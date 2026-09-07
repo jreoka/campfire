@@ -99,7 +99,11 @@ JWT_SECRET=dev DB_PATH=./data/campfire.db node server.js
 
 ## 5. Data & backup
 
-Everything is in `./data/campfire.db` (SQLite WAL). Back it up by copying the folder while the container is stopped:
+Everything persistent lives in `./data/`: `campfire.db` (all chat history,
+accounts, servers) plus `uploads/` (attached files, avatars, banners, icons,
+emoji). Uploads are stored next to the database on purpose — never next to
+the code, which is wiped on every rebuild. Back it all up by copying the
+folder while the container is stopped:
 
 ```bash
 docker compose stop && cp -r data data-backup && docker compose start

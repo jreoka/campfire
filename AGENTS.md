@@ -133,6 +133,14 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
 - [x] v2.1 (2026-09-07): real emoji dataset (Emojibase, 1914 emoji, keyword search,
       built to public/emoji.json via `npm run build:emoji`, lazy-loaded in picker),
       animated GIF thumbnails in picker (xs.gif renditions).
+- [x] Upload hardening + live-update fixes (2026-09-07): root-caused crushed server
+      icon to uploads living in ephemeral image storage — moved UPLOAD_DIR next to
+      DB_PATH (persistent volume), verified files survive rebuilds. Missing uploads
+      now 404 (never SPA HTML). Client degrades gracefully (avatars→initials,
+      icons→letter, images→file card, dead custom emoji→`:name:` text). Thread reply
+      counts re-render live even with the thread panel open. Deploy auto-update:
+      server fingerprints code at boot (`/api/version`), clients poll + show a
+      Refresh toast (voice-aware, drafts preserved); SW notifies tabs on activate.
 - [ ] NEXT: iterate on features/polish per owner feedback on the live site.
 - Open ideas (not requested yet): DMs, file/image sharing, push notifications,
   moderation roles beyond owner.
