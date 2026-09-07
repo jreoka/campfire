@@ -228,7 +228,8 @@ app.post('/api/servers', authRequired, (req, res) => {
   const s = { id: uid(), name, owner_id: req.user.id, invite_code: makeInvite(), created_at: now() };
   const tx = db.transaction(() => {
     db.prepare('INSERT INTO servers (id,name,owner_id,invite_code,created_at) VALUES (@id,@name,@owner_id,@invite_code,@created_at)').run(s);
-    db.prepare('INSERT INTO server_members (server_id,user_id,joined_at) VALUES (?,?,?)').run(s.id, req.user.id, now());
+    const maxP = db.prepare('SELECT COALESCE(MAX(position),-1) m FROM server_members WHERE user_id = ?').get(req.user.id).m;
+    db.prepare('INSERT INTO server_members (server_id,user_id,joined_at,position) VALUES (?,?,?,?)').run(s.id, req.user.id, now(), maxP + 1);
     const mk = (n, type, pos) => db.prepare("INSERT INTO channels (id,server_id,name,type,position,created_by,created_at) VALUES (?,?,?,?,?,?,?)")
       .run(uid(), s.id, n, type, pos, req.user.id, now());
     mk('general', 'text', 0);
@@ -244,7 +245,8 @@ app.post('/api/servers/join', authRequired, (req, res) => {
   const s = db.prepare('SELECT * FROM servers WHERE invite_code = ?').get(code);
   if (!s) return res.status(404).json({ error: 'bad_invite' });
   if (!isMember(s.id, req.user.id)) {
-    db.prepare('INSERT OR IGNORE INTO server_members (server_id,user_id,joined_at) VALUES (?,?,?)').run(s.id, req.user.id, now());
+    const maxP = db.prepare('SELECT COALESCE(MAX(position),-1) m FROM server_members WHERE user_id = ?').get(req.user.id).m;
+    db.prepare('INSERT INTO server_members (server_id,user_id,joined_at,position) VALUES (?,?,?,?)').run(s.id, req.user.id, now(), maxP + 1);
   }
   res.json({ server: serverView(s.id) });
 });
@@ -434,6 +436,44 @@ app.post('/api/me/password', authRequired, async (req, res) => {
   if (!await bcrypt.compare(String(current || ''), row.password_hash)) return res.status(401).json({ error: 'wrong_password' });
   if (String(next || '').length < 4) return res.status(400).json({ error: 'password too short (min 4)' });
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await bcrypt.hash(String(next), 10), req.user.id);
+  res.json({ ok: true });
+});
+
+// ---------- server layout (rail order + folders, per user) ----------
+app.get('/api/me/layout', authRequired, (req, res) => {
+  const folders = db.prepare('SELECT id,name,color,position,open FROM server_folders WHERE user_id = ? ORDER BY position ASC').all(req.user.id);
+  const order = db.prepare('SELECT server_id,folder_id,position FROM server_members WHERE user_id = ?').all(req.user.id);
+  res.json({ folders, order });
+});
+app.put('/api/me/layout', authRequired, (req, res) => {
+  const { servers, folders } = req.body || {};
+  if (!Array.isArray(servers) || !Array.isArray(folders)) return res.status(400).json({ error: 'bad_layout' });
+  if (servers.length > 200 || folders.length > 50) return res.status(400).json({ error: 'layout_too_big' });
+  const myServers = new Set(db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(req.user.id).map((r) => r.server_id));
+  const tx = db.transaction(() => {
+    const seen = new Set();
+    for (const f of folders) {
+      if (!f || typeof f.id !== 'string' || !f.id || f.id.length > 64) continue;
+      const name = String(f.name || '').trim().slice(0, 32) || 'Folder';
+      const color = /^#[0-9a-fA-F]{6}$/.test(f.color || '') ? f.color : '#5865f2';
+      const open = f.open === false ? 0 : 1;
+      const position = Math.max(0, Math.min(500, parseInt(f.position, 10) || 0));
+      const ex = db.prepare('SELECT id FROM server_folders WHERE id = ? AND user_id = ?').get(f.id, req.user.id);
+      if (ex) db.prepare('UPDATE server_folders SET name=?,color=?,position=?,open=? WHERE id=?').run(name, color, position, open, f.id);
+      else db.prepare('INSERT INTO server_folders (id,user_id,name,color,position,open,created_at) VALUES (?,?,?,?,?,?,?)').run(f.id, req.user.id, name, color, position, open, now());
+      seen.add(f.id);
+    }
+    if (seen.size) db.prepare(`DELETE FROM server_folders WHERE user_id = ? AND id NOT IN (${[...seen].map(() => '?').join(',')})`).run(req.user.id, ...[...seen]);
+    else db.prepare('DELETE FROM server_folders WHERE user_id = ?').run(req.user.id);
+    db.prepare('UPDATE server_members SET folder_id = NULL WHERE user_id = ? AND folder_id IS NOT NULL AND folder_id NOT IN (SELECT id FROM server_folders WHERE user_id = ?)').run(req.user.id, req.user.id);
+    const upd = db.prepare('UPDATE server_members SET folder_id = ?, position = ? WHERE user_id = ? AND server_id = ?');
+    for (const s of servers) {
+      if (!s || !myServers.has(s.id)) continue;
+      const fid = (typeof s.folderId === 'string' && seen.has(s.folderId)) ? s.folderId : null;
+      upd.run(fid, Math.max(0, Math.min(500, parseInt(s.position, 10) || 0)), req.user.id, s.id);
+    }
+  });
+  try { tx(); } catch { return res.status(400).json({ error: 'bad_layout' }); }
   res.json({ ok: true });
 });
 

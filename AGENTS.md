@@ -151,6 +151,13 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
       Auto-update hardened: navigations are network-first (a plain refresh is always
       fresh), tabs poll the code fingerprint, and the SW pings tabs on activate —
       tabs predating the updater get one forced reload so nobody sticks on old code.
+- [x] Rail upgrades (2026-09-07): settings moved to a gear at the bottom of the
+      server rail. Discord-style folders: drag servers to reorder, drop one onto
+      another to auto-create a folder, drag into/out of folders, right-click (or
+      double-click) for rename / 8 colors / collapse / delete. Per-user layout
+      persisted server-side (`server_folders` + positions, `PUT /api/me/layout`),
+      so order syncs to phones. Dedicated GIF button in the composer (was nested
+      under emoji).
       icon to uploads living in ephemeral image storage — moved UPLOAD_DIR next to
       DB_PATH (persistent volume), verified files survive rebuilds. Missing uploads
       now 404 (never SPA HTML). Client degrades gracefully (avatars→initials,

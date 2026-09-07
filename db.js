@@ -99,7 +99,18 @@ CREATE TABLE IF NOT EXISTS custom_emoji (
 CREATE INDEX IF NOT EXISTS idx_reactions_msg ON message_reactions(message_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_msg ON attachments(message_id);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_root_id);
+CREATE TABLE IF NOT EXISTS server_folders (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  color TEXT NOT NULL DEFAULT '#5865f2',
+  position INTEGER NOT NULL DEFAULT 0,
+  open INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL
+);
 `);
+addColumn('server_members', 'position', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('server_members', 'folder_id', 'TEXT');
 
 // Minimal better-sqlite3-compatible wrapper around DatabaseSync.
 const db = {

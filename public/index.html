@@ -52,6 +52,8 @@
     <nav id="rail" aria-label="Servers">
       <div id="server-list"></div>
       <button id="btn-add-server" title="Create or join a server">＋</button>
+      <div class="spacer"></div>
+      <button id="btn-settings-rail" class="tool-btn rail-gear" title="Settings"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2.4"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2.4"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="7" cy="18" r="2.4"/></svg></button>
     </nav>
 
     <!-- channel sidebar -->
@@ -71,7 +73,6 @@
       <div id="me-card">
         <span id="me-avatar" class="avatar">?</span>
         <span id="me-name">—</span>
-        <button id="btn-settings" class="mini" title="Settings"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2.4"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2.4"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="7" cy="18" r="2.4"/></svg></button>
         <button id="btn-logout" class="mini" title="Log out">⏻</button>
       </div>
       <div id="voice-bar" class="hidden">
@@ -99,8 +100,9 @@
       <div id="mention-pop" class="hidden"></div>
       <form id="composer">
         <button type="button" id="btn-attach" class="tool-btn" title="Attach a file"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
-        <button type="button" id="btn-emoji" class="tool-btn" title="Emoji and GIFs"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.2 1.8 3.5 1.8 3.5-1.8 3.5-1.8"/><line x1="9" y1="9.5" x2="9" y2="9.6"/><line x1="15" y1="9.5" x2="15" y2="9.6"/></svg></button>
+        <button type="button" id="btn-emoji" class="tool-btn" title="Emoji"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.2 1.8 3.5 1.8 3.5-1.8 3.5-1.8"/><line x1="9" y1="9.5" x2="9" y2="9.6"/><line x1="15" y1="9.5" x2="15" y2="9.6"/></svg></button>
         <input id="in-attach" type="file" class="hidden" />
+        <button type="button" id="btn-gif" class="tool-btn gif-btn" title="Send a GIF">GIF</button>
         <input id="in-message" autocomplete="off" maxlength="2000" placeholder="Message #general" />
         <button class="btn primary" type="submit">Send</button>
       </form>

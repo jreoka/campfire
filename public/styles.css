@@ -273,6 +273,23 @@ h1,h2,h3{letter-spacing:-0.01em}
   #thread-panel{position:fixed;top:0;bottom:0;right:0;z-index:40;box-shadow:none;border-left:1px solid var(--line)}
 }
 
+/* ---------- composer GIF button ---------- */
+.gif-btn{font-weight:800;font-size:.7rem;letter-spacing:.04em;border:1px solid var(--line);border-radius:6px;padding:.32rem .45rem;color:var(--text)}
+.gif-btn:hover{background:var(--panel-2)}
+/* ---------- rail settings + server folders ---------- */
+.rail-gear{color:var(--muted);padding:.55rem;border-radius:10px;margin-bottom:.2rem}
+.rail-gear:hover{background:var(--panel-2);color:var(--text)}
+.folder-children{display:flex;flex-direction:column;gap:5px;align-items:center;padding:3px 0 2px}
+.folder-btn.open{outline:2px solid #ffffff55;outline-offset:1px}
+#drop-marker{position:fixed;height:3px;background:var(--accent);border-radius:2px;z-index:300;pointer-events:none;display:none}
+.drop-combine{outline:2px solid var(--accent)!important;outline-offset:1px}
+#folder-menu{position:fixed;z-index:300;background:#101114;border:1px solid var(--line);border-radius:10px;padding:.35rem;min-width:190px}
+#folder-menu button.fm-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:6px;padding:.45rem .6rem;font-size:.86rem;font-weight:600;cursor:pointer}
+#folder-menu button.fm-item:hover{background:var(--panel-2)}
+#folder-menu button.fm-item.danger{color:#ff9a9e}
+#folder-menu .swatches{display:flex;gap:.35rem;padding:.45rem .6rem}
+#folder-menu .sw{width:22px;height:22px;border-radius:50%;cursor:pointer;border:2px solid transparent}
+#folder-menu .sw.sel{border-color:#fff}
 /* ---------- mobile ---------- */
 @media (max-width: 900px){
   #members{display:none}
