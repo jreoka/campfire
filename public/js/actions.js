@@ -419,8 +419,6 @@ function ctxFor(el, x, y) {
   if (vu && vu.dataset.uid) { openUserCard(vu.dataset.uid, x, y); return true; }
   const mem = el.closest('.member[data-uid]');
   if (mem && mem.dataset.uid) { memberCtxMenu(mem.dataset.uid, x, y); return true; }
-  const fb = el.closest('.folder-btn');
-  if (fb && fb.dataset.fid) { openFolderMenu(fb.dataset.fid, x, y); return true; }
   const sb = el.closest('.server-btn');
   if (sb && sb.dataset.sid) { serverCtxMenu(sb.dataset.sid, x, y); return true; }
   const dmr = el.closest('[data-dmthread]');

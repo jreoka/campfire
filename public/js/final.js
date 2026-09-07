@@ -42,13 +42,12 @@ function poke() {
   if (!e.target.closest('#picker') && !e.target.closest('#btn-emoji') && !e.target.closest('#btn-gif') && !e.target.closest('.msg-actions')) closePicker();
   if (!e.target.closest('#usercard') && !e.target.closest('[data-uid]') && !e.target.closest('.member')) closeUserCard();
   if (statusMenuEl && !e.target.closest('#status-pop') && !e.target.closest('#me-avatar')) closeStatusMenu();
-  if (folderMenuEl && !e.target.closest('#folder-menu')) closeFolderMenu();
   if (ctxEl && !e.target.closest('#ctx-menu') && !e.target.closest('.msg-actions')) closeCtx();
   if (document.body.classList.contains('members-open') && !e.target.closest('#members') && !e.target.closest('#btn-members')) document.body.classList.remove('members-open');
   if (!e.target.closest('#composer-more') && !e.target.closest('#btn-more') && !e.target.closest('#btn-plus')) $('#composer-more')?.classList.add('hidden');
 });
  document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeStatusMenu(); closeFolderMenu(); closeCtx(); closeSettings(); closeServerSettings(); $('#composer-more')?.classList.add('hidden'); cancelModal(); $('#lightbox').classList.add('hidden'); }
+  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeStatusMenu(); closeCtx(); closeSettings(); closeServerSettings(); $('#composer-more')?.classList.add('hidden'); cancelModal(); $('#lightbox').classList.add('hidden'); }
 });
 function composerAnchor() {
   const t = $('#composer-tools')?.getBoundingClientRect();

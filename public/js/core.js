@@ -31,9 +31,8 @@ const S = {
   pinCount: 0,
   pinsCtx: null, // context the pins popup is open for
   editing: null, // message id being edited
-  layoutFolders: [], // [{id,name,color,open,position,servers:[serverIds]}]
-  serverMeta: new Map(), // serverId -> {folderId, position}
-  rootOrder: [], // [{kind:'server'|'folder', id}] rail order top-to-bottom
+  serverMeta: new Map(), // serverId -> {position}
+  rootOrder: [], // [serverId] rail order top-to-bottom
   view: 'server', // 'server' | 'home'
   dms: [], friends: { friends: [], pendingIn: [], pendingOut: [], blocked: [] },
   friendTab: 'all', // friends sidebar tab: 'online' | 'all' | 'pending' | 'blocked'

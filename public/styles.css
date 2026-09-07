@@ -495,20 +495,10 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 /* ---------- composer GIF button ---------- */
 .gif-btn{font-weight:800;font-size:.7rem;letter-spacing:.04em;border:1px solid var(--line);border-radius:999px;padding:.32rem .5rem;color:var(--text);background:transparent;cursor:pointer}
 .gif-btn:hover{background:var(--panel-2)}
-/* ---------- rail settings + server folders ---------- */
+/* ---------- rail settings ---------- */
 .rail-gear{color:var(--muted);padding:.55rem;border-radius:999px;margin-bottom:.2rem}
 .rail-gear:hover{background:var(--panel-2);color:var(--text)}
-.folder-children{display:flex;flex-direction:column;gap:5px;align-items:center;padding:4px 0;border:0;border-radius:14px}
-.folder-btn.open{outline:2px solid #ffffff55;outline-offset:1px}
 #drop-marker{position:fixed;height:3px;background:var(--accent);border-radius:2px;z-index:300;pointer-events:none;display:none}
-.drop-combine{outline:2px solid var(--accent)!important;outline-offset:1px}
-#folder-menu{position:fixed;z-index:300;background:var(--panel-2);border:0;border-radius:12px;padding:.35rem;min-width:190px}
-#folder-menu button.fm-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:8px;padding:.45rem .6rem;font-size:.86rem;font-weight:600;cursor:pointer}
-#folder-menu button.fm-item:hover{background:var(--panel-3)}
-#folder-menu button.fm-item.danger{color:var(--red)}
-#folder-menu .swatches{display:flex;gap:.35rem;padding:.45rem .6rem}
-#folder-menu .sw{width:22px;height:22px;border-radius:50%;cursor:pointer;border:2px solid transparent}
-#folder-menu .sw.sel{border-color:#fff}
 /* ---------- home (friends + DMs) ---------- */
 #server-ui{display:contents}
 .home-head{padding:.85rem .9rem;border-bottom:1px solid var(--line)}
@@ -609,26 +599,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 @media (prefers-reduced-motion:reduce){.home-btn:hover img,.home-btn:active img{animation:none}}
 .home-btn:hover{background:transparent}
 .home-btn.active{background:transparent;border-radius:12px}
-.folder-btn{padding:8px}
-.fgrid{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;width:100%;height:100%;pointer-events:none;border-radius:10px;overflow:hidden}
-.folder-wrap.open .fgrid{border-radius:6px}
-.frow{display:inline-flex;gap:4px}
-.fic{border-radius:4px;overflow:hidden;background:rgba(0,0,0,.32);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;line-height:1}
-.n1 .fic{width:24px;height:24px;font-size:1rem;border-radius:8px}
-.n2 .fic{width:14px;height:14px;font-size:.68rem}
-.n3 .fic{width:11px;height:11px;font-size:.5rem}
-.n4 .fic{width:14px;height:14px;font-size:.62rem}
-.n4 .frow:first-child .fic:first-child{border-top-left-radius:10px}
-.n4 .frow:first-child .fic:last-child{border-top-right-radius:10px}
-.n4 .frow:last-child .fic:first-child{border-bottom-left-radius:10px}
-.n4 .frow:last-child .fic:last-child{border-bottom-right-radius:10px}
-.folder-wrap.open .n4 .frow:last-child .fic:first-child{border-bottom-left-radius:6px}
-.folder-wrap.open .n4 .frow:last-child .fic:last-child{border-bottom-right-radius:6px}
-.fic img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
 .server-btn,.chan,.dmrow,.member{-webkit-touch-callout:none}
-.folder-wrap{gap:2px}
-.folder-wrap.open{gap:4px;padding:6px;border-radius:18px}
-.folder-wrap.open .folder-btn{border-radius:14px}
 #home-badge{position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;font-size:.62rem;font-weight:800;border-radius:999px;padding:.05rem .35rem;min-width:18px;text-align:center;line-height:1.3;pointer-events:none}
 #home-badge.hidden{display:none}
 .dm-badge{flex-shrink:0;background:var(--red);color:#fff;font-size:.66rem;font-weight:800;border-radius:999px;padding:.08rem .42rem;min-width:20px;text-align:center;line-height:1.35}
@@ -714,7 +685,6 @@ body{touch-action:manipulation}
   body.nav-open #left{transform:none}
   #left #rail{width:60px;flex-shrink:0;padding:.6rem .3rem .6rem 7px}
   #left .server-btn,#left #btn-add-server{width:44px;height:44px}
-  .folder-wrap.open{padding:3px}
   #home-wrap{width:44px;height:44px}
   #home-wrap:has(> .active)::before{left:-5px;width:4px;height:22px}
   #server-list{overflow-x:hidden;padding:0}

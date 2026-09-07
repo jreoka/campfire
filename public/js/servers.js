@@ -4,10 +4,9 @@ async function refreshServers(selectId) {
   const { servers } = await api('/api/servers');
   S.servers = servers;
   try {
-    const { folders, order } = await api('/api/me/layout');
-    S.layoutFolders = folders.map((f) => ({ ...f, open: f.open !== 0, servers: [] }));
-    S.serverMeta = new Map(order.map((o) => [o.server_id, { folderId: o.folder_id, position: o.position }]));
-  } catch { S.layoutFolders = []; S.serverMeta = new Map(); }
+    const { order } = await api('/api/me/layout');
+    S.serverMeta = new Map((order || []).map((o) => [o.server_id, { position: o.position }]));
+  } catch { S.serverMeta = new Map(); }
   buildRootOrder();
   if (!servers.length) {
     S.serverId = null;
@@ -22,23 +21,11 @@ async function refreshServers(selectId) {
   renderServerList();
   await selectServer(S.serverId);
 }
-function folderById(id) { return S.layoutFolders.find((f) => f.id === id); }
 function buildRootOrder() {
-  for (const f of S.layoutFolders) f.servers = [];
-  const unfiled = [];
-  for (const s of S.servers) {
-    const m = S.serverMeta.get(s.id);
-    const f = m && m.folderId ? folderById(m.folderId) : null;
-    if (f) f.servers.push(s.id);
-    else unfiled.push(s.id);
-  }
-  for (const f of S.layoutFolders) {
-    f.servers.sort((a, b) => (S.serverMeta.get(a)?.position ?? 0) - (S.serverMeta.get(b)?.position ?? 0));
-  }
-  S.rootOrder = [
-    ...S.layoutFolders.map((f) => ({ kind: 'folder', id: f.id, pos: f.position })),
-    ...unfiled.map((id) => ({ kind: 'server', id, pos: S.serverMeta.get(id)?.position ?? 999 })),
-  ].sort((a, b) => a.pos - b.pos);
+  // Flat rail: servers sorted by saved position (stable — new joins keep
+  // membership order at the end). Anything without a position sinks to 999.
+  const pos = (id) => S.serverMeta.get(id)?.position ?? 999;
+  S.rootOrder = S.servers.map((s) => s.id).sort((a, b) => pos(a) - pos(b));
 }
 function serverBtn(s) {
   const b = document.createElement('button');
@@ -62,78 +49,21 @@ function serverBtn(s) {
     b.textContent = label;
   }
   b.onclick = () => selectServer(s.id);
-  wireDrag(b, 'server', s.id);
+  wireDrag(b, s.id);
   return b;
-}
-function folderGrid(kids) {
-  // Shrink-wrapped centered rows: big dark previews, symmetric blue all
-  // around — no edge-to-edge bands to read as cut off.
-  const shown = kids.slice(0, 4);
-  if (!shown.length) return '';
-  const cell = (s) => {
-    const label = (s.name || '?').trim().charAt(0).toUpperCase() || '?';
-    return s.icon_url
-      ? `<span class="fic"><img src="${esc(s.icon_url)}" alt="" loading="lazy" draggable="false" data-fb-letter="${esc(label)}" /></span>`
-      : `<span class="fic">${esc(label)}</span>`;
-  };
-  if (shown.length === 1) return `<span class="fgrid n1"><span class="frow">${cell(shown[0])}</span></span>`;
-  const rows = [];
-  for (let i = 0; i < shown.length; i += 2) rows.push(`<span class="frow">${shown.slice(i, i + 2).map(cell).join('')}</span>`);
-  return `<span class="fgrid n${shown.length}">${rows.join('')}</span>`;
-}
-function folderEl(f, kids) {
-  const wrap = document.createElement('div');
-  wrap.className = 'folder-wrap' + (f.open ? ' open' : '');
-  wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center';
-  const b = document.createElement('button');
-  b.className = 'server-btn folder-btn' + (f.open ? ' open' : '');
-  b.style.background = f.color;
-  b.title = f.name;
-  b.draggable = true;
-  b.dataset.drag = 'folder:' + f.id;
-  b.dataset.fid = f.id;
-  b.innerHTML = folderGrid(kids);
-  if (kids.some((k) => k.id === S.serverId)) b.style.outline = '2px solid #ffffff88';
-  b.onclick = () => { f.open = !f.open; saveLayout(); renderServerList(); };
-  // NOTE: no dblclick-to-rename here — a quick expand+collapse reads as a
-  // double click and would pop the rename box by accident. Rename lives in
-  // the folder's right-click menu.
-  b.oncontextmenu = (e) => { e.preventDefault(); openFolderMenu(f.id, e.clientX, e.clientY); };
-  wireDrag(b, 'folder', f.id);
-  wrap.appendChild(b);
-  if (f.open) {
-    const kidsBox = document.createElement('div');
-    kidsBox.className = 'folder-children';
-    // Open folder + dropdown read as one piece: the wash lives on the wrap
-    // so it encapsulates the folder button too (Discord-style).
-    if (/^#[0-9a-fA-F]{6}$/.test(f.color || '')) {
-      wrap.style.background = f.color + '33';
-    }
-    for (const s of kids) kidsBox.appendChild(serverBtn(s));
-    wrap.appendChild(kidsBox);
-  }
-  return wrap;
 }
 function renderServerList() {
   const box = $('#server-list');
   box.innerHTML = '';
   const byId = new Map(S.servers.map((s) => [s.id, s]));
-  for (const it of S.rootOrder) {
-    if (it.kind === 'folder') {
-      const f = folderById(it.id);
-      if (!f) continue;
-      box.appendChild(folderEl(f, (f.servers || []).map((id) => byId.get(id)).filter(Boolean)));
-    } else {
-      const s = byId.get(it.id);
-      if (s) box.appendChild(serverBtn(s));
-    }
+  for (const id of S.rootOrder) {
+    const s = byId.get(id);
+    if (s) box.appendChild(serverBtn(s));
   }
+  // Servers missing from the saved order (e.g. joined on another device)
+  // append at the end instead of vanishing.
   for (const s of S.servers) {
-    if (S.rootOrder.some((it) => it.kind === 'server' && it.id === s.id)) continue;
-    // Servers living inside a folder render under that folder only — without
-    // this they would duplicate at the bottom of the rail.
-    if (S.layoutFolders.some((f) => (f.servers || []).includes(s.id))) continue;
-    box.appendChild(serverBtn(s));
+    if (!S.rootOrder.includes(s.id)) box.appendChild(serverBtn(s));
   }
 }
 async function selectServer(id) {
