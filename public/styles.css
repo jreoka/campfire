@@ -76,7 +76,7 @@ h1,h2,h3{letter-spacing:-0.01em}
 #view-main{display:flex;height:100vh;height:100dvh;overflow:hidden}
 #view-main{height:100%}
 #left{display:contents}
-#rail{width:76px;background:var(--rail);display:flex;flex-direction:column;align-items:center;padding:.7rem 0;gap:.5rem;flex-shrink:0;overflow:hidden}
+#rail{width:76px;background:var(--rail);display:flex;flex-direction:column;align-items:center;padding:.7rem 0;gap:.8rem;flex-shrink:0;overflow:hidden}
 #server-list{display:flex;flex-direction:column;gap:.5rem;width:100%;align-items:flex-start;overflow-y:auto;padding:0 4px 0 14px;min-height:0;scrollbar-width:none}
 #server-list::-webkit-scrollbar,#dm-rail::-webkit-scrollbar{display:none}
 /* unread DM senders live under Home until opened */
@@ -751,7 +751,7 @@ body{touch-action:manipulation}
 @media (max-width: 700px){
   #left{position:fixed;top:0;bottom:0;left:0;z-index:30;display:flex;transform:translateX(-105%);transition:transform .2s;width:min(348px,94vw);background:var(--rail)}
   body.nav-open #left{transform:none}
-  #left #rail{width:60px;flex-shrink:0;padding:.6rem 0;gap:.8rem}
+  #left #rail{width:60px;flex-shrink:0;padding:.6rem 0;gap:1rem}
   #left .server-btn,#left #btn-add-server{width:44px;height:44px}
   #left .fwrap,#left .folder-btn{width:44px;height:44px}
   #left .folder-open{width:48px;padding:5px 2px}
