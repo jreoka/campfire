@@ -18,6 +18,22 @@ if (JWT_SECRET === 'dev-secret-change-me') {
 const ORIGIN = process.env.ORIGIN || ''; // e.g. https://chat.example.com (used for hints only)
 const KLIPY_KEY = process.env.KLIPY_KEY || '';
 
+// ---------- app version (powers client auto-update) ----------
+// Content hash of backend + frontend: changes exactly when a deploy changes code.
+const APP_VERSION = (() => {
+  try {
+    const h = crypto.createHash('sha1');
+    const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const p = path.join(dir, e.name);
+      return e.isDirectory() ? walk(p) : [p];
+    });
+    for (const f of [path.join(__dirname, 'server.js'), path.join(__dirname, 'db.js'), path.join(__dirname, 'package.json'), ...walk(path.join(__dirname, 'public'))]) {
+      try { h.update(fs.readFileSync(f)); } catch {}
+    }
+    return h.digest('hex').slice(0, 12);
+  } catch { return 'dev'; }
+})();
+
 // ---------- uploads ----------
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'data', 'uploads');
 const MAX_FILE_BYTES = parseInt(process.env.MAX_FILE_MB || '25', 10) * 1024 * 1024;
@@ -67,6 +83,9 @@ app.use('/uploads', express.static(UPLOAD_DIR, {
     }
   },
 }));
+// Missing uploads must 404 (never fall through to the SPA shell — an HTML page
+// served as an image breaks <img> rendering in confusing ways).
+app.use('/uploads', (req, res) => res.status(404).json({ error: 'not_found' }));
 
 // ---------- helpers ----------
 const uid = () => crypto.randomUUID();
@@ -141,6 +160,11 @@ function rateOk(userId) {
 }
 
 // ---------- API ----------
+// Client auto-update fingerprint: changes whenever deployed code changes.
+app.get('/api/version', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ version: APP_VERSION });
+});
 app.get('/api/config', (req, res) => {
   const iceServers = [{ urls: process.env.STUN_URL || 'stun:stun.l.google.com:19302' }];
   if (process.env.TURN_URL) {

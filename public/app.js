@@ -55,6 +55,7 @@ function paintAvatar(el, user) {
     el.innerHTML = '';
     const img = document.createElement('img');
     img.src = user.avatar_url; img.alt = ''; img.loading = 'lazy';
+    img.onerror = () => { el.innerHTML = ''; avatar(el, user.display_name, user.avatar_color); };
     el.appendChild(img);
   } else {
     el.innerHTML = '';
@@ -85,7 +86,7 @@ function renderRich(text) {
        .replace(/(^|[\s(])\*([^\*\n]+)\*/g, '$1<em>$2</em>')
        .replace(/~~([^~]+)~~/g, '<del>$1</del>');
   h = h.replace(/:([a-z0-9_+-]{2,32}):/g, (m, n) => S.emoji[n]
-    ? '<img class="cemoi" src="' + S.emoji[n] + '" alt="' + m + '" title="' + m + '">' : m);
+    ? '<img class="cemoi" src="' + S.emoji[n] + '" alt="' + m + '" title="' + m + '" data-fb-emoji="' + m + '">' : m);
   h = h.replace(/(^|[\s(])@([a-z0-9_.]{2,24})/g, (m, pre, un) => {
     const mem = memberByUsername(un);
     if (!mem) return m;
@@ -175,8 +176,14 @@ async function boot() {
     return;
   }
   showMain();
+  let draft = null;
+  try { draft = JSON.parse(sessionStorage.getItem('cf_draft') || 'null'); sessionStorage.removeItem('cf_draft'); } catch {}
+  if (draft && draft.s) S.serverId = draft.s;
   await refreshServers();
+  if (draft && draft.c && S.serverId === draft.s) { try { await selectChannel(draft.c); } catch {} }
+  if (draft && draft.t) $('#in-message').value = draft.t;
   connectWS();
+  pollVersion();
   // auto-join via ?invite=CODE
   const inv = new URLSearchParams(location.search).get('invite');
   if (inv) {
@@ -225,6 +232,7 @@ function renderServerList() {
       const img = document.createElement('img');
       img.src = s.icon_url; img.alt = '';
       img.style.cssText = 'width:100%;height:100%;border-radius:inherit;object-fit:cover;display:block';
+      img.onerror = () => { b.classList.remove('has-icon'); b.innerHTML = ''; b.textContent = s.name.trim().charAt(0).toUpperCase() || '?'; };
       b.appendChild(img);
     } else {
       b.textContent = s.name.trim().charAt(0).toUpperCase() || '?';
@@ -363,7 +371,7 @@ function updateMsgInCaches(mid, fn) {
   }
 }
 function attachmentHTML(a) {
-  if (a.kind === 'image') return `<img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" />`;
+  if (a.kind === 'image') return `<img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />`;
   if (a.kind === 'video') return `<video class="att-vid" src="${esc(a.url)}" controls preload="metadata"></video>`;
   if (a.kind === 'audio') return `<audio src="${esc(a.url)}" controls preload="metadata"></audio>`;
   return `<a class="file-card" href="${esc(a.url)}" target="_blank" rel="noopener"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span><span class="fname">${esc(a.name)}</span><br/><span class="fsize">${fmtSize(a.size)}</span></span></a>`;
@@ -372,7 +380,7 @@ function reactionsHTML(m) {
   if (!m.reactions?.length) return '';
   return '<div class="reactions">' + m.reactions.map((r) => {
     const label = r.emoji.startsWith(':') && r.emoji.endsWith(':') && S.emoji[r.emoji.slice(1, -1)]
-      ? `<img class="cemoi" src="${S.emoji[r.emoji.slice(1, -1)]}" alt="${esc(r.emoji)}">`
+      ? `<img class="cemoi" src="${S.emoji[r.emoji.slice(1, -1)]}" alt="${esc(r.emoji)}" data-fb-emoji="${esc(r.emoji)}">`
       : esc(r.emoji);
     return `<button class="reaction${r.me ? ' me' : ''}" data-act="react" data-emoji="${esc(r.emoji)}" title="${r.count}">${label} ${r.count}</button>`;
   }).join('') + '</div>';
@@ -540,12 +548,11 @@ function onWS(m) {
       const dnd = S.me && S.me.status === 'dnd';
       if (msg.threadRoot) {
         updateMsgInCaches(msg.threadRoot, (r) => { r.threadCount = (r.threadCount || 0) + 1; });
+        if (m.channelId === S.channelId) renderMessages();
         if (S.thread && S.thread.rootId === msg.threadRoot) {
           S.thread.replies.push(msg);
           renderThread(true);
           if (document.hidden && !dnd) notifyMsg(msg);
-        } else if (m.channelId === S.channelId) {
-          renderMessages();
         }
       } else {
         const arr = S.messages.get(m.channelId) || [];
@@ -861,6 +868,7 @@ function leaveVoice(silent) {
   grid.classList.add('hidden'); grid.innerHTML = '';
   if (!silent) S.ws?.send(JSON.stringify({ t: 'voice-leave' }));
   renderChannels();
+  if (S.updateReady && !silent) location.reload();
 }
 function toggleMute() {
   if (!S.voice) return;
@@ -1567,6 +1575,76 @@ function poke() {
   if (e.key === 'Escape') { closePicker(); closeUserCard(); closeStatusMenu(); closeSettings(); $('#lightbox').classList.add('hidden'); }
 });
 $('#btn-emoji').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert') : closePicker(); };
+
+// Broken images (deleted/missing uploads) degrade gracefully instead of
+// rendering as crushed broken-image boxes.
+document.addEventListener('error', (e) => {
+  const t = e.target;
+  if (!(t instanceof HTMLImageElement)) return;
+  if (t.dataset.fbName) {
+    const a = document.createElement('a');
+    a.className = 'file-card'; a.href = t.dataset.fbUrl; a.target = '_blank'; a.rel = 'noopener';
+    const s = document.createElement('span');
+    const n = document.createElement('span'); n.className = 'fname'; n.textContent = t.dataset.fbName;
+    s.appendChild(n); a.appendChild(s);
+    t.replaceWith(a);
+  } else if (t.dataset.fbEmoji) {
+    t.replaceWith(document.createTextNode(t.dataset.fbEmoji));
+  }
+}, true);
+
+// ---------- auto-update (deploys apply without hard refresh) ----------
+S.bootVersion = null; S.updateReady = false;
+async function checkVersion() {
+  try {
+    const r = await fetch('/api/version', { cache: 'no-store' });
+    const { version } = await r.json();
+    if (!S.bootVersion) { S.bootVersion = version; return; }
+    if (version === S.bootVersion) return;
+    if (!S.updateReady) onUpdateReady();
+    else if (!S.voice && !document.hidden) location.reload();
+  } catch {}
+}
+function onUpdateReady() {
+  S.updateReady = true;
+  if (S.voice) { toast('Update ready — applies when you leave voice'); return; }
+  toastAction('App updated — refresh for the latest version', 'Refresh', () => location.reload());
+  clearTimeout(onUpdateReady._t);
+  onUpdateReady._t = setTimeout(() => { if (S.updateReady && !S.voice && !document.hidden) location.reload(); }, 30000);
+}
+function toastAction(msg, label, fn) {
+  const el = $('#toast');
+  el.innerHTML = '';
+  el.appendChild(document.createTextNode(msg));
+  if (label) {
+    const b = document.createElement('button');
+    b.className = 'btn small primary'; b.style.marginLeft = '.6rem'; b.textContent = label;
+    b.onclick = () => { el.classList.add('hidden'); fn && fn(); };
+    el.appendChild(b);
+  }
+  el.classList.remove('hidden');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.add('hidden'), 8000);
+}
+function pollVersion() {
+  checkVersion();
+  setInterval(checkVersion, 60000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      checkVersion();
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
+        navigator.serviceWorker.getRegistration().then((r) => r && r.update()).catch(() => {});
+      }
+    }
+  });
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.t === 'SW_UPDATED') checkVersion(); });
+    navigator.serviceWorker.addEventListener('controllerchange', () => checkVersion());
+  }
+}
+window.addEventListener('beforeunload', () => {
+  try { sessionStorage.setItem('cf_draft', JSON.stringify({ s: S.serverId, c: S.channelId, t: document.querySelector('#in-message') ? document.querySelector('#in-message').value : '' })); } catch {}
+});
 
 // ---------- go ----------
 setMode('login');
