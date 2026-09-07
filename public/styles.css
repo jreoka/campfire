@@ -1,20 +1,20 @@
 /* Campfire — Material 3 (dark) theme. Tonal surfaces, pill buttons, expressive shapes. */
 :root{
-  --bg:#101413;            /* surface */
-  --panel:#161B19;         /* surface-container-low: sidebar, members, header, composer */
-  --panel-2:#1E2422;       /* surface-container: hovers, menus, cards */
-  --panel-3:#282F2C;       /* surface-container-high: active fills */
-  --inset:#0B0E0D;         /* surface-container-lowest: inputs */
-  --rail:#0B0E0D;          /* nav rail */
-  --line:#404943;          /* outline-variant: hairlines, control borders */
-  --text:#E0E6E1;          /* on-surface */
-  --muted:#8A938E;         /* on-surface-variant */
-  --accent:#8CE3A9;        /* primary */
-  --on-accent:#062117;     /* on-primary */
-  --accent-hover:#A5EDBC;
-  --accent-active:#C2F5D3;
-  --accent-container:#11492F;   /* primary-container: tonal fills */
-  --on-container:#C9F0D2;       /* on-primary-container */
+  --bg:#111417;            /* neutral grey surface, faint blue */
+  --panel:#191D20;         /* surface-container-low */
+  --panel-2:#20262B;       /* surface-container: hovers, menus, cards */
+  --panel-3:#292F35;       /* surface-container-high: active fills */
+  --inset:#0C0E10;         /* darkest: inputs, rail */
+  --rail:#0C0E10;          /* nav rail */
+  --line:#3C434A;          /* outline-variant: hairlines, control borders */
+  --text:#E2E2E6;          /* on-surface */
+  --muted:#8E9199;         /* on-surface-variant */
+  --accent:#AAC7FF;        /* primary: soft blue */
+  --on-accent:#0A305F;     /* on-primary */
+  --accent-hover:#C2D7FE;
+  --accent-active:#DCE2F9;
+  --accent-container:#284777;   /* primary-container: tonal fills */
+  --on-container:#DCE2F9;       /* on-primary-container */
   --green:#6EE7A0;         /* semantic: online, speaking, live */
   --amber:#F2C14E;         /* semantic: away */
   --red:#FFB4AB;           /* semantic: error/danger/dnd */
@@ -36,7 +36,7 @@ h1,h2,h3{letter-spacing:-0.01em}
 .muted{color:var(--muted)} .small{font-size:.85rem} .error{color:var(--red);font-size:.9rem}
 .spacer{flex:1}
 .row{display:flex;gap:.5rem;align-items:center} .row.end{justify-content:flex-end;margin-top:1rem} .row-between{display:flex;justify-content:space-between;align-items:center}
-::selection{background:#8CE3A955}
+::selection{background:#AAC7FF55}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-thumb{background:#3F4945;border-radius:6px;border:2px solid #0000}
@@ -99,7 +99,7 @@ h1,h2,h3{letter-spacing:-0.01em}
 .mini.danger:hover{background:var(--red-hover)}
 #me-card{display:flex;align-items:center;gap:.55rem;padding:.65rem .75rem;border-top:1px solid var(--line);background:var(--panel);font-size:.88rem;font-weight:600;cursor:pointer}
 .avatar{width:38px;height:38px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:700;color:#fff;flex-shrink:0;font-size:.85rem}
-#voice-bar{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.55rem .7rem;background:#0E3B24;border-top:1px solid var(--green);font-size:.85rem;border-radius:16px 16px 0 0}
+#voice-bar{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.55rem .7rem;background:var(--inset);border-top:1px solid var(--green);font-size:.85rem;border-radius:16px 16px 0 0}
 #voice-status{display:flex;align-items:center;min-width:0}
 .live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:.45rem;flex-shrink:0}
 #sidebar-scrim{display:none}
@@ -164,8 +164,8 @@ h1,h2,h3{letter-spacing:-0.01em}
 .modal label{font-size:.82rem;font-weight:600;color:var(--muted)}
 .modal hr{border:0;border-top:1px solid var(--line)}
 .codebox{background:var(--inset);border:1px solid var(--line);border-radius:16px;padding:.7rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:1.2rem;text-align:center;letter-spacing:.12em;margin:.7rem 0;user-select:all}
-#toast{position:fixed;left:50%;bottom:calc(1.2rem + var(--safe-b));transform:translateX(-50%);background:#E0E6E1;color:#101413;padding:.6rem 1rem;border-radius:8px;z-index:200;font-size:.85rem;font-weight:600;max-width:90vw}
-#toast .btn.small.primary{background:#101413;border-color:transparent;color:#E0E6E1}
+#toast{position:fixed;left:50%;bottom:calc(1.2rem + var(--safe-b));transform:translateX(-50%);background:#E2E2E6;color:#131313;padding:.6rem 1rem;border-radius:8px;z-index:200;font-size:.85rem;font-weight:600;max-width:90vw}
+#toast .btn.small.primary{background:#131313;border-color:transparent;color:#E2E2E6}
 
 /* ---------- attachments, replies, reactions ---------- */
 .tool-btn{border:0;background:transparent;color:var(--muted);border-radius:999px;padding:.45rem;cursor:pointer;display:inline-flex;align-items:center}
@@ -206,7 +206,7 @@ h1,h2,h3{letter-spacing:-0.01em}
 .cemoji{width:1.35em;height:1.35em;vertical-align:-0.25em}
 .bigemoji{font-size:2rem;line-height:1.3}
 .flash{animation:flash 1.6s}
-@keyframes flash{0%,40%{background:#8CE3A944}100%{background:transparent}}
+@keyframes flash{0%,40%{background:#AAC7FF44}100%{background:transparent}}
 
 /* ---------- picker (emoji + GIFs) ---------- */
 #picker{position:absolute;left:.9rem;bottom:calc(64px + var(--safe-b));width:min(360px,calc(100vw - 2rem));background:var(--panel-2);border:0;border-radius:16px;z-index:70;display:flex;flex-direction:column;max-height:380px}
