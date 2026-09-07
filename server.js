@@ -8,6 +8,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const { WebSocketServer } = require('ws');
+const webpush = require('web-push');
 const db = require('./db');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -134,6 +135,15 @@ function authRequired(req, res, next) {
 function isMember(serverId, userId) {
   return !!db.prepare('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?').get(serverId, userId);
 }
+function serverRoles(sid) {
+  return db.prepare('SELECT * FROM roles WHERE server_id = ? ORDER BY position DESC, created_at ASC').all(sid);
+}
+function isAdmin(sid, uid) {
+  const s = getServer(sid);
+  if (!s) return false;
+  if (s.owner_id === uid) return true;
+  return !!db.prepare('SELECT 1 FROM member_roles mr JOIN roles r ON r.id = mr.role_id WHERE mr.server_id = ? AND mr.user_id = ? AND r.admin = 1 LIMIT 1').get(sid, uid);
+}
 function getServer(serverId) {
   return db.prepare('SELECT * FROM servers WHERE id = ?').get(serverId);
 }
@@ -143,12 +153,19 @@ function serverView(serverId) {
   const channels = db.prepare("SELECT * FROM channels WHERE server_id = ? ORDER BY type DESC, position ASC, created_at ASC").all(serverId);
   const members = db.prepare(`
     SELECT u.id, u.username, u.display_name, u.avatar_color, u.avatar_url, u.banner_url, u.sidebar_banner_url,
-           u.status, u.status_text,
+           u.status, u.status_text, u.name_color, u.name_gradient,
            CASE WHEN u.id = s.owner_id THEN 'owner' ELSE 'member' END as role
     FROM server_members m JOIN users u ON u.id = m.user_id JOIN servers s ON s.id = m.server_id
     WHERE m.server_id = ? ORDER BY u.display_name COLLATE NOCASE ASC
   `).all(serverId);
-  return { ...s, channels, members };
+  const roleByUser = new Map();
+  for (const r of db.prepare('SELECT user_id, role_id FROM member_roles WHERE server_id = ?').all(serverId)) {
+    if (!roleByUser.has(r.user_id)) roleByUser.set(r.user_id, []);
+    roleByUser.get(r.user_id).push(r.role_id);
+  }
+  for (const m of members) m.roleIds = roleByUser.get(m.id) || [];
+  const roles = serverRoles(serverId);
+  return { ...s, channels, members, roles };
 }
 function publicUser(u) {
   if (!u) return { id: null, username: 'deleted', display_name: 'deleted user', avatar_color: '#555' };
@@ -157,10 +174,11 @@ function publicUser(u) {
     avatar_url: u.avatar_url || null, banner_url: u.banner_url || null,
     sidebar_banner_url: u.sidebar_banner_url || null,
     status: u.status || 'online', status_text: u.status_text || '',
+    name_color: u.name_color || '', name_gradient: u.name_gradient || '',
     created_at: u.created_at || null,
   };
 }
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, created_at';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, name_color, name_gradient, created_at';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -282,6 +300,8 @@ app.get('/api/servers/:id', authRequired, (req, res) => {
 app.post('/api/servers/:id/channels', authRequired, (req, res) => {
   const { id } = req.params;
   if (!isMember(id, req.user.id)) return res.status(403).json({ error: 'not_member' });
+  const s = getServer(id);
+  if (!s || !isAdmin(id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
   const name = String(req.body?.name || '').trim().replace(/\s+/g, '-').slice(0, 32);
   const type = req.body?.type === 'voice' ? 'voice' : 'text';
   if (!name) return res.status(400).json({ error: 'name_required' });
@@ -295,7 +315,7 @@ app.post('/api/servers/:id/channels', authRequired, (req, res) => {
 app.delete('/api/servers/:id/channels/:chId', authRequired, (req, res) => {
   const s = getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });
-  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
   const ch = db.prepare('SELECT * FROM channels WHERE id = ? AND server_id = ?').get(req.params.chId, req.params.id);
   if (!ch) return res.status(404).json({ error: 'no_channel' });
   const n = db.prepare('SELECT COUNT(*) c FROM channels WHERE server_id = ?').get(s.id).c;
@@ -315,7 +335,7 @@ app.delete('/api/servers/:id/channels/:chId', authRequired, (req, res) => {
 app.patch('/api/servers/:id/channels/:chId', authRequired, (req, res) => {
   const s = getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });
-  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
   const ch = db.prepare('SELECT * FROM channels WHERE id = ? AND server_id = ?').get(req.params.chId, s.id);
   if (!ch) return res.status(404).json({ error: 'no_channel' });
   const sets = [], params = [];
@@ -361,7 +381,7 @@ app.delete('/api/servers/:id', authRequired, (req, res) => {
 app.post('/api/servers/:id/invite/reset', authRequired, (req, res) => {
   const s = getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });
-  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
   const code = makeInvite();
   db.prepare('UPDATE servers SET invite_code = ? WHERE id = ?').run(code, s.id);
   broadcastToServer(s.id, { t: 'invite-updated', serverId: s.id, invite_code: code });
@@ -371,9 +391,10 @@ app.post('/api/servers/:id/invite/reset', authRequired, (req, res) => {
 app.post('/api/servers/:id/members/:uid/kick', authRequired, (req, res) => {
   const s = getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });
-  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
   const target = String(req.params.uid);
   if (target === s.owner_id) return res.status(400).json({ error: 'cannot_kick_owner' });
+  if (target !== req.user.id && isAdmin(s.id, target) && s.owner_id !== req.user.id) return res.status(403).json({ error: 'cannot_kick_admin' });
   if (!isMember(s.id, target)) return res.status(404).json({ error: 'not_member' });
   const u = publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(target));
   db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(s.id, target);
@@ -387,9 +408,10 @@ app.post('/api/servers/:id/members/:uid/kick', authRequired, (req, res) => {
 app.post('/api/servers/:id/members/:uid/ban', authRequired, (req, res) => {
   const s = getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });
-  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
   const target = String(req.params.uid);
   if (target === s.owner_id) return res.status(400).json({ error: 'cannot_kick_owner' });
+  if (target !== req.user.id && isAdmin(s.id, target) && s.owner_id !== req.user.id) return res.status(403).json({ error: 'cannot_kick_admin' });
   if (!isMember(s.id, target)) return res.status(404).json({ error: 'not_member' });
   const reason = String(req.body?.reason || '').trim().slice(0, 140);
   const u = publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(target));
@@ -407,7 +429,7 @@ app.post('/api/servers/:id/members/:uid/ban', authRequired, (req, res) => {
 app.get('/api/servers/:id/bans', authRequired, (req, res) => {
   const s = getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });
-  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
   const rows = db.prepare('SELECT user_id, reason, created_at FROM server_bans WHERE server_id = ? ORDER BY created_at DESC').all(s.id);
   const bans = rows.map((r) => {
     const u = publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(r.user_id));
@@ -419,12 +441,105 @@ app.get('/api/servers/:id/bans', authRequired, (req, res) => {
 app.delete('/api/servers/:id/bans/:uid', authRequired, (req, res) => {
   const s = getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });
-  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
   const target = String(req.params.uid);
   db.prepare('DELETE FROM server_bans WHERE server_id = ? AND user_id = ?').run(s.id, target);
   const u = publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(target));
   postServerSys(s.id, `${displayOf(u)} was unbanned`);
   res.json({ ok: true });
+});
+
+// ---------- roles ----------
+const ROLE_COLOR = /^#[0-9a-fA-F]{6}$/;
+app.post('/api/servers/:id/roles', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  const name = String(req.body?.name || '').trim().slice(0, 32);
+  if (!name) return res.status(400).json({ error: 'name_required' });
+  const color = ROLE_COLOR.test(String(req.body?.color || '')) ? String(req.body.color) : '';
+  const maxP = db.prepare('SELECT COALESCE(MAX(position),-1) m FROM roles WHERE server_id = ?').get(s.id).m;
+  const r = { id: uid(), server_id: s.id, name, color, hoist: 0, admin: 0, position: maxP + 1, created_at: now() };
+  db.prepare('INSERT INTO roles (id,server_id,name,color,hoist,admin,position,created_at) VALUES (@id,@server_id,@name,@color,@hoist,@admin,@position,@created_at)').run(r);
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ role: r });
+});
+app.patch('/api/servers/:id/roles/:rid', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  const r = db.prepare('SELECT * FROM roles WHERE id = ? AND server_id = ?').get(req.params.rid, s.id);
+  if (!r) return res.status(404).json({ error: 'no_role' });
+  const sets = [], params = [];
+  if (req.body?.name !== undefined) {
+    const name = String(req.body.name).trim().slice(0, 32);
+    if (!name) return res.status(400).json({ error: 'name_required' });
+    sets.push('name = ?'); params.push(name);
+  }
+  if (req.body?.color !== undefined) {
+    const color = String(req.body.color);
+    if (color && !ROLE_COLOR.test(color)) return res.status(400).json({ error: 'bad_color' });
+    sets.push('color = ?'); params.push(color || '');
+  }
+  if (req.body?.hoist !== undefined) { sets.push('hoist = ?'); params.push(req.body.hoist ? 1 : 0); }
+  if (req.body?.admin !== undefined) {
+    if (req.body.admin && s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+    sets.push('admin = ?'); params.push(req.body.admin ? 1 : 0);
+  }
+  if (sets.length) {
+    params.push(r.id);
+    db.prepare(`UPDATE roles SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  }
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ ok: true });
+});
+app.delete('/api/servers/:id/roles/:rid', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  db.prepare('DELETE FROM roles WHERE id = ? AND server_id = ?').run(req.params.rid, s.id);
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ ok: true });
+});
+app.post('/api/servers/:id/roles/:rid/members', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  const r = db.prepare('SELECT * FROM roles WHERE id = ? AND server_id = ?').get(req.params.rid, s.id);
+  if (!r) return res.status(404).json({ error: 'no_role' });
+  const target = String(req.body?.userId || '');
+  if (!isMember(s.id, target) || target === s.owner_id) return res.status(400).json({ error: 'bad_member' });
+  db.prepare('INSERT OR IGNORE INTO member_roles (server_id,user_id,role_id) VALUES (?,?,?)').run(s.id, target, r.id);
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ ok: true });
+});
+app.delete('/api/servers/:id/roles/:rid/members/:uid', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  db.prepare('DELETE FROM member_roles WHERE server_id = ? AND user_id = ? AND role_id = ?').run(s.id, String(req.params.uid), req.params.rid);
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ ok: true });
+});
+
+app.post('/api/servers/:id/banner', authRequired, imgSingle(upBanner), (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) { deleteUploaded(uploadUrl('banners', req.file)); return res.status(404).json({ error: 'no_server' }); }
+  if (!isAdmin(s.id, req.user.id)) { deleteUploaded(uploadUrl('banners', req.file)); return res.status(403).json({ error: 'owner_only' }); }
+  const url = uploadUrl('banners', req.file);
+  deleteUploaded(s.banner_url);
+  db.prepare('UPDATE servers SET banner_url = ? WHERE id = ?').run(url, s.id);
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ server: serverView(s.id) });
+});
+app.delete('/api/servers/:id/banner', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  deleteUploaded(s.banner_url);
+  db.prepare('UPDATE servers SET banner_url = NULL WHERE id = ?').run(s.id);
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ server: serverView(s.id) });
 });
 
 app.get('/api/servers/:id/channels/:chId/messages', authRequired, (req, res) => {
@@ -448,7 +563,7 @@ app.delete('/api/messages/:mid', authRequired, (req, res) => {
   const m = db.prepare('SELECT * FROM messages WHERE id = ?').get(req.params.mid);
   if (!m) return res.status(404).json({ error: 'no_message' });
   const s = getServer(m.server_id);
-  const canDelete = m.user_id === req.user.id || (s && s.owner_id === req.user.id);
+  const canDelete = m.user_id === req.user.id || (s && isAdmin(s.id, req.user.id));
   if (!canDelete) return res.status(403).json({ error: 'forbidden' });
   db.prepare('DELETE FROM messages WHERE id = ?').run(m.id);
   broadcastToServer(m.server_id, { t: 'message-deleted', serverId: m.server_id, channelId: m.channel_id, messageId: m.id });
@@ -540,6 +655,16 @@ app.patch('/api/me', authRequired, (req, res) => {
   }
   if (statusText !== undefined) {
     sets.push('status_text = ?'); vals.push(String(statusText).slice(0, 64));
+  }
+  if (req.body?.nameColor !== undefined) {
+    const c = String(req.body.nameColor);
+    if (c && !/^#[0-9a-fA-F]{6}$/.test(c)) return res.status(400).json({ error: 'bad_color' });
+    sets.push('name_color = ?'); vals.push(c || '');
+  }
+  if (req.body?.nameGradient !== undefined) {
+    const c = String(req.body.nameGradient);
+    if (c && !/^#[0-9a-fA-F]{6}$/.test(c)) return res.status(400).json({ error: 'bad_color' });
+    sets.push('name_gradient = ?'); vals.push(c || '');
   }
   if (!sets.length) return res.status(400).json({ error: 'nothing_to_update' });
   vals.push(req.user.id);
@@ -642,7 +767,7 @@ app.put('/api/me/layout', authRequired, (req, res) => {
 app.patch('/api/servers/:id', authRequired, (req, res) => {
   const s = getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });
-  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
   const name = String(req.body?.name || '').trim().slice(0, 48);
   if (!name) return res.status(400).json({ error: 'name_required' });
   db.prepare('UPDATE servers SET name = ? WHERE id = ?').run(name, s.id);
@@ -652,7 +777,7 @@ app.patch('/api/servers/:id', authRequired, (req, res) => {
 app.post('/api/servers/:id/icon', authRequired, imgSingle(upIcon), (req, res) => {
   const s = getServer(req.params.id);
   if (!s) { deleteUploaded(uploadUrl('icons', req.file)); return res.status(404).json({ error: 'no_server' }); }
-  if (s.owner_id !== req.user.id) { deleteUploaded(uploadUrl('icons', req.file)); return res.status(403).json({ error: 'owner_only' }); }
+  if (!isAdmin(s.id, req.user.id)) { deleteUploaded(uploadUrl('icons', req.file)); return res.status(403).json({ error: 'owner_only' }); }
   const url = uploadUrl('icons', req.file);
   deleteUploaded(s.icon_url);
   db.prepare('UPDATE servers SET icon_url = ? WHERE id = ?').run(url, s.id);
@@ -662,7 +787,7 @@ app.post('/api/servers/:id/icon', authRequired, imgSingle(upIcon), (req, res) =>
 app.delete('/api/servers/:id/icon', authRequired, (req, res) => {
   const s = getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });
-  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
   deleteUploaded(s.icon_url);
   db.prepare('UPDATE servers SET icon_url = NULL WHERE id = ?').run(s.id);
   broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
@@ -695,7 +820,7 @@ app.post('/api/servers/:id/emoji', authRequired, imgSingle(upEmoji), (req, res) 
 app.delete('/api/servers/:id/emoji/:name', authRequired, (req, res) => {
   const s = getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });
-  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
   const row = db.prepare('SELECT * FROM custom_emoji WHERE server_id = ? AND name = ?').get(s.id, req.params.name);
   if (!row) return res.status(404).json({ error: 'no_emoji' });
   db.prepare('DELETE FROM custom_emoji WHERE id = ?').run(row.id);
@@ -734,7 +859,7 @@ app.patch('/api/messages/:mid', authRequired, (req, res) => {
   const m = getMsg(req.params.mid);
   if (!m) return res.status(404).json({ error: 'no_message' });
   if (m.user_id !== req.user.id) return res.status(403).json({ error: 'only_your_own' });
-  const content = String(req.body?.content || '').trim().slice(0, 2000);
+  const content = String(req.body?.content || '').trim().slice(0, 5000);
   if (!content) return res.status(400).json({ error: 'empty_message' });
   db.prepare('UPDATE messages SET content = ?, edited_at = ? WHERE id = ?').run(content, now(), m.id);
   const full = hydrateMessages([db.prepare(`
@@ -842,6 +967,99 @@ function dmBanned(threadId, userId) {
   return !!db.prepare('SELECT 1 FROM dm_bans WHERE thread_id = ? AND user_id = ?').get(threadId, userId);
 }
 function displayOf(u) { return (u && (u.display_name || u.username)) || 'Someone'; }
+
+// ---------- push notifications (Web Push) ----------
+function metaGet(k) { try { return db.prepare('SELECT value FROM meta WHERE key = ?').get(k)?.value || null; } catch { return null; } }
+function metaSet(k, v) { db.prepare('INSERT OR REPLACE INTO meta (key,value) VALUES (?,?)').run(k, v); }
+let VAPID_PUBLIC = process.env.VAPID_PUBLIC || metaGet('vapid_public');
+let VAPID_PRIVATE = process.env.VAPID_PRIVATE || metaGet('vapid_private');
+if (!VAPID_PUBLIC || !VAPID_PRIVATE) {
+  const keys = webpush.generateVAPIDKeys();
+  VAPID_PUBLIC = keys.publicKey; VAPID_PRIVATE = keys.privateKey;
+  if (!process.env.VAPID_PUBLIC) { metaSet('vapid_public', VAPID_PUBLIC); metaSet('vapid_private', VAPID_PRIVATE); }
+}
+webpush.setVapidDetails(process.env.PUSH_SUBJECT || 'mailto:notifications@localhost', VAPID_PUBLIC, VAPID_PRIVATE);
+function userLive(uid) {
+  for (const c of clients) if (c.meta && c.meta.userId === uid) return true;
+  return false;
+}
+function notifMode(uid, scopes) {
+  let rows = [];
+  try { rows = db.prepare('SELECT scope, mode FROM notif_prefs WHERE user_id = ?').all(uid); } catch {}
+  const map = new Map(rows.map((r) => [r.scope, r.mode]));
+  for (const s of scopes) if (map.has(s)) return map.get(s);
+  return map.get('global') || 'all';
+}
+function pushToUser(uid, payload) {
+  let subs = [];
+  try { subs = db.prepare('SELECT endpoint, p256dh, auth FROM push_subs WHERE user_id = ?').all(uid); } catch { return; }
+  for (const s of subs) {
+    webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify(payload)).catch((err) => {
+      if (err && (err.statusCode === 404 || err.statusCode === 410)) {
+        try { db.prepare('DELETE FROM push_subs WHERE endpoint = ?').run(s.endpoint); } catch {}
+      }
+    });
+  }
+}
+function mentionsName(content, username) {
+  try {
+    return new RegExp('(^|[\\s(])@' + String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(String(content || ''));
+  } catch { return false; }
+}
+function notifyServerMessage(serverId, channelId, author, content) {
+  const text = String(content || '').trim();
+  if (!text) return;
+  let mems = [];
+  try { mems = db.prepare('SELECT user_id FROM server_members WHERE server_id = ? AND user_id != ?').all(serverId, author.userId).map((r) => r.user_id); } catch { return; }
+  if (!mems.length) return;
+  const live = new Set([...clients].filter((c) => c.meta).map((c) => c.meta.userId));
+  const cands = mems.filter((id) => !live.has(id));
+  if (!cands.length) return;
+  let prefs = [], names = new Map();
+  try {
+    const ph = cands.map(() => '?').join(',');
+    prefs = db.prepare(`SELECT user_id, scope, mode FROM notif_prefs WHERE user_id IN (${ph})`).all(...cands);
+    for (const u of db.prepare(`SELECT id, username FROM users WHERE id IN (${ph})`).all(...cands)) names.set(u.id, u.username);
+  } catch {}
+  const byUser = new Map();
+  for (const p of prefs) {
+    if (!byUser.has(p.user_id)) byUser.set(p.user_id, new Map());
+    byUser.get(p.user_id).set(p.scope, p.mode);
+  }
+  const ch = db.prepare('SELECT name FROM channels WHERE id = ?').get(channelId);
+  const s = getServer(serverId);
+  for (const uid of cands) {
+    const pm = byUser.get(uid) || new Map();
+    const mode = pm.get(`c:${channelId}`) || pm.get(`s:${serverId}`) || pm.get('global') || 'all';
+    if (mode === 'muted') continue;
+    if (mode === 'mentions' && !mentionsName(text, names.get(uid))) continue;
+    pushToUser(uid, {
+      title: `#${(ch && ch.name) || 'chat'} · ${s ? s.name : ''}`,
+      body: `${displayOf(author)}: ${text}`.slice(0, 160),
+      icon: author.avatar_url || '/icons/icon-192.png',
+      tag: `ch:${channelId}`,
+      url: `/?server=${serverId}&channel=${channelId}`,
+    });
+  }
+}
+function notifyDmMessage(thread, author, content) {
+  const text = String(content || '').trim();
+  if (!text) return;
+  let mems = [];
+  try { mems = db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ? AND user_id != ?').all(thread.id, author.userId).map((r) => r.user_id); } catch { return; }
+  const live = new Set([...clients].filter((c) => c.meta).map((c) => c.meta.userId));
+  for (const uid of mems) {
+    if (live.has(uid)) continue;
+    if (notifMode(uid, [`dm:${thread.id}`, 'global']) === 'muted') continue;
+    pushToUser(uid, {
+      title: thread.is_group ? (thread.name || 'Group chat') : `${displayOf(author)} (DM)`,
+      body: thread.is_group ? `${displayOf(author)}: ${text}`.slice(0, 160) : text.slice(0, 160),
+      icon: author.avatar_url || '/icons/icon-192.png',
+      tag: `dm:${thread.id}`,
+      url: `/?dm=${thread.id}`,
+    });
+  }
+}
 // drop a user's live sockets from a server (membership gone): stop server
 // broadcasts + pull them out of its voice rooms
 function evictFromServer(serverId, userId) {
@@ -980,6 +1198,47 @@ app.delete('/api/blocks/:oid', authRequired, (req, res) => {
   notifyUser(req.user.id, { t: 'friends-changed' });
   res.json({ ok: true });
 });
+
+// ---------- push subscriptions + notification prefs ----------
+const NOTIF_MODES = ['all', 'mentions', 'muted'];
+app.get('/api/push/config', authRequired, (req, res) => res.json({ publicKey: VAPID_PUBLIC }));
+app.post('/api/push/subscribe', authRequired, (req, res) => {
+  const { endpoint, keys } = req.body || {};
+  if (!endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ error: 'bad_subscription' });
+  db.prepare('INSERT OR REPLACE INTO push_subs (user_id,endpoint,p256dh,auth,created_at) VALUES (?,?,?,?,?)')
+    .run(req.user.id, String(endpoint).slice(0, 500), String(keys.p256dh), String(keys.auth), now());
+  res.json({ ok: true });
+});
+app.delete('/api/push/unsubscribe', authRequired, (req, res) => {
+  const ep = String(req.body?.endpoint || '');
+  if (ep) db.prepare('DELETE FROM push_subs WHERE user_id = ? AND endpoint = ?').run(req.user.id, ep);
+  res.json({ ok: true });
+});
+app.get('/api/notifs/prefs', authRequired, (req, res) => {
+  const rows = db.prepare('SELECT scope, mode FROM notif_prefs WHERE user_id = ?').all(req.user.id);
+  const prefs = {};
+  for (const r of rows) prefs[r.scope] = r.mode;
+  res.json({ prefs });
+});
+app.put('/api/notifs/prefs', authRequired, (req, res) => {
+  const scope = String(req.body?.scope || '');
+  const mode = String(req.body?.mode || '');
+  if (!['all', 'mentions', 'muted', 'inherit'].includes(mode)) return res.status(400).json({ error: 'bad_mode' });
+  const m = /^([sc]):(.+)$/.exec(scope);
+  if (scope !== 'global' && !m) {
+    const dm = /^dm:(.+)$/.exec(scope);
+    if (!dm || !dmThreadFor(req.user.id, dm[1])) return res.status(404).json({ error: 'no_thread' });
+  } else if (m) {
+    if (m[1] === 's') { if (!isMember(m[2], req.user.id)) return res.status(403).json({ error: 'not_member' }); }
+    else {
+      const ch = db.prepare('SELECT server_id FROM channels WHERE id = ?').get(m[2]);
+      if (!ch || !isMember(ch.server_id, req.user.id)) return res.status(404).json({ error: 'no_channel' });
+    }
+  }
+  if (mode === 'inherit' || scope === 'global' && mode === 'inherit') db.prepare('DELETE FROM notif_prefs WHERE user_id = ? AND scope = ?').run(req.user.id, scope);
+  else db.prepare('INSERT OR REPLACE INTO notif_prefs (user_id,scope,mode) VALUES (?,?,?)').run(req.user.id, scope, mode);
+  res.json({ ok: true });
+});
 app.get('/api/dms', authRequired, (req, res) => {
   const ids = db.prepare('SELECT thread_id FROM dm_members WHERE user_id = ?').all(req.user.id).map((r) => r.thread_id);
   const out = [];
@@ -1116,7 +1375,7 @@ app.patch('/api/dms/messages/:mid', authRequired, (req, res) => {
   const m = dmMsg(req.params.mid);
   if (!m || !dmThreadFor(req.user.id, m.thread_id)) return res.status(404).json({ error: 'no_message' });
   if (m.user_id !== req.user.id) return res.status(403).json({ error: 'only_your_own' });
-  const content = String(req.body?.content || '').trim().slice(0, 2000);
+  const content = String(req.body?.content || '').trim().slice(0, 5000);
   if (!content) return res.status(400).json({ error: 'empty_message' });
   db.prepare('UPDATE dm_messages SET content = ?, edited_at = ? WHERE id = ?').run(content, now(), m.id);
   const full = fullDm(m.id, req.user.id);
@@ -1358,7 +1617,7 @@ wss.on('connection', (ws, req) => {
     if (msg.t === 'message') {
       const serverId = String(msg.serverId || '');
       const channelId = String(msg.channelId || '');
-      const content = String(msg.content || '').trim().slice(0, 2000);
+      const content = String(msg.content || '').trim().slice(0, 5000);
       const replyTo = String(msg.replyTo || '') || null;
       const threadRoot = String(msg.threadRoot || '') || null;
       const atts = Array.isArray(msg.attachments) ? msg.attachments.slice(0, 5) : [];
@@ -1402,6 +1661,7 @@ wss.on('connection', (ws, req) => {
       for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, now());
       const full = fullMessage(mid, null);
       broadcastToServer(serverId, { t: 'message-new', serverId, channelId, message: full });
+      notifyServerMessage(serverId, channelId, me, content);
       return;
     }
 
@@ -1417,7 +1677,7 @@ wss.on('connection', (ws, req) => {
       const threadId = String(msg.threadId || '');
       const t = dmThreadFor(me.userId, threadId);
       if (!t) return;
-      const content = String(msg.content || '').trim().slice(0, 2000);
+      const content = String(msg.content || '').trim().slice(0, 5000);
       const replyTo = String(msg.replyTo || '') || null;
       const cleanAtts = cleanAttachments(msg.attachments);
       if (!content && !cleanAtts.length) return;
@@ -1429,6 +1689,7 @@ wss.on('connection', (ws, req) => {
       const insAtt = db.prepare('INSERT INTO dm_attachments (id,message_id,url,filename,mime,size,kind,created_at) VALUES (?,?,?,?,?,?,?,?)');
       for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, now());
       dmNotify(threadId, { t: 'dm-new', message: fullDm(mid, null) });
+      notifyDmMessage(t, me, content);
       return;
     }
 

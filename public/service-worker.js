@@ -7,7 +7,7 @@
  *   once so nobody gets stuck on an ancient version. Tabs with the updater
  *   reply to the ping and handle it themselves (voice-aware, draft-safe).
  */
-const CACHE = 'campfire-v40';
+const CACHE = 'campfire-v41';
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/emoji.json'];
 
 self.addEventListener('install', (e) => {
@@ -36,6 +36,32 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch {}
+  e.waitUntil(self.registration.showNotification(d.title || 'Campfire', {
+    body: d.body || '',
+    icon: d.icon || '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    tag: d.tag || 'campfire',
+    renotify: true,
+    data: { url: d.url || '/' },
+  }));
+});
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || '/';
+  e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then((wins) => {
+    for (const w of wins) {
+      if ('focus' in w) {
+        try { w.focus(); } catch {}
+        if ('navigate' in w) { try { w.navigate(url); } catch {} }
+        return;
+      }
+    }
+    if (clients.openWindow) return clients.openWindow(url);
+  }));
+});
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET') return;

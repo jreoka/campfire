@@ -60,6 +60,7 @@
     <!-- channel sidebar -->
     <aside id="sidebar">
       <div id="server-ui">
+      <div id="srv-banner" class="hidden"></div>
       <div id="server-header">
         <strong id="server-name">—</strong>
         <div class="row">
@@ -96,11 +97,6 @@
           <button id="btn-deafen" class="vb-btn" title="Deafen"></button>
           <button id="btn-camera" class="vb-btn" title="Turn on camera"></button>
           <button id="btn-share" class="vb-btn" title="Share screen"></button>
-          <select id="sel-quality" title="Stream quality">
-            <option value="high">720p</option>
-            <option value="medium">480p</option>
-            <option value="low">360p</option>
-          </select>
           <button id="btn-voice-leave" class="vb-btn danger" title="Disconnect"></button>
         </div>
       </div>
@@ -153,7 +149,7 @@
         <button type="button" id="btn-emoji" class="tool-btn" title="Emoji"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.2 1.8 3.5 1.8 3.5-1.8 3.5-1.8"/><line x1="9" y1="9.5" x2="9" y2="9.6"/><line x1="15" y1="9.5" x2="15" y2="9.6"/></svg></button>
         <input id="in-attach" type="file" class="hidden" />
         <button type="button" id="btn-gif" class="tool-btn gif-btn" title="Send a GIF">GIF</button>
-        <input id="in-message" autocomplete="off" maxlength="2000" placeholder="Message #general" />
+        <input id="in-message" autocomplete="off" maxlength="5000" placeholder="Message #general" />
         <button class="btn primary" type="submit">Send</button>
       </form>
     </main>
@@ -171,11 +167,35 @@
       <div id="thread-root"></div>
       <div id="thread-replies"></div>
       <form id="thread-composer">
-        <input id="in-thread" autocomplete="off" maxlength="2000" placeholder="Reply in thread" />
+        <input id="in-thread" autocomplete="off" maxlength="5000" placeholder="Reply in thread" />
         <button class="btn primary small" type="submit">Reply</button>
       </form>
     </aside>
   </section>
+</div>
+
+<!-- full call view -->
+<div id="call-view" class="hidden">
+  <header id="call-head">
+    <span class="live-badge">LIVE</span>
+    <div class="call-titles"><strong id="call-name">voice</strong><span id="call-sub" class="muted"></span></div>
+    <span class="spacer"></span>
+    <button id="call-min" class="icon-btn" title="Minimize" style="display:inline-block"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
+    <button id="call-leave" class="vb-btn danger" title="Disconnect">✕</button>
+  </header>
+  <div id="call-slot"></div>
+  <div id="call-controls">
+    <button id="cv-mute" class="vb-btn big" title="Mute"></button>
+    <button id="cv-deafen" class="vb-btn big" title="Deafen"></button>
+    <button id="cv-camera" class="vb-btn big" title="Camera"></button>
+    <button id="cv-share" class="vb-btn big" title="Share screen"></button>
+    <select id="cv-quality" title="Stream quality">
+      <option value="high">720p</option>
+      <option value="medium">480p</option>
+      <option value="low">360p</option>
+    </select>
+    <button id="cv-leave" class="vb-btn big danger" title="Disconnect">✕</button>
+  </div>
 </div>
 
 <!-- modals -->
@@ -214,6 +234,7 @@
     <div class="set-tabs">
       <button data-tab="profile" class="set-tab active">Profile</button>
       <button data-tab="account" class="set-tab">Account</button>
+      <button data-tab="notifs" class="set-tab">Notifications</button>
       <button data-tab="server" class="set-tab">Server</button>
       <span class="spacer"></span>
       <button id="settings-close" class="mini">✕</button>
@@ -253,6 +274,12 @@
         <input id="set-banner-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" />
         <p class="muted small">Avatars, banners and emoji can be animated GIFs. Click a preview to upload, or pick a GIF.</p>
         <label>Display name<input id="set-display" maxlength="32" /></label>
+        <div class="row" style="margin-top:.7rem;align-items:flex-end">
+          <label style="flex:0 0 auto;display:flex;gap:.4rem;align-items:center">Custom name color<input id="set-namecustom" type="checkbox" style="width:auto" /></label>
+          <label style="flex:1">Color<input id="set-namecolor" type="color" value="#aac7ff" /></label>
+          <label style="flex:1">Gradient to<input id="set-namegrad" type="color" value="#aac7ff" /></label>
+        </div>
+        <p class="muted small">Set both colors for a gradient, or match them for a solid color.</p>
         <div class="row" style="margin-top:.7rem">
           <label style="flex:1">Status
             <select id="set-status">
@@ -276,6 +303,7 @@
         </div>
       </div>
       <div id="set-server" class="set-pane hidden"></div>
+      <div id="set-notifs" class="set-pane hidden"></div>
     </div>
   </div>
 </div>

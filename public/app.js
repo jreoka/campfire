@@ -164,10 +164,12 @@ function prettyError(e) {
     invalid_login: 'Wrong username or password.', username_taken: 'That username is taken.',
     bad_username: 'Username needs 2–24 chars (a-z, 0-9, _ .).', bad_invite: 'Invite code not found.',
     slow_down: 'Slow down — you\'re sending too fast.', owner_only: 'Only the server owner can do that.', banned: 'You are banned from this server.', slow_mode: 'Slow mode is on — wait a moment.',
+    bad_color: 'Pick a valid color.', cannot_kick_admin: 'Only the owner can remove admins.',
   };
   return map[e] || e.replace(/_/g, ' ');
 }
 async function doLogout() {
+  try { await pushTeardown(); } catch {}
   try { await api('/api/logout', { method: 'POST' }); } catch {}
   try { leaveVoice(true); } catch {}
   try { S.ws?.close(); } catch {}
@@ -195,6 +197,7 @@ async function boot() {
   if (draft && draft.t) $('#in-message').value = draft.t;
   connectWS();
   pollVersion();
+  pushSetup();
   // auto-join via ?invite=CODE
   const inv = new URLSearchParams(location.search).get('invite');
   if (inv) {
@@ -205,6 +208,19 @@ async function boot() {
       toast('Joined "' + server.name + '"');
     } catch (err) { toast('Invite failed: ' + prettyError(err.message)); }
   }
+  // deep links from push notifications (?server=ID&channel=ID, ?dm=ID)
+  try {
+    const qs = new URLSearchParams(location.search);
+    const qdm = qs.get('dm'), qserv = qs.get('server'), qchan = qs.get('channel');
+    if (qdm || qserv) history.replaceState(null, '', location.pathname);
+    if (qdm) {
+      await openHome();
+      if (S.dms.some((t) => t.id === qdm)) selectDmThread(qdm);
+    } else if (qserv && S.servers.some((s) => s.id === qserv)) {
+      await selectServer(qserv);
+      if (S.serverDetail?.channels.some((c) => c.id === qchan && c.type === 'text')) await selectChannel(qchan);
+    }
+  } catch {}
 }
 function showAuth() {
   $('#view-auth').classList.remove('hidden');
@@ -333,6 +349,7 @@ async function selectServer(id) {
     const { server } = await api('/api/servers/' + id);
     S.serverDetail = server;
     $('#server-name').textContent = server.name;
+    renderServerHeader();
     try {
       const { emoji } = await api(`/api/servers/${id}/emoji`);
       S.emoji = {};
@@ -374,7 +391,7 @@ function renderChannels() {
     b.className = 'chan' + (S.voice && S.voice.channelId === c.id ? ' active' : '');
     b.innerHTML = `<span class="vicon"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3z"/><path d="M16 8a5 5 0 0 1 0 8" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></span><span>${esc(c.name)}</span>${occ.length ? `<span class="count">${occ.length}</span>` : ''}`;
     b.title = occ.length ? occ.map((p) => p.display_name).join(', ') : 'Join voice';
-    b.onclick = () => joinVoice(S.serverId, c.id);
+    b.onclick = () => openVoiceChannel(S.serverId, c.id);
     b.dataset.cid = c.id; b.dataset.ctype = 'voice';
     const users = document.createElement('div');
     users.className = 'vusers';
@@ -385,7 +402,7 @@ function renderChannels() {
   renderVoiceUsers();
 }
 function confirmDeleteChannel(c) {
-  if (S.serverDetail.owner_id !== S.me.id) return;
+  if (!canManage()) return;
   openModal(`Delete #${c.name}?`, `<p class="muted">Messages in this channel are deleted forever.</p>`, 'Delete', async () => {
     await api(`/api/servers/${S.serverId}/channels/${c.id}`, { method: 'DELETE' });
     S.serverDetail.channels = S.serverDetail.channels.filter((x) => x.id !== c.id);
@@ -433,7 +450,7 @@ function memberRowEl(m) {
     div.style.backgroundSize = 'cover';
     div.style.backgroundPosition = 'right center';
   }
-  div.innerHTML = `<span class="avatar"></span><span class="mnames"><span>${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${m.status_text && st !== 'offline' ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ''}</span><span class="status-dot ${st}"></span>`;
+  div.innerHTML = `<span class="avatar"></span><span class="mnames"><span style="${nameStyleFor(m)}">${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${m.status_text && st !== 'offline' ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ''}</span><span class="status-dot ${st}"></span>`;
   paintAvatar(div.querySelector('.avatar'), m);
   return div;
 }
@@ -447,9 +464,26 @@ function renderMembers() {
   $('#members-title').textContent = 'ONLINE';
   const box = $('#member-list');
   box.innerHTML = '';
-  const sorted = [...d.members].sort(memberSort);
   $('#online-count').textContent = d.members.filter((m) => statusOf(m.id) !== 'offline').length;
-  for (const m of sorted) box.appendChild(memberRowEl(m));
+  const hoisted = (d.roles || []).filter((r) => r.hoist);
+  const shown = new Set();
+  for (const r of hoisted) {
+    const mems = d.members.filter((m) => (m.roleIds || []).includes(r.id)).sort(memberSort);
+    if (!mems.length) continue;
+    const head = document.createElement('div');
+    head.className = 'role-head';
+    head.innerHTML = `<span${r.color ? ` style="color:${esc(r.color)}"` : ''}>${esc(r.name.toUpperCase())}</span><span class="muted"> — ${mems.length}</span>`;
+    box.appendChild(head);
+    for (const m of mems) { box.appendChild(memberRowEl(m)); shown.add(m.id); }
+  }
+  const rest = d.members.filter((m) => !shown.has(m.id)).sort(memberSort);
+  if (rest.length && shown.size) {
+    const head = document.createElement('div');
+    head.className = 'role-head';
+    head.innerHTML = '<span>MEMBERS</span>';
+    box.appendChild(head);
+  }
+  for (const m of rest) box.appendChild(memberRowEl(m));
 }
 function renderDmMembers() {
   if (S.view !== 'home') return;
@@ -464,11 +498,48 @@ function renderDmMembers() {
   for (const m of sorted) box.appendChild(memberRowEl(m));
 }
 
+// ---------- roles + name styling ----------
+function isOwner() { return !!(S.serverDetail && S.me && S.serverDetail.owner_id === S.me.id); }
+function myRoleIds() {
+  if (!S.serverDetail || !S.me) return [];
+  const me = S.serverDetail.members.find((m) => m.id === S.me.id);
+  return (me && me.roleIds) || [];
+}
+function canManage() {
+  const d = S.serverDetail;
+  if (!d || !S.me) return false;
+  if (d.owner_id === S.me.id) return true;
+  const mine = new Set(myRoleIds());
+  return (d.roles || []).some((r) => r.admin && mine.has(r.id));
+}
+function topRoleOf(m) {
+  const roles = S.serverDetail?.roles || [];
+  let best = null;
+  for (const rid of (m?.roleIds || [])) {
+    const r = roles.find((x) => x.id === rid);
+    if (r && r.color && (!best || r.position > best.position)) best = r;
+  }
+  return best;
+}
+const HEXC = /^#[0-9a-fA-F]{6}$/;
+function nameStyleFor(u) {
+  if (!u) return '';
+  const c1 = HEXC.test(u.name_color || '') ? u.name_color : '';
+  const c2 = HEXC.test(u.name_gradient || '') ? u.name_gradient : '';
+  if (c1 && c2) return `background:linear-gradient(90deg,${c1},${c2});-webkit-background-clip:text;background-clip:text;color:transparent;display:inline-block`;
+  if (c1) return `color:${c1}`;
+  if (S.view === 'server' && S.serverDetail) {
+    const m = S.serverDetail.members.find((x) => x.id === u.id);
+    const top = m && topRoleOf(m);
+    if (top) return `color:${top.color}`;
+  }
+  return '';
+}
 // ---------- messages ----------
 function canMod(m) {
   if (!m.user) return false;
   if (S.view === 'home') return m.user.id === S.me.id;
-  return m.user.id === S.me.id || (S.serverDetail && S.serverDetail.owner_id === S.me.id);
+  return m.user.id === S.me.id || (S.view === 'server' && canManage());
 }
 function msgById(id) {
   for (const [, arr] of S.messages) { const f = arr.find((x) => x.id === id); if (f) return f; }
@@ -514,12 +585,12 @@ function messageEl(m, opts = {}) {
   div.dataset.mid = m.id;
   const own = m.user && m.user.id === S.me.id;
   let inner = '<span class="avatar" data-uid="' + (m.user ? m.user.id : '') + '"></span><div class="body">';
-  inner += `<div class="head"><span class="who" data-uid="${m.user ? m.user.id : ''}">${esc(m.user ? m.user.display_name : 'deleted')}</span><span class="when">${fmtTime(m.created_at)}</span>${m.edited ? '<span class="edited">(edited)</span>' : ''}</div>`;
+  inner += `<div class="head"><span class="who" data-uid="${m.user ? m.user.id : ''}" style="${nameStyleFor(m.user)}">${esc(m.user ? m.user.display_name : 'deleted')}</span><span class="when">${fmtTime(m.created_at)}</span>${m.edited ? '<span class="edited">(edited)</span>' : ''}</div>`;
   if (m.replyTo) {
     inner += `<div class="reply-quote" data-jump="${m.replyTo.id}"><span class="rq-author">${esc(m.replyTo.author)}</span><span class="rq-text">${esc(m.replyTo.snippet)}</span></div>`;
   }
   if (S.editing === m.id) {
-    inner += `<div class="edit-box"><textarea id="edit-area" maxlength="2000">${esc(m.content)}</textarea><div class="row"><button class="btn small primary" data-act="edit-save">Save</button><button class="btn small" data-act="edit-cancel">Cancel</button></div></div>`;
+    inner += `<div class="edit-box"><textarea id="edit-area" maxlength="5000">${esc(m.content)}</textarea><div class="row"><button class="btn small primary" data-act="edit-save">Save</button><button class="btn small" data-act="edit-cancel">Cancel</button></div></div>`;
   } else if (m.content) {
     const big = isBigEmoji(m.content) && !m.attachments?.length;
     inner += `<div class="text${big ? ' bigemoji' : ''}">${renderRich(m.content)}</div>`;
@@ -751,8 +822,9 @@ function onWS(m) {
         if (m.channelId === S.channelId) {
           renderMessages();
           if (!msg.sys && document.hidden && !dnd) notifyMsg(msg);
-          else if (!msg.sys && !document.hidden && !dnd && mentionsMe(msg)) toast(`${msg.user.display_name} mentioned you`);
+          else if (!msg.sys && !document.hidden && !dnd && mentionsMe(msg)) { sfx.msg(); toast(`${msg.user.display_name} mentioned you`); }
         } else if (!msg.sys && !dnd) {
+          sfx.msg();
           toast(`#${chanName(m.channelId)}: ${msg.user.display_name}: ${(msg.content || '[attachment]').slice(0, 60)}`);
         }
       }
@@ -794,7 +866,7 @@ function onWS(m) {
         if (!msg.sys && document.hidden && !ddnd) notifyMsg(msg);
       } else {
         refreshDms();
-        if (!msg.sys && !ddnd) toast(`DM from ${msg.user.display_name}: ${(msg.content || '[attachment]').slice(0, 60)}`);
+        if (!msg.sys && !ddnd) { sfx.msg(); toast(`DM from ${msg.user.display_name}: ${(msg.content || '[attachment]').slice(0, 60)}`); }
       }
       break;
     }
@@ -886,6 +958,7 @@ function onWS(m) {
         const keepChan = S.channelId;
         S.serverDetail = m.server;
         $('#server-name').textContent = m.server.name;
+        renderServerHeader();
         renderTopic();
         if (!m.server.channels.find((c) => c.id === keepChan)) S.channelId = (m.server.channels.find((c) => c.type === 'text') || {}).id || null;
         renderServerList(); renderChannels();
@@ -936,6 +1009,7 @@ function onWS(m) {
     case 'voice-peer-joined': {
       if (S.voice && S.voice.serverId === m.serverId && S.voice.channelId === m.channelId) {
         ensurePeer(m.peer.id, false); // existing member: wait for offer
+        sfx.join();
       } else {
         // update occupancy cache so channel counts refresh on next voice-peers
         toast(`${m.peer.display_name} joined voice`);
@@ -947,6 +1021,7 @@ function onWS(m) {
     }
     case 'voice-peer-left': {
       closePeer(m.userId);
+      if (S.voice && S.voice.serverId === m.serverId && S.voice.channelId === m.channelId) sfx.leave();
       renderVoiceUsers();
       renderStage();
       break;
@@ -976,6 +1051,7 @@ function chanName(id) {
 function notifyMsg(m) {
   if (!m.user) return;
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  sfx.msg();
   try { new Notification(m.threadId ? `${m.user.display_name} (DM)` : `${m.user.display_name} (#${chanName(m.channelId)})`, { body: (m.content || '[attachment]').slice(0, 120) }); } catch {}
 }
 if ('Notification' in window && Notification.permission === 'default') {
@@ -1077,20 +1153,22 @@ $('#btn-server-menu').onclick = () => {
   const d = S.serverDetail;
   if (!d) return;
   const owner = d.owner_id === S.me.id;
+  const mgr = canManage();
   openModal(d.name, `
-    <label>New text channel<input id="m-chan" maxlength="32" placeholder="e.g. clips" /></label>
-    <div class="row" style="margin:.6rem 0"><button class="btn" id="m-mkchan">Create channel</button></div>
-    ${owner ? `<div class="row"><button class="btn" id="m-reset">Reset invite</button>
-      <button class="btn danger" id="m-del">Delete server</button></div>`
-      : `<button class="btn danger" id="m-leave">Leave server</button>`}
+    ${mgr ? `<label>New text channel<input id="m-chan" maxlength="32" placeholder="e.g. clips" /></label>
+    <div class="row" style="margin:.6rem 0"><button class="btn" id="m-mkchan">Create channel</button></div>` : ''}
+    ${mgr ? `<div class="row"><button class="btn" id="m-reset">Reset invite</button>
+      ${owner ? `<button class="btn danger" id="m-del">Delete server</button>` : ''}</div>` : ''}
+    ${!owner ? `<button class="btn danger" id="m-leave">Leave server</button>` : ''}
   `, 'Close', null);
-  $('#m-mkchan').onclick = async () => {
+  const mkc = $('#m-mkchan');
+  mkc && (mkc.onclick = async () => {
     const name = $('#m-chan').value.trim().replace(/\s+/g, '-');
     if (!name) return;
     await api(`/api/servers/${d.id}/channels`, { method: 'POST', body: JSON.stringify({ name, type: 'text' }) });
     $('#modal-backdrop').classList.add('hidden');
     selectServer(d.id);
-  };
+  });
   $('#m-reset') && ($('#m-reset').onclick = async () => {
     const { invite_code } = await api(`/api/servers/${d.id}/invite/reset`, { method: 'POST' });
     S.serverDetail.invite_code = invite_code;
@@ -1126,13 +1204,38 @@ $('#btn-members').onclick = (e) => { e.stopPropagation(); document.body.classLis
 $('#sidebar-scrim').onclick = () => document.body.classList.remove('nav-open');
 
 // ---------- VOICE (WebRTC mesh) ----------
+// call + notification sounds (synthesized with WebAudio, no assets)
+let sfxCtx = null;
+function sfxTone(freq, dur = 0.12, type = 'sine', vol = 0.1, delay = 0) {
+  try {
+    if (!sfxCtx) sfxCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (sfxCtx.state === 'suspended') { sfxCtx.resume().catch(() => {}); return; }
+    const t0 = sfxCtx.currentTime + delay;
+    const o = sfxCtx.createOscillator(), g = sfxCtx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t0);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(sfxCtx.destination);
+    o.start(t0); o.stop(t0 + dur + 0.05);
+  } catch {}
+}
+const sfx = {
+  msg() { sfxTone(880, 0.1, 'sine', 0.09); sfxTone(1318, 0.12, 'sine', 0.07, 0.08); },
+  mute() { sfxTone(440, 0.1, 'square', 0.045); },
+  unmute() { sfxTone(660, 0.1, 'square', 0.045); },
+  deaf() { sfxTone(330, 0.14, 'sawtooth', 0.045); sfxTone(220, 0.16, 'sawtooth', 0.045, 0.1); },
+  undeaf() { sfxTone(520, 0.12, 'sine', 0.09); },
+  join() { sfxTone(523, 0.1, 'sine', 0.09); sfxTone(784, 0.14, 'sine', 0.09, 0.09); },
+  leave() { sfxTone(784, 0.1, 'sine', 0.08); sfxTone(523, 0.16, 'sine', 0.08, 0.09); },
+};
 const VB_SVG = {
   mic: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/></svg>',
   deaf: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>',
   cam: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="13" height="12" rx="2.5"/><path d="M15 10.5l6-3.5v10l-6-3.5"/></svg>',
   share: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M12 17v4M8 21h8"/></svg>',
 };
-for (const [id, svg] of [['#btn-mute', VB_SVG.mic], ['#vf-mute', VB_SVG.mic], ['#btn-deafen', VB_SVG.deaf], ['#vf-deafen', VB_SVG.deaf], ['#btn-camera', VB_SVG.cam], ['#vf-camera', VB_SVG.cam], ['#btn-share', VB_SVG.share], ['#vf-share', VB_SVG.share]]) {
+for (const [id, svg] of [['#btn-mute', VB_SVG.mic], ['#vf-mute', VB_SVG.mic], ['#cv-mute', VB_SVG.mic], ['#btn-deafen', VB_SVG.deaf], ['#vf-deafen', VB_SVG.deaf], ['#cv-deafen', VB_SVG.deaf], ['#btn-camera', VB_SVG.cam], ['#vf-camera', VB_SVG.cam], ['#cv-camera', VB_SVG.cam], ['#btn-share', VB_SVG.share], ['#vf-share', VB_SVG.share], ['#cv-share', VB_SVG.share]]) {
   const b = $(id); if (b && !b.innerHTML.trim()) b.innerHTML = svg;
 }
 if ($('#btn-voice-leave') && !$('#btn-voice-leave').innerHTML.trim()) $('#btn-voice-leave').innerHTML = '✕';
@@ -1149,8 +1252,47 @@ $('#btn-camera').onclick = () => toggleCamera();
 $('#vf-share').onclick = () => toggleScreen();
 $('#btn-share').onclick = () => toggleScreen();
 if ($('#sel-quality')) $('#sel-quality').onchange = (e) => setQuality(e.target.value);
+if ($('#cv-quality')) $('#cv-quality').onchange = (e) => setQuality(e.target.value);
+$('#call-min').onclick = () => closeCallView();
+$('#voice-status').style.cursor = 'pointer';
+$('#voice-status').onclick = () => openCallView();
+$('#call-leave').onclick = () => leaveVoice();
+$('#cv-leave').onclick = () => leaveVoice();
+$('#cv-mute').onclick = () => toggleMute();
+$('#cv-deafen').onclick = () => toggleDeafen();
+$('#cv-camera').onclick = () => toggleCamera();
+$('#cv-share').onclick = () => toggleScreen();
 paintVoiceControls();
 
+async function openVoiceChannel(serverId, channelId) {
+  if (S.voice && S.voice.serverId === serverId && S.voice.channelId === channelId) { openCallView(); return; }
+  await joinVoice(serverId, channelId);
+  if (S.voice && S.voice.serverId === serverId && S.voice.channelId === channelId) openCallView();
+}
+function callViewOpen() { return !$('#call-view').classList.contains('hidden'); }
+function openCallView() {
+  if (!S.voice) return;
+  const grid = $('#stage-grid');
+  if (grid && grid.parentElement?.id !== 'call-slot') $('#call-slot').appendChild(grid);
+  const ch = S.serverDetail?.channels.find((c) => c.id === S.voice.channelId);
+  $('#call-name').textContent = ch ? ch.name : 'voice';
+  $('#stage').classList.add('hidden');
+  $('#call-view').classList.remove('hidden');
+  updateCallHead();
+  renderStage();
+}
+function closeCallView() {
+  const grid = $('#stage-grid');
+  if (grid && grid.parentElement?.id !== 'stage') $('#stage').appendChild(grid);
+  $('#call-view').classList.add('hidden');
+  renderStage();
+}
+function updateCallHead() {
+  if (!S.voice || !callViewOpen()) return;
+  const occ = S.voiceOccupancy.get(S.voice.channelId) || [];
+  const srv = (S.servers || []).find((s) => s.id === S.voice.serverId);
+  $('#call-sub').textContent = `${srv ? srv.name + ' · ' : ''}${occ.length} in call`;
+}
 async function joinVoice(serverId, channelId) {
   if (S.voice && S.voice.serverId === serverId && S.voice.channelId === channelId) return; // already here
   leaveVoice(true);
@@ -1173,6 +1315,7 @@ async function joinVoice(serverId, channelId) {
   renderChannels();
   startSpeakingMonitor();
   toast('Connected to voice');
+  sfx.join();
 }
 function leaveVoice(silent) {
   if (!S.voice) return;
@@ -1181,6 +1324,9 @@ function leaveVoice(silent) {
   S.voice.camStream?.getTracks().forEach((t) => t.stop());
   S.voice.screenStream?.getTracks().forEach((t) => t.stop());
   for (const [, el] of S.voice.audioEls) { try { el.remove(); } catch {} }
+  const grid = $('#stage-grid');
+  if (grid && grid.parentElement?.id !== 'stage') $('#stage').appendChild(grid);
+  $('#call-view').classList.add('hidden');
   $('#stage').classList.add('hidden');
   $('#stage-grid').innerHTML = '';
   const { serverId, channelId } = S.voice;
@@ -1192,7 +1338,7 @@ function leaveVoice(silent) {
   // optimistically drop self so the sidebar clears instantly (server echo confirms)
   const occ = S.voiceOccupancy.get(channelId) || [];
   S.voiceOccupancy.set(channelId, occ.filter((p) => p.id !== S.me.id));
-  if (!silent) S.ws?.send(JSON.stringify({ t: 'voice-leave' }));
+  if (!silent) { sfx.leave(); S.ws?.send(JSON.stringify({ t: 'voice-leave' })); }
   renderChannels();
   if (S.updateReady && !silent) location.reload();
 }
@@ -1207,14 +1353,19 @@ function paintVoiceControls() {
   const v = S.voice;
   const set = (id, off, label) => { const b = $(id); if (!b) return; b.classList.toggle('off', !!off); b.title = label; };
   if ($('#sel-quality')) $('#sel-quality').value = v?.quality || S.voiceQuality || 'high';
+  if ($('#cv-quality')) $('#cv-quality').value = v?.quality || S.voiceQuality || 'high';
   set('#btn-mute', v?.muted, v?.muted ? 'Unmute mic' : 'Mute mic');
   set('#vf-mute', v?.muted, v?.muted ? 'Unmute mic' : 'Mute mic');
+  set('#cv-mute', v?.muted, v?.muted ? 'Unmute mic' : 'Mute mic');
   set('#btn-deafen', v?.deafened, v?.deafened ? 'Undeafen' : 'Deafen');
   set('#vf-deafen', v?.deafened, v?.deafened ? 'Undeafen' : 'Deafen');
+  set('#cv-deafen', v?.deafened, v?.deafened ? 'Undeafen' : 'Deafen');
   set('#btn-camera', !v?.cameraOn, v?.cameraOn ? 'Turn camera off' : 'Turn camera on');
   set('#vf-camera', !v?.cameraOn, v?.cameraOn ? 'Turn camera off' : 'Turn camera on');
+  set('#cv-camera', !v?.cameraOn, v?.cameraOn ? 'Turn camera off' : 'Turn camera on');
   set('#btn-share', v?.sharing, v?.sharing ? 'Stop sharing screen' : 'Share screen');
   set('#vf-share', v?.sharing, v?.sharing ? 'Stop sharing screen' : 'Share screen');
+  set('#cv-share', v?.sharing, v?.sharing ? 'Stop sharing screen' : 'Share screen');
 }
 function applyMicState() {
   if (!S.voice) return;
@@ -1224,7 +1375,9 @@ function applyMicState() {
 }
 function toggleMute() {
   if (!S.voice) return;
+  if (S.voice.deafened) { toast('Undeafen to change your mic'); return; }
   S.voice.muted = !S.voice.muted;
+  sfx[S.voice.muted ? 'mute' : 'unmute']();
   applyMicState();
   $('#vf-name').textContent = (S.serverDetail?.channels.find((c) => c.id === S.voice.channelId) || {}).name || 'voice';
   sendVoiceState();
@@ -1235,6 +1388,7 @@ function toggleMute() {
 function toggleDeafen() {
   if (!S.voice) return;
   S.voice.deafened = !S.voice.deafened;
+  sfx[S.voice.deafened ? 'deaf' : 'undeaf']();
   applyMicState();
   for (const [, el] of S.voice.audioEls) el.muted = S.voice.deafened;
   sendVoiceState();
@@ -1590,6 +1744,7 @@ function renderStage() {
     }
     paintTile(k, el);
   }
+  updateCallHead();
 }
 const MIC_OFF_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3M2 2l20 20"/></svg>';
 // Discord-style: occupants listed under their voice channel, green ring while talking.
@@ -1738,7 +1893,7 @@ function memberCtxMenu(uid, x, y) {
     { label: `Mention @${u.username}`, icon: '@', fn: () => { insertAtCursor($('#in-message'), '@' + u.username + ' '); $('#in-message').focus(); } },
   ];
   if (S.me && uid !== S.me.id) {
-    if (S.view === 'server' && S.serverDetail && S.serverDetail.owner_id === S.me.id && uid !== S.serverDetail.owner_id) {
+    if (S.view === 'server' && S.serverDetail && canManage() && uid !== S.serverDetail.owner_id) {
       items.push({ label: `Kick @${u.username}`, icon: '→', danger: true, fn: () => modServerMember('kick', u) });
       items.push({ label: `Ban @${u.username}`, icon: '⊘', danger: true, fn: () => modServerMember('ban', u) });
     } else if (S.view === 'home' && S.dmThreadId) {
@@ -1769,12 +1924,20 @@ function modGroupItems(items, t, u) {
   items.push({ label: `Remove @${u.username}`, icon: '→', danger: true, fn: () => modGroupMember('remove', t, u) });
   items.push({ label: `Ban @${u.username}`, icon: '⊘', danger: true, fn: () => modGroupMember('ban', t, u) });
 }
-function openChannelSettings(sid, c) {
+async function openChannelSettings(sid, c) {
   const slows = [[0, 'Off'], [5, '5 seconds'], [10, '10 seconds'], [30, '30 seconds'], [60, '1 minute'], [300, '5 minutes']];
+  let curNotif = '';
+  try { const { prefs } = await api('/api/notifs/prefs'); curNotif = (prefs && prefs['c:' + c.id]) || ''; } catch {}
   openModal(`#${c.name} settings`, `
     <label>Channel name<input id="m-chan-name" maxlength="32" value="${esc(c.name)}" /></label>
     <label style="margin-top:.6rem;display:block">Description<input id="m-chan-desc" maxlength="200" placeholder="What's this channel about?" value="${esc(c.description || '')}" /></label>
     <label style="margin-top:.6rem;display:block">Slow mode<select id="m-chan-slow">${slows.map(([v, l]) => `<option value="${v}"${(c.slowmode || 0) === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+    <label style="margin-top:.6rem;display:block">Notifications<select id="m-chan-notif">
+      <option value=""${!curNotif ? ' selected' : ''}>Use server default</option>
+      <option value="all"${curNotif === 'all' ? ' selected' : ''}>All messages</option>
+      <option value="mentions"${curNotif === 'mentions' ? ' selected' : ''}>Mentions only</option>
+      <option value="muted"${curNotif === 'muted' ? ' selected' : ''}>Muted</option>
+    </select></label>
   `, 'Save', async () => {
     const name = $('#m-chan-name').value.trim().replace(/\s+/g, '-');
     if (!name) { toast('Give the channel a name'); return; }
@@ -1782,6 +1945,7 @@ function openChannelSettings(sid, c) {
       method: 'PATCH',
       body: JSON.stringify({ name, description: $('#m-chan-desc').value.trim(), slowmode: Number($('#m-chan-slow').value) }),
     });
+    try { await api('/api/notifs/prefs', { method: 'PUT', body: JSON.stringify({ scope: 'c:' + c.id, mode: $('#m-chan-notif').value || 'inherit' }) }); } catch (err) { toast('Notif save failed: ' + prettyError(err.message)); }
     renderServerTab();
     if (sid === S.serverId) selectServer(sid);
   });
@@ -1812,7 +1976,7 @@ function serverCtxMenu(sid, x, y) {
 function channelCtxMenu(cid, ctype, x, y) {
   const c = S.serverDetail?.channels.find((v) => v.id === cid);
   if (!c) return;
-  const owner = S.serverDetail.owner_id === S.me.id;
+  const owner = canManage();
   const items = ctype === 'voice'
     ? [{ label: 'Join voice', icon: '→', fn: () => joinVoice(S.serverId, cid) }]
     : [{ label: 'Open channel', icon: '→', fn: () => selectChannel(cid) }];
@@ -2093,7 +2257,7 @@ async function refreshDms() {
 function friendRowEl(u, extra) {
   const div = document.createElement('div');
   div.className = 'dmrow';
-  div.innerHTML = `<span class="avatar"></span><span class="dmmain"><span class="dmname">${esc(u.display_name)}</span><br/><span class="dmlast">@${esc(u.username)}${u.status_text ? ' · ' + esc(u.status_text) : ''}</span></span>`;
+  div.innerHTML = `<span class="avatar"></span><span class="dmmain"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span><br/><span class="dmlast">@${esc(u.username)}${u.status_text ? ' · ' + esc(u.status_text) : ''}</span></span>`;
   paintAvatar(div.querySelector('.avatar'), u);
   const dot = document.createElement('span');
   dot.className = 'status-dot ' + statusOf(u.id);
@@ -2197,7 +2361,7 @@ function dmRowEl(t) {
   b.className = 'dmrow' + (t.id === S.dmThreadId ? ' active' : '');
   b.dataset.dmthread = t.id;
   const av = t.isGroup ? null : dmPeer(t);
-  b.innerHTML = `<span class="avatar">${t.isGroup ? '#' : ''}</span><span class="dmmain"><span class="dmname">${esc(dmTitle(t))}</span><br/><span class="dmlast">${esc(t.last ? `${t.last.author}: ${t.last.content}`.slice(0, 60) : 'No messages yet')}</span></span>`;
+  b.innerHTML = `<span class="avatar">${t.isGroup ? '#' : ''}</span><span class="dmmain"><span class="dmname" style="${!t.isGroup && av ? nameStyleFor(av) : ''}">${esc(dmTitle(t))}</span><br/><span class="dmlast">${esc(t.last ? `${t.last.author}: ${t.last.content}`.slice(0, 60) : 'No messages yet')}</span></span>`;
   if (av) paintAvatar(b.querySelector('.avatar'), av);
   else { const a = b.querySelector('.avatar'); a.style.background = 'var(--panel-3)'; }
   b.onclick = () => selectDmThread(t.id);
@@ -2716,11 +2880,12 @@ function openUserCard(uid, x, y) {
     <div class="uc-banner"${u.banner_url ? ` style="background-image:url('${esc(u.banner_url)}')"` : ''}></div>
     <div class="uc-body">
       <span class="avatar big"></span>
-      <div class="uc-name">${esc(u.display_name)}</div>
+      <div class="uc-name" style="${nameStyleFor(u)}">${esc(u.display_name)}</div>
       <div class="uc-sub">@${esc(u.username)}${u.role === 'owner' ? ' · server owner' : ''}</div>
       <div class="uc-status"><span class="status-dot ${st}"></span><span>${stLabel}</span></div>
       ${u.status_text ? `<div class="uc-statustext">${esc(u.status_text)}</div>` : ''}
       ${u.created_at ? `<div class="uc-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
+      ${cardRolesHTML(uid)}
       <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}${uid !== S.me.id ? `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="uc-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>` : ''}<button class="btn small" id="uc-close">Close</button></div>
     </div>`;
   paintAvatar(card.querySelector('.avatar'), u);
@@ -2733,6 +2898,33 @@ function openUserCard(uid, x, y) {
   if (men) men.onclick = () => { insertAtCursor($('#in-message'), '@' + u.username + ' '); closeUserCard(); $('#in-message').focus(); };
   const blk = $('#uc-block');
   if (blk) blk.onclick = () => { const was = isBlocked(uid), nm = u.username; closeUserCard(); if (was) unblockUser(uid); else blockUser(uid, nm); };
+  card.querySelectorAll('[data-role-toggle]').forEach((b) => (b.onclick = async () => {
+    const rid = b.dataset.roleToggle, has = b.dataset.has === '1';
+    try {
+      if (has) await api(`/api/servers/${S.serverDetail.id}/roles/${rid}/members/${uid}`, { method: 'DELETE' });
+      else await api(`/api/servers/${S.serverDetail.id}/roles/${rid}/members`, { method: 'POST', body: JSON.stringify({ userId: uid }) });
+      const { server } = await api('/api/servers/' + S.serverDetail.id);
+      S.serverDetail = server;
+      renderMembers();
+      openUserCard(uid, x, y);
+    } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+  }));
+}
+function cardRolesHTML(uid) {
+  if (S.view !== 'server' || !S.serverDetail) return '';
+  const d = S.serverDetail;
+  const m = d.members.find((x) => x.id === uid);
+  if (!m || !(d.roles || []).length) return '';
+  const mine = new Set(m.roleIds || []);
+  const editable = canManage() && uid !== d.owner_id;
+  let h = '<div class="uc-roles">';
+  for (const r of d.roles) {
+    const has = mine.has(r.id);
+    const col = r.color ? ` style="border-color:${esc(r.color)};${has ? `background:${esc(r.color)}22;color:${esc(r.color)};` : ''}"` : '';
+    if (editable) h += `<button class="role-pill${has ? ' on' : ''}" data-role-toggle="${r.id}" data-has="${has ? '1' : '0'}"${col}>${has ? '✓ ' : '+ '}${esc(r.name)}</button>`;
+    else if (has) h += `<span class="role-pill"${col}>${esc(r.name)}</span>`;
+  }
+  return h + '</div>';
 }
 function closeUserCard() { $('#usercard').classList.add('hidden'); }
 
@@ -2786,6 +2978,9 @@ function applyMention(username) {
 function openSettings(tab = 'profile') {
   setSettingsTab(tab);
   $('#set-display').value = S.me.display_name || '';
+  $('#set-namecustom').checked = !!(S.me.name_color || S.me.name_gradient);
+  $('#set-namecolor').value = S.me.name_color || '#aac7ff';
+  $('#set-namegrad').value = S.me.name_gradient || S.me.name_color || '#aac7ff';
   $('#set-status').value = S.me.status || 'online';
   $('#set-statustext').value = S.me.status_text || '';
   $('#set-username').value = S.me.username || '';
@@ -2800,11 +2995,112 @@ function openSettings(tab = 'profile') {
   $('#settings-backdrop').classList.remove('hidden');
 }
 function closeSettings() { closePicker(); $('#settings-backdrop').classList.add('hidden'); }
+// ---------- notifications (Web Push + per-scope prefs) ----------
+const NOTIF_OPTS = [['all', 'All messages'], ['mentions', 'Mentions only'], ['muted', 'Muted']];
+let notifPrefsCache = {};
+function notifSelect(scope, val, small) {
+  const sel = document.createElement('select');
+  if (small) sel.style.maxWidth = '150px';
+  const opts = scope === 'global' ? NOTIF_OPTS : [['', 'Use default'], ...NOTIF_OPTS];
+  for (const [v, l] of opts) {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = l;
+    if (v === val) o.selected = true;
+    sel.appendChild(o);
+  }
+  sel.onchange = async () => {
+    try {
+      await api('/api/notifs/prefs', { method: 'PUT', body: JSON.stringify({ scope, mode: sel.value || 'inherit' }) });
+      if (sel.value) notifPrefsCache[scope] = sel.value;
+      else delete notifPrefsCache[scope];
+    } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+  };
+  return sel;
+}
+async function renderNotifsTab() {
+  const box = $('#set-notifs');
+  box.innerHTML = '<p class="muted small">Loading…</p>';
+  const pushOK = ('serviceWorker' in navigator) && ('PushManager' in window);
+  const perm = ('Notification' in window) ? Notification.permission : 'unsupported';
+  try { const { prefs } = await api('/api/notifs/prefs'); notifPrefsCache = prefs || {}; } catch { notifPrefsCache = {}; }
+  if (!$('#set-notifs')) return;
+  box.innerHTML = '';
+  const h = (t) => { const e = document.createElement('h4'); e.textContent = t; e.style.margin = '1rem 0 .4rem'; box.appendChild(e); };
+  h('Push notifications');
+  const st = document.createElement('p'); st.className = 'muted small';
+  if (!pushOK) st.textContent = 'Push is not supported in this browser.';
+  else if (perm === 'granted') st.textContent = 'Push notifications are enabled on this device — you will get pings even with Campfire closed.';
+  else if (perm === 'denied') st.textContent = 'Notifications are blocked. Allow them in your browser or OS settings, then return here.';
+  else st.textContent = 'Get pings on desktop and mobile, even with Campfire closed.';
+  box.appendChild(st);
+  if (pushOK && perm !== 'granted' && perm !== 'denied') {
+    const en = document.createElement('button'); en.className = 'btn small primary'; en.textContent = 'Enable notifications';
+    en.onclick = async () => {
+      try {
+        const p = await Notification.requestPermission();
+        if (p === 'granted') { await pushSetup(); renderNotifsTab(); toast('Notifications enabled'); }
+        else { toast('Notifications blocked'); renderNotifsTab(); }
+      } catch { toast('Could not enable'); }
+    };
+    box.appendChild(en);
+  }
+  if (pushOK && perm === 'granted') {
+    const off = document.createElement('button'); off.className = 'btn small'; off.textContent = 'Disable on this device';
+    off.onclick = async () => { await pushTeardown(); renderNotifsTab(); };
+    box.appendChild(off);
+  }
+  h('Default for everything');
+  box.appendChild(notifSelect('global', notifPrefsCache.global || 'all'));
+  h('Per server');
+  if (!S.servers.length) box.appendChild(Object.assign(document.createElement('p'), { className: 'muted small' }));
+  for (const s of S.servers) {
+    const row = document.createElement('div'); row.className = 'set-row';
+    row.innerHTML = `<span class="grow">${esc(s.name)}</span>`;
+    row.appendChild(notifSelect('s:' + s.id, notifPrefsCache['s:' + s.id] || ''));
+    box.appendChild(row);
+  }
+  const note = document.createElement('p'); note.className = 'muted small';
+  note.textContent = 'Per-channel rules live in each channel’s settings (Server tab → Channels → Edit). DMs follow the default rule.';
+  box.appendChild(note);
+}
+function urlB64ToU8(s) {
+  const pad = '='.repeat((4 - (s.length % 4)) % 4);
+  const bin = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+async function pushSetup() {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    if (!store.token || Notification.permission !== 'granted') return;
+    const { publicKey } = await api('/api/push/config');
+    if (!publicKey) return;
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToU8(publicKey) });
+    const js = sub.toJSON();
+    await api('/api/push/subscribe', { method: 'POST', body: JSON.stringify({ endpoint: sub.endpoint, keys: js.keys }) });
+  } catch {}
+}
+async function pushTeardown() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      try { await api('/api/push/unsubscribe', { method: 'DELETE', body: JSON.stringify({ endpoint: sub.endpoint }) }); } catch {}
+      try { await sub.unsubscribe(); } catch {}
+    }
+    toast('Notifications disabled on this device');
+  } catch {}
+}
 function setSettingsTab(t) {
   document.querySelectorAll('.set-tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
   $('#set-profile').classList.toggle('hidden', t !== 'profile');
   $('#set-account').classList.toggle('hidden', t !== 'account');
+  $('#set-notifs').classList.toggle('hidden', t !== 'notifs');
   $('#set-server').classList.toggle('hidden', t !== 'server');
+  if (t === 'notifs') renderNotifsTab();
 }
 document.querySelectorAll('.set-tab').forEach((b) => (b.onclick = () => setSettingsTab(b.dataset.tab)));
 $('#btn-settings-rail').onclick = () => openSettings('profile');
@@ -2924,6 +3220,8 @@ $('#set-profile-save').onclick = async () => {
       displayName: $('#set-display').value.trim(),
       status: $('#set-status').value,
       statusText: $('#set-statustext').value.trim(),
+      nameColor: $('#set-namecustom').checked ? $('#set-namecolor').value : '',
+      nameGradient: $('#set-namecustom').checked ? $('#set-namegrad').value : '',
     }) });
     S.me = { ...S.me, ...user };
     paintMe(); renderMembers();
@@ -2940,17 +3238,37 @@ $('#set-pw-save').onclick = async () => {
 $('#set-logout').onclick = doLogout;
 $('#me-card').style.cursor = 'pointer';
 $('#me-card').onclick = () => openSettings('profile');
+function renderServerHeader() {
+  const d = S.serverDetail;
+  const el = $('#srv-banner');
+  if (!el) return;
+  if (d && d.banner_url) { el.style.backgroundImage = `url("${d.banner_url}")`; el.classList.remove('hidden'); }
+  else { el.classList.add('hidden'); el.style.backgroundImage = ''; }
+}
+async function refreshServerTab() {
+  const id = S.serverDetail?.id;
+  if (!id) return;
+  try {
+    const { server } = await api('/api/servers/' + id);
+    if (S.serverDetail?.id !== id) return;
+    S.serverDetail = server;
+    renderServerTab();
+    renderMembers();
+    renderServerHeader();
+  } catch {}
+}
 function renderServerTab() {
   const box = $('#set-server');
   const d = S.serverDetail;
   if (!d) { box.innerHTML = '<p class="muted">No server selected.</p>'; return; }
   const owner = d.owner_id === S.me.id;
+  const mgr = canManage();
   box.innerHTML = '';
   const h = (t) => { const e = document.createElement('h4'); e.textContent = t; e.style.margin = '1rem 0 .4rem'; box.appendChild(e); };
   // general
   h('General');
   const nameRow = document.createElement('div');
-  nameRow.innerHTML = `<label style="flex:1">Server name<input id="srv-name" maxlength="48" value="${esc(d.name)}" ${owner ? '' : 'disabled'} /></label>`;
+  nameRow.innerHTML = `<label style="flex:1">Server name<input id="srv-name" maxlength="48" value="${esc(d.name)}" ${mgr ? '' : 'disabled'} /></label>`;
   box.appendChild(nameRow);
   const iconRow = document.createElement('div');
   iconRow.className = 'row';
@@ -2970,7 +3288,7 @@ function renderServerTab() {
     else { prev.classList.remove('has-icon'); prev.textContent = d.name.trim().charAt(0).toUpperCase(); }
   };
   paintPrev();
-  if (owner) {
+  if (mgr) {
     const ch = document.createElement('button'); ch.className = 'btn small'; ch.textContent = 'Change icon';
     const rm = document.createElement('button'); rm.className = 'btn small'; rm.textContent = 'Remove';
     const fi = document.createElement('input'); fi.type = 'file'; fi.accept = 'image/png,image/jpeg,image/gif,image/webp'; fi.className = 'hidden';
@@ -2982,6 +3300,22 @@ function renderServerTab() {
     iconRow.append(ch, rm, sv);
   }
   box.appendChild(iconRow);
+  // banner
+  h('Banner');
+  const banPrev = document.createElement('div');
+  banPrev.className = 'set-banner';
+  if (d.banner_url) banPrev.style.backgroundImage = `url('${esc(d.banner_url)}')`;
+  box.appendChild(banPrev);
+  if (mgr) {
+    const brow = document.createElement('div'); brow.className = 'row'; brow.style.marginTop = '.55rem';
+    const bch = document.createElement('button'); bch.className = 'btn small'; bch.textContent = 'Upload';
+    const brm = document.createElement('button'); brm.className = 'btn small'; brm.textContent = 'Remove';
+    const bfi = document.createElement('input'); bfi.type = 'file'; bfi.accept = 'image/png,image/jpeg,image/gif,image/webp'; bfi.className = 'hidden';
+    bch.onclick = () => bfi.click();
+    bfi.onchange = async () => { if (!bfi.files[0]) return; try { await uploadImage(`/api/servers/${d.id}/banner`, bfi.files[0]); refreshServerTab(); if (d.id === S.serverId) selectServer(d.id); } catch (err) { toast('Banner failed: ' + prettyError(err.message)); } };
+    brm.onclick = async () => { try { await api(`/api/servers/${d.id}/banner`, { method: 'DELETE' }); refreshServerTab(); if (d.id === S.serverId) selectServer(d.id); } catch {} };
+    brow.append(bch, brm); box.appendChild(brow);
+  }
   // invite
   h('Invite');
   const inv = document.createElement('div');
@@ -2990,7 +3324,7 @@ function renderServerTab() {
   const cp = document.createElement('button'); cp.className = 'btn small'; cp.textContent = 'Copy link';
   cp.onclick = () => { navigator.clipboard?.writeText(`${location.origin}${location.pathname}?invite=${d.invite_code}`); toast('Link copied'); };
   invRow.appendChild(cp);
-  if (owner) {
+  if (mgr) {
     const rs = document.createElement('button'); rs.className = 'btn small'; rs.textContent = 'Reset code';
     rs.onclick = async () => { try { const r = await api(`/api/servers/${d.id}/invite/reset`, { method: 'POST' }); S.serverDetail.invite_code = r.invite_code; renderServerTab(); } catch {} };
     invRow.appendChild(rs);
@@ -3004,7 +3338,7 @@ function renderServerTab() {
     const slowBadge = c.slowmode ? ` <span class="muted small">· ${c.slowmode}s slow</span>` : '';
     const descBadge = c.description ? ` <span class="muted small">· ${esc(c.description.slice(0, 24))}${c.description.length > 24 ? '…' : ''}</span>` : '';
     row.innerHTML = `<span class="muted">(${c.type})</span><span class="grow">${esc(c.name)}${slowBadge}${descBadge}</span>`;
-    if (owner) {
+    if (mgr) {
       const ed = document.createElement('button'); ed.className = 'mini'; ed.textContent = 'Edit';
       ed.onclick = () => openChannelSettings(d.id, c);
       row.appendChild(ed);
@@ -3014,7 +3348,7 @@ function renderServerTab() {
     }
     box.appendChild(row);
   }
-  if (owner) {
+  if (mgr) {
     const add = document.createElement('div'); add.className = 'row'; add.style.marginTop = '.5rem';
     add.innerHTML = `<input id="srv-newchan" maxlength="32" placeholder="new-channel" style="flex:2" /><select id="srv-newtype" style="flex:1"><option value="text">Text</option><option value="voice">Voice</option></select>`;
     const go = document.createElement('button'); go.className = 'btn small'; go.textContent = 'Add';
@@ -3036,7 +3370,7 @@ function renderServerTab() {
     for (const n of names) {
       const row = document.createElement('div'); row.className = 'set-row';
       row.innerHTML = `<img class="set-emoji-img" src="${esc(S.emoji[n])}" alt="" /><span class="grow">:${esc(n)}:</span>`;
-      if (owner) {
+      if (mgr) {
         const del = document.createElement('button'); del.className = 'mini danger'; del.textContent = 'Delete';
         del.onclick = async () => { try { await api(`/api/servers/${d.id}/emoji/${encodeURIComponent(n)}`, { method: 'DELETE' }); const r = await api(`/api/servers/${d.id}/emoji`); S.emoji = {}; for (const e of r.emoji) S.emoji[e.name] = e.url; drawEmoji(); } catch {} };
         row.appendChild(del);
@@ -3064,7 +3398,7 @@ function renderServerTab() {
   };
   eadd.appendChild(epick); box.appendChild(eadd); box.appendChild(efile);
   // banned members (owner only)
-  if (owner) {
+  if (mgr) {
     h('Banned members');
     const banBox = document.createElement('div');
     banBox.innerHTML = '<p class="muted small">Loading…</p>';
@@ -3083,6 +3417,54 @@ function renderServerTab() {
         banBox.appendChild(row);
       }
     }).catch(() => { banBox.innerHTML = '<p class="muted small">Could not load bans.</p>'; });
+  }
+  // roles
+  if (mgr) {
+    h('Roles');
+    const rbox = document.createElement('div');
+    box.appendChild(rbox);
+    const drawRoles = () => {
+      rbox.innerHTML = '';
+      const roles = (S.serverDetail?.roles || []);
+      if (!roles.length) rbox.innerHTML = '<p class="muted small">No roles yet — create one below. Assign them from a member\'s profile card.</p>';
+      for (const r of roles) {
+        const row = document.createElement('div'); row.className = 'set-row';
+        row.innerHTML = `<span class="rdot"${r.color ? ` style="background:${esc(r.color)}"` : ''}></span><span class="grow">${esc(r.name)}${r.admin ? ' <span class="muted small">· admin</span>' : ''}${r.hoist ? ' <span class="muted small">· hoisted</span>' : ''}</span>`;
+        const nm = document.createElement('button'); nm.className = 'mini'; nm.textContent = 'Rename';
+        nm.onclick = async () => {
+          const v = await openPromptModal({ title: 'Rename role', label: 'Role name', initial: r.name, okLabel: 'Save', maxlength: 32 });
+          if (v === null || !v.trim()) return;
+          try { await api(`/api/servers/${d.id}/roles/${r.id}`, { method: 'PATCH', body: JSON.stringify({ name: v.trim() }) }); refreshServerTab(); } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+        };
+        const cl = document.createElement('input'); cl.type = 'color'; cl.value = r.color || '#5865f2'; cl.title = 'Role color'; cl.className = 'clr';
+        cl.onchange = async () => { try { await api(`/api/servers/${d.id}/roles/${r.id}`, { method: 'PATCH', body: JSON.stringify({ color: cl.value }) }); refreshServerTab(); } catch (err) { toast('Failed: ' + prettyError(err.message)); } };
+        const ho = document.createElement('button'); ho.className = 'mini' + (r.hoist ? ' on' : ''); ho.textContent = 'Hoist';
+        ho.title = 'Show separately in the member list';
+        ho.onclick = async () => { try { await api(`/api/servers/${d.id}/roles/${r.id}`, { method: 'PATCH', body: JSON.stringify({ hoist: !r.hoist }) }); refreshServerTab(); } catch {} };
+        row.append(nm, cl, ho);
+        if (owner) {
+          const ad = document.createElement('button'); ad.className = 'mini' + (r.admin ? ' on' : ''); ad.textContent = 'Admin';
+          ad.title = 'Can manage the server (only the owner can grant this)';
+          ad.onclick = async () => { try { await api(`/api/servers/${d.id}/roles/${r.id}`, { method: 'PATCH', body: JSON.stringify({ admin: !r.admin }) }); refreshServerTab(); } catch (err) { toast('Failed: ' + prettyError(err.message)); } };
+          row.appendChild(ad);
+        }
+        const del = document.createElement('button'); del.className = 'mini danger'; del.textContent = '✕';
+        del.onclick = async () => { try { await api(`/api/servers/${d.id}/roles/${r.id}`, { method: 'DELETE' }); refreshServerTab(); } catch (err) { toast('Failed: ' + prettyError(err.message)); } };
+        row.appendChild(del);
+        rbox.appendChild(row);
+      }
+      const add = document.createElement('div'); add.className = 'row'; add.style.marginTop = '.5rem';
+      add.innerHTML = `<input id="srv-newrole" maxlength="32" placeholder="new role" style="flex:2" /><input id="srv-newrole-c" type="color" value="#5865f2" class="clr" />`;
+      const go = document.createElement('button'); go.className = 'btn small'; go.textContent = 'Add';
+      go.onclick = async () => {
+        const name = add.querySelector('#srv-newrole').value.trim();
+        if (!name) return;
+        try { await api(`/api/servers/${d.id}/roles`, { method: 'POST', body: JSON.stringify({ name, color: add.querySelector('#srv-newrole-c').value }) }); refreshServerTab(); }
+        catch (err) { toast('Failed: ' + prettyError(err.message)); }
+      };
+      add.appendChild(go); rbox.appendChild(add);
+    };
+    drawRoles();
   }
   // danger / leave
   const dz = document.createElement('div'); dz.className = 'danger-zone';

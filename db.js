@@ -188,10 +188,47 @@ CREATE TABLE IF NOT EXISTS blocks (
   PRIMARY KEY (user_id, blocked_id),
   CHECK (user_id != blocked_id)
 );
+CREATE TABLE IF NOT EXISTS roles (
+  id TEXT PRIMARY KEY,
+  server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  color TEXT NOT NULL DEFAULT '',
+  hoist INTEGER NOT NULL DEFAULT 0,
+  admin INTEGER NOT NULL DEFAULT 0,
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS member_roles (
+  server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+  PRIMARY KEY (server_id, user_id, role_id)
+);
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS push_subs (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (endpoint)
+);
+CREATE TABLE IF NOT EXISTS notif_prefs (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  scope TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode IN ('all','mentions','muted')),
+  PRIMARY KEY (user_id, scope)
+);
 `);
 addColumn('dm_messages', 'sys', 'TEXT');
 addColumn('channels', 'slowmode', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('channels', 'description', "TEXT NOT NULL DEFAULT ''");
+addColumn('servers', 'banner_url', 'TEXT');
+addColumn('users', 'name_color', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'name_gradient', "TEXT NOT NULL DEFAULT ''");
 addColumn('server_members', 'position', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('server_members', 'folder_id', 'TEXT');
 // status_text cap lowered to 64: trim any legacy longer values (idempotent)
