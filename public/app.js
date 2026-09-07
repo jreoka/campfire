@@ -163,7 +163,7 @@ function prettyError(e) {
   const map = {
     invalid_login: 'Wrong username or password.', username_taken: 'That username is taken.',
     bad_username: 'Username needs 2–24 chars (a-z, 0-9, _ .).', bad_invite: 'Invite code not found.',
-    slow_down: 'Slow down — you\'re sending too fast.', owner_only: 'Only the server owner can do that.', banned: 'You are banned from this server.',
+    slow_down: 'Slow down — you\'re sending too fast.', owner_only: 'Only the server owner can do that.', banned: 'You are banned from this server.', slow_mode: 'Slow mode is on — wait a moment.',
   };
   return map[e] || e.replace(/_/g, ' ');
 }
@@ -401,6 +401,7 @@ async function selectChannel(id) {
   $('#chan-name').textContent = ch ? ch.name : '—';
   $('#composer').classList.remove('hidden');
   $('#in-message').placeholder = ch ? `Message #${ch.name}` : 'Message…';
+  renderTopic();
   $('#messages').innerHTML = '<p class="muted">Loading…</p>';
   try {
     const { messages } = await api(`/api/servers/${S.serverId}/channels/${id}/messages?limit=80`);
@@ -834,6 +835,7 @@ function onWS(m) {
         const keepChan = S.channelId;
         S.serverDetail = m.server;
         $('#server-name').textContent = m.server.name;
+        renderTopic();
         if (!m.server.channels.find((c) => c.id === keepChan)) S.channelId = (m.server.channels.find((c) => c.type === 'text') || {}).id || null;
         renderServerList(); renderChannels();
         if (S.channelId && S.channelId !== keepChan) selectChannel(S.channelId);
@@ -909,7 +911,7 @@ function onWS(m) {
       if (S.voice && S.voice.channelId === m.channelId) { leaveVoice(); toast('Voice room was deleted'); }
       break;
     case 'error':
-      toast(prettyError(m.error));
+      toast(m.error === 'slow_mode' && m.retryAfter ? `Slow mode — wait ${m.retryAfter}s` : prettyError(m.error));
       break;
   }
 }
@@ -1359,6 +1361,23 @@ function modGroupItems(items, t, u) {
   if (u.id === t.created_by) return;
   items.push({ label: `Remove @${u.username}`, icon: '→', danger: true, fn: () => modGroupMember('remove', t, u) });
   items.push({ label: `Ban @${u.username}`, icon: '⊘', danger: true, fn: () => modGroupMember('ban', t, u) });
+}
+function openChannelSettings(sid, c) {
+  const slows = [[0, 'Off'], [5, '5 seconds'], [10, '10 seconds'], [30, '30 seconds'], [60, '1 minute'], [300, '5 minutes']];
+  openModal(`#${c.name} settings`, `
+    <label>Channel name<input id="m-chan-name" maxlength="32" value="${esc(c.name)}" /></label>
+    <label style="margin-top:.6rem;display:block">Description<input id="m-chan-desc" maxlength="200" placeholder="What's this channel about?" value="${esc(c.description || '')}" /></label>
+    <label style="margin-top:.6rem;display:block">Slow mode<select id="m-chan-slow">${slows.map(([v, l]) => `<option value="${v}"${(c.slowmode || 0) === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+  `, 'Save', async () => {
+    const name = $('#m-chan-name').value.trim().replace(/\s+/g, '-');
+    if (!name) { toast('Give the channel a name'); return; }
+    await api(`/api/servers/${sid}/channels/${c.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name, description: $('#m-chan-desc').value.trim(), slowmode: Number($('#m-chan-slow').value) }),
+    });
+    renderServerTab();
+    if (sid === S.serverId) selectServer(sid);
+  });
 }
 async function modGroupMember(kind, t, u) {
   const ok = await openConfirmModal({
@@ -1833,6 +1852,25 @@ async function openGroupBans(tid) {
     openGroupBans(tid);
   }));
 }
+function renderTopic() {
+  const el = $('#chan-topic');
+  const ch = S.view === 'server' ? (S.serverDetail?.channels || []).find((c) => c.id === S.channelId) : null;
+  const desc = (ch?.description || '').trim();
+  if (desc) {
+    el.textContent = desc;
+    el.title = desc;
+    el.classList.remove('hidden');
+  } else {
+    el.textContent = '';
+    el.title = '';
+    el.classList.add('hidden');
+  }
+}
+$('#chan-topic').onclick = () => {
+  const ch = (S.serverDetail?.channels || []).find((c) => c.id === S.channelId);
+  const desc = (ch?.description || '').trim();
+  if (desc) openModal(`#${ch.name}`, `<p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(desc)}</p>`, 'Close', null);
+};
 async function selectDmThread(id) {
   S.dmThreadId = id;
   document.querySelectorAll('.dmrow').forEach((b) => b.classList.toggle('active', b.dataset.dmthread === id));
@@ -1843,6 +1881,7 @@ async function selectDmThread(id) {
   $('#friends-page').classList.add('hidden');
   $('#messages').classList.remove('hidden');
   renderDmMembers();
+  renderTopic();
   $('#chan-hash').textContent = t.isGroup ? '' : '@';
   const peer = dmPeer(t);
   $('#chan-name').textContent = t.isGroup ? (t.name || 'Group chat') : ((peer || {}).display_name || 'DM');
@@ -1866,6 +1905,7 @@ function renderDmBlank() {
   $('#chan-hash').textContent = '';
   $('#chan-name').textContent = 'Friends';
   $('#typing').textContent = '';
+  renderTopic();
 }
 function renderDmMessages(force = false) {
   const box = $('#messages');
@@ -2485,8 +2525,13 @@ function renderServerTab() {
   for (const c of d.channels) {
     const row = document.createElement('div');
     row.className = 'set-row';
-    row.innerHTML = `<span class="muted">(${c.type})</span><span class="grow">${esc(c.name)}</span>`;
+    const slowBadge = c.slowmode ? ` <span class="muted small">· ${c.slowmode}s slow</span>` : '';
+    const descBadge = c.description ? ` <span class="muted small">· ${esc(c.description.slice(0, 24))}${c.description.length > 24 ? '…' : ''}</span>` : '';
+    row.innerHTML = `<span class="muted">(${c.type})</span><span class="grow">${esc(c.name)}${slowBadge}${descBadge}</span>`;
     if (owner) {
+      const ed = document.createElement('button'); ed.className = 'mini'; ed.textContent = 'Edit';
+      ed.onclick = () => openChannelSettings(d.id, c);
+      row.appendChild(ed);
       const del = document.createElement('button'); del.className = 'mini danger'; del.textContent = 'Delete';
       del.onclick = async () => { try { await api(`/api/servers/${d.id}/channels/${c.id}`, { method: 'DELETE' }); } catch (err) { toast('Delete failed: ' + prettyError(err.message)); } };
       row.appendChild(del);

@@ -108,6 +108,9 @@ h1,h2,h3{letter-spacing:-0.01em}
 #chat-header{display:flex;align-items:center;gap:.45rem;padding:.65rem .9rem;border-bottom:1px solid var(--line);background:var(--panel)}
 #chat-header strong{font-size:.95rem}
 #chan-hash{color:var(--muted);font-weight:700} #typing{font-size:.78rem;margin-left:.5rem}
+#chan-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0}
+#chan-topic{color:var(--muted);font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:34vw;border-left:1px solid var(--line);padding-left:.6rem;margin-left:.15rem;cursor:pointer}
+#chan-topic:hover{color:var(--text)}
 .icon-btn{display:none;border:1px solid var(--line);background:transparent;color:var(--text);border-radius:999px;padding:.35rem .6rem;font-size:1rem;cursor:pointer}
 .vusers{display:flex;flex-direction:column;gap:1px;padding:1px 0 5px 22px}
 .vuser{display:flex;align-items:center;gap:.45rem;border-radius:999px;padding:.28rem .6rem .28rem .3rem;cursor:pointer}

@@ -164,6 +164,15 @@ const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
+const slowTs = new Map(); // `${channelId}:${userId}` -> last accepted post (slow mode)
+function slowBlocked(channelId, userId, secs) {
+  if (!secs) return 0;
+  const k = channelId + ':' + userId;
+  const wait = Math.ceil(((slowTs.get(k) || 0) + secs * 1000 - Date.now()) / 1000);
+  if (wait > 0) return wait;
+  slowTs.set(k, Date.now());
+  return 0;
+}
 function rateOk(userId) {
   const t = Date.now();
   const arr = (rl.get(userId) || []).filter((x) => t - x < 10000);
@@ -300,6 +309,33 @@ app.delete('/api/servers/:id/channels/:chId', authRequired, (req, res) => {
   }
   voiceRooms.delete(key);
   broadcastToServer(s.id, { t: 'channel-deleted', channelId: ch.id, serverId: s.id });
+  res.json({ ok: true });
+});
+
+app.patch('/api/servers/:id/channels/:chId', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  const ch = db.prepare('SELECT * FROM channels WHERE id = ? AND server_id = ?').get(req.params.chId, s.id);
+  if (!ch) return res.status(404).json({ error: 'no_channel' });
+  const sets = [], params = [];
+  if (req.body?.name !== undefined) {
+    const name = String(req.body.name).trim().replace(/\s+/g, '-').slice(0, 32);
+    if (!name) return res.status(400).json({ error: 'name_required' });
+    sets.push('name = ?'); params.push(name);
+  }
+  if (req.body?.description !== undefined) {
+    sets.push('description = ?'); params.push(String(req.body.description).slice(0, 200));
+  }
+  if (req.body?.slowmode !== undefined) {
+    const sm = Number(req.body.slowmode);
+    sets.push('slowmode = ?'); params.push([0, 5, 10, 30, 60, 300].includes(sm) ? sm : 0);
+  }
+  if (sets.length) {
+    params.push(ch.id);
+    db.prepare(`UPDATE channels SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  }
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
   res.json({ ok: true });
 });
 
@@ -1328,6 +1364,13 @@ wss.on('connection', (ws, req) => {
       const ch = db.prepare('SELECT * FROM channels WHERE id = ? AND server_id = ?').get(channelId, serverId);
       if (!ch || ch.type !== 'text') return;
       if (!rateOk(me.userId)) { safeSend(ws, { t: 'error', error: 'slow_down' }); return; }
+      if (ch.slowmode > 0) {
+        const srv = getServer(serverId);
+        if (srv && srv.owner_id !== me.userId) {
+          const wait = slowBlocked(channelId, me.userId, ch.slowmode);
+          if (wait > 0) { safeSend(ws, { t: 'error', error: 'slow_mode', retryAfter: wait }); return; }
+        }
+      }
       if (replyTo) {
         const pr = db.prepare('SELECT channel_id FROM messages WHERE id = ? AND server_id = ?').get(replyTo, serverId);
         if (!pr || pr.channel_id !== channelId) return;

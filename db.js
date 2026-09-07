@@ -190,6 +190,8 @@ CREATE TABLE IF NOT EXISTS blocks (
 );
 `);
 addColumn('dm_messages', 'sys', 'TEXT');
+addColumn('channels', 'slowmode', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('channels', 'description', "TEXT NOT NULL DEFAULT ''");
 addColumn('server_members', 'position', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('server_members', 'folder_id', 'TEXT');
 // status_text cap lowered to 64: trim any legacy longer values (idempotent)
