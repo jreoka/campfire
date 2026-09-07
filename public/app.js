@@ -337,7 +337,9 @@ async function refreshServers(selectId) {
   if (!servers.length) {
     S.serverId = null;
     renderServerList();
-    openAddServer();
+    // No auto-popping Servers dialog on first login/signup — land on Home
+    // (friends + DMs); the rail + button is there when they want a server.
+    await openHome();
     return;
   }
   if (selectId) S.serverId = selectId;
