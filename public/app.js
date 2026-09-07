@@ -3305,16 +3305,37 @@ function renderServerTab() {
   if (!d) { box.innerHTML = '<p class="muted">No server selected.</p>'; return; }
   const owner = d.owner_id === S.me.id;
   const mgr = canManage();
+  const scroller = box.parentElement;
+  const keepScroll = scroller ? scroller.scrollTop : 0;
   box.innerHTML = '';
-  const h = (t) => { const e = document.createElement('h4'); e.textContent = t; e.style.margin = '1rem 0 .4rem'; box.appendChild(e); };
+  let sub = S.serverSubTab || 'general';
+  if ((sub === 'roles' || sub === 'bans') && !mgr) sub = 'general';
+  const subTabs = document.createElement('div');
+  subTabs.className = 'srv-subtabs';
+  box.appendChild(subTabs);
+  for (const [sid, slabel] of [['general', 'General'], ['channels', 'Channels'], ['emoji', 'Emoji'], ['roles', 'Roles'], ['bans', 'Bans']]) {
+    if ((sid === 'roles' || sid === 'bans') && !mgr) continue;
+    const b = document.createElement('button');
+    b.className = 'ftab' + (sub === sid ? ' active' : '');
+    b.textContent = slabel;
+    b.onclick = () => {
+      S.serverSubTab = sid;
+      subTabs.querySelectorAll('.ftab').forEach((x) => x.classList.toggle('active', x === b));
+      box.querySelectorAll('[data-ssub]').forEach((x) => (x.style.display = x.dataset.ssub === sid ? '' : 'none'));
+    };
+    subTabs.appendChild(b);
+  }
+  const sec = (id) => { const el = document.createElement('div'); el.dataset.ssub = id; el.style.display = sub === id ? '' : 'none'; box.appendChild(el); return el; };
+  let cur = sec('general');
+  const h = (t) => { const e = document.createElement('h4'); e.textContent = t; e.style.margin = '1rem 0 .4rem'; cur.appendChild(e); };
   // general
   h('General');
   const nameRow = document.createElement('div');
   nameRow.innerHTML = `<label style="flex:1">Server name<input id="srv-name" maxlength="48" value="${esc(d.name)}" ${mgr ? '' : 'disabled'} /></label>`;
-  box.appendChild(nameRow);
+  cur.appendChild(nameRow);
   const descRow = document.createElement('div');
   descRow.innerHTML = `<label style="flex:1">Description (shown on invites)<input id="srv-desc" maxlength="200" placeholder="What is this server about?" value="${esc(d.description || '')}" ${mgr ? '' : 'disabled'} /></label>`;
-  box.appendChild(descRow);
+  cur.appendChild(descRow);
   const iconRow = document.createElement('div');
   iconRow.className = 'row';
   iconRow.style.margin = '.5rem 0';
@@ -3344,13 +3365,13 @@ function renderServerTab() {
     sv.onclick = async () => { try { await api(`/api/servers/${d.id}`, { method: 'PATCH', body: JSON.stringify({ name: box.querySelector('#srv-name').value, description: box.querySelector('#srv-desc').value }) }); toast('Server saved'); } catch (err) { toast('Save failed: ' + prettyError(err.message)); } };
     iconRow.append(ch, rm, sv);
   }
-  box.appendChild(iconRow);
+  cur.appendChild(iconRow);
   // banner
   h('Banner');
   const banPrev = document.createElement('div');
   banPrev.className = 'set-banner';
   if (d.banner_url) banPrev.style.backgroundImage = `url('${esc(d.banner_url)}')`;
-  box.appendChild(banPrev);
+  cur.appendChild(banPrev);
   if (mgr) {
     const brow = document.createElement('div'); brow.className = 'row'; brow.style.marginTop = '.55rem';
     const bch = document.createElement('button'); bch.className = 'btn small'; bch.textContent = 'Upload';
@@ -3359,7 +3380,7 @@ function renderServerTab() {
     bch.onclick = () => bfi.click();
     bfi.onchange = async () => { if (!bfi.files[0]) return; try { await uploadImage(`/api/servers/${d.id}/banner`, bfi.files[0]); refreshServerTab(); if (d.id === S.serverId) selectServer(d.id); } catch (err) { toast('Banner failed: ' + prettyError(err.message)); } };
     brm.onclick = async () => { try { await api(`/api/servers/${d.id}/banner`, { method: 'DELETE' }); refreshServerTab(); if (d.id === S.serverId) selectServer(d.id); } catch {} };
-    brow.append(bch, brm); box.appendChild(brow);
+    brow.append(bch, brm); cur.appendChild(brow);
   }
   // invite
   h('Invite');
@@ -3374,7 +3395,8 @@ function renderServerTab() {
     rs.onclick = async () => { try { const r = await api(`/api/servers/${d.id}/invite/reset`, { method: 'POST' }); S.serverDetail.invite_code = r.invite_code; renderServerTab(); } catch {} };
     invRow.appendChild(rs);
   }
-  inv.appendChild(invRow); box.appendChild(inv);
+  inv.appendChild(invRow); cur.appendChild(inv);
+  cur = sec('channels');
   // channels
   h('Channels');
   for (const c of d.channels) {
@@ -3391,7 +3413,7 @@ function renderServerTab() {
       del.onclick = async () => { try { await api(`/api/servers/${d.id}/channels/${c.id}`, { method: 'DELETE' }); } catch (err) { toast('Delete failed: ' + prettyError(err.message)); } };
       row.appendChild(del);
     }
-    box.appendChild(row);
+    cur.appendChild(row);
   }
   if (mgr) {
     const add = document.createElement('div'); add.className = 'row'; add.style.marginTop = '.5rem';
@@ -3403,8 +3425,9 @@ function renderServerTab() {
       try { await api(`/api/servers/${d.id}/channels`, { method: 'POST', body: JSON.stringify({ name, type: add.querySelector('#srv-newtype').value }) }); renderServerTab(); }
       catch (err) { toast('Failed: ' + prettyError(err.message)); }
     };
-    add.appendChild(go); box.appendChild(add);
+    add.appendChild(go); cur.appendChild(add);
   }
+  cur = sec('emoji');
   // custom emoji
   h('Custom emoji');
   const elist = document.createElement('div'); elist.id = 'srv-emojilist';
@@ -3423,7 +3446,7 @@ function renderServerTab() {
       elist.appendChild(row);
     }
   };
-  drawEmoji(); box.appendChild(elist);
+  drawEmoji(); cur.appendChild(elist);
   const eadd = document.createElement('div'); eadd.className = 'row'; eadd.style.marginTop = '.5rem';
   eadd.innerHTML = `<input id="srv-emojiname" maxlength="32" placeholder="name" style="flex:1" />`;
   const epick = document.createElement('button'); epick.className = 'btn small'; epick.textContent = 'Upload image';
@@ -3441,13 +3464,14 @@ function renderServerTab() {
       drawEmoji();
     } catch (err) { toast('Emoji failed: ' + prettyError(err.message)); }
   };
-  eadd.appendChild(epick); box.appendChild(eadd); box.appendChild(efile);
+  eadd.appendChild(epick); cur.appendChild(eadd); box.appendChild(efile);
+  cur = sec('bans');
   // banned members (owner only)
   if (mgr) {
     h('Banned members');
     const banBox = document.createElement('div');
     banBox.innerHTML = '<p class="muted small">Loading…</p>';
-    box.appendChild(banBox);
+    cur.appendChild(banBox);
     api(`/api/servers/${d.id}/bans`).then(({ bans }) => {
       banBox.innerHTML = '';
       if (!bans.length) banBox.innerHTML = '<p class="muted small">Nobody is banned.</p>';
@@ -3463,11 +3487,12 @@ function renderServerTab() {
       }
     }).catch(() => { banBox.innerHTML = '<p class="muted small">Could not load bans.</p>'; });
   }
+  cur = sec('roles');
   // roles
   if (mgr) {
     h('Roles');
     const rbox = document.createElement('div');
-    box.appendChild(rbox);
+    cur.appendChild(rbox);
     const drawRoles = () => {
       rbox.innerHTML = '';
       const roles = (S.serverDetail?.roles || []);
@@ -3511,6 +3536,7 @@ function renderServerTab() {
     };
     drawRoles();
   }
+  cur = sec('general');
   // danger / leave
   const dz = document.createElement('div'); dz.className = 'danger-zone';
   dz.innerHTML = `<h4>${owner ? 'Danger zone' : 'Leave'}</h4>`;
@@ -3530,7 +3556,8 @@ function renderServerTab() {
       refreshServers();
     } catch (err) { toast('Failed: ' + prettyError(err.message)); }
   };
-  dz.appendChild(lb); box.appendChild(dz);
+  dz.appendChild(lb); cur.appendChild(dz);
+  if (scroller) scroller.scrollTop = keepScroll;
 }
 
 // ---------- presence: quick switch + idle auto-away ----------

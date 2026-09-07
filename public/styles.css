@@ -195,6 +195,7 @@ h1,h2,h3{letter-spacing:-0.01em}
 .edit-box .row{margin-top:.35rem}
 .msg .text code{background:var(--panel-3);border:0;border-radius:6px;padding:.05rem .35rem;font-size:.85em}
 .member.off{opacity:.45}
+.srv-subtabs{display:flex;gap:.25rem;flex-wrap:wrap;position:sticky;top:0;background:var(--panel-2);padding:.2rem 0 .55rem;z-index:2}
 /* ---------- invite landing ---------- */
 #invite-view{position:fixed;inset:0;background:var(--bg);z-index:250;display:flex;align-items:center;justify-content:center;padding:1rem}
 .invite-card{width:100%;max-width:420px;background:var(--panel);border:0;border-radius:28px;overflow:hidden;text-align:center}
