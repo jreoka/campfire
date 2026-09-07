@@ -11,6 +11,7 @@ const { WebSocketServer } = require('ws');
 const webpush = require('web-push');
 const { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } = require('@simplewebauthn/server');
 const db = require('./db');
+const storage = require('./storage');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
@@ -47,16 +48,33 @@ const FILE_MIMES = [...IMG_MIMES, 'video/mp4', 'video/webm', 'audio/mpeg', 'audi
 const EXT_BY_MIME = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/wav': '.wav', 'application/pdf': '.pdf', 'text/plain': '.txt', 'text/markdown': '.md', 'application/zip': '.zip' };
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 function uploader(sub, mimes, maxBytes) {
-  const dir = path.join(UPLOAD_DIR, sub);
-  fs.mkdirSync(dir, { recursive: true });
-  return multer({
-    storage: multer.diskStorage({
-      destination: dir,
+  // S3 mode buffers in memory and uploads to the bucket in persistUpload()
+  // (same filename scheme, same URL shape); otherwise files land on disk.
+  const store = storage.s3Enabled()
+    ? multer.memoryStorage()
+    : multer.diskStorage({
+      destination: (req, file, cb) => {
+        const dir = path.join(UPLOAD_DIR, sub);
+        fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+      },
       filename: (req, file, cb) => cb(null, crypto.randomBytes(16).toString('hex') + (EXT_BY_MIME[file.mimetype] || '.bin')),
-    }),
+    });
+  const mw = multer({
+    storage: store,
     limits: { fileSize: maxBytes, files: 1 },
     fileFilter: (req, file, cb) => cb(null, mimes.includes(file.mimetype)),
   });
+  mw._sub = sub;
+  return mw;
+}
+// After multer: in S3 mode push the buffer to the bucket and assign the
+// filename multer would have used on disk. Local mode is already on disk.
+async function persistUpload(sub, file) {
+  if (!file || !storage.s3Enabled()) return;
+  const filename = crypto.randomBytes(16).toString('hex') + (EXT_BY_MIME[file.mimetype] || '.bin');
+  await storage.s3Put(`${sub}/${filename}`, file.buffer, file.mimetype);
+  file.filename = filename;
 }
 const upFile = uploader('files', FILE_MIMES, MAX_FILE_BYTES);
 const upImg = uploader('avatars', IMG_MIMES, MAX_IMG_BYTES);
@@ -68,9 +86,18 @@ function uploadUrl(sub, file) { return `/uploads/${sub}/${file.filename}?v=${Dat
 function deleteUploaded(url) {
   if (!url || !url.startsWith('/uploads/')) return;
   const clean = String(url).split('?')[0];
+  if (storage.s3Enabled()) {
+    const key = storage.s3KeyFromUrl(clean);
+    if (key) storage.s3Delete(key);
+  }
+  // Always attempt the local unlink too: harmless when absent, and covers
+  // files still on disk from before an S3 migration.
   const p = path.join(UPLOAD_DIR, clean.slice('/uploads/'.length));
   if (path.resolve(p).startsWith(path.resolve(UPLOAD_DIR))) fs.unlink(p, () => {});
 }
+
+if (storage.s3Enabled()) console.log('[campfire] media storage: S3 bucket ' + (process.env.S3_BUCKET || ''));
+else console.log('[campfire] media storage: local disk ' + UPLOAD_DIR);
 
 const app = express();
 app.set('trust proxy', 1);
@@ -99,6 +126,44 @@ app.use('/uploads', express.static(UPLOAD_DIR, {
     }
   },
 }));
+// S3 mode: serve bucket objects at the same /uploads/* paths. Local static
+// above still wins for any file left on disk; misses fall through here.
+if (storage.s3Enabled()) {
+  app.use('/uploads', async (req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    const key = storage.s3KeyFromUrl('/uploads' + req.path);
+    if (!key) return next();
+    let data;
+    try {
+      const range = req.headers.range && /^bytes=\d*-\d*$/.test(req.headers.range) ? req.headers.range : undefined;
+      data = await storage.s3Get(key, range);
+    } catch (err) {
+      const code = err?.$metadata?.httpStatusCode;
+      if (code === 404 || code === 403 || err?.name === 'NoSuchKey') return next();
+      if (code === 416) return res.status(416).end();
+      return res.status(502).json({ error: 'storage_failed' });
+    }
+    try {
+      res.setHeader('Content-Type', data.ContentType || storage.mimeForFilename(key));
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'public, max-age=604800');
+      res.setHeader('Accept-Ranges', 'bytes');
+      if (data.ETag) res.setHeader('ETag', data.ETag);
+      if (data.LastModified) res.setHeader('Last-Modified', data.LastModified.toUTCString());
+      if (!/\.(png|jpe?g|gif|webp|mp4|webm|mp3|ogg|wav)$/i.test(key)) {
+        res.setHeader('Content-Disposition', 'attachment');
+      }
+      if (data.$metadata?.httpStatusCode === 206 && data.ContentRange) {
+        res.status(206);
+        res.setHeader('Content-Range', data.ContentRange);
+      }
+      if (data.ContentLength !== undefined) res.setHeader('Content-Length', data.ContentLength);
+      if (req.method === 'HEAD' || !data.Body) return res.end();
+      data.Body.on('error', () => { try { res.destroy(); } catch {} });
+      data.Body.pipe(res);
+    } catch { try { res.destroy(); } catch {} }
+  });
+}
 // Missing uploads must 404 (never fall through to the SPA shell — an HTML page
 // served as an image breaks <img> rendering in confusing ways).
 app.use('/uploads', (req, res) => res.status(404).json({ error: 'not_found' }));
@@ -1000,8 +1065,10 @@ app.post('/api/upload', authRequired, (req, res, next) => {
     if (err) return res.status(413).json({ error: 'file_too_large (max ' + Math.round(MAX_FILE_BYTES / 1048576) + 'MB)' });
     next();
   });
-}, (req, res) => {
+}, async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'bad_file (images, mp4/webm, mp3, pdf, txt, zip)' });
+  try { await persistUpload('files', req.file); }
+  catch { return res.status(500).json({ error: 'storage_failed' }); }
   const mt = req.file.mimetype;
   const kind = mt.startsWith('image/') ? 'image' : mt.startsWith('video/') ? 'video' : mt.startsWith('audio/') ? 'audio' : 'file';
   res.json({ url: uploadUrl('files', req.file), name: String(req.file.originalname || 'file').slice(0, 120), mime: mt, size: req.file.size, kind });
@@ -1009,9 +1076,11 @@ app.post('/api/upload', authRequired, (req, res, next) => {
 
 // image upload middleware: rejects non-images / oversize with a clean 400/413
 function imgSingle(up) {
-  return (req, res, next) => up.single('file')(req, res, (err) => {
+  return (req, res, next) => up.single('file')(req, res, async (err) => {
     if (err) return res.status(413).json({ error: 'image_too_large' });
     if (!req.file) return res.status(400).json({ error: 'bad_image (png, jpg, gif incl. animated, webp)' });
+    try { await persistUpload(up._sub, req.file); }
+    catch { return res.status(500).json({ error: 'storage_failed' }); }
     next();
   });
 }

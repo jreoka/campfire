@@ -102,8 +102,11 @@ JWT_SECRET=dev DB_PATH=./data/campfire.db node server.js
 Everything persistent lives in `./data/`: `campfire.db` (all chat history,
 accounts, servers) plus `uploads/` (attached files, avatars, banners, icons,
 emoji). Uploads are stored next to the database on purpose — never next to
-the code, which is wiped on every rebuild. Back it all up by copying the
-folder while the container is stopped:
+the code, which is wiped on every rebuild. Alternatively set `S3_*` in
+`.env` (see `.env.example`) to keep media in S3-compatible storage such as
+Cloudflare R2 instead of on disk — URLs stay the same, and existing files
+move over with `node scripts/migrate-uploads-to-r2.js [--delete]`. Back it
+all up by copying the folder while the container is stopped:
 
 ```bash
 docker compose stop && cp -r data data-backup && docker compose start
