@@ -425,7 +425,9 @@ function folderEl(f, kids) {
   b.innerHTML = folderGrid(kids);
   if (kids.some((k) => k.id === S.serverId)) b.style.outline = '2px solid #ffffff88';
   b.onclick = () => { f.open = !f.open; saveLayout(); renderServerList(); };
-  b.ondblclick = () => renameFolder(f.id);
+  // NOTE: no dblclick-to-rename here — a quick expand+collapse reads as a
+  // double click and would pop the rename box by accident. Rename lives in
+  // the folder's right-click menu.
   b.oncontextmenu = (e) => { e.preventDefault(); openFolderMenu(f.id, e.clientX, e.clientY); };
   wireDrag(b, 'folder', f.id);
   wrap.appendChild(b);
@@ -2887,6 +2889,13 @@ function applyDrop(dd, t) {
       detachServer(dd.id);
       if (!f.servers.includes(dd.id)) f.servers.push(dd.id);
       f.open = true;
+    } else if (t.zone === 'before-folder' || t.zone === 'after-folder') {
+      // Gap drop beside a whole folder: land at root next to it (this is
+      // how servers leave an open folder without aiming at a thin line).
+      const fi = S.rootOrder.findIndex((it) => it.kind === 'folder' && it.id === t.id);
+      if (fi < 0) return;
+      detachServer(dd.id);
+      S.rootOrder.splice(fi + (t.zone === 'after-folder' ? 1 : 0), 0, { kind: 'server', id: dd.id });
     } else if (t.zone === 'combine') {
       if (dd.id === t.id) return;
       detachServer(dd.id);
@@ -2975,16 +2984,55 @@ function wireDrag(el, kind, id) {
   });
   el.addEventListener('dragend', () => { dragPayload = null; dropTarget = null; clearDropMarks(); hideMarker(); });
 }
-// drop on empty rail space → move to end of root
+// Drop anywhere on rail gaps/background: snap to the nearest item edge so
+// moving servers (especially out of an open folder) never needs pixel-perfect
+// aim at the marker line. Gaps between top-level items mean root; gaps inside
+// an open folder's box mean that folder.
 $('#server-list').addEventListener('dragover', (e) => {
-  if (!dragPayload || e.target.closest('[data-drag]')) return;
+  if (!dragPayload) return;
+  if (e.target.closest('[data-drag]')) return; // button handlers own direct hovers
   e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  clearDropMarks();
+  // Inside an open folder's box? Nearest child decides (stays in folder).
+  // Anywhere else? Nearest top-level unit decides (root level).
+  const box = e.target.closest ? e.target.closest('.folder-children') : null;
+  let cands = [];
+  if (box) {
+    cands = [...box.querySelectorAll('[data-drag]')].map((el) => ({ el, fid: null }));
+  } else {
+    for (const child of document.querySelectorAll('#server-list > *')) {
+      if (child.dataset && child.dataset.drag) {
+        cands.push({ el: child, fid: null });
+      } else if (child.classList && child.classList.contains('folder-wrap')) {
+        const fb = child.querySelector('[data-fid]');
+        if (fb) cands.push({ el: child, fid: fb.dataset.fid });
+      }
+    }
+  }
+  let best = null, bestDist = Infinity, bestEdge = 'after';
+  for (const c of cands) {
+    const r = c.el.getBoundingClientRect();
+    if (!r.height) continue;
+    const mid = r.top + r.height / 2;
+    const d = Math.abs(e.clientY - mid);
+    if (d < bestDist) { bestDist = d; best = c; bestEdge = e.clientY < mid ? 'before' : 'after'; }
+  }
+  if (!best) { hideMarker(); dropTarget = null; return; }
+  if (best.fid) {
+    dropTarget = { zone: bestEdge + '-folder', id: best.fid };
+  } else {
+    dropTarget = { zone: bestEdge, id: best.el.dataset.drag.split(':')[1] };
+  }
+  showMarker(best.el.getBoundingClientRect(), bestEdge);
 });
 $('#server-list').addEventListener('drop', (e) => {
   if (!dragPayload || e.target.closest('[data-drag]')) return;
   e.preventDefault();
-  const dd = dragPayload;
-  dragPayload = null; hideMarker();
+  const dd = dragPayload, t = dropTarget;
+  dragPayload = null; dropTarget = null; hideMarker(); clearDropMarks();
+  if (dd && t) { applyDrop(dd, t); return; } // gap drop with a snapped target
+  if (!dd) return;
   if (dd.kind === 'server') { detachServer(dd.id); S.rootOrder.push({ kind: 'server', id: dd.id }); }
   else {
     const from = S.rootOrder.findIndex((it) => it.kind === 'folder' && it.id === dd.id);
