@@ -4279,4 +4279,13 @@ window.addEventListener('beforeunload', () => {
 setMode('login');
 initTurnstile();
 if (store.token) boot();
-else showAuth();
+else {
+  showAuth();
+  // Signed-out invite link: preview the server + offer sign in/up (join happens after auth).
+  const inv0 = new URLSearchParams(location.search).get('invite');
+  if (inv0) {
+    try { history.replaceState(null, '', location.pathname); } catch {}
+    stashInvite(inv0);
+    showInviteLanding(inv0);
+  }
+}
