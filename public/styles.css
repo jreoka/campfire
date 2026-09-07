@@ -355,6 +355,10 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .uc-sub{font-size:.8rem;color:var(--muted)}
 .uc-status{display:flex;align-items:center;gap:.4rem;font-size:.82rem;margin-top:.45rem}
 .uc-statustext{font-size:.85rem;margin-top:.3rem;background:var(--panel-3);border:0;border-radius:12px;padding:.4rem .55rem;overflow-wrap:anywhere}
+.uc-bio{font-size:.85rem;margin-top:.3rem;overflow-wrap:anywhere;white-space:pre-wrap}
+.uc-bio a{color:var(--accent)}
+.uc-bio code{background:var(--panel-3);border-radius:6px;padding:.05rem .35rem;font-size:.85em}
+.uc-bio img.cemoi{width:22px;height:22px;vertical-align:-4px}
 .uc-since{font-size:.75rem;color:var(--muted);margin-top:.5rem}
 .uc-actions{display:flex;gap:.4rem;margin-top:.6rem}
 .avatar.big{width:56px;height:56px;font-size:1.3rem}
@@ -386,8 +390,9 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
   .set-tabs{flex-direction:row;align-items:center;min-width:0}
 }
 .set-pane label{display:block;font-size:.82rem;font-weight:600;color:var(--muted);margin:.65rem 0}
-.set-pane input,.set-pane select{width:100%;margin-top:.3rem;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:var(--radius);padding:.6rem .7rem;font-size:.92rem;outline:none}
-.set-pane input:focus,.set-pane select:focus{border-color:var(--accent)}
+.set-pane input,.set-pane select,.set-pane textarea{width:100%;margin-top:.3rem;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:var(--radius);padding:.6rem .7rem;font-size:.92rem;outline:none}
+.set-pane input:focus,.set-pane select:focus,.set-pane textarea:focus{border-color:var(--accent)}
+.set-pane textarea{resize:vertical;min-height:70px}
 .set-pane input:disabled{opacity:.55}
 .set-banner{height:90px;min-height:90px;border-radius:16px;background:var(--panel-3);background-size:cover;background-position:center;background-repeat:no-repeat}
 .pf-sec-label{font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:1rem 0 .55rem}

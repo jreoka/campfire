@@ -3508,6 +3508,7 @@ function openUserCard(uid, x, y) {
       <div class="uc-sub">@${esc(u.username)}${u.role === 'owner' ? ' · server owner' : ''}</div>
       <div class="uc-status"><span class="status-dot ${st}"></span><span>${stLabel}</span></div>
       ${u.status_text ? `<div class="uc-statustext">${esc(u.status_text)}</div>` : ''}
+      ${u.bio ? `<div class="uc-bio">${renderRich(u.bio)}</div>` : ''}
       ${u.created_at ? `<div class="uc-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
       ${cardRolesHTML(uid)}
       <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}${canMod ? '<button class="btn small danger" id="uc-kick">Kick</button><button class="btn small danger" id="uc-ban">Ban</button>' : ''}${uid !== S.me.id ? `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="uc-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>` : ''}<button class="btn small" id="uc-close">Close</button></div>
@@ -3614,6 +3615,8 @@ function openSettings(tab = 'profile') {
   $('#set-namegrad').value = S.me.name_gradient || S.me.name_color || '#aac7ff';
   $('#set-status').value = S.me.status || 'online';
   $('#set-statustext').value = S.me.status_text || '';
+  $('#set-bio').value = S.me.bio || '';
+  updateBioCount();
   $('#set-username').value = S.me.username || '';
   $('#set-pw-cur').value = ''; $('#set-pw-new').value = '';
   paintAvatar($('#set-avatar-prev'), S.me);
@@ -3861,12 +3864,15 @@ $('#set-banner-rm').onclick = async () => {
   try { const { user } = await api('/api/me/banner', { method: 'DELETE' }); S.me = { ...S.me, ...user }; $('#set-banner-prev').style.backgroundImage = ''; }
   catch { toast('Remove failed'); }
 };
+function updateBioCount() { const b = $('#set-bio'); if (b) $('#set-bio-count').textContent = `${b.value.length} / 300`; }
+$('#set-bio').addEventListener('input', updateBioCount);
 $('#set-profile-save').onclick = async () => {
   try {
     const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify({
       displayName: $('#set-display').value.trim(),
       status: $('#set-status').value,
       statusText: $('#set-statustext').value.trim(),
+      bio: $('#set-bio').value,
       nameColor: $('#set-namecustom').checked ? $('#set-namecolor').value : '',
       nameGradient: $('#set-namecustom').checked ? $('#set-namegrad').value : '',
     }) });

@@ -153,7 +153,7 @@ function serverView(serverId) {
   const channels = db.prepare("SELECT * FROM channels WHERE server_id = ? ORDER BY type DESC, position ASC, created_at ASC").all(serverId);
   const members = db.prepare(`
     SELECT u.id, u.username, u.display_name, u.avatar_color, u.avatar_url, u.banner_url, u.sidebar_banner_url,
-           u.status, u.status_text, u.name_color, u.name_gradient,
+           u.status, u.status_text, u.bio, u.name_color, u.name_gradient,
            CASE WHEN u.id = s.owner_id THEN 'owner' ELSE 'member' END as role
     FROM server_members m JOIN users u ON u.id = m.user_id JOIN servers s ON s.id = m.server_id
     WHERE m.server_id = ? ORDER BY u.display_name COLLATE NOCASE ASC
@@ -173,12 +173,12 @@ function publicUser(u) {
     id: u.id, username: u.username, display_name: u.display_name, avatar_color: u.avatar_color || '#5865f2',
     avatar_url: u.avatar_url || null, banner_url: u.banner_url || null,
     sidebar_banner_url: u.sidebar_banner_url || null,
-    status: u.status || 'online', status_text: u.status_text || '',
+    status: u.status || 'online', status_text: u.status_text || '', bio: u.bio || '',
     name_color: u.name_color || '', name_gradient: u.name_gradient || '',
     created_at: u.created_at || null,
   };
 }
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, name_color, name_gradient, created_at';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, bio, name_color, name_gradient, created_at';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -785,6 +785,9 @@ app.patch('/api/me', authRequired, (req, res) => {
   if (statusText !== undefined) {
     sets.push('status_text = ?'); vals.push(String(statusText).slice(0, 64));
   }
+  if (req.body?.bio !== undefined) {
+    sets.push('bio = ?'); vals.push(squashBreaks(req.body.bio).trim().slice(0, 300));
+  }
   if (req.body?.nameColor !== undefined) {
     const c = String(req.body.nameColor);
     if (c && !/^#[0-9a-fA-F]{6}$/.test(c)) return res.status(400).json({ error: 'bad_color' });
@@ -991,7 +994,7 @@ app.patch('/api/messages/:mid', authRequired, (req, res) => {
   const m = getMsg(req.params.mid);
   if (!m) return res.status(404).json({ error: 'no_message' });
   if (m.user_id !== req.user.id) return res.status(403).json({ error: 'only_your_own' });
-  const content = String(req.body?.content || '').trim().slice(0, 5000);
+  const content = squashBreaks(String(req.body?.content || '')).trim().slice(0, 5000);
   if (!content) return res.status(400).json({ error: 'empty_message' });
   db.prepare('UPDATE messages SET content = ?, edited_at = ? WHERE id = ?').run(content, now(), m.id);
   const full = hydrateMessages([db.prepare(`
@@ -1116,6 +1119,8 @@ function dmBanned(threadId, userId) {
   return !!db.prepare('SELECT 1 FROM dm_bans WHERE thread_id = ? AND user_id = ?').get(threadId, userId);
 }
 function displayOf(u) { return (u && (u.display_name || u.username)) || 'Someone'; }
+// Collapse blank-line spam (3+ newlines -> 2) so walls of empty lines can't flood chat/bios.
+function squashBreaks(s) { return String(s || '').replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n'); }
 
 // ---------- push notifications (Web Push) ----------
 function metaGet(k) { try { return db.prepare('SELECT value FROM meta WHERE key = ?').get(k)?.value || null; } catch { return null; } }
@@ -1556,7 +1561,7 @@ app.patch('/api/dms/messages/:mid', authRequired, (req, res) => {
   const m = dmMsg(req.params.mid);
   if (!m || !dmThreadFor(req.user.id, m.thread_id)) return res.status(404).json({ error: 'no_message' });
   if (m.user_id !== req.user.id) return res.status(403).json({ error: 'only_your_own' });
-  const content = String(req.body?.content || '').trim().slice(0, 5000);
+  const content = squashBreaks(String(req.body?.content || '')).trim().slice(0, 5000);
   if (!content) return res.status(400).json({ error: 'empty_message' });
   db.prepare('UPDATE dm_messages SET content = ?, edited_at = ? WHERE id = ?').run(content, now(), m.id);
   const full = fullDm(m.id, req.user.id);
@@ -1835,7 +1840,7 @@ wss.on('connection', (ws, req) => {
     if (msg.t === 'message') {
       const serverId = String(msg.serverId || '');
       const channelId = String(msg.channelId || '');
-      const content = String(msg.content || '').trim().slice(0, 5000);
+      const content = squashBreaks(String(msg.content || '')).trim().slice(0, 5000);
       const replyTo = String(msg.replyTo || '') || null;
       const threadRoot = String(msg.threadRoot || '') || null;
       const atts = Array.isArray(msg.attachments) ? msg.attachments.slice(0, 5) : [];
@@ -1896,7 +1901,7 @@ wss.on('connection', (ws, req) => {
       const threadId = String(msg.threadId || '');
       const t = dmThreadFor(me.userId, threadId);
       if (!t) return;
-      const content = String(msg.content || '').trim().slice(0, 5000);
+      const content = squashBreaks(String(msg.content || '')).trim().slice(0, 5000);
       const replyTo = String(msg.replyTo || '') || null;
       const cleanAtts = cleanAttachments(msg.attachments);
       if (!content && !cleanAtts.length) return;

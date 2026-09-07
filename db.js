@@ -246,6 +246,7 @@ addColumn('servers', 'banner_url', 'TEXT');
 addColumn('servers', 'description', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'name_color', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'name_gradient', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'bio', "TEXT NOT NULL DEFAULT ''");
 addColumn('server_members', 'position', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('server_members', 'folder_id', 'TEXT');
 // status_text cap lowered to 64: trim any legacy longer values (idempotent)
