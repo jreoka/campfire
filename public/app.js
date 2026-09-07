@@ -1902,7 +1902,25 @@ function renderStage() {
     paintTile(k, el);
   }
   updateCallHead();
+  fitStage();
 }
+// Full call view: size tiles to fit the available area — no scrollbar, no giant tiles.
+function fitStage() {
+  const grid = $('#stage-grid');
+  if (!grid) return;
+  const n = grid.children.length;
+  if (!S.callOpen || !S.voice || !n) { grid.style.gridTemplateColumns = ''; grid.style.justifyContent = ''; return; }
+  const gap = 8, W = grid.clientWidth, H = grid.clientHeight;
+  if (!W || !H) return;
+  let cols = n, w = (W - (n - 1) * gap) / n;
+  for (let c = 1; c <= n; c++) {
+    const rows = Math.ceil(n / c), tw = (W - (c - 1) * gap) / c, th = (tw * 9) / 16;
+    if (rows * th + (rows - 1) * gap <= H) { cols = c; w = tw; break; }
+  }
+  grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, ${Math.max(120, Math.floor(w))}px))`;
+  grid.style.justifyContent = 'center';
+}
+window.addEventListener('resize', () => { try { fitStage(); } catch {} });
 const MIC_OFF_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3M2 2l20 20"/></svg>';
 // Discord-style: occupants listed under their voice channel, green ring while talking.
 function renderVoiceUsers() {

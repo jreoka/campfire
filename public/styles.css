@@ -102,7 +102,7 @@ h1,h2,h3{letter-spacing:-0.01em}
 .mini.danger:hover{background:var(--red-hover)}
 #me-card{display:flex;align-items:center;gap:.55rem;padding:.65rem .75rem;border-top:1px solid var(--line);background:var(--panel);font-size:.88rem;font-weight:600;cursor:pointer}
 .avatar{width:38px;height:38px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:700;color:#fff;flex-shrink:0;font-size:.85rem}
-#voice-bar{display:flex;flex-direction:column;gap:.5rem;padding:.6rem .7rem;background:var(--inset);border-top:1px solid var(--green);font-size:.85rem;border-radius:16px 16px 0 0}
+#voice-bar{display:flex;flex-direction:column;gap:.5rem;padding:.6rem .7rem;background:var(--inset);border-top:1px solid var(--green);font-size:.85rem;border-radius:0}
 .vb-btns{display:flex;align-items:center;justify-content:center;gap:.35rem}
 .vb-btn{border:0;background:var(--panel-3);color:var(--text);border-radius:12px;width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0}
 .vb-btn:hover{background:var(--accent-container)}
@@ -140,7 +140,7 @@ h1,h2,h3{letter-spacing:-0.01em}
 #stage{border-bottom:1px solid var(--line);background:var(--inset);padding:.6rem;max-height:46dvh;overflow-y:auto;flex-shrink:0}
 /* full call view: stage takes the entire chat area */
 #chat.call-open #stage{flex:1;min-height:0;max-height:none;border-bottom:0;display:flex;flex-direction:column;overflow:hidden}
-#chat.call-open #stage-grid{flex:1;min-height:0;overflow-y:auto;align-content:center;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+#chat.call-open #stage-grid{flex:1;min-height:0;overflow-y:auto;align-content:center;justify-content:center;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
 #chat.call-open #voice-fab{display:none!important}
 #stage-head{display:flex;align-items:center;gap:.5rem;padding:.1rem .2rem .55rem}
 #stage-head strong{font-size:.92rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
