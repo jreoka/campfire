@@ -1,0 +1,5 @@
+# Production frontend. DOMAIN is injected from .env by docker-compose.prod.yml.
+# Caddy fetches and renews a Let's Encrypt certificate automatically.
+{$DOMAIN} {
+	reverse_proxy campfire:3000
+}

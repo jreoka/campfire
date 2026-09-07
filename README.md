@@ -58,6 +58,21 @@ server {
 
 </details>
 
+### Option B: full production stack (app + automatic HTTPS, Docker only)
+
+If the host has Docker and a domain pointed at it, this repo ships a
+production overlay with Caddy fetching your TLS certificate automatically:
+
+```bash
+git clone https://github.com/jreoka/campfire.git && cd campfire
+cp .env.example .env
+# edit .env: JWT_SECRET=$(openssl rand -base64 32), DOMAIN=chat.example.com, BIND=127.0.0.1
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+Open `https://your-domain` — done. Ports 80 and 443 must be reachable for the
+certificate challenge.
+
 ## 2. Friends join on their phones 📲
 
 1. Send them `https://your-server` + the **invite code** (or the full `?invite=CODE` link).

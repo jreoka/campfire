@@ -1,0 +1,29 @@
+# Production overlay: Caddy in front with automatic HTTPS (Let's Encrypt).
+# The app stays on the internal Docker network; only 80/443 are public.
+#
+# Usage on the server:
+#   cp .env.example .env   # set JWT_SECRET, DOMAIN, BIND=127.0.0.1
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Requires: DNS A record for $DOMAIN pointing at this host, ports 80+443 reachable.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: campfire-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - DOMAIN=${DOMAIN:?Set DOMAIN in .env for production}
+    depends_on:
+      - campfire
+
+volumes:
+  caddy_data:
+  caddy_config:
