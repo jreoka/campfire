@@ -397,6 +397,18 @@ function serverBtn(s) {
   wireDrag(b, 'server', s.id);
   return b;
 }
+function folderGrid(kids) {
+  // Discord-style preview: up to 4 server icons in a mini grid.
+  const shown = kids.slice(0, 4);
+  if (!shown.length) return '';
+  const cells = shown.map((s) => {
+    const label = (s.name || '?').trim().charAt(0).toUpperCase() || '?';
+    return s.icon_url
+      ? `<span class="fic"><img src="${esc(s.icon_url)}" alt="" loading="lazy" draggable="false" data-fb-letter="${esc(label)}" /></span>`
+      : `<span class="fic">${esc(label)}</span>`;
+  }).join('');
+  return `<span class="fgrid n${shown.length}">${cells}</span>`;
+}
 function folderEl(f, kids) {
   const wrap = document.createElement('div');
   wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px';
@@ -407,7 +419,7 @@ function folderEl(f, kids) {
   b.draggable = true;
   b.dataset.drag = 'folder:' + f.id;
   b.dataset.fid = f.id;
-  b.innerHTML = `<span>${kids.length}</span>`;
+  b.innerHTML = folderGrid(kids);
   if (kids.some((k) => k.id === S.serverId)) b.style.outline = '2px solid #ffffff88';
   b.onclick = () => { f.open = !f.open; saveLayout(); renderServerList(); };
   b.ondblclick = () => renameFolder(f.id);
@@ -417,6 +429,11 @@ function folderEl(f, kids) {
   if (f.open) {
     const kidsBox = document.createElement('div');
     kidsBox.className = 'folder-children';
+    // Encapsulate the expanded servers in a wash of the folder color.
+    if (/^#[0-9a-fA-F]{6}$/.test(f.color || '')) {
+      kidsBox.style.background = f.color + '26';
+      kidsBox.style.borderColor = f.color + '66';
+    }
     for (const s of kids) kidsBox.appendChild(serverBtn(s));
     wrap.appendChild(kidsBox);
   }
@@ -5257,6 +5274,9 @@ document.addEventListener('error', (e) => {
     t.replaceWith(a);
   } else if (t.dataset.fbEmoji) {
     t.replaceWith(document.createTextNode(t.dataset.fbEmoji));
+  } else if (t.dataset.fbLetter) {
+    const cell = t.parentNode;
+    if (cell) cell.textContent = t.dataset.fbLetter;
   }
 }, true);
 
