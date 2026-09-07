@@ -414,7 +414,7 @@ function folderGrid(kids) {
 function folderEl(f, kids) {
   const wrap = document.createElement('div');
   wrap.className = 'folder-wrap' + (f.open ? ' open' : '');
-  wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px';
+  wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center';
   const b = document.createElement('button');
   b.className = 'server-btn folder-btn' + (f.open ? ' open' : '');
   b.style.background = f.color;

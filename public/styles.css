@@ -613,6 +613,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .folder-wrap.open .fgrid>.fic:nth-child(3){border-bottom-left-radius:2px}
 .folder-wrap.open .fgrid>.fic:nth-child(4){border-bottom-right-radius:2px}
 .server-btn,.chan,.dmrow,.member{-webkit-touch-callout:none}
+.folder-wrap{gap:2px}
 .folder-wrap.open{gap:0}
 .folder-wrap.open .folder-btn{border-bottom-left-radius:8px;border-bottom-right-radius:8px}
 .folder-wrap.open .folder-children{border-top-left-radius:8px;border-top-right-radius:8px;border-top-width:2px}
