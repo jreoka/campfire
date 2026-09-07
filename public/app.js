@@ -3060,6 +3060,18 @@ function dmRowEl(t) {
     badge.textContent = unread > 99 ? '99+' : String(unread);
     b.appendChild(badge);
   }
+  if (!t.isGroup) {
+    const x = document.createElement('span');
+    x.className = 'dm-close';
+    x.textContent = '×';
+    x.title = 'Close DM';
+    x.setAttribute('role', 'button');
+    x.tabIndex = 0;
+    const doClose = (e) => { e.stopPropagation(); closeDm(t.id); };
+    x.onclick = doClose;
+    x.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doClose(e); } };
+    b.appendChild(x);
+  }
   return b;
 }
 function renderDmLists() {
@@ -3075,6 +3087,11 @@ async function openDmWith(userId) {
     await refreshDms();
     selectDmThread(thread.id);
   } catch (err) { toast(prettyError(err.message)); }
+}
+async function closeDm(tid) {
+  try { await api(`/api/dms/${tid}/close`, { method: 'POST' }); } catch {}
+  if (S.dmThreadId === tid) { S.dmThreadId = null; renderDmBlank(); }
+  refreshDms();
 }
 function openGroupModal() {
   const friends = S.friends.friends;
@@ -3097,13 +3114,16 @@ function dmCtxMenu(tid, x, y) {
   const items = [
     { label: 'Open', icon: '→', fn: () => selectDmThread(tid) },
   ];
+  if (t && !t.isGroup) {
+    items.push({ label: 'Close DM', icon: '×', fn: () => closeDm(tid) });
+  }
   if (t && t.isGroup) {
     items.push({ label: 'Add members…', icon: '+', fn: () => openGroupAdd(tid) });
   }
   if (t && t.isGroup && t.created_by === S.me?.id) {
     items.push({ label: 'Banned members…', icon: '⊘', fn: () => openGroupBans(tid) });
   }
-  // Direct (1:1) DMs can't be closed or left — Leave only exists for groups.
+  // Direct (1:1) DMs can be dismissed but never totally left — Leave only exists for groups.
   if (t && t.isGroup) {
     items.push({ label: 'Leave chat', icon: '🗑', danger: true, fn: async () => {
       try { await api(`/api/dms/${tid}/leave`, { method: 'POST' }); } catch {}

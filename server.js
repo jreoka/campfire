@@ -60,14 +60,6 @@ try {
     moved += r.changes;
   }
   if (moved) console.log(`[campfire] flattened ${moved} nested thread ${moved === 1 ? 'reply' : 'replies'} to 1 level`);
-  // Direct (1:1) DMs can't be closed anymore — restore any previously
-  // dismissed ones so they aren't stuck invisible with no way back.
-  // Idempotent (matches 0 rows when clean).
-  try {
-    const r = db.prepare(`UPDATE dm_members SET hidden = 0 WHERE hidden = 1 AND thread_id IN
-      (SELECT id FROM dm_threads WHERE is_group IS NULL OR is_group = 0)`).run();
-    if (r.changes) console.log(`[campfire] restored ${r.changes} dismissed direct DM ${r.changes === 1 ? 'membership' : 'memberships'}`);
-  } catch {}
 } catch {}
 
 // ---------- uploads ----------
@@ -1934,8 +1926,6 @@ app.post('/api/dms/:tid/leave', authRequired, (req, res) => {
 app.post('/api/dms/:tid/close', authRequired, (req, res) => {
   const t = dmThreadFor(req.user.id, req.params.tid);
   if (!t) return res.status(404).json({ error: 'no_thread' });
-  // Direct (1:1) DMs can't be closed/dismissed — closing is groups-only.
-  if (!t.is_group) return res.status(400).json({ error: 'not_group' });
   db.prepare('UPDATE dm_members SET hidden = 1 WHERE thread_id = ? AND user_id = ?').run(t.id, req.user.id);
   notifyUser(req.user.id, { t: 'dm-threads-changed' });
   res.json({ ok: true });
