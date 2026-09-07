@@ -320,10 +320,12 @@ async function boot() {
   } catch {}
 }
 function showAuth() {
+  $('#boot-splash')?.classList.add('hidden');
   $('#view-auth').classList.remove('hidden');
   $('#view-main').classList.add('hidden');
 }
 function showMain() {
+  $('#boot-splash')?.classList.add('hidden');
   $('#view-auth').classList.add('hidden');
   $('#view-main').classList.remove('hidden');
   paintMe();
