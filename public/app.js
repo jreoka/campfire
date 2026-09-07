@@ -1610,15 +1610,13 @@ async function openDmWith(userId) {
 }
 function openGroupModal() {
   const friends = S.friends.friends;
-  if (!friends.length) { toast('Add some friends first'); return; }
   openModal('New group chat', `
-    <label>Group name<input id="m-group-name" maxlength="40" placeholder="e.g. Game night" /></label>
-    <div style="margin-top:.6rem;max-height:220px;overflow-y:auto" id="m-group-picks">
+    <label>Group name<input id="m-group-name" maxlength="40" placeholder="e.g. Notes to self" /></label>
+    ${friends.length ? `<div style="margin-top:.6rem;max-height:220px;overflow-y:auto" id="m-group-picks">
       ${friends.map((f) => `<label class="gpick"><input type="checkbox" value="${f.id}" /> ${esc(f.display_name)} <span class="muted">@${esc(f.username)}</span></label>`).join('')}
-    </div>`, 'Create', async () => {
+    </div>` : '<p class="muted small">Just you for now — invite friends later.</p><div id="m-group-picks"></div>'}`, 'Create', async () => {
     const name = (document.querySelector('#m-group-name') || {}).value || '';
     const ids = [...document.querySelectorAll('#m-group-picks input:checked')].map((i) => i.value);
-    if (!ids.length) { toast('Pick at least one friend'); return; }
     try {
       const { thread } = await api('/api/dms/group', { method: 'POST', body: JSON.stringify({ name, userIds: ids }) });
       await refreshDms();

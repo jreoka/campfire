@@ -846,7 +846,6 @@ app.post('/api/dms', authRequired, (req, res) => {
 app.post('/api/dms/group', authRequired, (req, res) => {
   const name = String(req.body?.name || '').trim().slice(0, 40) || 'Group chat';
   const ids = [...new Set((req.body?.userIds || []).map(String))].filter((v) => v !== req.user.id).slice(0, 9);
-  if (!ids.length) return res.status(400).json({ error: 'pick_friends' });
   for (const oid of ids) {
     if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(oid)) return res.status(404).json({ error: 'user_not_found' });
     if (!areFriends(req.user.id, oid)) return res.status(403).json({ error: 'add_friend_first' });
