@@ -412,7 +412,11 @@ function renderServerList() {
     }
   }
   for (const s of S.servers) {
-    if (!S.rootOrder.some((it) => it.kind === 'server' && it.id === s.id)) box.appendChild(serverBtn(s));
+    if (S.rootOrder.some((it) => it.kind === 'server' && it.id === s.id)) continue;
+    // Servers living inside a folder render under that folder only — without
+    // this they would duplicate at the bottom of the rail.
+    if (S.layoutFolders.some((f) => (f.servers || []).includes(s.id))) continue;
+    box.appendChild(serverBtn(s));
   }
 }
 async function selectServer(id) {
