@@ -37,6 +37,31 @@ const APP_VERSION = (() => {
   } catch { return 'dev'; }
 })();
 
+// One-time flatten: threads are 1 level deep — re-parent any reply-of-a-reply
+// onto the ultimate root. Idempotent (matches 0 rows when clean), so it runs
+// on every boot and also repairs databases written by older clients.
+try {
+  // Replies whose root was deleted before root-delete cascaded are unreachable
+  // (history hides non-roots, thread fetch 404s without the root) — drop them.
+  const orphans = db.prepare(`SELECT id FROM messages WHERE thread_root_id IS NOT NULL
+    AND thread_root_id NOT IN (SELECT id FROM messages)`).all().map((r) => r.id);
+  if (orphans.length) {
+    const ph = orphans.map(() => '?').join(',');
+    try { db.prepare(`DELETE FROM message_pins WHERE message_id IN (${ph})`).run(...orphans); } catch {}
+    db.prepare(`DELETE FROM messages WHERE id IN (${ph})`).run(...orphans);
+    console.log(`[campfire] removed ${orphans.length} orphaned thread ${orphans.length === 1 ? 'reply' : 'replies'}`);
+  }
+  let moved = 0;
+  for (let i = 0; i < 10; i++) {
+    const r = db.prepare(`UPDATE messages SET thread_root_id =
+      (SELECT p.thread_root_id FROM messages p WHERE p.id = messages.thread_root_id)
+      WHERE thread_root_id IN (SELECT id FROM messages WHERE thread_root_id IS NOT NULL)`).run();
+    if (!r.changes) break;
+    moved += r.changes;
+  }
+  if (moved) console.log(`[campfire] flattened ${moved} nested thread ${moved === 1 ? 'reply' : 'replies'} to 1 level`);
+} catch {}
+
 // ---------- uploads ----------
 // Uploads live next to the database (persistent volume), never next to the code
 // (container image layers are ephemeral and wiped on every rebuild).
@@ -1010,11 +1035,22 @@ app.delete('/api/messages/:mid', authRequired, (req, res) => {
   const s = getServer(m.server_id);
   const canDelete = m.user_id === req.user.id || (s && isAdmin(s.id, req.user.id));
   if (!canDelete) return res.status(403).json({ error: 'forbidden' });
+  // Deleting a thread root removes its replies too (threads are 1 level deep).
+  let pinsChanged = false;
+  if (!m.thread_root_id) {
+    const kidIds = db.prepare('SELECT id FROM messages WHERE thread_root_id = ?').all(m.id).map((r) => r.id);
+    if (kidIds.length) {
+      const ph = kidIds.map(() => '?').join(',');
+      if (db.prepare(`DELETE FROM message_pins WHERE message_id IN (${ph})`).run(...kidIds).changes) pinsChanged = true;
+      db.prepare('DELETE FROM messages WHERE thread_root_id = ?').run(m.id);
+    }
+  }
   db.prepare('DELETE FROM messages WHERE id = ?').run(m.id);
-  if (db.prepare('DELETE FROM message_pins WHERE message_id = ?').run(m.id).changes) {
+  if (db.prepare('DELETE FROM message_pins WHERE message_id = ?').run(m.id).changes) pinsChanged = true;
+  if (pinsChanged) {
     broadcastToServer(m.server_id, { t: 'pins-changed', serverId: m.server_id, channelId: m.channel_id });
   }
-  broadcastToServer(m.server_id, { t: 'message-deleted', serverId: m.server_id, channelId: m.channel_id, messageId: m.id });
+  broadcastToServer(m.server_id, { t: 'message-deleted', serverId: m.server_id, channelId: m.channel_id, messageId: m.id, threadRoot: m.thread_root_id || null });
   res.json({ ok: true });
 });
 
@@ -2244,7 +2280,7 @@ wss.on('connection', (ws, req) => {
       const channelId = String(msg.channelId || '');
       const content = squashBreaks(String(msg.content || '')).trim().slice(0, 5000);
       const replyTo = String(msg.replyTo || '') || null;
-      const threadRoot = String(msg.threadRoot || '') || null;
+      let threadRoot = String(msg.threadRoot || '') || null;
       const atts = Array.isArray(msg.attachments) ? msg.attachments.slice(0, 5) : [];
       if ((!content && !atts.length) || !serverId || !channelId) return;
       if (!me.servers.has(serverId) || !isMember(serverId, me.userId)) return;
@@ -2263,8 +2299,10 @@ wss.on('connection', (ws, req) => {
         if (!pr || pr.channel_id !== channelId) return;
       }
       if (threadRoot) {
-        const rr = db.prepare('SELECT channel_id FROM messages WHERE id = ? AND server_id = ?').get(threadRoot, serverId);
+        const rr = db.prepare('SELECT channel_id, thread_root_id FROM messages WHERE id = ? AND server_id = ?').get(threadRoot, serverId);
         if (!rr || rr.channel_id !== channelId) return;
+        // Threads are 1 level deep: a reply-to-a-reply lands on the ultimate root.
+        if (rr.thread_root_id) threadRoot = rr.thread_root_id;
       }
       const cleanAtts = [];
       for (const a of atts) {

@@ -735,7 +735,7 @@ function messageEl(m, opts = {}) {
     inner += '<div class="msg-atts">' + m.attachments.map(attachmentHTML).join('') + '</div>';
   }
   inner += reactionsHTML(m);
-  if (!opts.inThread && m.threadCount > 0) {
+  if (!opts.inThread && !m.threadRoot && m.threadCount > 0) {
     inner += `<button class="thread-link" data-act="thread">${m.threadCount} ${m.threadCount === 1 ? 'reply' : 'replies'} →</button>`;
   }
   inner += '</div>';
@@ -1004,6 +1004,8 @@ function onWS(m) {
     case 'message-deleted': {
       const arr = (S.messages.get(m.channelId) || []).filter((x) => x.id !== m.messageId);
       S.messages.set(m.channelId, arr);
+      // A deleted reply drops the root's live reply count (drives the N-replies link).
+      if (m.threadRoot) updateMsgInCaches(m.threadRoot, (r) => { r.threadCount = Math.max(0, (r.threadCount || 1) - 1); });
       if (S.thread) {
         if (S.thread.rootId === m.messageId) closeThread();
         else S.thread.replies = S.thread.replies.filter((x) => x.id !== m.messageId);
@@ -2140,7 +2142,7 @@ function messageMenuItems(m, mid, x, y) {
     { label: 'Reply', icon: '↩', fn: () => { S.replyTo = m; renderComposerMeta(); $('#in-message').focus(); } },
     { label: 'Forward', icon: '↗', fn: () => openForward(mid) },
   ];
-  if (!dm) items.push({ label: 'Open thread', icon: '💬', fn: () => openThread(mid) });
+  if (!dm && !m.threadRoot) items.push({ label: 'Open thread', icon: '💬', fn: () => openThread(mid) });
   if (!m.threadRoot) items.push({ label: S.pinIds.has(mid) ? 'Unpin message' : 'Pin message', icon: PIN_SVG, fn: () => togglePin(mid) });
   items.push({ sep: true });
   if (own) items.push({ label: 'Edit message', icon: '✎', fn: () => startEdit(mid) });
