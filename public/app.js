@@ -859,10 +859,13 @@ function leaveVoice(silent) {
   for (const [, pc] of S.voice.pcs) { try { pc.close(); } catch {} }
   S.voice.stream?.getTracks().forEach((t) => t.stop());
   for (const [, el] of S.voice.audioEls) { try { el.remove(); } catch {} }
-  const { serverId } = S.voice;
+  const { serverId, channelId } = S.voice;
   S.voice = null;
   stopSpeakingMonitor();
   $('#voice-bar').classList.add('hidden');
+  // optimistically drop self so the sidebar clears instantly (server echo confirms)
+  const occ = S.voiceOccupancy.get(channelId) || [];
+  S.voiceOccupancy.set(channelId, occ.filter((p) => p.id !== S.me.id));
   if (!silent) S.ws?.send(JSON.stringify({ t: 'voice-leave' }));
   renderChannels();
   if (S.updateReady && !silent) location.reload();
@@ -1656,7 +1659,13 @@ function pollVersion() {
     }
   });
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.t === 'SW_UPDATED') checkVersion(); });
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (e.data && e.data.t === 'SW_PING' && e.source) {
+        try { e.source.postMessage({ t: 'SW_PONG', hasUpdater: true }); } catch {}
+        checkVersion();
+      }
+      else if (e.data && e.data.t === 'SW_UPDATED') checkVersion();
+    });
     navigator.serviceWorker.addEventListener('controllerchange', () => checkVersion());
   }
 }

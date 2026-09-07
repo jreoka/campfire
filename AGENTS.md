@@ -146,6 +146,11 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
       grid above chat. Green VAD rings: each client analyses its own mic and
       broadcasts speech state, so everyone sees who is talking in every room.
       Mute forces speaking off server-side.
+- [x] Stale-state + update-delivery fixes (2026-09-07): leaver now gets the trimmed
+      occupant echo (their sidebar cleared instantly + optimistically client-side).
+      Auto-update hardened: navigations are network-first (a plain refresh is always
+      fresh), tabs poll the code fingerprint, and the SW pings tabs on activate —
+      tabs predating the updater get one forced reload so nobody sticks on old code.
       icon to uploads living in ephemeral image storage — moved UPLOAD_DIR next to
       DB_PATH (persistent volume), verified files survive rebuilds. Missing uploads
       now 404 (never SPA HTML). Client degrades gracefully (avatars→initials,

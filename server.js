@@ -737,9 +737,11 @@ function leaveVoice(ws, notify = true) {
   ws.meta.voice = null;
   if (notify) {
     broadcastToServer(v.serverId, { t: 'voice-peer-left', serverId: v.serverId, channelId: v.channelId, userId: ws.meta.userId });
-    // send updated list to remaining occupants
+    // send updated list to remaining occupants… and to the leaver too,
+    // otherwise their own sidebar keeps showing them until a refresh
     const peers = voicePeersPayload(key);
     for (const other of voiceRooms.get(key) || []) safeSend(other, { t: 'voice-peers', serverId: v.serverId, channelId: v.channelId, peers });
+    safeSend(ws, { t: 'voice-peers', serverId: v.serverId, channelId: v.channelId, peers });
   }
 }
 
