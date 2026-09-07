@@ -603,9 +603,10 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .fic{border-radius:4px;overflow:hidden;background:rgba(0,0,0,.32);color:#fff;font-size:.68rem;font-weight:800;display:flex;align-items:center;justify-content:center;min-width:0;min-height:0;line-height:1}
 .fic.empty{background:transparent}
 .fic img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
+.server-btn,.chan,.dmrow,.member{-webkit-touch-callout:none}
 .folder-wrap.open{gap:0}
-.folder-wrap.open .folder-btn{z-index:1}
-.folder-wrap.open .folder-children{margin-top:-12px;padding-top:16px}
+.folder-wrap.open .folder-btn{border-bottom-left-radius:8px;border-bottom-right-radius:8px}
+.folder-wrap.open .folder-children{border-top-left-radius:8px;border-top-right-radius:8px;border-top-width:2px}
 #home-badge{position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;font-size:.62rem;font-weight:800;border-radius:999px;padding:.05rem .35rem;min-width:18px;text-align:center;line-height:1.3;pointer-events:none}
 #home-badge.hidden{display:none}
 .dm-badge{flex-shrink:0;background:var(--red);color:#fff;font-size:.66rem;font-weight:800;border-radius:999px;padding:.08rem .42rem;min-width:20px;text-align:center;line-height:1.35}

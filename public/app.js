@@ -438,6 +438,7 @@ function folderEl(f, kids) {
     if (/^#[0-9a-fA-F]{6}$/.test(f.color || '')) {
       kidsBox.style.background = f.color + '26';
       kidsBox.style.borderColor = f.color + '66';
+      kidsBox.style.borderTopColor = f.color;
     }
     for (const s of kids) kidsBox.appendChild(serverBtn(s));
     wrap.appendChild(kidsBox);
@@ -2807,25 +2808,35 @@ document.addEventListener('contextmenu', (e) => {
 // touch-hold (long press): bottom sheet for messages, popup menus elsewhere
 let holdT = null;
 let holdSheet = false; // long-press opened the sheet: swallow the lift-off click
+let holdMenu = false; // long-press opened a ctx menu: swallow the lift-off click too
+let holdX = 0, holdY = 0; // finger jitter must not cancel a hold; only real moves do
 // (non-passive so preventDefault() can cancel the synthetic click)
 document.addEventListener('touchend', (e) => {
   if (holdSheet) { holdSheet = false; try { e.preventDefault(); } catch {} }
+  if (holdMenu) { holdMenu = false; try { e.preventDefault(); } catch {} }
 }, { passive: false });
 document.addEventListener('touchstart', (e) => {
   if (!e.target.closest || e.target.closest('input, textarea, select, a')) return;
-  const t = e.target.closest('.msg,.chan,.member,.server-btn,.vuser');
+  const t = e.target.closest('.msg,.chan,.member,.server-btn,.vuser,[data-dmthread]');
   if (!t) return;
   const touch = e.touches[0];
   const x = touch.clientX, y = touch.clientY;
+  holdX = x; holdY = y;
+  holdMenu = false;
   holdT = setTimeout(() => {
     holdT = null;
     try { navigator.vibrate && navigator.vibrate(10); } catch {}
     const mt = t.closest('.msg[data-mid]');
     if (mt && isCoarse()) { holdSheet = true; openMsgSheet(mt.dataset.mid); }
-    else ctxFor(t, x, y);
+    else if (ctxFor(t, x, y)) holdMenu = true;
   }, 550);
 }, { passive: true });
-['touchend', 'touchcancel', 'touchmove'].forEach((ev) => document.addEventListener(ev, () => { clearTimeout(holdT); holdT = null; }, { passive: true }));
+['touchend', 'touchcancel'].forEach((ev) => document.addEventListener(ev, () => { clearTimeout(holdT); holdT = null; }, { passive: true }));
+// touchmove only cancels a hold on a real move (finger jitter is normal)
+document.addEventListener('touchmove', (e) => {
+  const t = e.touches && e.touches[0];
+  if (t && Math.hypot(t.clientX - holdX, t.clientY - holdY) > 12) { clearTimeout(holdT); holdT = null; }
+}, { passive: true });
 
 /* ================= rail folders + drag reorder ================= */
 let dragPayload = null, dropTarget = null, dropMarker = null, folderMenuEl = null;
