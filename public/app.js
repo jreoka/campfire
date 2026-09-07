@@ -1639,6 +1639,8 @@ function dmTitle(t) { return t.isGroup ? (t.name || 'Group chat') : ((dmPeer(t) 
 function openServerView() {
   S.view = 'server';
   document.body.classList.remove('view-home', 'dm-open');
+  $('#friends-page').classList.add('hidden');
+  $('#messages').classList.remove('hidden');
   $('#server-ui').classList.remove('hidden');
   $('#home-ui').classList.add('hidden');
   $('#btn-home').classList.remove('active');
@@ -1653,9 +1655,8 @@ async function openHome() {
   document.querySelectorAll('#server-list .server-btn').forEach((b) => b.classList.remove('active'));
   closeThread(true);
   await Promise.all([refreshFriends(), refreshDms()]);
-  if (!S.dmThreadId || !S.dms.some((t) => t.id === S.dmThreadId)) S.dmThreadId = (S.dms[0] || {}).id || null;
-  if (S.dmThreadId) selectDmThread(S.dmThreadId);
-  else renderDmBlank();
+  S.dmThreadId = null;
+  renderDmBlank();
 }
 async function refreshFriends() {
   try { S.friends = await api('/api/friends'); renderFriendLists(); } catch {}
@@ -1839,6 +1840,8 @@ async function selectDmThread(id) {
   if (!t) { renderDmBlank(); return; }
   document.body.classList.add('dm-open');
   $('#composer').classList.remove('hidden');
+  $('#friends-page').classList.add('hidden');
+  $('#messages').classList.remove('hidden');
   renderDmMembers();
   $('#chan-hash').textContent = t.isGroup ? '' : '@';
   const peer = dmPeer(t);
@@ -1858,10 +1861,11 @@ async function selectDmThread(id) {
 function renderDmBlank() {
   document.body.classList.remove('dm-open');
   $('#composer').classList.add('hidden');
+  $('#messages').classList.add('hidden');
+  $('#friends-page').classList.remove('hidden');
   $('#chan-hash').textContent = '';
-  $('#chan-name').textContent = 'Home';
+  $('#chan-name').textContent = 'Friends';
   $('#typing').textContent = '';
-  $('#messages').innerHTML = '<p class="muted" style="text-align:center;margin-top:2rem">Pick a conversation — or add a friend to start one.</p>';
 }
 function renderDmMessages(force = false) {
   const box = $('#messages');
