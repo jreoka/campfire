@@ -427,8 +427,8 @@ function renderMembers() {
     const div = document.createElement('div');
     div.className = 'member' + (st === 'offline' ? ' off' : '');
     div.dataset.uid = m.id;
-    if (m.banner_url && st !== 'offline') {
-      div.style.backgroundImage = `linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${m.banner_url}")`;
+    if (m.sidebar_banner_url && st !== 'offline') {
+      div.style.backgroundImage = `linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${m.sidebar_banner_url}")`;
       div.style.backgroundSize = 'cover';
       div.style.backgroundPosition = 'right center';
     }
@@ -918,11 +918,15 @@ $('#btn-add-voice').onclick = async () => {
 };
 
 // ---------- mobile nav ----------
+// ---------- mobile navigation ----------
 $('#btn-menu').onclick = () => document.body.classList.toggle('nav-open');
+$('#btn-members').onclick = (e) => { e.stopPropagation(); document.body.classList.toggle('members-open'); };
 $('#sidebar-scrim').onclick = () => document.body.classList.remove('nav-open');
 
 // ---------- VOICE (WebRTC mesh) ----------
 $('#btn-voice-leave').onclick = () => leaveVoice();
+$('#vf-leave').onclick = () => leaveVoice();
+$('#vf-mute').onclick = () => toggleMute();
 $('#btn-mute').onclick = () => toggleMute();
 
 async function joinVoice(serverId, channelId) {
@@ -938,6 +942,7 @@ async function joinVoice(serverId, channelId) {
   const ch = S.serverDetail?.channels.find((c) => c.id === channelId);
   S.voice = { serverId, channelId, stream, pcs: new Map(), muted: false, speaking: false, audioEls: new Map() };
   $('#voice-bar').classList.remove('hidden');
+  $('#voice-fab').classList.remove('hidden');
   $('#voice-chan-name').textContent = ch ? ch.name : 'voice';
   $('#btn-mute').textContent = 'Mute';
   S.ws?.send(JSON.stringify({ t: 'voice-join', serverId, channelId }));
@@ -954,6 +959,7 @@ function leaveVoice(silent) {
   S.voice = null;
   stopSpeakingMonitor();
   $('#voice-bar').classList.add('hidden');
+  $('#voice-fab').classList.add('hidden');
   // optimistically drop self so the sidebar clears instantly (server echo confirms)
   const occ = S.voiceOccupancy.get(channelId) || [];
   S.voiceOccupancy.set(channelId, occ.filter((p) => p.id !== S.me.id));
@@ -966,6 +972,8 @@ function toggleMute() {
   S.voice.muted = !S.voice.muted;
   S.voice.stream.getAudioTracks().forEach((t) => (t.enabled = !S.voice.muted));
   $('#btn-mute').textContent = S.voice.muted ? 'Unmute' : 'Mute';
+  $('#vf-mute').textContent = S.voice.muted ? 'Unmute' : 'Mute';
+  $('#vf-name').textContent = (S.serverDetail?.channels.find((c) => c.id === S.voice.channelId) || {}).name || 'voice';
   if (S.voice.muted) { S.voice.speaking = false; setSpeakingUI(S.me.id, false); }
   S.ws?.send(JSON.stringify({ t: 'voice-state', muted: S.voice.muted, speaking: S.voice.muted ? false : !!S.voice.speaking }));
   renderVoiceUsers();
@@ -1578,7 +1586,7 @@ function sendGif(g) {
   const url = g.gif || g.mp4;
   const pick = S.gifPick;
   closePicker();
-  if (pick === 'avatar' || pick === 'banner') { if (url) applyProfileUrl(pick, url); return; }
+  if (pick === 'avatar' || pick === 'banner' || pick === 'sidebar') { if (url) applyProfileUrl(pick, url); return; }
   if (!S.serverId || !S.channelId || !url) return;
   sendChat('', { attachments: [{ url, name: (g.title || 'gif').slice(0, 80) + '.gif', mime: 'image/gif', size: 0, kind: 'image' }] });
 }
@@ -1658,14 +1666,16 @@ async function saveEdit(mid) {
 
 // ---------- threads ----------
 async function applyProfileUrl(kind, url) {
+  const ep = kind === 'sidebar' ? 'sidebar-banner' : kind;
   try {
-    const { user } = await api(`/api/me/${kind}/url`, { method: 'POST', body: JSON.stringify({ url }) });
+    const { user } = await api(`/api/me/${ep}/url`, { method: 'POST', body: JSON.stringify({ url }) });
     S.me = { ...S.me, ...user };
     paintMe(); renderMembers();
     if (kind === 'avatar') paintAvatar($('#set-avatar-prev'), S.me);
-    else $('#set-banner-prev').style.backgroundImage = S.me.banner_url ? `url('${S.me.banner_url}')` : '';
-    loadMediaHist();
-    toast(kind === 'avatar' ? 'Avatar updated' : 'Banner updated');
+    else if (kind === 'banner') $('#set-banner-prev').style.backgroundImage = S.me.banner_url ? `url('${S.me.banner_url}')` : '';
+    else $('#set-sidebar-prev').style.backgroundImage = S.me.sidebar_banner_url ? `url('${S.me.sidebar_banner_url}')` : '';
+    if (kind !== 'sidebar') loadMediaHist();
+    toast((kind === 'avatar' ? 'Avatar' : kind === 'banner' ? 'Banner' : 'Sidebar banner') + ' updated');
   } catch (err) { toast('Failed: ' + prettyError(err.message)); }
 }
 async function loadMediaHist() {
@@ -1760,7 +1770,7 @@ function openUserCard(uid, x, y) {
   paintAvatar(card.querySelector('.avatar'), u);
   card.classList.remove('hidden');
   const r = card.getBoundingClientRect();
-  card.style.left = Math.max(8, Math.min(x || 8, innerWidth - 296)) + 'px';
+  card.style.left = Math.max(8, Math.min(x || 8, innerWidth - Math.min(296, innerWidth - 16))) + 'px';
   card.style.top = Math.max(8, Math.min(y || 8, innerHeight - (r.height || 300) - 8)) + 'px';
   $('#uc-close').onclick = closeUserCard;
   const men = $('#uc-mention');
@@ -1825,6 +1835,8 @@ function openSettings(tab = 'profile') {
   paintAvatar($('#set-avatar-prev'), S.me);
   const b = $('#set-banner-prev');
   b.style.backgroundImage = S.me.banner_url ? `url('${S.me.banner_url}')` : '';
+  const sb = $('#set-sidebar-prev');
+  if (sb) sb.style.backgroundImage = S.me.sidebar_banner_url ? `url('${S.me.sidebar_banner_url}')` : '';
   loadMediaHist();
   renderServerTab();
   $('#settings-backdrop').classList.remove('hidden');
@@ -1853,6 +1865,28 @@ $('#set-avatar-btn').onclick = () => $('#set-avatar-file').click();
 $('#set-banner-btn').onclick = () => $('#set-banner-file').click();
 $('#set-avatar-gif').onclick = () => { S.gifPick = 'avatar'; openPicker('insert', null, 'gifs'); };
 $('#set-banner-gif').onclick = () => { S.gifPick = 'banner'; openPicker('insert', null, 'gifs'); };
+$('#set-sidebar-btn').onclick = () => $('#set-sidebar-file').click();
+$('#set-sidebar-gif').onclick = () => { S.gifPick = 'sidebar'; openPicker('insert', null, 'gifs'); };
+$('#set-sidebar-prev').onclick = () => $('#set-sidebar-file').click();
+$('#set-sidebar-file').addEventListener('change', async (e) => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try {
+    const { user } = await uploadImage('/api/me/sidebar-banner', f);
+    S.me = { ...S.me, ...user };
+    paintMe(); renderMembers();
+    $('#set-sidebar-prev').style.backgroundImage = S.me.sidebar_banner_url ? `url('${S.me.sidebar_banner_url}')` : '';
+    toast('Sidebar banner updated');
+  } catch (err) { toast('Upload failed: ' + prettyError(err.message)); }
+});
+$('#set-sidebar-rm').onclick = async () => {
+  try {
+    const { user } = await api('/api/me/sidebar-banner', { method: 'DELETE' });
+    S.me = { ...S.me, ...user };
+    paintMe(); renderMembers();
+    $('#set-sidebar-prev').style.backgroundImage = '';
+  } catch { toast('Remove failed'); }
+};
 $('#set-avatar-prev').onclick = () => $('#set-avatar-file').click();
 $('#set-banner-prev').onclick = () => $('#set-banner-file').click();
 $('#set-avatar-file').addEventListener('change', async (e) => {
@@ -2078,6 +2112,7 @@ function poke() {
   if (statusMenuEl && !e.target.closest('#status-pop') && !e.target.closest('#me-avatar')) closeStatusMenu();
   if (folderMenuEl && !e.target.closest('#folder-menu')) closeFolderMenu();
   if (ctxEl && !e.target.closest('#ctx-menu') && !e.target.closest('.msg-actions')) closeCtx();
+  if (document.body.classList.contains('members-open') && !e.target.closest('#members') && !e.target.closest('#btn-members')) document.body.classList.remove('members-open');
 });
  document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { closePicker(); closeUserCard(); closeStatusMenu(); closeFolderMenu(); closeCtx(); closeSettings(); $('#lightbox').classList.add('hidden'); }
@@ -2160,6 +2195,17 @@ function pollVersion() {
 window.addEventListener('beforeunload', () => {
   try { sessionStorage.setItem('cf_draft', JSON.stringify({ s: S.serverId, c: S.channelId, t: document.querySelector('#in-message') ? document.querySelector('#in-message').value : '' })); } catch {}
 });
+
+// touch devices have no hover: tapping a message toggles its action bar
+if (window.matchMedia && matchMedia('(hover: none)').matches) {
+  document.addEventListener('click', (e) => {
+    const msg = e.target.closest && e.target.closest('.msg[data-mid]');
+    if (!msg || e.target.closest('a,button,.msg-actions,.reaction,.reply-quote,input,textarea')) return;
+    const was = msg.classList.contains('show-actions');
+    document.querySelectorAll('.msg.show-actions').forEach((m) => m.classList.remove('show-actions'));
+    if (!was) msg.classList.add('show-actions');
+  });
+}
 
 // ---------- go ----------
 setMode('login');

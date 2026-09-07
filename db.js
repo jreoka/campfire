@@ -65,6 +65,7 @@ addColumn('users', 'status', "TEXT NOT NULL DEFAULT 'online'");
 addColumn('users', 'status_text', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'avatar_url', 'TEXT');
 addColumn('users', 'banner_url', 'TEXT');
+addColumn('users', 'sidebar_banner_url', 'TEXT');
 addColumn('servers', 'icon_url', 'TEXT');
 addColumn('messages', 'reply_to_id', 'TEXT');
 addColumn('messages', 'thread_root_id', 'TEXT');

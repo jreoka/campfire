@@ -59,6 +59,7 @@ function uploader(sub, mimes, maxBytes) {
 const upFile = uploader('files', FILE_MIMES, MAX_FILE_BYTES);
 const upImg = uploader('avatars', IMG_MIMES, MAX_IMG_BYTES);
 const upBanner = uploader('banners', IMG_MIMES, MAX_IMG_BYTES);
+const upSidebar = uploader('sidebar', IMG_MIMES, MAX_IMG_BYTES);
 const upIcon = uploader('icons', IMG_MIMES, MAX_IMG_BYTES);
 const upEmoji = uploader('emoji', IMG_MIMES, 4 * 1024 * 1024);
 function uploadUrl(sub, file) { return `/uploads/${sub}/${file.filename}?v=${Date.now().toString(36)}`; }
@@ -141,7 +142,7 @@ function serverView(serverId) {
   if (!s) return null;
   const channels = db.prepare("SELECT * FROM channels WHERE server_id = ? ORDER BY type DESC, position ASC, created_at ASC").all(serverId);
   const members = db.prepare(`
-    SELECT u.id, u.username, u.display_name, u.avatar_color, u.avatar_url, u.banner_url,
+    SELECT u.id, u.username, u.display_name, u.avatar_color, u.avatar_url, u.banner_url, u.sidebar_banner_url,
            u.status, u.status_text,
            CASE WHEN u.id = s.owner_id THEN 'owner' ELSE 'member' END as role
     FROM server_members m JOIN users u ON u.id = m.user_id JOIN servers s ON s.id = m.server_id
@@ -154,11 +155,12 @@ function publicUser(u) {
   return {
     id: u.id, username: u.username, display_name: u.display_name, avatar_color: u.avatar_color || '#5865f2',
     avatar_url: u.avatar_url || null, banner_url: u.banner_url || null,
+    sidebar_banner_url: u.sidebar_banner_url || null,
     status: u.status || 'online', status_text: u.status_text || '',
     created_at: u.created_at || null,
   };
 }
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, status, status_text, created_at';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, created_at';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -454,18 +456,34 @@ app.patch('/api/me', authRequired, (req, res) => {
   res.json({ user: u });
 });
 // set avatar/banner from a URL (e.g. a Klipy GIF) instead of an upload
-function setProfileUrl(req, res, col, kind) {
+function setProfileUrl(req, res, col, kind, record = true) {
   const url = String(req.body?.url || '').trim().slice(0, 500);
   if (!/^https:\/\//.test(url)) return res.status(400).json({ error: 'bad_url (https only)' });
   deleteUploaded(req.user[col]);
   db.prepare(`UPDATE users SET ${col} = ? WHERE id = ?`).run(url, req.user.id);
-  recordMedia(req.user.id, kind, url);
+  if (record) recordMedia(req.user.id, kind, url);
   const u = freshUser(req.user.id);
   broadcastUserUpdate(u);
-  res.json({ user: u, history: mediaHist(req.user.id, kind) });
+  res.json({ user: u, history: record ? mediaHist(req.user.id, kind) : [] });
 }
 app.post('/api/me/avatar/url', authRequired, (req, res) => setProfileUrl(req, res, 'avatar_url', 'avatar'));
 app.post('/api/me/banner/url', authRequired, (req, res) => setProfileUrl(req, res, 'banner_url', 'banner'));
+app.post('/api/me/sidebar-banner', authRequired, imgSingle(upSidebar), (req, res) => {
+  const url = uploadUrl('sidebar', req.file);
+  deleteUploaded(req.user.sidebar_banner_url);
+  db.prepare('UPDATE users SET sidebar_banner_url = ? WHERE id = ?').run(url, req.user.id);
+  const u = freshUser(req.user.id);
+  broadcastUserUpdate(u);
+  res.json({ user: u });
+});
+app.delete('/api/me/sidebar-banner', authRequired, (req, res) => {
+  deleteUploaded(req.user.sidebar_banner_url);
+  db.prepare('UPDATE users SET sidebar_banner_url = NULL WHERE id = ?').run(req.user.id);
+  const u = freshUser(req.user.id);
+  broadcastUserUpdate(u);
+  res.json({ user: u });
+});
+app.post('/api/me/sidebar-banner/url', authRequired, (req, res) => setProfileUrl(req, res, 'sidebar_banner_url', 'sidebar', false));
 app.get('/api/me/media-history', authRequired, (req, res) => {
   res.json({ avatar: mediaHist(req.user.id, 'avatar'), banner: mediaHist(req.user.id, 'banner') });
 });

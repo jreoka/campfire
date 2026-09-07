@@ -316,10 +316,36 @@ h1,h2,h3{letter-spacing:-0.01em}
 #folder-menu .swatches{display:flex;gap:.35rem;padding:.45rem .6rem}
 #folder-menu .sw{width:22px;height:22px;border-radius:50%;cursor:pointer;border:2px solid transparent}
 #folder-menu .sw.sel{border-color:#fff}
-/* ---------- mobile ---------- */
+/* ---------- mobile native app ---------- */
+body{touch-action:manipulation}
+.members-btn{display:none}
+#voice-fab{display:none}
 @media (max-width: 900px){
-  #members{display:none}
+  #members{display:flex;position:fixed;top:0;bottom:0;right:0;width:min(300px,84vw);z-index:45;transform:translateX(105%);transition:transform .22s;border-left:1px solid var(--line)}
+  body.members-open #members{transform:none}
+  .members-btn{display:inline-flex;align-items:center}
 }
+@media (max-width: 700px){
+  #sidebar{width:min(320px,86vw)}
+  #chan-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #typing{display:none}
+  #in-message,#in-thread{font-size:16px}
+  #composer .btn{padding:.7rem 1.1rem;min-height:44px}
+  #composer .tool-btn,#composer .gif-btn{min-height:44px;min-width:44px;justify-content:center}
+  #picker{left:0;right:0;bottom:0;width:auto;max-height:62dvh;border-radius:20px 20px 0 0}
+  #mention-pop{left:.5rem;right:.5rem}
+  #thread-panel{width:min(360px,100vw)}
+  #usercard{width:min(300px,calc(100vw - 16px))}
+  #settings-backdrop{padding:0}
+  .settings{max-width:none;max-height:none;height:100dvh;border-radius:0}
+  .modal{max-width:calc(100vw - 2rem)}
+  #voice-fab{display:flex;align-items:center;gap:.5rem;margin:.5rem .6rem 0;padding:.55rem .7rem;background:var(--panel-2);border:1px solid var(--line);border-radius:999px;font-size:.85rem}
+  #voice-fab.hidden{display:none}
+  #voice-fab .mini{padding:.45rem .8rem}
+  .msg.show-actions .msg-actions{display:flex}
+  .msg .text{font-size:.95rem}
+}
+/* ---------- mobile (drawer rules) ---------- */
 @media (max-width: 700px){
   #sidebar{position:fixed;top:0;bottom:0;left:0;transform:translateX(-105%);transition:transform .2s}
   body.nav-open #sidebar{transform:none}

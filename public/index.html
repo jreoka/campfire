@@ -91,10 +91,17 @@
         <span id="chan-hash">#</span><strong id="chan-name">general</strong>
         <span id="typing" class="muted"></span>
         <span class="spacer"></span>
+        <button id="btn-members" class="icon-btn members-btn" title="Members"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></button>
       </header>
 
       <div id="messages"></div>
 
+      <div id="voice-fab" class="hidden">
+        <span class="live-dot"></span><b id="vf-name">voice</b>
+        <span class="spacer"></span>
+        <button id="vf-mute" class="mini">Mute</button>
+        <button id="vf-leave" class="mini danger">Leave</button>
+      </div>
       <div id="attach-preview" class="hidden"></div>
       <div id="mention-pop" class="hidden"></div>
       <form id="composer">
@@ -188,6 +195,15 @@
           <button class="btn small" id="set-banner-rm">Remove</button>
         </div>
         <div id="set-banner-hist" class="hist-row"></div>
+        <div class="pf-sec-label">Sidebar banner</div>
+        <div id="set-sidebar-prev" class="set-banner clickable" title="Upload a sidebar banner"></div>
+        <div class="row" style="margin-top:.55rem">
+          <button class="btn small primary" id="set-sidebar-btn">Upload</button>
+          <button class="btn small" id="set-sidebar-gif">Use GIF</button>
+          <button class="btn small" id="set-sidebar-rm">Remove</button>
+        </div>
+        <input id="set-sidebar-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" />
+        <p class="muted small">Shown faded behind your name in the member list. Leave it empty for none.</p>
         <input id="set-avatar-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" />
         <input id="set-banner-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" />
         <p class="muted small">Avatars, banners and emoji can be animated GIFs. Click a preview to upload, or pick a GIF.</p>
