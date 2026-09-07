@@ -1351,14 +1351,6 @@ function showInvite(srv) {
     } catch (err) { toast('Invite failed: ' + prettyError(err.message)); }
   };
 }
-$('#btn-add-voice').onclick = async () => {
-  const name = await openPromptModal({ title: 'New voice room', label: 'Voice room name', initial: 'Hangout', placeholder: 'e.g. Hangout', okLabel: 'Create', maxlength: 32 });
-  if (name === null || !name.trim()) return;
-  try {
-    await api(`/api/servers/${S.serverId}/channels`, { method: 'POST', body: JSON.stringify({ name: name.trim().slice(0, 32), type: 'voice' }) });
-    selectServer(S.serverId);
-  } catch (err) { toast('Failed: ' + prettyError(err.message)); }
-};
 
 // ---------- mobile nav ----------
 // ---------- mobile navigation ----------
@@ -2179,12 +2171,12 @@ function renderFwdDests(filter = '') {
     return b;
   };
   const sec = (t) => { const e = document.createElement('div'); e.className = 'fwd-sec'; e.textContent = t; box.appendChild(e); };
-  const chanHits = fwdDestCache.chans.filter((c) => hit(c.name) || hit(c.serverName));
+  const chanHits = fwdDestCache.chans.filter((c) => !sameCtx(S.fwdSrcCtx, c) && (hit(c.name) || hit(c.serverName)));
   if (chanHits.length) {
     sec('CHANNELS');
     for (const c of chanHits) box.appendChild(mkRow(c, '#', '#' + c.name, c.serverName, null));
   }
-  const dmHits = fwdDestCache.dms.filter((t) => hit(dmTitle(t)));
+  const dmHits = fwdDestCache.dms.filter((t) => !sameCtx(S.fwdSrcCtx, { kind: 'dm', id: t.id }) && hit(dmTitle(t)));
   if (dmHits.length) {
     sec('DIRECT MESSAGES');
     for (const t of dmHits) {
@@ -2199,7 +2191,8 @@ async function openForward(mid) {
   if (!m || m.sys) return;
   S.fwdSrc = m;
   const ctx = pinsCtx();
-  S.fwdPick = ctx ? (ctx.kind === 'dm' ? { kind: 'dm', id: ctx.id } : { kind: 'server', serverId: ctx.serverId, id: ctx.id }) : null;
+  S.fwdSrcCtx = ctx;
+  S.fwdPick = null;
   const author = m.user ? m.user.display_name : 'Someone';
   const snip = m.content ? (m.content.length > 140 ? m.content.slice(0, 140) + '…' : m.content)
     : (m.attachments?.length ? `[${m.attachments.length} attachment${m.attachments.length === 1 ? '' : 's'}]` : '[no text]');
@@ -2219,8 +2212,9 @@ async function openForward(mid) {
   try {
     await loadFwdDests();
     if (!S.fwdPick) {
-      const first = fwdDestCache.chans[0] || fwdDestCache.dms.map((t) => ({ kind: 'dm', id: t.id }))[0] || null;
-      S.fwdPick = first;
+      const firstChan = (fwdDestCache.chans || []).find((c) => !sameCtx(S.fwdSrcCtx, c));
+      const firstDm = (fwdDestCache.dms || []).map((t) => ({ kind: 'dm', id: t.id })).find((p) => !sameCtx(S.fwdSrcCtx, p));
+      S.fwdPick = firstChan || firstDm || null;
     }
     renderFwdDests();
   } catch { renderFwdDests(); }
@@ -2228,6 +2222,7 @@ async function openForward(mid) {
 function sendForward() {
   const pick = S.fwdPick, src = S.fwdSrc;
   if (!pick || !src) { toast('Pick a chat first'); return; }
+  if (sameCtx(S.fwdSrcCtx, pick)) { toast('Pick a different chat'); return; }
   const comment = (document.querySelector('#fwd-comment')?.value || '').trim().slice(0, 2000);
   const orig = src.content || '';
   let content = comment ? (orig ? comment + '\n\n' + orig : comment) : orig;
