@@ -494,6 +494,7 @@ function renderChannels() {
     b.onclick = () => selectChannel(c.id);
     b.dataset.cid = c.id; b.dataset.ctype = 'text';
     b.ondblclick = () => confirmDeleteChannel(c);
+    wireChanDrag(b, c);
     tc.appendChild(b);
   }
   for (const c of d.channels.filter((x) => x.type === 'voice')) {
@@ -505,6 +506,7 @@ function renderChannels() {
     b.title = occ.length ? occ.map((p) => p.display_name).join(', ') : 'Join voice';
     b.onclick = () => openVoiceChannel(S.serverId, c.id);
     b.dataset.cid = c.id; b.dataset.ctype = 'voice';
+    wireChanDrag(b, c);
     const users = document.createElement('div');
     users.className = 'vusers';
     users.id = 'vusers-' + c.id;
@@ -512,6 +514,51 @@ function renderChannels() {
     vc.appendChild(wrap);
   }
   renderVoiceUsers();
+}
+// Admin channel reordering: drag a channel above/below another of the same
+// type (text and voice order independently). Reuses the rail drop marker.
+let chanDrag = null;
+function wireChanDrag(b, c) {
+  if (!canManage()) return;
+  b.draggable = true;
+  b.addEventListener('dragstart', (e) => {
+    chanDrag = { id: c.id, type: c.type, target: null, edge: null };
+    try { e.dataTransfer.setData('text/plain', 'channel:' + c.id); } catch {}
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  b.addEventListener('dragover', (e) => {
+    if (!chanDrag || chanDrag.id === c.id || chanDrag.type !== c.type) return;
+    e.preventDefault(); e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    const r = b.getBoundingClientRect();
+    const edge = (e.clientY - r.top) / r.height < 0.5 ? 'before' : 'after';
+    showMarker(r, edge);
+    chanDrag.target = c.id; chanDrag.edge = edge;
+  });
+  b.addEventListener('dragleave', () => { hideMarker(); });
+  b.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const dd = chanDrag; chanDrag = null; hideMarker();
+    if (dd && dd.target) moveChannel(dd.id, dd.target, dd.edge);
+  });
+  b.addEventListener('dragend', () => { chanDrag = null; hideMarker(); });
+}
+async function moveChannel(dragId, targetId, edge) {
+  const d = S.serverDetail;
+  const drag = d?.channels.find((v) => v.id === dragId);
+  const tgt = d?.channels.find((v) => v.id === targetId);
+  if (!d || !drag || !tgt || drag.type !== tgt.type || dragId === targetId) return;
+  const arr = d.channels.filter((x) => x.id !== dragId);
+  arr.splice(arr.findIndex((x) => x.id === targetId) + (edge === 'after' ? 1 : 0), 0, drag);
+  d.channels = arr;
+  renderChannels();
+  try {
+    await api(`/api/servers/${d.id}/channels/order`, { method: 'PUT',
+      body: JSON.stringify({ order: arr.filter((x) => x.type === drag.type).map((x) => x.id) }) });
+  } catch (err) {
+    toast('Reorder failed: ' + prettyError(err.message));
+    selectServer(d.id);
+  }
 }
 function confirmDeleteChannel(c) {
   if (!canManage()) return;
@@ -2400,7 +2447,6 @@ async function openChannelSettings(sid, c) {
     <label>Channel name<input id="m-chan-name" maxlength="32" value="${esc(c.name)}" /></label>
     <label style="margin-top:.6rem;display:block">Description<input id="m-chan-desc" maxlength="200" placeholder="What's this channel about?" value="${esc(c.description || '')}" /></label>
     <label style="margin-top:.6rem;display:block">Slow mode<select id="m-chan-slow">${slows.map(([v, l]) => `<option value="${v}"${(c.slowmode || 0) === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
-    <p class="muted small" style="margin-top:.6rem">Notification prefs are personal — right-click the channel to set your own.</p>
   `, 'Save', async () => {
     const name = $('#m-chan-name').value.trim().replace(/\s+/g, '-');
     if (!name) { toast('Give the channel a name'); return; }

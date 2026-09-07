@@ -729,6 +729,26 @@ app.post('/api/servers/:id/channels', authRequired, (req, res) => {
   res.json({ channel: ch });
 });
 
+// Reorder channels within their type group (text / voice order separately).
+app.put('/api/servers/:id/channels/order', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  const order = Array.isArray(req.body?.order) ? req.body.order.map(String) : null;
+  if (!order || !order.length || order.length > 200) return res.status(400).json({ error: 'bad_order' });
+  const rows = db.prepare('SELECT id, type FROM channels WHERE server_id = ?').all(s.id);
+  const byId = new Map(rows.map((r) => [r.id, r.type]));
+  if (new Set(order).size !== order.length || order.some((id) => !byId.has(id))) return res.status(400).json({ error: 'bad_order' });
+  const seen = new Set(order);
+  const grouped = { text: [], voice: [] };
+  for (const id of order) grouped[byId.get(id)].push(id);
+  for (const r of rows) if (!seen.has(r.id)) grouped[r.type].push(r.id);
+  const upd = db.prepare('UPDATE channels SET position = ? WHERE id = ?');
+  for (const t of ['text', 'voice']) grouped[t].forEach((id, i) => upd.run(i, id));
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ ok: true });
+});
+
 app.delete('/api/servers/:id/channels/:chId', authRequired, (req, res) => {
   const s = getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });
