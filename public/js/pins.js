@@ -251,7 +251,7 @@ function renderDmMessages(force = false) {
     box.appendChild(messageEl(m));
   }
   if (!msgs.length) box.innerHTML += '<p class="muted" style="text-align:center">No messages yet — say hello.</p>';
-  if (force || nearBottom) box.scrollTop = box.scrollHeight;
+  if (force || nearBottom) anchorBottom(box);
   updatePill();
 }
 function sendDm(content, opts = {}) {

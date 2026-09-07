@@ -355,7 +355,7 @@ function renderThread(scroll = false) {
   repBox.innerHTML = '';
   for (const r of S.thread.replies) repBox.appendChild(messageEl(r, { inThread: true }));
   if (!S.thread.replies.length) repBox.innerHTML = '<p class="muted small" style="text-align:center">No replies yet.</p>';
-  if (scroll || nearBottom) repBox.scrollTop = repBox.scrollHeight;
+  if (scroll || nearBottom) anchorBottom(repBox);
 }
 function closeThread(silent) {
   S.thread = null;

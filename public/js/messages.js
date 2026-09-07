@@ -269,6 +269,22 @@ function messageEl(m, opts = {}) {
   paintAvatar(div.querySelector('.avatar'), lu);
   return div;
 }
+function anchorBottom(box) {
+  // Lazy `loading` images have 0 height until they load, so the first scroll
+  // lands above the true bottom and the content grows under us. Re-anchor on
+  // each image settling (they load roughly together, so re-check after every
+  // one) to reliably land on the bottom.
+  box.scrollTop = box.scrollHeight;
+  for (const img of box.querySelectorAll('img')) {
+    if (img.complete) continue;
+    const once = () => {
+      img.removeEventListener('load', once); img.removeEventListener('error', once);
+      box.scrollTop = box.scrollHeight;
+    };
+    img.addEventListener('load', once);
+    img.addEventListener('error', once);
+  }
+}
 function renderMessages(force = false) {
   const box = $('#messages');
   const msgs = S.messages.get(S.channelId) || [];
@@ -281,7 +297,7 @@ function renderMessages(force = false) {
     box.appendChild(messageEl(m));
   }
   if (!msgs.length) box.innerHTML += '<p class="muted" style="text-align:center">No messages yet — say hello.</p>';
-  if (force || nearBottom) box.scrollTop = box.scrollHeight;
+  if (force || nearBottom) anchorBottom(box);
   updatePill();
 }
 function renderComposerMeta() {
