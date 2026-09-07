@@ -111,76 +111,24 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
 - Kill a stray server via `netstat -ano | grep :PORT` + `taskkill //PID <pid> //F`.
 - `node` here is v26; Docker Desktop available (`docker build`/`docker run` verified).
 
-## Status / history (as of 2026-09-07)
+## Current state
 
-- [x] v1 built: auth, servers, invites, text channels, history, typing, presence,
-      voice rooms (mesh), PWA shell, Dockerfile + compose, README.
-- [x] Verified: local E2E pass + `docker build` + container smoke test
-      (API, manifest, icons, register all 200).
-- [x] UI pass 1: flat professional redesign (was gradient/shadow), de-emojified.
-- [x] Removed in-app PWA install buttons.
-- [x] Deployed to https://campfire.dill.moe (DigitalOcean Ubuntu 26.04, Docker 29 +
-      Caddy auto-HTTPS via docker-compose.prod.yml, UFW 22/80/443, app on
-      loopback :3000). Local test db migrated to /opt/campfire/data. Server .env
-      JWT_SECRET matches local .env so existing login tokens kept working.
-      Deploy flow: `git pull` in /opt/campfire, then compose up with prod overlay.
-- [x] v2 convenience drop (2026-09-07): file uploads (/data/uploads, images/video/audio/files),
-      unicode + custom server emoji, Klipy GIF picker (KLIPY_KEY in server .env only,
-      proxied via /api/gifs/*), replies w/ quotes + jump, threads side panel,
-      emoji reactions + quick react, message editing, presence (online/away/dnd/
-      invisible + auto-away + custom status text), hover user cards w/ banners,
-      tabbed settings (Profile/Account/Server), animated GIF avatars/banners/icons,
-      @mentions + autocomplete + highlight, markdown-lite, image lightbox,
-      drag-drop/paste uploads, server icons. E2E-verified incl. live Klipy search.
-- [x] v2.1 (2026-09-07): real emoji dataset (Emojibase, 1914 emoji, keyword search,
-      built to public/emoji.json via `npm run build:emoji`, lazy-loaded in picker),
-      animated GIF thumbnails in picker (xs.gif renditions).
-- [x] Upload hardening + live-update fixes (2026-09-07): root-caused crushed server
-      icon to uploads living in ephemeral image storage — moved UPLOAD_DIR next to
-      DB_PATH (persistent volume), verified files survive rebuilds. Missing uploads
-      now 404 (never SPA HTML). Client degrades gracefully (avatars→initials,
-      icons→letter, images→file card, dead custom emoji→`:name:` text). Thread reply
-      counts re-render live even with the thread panel open. Deploy auto-update:
-      server fingerprints code at boot (`/api/version`), clients poll + show a
-      Refresh toast (voice-aware, drafts preserved); SW notifies tabs on activate.
-- [x] Discord-style voice sidebar (2026-09-07): occupants render under their voice
-      channel (avatar + name + muted mic icon, click opens user card) instead of a
-      grid above chat. Green VAD rings: each client analyses its own mic and
-      broadcasts speech state, so everyone sees who is talking in every room.
-      Mute forces speaking off server-side.
-- [x] Stale-state + update-delivery fixes (2026-09-07): leaver now gets the trimmed
-      occupant echo (their sidebar cleared instantly + optimistically client-side).
-      Auto-update hardened: navigations are network-first (a plain refresh is always
-      fresh), tabs poll the code fingerprint, and the SW pings tabs on activate —
-      tabs predating the updater get one forced reload so nobody sticks on old code.
-- [x] Rail icon crush fix (2026-09-07): the 1024px source was fine — the `<img>` flex
-      item rendered narrower than the button. Rail icons (and settings preview) now
-      paint via `background-image: cover`, which fills by construction; broken URLs
-      fall back to the letter via a preload probe.
-- [x] Black-and-white theme + menus + reaction bar (2026-09-07): full mono theme
-      (black surfaces, white dividing lines/borders, inverted primary buttons;
-      semantic colors kept only for status/VAD/danger/user content). Generic
-      right-click + touch-hold context menus for messages, channels, members,
-      servers, voice users (native menu preserved in inputs/links). Hover bar is
-      now most-used emoji (tracked locally) + ➕ + ↩ + ⋯ overflow menu.
-- [x] Poisoned-cache lesson (2026-09-07): a once-404 upload URL can stick in a
-      browser/SW cache even after the file exists. Fix without user action: copy
-      the file to a fresh random name (+ `?v=`), point the db row at it. All new
-      uploads already get `?v=` keys so this class is dead going forward.
-- [x] Rail upgrades (2026-09-07): settings moved to a gear at the bottom of the
-      server rail. Discord-style folders: drag servers to reorder, drop one onto
-      another to auto-create a folder, drag into/out of folders, right-click (or
-      double-click) for rename / 8 colors / collapse / delete. Per-user layout
-      persisted server-side (`server_folders` + positions, `PUT /api/me/layout`),
-      so order syncs to phones. Dedicated GIF button in the composer (was nested
-      under emoji).
-      icon to uploads living in ephemeral image storage — moved UPLOAD_DIR next to
-      DB_PATH (persistent volume), verified files survive rebuilds. Missing uploads
-      now 404 (never SPA HTML). Client degrades gracefully (avatars→initials,
-      icons→letter, images→file card, dead custom emoji→`:name:` text). Thread reply
-      counts re-render live even with the thread panel open. Deploy auto-update:
-      server fingerprints code at boot (`/api/version`), clients poll + show a
-      Refresh toast (voice-aware, drafts preserved); SW notifies tabs on activate.
-- [ ] NEXT: iterate on features/polish per owner feedback on the live site.
-- Open ideas (not requested yet): DMs, file/image sharing, push notifications,
-  moderation roles beyond owner.
+Live at https://campfire.dill.moe (DigitalOcean Ubuntu, Docker + Caddy
+auto-HTTPS via `docker-compose.prod.yml`, UFW 22/80/443). Deploy: `git pull`
+in /opt/campfire, `docker compose -f docker-compose.yml -f docker-compose.prod.yml
+up -d --build`. Secrets live in server + local `.env` (never committed).
+
+Shipped: auth, servers/invites, text channels, voice rooms (mesh WebRTC, sidebar
+occupants + VAD rings), uploads, emoji (Emojibase set + custom + Klipy GIFs),
+replies/threads/reactions/edits/mentions/markdown, presence + statuses, user
+cards, tabbed settings, rail folders + DnD, B&W theme, ctx menus, auto-update.
+Detail per change lives in `git log` — don't duplicate it here.
+
+Non-obvious rules (learned the hard way): uploads must live next to the DB on
+the persistent volume (never the image layer); new uploads get `?v=` cache keys;
+missing `/uploads/*` must 404 (never SPA fallback); bump the SW `CACHE` version
+on every `public/` change; navigations are network-first.
+
+NEXT: iterate per owner feedback on the live site.
+- Open ideas (not requested yet): DMs, push notifications, moderation roles
+  beyond owner. (File/image sharing + custom emoji/GIFs already shipped.)
