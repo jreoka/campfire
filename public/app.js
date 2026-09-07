@@ -264,6 +264,9 @@ async function boot() {
   pollVersion();
   pushSetup();
   refreshNotifBadge();
+  // Warm the per-user notification prefs so channel/server right-click menus
+  // and muted indicators are correct from the start.
+  refreshNotifPrefs().then(() => { renderServerList(); renderChannels(); }).catch(() => {});
   // invite landing (/invite/CODE or ?invite=CODE)
   const inv = consumeInvite();
   if (inv) {
@@ -347,7 +350,7 @@ function buildRootOrder() {
 function serverBtn(s) {
   const b = document.createElement('button');
   const label = s.name.trim().charAt(0).toUpperCase() || '?';
-  b.className = 'server-btn' + (s.id === S.serverId ? ' active' : '') + (s.icon_url ? ' has-icon' : '');
+  b.className = 'server-btn' + (s.id === S.serverId ? ' active' : '') + (s.icon_url ? ' has-icon' : '') + (serverMuted(s.id) ? ' muted' : '');
   b.title = s.name;
   b.draggable = true;
   b.dataset.drag = 'server:' + s.id;
@@ -464,7 +467,7 @@ function renderChannels() {
   tc.innerHTML = ''; vc.innerHTML = '';
   for (const c of d.channels.filter((x) => x.type === 'text')) {
     const b = document.createElement('button');
-    b.className = 'chan' + (c.id === S.channelId ? ' active' : '');
+    b.className = 'chan' + (c.id === S.channelId ? ' active' : '') + (chanMuted(c.id) ? ' muted' : '');
     b.innerHTML = `<span class="muted">#</span><span>${esc(c.name)}</span>`;
     b.onclick = () => selectChannel(c.id);
     b.dataset.cid = c.id; b.dataset.ctype = 'text';
@@ -2369,18 +2372,11 @@ function modGroupItems(items, t, u) {
 }
 async function openChannelSettings(sid, c) {
   const slows = [[0, 'Off'], [5, '5 seconds'], [10, '10 seconds'], [30, '30 seconds'], [60, '1 minute'], [300, '5 minutes']];
-  let curNotif = '';
-  try { const { prefs } = await api('/api/notifs/prefs'); curNotif = (prefs && prefs['c:' + c.id]) || ''; } catch {}
   openModal(`#${c.name} settings`, `
     <label>Channel name<input id="m-chan-name" maxlength="32" value="${esc(c.name)}" /></label>
     <label style="margin-top:.6rem;display:block">Description<input id="m-chan-desc" maxlength="200" placeholder="What's this channel about?" value="${esc(c.description || '')}" /></label>
     <label style="margin-top:.6rem;display:block">Slow mode<select id="m-chan-slow">${slows.map(([v, l]) => `<option value="${v}"${(c.slowmode || 0) === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
-    <label style="margin-top:.6rem;display:block">Notifications<select id="m-chan-notif">
-      <option value=""${!curNotif ? ' selected' : ''}>Use server default</option>
-      <option value="all"${curNotif === 'all' ? ' selected' : ''}>All messages</option>
-      <option value="mentions"${curNotif === 'mentions' ? ' selected' : ''}>Mentions only</option>
-      <option value="muted"${curNotif === 'muted' ? ' selected' : ''}>Muted</option>
-    </select></label>
+    <p class="muted small" style="margin-top:.6rem">Notification prefs are personal — right-click the channel to set your own.</p>
   `, 'Save', async () => {
     const name = $('#m-chan-name').value.trim().replace(/\s+/g, '-');
     if (!name) { toast('Give the channel a name'); return; }
@@ -2388,7 +2384,6 @@ async function openChannelSettings(sid, c) {
       method: 'PATCH',
       body: JSON.stringify({ name, description: $('#m-chan-desc').value.trim(), slowmode: Number($('#m-chan-slow').value) }),
     });
-    try { await api('/api/notifs/prefs', { method: 'PUT', body: JSON.stringify({ scope: 'c:' + c.id, mode: $('#m-chan-notif').value || 'inherit' }) }); } catch (err) { toast('Notif save failed: ' + prettyError(err.message)); }
     renderServerTab();
     if (sid === S.serverId) selectServer(sid);
   });
@@ -2405,15 +2400,81 @@ async function modGroupMember(kind, t, u) {
     refreshDms().then(() => renderDmMembers());
   } catch (err) { toast('Failed: ' + prettyError(err.message)); }
 }
+const BELL_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>';
+const MUTE_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>';
+// Effective notification mode for the current user: first stored pref in the
+// chain wins (channel → server → global), defaulting to 'all'.
+function notifEffective(...scopes) {
+  for (const s of scopes) if (notifPrefsCache[s]) return notifPrefsCache[s];
+  return 'all';
+}
+function serverMuted(sid) {
+  return notifEffective('s:' + sid) === 'muted';
+}
+function chanMuted(cid) {
+  return notifEffective('c:' + cid, 's:' + S.serverId) === 'muted';
+}
+// Toggle item for a mute/unmute row: unmuting clears your own override, or
+// overrides an inherited mute with an explicit 'all'.
+function muteToggleItem(muted, ownMuted, labelBase, scope) {
+  return {
+    label: (muted ? 'Unmute ' : 'Mute ') + labelBase, icon: MUTE_SVG,
+    fn: async () => { await setNotifPref(scope, muted ? (ownMuted ? 'inherit' : 'all') : 'muted'); renderServerList(); renderChannels(); },
+  };
+}
+async function openServerNotifSettings(sid) {
+  const s = S.servers.find((v) => v.id === sid);
+  if (!s) return;
+  await refreshNotifPrefs();
+  const cur = notifPrefsCache['s:' + sid] || '';
+  const glob = notifEffective('global');
+  const opt = (v, l) => `<option value="${v}"${cur === v ? ' selected' : ''}>${l}</option>`;
+  openModal(`${esc(s.name)} notifications`, `
+    <p class="muted small">How should <b>${esc(s.name)}</b> notify you? This is personal — it does not change anything for other members.</p>
+    <label style="margin-top:.6rem;display:block">Notify me<select id="m-notif-mode">
+      ${opt('', `Use global default (currently ${NOTIF_LABEL[glob]})`)}
+      ${opt('all', 'All messages')}
+      ${opt('mentions', 'Mentions only')}
+      ${opt('muted', 'Muted')}
+    </select></label>
+  `, 'Save', async () => {
+    await setNotifPref('s:' + sid, $('#m-notif-mode').value || 'inherit');
+    renderServerList(); renderChannels();
+  });
+}
+async function openChannelNotifSettings(cid) {
+  const c = S.serverDetail?.channels.find((v) => v.id === cid);
+  if (!c) return;
+  await refreshNotifPrefs();
+  const cur = notifPrefsCache['c:' + cid] || '';
+  const srv = notifEffective('s:' + S.serverId);
+  const opt = (v, l) => `<option value="${v}"${cur === v ? ' selected' : ''}>${l}</option>`;
+  openModal(`#${esc(c.name)} notifications`, `
+    <p class="muted small">How should <b>#${esc(c.name)}</b> notify you? This is personal — it does not change anything for other members.</p>
+    <label style="margin-top:.6rem;display:block">Notify me<select id="m-notif-mode">
+      ${opt('', `Use server default (currently ${NOTIF_LABEL[srv]})`)}
+      ${opt('all', 'All messages')}
+      ${opt('mentions', 'Mentions only')}
+      ${opt('muted', 'Muted')}
+    </select></label>
+  `, 'Save', async () => {
+    await setNotifPref('c:' + cid, $('#m-notif-mode').value || 'inherit');
+    renderChannels();
+  });
+}
 function serverCtxMenu(sid, x, y) {
   const s = S.servers.find((v) => v.id === sid);
   if (!s) return;
   const d = S.serverDetail && S.serverDetail.id === sid ? S.serverDetail : null;
   const owner = d ? d.owner_id === S.me.id : false;
+  const own = notifPrefsCache['s:' + sid] || '';
   openCtx(x, y, [
     { label: 'Open', icon: '→', fn: () => selectServer(sid) },
     { label: 'Copy invite link', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(`${location.origin}/invite/${s.invite_code}`); toast('Link copied'); } catch {} } },
     { label: 'Server settings', icon: '⚙', fn: async () => { if (sid !== S.serverId) await selectServer(sid); openServerSettings(); } },
+    { sep: true },
+    muteToggleItem(serverMuted(sid), own === 'muted', 'server', 's:' + sid),
+    { label: 'Notification settings', icon: BELL_SVG, fn: () => openServerNotifSettings(sid) },
   ]);
 }
 function channelCtxMenu(cid, ctype, x, y) {
@@ -2424,6 +2485,12 @@ function channelCtxMenu(cid, ctype, x, y) {
     ? [{ label: 'Join voice', icon: '→', fn: () => openVoiceChannel(S.serverId, cid) }]
     : [{ label: 'Open channel', icon: '→', fn: () => selectChannel(cid) }];
   items.push({ label: 'Copy name', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(c.name); toast('Copied'); } catch {} } });
+  if (ctype === 'text') {
+    const own = notifPrefsCache['c:' + cid] || '';
+    items.push({ sep: true });
+    items.push(muteToggleItem(chanMuted(cid), own === 'muted', '#' + c.name, 'c:' + cid));
+    items.push({ label: 'Notification settings', icon: BELL_SVG, fn: () => openChannelNotifSettings(cid) });
+  }
   if (owner) items.push({ label: 'Delete channel', icon: '🗑', danger: true, fn: () => confirmDeleteChannel(c) });
   openCtx(x, y, items);
 }
@@ -3706,7 +3773,20 @@ function openSettings(tab = 'profile') {
 function closeSettings() { closePicker(); $('#settings-backdrop').classList.add('hidden'); }
 // ---------- notifications (Web Push + per-scope prefs) ----------
 const NOTIF_OPTS = [['all', 'All messages'], ['mentions', 'Mentions only'], ['muted', 'Muted']];
+const NOTIF_LABEL = { all: 'All messages', mentions: 'Mentions only', muted: 'Muted' };
 let notifPrefsCache = {};
+async function refreshNotifPrefs() {
+  try { const { prefs } = await api('/api/notifs/prefs'); notifPrefsCache = prefs || {}; }
+  catch { notifPrefsCache = {}; }
+  return notifPrefsCache;
+}
+async function setNotifPref(scope, mode) {
+  try {
+    await api('/api/notifs/prefs', { method: 'PUT', body: JSON.stringify({ scope, mode }) });
+    if (mode === 'inherit') delete notifPrefsCache[scope];
+    else notifPrefsCache[scope] = mode;
+  } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+}
 function notifSelect(scope, val, small) {
   const sel = document.createElement('select');
   if (small) sel.style.maxWidth = '150px';
@@ -3718,11 +3798,9 @@ function notifSelect(scope, val, small) {
     sel.appendChild(o);
   }
   sel.onchange = async () => {
-    try {
-      await api('/api/notifs/prefs', { method: 'PUT', body: JSON.stringify({ scope, mode: sel.value || 'inherit' }) });
-      if (sel.value) notifPrefsCache[scope] = sel.value;
-      else delete notifPrefsCache[scope];
-    } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+    await setNotifPref(scope, sel.value || 'inherit');
+    sel.value = notifPrefsCache[scope] || '';
+    renderServerList(); renderChannels();
   };
   return sel;
 }
@@ -3782,7 +3860,7 @@ async function renderNotifsTab() {
     box.appendChild(row);
   }
   const note = document.createElement('p'); note.className = 'muted small';
-  note.textContent = 'Per-channel rules live in each channel’s settings (Server settings → Channels → Edit). DMs follow the default rule.';
+  note.textContent = 'Right-click a channel or server for its own rules. DM threads follow the default rule.';
   box.appendChild(note);
 }
 function urlB64ToU8(s) {
