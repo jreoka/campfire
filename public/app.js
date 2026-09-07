@@ -434,11 +434,10 @@ function folderEl(f, kids) {
   if (f.open) {
     const kidsBox = document.createElement('div');
     kidsBox.className = 'folder-children';
-    // Encapsulate the expanded servers in a wash of the folder color.
+    // Open folder + dropdown read as one piece: the wash lives on the wrap
+    // so it encapsulates the folder button too (Discord-style).
     if (/^#[0-9a-fA-F]{6}$/.test(f.color || '')) {
-      kidsBox.style.background = f.color + '26';
-      kidsBox.style.borderColor = f.color + '66';
-      kidsBox.style.borderTopColor = f.color;
+      wrap.style.background = f.color + '33';
     }
     for (const s of kids) kidsBox.appendChild(serverBtn(s));
     wrap.appendChild(kidsBox);
