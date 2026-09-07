@@ -722,6 +722,7 @@ function messageEl(m, opts = {}) {
   } else if (m.content) {
     const big = isBigEmoji(m.content) && !m.attachments?.length;
     inner += `<div class="text${big ? ' bigemoji' : ''}">${renderRich(m.content)}</div>`;
+    if (!big && typeof linkEmbedsHTML === 'function') inner += linkEmbedsHTML(m.content);
   }
   if (m.attachments?.length) {
     inner += '<div class="msg-atts">' + m.attachments.map(attachmentHTML).join('') + '</div>';
@@ -1573,9 +1574,12 @@ function sendVoiceState() {
 function paintVoiceControls() {
   const v = S.voice;
   const set = (id, off, label) => { const b = $(id); if (!b) return; b.classList.toggle('off', !!off); b.title = label; };
-  set('#btn-mute', v?.muted, v?.muted ? 'Unmute mic' : 'Mute mic');
-  set('#vf-mute', v?.muted, v?.muted ? 'Unmute mic' : 'Mute mic');
-  set('#cv-mute', v?.muted, v?.muted ? 'Unmute mic' : 'Mute mic');
+  // Deafening also mutes the mic, so the mic button stays red while deafened.
+  const micOff = v?.muted || v?.deafened;
+  const micLabel = v?.deafened ? 'Deafened — undeafen to unmute' : (v?.muted ? 'Unmute mic' : 'Mute mic');
+  set('#btn-mute', micOff, micLabel);
+  set('#vf-mute', micOff, micLabel);
+  set('#cv-mute', micOff, micLabel);
   set('#btn-deafen', v?.deafened, v?.deafened ? 'Undeafen' : 'Deafen');
   set('#vf-deafen', v?.deafened, v?.deafened ? 'Undeafen' : 'Deafen');
   set('#cv-deafen', v?.deafened, v?.deafened ? 'Undeafen' : 'Deafen');
@@ -3383,7 +3387,7 @@ async function saveEdit(mid) {
   const actEl = e.target.closest('[data-act]');
   const jumpEl = e.target.closest('[data-jump]');
   const reactEl = e.target.closest('.reaction');
-  const imgEl = e.target.closest('.att-img');
+  const imgEl = e.target.closest('.att-img,.embed-img');
   const memberEl = e.target.closest('.member');
   if (reactEl && reactEl.dataset.emoji) {
     const msgEl = reactEl.closest('[data-mid]');
@@ -3391,6 +3395,22 @@ async function saveEdit(mid) {
     return;
   }
   const spEl = e.target.closest('.spoiler');
+  const ytBtn = e.target.closest('[data-yt-play]');
+  if (ytBtn) {
+    const wrap = ytBtn.closest('.embed');
+    const src = ytBtn.getAttribute('data-yt-play');
+    if (wrap && src && !wrap.querySelector('iframe')) {
+      const f = document.createElement('iframe');
+      f.className = 'embed-frame yt-player';
+      f.src = src;
+      f.title = 'YouTube video';
+      f.loading = 'lazy';
+      f.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+      f.allowFullscreen = true;
+      ytBtn.replaceWith(f);
+    }
+    return;
+  }
   if (spEl && !spEl.classList.contains('shown') && spEl.closest('.msg .text,.uc-bio')) { spEl.classList.add('shown'); return; }
   const spVeil = e.target.closest('.spoiler-veil');
   if (spVeil) { spVeil.closest('.att-wrap')?.classList.add('shown'); return; }

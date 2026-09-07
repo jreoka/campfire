@@ -298,6 +298,26 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .att-wrap:hover .att-dl,.att-dl:focus-visible{opacity:1}
 @media (hover:none){.att-dl{opacity:1}}
 .msg-atts audio{max-width:100%}
+/* ---------- link embeds (YouTube, X, Spotify, Twitch, TikTok, ...) ---------- */
+.embeds{display:flex;flex-direction:column;gap:.5rem;margin-top:.45rem;max-width:520px}
+.embed{background:var(--panel-2);border:0;border-radius:16px;overflow:hidden;max-width:100%}
+.embed-src{display:block;font-size:.68rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:.5rem .75rem .35rem}
+.embed-frame{display:block;width:100%;border:0;background:#000}
+.embed-169{aspect-ratio:16/9}
+.embed-169 .embed-frame{width:100%;height:100%}
+.embed-frame.tweet{height:500px;background:transparent}
+.embed-frame.tiktok{max-width:325px;height:620px}
+.embed-frame.ig{max-width:400px;height:560px}
+.embed-frame.yt-player{aspect-ratio:16/9;height:auto}
+.yt-facade{position:relative;display:block;width:100%;aspect-ratio:16/9;border:0;padding:0;background:#000;cursor:pointer}
+.yt-facade img{width:100%;height:100%;object-fit:cover;display:block}
+.yt-play{position:absolute;inset:0;margin:auto;width:64px;height:64px;border-radius:50%;background:rgba(0,0,0,.72);color:#fff;display:flex;align-items:center;justify-content:center;transition:background .15s,transform .15s}
+.yt-facade:hover .yt-play{background:#c00;transform:scale(1.06)}
+.embed-media{background:transparent}
+.embed-img{max-width:100%;max-height:320px;border-radius:16px;cursor:zoom-in;display:block;object-fit:contain;background:#000}
+.embed-vid{max-width:100%;max-height:320px;border-radius:16px;background:#000;display:block}
+.embed-media audio{max-width:100%}
+@media (max-width:700px){.embeds{max-width:100%}}
 .file-card{display:flex;align-items:center;gap:.6rem;background:var(--panel-2);border:0;border-radius:16px;padding:.6rem .8rem;max-width:320px;text-decoration:none;color:var(--text)}
 .file-card .fname{font-size:.85rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .file-card .fsize{font-size:.72rem;color:var(--muted)}
