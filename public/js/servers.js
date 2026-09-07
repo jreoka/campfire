@@ -327,11 +327,27 @@ function memberSort(a, b) {
   const ao = statusOf(a.id) === 'offline' ? 1 : 0, bo = statusOf(b.id) === 'offline' ? 1 : 0;
   return ao - bo || a.display_name.localeCompare(b.display_name);
 }
+function renderMembersBanner() {
+  const el = $('#members-banner');
+  if (!el) return;
+  const d = S.serverDetail;
+  if (S.view !== 'server' || !d) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  const label = (d.name || 'Server').trim().charAt(0).toUpperCase() || 'S';
+  const icon = d.icon_url
+    ? '<span class="mb-avatar avatar"><img src="' + esc(d.icon_url) + '" alt="" loading="lazy" /></span>'
+    : '<span class="mb-avatar avatar" style="background:' + esc(d.banner_url ? d.banner_url : '#2c3663') + '">' + esc(label) + '</span>';
+  el.innerHTML = icon
+    + '<div class="mb-main"><strong>' + esc(d.name || 'Server') + '</strong>'
+    + '<span class="mb-count">' + (d.members || []).length + ' member' + ((d.members || []).length === 1 ? '' : 's') + '</span></div>'
+    + (d.description ? '<p class="mb-desc">' + esc(d.description) + '</p>' : '');
+}
 function renderMembers() {
   // Server roster only — never paint it over the DM member list in home view.
   if (S.view !== 'server') return;
   const d = S.serverDetail;
   if (!d) return;
+  renderMembersBanner();
   $('#members-head').classList.add('hidden');
   const box = $('#member-list');
   box.innerHTML = '';
@@ -368,6 +384,7 @@ function renderDmMembers() {
   if (S.view !== 'home') return;
   const t = S.dms.find((x) => x.id === S.dmThreadId);
   if (!t) return;
+  const mb = $('#members-banner'); if (mb) mb.classList.add('hidden');
   $('#members-head').classList.remove('hidden');
   $('#members-title').textContent = 'MEMBERS';
   const box = $('#member-list');

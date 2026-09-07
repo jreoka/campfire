@@ -196,12 +196,13 @@
           <button type="button" class="ctx-item" id="cm-poll">Create a poll</button>
         </div>
         </div>
-        <button class="btn primary" type="submit">Send</button>
+        <button class="send-btn" type="submit" title="Send" aria-label="Send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
       </form>
     </main>
 
     <!-- members -->
     <aside id="members">
+      <div id="members-banner" class="hidden"></div>
       <div class="chan-group-label" id="members-head"><span id="members-title">ONLINE</span> — <span id="online-count">0</span></div>
       <div id="member-list"></div>
     </aside>
