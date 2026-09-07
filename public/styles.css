@@ -751,7 +751,7 @@ body{touch-action:manipulation}
 @media (max-width: 700px){
   #left{position:fixed;top:0;bottom:0;left:0;z-index:30;display:flex;transform:translateX(-105%);transition:transform .2s;width:min(348px,94vw);background:var(--rail)}
   body.nav-open #left{transform:none}
-  #left #rail{width:60px;flex-shrink:0;padding:.6rem 0}
+  #left #rail{width:60px;flex-shrink:0;padding:.6rem 0;gap:.6rem}
   #left .server-btn,#left #btn-add-server{width:44px;height:44px}
   #left .fwrap,#left .folder-btn{width:44px;height:44px}
   #left .folder-open{width:48px;padding:5px 2px}
@@ -761,7 +761,7 @@ body{touch-action:manipulation}
   #left .fc,#left .fg1 .fc{width:15px;height:15px}
   #home-wrap{width:44px;height:44px}
   #home-wrap:has(> .active)::before{left:-6px;width:6px;height:22px}
-  #server-list{overflow-x:hidden;align-items:flex-start;padding:0 4px 0 8px}
+  #server-list{overflow-x:hidden;align-items:flex-start;padding:0 4px 0 8px;gap:.65rem}
   #dm-rail{padding:0 4px 6px 8px}
   .server-btn.active::before{left:-6px;width:6px;height:22px}
   #left #sidebar{position:static;transform:none;width:auto;flex:1;min-width:0;border-left:1px solid var(--line)}
