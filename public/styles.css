@@ -77,7 +77,8 @@ h1,h2,h3{letter-spacing:-0.01em}
 #left{display:contents}
 #rail{width:72px;background:var(--rail);display:flex;flex-direction:column;align-items:center;padding:.7rem .4rem;gap:.5rem;flex-shrink:0}
 #server-list{display:flex;flex-direction:column;gap:.5rem;width:100%;align-items:center;overflow-y:auto}
-.server-btn{width:52px;height:52px;border-radius:18px;border:0;background:var(--panel-2);color:var(--text);font-size:1.15rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.server-btn{width:52px;height:52px;border-radius:18px;border:0;background:var(--panel-2);color:var(--text);font-size:1.15rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
+.server-btn.active::before{content:'';position:absolute;left:1px;top:50%;transform:translateY(-50%);width:0;height:0;border-top:6px solid transparent;border-bottom:6px solid transparent;border-left:9px solid #fff;z-index:2}
 .server-btn:hover{background:var(--panel-3)}
 .server-btn.active{background:var(--accent);color:var(--on-accent)}
 .server-btn.has-icon{background-color:transparent;background-size:cover;background-position:center}
