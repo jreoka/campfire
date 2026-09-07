@@ -128,7 +128,15 @@
       </div>
 
       <div id="stage" class="hidden">
+        <div id="stage-head" class="hidden"><span class="live-badge">LIVE</span><strong id="stage-name">voice</strong><span id="stage-sub" class="muted"></span><span class="spacer"></span><button id="sc-min" class="icon-btn" title="Back to chat" style="display:inline-block"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button></div>
         <div id="stage-grid"></div>
+        <div id="stage-controls" class="hidden">
+          <button id="cv-mute" class="vb-btn big" title="Mute"></button>
+          <button id="cv-deafen" class="vb-btn big" title="Deafen"></button>
+          <button id="cv-camera" class="vb-btn big" title="Camera"></button>
+          <button id="cv-share" class="vb-btn big" title="Share screen"></button>
+          <button id="cv-leave" class="vb-btn big danger" title="Disconnect">✕</button>
+        </div>
       </div>
 
       <div id="messages"></div>
@@ -173,31 +181,6 @@
     </aside>
   </section>
 </div>
-
-<!-- full call view -->
-<div id="call-view" class="hidden">
-  <header id="call-head">
-    <span class="live-badge">LIVE</span>
-    <div class="call-titles"><strong id="call-name">voice</strong><span id="call-sub" class="muted"></span></div>
-    <span class="spacer"></span>
-    <button id="call-min" class="icon-btn" title="Minimize" style="display:inline-block"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
-    <button id="call-leave" class="vb-btn danger" title="Disconnect">✕</button>
-  </header>
-  <div id="call-slot"></div>
-  <div id="call-controls">
-    <button id="cv-mute" class="vb-btn big" title="Mute"></button>
-    <button id="cv-deafen" class="vb-btn big" title="Deafen"></button>
-    <button id="cv-camera" class="vb-btn big" title="Camera"></button>
-    <button id="cv-share" class="vb-btn big" title="Share screen"></button>
-    <select id="cv-quality" title="Stream quality">
-      <option value="high">720p</option>
-      <option value="medium">480p</option>
-      <option value="low">360p</option>
-    </select>
-    <button id="cv-leave" class="vb-btn big danger" title="Disconnect">✕</button>
-  </div>
-</div>
-
 <!-- invite landing -->
 <div id="invite-view" class="hidden">
   <div class="invite-card">

@@ -416,11 +416,13 @@ function confirmDeleteChannel(c) {
 }
 async function selectChannel(id) {
   S.channelId = id;
+  S.callOpen = false;
   renderChannels();
   const ch = S.serverDetail.channels.find((c) => c.id === id);
   $('#chan-name').textContent = ch ? ch.name : '—';
   $('#composer').classList.remove('hidden');
   $('#in-message').placeholder = ch ? `Message #${ch.name}` : 'Message…';
+  $('#messages').classList.remove('hidden');
   renderTopic();
   $('#messages').innerHTML = '<p class="muted">Loading…</p>';
   try {
@@ -1279,8 +1281,6 @@ for (const [id, svg] of [['#btn-mute', VB_SVG.mic], ['#vf-mute', VB_SVG.mic], ['
   const b = $(id); if (b && !b.innerHTML.trim()) b.innerHTML = svg;
 }
 if ($('#btn-voice-leave') && !$('#btn-voice-leave').innerHTML.trim()) $('#btn-voice-leave').innerHTML = '✕';
-try { S.voiceQuality = localStorage.getItem('cf_vq') || 'high'; } catch { S.voiceQuality = 'high'; }
-if ($('#sel-quality')) $('#sel-quality').value = S.voiceQuality;
 $('#btn-voice-leave').onclick = () => leaveVoice();
 $('#vf-leave').onclick = () => leaveVoice();
 $('#vf-mute').onclick = () => toggleMute();
@@ -1291,12 +1291,9 @@ $('#vf-camera').onclick = () => toggleCamera();
 $('#btn-camera').onclick = () => toggleCamera();
 $('#vf-share').onclick = () => toggleScreen();
 $('#btn-share').onclick = () => toggleScreen();
-if ($('#sel-quality')) $('#sel-quality').onchange = (e) => setQuality(e.target.value);
-if ($('#cv-quality')) $('#cv-quality').onchange = (e) => setQuality(e.target.value);
-$('#call-min').onclick = () => closeCallView();
+if ($('#sc-min')) $('#sc-min').onclick = () => closeCallView();
 $('#voice-status').style.cursor = 'pointer';
 $('#voice-status').onclick = () => openCallView();
-$('#call-leave').onclick = () => leaveVoice();
 $('#cv-leave').onclick = () => leaveVoice();
 $('#cv-mute').onclick = () => toggleMute();
 $('#cv-deafen').onclick = () => toggleDeafen();
@@ -1309,29 +1306,28 @@ async function openVoiceChannel(serverId, channelId) {
   await joinVoice(serverId, channelId);
   if (S.voice && S.voice.serverId === serverId && S.voice.channelId === channelId) openCallView();
 }
-function callViewOpen() { return !$('#call-view').classList.contains('hidden'); }
+function callViewOpen() { return !!S.callOpen; }
 function openCallView() {
   if (!S.voice) return;
-  const grid = $('#stage-grid');
-  if (grid && grid.parentElement?.id !== 'call-slot') $('#call-slot').appendChild(grid);
+  S.callOpen = true;
   const ch = S.serverDetail?.channels.find((c) => c.id === S.voice.channelId);
-  $('#call-name').textContent = ch ? ch.name : 'voice';
-  $('#stage').classList.add('hidden');
-  $('#call-view').classList.remove('hidden');
-  updateCallHead();
+  $('#stage-name').textContent = ch ? ch.name : 'voice';
+  $('#messages').classList.add('hidden');
+  $('#friends-page').classList.add('hidden');
   renderStage();
 }
 function closeCallView() {
-  const grid = $('#stage-grid');
-  if (grid && grid.parentElement?.id !== 'stage') $('#stage').appendChild(grid);
-  $('#call-view').classList.add('hidden');
+  S.callOpen = false;
+  if (S.view === 'home' && !S.dmThreadId) renderDmBlank();
+  else { $('#friends-page').classList.add('hidden'); $('#messages').classList.remove('hidden'); }
   renderStage();
 }
 function updateCallHead() {
-  if (!S.voice || !callViewOpen()) return;
+  if (!S.voice || !S.callOpen) return;
   const occ = S.voiceOccupancy.get(S.voice.channelId) || [];
   const srv = (S.servers || []).find((s) => s.id === S.voice.serverId);
-  $('#call-sub').textContent = `${srv ? srv.name + ' · ' : ''}${occ.length} in call`;
+  $('#stage-name').textContent = (S.serverDetail?.channels.find((c) => c.id === S.voice.channelId) || {}).name || 'voice';
+  $('#stage-sub').textContent = `${srv ? srv.name + ' · ' : ''}${occ.length} in call`;
 }
 async function joinVoice(serverId, channelId) {
   if (S.voice && S.voice.serverId === serverId && S.voice.channelId === channelId) return; // already here
@@ -1344,7 +1340,7 @@ async function joinVoice(serverId, channelId) {
     return;
   }
   const ch = S.serverDetail?.channels.find((c) => c.id === channelId);
-  S.voice = { serverId, channelId, stream, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, cameraOn: false, sharing: false, quality: S.voiceQuality || 'high', speaking: false, audioEls: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
+  S.voice = { serverId, channelId, stream, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, cameraOn: false, sharing: false, quality: 'high', speaking: false, audioEls: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
   $('#voice-bar').classList.remove('hidden');
   $('#voice-fab').classList.remove('hidden');
   $('#voice-chan-name').textContent = ch ? ch.name : 'voice';
@@ -1364,9 +1360,9 @@ function leaveVoice(silent) {
   S.voice.camStream?.getTracks().forEach((t) => t.stop());
   S.voice.screenStream?.getTracks().forEach((t) => t.stop());
   for (const [, el] of S.voice.audioEls) { try { el.remove(); } catch {} }
-  const grid = $('#stage-grid');
-  if (grid && grid.parentElement?.id !== 'stage') $('#stage').appendChild(grid);
-  $('#call-view').classList.add('hidden');
+  S.callOpen = false;
+  if (S.view === 'home' && !S.dmThreadId) renderDmBlank();
+  else { $('#friends-page').classList.add('hidden'); $('#messages').classList.remove('hidden'); }
   $('#stage').classList.add('hidden');
   $('#stage-grid').innerHTML = '';
   const { serverId, channelId } = S.voice;
@@ -1392,8 +1388,6 @@ function sendVoiceState() {
 function paintVoiceControls() {
   const v = S.voice;
   const set = (id, off, label) => { const b = $(id); if (!b) return; b.classList.toggle('off', !!off); b.title = label; };
-  if ($('#sel-quality')) $('#sel-quality').value = v?.quality || S.voiceQuality || 'high';
-  if ($('#cv-quality')) $('#cv-quality').value = v?.quality || S.voiceQuality || 'high';
   set('#btn-mute', v?.muted, v?.muted ? 'Unmute mic' : 'Mute mic');
   set('#vf-mute', v?.muted, v?.muted ? 'Unmute mic' : 'Mute mic');
   set('#cv-mute', v?.muted, v?.muted ? 'Unmute mic' : 'Mute mic');
@@ -1451,21 +1445,6 @@ function applySenderQuality(sender) {
     p.encodings[0].maxBitrate = q.br;
     sender.setParameters(p).catch(() => {});
   } catch {}
-}
-function setQuality(q) {
-  if (!V_QUALITY[q]) return;
-  S.voiceQuality = q;
-  try { localStorage.setItem('cf_vq', q); } catch {}
-  if (!S.voice) { paintVoiceControls(); return; }
-  S.voice.quality = q;
-  const spec = V_QUALITY[q];
-  if (S.voice.cameraOn && S.voice.camStream) {
-    const vt = S.voice.camStream.getVideoTracks()[0];
-    if (vt) vt.applyConstraints({ width: { ideal: spec.w }, height: { ideal: spec.h } }).catch(() => {});
-  }
-  for (const [, s] of S.voice.senders) { applySenderQuality(s.camera); applySenderQuality(s.screen); }
-  paintVoiceControls();
-  toast('Stream quality: ' + spec.label);
 }
 async function toggleCamera() {
   if (!S.voice) return;
@@ -1690,6 +1669,7 @@ function attachRemoteVideo(peerId, media, track) {
 function liveVideoTracks(ms) { return ms ? ms.getVideoTracks().filter((t) => t.readyState === 'live') : []; }
 function stageVisible() {
   if (!S.voice) return false;
+  if (S.callOpen) return true;
   if (S.voice.cameraOn || S.voice.sharing) return true;
   for (const [, rv] of S.voice.remoteVideo) {
     if (liveVideoTracks(rv.camera).length || liveVideoTracks(rv.screen).length) return true;
@@ -1756,6 +1736,9 @@ function renderStage() {
   const stage = $('#stage'), grid = $('#stage-grid');
   if (!stageVisible() || !S.voice) { stage.classList.add('hidden'); return; }
   stage.classList.remove('hidden');
+  const full = !!S.callOpen;
+  $('#stage-head').classList.toggle('hidden', !full);
+  $('#stage-controls').classList.toggle('hidden', !full);
   const occ = S.voiceOccupancy.get(S.voice.channelId) || [];
   const order = ['me:cam'];
   if (S.voice.sharing) order.push('me:screen');
@@ -2018,7 +2001,7 @@ function channelCtxMenu(cid, ctype, x, y) {
   if (!c) return;
   const owner = canManage();
   const items = ctype === 'voice'
-    ? [{ label: 'Join voice', icon: '→', fn: () => joinVoice(S.serverId, cid) }]
+    ? [{ label: 'Join voice', icon: '→', fn: () => openVoiceChannel(S.serverId, cid) }]
     : [{ label: 'Open channel', icon: '→', fn: () => selectChannel(cid) }];
   items.push({ label: 'Copy name', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(c.name); toast('Copied'); } catch {} } });
   if (owner) items.push({ label: 'Delete channel', icon: '🗑', danger: true, fn: () => confirmDeleteChannel(c) });
@@ -2268,6 +2251,7 @@ function dmPeer(t) { return (t.members || []).find((m) => m.id !== S.me.id) || n
 function dmTitle(t) { return t.isGroup ? (t.name || 'Group chat') : ((dmPeer(t) || {}).display_name || 'Direct message'); }
 function openServerView() {
   S.view = 'server';
+  S.callOpen = false;
   document.body.classList.remove('view-home', 'dm-open');
   $('#friends-page').classList.add('hidden');
   $('#messages').classList.remove('hidden');
@@ -2277,6 +2261,7 @@ function openServerView() {
 }
 async function openHome() {
   S.view = 'home';
+  S.callOpen = false;
   document.body.classList.add('view-home');
   document.body.classList.remove('nav-open');
   $('#server-ui').classList.add('hidden');
@@ -2484,6 +2469,7 @@ $('#chan-topic').onclick = () => {
 };
 async function selectDmThread(id) {
   S.dmThreadId = id;
+  S.callOpen = false;
   document.querySelectorAll('.dmrow').forEach((b) => b.classList.toggle('active', b.dataset.dmthread === id));
   const t = S.dms.find((x) => x.id === id);
   if (!t) { renderDmBlank(); return; }
