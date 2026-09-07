@@ -23,7 +23,7 @@ async function startVoiceRec() {
   let rec;
   try { rec = new MediaRecorder(recStream, mt ? { mimeType: mt } : undefined); }
   catch { try { stream.getTracks().forEach((t) => t.stop()); } catch {} try { noise?.stop(); } catch {} toast('Recording is not supported here'); return; }
-  recSt = { rec, stream, noise, chunks: [], t0: Date.now(), timer: null, cancelled: false };
+  recSt = { rec, stream, noise, chunks: [], t0: Date.now(), timer: null, cancelled: false, paused: false, pauseTotal: 0, pauseStart: null };
   rec.ondataavailable = (e) => { if (recSt && e.data && e.data.size) recSt.chunks.push(e.data); };
   rec.onstop = finishVoiceRec;
   try { rec.start(); } catch { cancelVoiceRec(); return; }
@@ -31,19 +31,49 @@ async function startVoiceRec() {
   recSt.timer = setInterval(() => {
     if (!recSt) return;
     paintRecTime();
-    if (Date.now() - recSt.t0 >= REC_MAX_MS) stopVoiceRec(); // cap: auto-finish
+    if (recElapsedMs() >= REC_MAX_MS) stopVoiceRec(); // cap on actual recorded audio (pauses don't count)
   }, 500);
 }
 function paintRecBar() {
   const bar = $('#rec-bar');
   if (!bar) return;
   bar.classList.toggle('hidden', !recSt);
+  if (recSt) {
+    bar.classList.toggle('paused', !!recSt.paused);
+    const pb = $('#rec-pause');
+    if (pb) pb.textContent = recSt.paused ? 'Resume' : 'Pause';
+    const st = $('#rec-status');
+    if (st) st.textContent = recSt.paused ? 'Paused' : 'Recording…';
+  }
   paintRecTime();
 }
 function paintRecTime() {
   const t = $('#rec-time');
-  if (t) t.textContent = fmtClock(recSt ? (Date.now() - recSt.t0) / 1000 : 0);
+  if (t) t.textContent = fmtClock(recSt ? recElapsedMs() / 1000 : 0);
 }
+// Milliseconds of actual audio recorded so far — paused time does not count.
+function recElapsedMs() {
+  const st = recSt;
+  if (!st) return 0;
+  if (st.paused) return (st.pauseStart - st.t0) - st.pauseTotal;
+  return (Date.now() - st.t0) - st.pauseTotal;
+}
+function pauseVoiceRec() {
+  if (!recSt || recSt.paused) return;
+  try { recSt.rec.pause(); } catch {}
+  recSt.paused = true;
+  recSt.pauseStart = Date.now();
+  paintRecBar();
+}
+function resumeVoiceRec() {
+  if (!recSt || !recSt.paused) return;
+  recSt.pauseTotal += Date.now() - recSt.pauseStart;
+  recSt.pauseStart = null;
+  try { recSt.rec.resume(); } catch {}
+  recSt.paused = false;
+  paintRecBar();
+}
+function toggleRecPause() { recSt && recSt.paused ? resumeVoiceRec() : pauseVoiceRec(); }
 function stopVoiceRec() {
   if (recSt && !recSt.cancelled) { try { recSt.rec.stop(); } catch {} }
 }

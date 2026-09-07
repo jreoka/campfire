@@ -80,9 +80,10 @@ h1,h2,h3{letter-spacing:-0.01em}
 #server-list{display:flex;flex-direction:column;gap:.5rem;width:100%;align-items:flex-start;overflow-y:auto;padding:0 4px 0 14px;min-height:0;scrollbar-width:none}
 #server-list::-webkit-scrollbar,#dm-rail::-webkit-scrollbar{display:none}
 /* unread DM senders live under Home until opened */
-#dm-rail{display:flex;flex-direction:column;gap:.5rem;align-items:flex-start;width:100%;flex-shrink:0;min-height:0;overflow-y:auto;max-height:38%;scrollbar-width:none;padding:0 4px 0 14px}
+#dm-rail{display:flex;flex-direction:column;gap:.5rem;align-items:flex-start;width:100%;flex-shrink:0;min-height:0;overflow-y:auto;max-height:38%;scrollbar-width:none;padding:0 4px 6px 14px}
 #dm-rail:empty{display:none}
 #dm-rail .avatar{width:100%;height:100%;font-size:1.1rem}
+#dm-rail .server-btn{border-radius:50%;overflow:visible}
 .rail-dm-badge{position:absolute;bottom:-4px;right:-4px;background:var(--red);color:#fff;font-size:.62rem;font-weight:800;border-radius:999px;padding:.05rem .35rem;min-width:18px;text-align:center;line-height:1.3;pointer-events:none;z-index:2}
 .server-btn{width:48px;height:48px;border-radius:18px;border:0;background:var(--panel-2);color:var(--text);font-size:1.15rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;position:relative;flex-shrink:0}
 .server-btn img{border-radius:inherit}
@@ -670,6 +671,8 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 @keyframes rec-pulse{0%,100%{opacity:1}50%{opacity:.35}}
 @media (prefers-reduced-motion:reduce){.rec-dot{animation:none}}
 #rec-time{font-variant-numeric:tabular-nums;font-weight:700}
+#rec-bar.paused .rec-dot{background:var(--amber);animation:none}
+#rec-bar.paused #rec-status{color:var(--amber)}
 /* audio player: one shared look for every audio embed */
 .vplayer{display:flex;align-items:center;gap:.6rem;background:var(--panel-2);border-radius:18px;padding:.5rem .6rem;max-width:330px}
 .vp-play{width:38px;height:38px;border-radius:50%;border:0;background:var(--accent);color:var(--on-accent);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0}
@@ -754,7 +757,7 @@ body{touch-action:manipulation}
   #home-wrap{width:44px;height:44px}
   #home-wrap:has(> .active)::before{left:-6px;width:6px;height:22px}
   #server-list{overflow-x:hidden;align-items:flex-start;padding:0 4px 0 8px}
-  #dm-rail{padding:0 4px 0 8px}
+  #dm-rail{padding:0 4px 6px 8px}
   .server-btn.active::before{left:-6px;width:6px;height:22px}
   #left #sidebar{position:static;transform:none;width:auto;flex:1;min-width:0;border-left:1px solid var(--line)}
   #sidebar-scrim{display:block;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:20;opacity:0;pointer-events:none;transition:opacity .2s}

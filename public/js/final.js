@@ -68,6 +68,7 @@ $('#cm-voice').onclick = (e) => { e.stopPropagation(); $('#composer-more').class
 $('#cm-poll').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); openPollModal(); };
 $('#rec-cancel').onclick = cancelVoiceRec;
 $('#rec-done').onclick = stopVoiceRec;
+$('#rec-pause').onclick = toggleRecPause;
 // Live markdown preview: rendered backdrop behind the transparent input text.
 function syncComposerRender() {
   const inp = $('#in-message'), r = $('#in-render-inner');

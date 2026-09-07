@@ -53,16 +53,13 @@ async function refreshDms() {
     renderDmLists();
   } catch {}
 }
-function dmUnreadTotal() {
-  let n = 0;
-  for (const c of S.dmUnread.values()) n += c;
-  return n;
-}
-// Red count on the campfire home button: unread DMs + incoming friend requests.
+// Red count on the campfire home button: incoming friend requests only.
+// Unread DMs already show as their own red count on the rail avatars, so
+// counting them again here would double the badge.
 function paintHomeBadge() {
   const b = $('#home-badge');
   if (!b) return;
-  const n = dmUnreadTotal() + ((S.friends && S.friends.pendingIn) || []).length;
+  const n = ((S.friends && S.friends.pendingIn) || []).length;
   b.textContent = n > 99 ? '99+' : String(n);
   b.classList.toggle('hidden', !n);
   renderDmRail();
