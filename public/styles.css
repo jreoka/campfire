@@ -66,7 +66,12 @@ h1,h2,h3{letter-spacing:-0.01em}
 #view-main{display:flex;height:100dvh;overflow:hidden}
 #rail{width:68px;background:var(--rail);display:flex;flex-direction:column;align-items:center;padding:.7rem .4rem;gap:.5rem;flex-shrink:0}
 #server-list{display:flex;flex-direction:column;gap:.5rem;width:100%;align-items:center;overflow-y:auto}
-.server-btn{width:48px;height:48px;border-radius:14px;border:0;background:var(--panel-2);color:#fff;font-size:1.15rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.server-btn{width:48px;height:48px;border-radius:14px;border:0;background:var(--panel-2);color:#fff;font-size:1.15rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.server-btn:hover{background:var(--accent)}
+.server-btn.active{background:var(--accent)}
+.server-btn.has-icon{background:transparent}
+.server-btn.has-icon:hover{background:transparent}
+.server-btn.has-icon.active{background:transparent;outline:2px solid var(--accent);outline-offset:2px}
 .server-btn:hover{background:var(--accent)}
 .server-btn.active{background:var(--accent)}
 #btn-add-server{width:48px;height:48px;border-radius:14px;border:1px solid var(--line);background:transparent;color:var(--green);font-size:1.3rem;font-weight:400;cursor:pointer}
@@ -127,7 +132,9 @@ h1,h2,h3{letter-spacing:-0.01em}
 #in-message::placeholder{color:#6d6f78}
 
 #members{width:210px;background:var(--panel);border-left:1px solid var(--rail);overflow-y:auto;flex-shrink:0;padding-bottom:1rem}
-.member{display:flex;align-items:center;gap:.5rem;padding:.35rem .85rem;font-size:.88rem;font-weight:500}
+#member-list{padding:.25rem .45rem}
+.member{display:flex;align-items:center;gap:.5rem;padding:.4rem .55rem;margin:1px 0;border-radius:6px;font-size:.88rem;font-weight:500;cursor:pointer}
+.member:hover{background:var(--panel-2)}
 .member .avatar{width:28px;height:28px;font-size:.75rem}
 .member .mnames{display:flex;flex-direction:column;min-width:0;line-height:1.25}
 .member .mstatus{font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

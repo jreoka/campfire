@@ -218,7 +218,7 @@ function renderServerList() {
   box.innerHTML = '';
   for (const s of S.servers) {
     const b = document.createElement('button');
-    b.className = 'server-btn' + (s.id === S.serverId ? ' active' : '');
+    b.className = 'server-btn' + (s.id === S.serverId ? ' active' : '') + (s.icon_url ? ' has-icon' : '');
     b.title = s.name;
     if (s.icon_url) {
       b.innerHTML = '';
