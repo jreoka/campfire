@@ -9,6 +9,7 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const { WebSocketServer } = require('ws');
 const webpush = require('web-push');
+const { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } = require('@simplewebauthn/server');
 const db = require('./db');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -72,6 +73,7 @@ function deleteUploaded(url) {
 }
 
 const app = express();
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '64kb' }));
 app.use(cookieParser());
 app.use((req, res, next) => {
@@ -110,9 +112,73 @@ const pickColor = () => COLORS[Math.floor(Math.random() * COLORS.length)];
 function makeInvite() {
   return crypto.randomBytes(6).toString('base64url').slice(0, 8);
 }
-function signToken(user) {
-  return jwt.sign({ sub: user.id, u: user.username }, JWT_SECRET, { expiresIn: '30d' });
+function sessionDeviceName(req) {
+  const d = String(req.body?.device || '').trim().slice(0, 32);
+  if (d) return d;
+  const ua = String(req.get('user-agent') || '');
+  if (/mobile|android|iphone|ipad/i.test(ua)) return 'Phone';
+  if (/macintosh/i.test(ua)) return 'Mac';
+  if (/windows/i.test(ua)) return 'Windows';
+  if (/linux/i.test(ua)) return 'Linux';
+  return '';
 }
+function newSession(userId, req, name) {
+  const sid = uid();
+  db.prepare('INSERT INTO sessions (id,user_id,name,ip,user_agent,created_at,last_seen,revoked) VALUES (?,?,?,?,?,?,?,0)')
+    .run(sid, userId, String(name ?? sessionDeviceName(req)).slice(0, 32), String(req.ip || '').slice(0, 64), String(req.get('user-agent') || '').slice(0, 300), now(), now());
+  return sid;
+}
+function signSession(user, sid) {
+  return jwt.sign({ sub: user.id, u: user.username, sid }, JWT_SECRET, { expiresIn: '30d' });
+}
+const sessTouch = new Map(); // sid -> last last_seen write (throttles per-request DB writes)
+function touchSession(sid) {
+  const t = now();
+  if (t - (sessTouch.get(sid) || 0) < 5 * 60e3) return;
+  sessTouch.set(sid, t);
+  try { db.prepare('UPDATE sessions SET last_seen = ? WHERE id = ?').run(t, sid); } catch {}
+}
+// TOTP (RFC 6238, SHA-1, 30s, 6 digits) — dependency-free.
+const B32ABC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+function b32encode(buf) {
+  let out = '', bits = 0, val = 0;
+  for (const byte of buf) { val = (val << 8) | byte; bits += 8; while (bits >= 5) { out += B32ABC[(val >>> (bits - 5)) & 31]; bits -= 5; } }
+  if (bits > 0) out += B32ABC[(val << (5 - bits)) & 31];
+  return out;
+}
+function b32decode(s) {
+  const clean = String(s || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
+  const bytes = [];
+  let bits = 0, val = 0;
+  for (const ch of clean) { val = (val << 5) | B32ABC.indexOf(ch); bits += 5; if (bits >= 8) { bytes.push((val >>> (bits - 8)) & 255); bits -= 8; } }
+  return Buffer.from(bytes);
+}
+function totpAt(secretB32, counter) {
+  const msg = Buffer.alloc(8);
+  msg.writeBigUInt64BE(BigInt(counter));
+  const h = crypto.createHmac('sha1', b32decode(secretB32)).update(msg).digest();
+  const o = h[h.length - 1] & 15;
+  return String(((h.readUInt32BE(o) & 0x7fffffff) % 1000000)).padStart(6, '0');
+}
+function verifyTotp(secretB32, code) {
+  const c = String(code || '').replace(/\D/g, '');
+  if (!/^[0-9]{6}$/.test(c) || !secretB32) return false;
+  const ctr = Math.floor(now() / 30000);
+  return c === totpAt(secretB32, ctr - 1) || c === totpAt(secretB32, ctr) || c === totpAt(secretB32, ctr + 1);
+}
+function newBackupCodes() {
+  const codes = [];
+  const abc = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  for (let i = 0; i < 10; i++) {
+    let c = '';
+    const r = crypto.randomBytes(8);
+    for (const b of r) c += abc[b % abc.length];
+    codes.push(c);
+  }
+  const hashes = codes.map((c) => crypto.createHash('sha256').update(c).digest('hex'));
+  return { codes, hashes };
+}
+const twofaFails = new Map(); // userId -> {n, until} — brute-force brake for 2FA codes
 function getTokenFromReq(req) {
   const h = req.headers.authorization || '';
   if (h.startsWith('Bearer ')) return h.slice(7);
@@ -126,7 +192,14 @@ function authRequired(req, res, next) {
     const p = jwt.verify(token, JWT_SECRET);
     const user = db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(p.sub);
     if (!user) return res.status(401).json({ error: 'user_gone' });
+    if ((p.iat || 0) * 1000 < (user.token_valid_after || 0)) return res.status(401).json({ error: 'bad_token' });
+    if (p.sid) {
+      const s = db.prepare('SELECT id,user_id,revoked FROM sessions WHERE id = ?').get(p.sid);
+      if (!s || s.user_id !== user.id || s.revoked) return res.status(401).json({ error: 'bad_token' });
+      touchSession(p.sid);
+    }
     req.user = user;
+    req.sessionId = p.sid || null;
     next();
   } catch {
     return res.status(401).json({ error: 'bad_token' });
@@ -178,7 +251,7 @@ function publicUser(u) {
     created_at: u.created_at || null,
   };
 }
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, bio, name_color, name_gradient, created_at';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -252,9 +325,10 @@ app.post('/api/register', async (req, res) => {
   const hash = await bcrypt.hash(password, 10);
   const user = { id: uid(), username, display_name: displayName || username, password_hash: hash, avatar_color: pickColor(), created_at: now() };
   db.prepare('INSERT INTO users (id, username, display_name, password_hash, avatar_color, created_at) VALUES (@id,@username,@display_name,@password_hash,@avatar_color,@created_at)').run(user);
-  const token = signToken(user);
+  const sid = newSession(user.id, req);
+  const token = signSession(user, sid);
   res.cookie('cf_token', token, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 864e5 });
-  res.json({ token, user: publicUser({ id: user.id, username, display_name: user.display_name, avatar_color: user.avatar_color }) });
+  res.json({ token, sid, user: publicUser({ id: user.id, username, display_name: user.display_name, avatar_color: user.avatar_color }) });
 });
 
 app.post('/api/login', async (req, res) => {
@@ -265,14 +339,235 @@ app.post('/api/login', async (req, res) => {
   if (!u) return res.status(401).json({ error: 'invalid_login' });
   const ok = await bcrypt.compare(String(password || ''), u.password_hash);
   if (!ok) return res.status(401).json({ error: 'invalid_login' });
-  const token = signToken(u);
+  if (u.totp_enabled) {
+    const tmp = jwt.sign({ sub: u.id, purpose: '2fa-pre' }, JWT_SECRET, { expiresIn: '5m' });
+    return res.json({ need2fa: true, tmp });
+  }
+  const sid = newSession(u.id, req);
+  const token = signSession(u, sid);
   res.cookie('cf_token', token, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 864e5 });
-  res.json({ token, user: publicUser(u) });
+  res.json({ token, sid, user: publicUser(u) });
 });
 
 app.post('/api/logout', (req, res) => {
   res.clearCookie('cf_token');
   res.json({ ok: true });
+});
+
+// ---------- sessions ----------
+function closeSessionSockets(userId, sid) {
+  for (const c of clients) {
+    if (c.meta && c.meta.userId === userId && (!sid || c.meta.sid === sid)) { try { c.close(4401, 'session revoked'); } catch {} }
+  }
+}
+app.get('/api/sessions', authRequired, (req, res) => {
+  const rows = db.prepare('SELECT id,name,ip,user_agent,created_at,last_seen FROM sessions WHERE user_id = ? AND revoked = 0 ORDER BY last_seen DESC').all(req.user.id);
+  res.json({ sessions: rows.map((s) => ({ ...s, current: s.id === req.sessionId })) });
+});
+app.patch('/api/sessions/:id', authRequired, (req, res) => {
+  const s = db.prepare('SELECT * FROM sessions WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!s || s.revoked) return res.status(404).json({ error: 'no_session' });
+  const name = String(req.body?.name ?? '').trim().slice(0, 32);
+  db.prepare('UPDATE sessions SET name = ? WHERE id = ?').run(name, s.id);
+  res.json({ ok: true });
+});
+app.delete('/api/sessions/others', authRequired, (req, res) => {
+  const rows = db.prepare('SELECT id FROM sessions WHERE user_id = ? AND revoked = 0').all(req.user.id);
+  for (const r of rows) {
+    if (r.id === req.sessionId) continue;
+    db.prepare('UPDATE sessions SET revoked = 1 WHERE id = ?').run(r.id);
+    closeSessionSockets(req.user.id, r.id);
+  }
+  res.json({ ok: true });
+});
+app.delete('/api/sessions/current', authRequired, (req, res) => {
+  if (req.sessionId) { db.prepare('UPDATE sessions SET revoked = 1 WHERE id = ?').run(req.sessionId); closeSessionSockets(req.user.id, req.sessionId); }
+  res.clearCookie('cf_token');
+  res.json({ ok: true });
+});
+app.delete('/api/sessions/:id', authRequired, (req, res) => {
+  const s = db.prepare('SELECT * FROM sessions WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!s) return res.status(404).json({ error: 'no_session' });
+  db.prepare('UPDATE sessions SET revoked = 1 WHERE id = ?').run(s.id);
+  closeSessionSockets(req.user.id, s.id);
+  res.json({ ok: true, current: s.id === req.sessionId });
+});
+
+// ---------- two-factor (TOTP + backup codes) ----------
+app.get('/api/2fa/status', authRequired, (req, res) => {
+  res.json({ enabled: !!req.user.totp_enabled });
+});
+app.post('/api/2fa/setup', authRequired, (req, res) => {
+  if (req.user.totp_enabled) return res.status(400).json({ error: 'already_enabled' });
+  const secret = b32encode(crypto.randomBytes(20));
+  db.prepare('UPDATE users SET totp_secret = ? WHERE id = ?').run(secret, req.user.id);
+  res.json({ secret, otpauth_url: `otpauth://totp/Campfire:${encodeURIComponent(req.user.username)}?secret=${secret}&issuer=Campfire` });
+});
+app.post('/api/2fa/enable', authRequired, (req, res) => {
+  const u = db.prepare('SELECT totp_secret, totp_enabled FROM users WHERE id = ?').get(req.user.id);
+  if (!u || u.totp_enabled) return res.status(400).json({ error: 'bad_state' });
+  if (!u.totp_secret || !verifyTotp(u.totp_secret, req.body?.code)) return res.status(400).json({ error: 'bad_code' });
+  const { codes, hashes } = newBackupCodes();
+  db.prepare('UPDATE users SET totp_enabled = 1 WHERE id = ?').run(req.user.id);
+  db.prepare('DELETE FROM totp_backups WHERE user_id = ?').run(req.user.id);
+  const ins = db.prepare('INSERT INTO totp_backups (user_id, code_hash, created_at) VALUES (?,?,?)');
+  for (const h of hashes) ins.run(req.user.id, h, now());
+  res.json({ ok: true, backupCodes: codes });
+});
+// A code may be a TOTP or an unused backup code (single-use).
+function check2faCode(uid, secret, code) {
+  const c = String(code || '').trim().toUpperCase().replace(/[\s-]/g, '');
+  if (!c) return false;
+  const f = twofaFails.get(uid);
+  if (f && f.until > now()) return false;
+  const fail = () => {
+    const e = twofaFails.get(uid) || { n: 0, until: 0 };
+    e.n += 1;
+    if (e.n >= 10) { e.until = now() + 60e3; e.n = 0; }
+    twofaFails.set(uid, e);
+  };
+  if (secret && verifyTotp(secret, c)) { twofaFails.delete(uid); return true; }
+  const h = crypto.createHash('sha256').update(c).digest('hex');
+  const row = db.prepare('SELECT code_hash FROM totp_backups WHERE user_id = ? AND code_hash = ?').get(uid, h);
+  if (row) { db.prepare('DELETE FROM totp_backups WHERE user_id = ? AND code_hash = ?').run(uid, h); twofaFails.delete(uid); return true; }
+  fail();
+  return false;
+}
+app.post('/api/2fa/disable', authRequired, (req, res) => {
+  const u = db.prepare('SELECT totp_secret, totp_enabled FROM users WHERE id = ?').get(req.user.id);
+  if (!u || !u.totp_enabled || !check2faCode(req.user.id, u.totp_secret, req.body?.code)) return res.status(400).json({ error: 'bad_code' });
+  db.prepare('UPDATE users SET totp_secret = NULL, totp_enabled = 0 WHERE id = ?').run(req.user.id);
+  db.prepare('DELETE FROM totp_backups WHERE user_id = ?').run(req.user.id);
+  res.json({ ok: true });
+});
+app.post('/api/2fa/backup-codes/regenerate', authRequired, (req, res) => {
+  const u = db.prepare('SELECT totp_secret, totp_enabled FROM users WHERE id = ?').get(req.user.id);
+  if (!u || !u.totp_enabled || !check2faCode(req.user.id, u.totp_secret, req.body?.code)) return res.status(400).json({ error: 'bad_code' });
+  const { codes, hashes } = newBackupCodes();
+  db.prepare('DELETE FROM totp_backups WHERE user_id = ?').run(req.user.id);
+  const ins = db.prepare('INSERT INTO totp_backups (user_id, code_hash, created_at) VALUES (?,?,?)');
+  for (const h of hashes) ins.run(req.user.id, h, now());
+  res.json({ ok: true, backupCodes: codes });
+});
+app.post('/api/login/2fa', async (req, res) => {
+  let p;
+  try { p = jwt.verify(String(req.body?.tmp || ''), JWT_SECRET); } catch { return res.status(401).json({ error: 'bad_token' }); }
+  if (!p || p.purpose !== '2fa-pre') return res.status(401).json({ error: 'bad_token' });
+  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(p.sub);
+  if (!u) return res.status(401).json({ error: 'invalid_login' });
+  if (!u.totp_enabled) return res.status(400).json({ error: 'not_enabled' });
+  if (!check2faCode(u.id, u.totp_secret, req.body?.code)) {
+    const f = twofaFails.get(u.id);
+    if (f && f.until > now()) return res.status(429).json({ error: 'slow_down' });
+    return res.status(401).json({ error: 'bad_code' });
+  }
+  const sid = newSession(u.id, req);
+  const token = signSession(u, sid);
+  res.cookie('cf_token', token, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 864e5 });
+  res.json({ token, sid, user: publicUser(u) });
+});
+
+// ---------- passkeys (WebAuthn) ----------
+const wac = new Map(); // stateId -> {type:'reg'|'auth', userId?, challenge, expires}
+setInterval(() => { const t = now(); for (const [k, v] of wac) if (v.expires < t) wac.delete(k); }, 60e3);
+function webauthnRp(req) { return req.hostname; }
+function webauthnOrigin(req) { return `${req.protocol}://${req.get('host')}`; }
+app.post('/api/passkeys/register/options', authRequired, async (req, res) => {
+  try {
+    const existing = db.prepare('SELECT credential_id FROM passkeys WHERE user_id = ?').all(req.user.id);
+    const options = await generateRegistrationOptions({
+      rpName: 'Campfire', rpID: webauthnRp(req),
+      userID: Buffer.from(req.user.id),
+      userName: req.user.username, userDisplayName: req.user.display_name || req.user.username,
+      attestationType: 'none',
+      excludeCredentials: existing.map((r) => ({ id: r.credential_id })),
+    });
+    const stateId = uid();
+    wac.set(stateId, { type: 'reg', userId: req.user.id, challenge: options.challenge, expires: now() + 5 * 60e3 });
+    res.json({ stateId, options });
+  } catch { res.status(500).json({ error: 'webauthn_failed' }); }
+});
+app.post('/api/passkeys/register/verify', authRequired, async (req, res) => {
+  try {
+    const sid0 = String(req.body?.stateId || '');
+    const st = wac.get(sid0);
+    if (!st || st.type !== 'reg' || st.userId !== req.user.id) return res.status(400).json({ error: 'bad_state' });
+    wac.delete(sid0);
+    const v = await verifyRegistrationResponse({
+      response: req.body?.attResp, expectedChallenge: st.challenge,
+      expectedOrigin: webauthnOrigin(req), expectedRPID: webauthnRp(req),
+    });
+    if (!v.verified || !v.registrationInfo) return res.status(400).json({ error: 'verify_failed' });
+    const { credential } = v.registrationInfo;
+    const name = String(req.body?.name || 'Passkey').trim().slice(0, 32) || 'Passkey';
+    const id = uid();
+    db.prepare('INSERT INTO passkeys (id,user_id,name,credential_id,public_key,counter,transports,created_at,last_used) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run(id, req.user.id, name, credential.id, Buffer.from(credential.publicKey).toString('base64'), credential.counter || 0, JSON.stringify(req.body?.attResp?.response?.transports || []), now(), 0);
+    res.json({ ok: true, passkey: { id, name } });
+  } catch (err) {
+    if (String(err?.code || '').includes('UNIQUE') || String(err?.message || '').includes('UNIQUE')) return res.status(409).json({ error: 'already_added' });
+    res.status(400).json({ error: 'verify_failed' });
+  }
+});
+app.get('/api/passkeys', authRequired, (req, res) => {
+  const rows = db.prepare('SELECT id,name,credential_id,created_at,last_used FROM passkeys WHERE user_id = ? ORDER BY created_at ASC').all(req.user.id);
+  res.json({ passkeys: rows });
+});
+app.patch('/api/passkeys/:id', authRequired, (req, res) => {
+  const r = db.prepare('SELECT * FROM passkeys WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!r) return res.status(404).json({ error: 'no_passkey' });
+  const name = String(req.body?.name ?? '').trim().slice(0, 32) || 'Passkey';
+  db.prepare('UPDATE passkeys SET name = ? WHERE id = ?').run(name, r.id);
+  res.json({ ok: true });
+});
+app.delete('/api/passkeys/:id', authRequired, (req, res) => {
+  db.prepare('DELETE FROM passkeys WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  res.json({ ok: true });
+});
+app.post('/api/passkeys/login/options', async (req, res) => {
+  try {
+    const username = String(req.body?.username || '').trim().toLowerCase();
+    let allow = [], userId = null;
+    if (username) {
+      const u = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+      if (!u) return res.status(404).json({ error: 'user_not_found' });
+      userId = u.id;
+      allow = db.prepare('SELECT credential_id FROM passkeys WHERE user_id = ?').all(u.id).map((r) => ({ id: r.credential_id }));
+      if (!allow.length) return res.status(404).json({ error: 'no_passkeys' });
+    }
+    const options = await generateAuthenticationOptions({ rpID: webauthnRp(req), allowCredentials: allow.length ? allow : undefined, userVerification: 'preferred' });
+    const stateId = uid();
+    wac.set(stateId, { type: 'auth', userId, challenge: options.challenge, expires: now() + 5 * 60e3 });
+    res.json({ stateId, options });
+  } catch { res.status(500).json({ error: 'webauthn_failed' }); }
+});
+app.post('/api/passkeys/login/verify', async (req, res) => {
+  try {
+    const sid0 = String(req.body?.stateId || '');
+    const st = wac.get(sid0);
+    if (!st || st.type !== 'auth') return res.status(400).json({ error: 'bad_state' });
+    wac.delete(sid0);
+    const authResp = req.body?.authResp;
+    const credId = String(authResp?.id || '');
+    if (!credId) return res.status(400).json({ error: 'verify_failed' });
+    const row = db.prepare('SELECT * FROM passkeys WHERE credential_id = ?').get(credId);
+    if (!row || (st.userId && row.user_id !== st.userId)) return res.status(400).json({ error: 'verify_failed' });
+    const uh = authResp?.response?.userHandle;
+    if (uh && Buffer.from(uh, 'base64url').toString() !== row.user_id) return res.status(400).json({ error: 'verify_failed' });
+    const v = await verifyAuthenticationResponse({
+      response: authResp, expectedChallenge: st.challenge,
+      expectedOrigin: webauthnOrigin(req), expectedRPID: webauthnRp(req),
+      credential: { id: row.credential_id, publicKey: new Uint8Array(Buffer.from(row.public_key, 'base64')), counter: row.counter, transports: JSON.parse(row.transports || '[]') },
+    });
+    if (!v.verified) return res.status(401).json({ error: 'verify_failed' });
+    db.prepare('UPDATE passkeys SET counter = ?, last_used = ? WHERE id = ?').run(v.authenticationInfo.newCounter, now(), row.id);
+    const u = db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id);
+    if (!u) return res.status(401).json({ error: 'invalid_login' });
+    const sid = newSession(u.id, req);
+    const token = signSession(u, sid);
+    res.cookie('cf_token', token, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 864e5 });
+    res.json({ token, sid, user: publicUser(u) });
+  } catch { res.status(400).json({ error: 'verify_failed' }); }
 });
 
 app.get('/api/me', authRequired, (req, res) => res.json({ user: publicUser(req.user) }));
@@ -1160,14 +1455,37 @@ function mentionsName(content, username) {
     return new RegExp('(^|[\\s(])@' + String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(String(content || ''));
   } catch { return false; }
 }
-function notifyServerMessage(serverId, channelId, author, content) {
+function unreadNotifs(uid) {
+  try { return db.prepare('SELECT COUNT(*) c FROM notifications WHERE user_id = ? AND read_at IS NULL').get(uid).c; } catch { return 0; }
+}
+function pushInbox(userId, n) {
+  try {
+    db.prepare('INSERT INTO notifications (id,user_id,kind,title,body,server_id,channel_id,message_id,thread_id,created_at,read_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+      .run(uid(), userId, n.kind || 'mention', String(n.title || '').slice(0, 120), String(n.body || '').slice(0, 300), n.server_id || null, n.channel_id || null, n.message_id || null, n.thread_id || null, now(), null);
+    db.prepare('DELETE FROM notifications WHERE user_id = ? AND id NOT IN (SELECT id FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 200)').run(userId, userId);
+    notifyUser(userId, { t: 'notif-new', unread: unreadNotifs(userId) });
+  } catch {}
+}
+app.get('/api/notifs/inbox', authRequired, (req, res) => {
+  const items = db.prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 60').all(req.user.id);
+  res.json({ items, unread: unreadNotifs(req.user.id) });
+});
+app.put('/api/notifs/read', authRequired, (req, res) => {
+  if (req.body?.all) db.prepare('UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL').run(now(), req.user.id);
+  else if (Array.isArray(req.body?.ids) && req.body.ids.length) {
+    const ids = req.body.ids.slice(0, 100).map(String);
+    db.prepare(`UPDATE notifications SET read_at = ? WHERE user_id = ? AND id IN (${ids.map(() => '?').join(',')})`).run(now(), req.user.id, ...ids);
+  }
+  res.json({ unread: unreadNotifs(req.user.id) });
+});
+function notifyServerMessage(serverId, channelId, author, content, messageId) {
   const text = String(content || '').trim();
   if (!text) return;
   let mems = [];
   try { mems = db.prepare('SELECT user_id FROM server_members WHERE server_id = ? AND user_id != ?').all(serverId, author.userId).map((r) => r.user_id); } catch { return; }
   if (!mems.length) return;
   const live = new Set([...clients].filter((c) => c.meta).map((c) => c.meta.userId));
-  const cands = mems.filter((id) => !live.has(id));
+  const cands = mems;
   if (!cands.length) return;
   let prefs = [], names = new Map();
   try {
@@ -1187,27 +1505,34 @@ function notifyServerMessage(serverId, channelId, author, content) {
     const mode = pm.get(`c:${channelId}`) || pm.get(`s:${serverId}`) || pm.get('global') || 'all';
     if (mode === 'muted') continue;
     if (mode === 'mentions' && !mentionsName(text, names.get(uid))) continue;
+    const title = `#${(ch && ch.name) || 'chat'} · ${s ? s.name : ''}`;
+    const body = `${displayOf(author)}: ${text}`.slice(0, 160);
+    pushInbox(uid, { kind: 'mention', title, body, server_id: serverId, channel_id: channelId, message_id: messageId || null });
+    if (live.has(uid)) continue;
     pushToUser(uid, {
-      title: `#${(ch && ch.name) || 'chat'} · ${s ? s.name : ''}`,
-      body: `${displayOf(author)}: ${text}`.slice(0, 160),
+      title,
+      body,
       icon: author.avatar_url || '/icons/icon-192.png',
       tag: `ch:${channelId}`,
       url: `/?server=${serverId}&channel=${channelId}`,
     });
   }
 }
-function notifyDmMessage(thread, author, content) {
+function notifyDmMessage(thread, author, content, messageId) {
   const text = String(content || '').trim();
   if (!text) return;
   let mems = [];
   try { mems = db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ? AND user_id != ?').all(thread.id, author.userId).map((r) => r.user_id); } catch { return; }
   const live = new Set([...clients].filter((c) => c.meta).map((c) => c.meta.userId));
   for (const uid of mems) {
-    if (live.has(uid)) continue;
     if (notifMode(uid, [`dm:${thread.id}`, 'global']) === 'muted') continue;
+    const title = thread.is_group ? (thread.name || 'Group chat') : `${displayOf(author)} (DM)`;
+    const body = thread.is_group ? `${displayOf(author)}: ${text}`.slice(0, 160) : text.slice(0, 160);
+    pushInbox(uid, { kind: 'dm', title, body, thread_id: thread.id, message_id: messageId || null });
+    if (live.has(uid)) continue;
     pushToUser(uid, {
-      title: thread.is_group ? (thread.name || 'Group chat') : `${displayOf(author)} (DM)`,
-      body: thread.is_group ? `${displayOf(author)}: ${text}`.slice(0, 160) : text.slice(0, 160),
+      title,
+      body,
       icon: author.avatar_url || '/icons/icon-192.png',
       tag: `dm:${thread.id}`,
       url: `/?dm=${thread.id}`,
@@ -1319,6 +1644,7 @@ app.post('/api/friends', authRequired, (req, res) => {
   const [x, y] = req.user.id < target.id ? [req.user.id, target.id] : [target.id, req.user.id];
   db.prepare('INSERT INTO friendships (user_a,user_b,status,action_by,created_at) VALUES (?,?,?,?,?)').run(x, y, 'pending', req.user.id, now());
   notifyUser(target.id, { t: 'friends-changed' });
+  pushInbox(target.id, { kind: 'friend', title: 'Friend request', body: `${displayOf(req.user)} sent you a friend request` });
   res.json({ ok: true });
 });
 app.post('/api/friends/:oid/accept', authRequired, (req, res) => {
@@ -1328,6 +1654,7 @@ app.post('/api/friends/:oid/accept', authRequired, (req, res) => {
   db.prepare('UPDATE friendships SET status = ? WHERE user_a = ? AND user_b = ?').run('accepted', f.user_a, f.user_b);
   notifyUser(req.params.oid, { t: 'friends-changed' });
   notifyUser(req.user.id, { t: 'friends-changed' });
+  pushInbox(req.params.oid, { kind: 'friend', title: 'Friend request accepted', body: `${displayOf(req.user)} accepted your friend request` });
   res.json({ ok: true });
 });
 app.delete('/api/friends/:oid', authRequired, (req, res) => {
@@ -1799,10 +2126,15 @@ wss.on('connection', (ws, req) => {
   try { p = jwt.verify(token, JWT_SECRET); } catch { ws.close(4401, 'bad token'); return; }
   const u = db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(p.sub);
   if (!u) { ws.close(4401, 'no user'); return; }
+  if ((p.iat || 0) * 1000 < (u.token_valid_after || 0)) { ws.close(4401, 'bad token'); return; }
+  if (p.sid) {
+    const s = db.prepare('SELECT id,user_id,revoked FROM sessions WHERE id = ?').get(p.sid);
+    if (!s || s.user_id !== u.id || s.revoked) { ws.close(4401, 'bad token'); return; }
+  }
   const memberRows = db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(u.id);
   ws.meta = {
     userId: u.id, username: u.username, display_name: u.display_name, avatar_color: u.avatar_color,
-    avatar_url: u.avatar_url || null, status: u.status || 'online',
+    avatar_url: u.avatar_url || null, status: u.status || 'online', sid: p.sid || null,
     servers: new Set(memberRows.map((r) => r.server_id)),
     voice: null,
   };
@@ -1886,7 +2218,7 @@ wss.on('connection', (ws, req) => {
       for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, now());
       const full = fullMessage(mid, null);
       broadcastToServer(serverId, { t: 'message-new', serverId, channelId, message: full });
-      notifyServerMessage(serverId, channelId, me, content);
+      notifyServerMessage(serverId, channelId, me, content, mid);
       return;
     }
 
@@ -1916,7 +2248,7 @@ wss.on('connection', (ws, req) => {
       const insAtt = db.prepare('INSERT INTO dm_attachments (id,message_id,url,filename,mime,size,kind,spoiler,created_at) VALUES (?,?,?,?,?,?,?,?,?)');
       for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, now());
       dmNotify(threadId, { t: 'dm-new', message: fullDm(mid, null) });
-      notifyDmMessage(t, me, content);
+      notifyDmMessage(t, me, content, mid);
       return;
     }
 

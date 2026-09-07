@@ -6,6 +6,8 @@ const apiBase = '';
 const store = {
   get token() { return localStorage.getItem('cf_token') || ''; },
   set token(v) { v ? localStorage.setItem('cf_token', v) : localStorage.removeItem('cf_token'); },
+  get sid() { return localStorage.getItem('cf_sid') || ''; },
+  set sid(v) { v ? localStorage.setItem('cf_sid', v) : localStorage.removeItem('cf_sid'); },
 };
 const isCoarse = () => window.matchMedia && matchMedia('(hover: none)').matches;
 
@@ -189,9 +191,11 @@ $('#form-auth').addEventListener('submit', async (e) => {
   }
   try {
     const data = mode === 'login'
-      ? await api('/api/login', { method: 'POST', body: JSON.stringify({ username, password, turnstile: turnstileToken() }) })
-      : await api('/api/register', { method: 'POST', body: JSON.stringify({ username, password, displayName, turnstile: turnstileToken() }) });
+      ? await api('/api/login', { method: 'POST', body: JSON.stringify({ username, password, turnstile: turnstileToken(), device: deviceName() }) })
+      : await api('/api/register', { method: 'POST', body: JSON.stringify({ username, password, displayName, turnstile: turnstileToken(), device: deviceName() }) });
+    if (data.need2fa) { pending2faTmp = data.tmp; show2faStep(); return; }
     store.token = data.token;
+    if (data.sid) store.sid = data.sid;
     await boot();
   } catch (err) {
     const el = $('#auth-error');
@@ -213,10 +217,12 @@ function prettyError(e) {
 }
 async function doLogout() {
   try { await pushTeardown(); } catch {}
+  try { await api('/api/sessions/current', { method: 'DELETE' }); } catch {}
   try { await api('/api/logout', { method: 'POST' }); } catch {}
   try { leaveVoice(true); } catch {}
   try { S.ws?.close(); } catch {}
   store.token = '';
+  store.sid = '';
   location.reload();
 }
 
@@ -257,6 +263,7 @@ async function boot() {
   connectWS();
   pollVersion();
   pushSetup();
+  refreshNotifBadge();
   // invite landing (/invite/CODE or ?invite=CODE)
   const inv = consumeInvite();
   if (inv) {
@@ -1165,6 +1172,9 @@ function onWS(m) {
       toast('Server was deleted'); refreshServers(); break;
     case 'invite-updated':
       if (m.serverId === S.serverId) S.serverDetail.invite_code = m.invite_code;
+      break;
+    case 'notif-new':
+      paintNotifBadge(m.unread || 0);
       break;
     // ---- voice ----
     case 'voice-peers': {
@@ -3793,7 +3803,7 @@ function setSettingsTab(t) {
   $('#set-notifs').classList.toggle('hidden', t !== 'notifs');
   if (t === 'notifs') renderNotifsTab();
 }
-document.querySelectorAll('.set-tab').forEach((b) => (b.onclick = () => setSettingsTab(b.dataset.tab)));
+document.querySelectorAll('.set-tab').forEach((b) => (b.onclick = () => { setSettingsTab(b.dataset.tab); if (b.dataset.tab === 'account') renderSecurityTab(); }));
 $('#btn-settings-rail').onclick = () => openSettings('profile');
 $('#btn-home').onclick = openHome;
 $('#btn-pins').onclick = openPins;
@@ -3937,6 +3947,291 @@ $('#set-pw-save').onclick = async () => {
   } catch (err) { toast('Failed: ' + prettyError(err.message)); }
 };
 $('#set-logout').onclick = doLogout;
+// ---------- security: 2FA, passkeys, sessions + notification inbox ----------
+function deviceName() {
+  try {
+    const ud = navigator.userAgentData;
+    if (ud?.platform) return `${ud.platform} ${(ud.brands || []).map((b) => b.brand)[0] || ''}`.trim().slice(0, 32);
+  } catch {}
+  return '';
+}
+function b64ToBuf(s) {
+  const bin = atob(String(s || '').replace(/-/g, '+').replace(/_/g, '/'));
+  const b = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+  return b;
+}
+function bufToB64(buf) {
+  const u = new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < u.length; i += 0x8000) bin += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function pkToJson(cred) {
+  const o = { id: cred.id, rawId: bufToB64(cred.rawId), type: cred.type, response: {} };
+  for (const k of ['clientDataJSON', 'attestationObject', 'authenticatorData', 'signature', 'userHandle']) {
+    if (cred.response[k]) o.response[k] = bufToB64(cred.response[k]);
+  }
+  return o;
+}
+function pkFromJson(opts) {
+  const o = { ...opts, challenge: b64ToBuf(opts.challenge) };
+  if (o.user && o.user.id) o.user = { ...o.user, id: b64ToBuf(o.user.id) };
+  if (o.allowCredentials) o.allowCredentials = o.allowCredentials.map((c) => ({ ...c, id: b64ToBuf(c.id) }));
+  if (o.excludeCredentials) o.excludeCredentials = o.excludeCredentials.map((c) => ({ ...c, id: b64ToBuf(c.id) }));
+  return o;
+}
+function webauthnSupported() { return !!(navigator.credentials && window.PublicKeyCredential); }
+let pending2faTmp = null;
+function show2faStep() {
+  $('#form-auth').classList.add('hidden');
+  $('#btn-passkey').classList.add('hidden');
+  $('#form-2fa').classList.remove('hidden');
+  $('#in-2fa').value = '';
+  $('#auth-2fa-error').classList.add('hidden');
+  setTimeout(() => { try { $('#in-2fa').focus(); } catch {} }, 50);
+}
+function hide2faStep() {
+  $('#form-2fa').classList.add('hidden');
+  $('#form-auth').classList.remove('hidden');
+  $('#btn-passkey').classList.remove('hidden');
+  pending2faTmp = null;
+}
+$('#btn-2fa-back').onclick = hide2faStep;
+$('#form-2fa').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const code = $('#in-2fa').value.trim();
+  if (!code || !pending2faTmp) return;
+  try {
+    const data = await api('/api/login/2fa', { method: 'POST', body: JSON.stringify({ tmp: pending2faTmp, code }) });
+    store.token = data.token;
+    if (data.sid) store.sid = data.sid;
+    hide2faStep();
+    await boot();
+  } catch (err) {
+    const el = $('#auth-2fa-error');
+    el.textContent = '⚠️ ' + prettyError(err.message);
+    el.classList.remove('hidden');
+  }
+});
+$('#btn-passkey').onclick = async () => {
+  if (!webauthnSupported()) { toast('Passkeys are not supported in this browser'); return; }
+  try {
+    const username = $('#in-username').value.trim().toLowerCase() || undefined;
+    const { stateId, options } = await api('/api/passkeys/login/options', { method: 'POST', body: JSON.stringify({ username }) });
+    const cred = await navigator.credentials.get({ publicKey: pkFromJson(options) });
+    const data = await api('/api/passkeys/login/verify', { method: 'POST', body: JSON.stringify({ stateId, authResp: pkToJson(cred), device: deviceName() }) });
+    store.token = data.token;
+    if (data.sid) store.sid = data.sid;
+    await boot();
+  } catch (err) { toast(prettyError(err.message)); }
+};
+async function renderSecurityTab() {
+  if (!S.me) return;
+  render2faBox(); renderPasskeyBox(); renderSessionBox();
+}
+async function render2faBox() {
+  const box = $('#set-2fa');
+  if (!box) return;
+  let enabled = false;
+  try { ({ enabled } = await api('/api/2fa/status')); } catch { box.innerHTML = '<p class="muted small">Unavailable.</p>'; return; }
+  box.innerHTML = '';
+  if (!enabled) {
+    const p = document.createElement('p'); p.className = 'muted small'; p.textContent = 'Off — add an authenticator app for a second step at sign in.';
+    const b = document.createElement('button'); b.className = 'btn small primary'; b.textContent = 'Set up 2FA';
+    b.onclick = start2faSetup;
+    box.append(p, b);
+    return;
+  }
+  const p = document.createElement('p'); p.className = 'muted small'; p.textContent = 'On — signing in asks for a code from your authenticator app.';
+  const row = document.createElement('div'); row.className = 'row'; row.style.marginTop = '.5rem';
+  const regen = document.createElement('button'); regen.className = 'btn small'; regen.textContent = 'New backup codes';
+  regen.onclick = async () => {
+    const code = await openPromptModal({ title: 'Confirm it\'s you', label: 'Enter a 2FA code or backup code', okLabel: 'Continue', maxlength: 16 });
+    if (code === null) return;
+    try {
+      const { backupCodes } = await api('/api/2fa/backup-codes/regenerate', { method: 'POST', body: JSON.stringify({ code: (code || '').trim() }) });
+      showBackupCodes(backupCodes);
+    } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+  };
+  const dis = document.createElement('button'); dis.className = 'btn small danger'; dis.textContent = 'Disable 2FA';
+  dis.onclick = async () => {
+    const code = await openPromptModal({ title: 'Disable 2FA?', label: 'Enter a 2FA code or backup code to confirm', okLabel: 'Disable', maxlength: 16 });
+    if (code === null) return;
+    try { await api('/api/2fa/disable', { method: 'POST', body: JSON.stringify({ code: (code || '').trim() }) }); render2faBox(); toast('2FA disabled'); }
+    catch (err) { toast('Failed: ' + prettyError(err.message)); }
+  };
+  row.append(regen, dis);
+  box.append(p, row);
+}
+async function start2faSetup() {
+  const box = $('#set-2fa');
+  let setup;
+  try { setup = await api('/api/2fa/setup', { method: 'POST' }); }
+  catch (err) { toast('Failed: ' + prettyError(err.message)); return; }
+  box.innerHTML = '';
+  const p = document.createElement('p'); p.className = 'muted small';
+  p.textContent = 'Scan this secret into your authenticator app (or tap the link on mobile), then enter the 6-digit code.';
+  const link = document.createElement('div');
+  link.innerHTML = `<a href="${esc(setup.otpauth_url)}">Add to authenticator app</a>`;
+  const code = document.createElement('div'); code.className = 'codebox'; code.textContent = setup.secret;
+  const cp = document.createElement('button'); cp.className = 'btn small'; cp.textContent = 'Copy secret';
+  cp.onclick = () => { try { navigator.clipboard.writeText(setup.secret); toast('Secret copied'); } catch {} };
+  const inp = document.createElement('input'); inp.maxLength = 16; inp.placeholder = '123456'; inp.inputMode = 'numeric'; inp.style.marginTop = '.5rem';
+  const row = document.createElement('div'); row.className = 'row'; row.style.marginTop = '.5rem';
+  const ok = document.createElement('button'); ok.className = 'btn small primary'; ok.textContent = 'Confirm';
+  ok.onclick = async () => {
+    try {
+      const { backupCodes } = await api('/api/2fa/enable', { method: 'POST', body: JSON.stringify({ code: inp.value.trim() }) });
+      render2faBox();
+      showBackupCodes(backupCodes);
+    } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+  };
+  const cancel = document.createElement('button'); cancel.className = 'btn small'; cancel.textContent = 'Cancel';
+  cancel.onclick = render2faBox;
+  row.append(ok, cancel);
+  box.append(p, link, code, cp, inp, row);
+}
+function showBackupCodes(codes) {
+  openModal('Backup codes', `<p class="muted">Save these somewhere safe — each works once if you lose your authenticator. This is the only time they are shown.</p><div class="backup-codes">${(codes || []).map(esc).join('<br/>')}</div>`, 'Done', null);
+}
+async function renderPasskeyBox() {
+  const box = $('#set-passkeys');
+  if (!box) return;
+  let passkeys = [];
+  try { ({ passkeys } = await api('/api/passkeys')); } catch { box.innerHTML = '<p class="muted small">Unavailable.</p>'; return; }
+  box.innerHTML = '';
+  if (!passkeys.length) box.innerHTML = '<p class="muted small">None yet — add one to sign in without a password.</p>';
+  for (const p of passkeys) {
+    const row = document.createElement('div'); row.className = 'sec-row';
+    const main = document.createElement('span'); main.className = 'grow';
+    main.innerHTML = `<span>${esc(p.name || 'Passkey')}</span><span class="sub">added ${new Date(p.created_at).toLocaleDateString()}${p.last_used ? ' · used ' + new Date(p.last_used).toLocaleDateString() : ''}</span>`;
+    const rn = document.createElement('button'); rn.className = 'mini'; rn.textContent = 'Rename';
+    rn.onclick = async () => {
+      const v = await openPromptModal({ title: 'Rename passkey', label: 'Passkey name', initial: p.name || 'Passkey', okLabel: 'Save', maxlength: 32 });
+      if (v === null) return;
+      try { await api(`/api/passkeys/${p.id}`, { method: 'PATCH', body: JSON.stringify({ name: v.trim() }) }); renderPasskeyBox(); }
+      catch (err) { toast('Failed: ' + prettyError(err.message)); }
+    };
+    const del = document.createElement('button'); del.className = 'mini danger'; del.textContent = '✕';
+    del.onclick = async () => {
+      try { await api(`/api/passkeys/${p.id}`, { method: 'DELETE' }); renderPasskeyBox(); toast('Passkey removed'); }
+      catch (err) { toast('Failed: ' + prettyError(err.message)); }
+    };
+    row.append(main, rn, del);
+    box.appendChild(row);
+  }
+}
+$('#set-passkey-add').onclick = async () => {
+  if (!webauthnSupported()) { toast('Passkeys are not supported in this browser'); return; }
+  const name = await openPromptModal({ title: 'Add passkey', label: 'Name this passkey', initial: 'My passkey', okLabel: 'Continue', maxlength: 32 });
+  if (name === null) return;
+  try {
+    const { stateId, options } = await api('/api/passkeys/register/options', { method: 'POST' });
+    const cred = await navigator.credentials.create({ publicKey: pkFromJson(options) });
+    await api('/api/passkeys/register/verify', { method: 'POST', body: JSON.stringify({ stateId, name: (name || '').trim() || 'Passkey', attResp: pkToJson(cred) }) });
+    toast('Passkey added');
+    renderPasskeyBox();
+  } catch (err) { toast(prettyError(err.message)); }
+};
+function fmtSeen(ts) {
+  const d = Date.now() - ts;
+  if (d < 60e3) return 'just now';
+  if (d < 3600e3) return Math.floor(d / 60e3) + 'm ago';
+  if (d < 86400e3) return Math.floor(d / 3600e3) + 'h ago';
+  if (d < 30 * 86400e3) return Math.floor(d / 86400e3) + 'd ago';
+  return new Date(ts).toLocaleDateString();
+}
+async function renderSessionBox() {
+  const box = $('#set-sessions');
+  if (!box) return;
+  let sessions = [];
+  try { ({ sessions } = await api('/api/sessions')); } catch { box.innerHTML = '<p class="muted small">Unavailable.</p>'; return; }
+  box.innerHTML = '';
+  if (!sessions.length) box.innerHTML = '<p class="muted small">No active sessions.</p>';
+  for (const s of sessions) {
+    const row = document.createElement('div'); row.className = 'sec-row';
+    const main = document.createElement('span'); main.className = 'grow';
+    const ua = (s.user_agent || '').slice(0, 48);
+    main.innerHTML = `<span>${esc(s.name || 'Unnamed device')}${s.current ? ' · this device' : ''}</span><span class="sub">${esc([s.ip, ua].filter(Boolean).join(' · '))} · seen ${fmtSeen(s.last_seen || s.created_at)}</span>`;
+    const rn = document.createElement('button'); rn.className = 'mini'; rn.textContent = 'Rename';
+    rn.onclick = async () => {
+      const v = await openPromptModal({ title: 'Rename session', label: 'Session name', initial: s.name || '', placeholder: 'e.g. Home PC', okLabel: 'Save', maxlength: 32 });
+      if (v === null) return;
+      try { await api(`/api/sessions/${s.id}`, { method: 'PATCH', body: JSON.stringify({ name: (v || '').trim() }) }); renderSessionBox(); }
+      catch (err) { toast('Failed: ' + prettyError(err.message)); }
+    };
+    row.appendChild(main);
+    row.appendChild(rn);
+    if (!s.current) {
+      const rev = document.createElement('button'); rev.className = 'mini danger'; rev.textContent = 'Revoke';
+      rev.onclick = async () => {
+        try { await api(`/api/sessions/${s.id}`, { method: 'DELETE' }); renderSessionBox(); toast('Session revoked'); }
+        catch (err) { toast('Failed: ' + prettyError(err.message)); }
+      };
+      row.appendChild(rev);
+    }
+    box.appendChild(row);
+  }
+}
+$('#set-sess-revoke-others').onclick = async () => {
+  try { await api('/api/sessions/others', { method: 'DELETE' }); renderSessionBox(); toast('Other sessions revoked'); }
+  catch (err) { toast('Failed: ' + prettyError(err.message)); }
+};
+// ---------- notification inbox ----------
+function paintNotifBadge(n) {
+  const b = $('#notifs-count');
+  if (!b) return;
+  b.textContent = n > 99 ? '99+' : String(n);
+  b.classList.toggle('hidden', !n);
+}
+async function refreshNotifBadge() {
+  if (!store.token) return;
+  try {
+    const { unread } = await api('/api/notifs/inbox');
+    paintNotifBadge(unread || 0);
+  } catch {}
+}
+function inboxWhen(ts) {
+  try { return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+  catch { return ''; }
+}
+async function openInbox() {
+  let items = [];
+  try { ({ items } = await api('/api/notifs/inbox')); } catch { toast('Could not load notifications'); return; }
+  openModal('Notifications', `<div class="row end" style="margin:0 0 .4rem"><button class="btn small" id="m-notif-readall">Mark all read</button></div><div id="m-inbox-list"></div>`, 'Close', null, { wide: true });
+  const list = $('#m-inbox-list');
+  if (!items.length) list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">All caught up — mentions, DMs and friend requests land here.</p>';
+  for (const n of items) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'inbox-item' + (n.read_at ? ' read' : '');
+    const kind = n.kind === 'dm' ? 'DM' : n.kind === 'friend' ? 'Friend' : 'Mention';
+    b.innerHTML = `<span class="dot"></span><span class="imain"><span class="ititle">${esc(n.title || kind)}</span><br/><span class="ibody">${esc(n.body || '')}</span></span><span class="iwhen">${esc(inboxWhen(n.created_at))}</span>`;
+    b.onclick = () => openNotifItem(n);
+    list.appendChild(b);
+  }
+  $('#m-notif-readall').onclick = async () => {
+    try { await api('/api/notifs/read', { method: 'PUT', body: JSON.stringify({ all: true }) }); } catch {}
+    paintNotifBadge(0);
+    openInbox();
+  };
+}
+async function openNotifItem(n) {
+  try { await api('/api/notifs/read', { method: 'PUT', body: JSON.stringify({ ids: [n.id] }) }); } catch {}
+  refreshNotifBadge();
+  $('#modal-backdrop').classList.add('hidden');
+  try {
+    if (n.kind === 'dm' && n.thread_id) { await openHome(); selectDmThread(n.thread_id); }
+    else if (n.kind === 'friend') { await openHome(); S.friendTab = 'pending'; document.querySelector('#friend-tabs .ftab[data-ftab="pending"]')?.click(); refreshFriends(); }
+    else if (n.server_id) {
+      if (n.server_id !== S.serverId) await selectServer(n.server_id);
+      if (n.channel_id) await selectChannel(n.channel_id);
+      if (n.message_id) jumpToMessage(n.message_id);
+    }
+  } catch {}
+}
+$('#btn-notifs').onclick = openInbox;
 $('#me-card').style.cursor = 'pointer';
 $('#me-card').onclick = () => openSettings('profile');
 function renderServerHeader() {

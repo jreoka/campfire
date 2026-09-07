@@ -122,7 +122,8 @@ up -d --build`. Secrets live in server + local `.env` (never committed).
 Shipped: auth, servers/invites, text channels, voice rooms (mesh WebRTC, sidebar
 occupants + VAD rings), uploads, emoji (Emojibase set + custom + Klipy GIFs),
 replies/threads/reactions/edits/mentions/markdown, presence + statuses, user
-cards, tabbed settings, rail folders + DnD, B&W theme, ctx menus, auto-update.
+cards, tabbed settings, rail folders + DnD, B&W theme, ctx menus, auto-update,
+TOTP 2FA + passkeys + sessions, notification inbox.
 Detail per change lives in `git log` — don't duplicate it here.
 
 ## Deployment (owner directive)

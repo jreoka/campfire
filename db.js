@@ -247,6 +247,53 @@ addColumn('servers', 'description', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'name_color', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'name_gradient', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'bio', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'totp_secret', 'TEXT');
+addColumn('users', 'totp_enabled', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('users', 'token_valid_after', 'INTEGER NOT NULL DEFAULT 0');
+raw.exec(`
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL DEFAULT '',
+  ip TEXT NOT NULL DEFAULT '',
+  user_agent TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL,
+  revoked INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE TABLE IF NOT EXISTS totp_backups (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS passkeys (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL DEFAULT '',
+  credential_id TEXT NOT NULL UNIQUE,
+  public_key TEXT NOT NULL,
+  counter INTEGER NOT NULL DEFAULT 0,
+  transports TEXT NOT NULL DEFAULT '[]',
+  created_at INTEGER NOT NULL,
+  last_used INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys(user_id);
+CREATE TABLE IF NOT EXISTS notifications (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'mention',
+  title TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  server_id TEXT,
+  channel_id TEXT,
+  message_id TEXT,
+  thread_id TEXT,
+  created_at INTEGER NOT NULL,
+  read_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_notifs_user ON notifications(user_id, created_at DESC);
+`);
 addColumn('attachments', 'spoiler', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('dm_attachments', 'spoiler', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('server_members', 'position', 'INTEGER NOT NULL DEFAULT 0');
