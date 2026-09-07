@@ -334,8 +334,8 @@ h1,h2,h3{letter-spacing:-0.01em}
 .dmrow .mini{flex-shrink:0}
 .home-btn svg{display:block}
 .home-btn.active{background:var(--accent)}
-body.view-home #members{display:none!important}
-body.view-home #btn-members{display:none!important}
+body.view-home:not(.dm-open) #members{display:none!important}
+body.view-home:not(.dm-open) #btn-members{display:none!important}
 .gpick{display:flex!important;gap:.5rem;align-items:center;padding:.3rem 0}
 /* ---------- mobile native app ---------- */
 body{touch-action:manipulation}

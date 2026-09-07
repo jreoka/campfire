@@ -16,6 +16,7 @@ const S = {
   serverDetail: null, // {channels, members, ...}
   messages: new Map(), // channelId -> [msgs]
   online: {}, // userId -> status ('online'|'away'|'dnd'); absent = offline/invisible
+  presenceAll: {}, // userId -> last-seen live status across ALL shared servers (feeds DM member list)
   emoji: {}, // custom server emoji name -> url
   replyTo: null, // message being replied to
   pendingAtts: [], // uploaded attachments awaiting send
@@ -81,7 +82,9 @@ function memberByUsername(un) {
 }
 function memberById(id) {
   if (S.me && S.me.id === id) return S.me;
-  return (S.serverDetail?.members || []).find((m) => m.id === id) || null;
+  return (S.serverDetail?.members || []).find((m) => m.id === id)
+    || (S.dms.find((t) => t.id === S.dmThreadId)?.members || []).find((m) => m.id === id)
+    || null;
 }
 // Escape + code/bold/italic/strike + custom emoji + @mentions + links.
 function renderRich(text) {
@@ -405,7 +408,7 @@ async function selectChannel(id) {
 }
 function statusOf(id) {
   if (S.me && id === S.me.id) return S.me.status || 'online';
-  return S.online[id] || 'offline';
+  return S.online[id] || S.presenceAll[id] || 'offline';
 }
 function paintMe() {
   if (!S.me) return;
@@ -416,30 +419,45 @@ function mentionsMe(msg) {
   if (!msg || !msg.content || !S.me) return false;
   return new RegExp('(^|[\\s(])@' + S.me.username + '\\b').test(msg.content);
 }
+function memberRowEl(m) {
+  const st = statusOf(m.id);
+  const div = document.createElement('div');
+  div.className = 'member' + (st === 'offline' ? ' off' : '');
+  div.dataset.uid = m.id;
+  if (m.sidebar_banner_url && st !== 'offline') {
+    div.style.backgroundImage = `linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${m.sidebar_banner_url}")`;
+    div.style.backgroundSize = 'cover';
+    div.style.backgroundPosition = 'right center';
+  }
+  div.innerHTML = `<span class="avatar"></span><span class="mnames"><span>${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${m.status_text && st !== 'offline' ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ''}</span><span class="status-dot ${st}"></span>`;
+  paintAvatar(div.querySelector('.avatar'), m);
+  return div;
+}
+function memberSort(a, b) {
+  const ao = statusOf(a.id) === 'offline' ? 1 : 0, bo = statusOf(b.id) === 'offline' ? 1 : 0;
+  return ao - bo || a.display_name.localeCompare(b.display_name);
+}
 function renderMembers() {
   const d = S.serverDetail;
   if (!d) return;
+  $('#members-title').textContent = 'ONLINE';
   const box = $('#member-list');
   box.innerHTML = '';
-  const sorted = [...d.members].sort((a, b) => {
-    const ao = statusOf(a.id) === 'offline' ? 1 : 0, bo = statusOf(b.id) === 'offline' ? 1 : 0;
-    return ao - bo || a.display_name.localeCompare(b.display_name);
-  });
+  const sorted = [...d.members].sort(memberSort);
   $('#online-count').textContent = d.members.filter((m) => statusOf(m.id) !== 'offline').length;
-  for (const m of sorted) {
-    const st = statusOf(m.id);
-    const div = document.createElement('div');
-    div.className = 'member' + (st === 'offline' ? ' off' : '');
-    div.dataset.uid = m.id;
-    if (m.sidebar_banner_url && st !== 'offline') {
-      div.style.backgroundImage = `linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${m.sidebar_banner_url}")`;
-      div.style.backgroundSize = 'cover';
-      div.style.backgroundPosition = 'right center';
-    }
-    div.innerHTML = `<span class="avatar"></span><span class="mnames"><span>${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${m.status_text && st !== 'offline' ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ''}</span><span class="status-dot ${st}"></span>`;
-    paintAvatar(div.querySelector('.avatar'), m);
-    box.appendChild(div);
-  }
+  for (const m of sorted) box.appendChild(memberRowEl(m));
+}
+function renderDmMembers() {
+  if (S.view !== 'home') return;
+  const t = S.dms.find((x) => x.id === S.dmThreadId);
+  if (!t) return;
+  $('#members-title').textContent = 'MEMBERS';
+  const box = $('#member-list');
+  box.innerHTML = '';
+  const members = t.members || [];
+  const sorted = [...members].sort(memberSort);
+  $('#online-count').textContent = members.filter((m) => statusOf(m.id) !== 'offline').length;
+  for (const m of sorted) box.appendChild(memberRowEl(m));
 }
 
 // ---------- messages ----------
@@ -741,6 +759,7 @@ function onWS(m) {
       if (S.view === 'home') {
         refreshDms().then(() => {
           if (S.dmThreadId && !S.dms.some((t) => t.id === S.dmThreadId)) { S.dmThreadId = null; renderDmBlank(); }
+          else renderDmMembers();
         });
       }
       break;
@@ -762,27 +781,40 @@ function onWS(m) {
       }
       break;
     case 'presence':
+      Object.assign(S.presenceAll, m.online || {});
       if (m.serverId === S.serverId) { S.online = m.online || {}; S.online[S.me.id] = S.me.status || 'online'; renderMembers(); }
+      if (S.view === 'home') renderDmMembers();
       break;
     case 'user-online':
+      S.presenceAll[m.userId] = m.status || 'online';
       if (m.serverId === S.serverId) { S.online[m.userId] = m.status || 'online'; renderMembers(); }
+      else if (S.view === 'home') renderDmMembers();
       break;
     case 'user-offline':
+      delete S.presenceAll[m.userId];
       if (m.serverId === S.serverId) { delete S.online[m.userId]; renderMembers(); }
+      else if (S.view === 'home') renderDmMembers();
       break;
     case 'user-status':
+      if (m.status === 'invisible') delete S.presenceAll[m.userId];
+      else S.presenceAll[m.userId] = m.status;
       if (m.serverId === S.serverId) {
         if (m.status === 'invisible') delete S.online[m.userId];
         else S.online[m.userId] = m.status;
         renderMembers();
-      }
+      } else if (S.view === 'home') renderDmMembers();
       break;
     case 'user-updated': {
       const u = m.user;
       if (u.id === S.me.id) { S.me = { ...S.me, ...u }; paintMe(); }
       const mem = (S.serverDetail?.members || []).find((x) => x.id === u.id);
       if (mem) Object.assign(mem, u);
+      for (const t of S.dms) {
+        const dm = (t.members || []).find((x) => x.id === u.id);
+        if (dm) Object.assign(dm, u);
+      }
       renderMembers();
+      if (S.view === 'home') renderDmMembers();
       if (S.channelId) renderMessages();
       break;
     }
@@ -1536,7 +1568,7 @@ function dmPeer(t) { return (t.members || []).find((m) => m.id !== S.me.id) || n
 function dmTitle(t) { return t.isGroup ? (t.name || 'Group chat') : ((dmPeer(t) || {}).display_name || 'Direct message'); }
 function openServerView() {
   S.view = 'server';
-  document.body.classList.remove('view-home');
+  document.body.classList.remove('view-home', 'dm-open');
   $('#server-ui').classList.remove('hidden');
   $('#home-ui').classList.add('hidden');
   $('#btn-home').classList.remove('active');
@@ -1669,6 +1701,8 @@ async function selectDmThread(id) {
   document.querySelectorAll('.dmrow').forEach((b) => b.classList.toggle('active', b.dataset.dmthread === id));
   const t = S.dms.find((x) => x.id === id);
   if (!t) { renderDmBlank(); return; }
+  document.body.classList.add('dm-open');
+  renderDmMembers();
   $('#chan-hash').textContent = t.isGroup ? '' : '@';
   const peer = dmPeer(t);
   $('#chan-name').textContent = t.isGroup ? (t.name || 'Group chat') : ((peer || {}).display_name || 'DM');
@@ -1685,6 +1719,7 @@ async function selectDmThread(id) {
   } catch { $('#messages').innerHTML = '<p class="error">Could not load messages.</p>'; }
 }
 function renderDmBlank() {
+  document.body.classList.remove('dm-open');
   $('#chan-hash').textContent = '';
   $('#chan-name').textContent = 'Home';
   $('#typing').textContent = '';
