@@ -62,7 +62,7 @@ function serverBtn(s) {
   const label = s.name.trim().charAt(0).toUpperCase() || '?';
   b.className = 'server-btn' + (s.id === S.serverId ? ' active' : '') + (s.icon_url ? ' has-icon' : '') + (serverMuted(s.id) ? ' muted' : '');
   b.title = s.name;
-  b.draggable = true;
+  b.draggable = !isCoarse(); // touch devices: drop native drag so long-press opens the slide-up sheet
   b.dataset.drag = 'server:' + s.id;
   b.dataset.sid = s.id;
   if (s.icon_url) {
@@ -85,7 +85,7 @@ function folderBtn(f) {
   const b = document.createElement('button');
   b.className = 'folder-btn' + (S.openFolderId === f.id ? ' open' : '');
   b.title = f.name || 'Folder';
-  b.draggable = true;
+  b.draggable = !isCoarse(); // touch devices: native drag fights the long-press sheet
   b.dataset.drag = 'folder:' + f.id;
   b.dataset.fid = f.id;
   b.style.setProperty('--fcolor', f.color || '#5865f2');
@@ -223,7 +223,7 @@ function renderChannels() {
 let chanDrag = null;
 function wireChanDrag(b, c) {
   if (!canManage()) return;
-  b.draggable = true;
+  b.draggable = !isCoarse(); // touch devices: let long-press open the channel sheet, not drag
   b.addEventListener('dragstart', (e) => {
     chanDrag = { id: c.id, type: c.type, target: null, edge: null };
     try { e.dataTransfer.setData('text/plain', 'channel:' + c.id); } catch {}
