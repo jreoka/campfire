@@ -117,7 +117,11 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
       (API, manifest, icons, register all 200).
 - [x] UI pass 1: flat professional redesign (was gradient/shadow), de-emojified.
 - [x] Removed in-app PWA install buttons.
-- [ ] NEXT: VPS deployment (owner preparing VPS; needs Docker + Caddy + domain
-      for HTTPS). Local test data can be migrated by copying `data/campfire.db`.
+- [x] Deployed to https://campfire.dill.moe (DigitalOcean Ubuntu 26.04, Docker 29 +
+      Caddy auto-HTTPS via docker-compose.prod.yml, UFW 22/80/443, app on
+      loopback :3000). Local test db migrated to /opt/campfire/data. Server .env
+      JWT_SECRET matches local .env so existing login tokens kept working.
+      Deploy flow: `git pull` in /opt/campfire, then compose up with prod overlay.
+- [ ] NEXT: iterate on features/polish per owner feedback on the live site.
 - Open ideas (not requested yet): DMs, file/image sharing, push notifications,
   moderation roles beyond owner.
