@@ -217,6 +217,8 @@ h1,h2,h3{letter-spacing:-0.01em}
 .pk-gif img{width:100%;height:90px;object-fit:cover;border-radius:6px;display:block}
 .pk-gif:hover{outline:2px solid var(--accent)}
 .pk-empty{color:var(--muted);font-size:.85rem;padding:1rem;text-align:center;width:100%}
+.pk-attr{font-size:.72rem;color:var(--muted);text-align:center;padding:.45rem;border-top:1px solid var(--line)}
+.pk-attr a{color:#9aa5ff;font-weight:700;text-decoration:none}
 
 /* ---------- user card ---------- */
 #usercard{position:fixed;z-index:120;width:280px;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}

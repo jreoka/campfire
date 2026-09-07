@@ -1320,6 +1320,8 @@ function setPickerTab(t) {
   document.querySelectorAll('.pk-tab').forEach((b) => b.classList.toggle('active', b.dataset.ptab === t));
   $('#pk-emoji').classList.toggle('hidden', t !== 'emoji');
   $('#pk-gifs').classList.toggle('hidden', t !== 'gifs');
+  $('#pk-klipy').classList.toggle('hidden', t !== 'gifs');
+  $('#pk-search').placeholder = t === 'gifs' ? 'Search KLIPY' : 'Search emoji';
 }
 document.querySelectorAll('.pk-tab').forEach((b) => (b.onclick = () => setPickerTab(b.dataset.ptab)));
 let emojiData = null, emojiLoadP = null;
