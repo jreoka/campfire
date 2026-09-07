@@ -131,6 +131,31 @@ async function api(path, opts = {}) {
 
 // ---------- auth ----------
 let mode = 'login';
+// Cloudflare Turnstile: site key comes from /api/config (public); the widget
+// is explicitly rendered once the key is known. Tokens are single-use, so
+// the widget resets after every submit attempt.
+S.turnstileKey = null; S.tsWidget = undefined;
+async function initTurnstile() {
+  try {
+    const cfg = await api('/api/config');
+    if (!cfg || !cfg.turnstileSiteKey) return;
+    S.turnstileKey = cfg.turnstileSiteKey;
+    $('#ts-wrap').classList.remove('hidden');
+    if (window.turnstile) S.tsWidget = turnstile.render('#ts-widget', { sitekey: S.turnstileKey, theme: 'dark' });
+  } catch {}
+}
+function turnstileToken() {
+  try { return (window.turnstile && S.tsWidget !== undefined) ? turnstile.getResponse(S.tsWidget) : ''; }
+  catch { return ''; }
+}
+function turnstileReset() {
+  try { if (window.turnstile && S.tsWidget !== undefined) turnstile.reset(S.tsWidget); } catch {}
+}
+function authError(msg) {
+  const el = $('#auth-error');
+  el.textContent = '⚠️ ' + msg;
+  el.classList.remove('hidden');
+}
 function setMode(m) {
   mode = m;
   $('#tab-login').classList.toggle('active', m === 'login');
@@ -147,16 +172,22 @@ $('#form-auth').addEventListener('submit', async (e) => {
   const password = $('#in-password').value;
   const displayName = $('#in-display').value.trim();
   $('#auth-error').classList.add('hidden');
+  if (S.turnstileKey) {
+    if (!window.turnstile || S.tsWidget === undefined) { authError('Captcha still loading — wait a moment and try again.'); return; }
+    if (!turnstileToken()) { authError('Complete the captcha to continue.'); return; }
+  }
   try {
     const data = mode === 'login'
-      ? await api('/api/login', { method: 'POST', body: JSON.stringify({ username, password }) })
-      : await api('/api/register', { method: 'POST', body: JSON.stringify({ username, password, displayName }) });
+      ? await api('/api/login', { method: 'POST', body: JSON.stringify({ username, password, turnstile: turnstileToken() }) })
+      : await api('/api/register', { method: 'POST', body: JSON.stringify({ username, password, displayName, turnstile: turnstileToken() }) });
     store.token = data.token;
     await boot();
   } catch (err) {
     const el = $('#auth-error');
     el.textContent = '⚠️ ' + prettyError(err.message);
     el.classList.remove('hidden');
+  } finally {
+    turnstileReset();
   }
 });
 function prettyError(e) {
@@ -164,6 +195,7 @@ function prettyError(e) {
     invalid_login: 'Wrong username or password.', username_taken: 'That username is taken.',
     bad_username: 'Username needs 2–24 chars (a-z, 0-9, _ .).', bad_invite: 'Invite code not found.',
     slow_down: 'Slow down — you\'re sending too fast.', owner_only: 'Only the server owner can do that.', banned: 'You are banned from this server.', slow_mode: 'Slow mode is on — wait a moment.',
+    captcha_required: 'Complete the captcha to continue.', captcha_failed: 'Captcha check failed — please try again.',
     bad_color: 'Pick a valid color.', cannot_kick_admin: 'Only the owner can remove admins.',
   };
   return map[e] || e.replace(/_/g, ' ');
@@ -3734,5 +3766,6 @@ if (window.matchMedia && matchMedia('(hover: none)').matches) {
 
 // ---------- go ----------
 setMode('login');
+initTurnstile();
 if (store.token) boot();
 else showAuth();

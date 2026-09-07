@@ -17,6 +17,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Campfire" />
 <link rel="stylesheet" href="/styles.css" />
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
 <div id="app">
@@ -41,6 +42,7 @@
         <label>Password
           <input id="in-password" type="password" autocomplete="current-password" placeholder="••••••" required />
         </label>
+        <div id="ts-wrap" class="hidden"><div id="ts-widget"></div></div>
         <p id="auth-error" class="error hidden"></p>
         <button class="btn primary big" type="submit" id="btn-auth">Log in</button>
       </form>

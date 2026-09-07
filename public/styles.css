@@ -56,6 +56,7 @@ h1,h2,h3{letter-spacing:-0.01em}
 #form-auth label{display:block;margin:.7rem 0;font-size:.82rem;font-weight:600;color:var(--muted)}
 #form-auth input{width:100%;margin-top:.35rem;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:var(--radius);padding:.65rem .75rem;font-size:.95rem;outline:none}
 #form-auth input:focus{border-color:var(--accent)}
+#ts-wrap{display:flex;justify-content:center;margin:.7rem 0 .2rem}
 .btn{border:1px solid var(--line);background:transparent;color:var(--text);border-radius:999px;padding:.6rem 1.2rem;font-size:.92rem;font-weight:600;cursor:pointer}
 .btn:hover{background:var(--panel-2)}
 .btn:active{background:var(--panel-3)}

@@ -215,10 +215,32 @@ app.get('/api/config', (req, res) => {
       credential: process.env.TURN_PASS || undefined,
     });
   }
-  res.json({ iceServers, origin: ORIGIN });
+  res.json({ iceServers, origin: ORIGIN, turnstileSiteKey: process.env.TURNSTILE_SITEKEY || null });
 });
 
+// ---------- Cloudflare Turnstile (login/signup captcha) ----------
+// Secret lives in TURNSTILE_SECRET env (never committed). When unset (dev),
+// verification is skipped so local register/login keep working.
+const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET || '';
+if (!TURNSTILE_SECRET) console.warn('[auth] TURNSTILE_SECRET not set — captcha verification disabled');
+async function verifyTurnstile(token, ip) {
+  if (!TURNSTILE_SECRET) return true;
+  if (!token || typeof token !== 'string') return false;
+  try {
+    const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ secret: TURNSTILE_SECRET, response: token, ...(ip ? { remoteip: ip } : {}) }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const j = await r.json().catch(() => ({}));
+    return j.success === true;
+  } catch { return false; }
+}
+
 app.post('/api/register', async (req, res) => {
+  const tsToken = req.body?.turnstile;
+  if (!(await verifyTurnstile(tsToken, req.ip))) return res.status(403).json({ error: tsToken ? 'captcha_failed' : 'captcha_required' });
   let { username, password, displayName } = req.body || {};
   username = String(username || '').trim().toLowerCase().replace(/[^a-z0-9_.]/g, '').slice(0, 24);
   displayName = String(displayName || username || '').trim().slice(0, 32);
@@ -236,6 +258,8 @@ app.post('/api/register', async (req, res) => {
 });
 
 app.post('/api/login', async (req, res) => {
+  const tsToken = req.body?.turnstile;
+  if (!(await verifyTurnstile(tsToken, req.ip))) return res.status(403).json({ error: tsToken ? 'captcha_failed' : 'captcha_required' });
   const { username, password } = req.body || {};
   const u = db.prepare('SELECT * FROM users WHERE username = ?').get(String(username || '').trim().toLowerCase());
   if (!u) return res.status(401).json({ error: 'invalid_login' });
