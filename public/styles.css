@@ -175,7 +175,9 @@ h1,h2,h3{letter-spacing:-0.01em}
 .tool-btn{border:0;background:transparent;color:var(--muted);border-radius:999px;padding:.45rem;cursor:pointer;display:inline-flex;align-items:center}
 .tool-btn:hover{background:var(--panel-2);color:var(--text)}
 #attach-preview{display:flex;gap:.5rem;flex-wrap:wrap;padding:.55rem .9rem 0;background:var(--panel)}
-.att-chip{display:flex;align-items:center;gap:.45rem;background:var(--panel-3);border:0;border-radius:12px;padding:.3rem .4rem;font-size:.78rem;max-width:220px}
+.att-chip{display:flex;align-items:center;gap:.45rem;background:var(--panel-3);border:0;border-radius:12px;padding:.3rem .4rem;font-size:.78rem;max-width:220px;min-height:32px}
+.att-chip>span{flex:1;min-width:0;line-height:1.35;align-self:center}
+.att-chip .mini{align-self:center;flex-shrink:0;line-height:1;padding:.35rem .6rem}
 .att-chip img{width:28px;height:28px;object-fit:cover;border-radius:8px}
 .att-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #mention-pop{position:absolute;left:.9rem;bottom:calc(64px + var(--safe-b));background:var(--panel-2);border:0;border-radius:12px;min-width:220px;max-height:220px;overflow-y:auto;z-index:60}
