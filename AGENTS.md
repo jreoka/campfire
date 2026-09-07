@@ -141,6 +141,18 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
       counts re-render live even with the thread panel open. Deploy auto-update:
       server fingerprints code at boot (`/api/version`), clients poll + show a
       Refresh toast (voice-aware, drafts preserved); SW notifies tabs on activate.
+- [x] Discord-style voice sidebar (2026-09-07): occupants render under their voice
+      channel (avatar + name + muted mic icon, click opens user card) instead of a
+      grid above chat. Green VAD rings: each client analyses its own mic and
+      broadcasts speech state, so everyone sees who is talking in every room.
+      Mute forces speaking off server-side.
+      icon to uploads living in ephemeral image storage — moved UPLOAD_DIR next to
+      DB_PATH (persistent volume), verified files survive rebuilds. Missing uploads
+      now 404 (never SPA HTML). Client degrades gracefully (avatars→initials,
+      icons→letter, images→file card, dead custom emoji→`:name:` text). Thread reply
+      counts re-render live even with the thread panel open. Deploy auto-update:
+      server fingerprints code at boot (`/api/version`), clients poll + show a
+      Refresh toast (voice-aware, drafts preserved); SW notifies tabs on activate.
 - [ ] NEXT: iterate on features/polish per owner feedback on the live site.
 - Open ideas (not requested yet): DMs, file/image sharing, push notifications,
   moderation roles beyond owner.

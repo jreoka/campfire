@@ -716,6 +716,7 @@ function voicePeersPayload(key) {
     avatar_color: ws.meta.avatar_color,
     avatar_url: ws.meta.avatar_url || null,
     muted: !!(ws.meta.voice && ws.meta.voice.muted),
+    speaking: !!(ws.meta.voice && ws.meta.voice.speaking),
   }));
 }
 function findWsInVoice(key, userId) {
@@ -855,7 +856,7 @@ wss.on('connection', (ws, req) => {
       // tell others someone joined
       broadcastToServer(serverId, {
         t: 'voice-peer-joined', serverId, channelId,
-        peer: { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, avatar_url: me.avatar_url || null, muted: false },
+        peer: { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, avatar_url: me.avatar_url || null, muted: false, speaking: false },
       }, ws);
       // also broadcast updated occupancy to whole server (for channel user counts)
       broadcastToServer(serverId, { t: 'voice-peers', serverId, channelId, peers: voicePeersPayload(key) }, ws);
@@ -870,9 +871,11 @@ wss.on('connection', (ws, req) => {
     if (msg.t === 'voice-state') {
       if (!me.voice) return;
       me.voice.muted = !!msg.muted;
+      if (typeof msg.speaking === 'boolean') me.voice.speaking = msg.speaking;
+      if (me.voice.muted) me.voice.speaking = false;
       broadcastToServer(me.voice.serverId, {
         t: 'voice-state', serverId: me.voice.serverId, channelId: me.voice.channelId,
-        userId: me.userId, muted: me.voice.muted,
+        userId: me.userId, muted: me.voice.muted, speaking: !!me.voice.speaking,
       });
       return;
     }

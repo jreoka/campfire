@@ -285,13 +285,19 @@ function renderChannels() {
   }
   for (const c of d.channels.filter((x) => x.type === 'voice')) {
     const occ = S.voiceOccupancy.get(c.id) || [];
+    const wrap = document.createElement('div');
     const b = document.createElement('button');
     b.className = 'chan' + (S.voice && S.voice.channelId === c.id ? ' active' : '');
     b.innerHTML = `<span class="vicon"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3z"/><path d="M16 8a5 5 0 0 1 0 8" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></span><span>${esc(c.name)}</span>${occ.length ? `<span class="count">${occ.length}</span>` : ''}`;
     b.title = occ.length ? occ.map((p) => p.display_name).join(', ') : 'Join voice';
     b.onclick = () => joinVoice(S.serverId, c.id);
-    vc.appendChild(b);
+    const users = document.createElement('div');
+    users.className = 'vusers';
+    users.id = 'vusers-' + c.id;
+    wrap.append(b, users);
+    vc.appendChild(wrap);
   }
+  renderVoiceUsers();
 }
 function confirmDeleteChannel(c) {
   if (S.serverDetail.owner_id !== S.me.id) return;
@@ -663,10 +669,10 @@ function onWS(m) {
     case 'voice-peers': {
       S.voiceOccupancy.set(m.channelId, m.peers);
       if (m.serverId === S.serverId) renderChannels();
+      else renderVoiceUsers();
       if (S.voice && S.voice.serverId === m.serverId && S.voice.channelId === m.channelId) {
         onVoicePeers(m.peers);
       }
-      renderVoiceGrid();
       break;
     }
     case 'voice-peer-joined': {
@@ -677,19 +683,19 @@ function onWS(m) {
         toast(`${m.peer.display_name} joined voice`);
         S.ws.send(JSON.stringify({ t: 'subscribe' }));
       }
-      renderVoiceGrid();
+      renderVoiceUsers();
       break;
     }
     case 'voice-peer-left': {
       closePeer(m.userId);
-      renderVoiceGrid();
+      renderVoiceUsers();
       break;
     }
     case 'voice-state': {
       const occ = S.voiceOccupancy.get(m.channelId) || [];
       const p = occ.find((x) => x.id === m.userId);
-      if (p) p.muted = m.muted;
-      renderVoiceGrid();
+      if (p) { p.muted = m.muted; p.speaking = !!m.speaking; }
+      if (m.serverId === S.serverId) renderVoiceUsers();
       break;
     }
     case 'voice-signal':
@@ -825,11 +831,6 @@ $('#btn-menu').onclick = () => document.body.classList.toggle('nav-open');
 $('#sidebar-scrim').onclick = () => document.body.classList.remove('nav-open');
 
 // ---------- VOICE (WebRTC mesh) ----------
-$('#btn-join-voice').onclick = () => {
-  const voices = S.serverDetail?.channels.filter((c) => c.type === 'voice') || [];
-  if (!voices.length) return toast('No voice rooms yet — create one with ＋');
-  joinVoice(S.serverId, voices[0].id);
-};
 $('#btn-voice-leave').onclick = () => leaveVoice();
 $('#btn-mute').onclick = () => toggleMute();
 
@@ -844,14 +845,12 @@ async function joinVoice(serverId, channelId) {
     return;
   }
   const ch = S.serverDetail?.channels.find((c) => c.id === channelId);
-  S.voice = { serverId, channelId, stream, pcs: new Map(), muted: false, audioEls: new Map() };
+  S.voice = { serverId, channelId, stream, pcs: new Map(), muted: false, speaking: false, audioEls: new Map() };
   $('#voice-bar').classList.remove('hidden');
-  $('#voice-grid').classList.remove('hidden');
   $('#voice-chan-name').textContent = ch ? ch.name : 'voice';
   $('#btn-mute').textContent = 'Mute';
   S.ws?.send(JSON.stringify({ t: 'voice-join', serverId, channelId }));
   renderChannels();
-  renderVoiceGrid();
   startSpeakingMonitor();
   toast('Connected to voice');
 }
@@ -864,8 +863,6 @@ function leaveVoice(silent) {
   S.voice = null;
   stopSpeakingMonitor();
   $('#voice-bar').classList.add('hidden');
-  const grid = $('#voice-grid');
-  grid.classList.add('hidden'); grid.innerHTML = '';
   if (!silent) S.ws?.send(JSON.stringify({ t: 'voice-leave' }));
   renderChannels();
   if (S.updateReady && !silent) location.reload();
@@ -875,8 +872,9 @@ function toggleMute() {
   S.voice.muted = !S.voice.muted;
   S.voice.stream.getAudioTracks().forEach((t) => (t.enabled = !S.voice.muted));
   $('#btn-mute').textContent = S.voice.muted ? 'Unmute' : 'Mute';
-  S.ws?.send(JSON.stringify({ t: 'voice-state', muted: S.voice.muted }));
-  renderVoiceGrid();
+  if (S.voice.muted) { S.voice.speaking = false; setSpeakingUI(S.me.id, false); }
+  S.ws?.send(JSON.stringify({ t: 'voice-state', muted: S.voice.muted, speaking: S.voice.muted ? false : !!S.voice.speaking }));
+  renderVoiceUsers();
 }
 function ensurePeer(peerId, initiator) {
   if (!S.voice || peerId === S.me.id || S.voice.pcs.has(peerId)) return S.voice?.pcs.get(peerId);
@@ -933,7 +931,6 @@ function closePeer(peerId) {
   if (pc) { try { pc.close(); } catch {} S.voice.pcs.delete(peerId); }
   const el = S.voice.audioEls.get(peerId);
   if (el) { try { el.remove(); } catch {} S.voice.audioEls.delete(peerId); }
-  renderVoiceGrid();
 }
 function attachRemoteAudio(peerId, stream) {
   if (!S.voice) return;
@@ -947,27 +944,34 @@ function attachRemoteAudio(peerId, stream) {
   }
   el.srcObject = stream;
 }
-function renderVoiceGrid() {
-  const grid = $('#voice-grid');
-  if (!S.voice) { grid.classList.add('hidden'); grid.innerHTML = ''; return; }
-  const occ = S.voiceOccupancy.get(S.voice.channelId) || [];
-  grid.classList.remove('hidden');
-  grid.innerHTML = '';
-  // include self first
-  const tiles = [{ id: S.me.id, display_name: S.me.display_name + ' (you)', avatar_color: S.me.avatar_color, muted: S.voice.muted }, ...occ.filter((p) => p.id !== S.me.id)];
-  for (const p of tiles) {
-    const d = document.createElement('div');
-    d.className = 'vtile';
-    d.id = 'vt-' + p.id;
-    d.innerHTML = `<span class="avatar"></span><span>${esc(p.display_name)}</span>${p.muted ? '<span class="muted-tag">muted</span>' : ''}`;
-    paintAvatar(d.querySelector('.avatar'), p);
-    grid.appendChild(d);
+const MIC_OFF_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3M2 2l20 20"/></svg>';
+// Discord-style: occupants listed under their voice channel, green ring while talking.
+function renderVoiceUsers() {
+  const d = S.serverDetail;
+  if (!d) return;
+  for (const c of d.channels.filter((x) => x.type === 'voice')) {
+    const box = document.getElementById('vusers-' + c.id);
+    if (!box) continue;
+    const occ = S.voiceOccupancy.get(c.id) || [];
+    box.innerHTML = '';
+    for (const p of occ) {
+      const u = document.createElement('div');
+      u.className = 'vuser' + (p.speaking && !p.muted ? ' speaking' : '');
+      u.dataset.vuser = p.id;
+      u.dataset.uid = p.id;
+      u.innerHTML = `<span class="avatar"></span><span class="vname">${esc(p.display_name)}${p.id === S.me.id ? ' (you)' : ''}</span>${p.muted ? '<span class="vmic">' + MIC_OFF_SVG + '</span>' : ''}`;
+      paintAvatar(u.querySelector('.avatar'), p);
+      box.appendChild(u);
+    }
   }
-  const joinBtn = $('#btn-join-voice');
-  joinBtn.classList.add('hidden');
 }
-// speaking indicator (local mic level → green ring on own tile)
-let speakTimer = null, speakCtx = null;
+function setSpeakingUI(userId, speaking) {
+  const el = document.querySelector('[data-vuser="' + CSS.escape(userId) + '"]');
+  if (el) el.classList.toggle('speaking', speaking);
+}
+// Voice activity detection: local mic level → broadcast speech state so every
+// client sees green rings (works for all rooms, not just the one you're in).
+let speakTimer = null, speakCtx = null, speakOn = false, speakQuiet = 0;
 function startSpeakingMonitor() {
   stopSpeakingMonitor();
   try {
@@ -978,16 +982,30 @@ function startSpeakingMonitor() {
     src.connect(an);
     const buf = new Uint8Array(an.fftSize);
     speakTimer = setInterval(() => {
+      if (!S.voice) return;
       an.getByteTimeDomainData(buf);
       let sum = 0;
       for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
-      const loud = Math.sqrt(sum / buf.length) > (S.voice?.muted ? 99 : 0.08);
-      document.getElementById('vt-' + S.me.id)?.classList.toggle('speaking', loud);
+      const lvl = Math.sqrt(sum / buf.length);
+      let talking = speakOn;
+      if (S.voice.muted) { talking = false; speakQuiet = 0; }
+      else if (lvl > 0.09) { talking = true; speakQuiet = 0; }
+      else if (speakOn && ++speakQuiet >= 3) { talking = false; speakQuiet = 0; }
+      if (talking !== speakOn) {
+        speakOn = talking;
+        S.voice.speaking = talking;
+        setSpeakingUI(S.me.id, talking);
+        const occ = S.voiceOccupancy.get(S.voice.channelId) || [];
+        const me = occ.find((p) => p.id === S.me.id);
+        if (me) me.speaking = talking;
+        S.ws?.send(JSON.stringify({ t: 'voice-state', muted: S.voice.muted, speaking: talking }));
+      }
     }, 200);
   } catch {}
 }
 function stopSpeakingMonitor() {
   clearInterval(speakTimer); speakTimer = null;
+  if (speakOn) { speakOn = false; speakQuiet = 0; if (S.me) setSpeakingUI(S.me.id, false); }
   try { speakCtx?.close(); } catch {}
   speakCtx = null;
 }

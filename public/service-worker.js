@@ -1,5 +1,5 @@
 /* Campfire service worker — app-shell offline cache */
-const CACHE = 'campfire-v7';
+const CACHE = 'campfire-v8';
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
