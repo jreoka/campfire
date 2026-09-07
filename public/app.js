@@ -3065,6 +3065,9 @@ function dmCtxMenu(tid, x, y) {
   if (t && !t.isGroup) {
     items.push({ label: 'Close DM', icon: '×', fn: () => closeDm(tid) });
   }
+  if (t && t.isGroup) {
+    items.push({ label: 'Add members…', icon: '+', fn: () => openGroupAdd(tid) });
+  }
   if (t && t.isGroup && t.created_by === S.me?.id) {
     items.push({ label: 'Banned members…', icon: '⊘', fn: () => openGroupBans(tid) });
   }
@@ -3074,6 +3077,31 @@ function dmCtxMenu(tid, x, y) {
     refreshDms();
   } });
   openCtx(x, y, items);
+}
+async function openGroupAdd(tid) {
+  const t = S.dms.find((x) => x.id === tid);
+  if (!t) return;
+  await ensureFriends();
+  const inGroup = new Set((t.members || []).map((m) => m.id));
+  const cands = (S.friends.friends || []).filter((f) => !inGroup.has(f.id));
+  if (!cands.length) { toast('No friends to add — everyone is already here'); return; }
+  openModal(`Add to ${esc(t.name || 'group chat')}`, `
+    <div style="margin-top:.2rem;max-height:220px;overflow-y:auto" id="m-add-picks">
+      ${cands.map((f) => `<label class="gpick"><input type="checkbox" value="${f.id}" /> ${esc(f.display_name)} <span class="muted">@${esc(f.username)}</span></label>`).join('')}
+    </div>`, 'Add', async () => {
+    const ids = [...document.querySelectorAll('#m-add-picks input:checked')].map((i) => i.value);
+    if (!ids.length) return;
+    let failed = 0;
+    for (const id of ids) {
+      try { await api(`/api/dms/${tid}/members`, { method: 'POST', body: JSON.stringify({ userId: id }) }); }
+      catch { failed++; }
+    }
+    await refreshDms();
+    if (S.view === 'home' && S.dmThreadId === tid) selectDmThread(tid);
+    if (failed >= ids.length) toast('Could not add members');
+    else if (failed) toast('Some members could not be added');
+    else toast(ids.length === 1 ? 'Member added' : 'Members added');
+  });
 }
 async function openGroupBans(tid) {
   let bans = [];
