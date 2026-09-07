@@ -102,6 +102,9 @@ async function renderNotifsTab() {
     box.appendChild(en);
   }
   if (pushOK && subscribed) {
+    const test = document.createElement('button'); test.className = 'btn small'; test.textContent = 'Send test push';
+    test.onclick = async () => { try { await api('/api/push/test', { method: 'POST' }); toast('Test push sent'); } catch { toast('Test failed'); } };
+    box.appendChild(test);
     const off = document.createElement('button'); off.className = 'btn small'; off.textContent = 'Disable on this device';
     off.onclick = async () => { await pushTeardown(); renderNotifsTab(); };
     box.appendChild(off);

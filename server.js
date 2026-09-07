@@ -1507,6 +1507,12 @@ function areFriends(a, b) {
 function notifyUser(userId, obj) {
   for (const c of clients) if (c.meta && c.meta.userId === userId) safeSend(c, obj);
 }
+// Does the user have a live socket with their page visible/focused? Only then do
+// we suppress the OS push (so backgrounded/closed mobile apps still get pings).
+function userVisible(uid) {
+  for (const c of clients) if (c.meta && c.meta.userId === uid && c.meta.visible) return true;
+  return false;
+}
 function dmThreadFor(userId, threadId) {
   if (!threadId) return null;
   const t = db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(threadId);
@@ -1600,6 +1606,7 @@ function pushToUser(uid, payload) {
       if (err && (err.statusCode === 404 || err.statusCode === 410)) {
         try { db.prepare('DELETE FROM push_subs WHERE endpoint = ?').run(s.endpoint); } catch {}
       }
+      console.error('[push]', uid, (err && (err.statusCode || err.message)) || 'error');
     });
   }
 }
@@ -1637,7 +1644,6 @@ function notifyServerMessage(serverId, channelId, author, content, messageId) {
   let mems = [];
   try { mems = db.prepare('SELECT user_id FROM server_members WHERE server_id = ? AND user_id != ?').all(serverId, author.userId).map((r) => r.user_id); } catch { return; }
   if (!mems.length) return;
-  const live = new Set([...clients].filter((c) => c.meta).map((c) => c.meta.userId));
   const cands = mems;
   if (!cands.length) return;
   let prefs = [], names = new Map();
@@ -1661,7 +1667,7 @@ function notifyServerMessage(serverId, channelId, author, content, messageId) {
     const title = `#${(ch && ch.name) || 'chat'} · ${s ? s.name : ''}`;
     const body = `${displayOf(author)}: ${text}`.slice(0, 160);
     pushInbox(uid, { kind: 'mention', title, body, server_id: serverId, channel_id: channelId, message_id: messageId || null });
-    if (live.has(uid)) continue;
+    if (userVisible(uid)) continue;
     pushToUser(uid, {
       title,
       body,
@@ -1676,14 +1682,13 @@ function notifyDmMessage(thread, author, content, messageId) {
   if (!text) return;
   let mems = [];
   try { mems = db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ? AND user_id != ?').all(thread.id, author.userId).map((r) => r.user_id); } catch { return; }
-  const live = new Set([...clients].filter((c) => c.meta).map((c) => c.meta.userId));
   for (const uid of mems) {
     if (notifMode(uid, [`dm:${thread.id}`, 'global']) === 'muted') continue;
     const title = thread.is_group ? (thread.name || 'Group chat') : `${displayOf(author)} (DM)`;
     const body = thread.is_group ? `${displayOf(author)}: ${text}`.slice(0, 160) : text.slice(0, 160);
     // DMs stay out of the notification inbox (mentions + major events only) —
-    // live tabs badge via dm-new, offline devices still get a push below.
-    if (live.has(uid)) continue;
+    // visible tabs badge via dm-new, hidden/closed devices still get a push below.
+    if (userVisible(uid)) continue;
     pushToUser(uid, {
       title,
       body,
@@ -1899,6 +1904,10 @@ app.post('/api/push/subscribe', authRequired, (req, res) => {
 app.delete('/api/push/unsubscribe', authRequired, (req, res) => {
   const ep = String(req.body?.endpoint || '');
   if (ep) db.prepare('DELETE FROM push_subs WHERE user_id = ? AND endpoint = ?').run(req.user.id, ep);
+  res.json({ ok: true });
+});
+app.post('/api/push/test', authRequired, (req, res) => {
+  pushToUser(req.user.id, { title: 'Campfire', body: 'Test push — delivery works!', tag: 'campfire-test', url: '/' });
   res.json({ ok: true });
 });
 app.get('/api/notifs/prefs', authRequired, (req, res) => {
@@ -2368,6 +2377,7 @@ wss.on('connection', (ws, req) => {
     avatar_url: u.avatar_url || null, status: u.status || 'online', sid: p.sid || null,
     servers: new Set(memberRows.map((r) => r.server_id)),
     voice: null,
+    visible: true,
   };
   clients.add(ws);
   safeSend(ws, { t: 'hello', user: publicUser(u), version: APP_VERSION });
@@ -2377,6 +2387,8 @@ wss.on('connection', (ws, req) => {
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     const me = ws.meta;
     if (!me) return;
+
+    if (msg.t === 'visibility') { me.visible = msg.visible !== false; return; }
 
     if (msg.t === 'subscribe') {
       // refresh memberships

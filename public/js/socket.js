@@ -1,11 +1,17 @@
 'use strict';
 // ---------- websocket ----------
+function sendVisibility() {
+  try { S.ws?.send(JSON.stringify({ t: 'visibility', visible: document.visibilityState === 'visible' })); } catch {}
+}
+// Tell the server when the tab is foregrounded/backgrounded so it stops
+// suppressing pushes for hidden/closed mobile tabs.
+document.addEventListener('visibilitychange', sendVisibility);
 function connectWS() {
   S.ws?.close();
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(store.token)}`);
   S.ws = ws;
-  ws.onopen = () => { ws.send(JSON.stringify({ t: 'subscribe' })); checkVersion(); };
+  ws.onopen = () => { ws.send(JSON.stringify({ t: 'subscribe' })); sendVisibility(); checkVersion(); };
   ws.onmessage = (ev) => {
     let m;
     try { m = JSON.parse(ev.data); } catch { return; }
