@@ -122,6 +122,14 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
       loopback :3000). Local test db migrated to /opt/campfire/data. Server .env
       JWT_SECRET matches local .env so existing login tokens kept working.
       Deploy flow: `git pull` in /opt/campfire, then compose up with prod overlay.
+- [x] v2 convenience drop (2026-09-07): file uploads (/data/uploads, images/video/audio/files),
+      unicode + custom server emoji, Klipy GIF picker (KLIPY_KEY in server .env only,
+      proxied via /api/gifs/*), replies w/ quotes + jump, threads side panel,
+      emoji reactions + quick react, message editing, presence (online/away/dnd/
+      invisible + auto-away + custom status text), hover user cards w/ banners,
+      tabbed settings (Profile/Account/Server), animated GIF avatars/banners/icons,
+      @mentions + autocomplete + highlight, markdown-lite, image lightbox,
+      drag-drop/paste uploads, server icons. E2E-verified incl. live Klipy search.
 - [ ] NEXT: iterate on features/polish per owner feedback on the live site.
 - Open ideas (not requested yet): DMs, file/image sharing, push notifications,
   moderation roles beyond owner.
