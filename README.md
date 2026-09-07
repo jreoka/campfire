@@ -117,6 +117,6 @@ To reset: `docker compose down && rm -rf data && docker compose up -d`.
 ## 6. What it does / doesn't do
 
 ✅ accounts, servers, invite codes/links, text channels, persistent history, live typing + presence, voice rooms with mute + speaking ring, mobile-friendly PWA
-🚫 no DMs yet, no file uploads, no push notifications when closed, no moderation roles beyond owner (delete channel/server). All easy to add — the code is ~1k lines total, start in `server.js` + `public/app.js`.
+🚫 no DMs yet, no file uploads, no push notifications when closed, no moderation roles beyond owner (delete channel/server). All easy to add — the code is ~10k lines total, start in `server.js` + `public/js/`.
 
 Enjoy the campfire. 🔥

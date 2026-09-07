@@ -1,5 +1,6 @@
 /* Campfire — Material 3 (dark) theme. Tonal surfaces, pill buttons, expressive shapes. */
 :root{
+  color-scheme:dark;
   --bg:#111417;            /* neutral grey surface, faint blue */
   --panel:#191D20;         /* surface-container-low */
   --panel-2:#20262B;       /* surface-container: hovers, menus, cards */
@@ -75,7 +76,7 @@ h1,h2,h3{letter-spacing:-0.01em}
 #view-main{display:flex;height:100vh;height:100dvh;overflow:hidden}
 #view-main{height:100%}
 #left{display:contents}
-#rail{width:76px;background:var(--rail);display:flex;flex-direction:column;align-items:center;padding:.7rem .4rem .7rem 1px;gap:.5rem;flex-shrink:0;overflow:hidden}
+#rail{width:76px;background:var(--rail);display:flex;flex-direction:column;align-items:center;padding:.7rem .4rem .7rem 12px;gap:.5rem;flex-shrink:0;overflow:hidden}
 #server-list{display:flex;flex-direction:column;gap:.5rem;width:100%;align-items:center;overflow-y:auto;padding:0 4px 0 0;min-height:0}
 /* unread DM senders live under Home until opened */
 #dm-rail{display:flex;flex-direction:column;gap:.5rem;align-items:center;width:100%;flex-shrink:0;min-height:0;overflow-y:auto;max-height:38%;scrollbar-width:thin}
@@ -221,6 +222,10 @@ h1,h2,h3{letter-spacing:-0.01em}
 .edit-box textarea{width:100%;min-height:64px;background:var(--inset);border:1px solid var(--accent);color:var(--text);border-radius:12px;padding:.5rem .6rem;font-size:.9rem;outline:none;resize:vertical}
 .edit-box .row{margin-top:.35rem}
 .msg .text code{background:var(--panel-3);border:0;border-radius:6px;padding:.05rem .35rem;font-size:.85em}
+.msg .text pre.codeblock{background:var(--inset);border:1px solid var(--line);border-radius:var(--radius);padding:.55rem .7rem;margin:.4rem 0;overflow-x:auto;font-size:.85em}
+.msg .text pre.codeblock code{background:transparent;border:0;border-radius:0;padding:0;font-size:1em}
+.msg .text .cb-lang{display:block;color:var(--muted);font-size:.78em;margin-bottom:.35rem;user-select:none}
+.msg .text blockquote{border-left:3px solid var(--line);margin:.35rem 0;padding:.1rem 0 .1rem .7rem;color:var(--muted)}
 .member.off{opacity:.45}
 .srv-subtabs{display:flex;gap:.25rem;flex-wrap:wrap;position:sticky;top:0;background:var(--panel-2);padding:.2rem 0 .55rem;z-index:2}
 /* ---------- invite landing ---------- */
@@ -448,6 +453,10 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .set-pane input:focus,.set-pane select:focus,.set-pane textarea:focus{border-color:var(--accent)}
 .set-pane textarea{resize:vertical;min-height:70px}
 .set-pane input:disabled{opacity:.55}
+.set-pane input[type=color]{padding:.25rem .35rem;height:2.6rem;cursor:pointer}
+.set-pane input[type=color]::-webkit-color-swatch-wrapper{padding:0}
+.set-pane input[type=color]::-webkit-color-swatch{border:0;border-radius:8px}
+.set-pane input[type=color]::-moz-color-swatch{border:0;border-radius:8px}
 .set-banner{height:90px;min-height:90px;border-radius:16px;background:var(--panel-3);background-size:cover;background-position:center;background-repeat:no-repeat}
 .pf-sec-label{font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:1rem 0 .55rem}
 .pf-sec-label:first-child{margin-top:.1rem}
@@ -703,7 +712,7 @@ body{touch-action:manipulation}
 @media (max-width: 700px){
   #left{position:fixed;top:0;bottom:0;left:0;z-index:30;display:flex;transform:translateX(-105%);transition:transform .2s;width:min(348px,94vw);background:var(--rail)}
   body.nav-open #left{transform:none}
-  #left #rail{width:60px;flex-shrink:0}
+  #left #rail{width:60px;flex-shrink:0;padding:.6rem .3rem .6rem 7px}
   #left .server-btn,#left #btn-add-server{width:44px;height:44px}
   .folder-wrap.open{padding:3px}
   #home-wrap{width:44px;height:44px}

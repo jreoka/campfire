@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
-<title>Campfire - UNDER CONSTRUCTION</title>
+<title>Campfire</title>
 <meta name="description" content="Campfire: a tiny self-hosted chat + voice app. Create servers, chat, and hop into voice rooms. Installable PWA." />
 <meta name="theme-color" content="#1a1d29" />
 <link rel="manifest" href="/manifest.webmanifest" />
@@ -364,7 +364,22 @@
 <div id="toast" class="hidden"></div>
 
 <script src="/embeds.js"></script>
-<script src="/app.js"></script>
+<script src="/js/core.js"></script>
+<script src="/js/auth.js"></script>
+<script src="/js/servers.js"></script>
+<script src="/js/messages.js"></script>
+<script src="/js/socket.js"></script>
+<script src="/js/ui.js"></script>
+<script src="/js/voice.js"></script>
+<script src="/js/actions.js"></script>
+<script src="/js/rail.js"></script>
+<script src="/js/home.js"></script>
+<script src="/js/pins.js"></script>
+<script src="/js/compose.js"></script>
+<script src="/js/pickers.js"></script>
+<script src="/js/settings.js"></script>
+<script src="/js/security.js"></script>
+<script src="/js/final.js"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(()=>{}));

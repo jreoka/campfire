@@ -155,7 +155,7 @@ app.get(['/', '/index.html'], (req, res, next) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     // The shell carries per-deploy asset pins: never let it go stale.
     res.setHeader('Cache-Control', 'no-store');
-    res.send(html.replace(/(src|href)="(\/(?:app\.js|styles\.css))"/g, `$1="$2?v=${APP_VERSION}"`));
+    res.send(html.replace(/(src|href)="(\/(?:js\/[a-z0-9_-]+\.js|embeds\.js|styles\.css))"/g, `$1="$2?v=${APP_VERSION}"`));
   });
 });
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));

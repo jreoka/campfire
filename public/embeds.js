@@ -3,7 +3,8 @@
  * X, Spotify, SoundCloud, Twitch, TikTok, Instagram, Vimeo and Streamable
  * render their official iframe players; direct image/video/audio links render
  * inline. Plain links stay as plain links (no server-side scraping proxy).
- * Loaded after app.js; uses its esc() helper. No DOM deps (testable in node).
+ * Loaded before the js/ app scripts; its esc() use is call-time only, so the
+ * helper just needs to exist globally by the time messages render. No DOM deps (testable in node).
  */
 'use strict';
 

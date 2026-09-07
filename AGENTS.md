@@ -19,7 +19,8 @@ Mobile-friendly PWA. Repo: `https://github.com/jreoka/campfire`.
   `exec`, `transaction`). Chosen deliberately so `npm install` needs no build
   tools and the Docker image stays tiny. **Do not switch to better-sqlite3.**
 - **Frontend:** vanilla HTML/CSS/JS in `public/` (`index.html`, `styles.css`,
-  `app.js`). No framework, no bundler. Served by Express static.
+  `js/*.js` modules loaded in order via plain script tags). No framework, no
+  bundler. Served by Express static.
 - **Realtime:** one WebSocket endpoint (`/ws?token=JWT`) handles live chat,
   typing indicators, presence, and WebRTC signaling.
 - **Voice:** WebRTC **mesh (P2P)** — fine for 2–8 people, zero server CPU cost.
@@ -45,7 +46,9 @@ campfire/
   public/
     index.html       # SPA shell (auth view + main view + modals)
     styles.css       # flat professional dark UI (see design rules below)
-    app.js           # SPA: auth, servers/channels, WS client, WebRTC mesh, modals
+    js/              # SPA modules (ordered classic scripts): core, auth, servers,
+                     # messages, socket, ui, voice, actions, rail, home, pins,
+                     # compose, pickers, settings, security, final
     manifest.webmanifest
     service-worker.js   # bump CACHE ('campfire-vN') on every frontend change
     icons/           # generated PNGs (committed so static serving works w/o build)
