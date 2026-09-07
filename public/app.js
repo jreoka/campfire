@@ -398,19 +398,22 @@ function serverBtn(s) {
   return b;
 }
 function folderGrid(kids) {
-  // Discord-style preview: up to 4 server icons in a mini grid.
+  // Discord-style preview: up to 4 server icons in a fixed 2x2 grid. With
+  // fewer than 4 servers the icons sit in the top row, space below.
   const shown = kids.slice(0, 4);
   if (!shown.length) return '';
-  const cells = shown.map((s) => {
+  let cells = shown.map((s) => {
     const label = (s.name || '?').trim().charAt(0).toUpperCase() || '?';
     return s.icon_url
       ? `<span class="fic"><img src="${esc(s.icon_url)}" alt="" loading="lazy" draggable="false" data-fb-letter="${esc(label)}" /></span>`
       : `<span class="fic">${esc(label)}</span>`;
   }).join('');
-  return `<span class="fgrid n${shown.length}">${cells}</span>`;
+  for (let i = shown.length; i < 4; i++) cells += '<span class="fic empty"></span>';
+  return `<span class="fgrid">${cells}</span>`;
 }
 function folderEl(f, kids) {
   const wrap = document.createElement('div');
+  wrap.className = 'folder-wrap' + (f.open ? ' open' : '');
   wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px';
   const b = document.createElement('button');
   b.className = 'server-btn folder-btn' + (f.open ? ' open' : '');
@@ -433,6 +436,7 @@ function folderEl(f, kids) {
     if (/^#[0-9a-fA-F]{6}$/.test(f.color || '')) {
       kidsBox.style.background = f.color + '26';
       kidsBox.style.borderColor = f.color + '66';
+      kidsBox.style.borderTopColor = f.color;
     }
     for (const s of kids) kidsBox.appendChild(serverBtn(s));
     wrap.appendChild(kidsBox);
