@@ -1244,7 +1244,7 @@ function hydrateDm(rows, meId) {
   if (ids.length) {
     const ph = ids.map(() => '?').join(',');
     for (const a of db.prepare(`SELECT * FROM dm_attachments WHERE message_id IN (${ph}) ORDER BY created_at ASC`).all(...ids)) {
-      (attBy[a.message_id] = attBy[a.message_id] || []).push({ url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind });
+      (attBy[a.message_id] = attBy[a.message_id] || []).push({ url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler });
     }
     for (const r of db.prepare(`SELECT message_id, emoji, user_id FROM dm_reactions WHERE message_id IN (${ph})`).all(...ids)) {
       const t = (reactBy[r.message_id] = reactBy[r.message_id] || {});
@@ -1279,6 +1279,7 @@ function cleanAttachments(atts) {
       url, name: String(a?.name || 'file').slice(0, 120), mime,
       size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, 100 * 1024 * 1024)),
       kind: isLocal ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file') : 'image',
+      spoiler: a?.spoiler ? 1 : 0,
     });
   }
   return out;
@@ -1699,7 +1700,7 @@ function hydrateMessages(rows, meId) {
   if (ids.length) {
     const ph = ids.map(() => '?').join(',');
     for (const a of db.prepare(`SELECT * FROM attachments WHERE message_id IN (${ph}) ORDER BY created_at ASC`).all(...ids)) {
-      (attBy[a.message_id] = attBy[a.message_id] || []).push({ url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind });
+      (attBy[a.message_id] = attBy[a.message_id] || []).push({ url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler });
     }
     for (const r of db.prepare(`SELECT message_id, emoji, user_id FROM message_reactions WHERE message_id IN (${ph})`).all(...ids)) {
       const t = (reactBy[r.message_id] = reactBy[r.message_id] || {});
@@ -1874,15 +1875,15 @@ wss.on('connection', (ws, req) => {
         const kind = isLocal
           ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file')
           : 'image';
-        cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, 100 * 1024 * 1024)), kind });
+        cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, 100 * 1024 * 1024)), kind, spoiler: a?.spoiler ? 1 : 0 });
       }
       if (!content && !cleanAtts.length) return;
       const mid = uid();
       const fwdFrom = String(msg.fwdFrom || '').trim().slice(0, 64) || null;
       db.prepare('INSERT INTO messages (id,server_id,channel_id,user_id,content,reply_to_id,thread_root_id,fwd_from,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
         .run(mid, serverId, channelId, me.userId, content, replyTo, threadRoot, fwdFrom, now());
-      const insAtt = db.prepare('INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,created_at) VALUES (?,?,?,?,?,?,?,?)');
-      for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, now());
+      const insAtt = db.prepare('INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,spoiler,created_at) VALUES (?,?,?,?,?,?,?,?,?)');
+      for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, now());
       const full = fullMessage(mid, null);
       broadcastToServer(serverId, { t: 'message-new', serverId, channelId, message: full });
       notifyServerMessage(serverId, channelId, me, content);
@@ -1912,8 +1913,8 @@ wss.on('connection', (ws, req) => {
       db.prepare('INSERT INTO dm_messages (id,thread_id,user_id,content,reply_to_id,fwd_from,created_at) VALUES (?,?,?,?,?,?,?)')
         .run(mid, threadId, me.userId, content, replyTo, fwdFrom, now());
       db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ?').run(threadId);
-      const insAtt = db.prepare('INSERT INTO dm_attachments (id,message_id,url,filename,mime,size,kind,created_at) VALUES (?,?,?,?,?,?,?,?)');
-      for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, now());
+      const insAtt = db.prepare('INSERT INTO dm_attachments (id,message_id,url,filename,mime,size,kind,spoiler,created_at) VALUES (?,?,?,?,?,?,?,?,?)');
+      for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, now());
       dmNotify(threadId, { t: 'dm-new', message: fullDm(mid, null) });
       notifyDmMessage(t, me, content);
       return;

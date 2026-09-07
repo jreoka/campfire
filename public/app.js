@@ -97,13 +97,15 @@ function memberById(id) {
     || null;
 }
 // Escape + code/bold/italic/strike + custom emoji + @mentions + links.
-function renderRich(text) {
+function renderRich(text, opts = {}) {
   let h = esc(text);
   const codes = [];
   h = h.replace(/`([^`\n]+)`/g, (m, c) => { codes.push(c); return '\u0000' + (codes.length - 1) + '\u0000'; });
+  h = h.replace(/\|\|(.+?)\|\|/gs, (m, inner) => '<span class="spoiler">' + inner + '</span>');
   h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
        .replace(/(^|[\s(])\*([^\*\n]+)\*/g, '$1<em>$2</em>')
        .replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  if (!opts.plain) {
   h = h.replace(/:([a-z0-9_+-]{2,32}):/g, (m, n) => S.emoji[n]
     ? '<img class="cemoi" src="' + S.emoji[n] + '" alt="' + m + '" title="' + m + '" data-fb-emoji="' + m + '">' : m);
   h = h.replace(/(^|[\s(])@([A-Za-z0-9_.]{2,24})/g, (m, pre, un) => {
@@ -111,6 +113,7 @@ function renderRich(text) {
     if (!mem) return m;
     return pre + '<span class="mention' + (mem.id === S.me.id ? ' me' : '') + '" data-uid="' + mem.id + '">@' + esc(mem.display_name) + '</span>';
   });
+  }
   h = h.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
   h = h.replace(/\u0000(\d+)\u0000/g, (m, i) => '<code>' + codes[+i] + '</code>');
   return h;
@@ -673,8 +676,8 @@ function updateMsgInCaches(mid, fn) {
 const DL_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>';
 function attDl(a) { return `<a class="att-dl" href="${esc(a.url)}" download="${esc(a.name)}" target="_blank" rel="noopener" title="Download">${DL_ICON}</a>`; }
 function attachmentHTML(a) {
-  if (a.kind === 'image') return `<span class="att-wrap"><img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}</span>`;
-  if (a.kind === 'video') return `<span class="att-wrap"><video class="att-vid" src="${esc(a.url)}" controls preload="metadata"></video>${attDl(a)}</span>`;
+  if (a.kind === 'image') return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+  if (a.kind === 'video') return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><video class="att-vid" src="${esc(a.url)}" controls preload="metadata"></video>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'audio') return `<audio src="${esc(a.url)}" controls preload="metadata"></audio>`;
   return `<a class="file-card" href="${esc(a.url)}" target="_blank" rel="noopener"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span><span class="fname">${esc(a.name)}</span><br/><span class="fsize">${fmtSize(a.size)}</span></span></a>`;
 }
@@ -768,8 +771,15 @@ function renderComposerMeta() {
     chip.innerHTML = `${thumb}<span>${esc(a.name)} (${fmtSize(a.size)})</span>`;
     const x = document.createElement('button'); x.className = 'mini'; x.textContent = '✕';
     x.onclick = () => { S.pendingAtts.splice(i, 1); renderComposerMeta(); };
+    if (a.kind === 'image' || a.kind === 'video') {
+      const sp = document.createElement('button');
+      sp.type = 'button'; sp.className = 'mini' + (a.spoiler ? ' on' : ''); sp.textContent = 'Spoiler'; sp.title = 'Mark as spoiler';
+      sp.onclick = () => { a.spoiler = !a.spoiler; renderComposerMeta(); };
+      chip.appendChild(sp);
+    }
     chip.appendChild(x); box.appendChild(chip);
   });
+  syncComposerRender();
 }
 async function uploadAndAttach(file) {
   if (!file) return;
@@ -868,6 +878,7 @@ $('#composer').addEventListener('submit', (e) => {
   }
   S.pendingAtts = []; S.replyTo = null;
   renderComposerMeta();
+  syncComposerRender();
 });
 function sendChat(content, opts = {}) {
   if (S.ws && S.ws.readyState === 1) {
@@ -1962,6 +1973,22 @@ function fitStage() {
   grid.style.justifyContent = 'center';
 }
 window.addEventListener('resize', () => { try { fitStage(); } catch {} });
+// Mobile keyboard: track the visual viewport so the app shell compresses
+// instead of panning — top stays anchored, composer + messages slide up.
+if (window.visualViewport) {
+  const vv = window.visualViewport;
+  const syncVV = () => {
+    document.documentElement.style.setProperty('--vvh', vv.height + 'px');
+    const ae = document.activeElement;
+    if (ae && (ae.id === 'in-message' || ae.id === 'in-thread')) {
+      const m = $('#messages');
+      if (m) m.scrollTop = m.scrollHeight;
+    }
+  };
+  let vvT = null;
+  vv.addEventListener('resize', () => { clearTimeout(vvT); vvT = setTimeout(syncVV, 60); });
+  syncVV();
+}
 const MIC_OFF_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3M2 2l20 20"/></svg>';
 // Discord-style: occupants listed under their voice channel, green ring while talking.
 function renderVoiceUsers() {
@@ -2276,7 +2303,7 @@ function sendForward() {
   const orig = src.content || '';
   let content = comment ? (orig ? comment + '\n\n' + orig : comment) : orig;
   content = content.slice(0, 5000);
-  const atts = (src.attachments || []).slice(0, 5).map((a) => ({ url: a.url, name: a.name, mime: a.mime, size: a.size, kind: a.kind }));
+  const atts = (src.attachments || []).slice(0, 5).map((a) => ({ url: a.url, name: a.name, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler }));
   if (!content && !atts.length) { toast('Nothing to forward'); return; }
   if (!S.ws || S.ws.readyState !== 1) { toast('Reconnecting… try again in a second'); return; }
   const fwdFrom = src.fwdFrom || (src.user ? src.user.display_name : 'Someone');
@@ -3243,6 +3270,7 @@ function insertAtCursor(input, text) {
   const s = input.selectionStart ?? input.value.length, e = input.selectionEnd ?? input.value.length;
   input.value = input.value.slice(0, s) + text + input.value.slice(e);
   input.selectionStart = input.selectionEnd = s + text.length;
+  syncComposerRender();
 }
 let gifSearchT = null;
 function applyPickerSearch(q) {
@@ -3352,7 +3380,15 @@ async function saveEdit(mid) {
     if (msgEl) toggleReaction(msgEl.dataset.mid, reactEl.dataset.emoji);
     return;
   }
-  if (imgEl) { openLightbox(imgEl.src); return; }
+  const spEl = e.target.closest('.spoiler');
+  if (spEl && !spEl.classList.contains('shown') && spEl.closest('.msg .text,.uc-bio')) { spEl.classList.add('shown'); return; }
+  const spVeil = e.target.closest('.spoiler-veil');
+  if (spVeil) { spVeil.closest('.att-wrap')?.classList.add('shown'); return; }
+  if (imgEl) {
+    const spWrap = imgEl.closest('.att-wrap.spoiler:not(.shown)');
+    if (spWrap) { spWrap.classList.add('shown'); return; }
+    openLightbox(imgEl.src); return;
+  }
   if (jumpEl) { jumpToMessage(jumpEl.dataset.jump); return; }
   if (actEl) {
     const msgEl = actEl.closest('[data-mid]');
@@ -3606,6 +3642,7 @@ function applyMention(username) {
   inp.value = inp.value.slice(0, pos).replace(/@[A-Za-z0-9_.]{1,24}$/, '@' + username + ' ');
   hideMentionPop();
   inp.focus();
+  syncComposerRender();
 }
 
 // ---------- settings (tabbed) ----------
@@ -4263,6 +4300,15 @@ $('#btn-more').onclick = (e) => { e.stopPropagation(); closePicker(); $('#compos
 $('#cm-attach').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); $('#btn-attach').click(); };
 $('#cm-emoji').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); $('#btn-emoji').click(); };
 $('#cm-gif').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); $('#btn-gif').click(); };
+// Live markdown preview: rendered backdrop behind the transparent input text.
+function syncComposerRender() {
+  const inp = $('#in-message'), r = $('#in-render-inner');
+  if (!inp || !r) return;
+  r.innerHTML = inp.value ? renderRich(inp.value, { plain: true }) : '';
+  r.style.marginLeft = (-inp.scrollLeft) + 'px';
+}
+$('#in-message').addEventListener('input', syncComposerRender);
+$('#in-message').addEventListener('scroll', () => { const r = $('#in-render-inner'); if (r) r.style.marginLeft = (-$('#in-message').scrollLeft) + 'px'; });
 
 // Broken images (deleted/missing uploads) degrade gracefully instead of
 // rendering as crushed broken-image boxes.
