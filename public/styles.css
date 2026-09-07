@@ -271,9 +271,9 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .reply-quote .rq-author{font-weight:700}
 .reply-quote .rq-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .msg-atts{display:flex;flex-direction:column;align-items:flex-start;gap:.4rem;margin-top:.35rem}
-.msg-atts img.att-img{max-width:min(420px,100%);max-height:320px;border-radius:16px;cursor:zoom-in;object-fit:contain;background:#000}
-.msg-atts video.att-vid{max-width:min(420px,100%);max-height:320px;border-radius:16px;background:#000}
-.att-wrap{position:relative;display:inline-block;max-width:100%}
+.msg-atts img.att-img{max-width:100%;max-height:320px;border-radius:16px;cursor:zoom-in;object-fit:contain;background:#000}
+.msg-atts video.att-vid{max-width:100%;max-height:320px;border-radius:16px;background:#000}
+.att-wrap{position:relative;display:inline-block;max-width:420px}
 .att-wrap img.att-img,.att-wrap video.att-vid{display:block}
 .att-dl{position:absolute;top:.45rem;right:.45rem;display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.65);color:#fff;opacity:0;transition:opacity .15s;z-index:2}
 .att-dl:hover{background:rgba(0,0,0,.85);color:#fff}
