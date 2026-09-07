@@ -36,6 +36,7 @@ const S = {
   friendTab: 'all', // friends sidebar tab: 'online' | 'all' | 'pending' | 'blocked'
   dmThreadId: null, dmMessages: new Map(), // threadId -> [msgs]
   voiceOccupancy: new Map(), // channelId -> [peers]
+  voiceSince: new Map(), // channelId -> epoch ms first seen occupied (drives room timers)
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
   voice: null, // {serverId, channelId, stream, pcs:Map, muted, analysers}
   ws: null,
@@ -218,6 +219,17 @@ async function doLogout() {
 
 function stashInvite(code) { try { if (code) sessionStorage.setItem('cf_invite', code); } catch {} }
 function takeInvite() { try { const p = sessionStorage.getItem('cf_invite'); if (p) sessionStorage.removeItem('cf_invite'); return p || null; } catch { return null; } }
+// Invite codes arrive as /invite/CODE (pretty links) or legacy ?invite=CODE.
+// Reads + cleans the URL (other query params are preserved).
+function consumeInvite() {
+  const u = new URL(location.href);
+  let code = null;
+  const pm = u.pathname.match(/^\/invite\/([\w-]+)\/?$/);
+  if (pm) { code = pm[1]; u.pathname = '/'; }
+  else if (u.searchParams.get('invite')) { code = u.searchParams.get('invite'); u.searchParams.delete('invite'); }
+  if (code) { try { history.replaceState(null, '', u.pathname + u.search + u.hash); } catch {} }
+  return code;
+}
 // ---------- boot ----------
 async function boot() {
   try {
@@ -226,8 +238,8 @@ async function boot() {
     const { user } = await api('/api/me');
     S.me = user;
   } catch {
-    const inv0 = new URLSearchParams(location.search).get('invite');
-    if (inv0) { try { history.replaceState(null, '', location.pathname); } catch {} stashInvite(inv0); }
+    const inv0 = consumeInvite();
+    if (inv0) stashInvite(inv0);
     showAuth();
     if (inv0) showInviteLanding(inv0);
     return;
@@ -242,10 +254,9 @@ async function boot() {
   connectWS();
   pollVersion();
   pushSetup();
-  // invite landing (?invite=CODE)
-  const inv = new URLSearchParams(location.search).get('invite');
+  // invite landing (/invite/CODE or ?invite=CODE)
+  const inv = consumeInvite();
   if (inv) {
-    try { history.replaceState(null, '', location.pathname); } catch {}
     stashInvite(inv);
     showInviteLanding(inv);
   } else {
@@ -423,6 +434,19 @@ async function selectServer(id) {
     await refreshServers();
   }
 }
+function fmtVoiceTime(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(ss).padStart(2, '0');
+}
+setInterval(() => {
+  const now = Date.now();
+  document.querySelectorAll('[data-vtimer]').forEach((el) => {
+    const t0 = S.voiceSince.get(el.dataset.vtimer);
+    if (!t0) { el.remove(); return; }
+    el.textContent = fmtVoiceTime(now - t0);
+  });
+}, 1000);
 function renderChannels() {
   const d = S.serverDetail;
   if (!d) return;
@@ -442,7 +466,7 @@ function renderChannels() {
     const wrap = document.createElement('div');
     const b = document.createElement('button');
     b.className = 'chan' + (S.voice && S.voice.channelId === c.id ? ' active' : '');
-    b.innerHTML = `<span class="vicon"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3z"/><path d="M16 8a5 5 0 0 1 0 8" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></span><span>${esc(c.name)}</span>${occ.length ? `<span class="count">${occ.length}</span>` : ''}`;
+    b.innerHTML = `<span class="vicon"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M14.5 9.5a4 4 0 0 1 0 5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M17 7a8 8 0 0 1 0 10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M19.5 4.5a12 12 0 0 1 0 15" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></span><span>${esc(c.name)}</span>${occ.length ? `<span class="count">${occ.length}</span>` : ''}${occ.length && S.voiceSince.get(c.id) ? `<span class="vtime" data-vtimer="${c.id}">${fmtVoiceTime(Date.now() - S.voiceSince.get(c.id))}</span>` : ''}`;
     b.title = occ.length ? occ.map((p) => p.display_name).join(', ') : 'Join voice';
     b.onclick = () => openVoiceChannel(S.serverId, c.id);
     b.dataset.cid = c.id; b.dataset.ctype = 'voice';
@@ -1134,6 +1158,8 @@ function onWS(m) {
     // ---- voice ----
     case 'voice-peers': {
       S.voiceOccupancy.set(m.channelId, m.peers);
+      if ((m.peers || []).length) { if (!S.voiceSince.has(m.channelId)) S.voiceSince.set(m.channelId, Date.now()); }
+      else S.voiceSince.delete(m.channelId);
       if (m.serverId === S.serverId) renderChannels();
       else renderVoiceUsers();
       if (S.voice && S.voice.serverId === m.serverId && S.voice.channelId === m.channelId) {
@@ -1312,7 +1338,7 @@ async function showInviteLanding(code) {
 $('#btn-invite').onclick = () => showInvite(S.serverDetail);
 function showInvite(srv) {
   if (!srv) return;
-  const url = `${location.origin}${location.pathname}?invite=${srv.invite_code}`;
+  const url = `${location.origin}/invite/${srv.invite_code}`;
   openModal(`Invite to ${srv.name}`, `
     <p class="muted">Share this code or link — anyone with it can join.</p>
     <div class="codebox">${esc(srv.invite_code)}</div>
@@ -1462,7 +1488,8 @@ function updateCallHead() {
   const occ = S.voiceOccupancy.get(S.voice.channelId) || [];
   const srv = (S.servers || []).find((s) => s.id === S.voice.serverId);
   $('#stage-name').textContent = (S.serverDetail?.channels.find((c) => c.id === S.voice.channelId) || {}).name || 'voice';
-  $('#stage-sub').textContent = `${srv ? srv.name + ' · ' : ''}${occ.length} in call`;
+  const t0 = S.voice.channelId && S.voiceSince.get(S.voice.channelId);
+  $('#stage-sub').innerHTML = `${esc(srv ? srv.name + ' · ' : '')}${occ.length} in call${t0 ? ` · <span class="vtime" data-vtimer="${S.voice.channelId}">${fmtVoiceTime(Date.now() - t0)}</span>` : ''}`;
 }
 async function joinVoice(serverId, channelId) {
   if (S.voice && S.voice.serverId === serverId && S.voice.channelId === channelId) return; // already here
@@ -1510,6 +1537,7 @@ function leaveVoice(silent) {
   // optimistically drop self so the sidebar clears instantly (server echo confirms)
   const occ = S.voiceOccupancy.get(channelId) || [];
   S.voiceOccupancy.set(channelId, occ.filter((p) => p.id !== S.me.id));
+  if (!(S.voiceOccupancy.get(channelId) || []).length) S.voiceSince.delete(channelId);
   if (!silent) { sfx.leave(); S.ws?.send(JSON.stringify({ t: 'voice-leave' })); }
   renderChannels();
   if (S.updateReady && !silent) location.reload();
@@ -2343,7 +2371,7 @@ function serverCtxMenu(sid, x, y) {
   const owner = d ? d.owner_id === S.me.id : false;
   openCtx(x, y, [
     { label: 'Open', icon: '→', fn: () => selectServer(sid) },
-    { label: 'Copy invite link', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(`${location.origin}${location.pathname}?invite=${s.invite_code}`); toast('Link copied'); } catch {} } },
+    { label: 'Copy invite link', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(`${location.origin}/invite/${s.invite_code}`); toast('Link copied'); } catch {} } },
     { label: 'Server settings', icon: '⚙', fn: async () => { if (sid !== S.serverId) await selectServer(sid); openServerSettings(); } },
   ]);
 }
@@ -3975,7 +4003,7 @@ function renderServerTab() {
   inv.innerHTML = `<div class="codebox">${esc(d.invite_code)}</div>`;
   const invRow = document.createElement('div'); invRow.className = 'row';
   const cp = document.createElement('button'); cp.className = 'btn small'; cp.textContent = 'Copy link';
-  cp.onclick = () => { navigator.clipboard?.writeText(`${location.origin}${location.pathname}?invite=${d.invite_code}`); toast('Link copied'); };
+  cp.onclick = () => { navigator.clipboard?.writeText(`${location.origin}/invite/${d.invite_code}`); toast('Link copied'); };
   invRow.appendChild(cp);
   if (mgr) {
     const rs = document.createElement('button'); rs.className = 'btn small'; rs.textContent = 'Reset code';
@@ -4302,9 +4330,8 @@ if (store.token) boot();
 else {
   showAuth();
   // Signed-out invite link: preview the server + offer sign in/up (join happens after auth).
-  const inv0 = new URLSearchParams(location.search).get('invite');
+  const inv0 = consumeInvite();
   if (inv0) {
-    try { history.replaceState(null, '', location.pathname); } catch {}
     stashInvite(inv0);
     showInviteLanding(inv0);
   }
