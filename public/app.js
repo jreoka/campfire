@@ -3166,7 +3166,7 @@ function setPickerTab(t) {
   $('#pk-klipy').classList.toggle('hidden', t !== 'gifs');
   $('#pk-search').placeholder = t === 'gifs' ? 'Search KLIPY' : 'Search emoji';
 }
-document.querySelectorAll('.pk-tab').forEach((b) => (b.onclick = () => setPickerTab(b.dataset.ptab)));
+document.querySelectorAll('.pk-tab').forEach((b) => (b.onclick = () => { setPickerTab(b.dataset.ptab); applyPickerSearch($('#pk-search').value || ''); }));
 let emojiData = null, emojiLoadP = null;
 function ensureEmojiData() {
   if (emojiData) return Promise.resolve(emojiData);
@@ -3245,15 +3245,17 @@ function insertAtCursor(input, text) {
   input.selectionStart = input.selectionEnd = s + text.length;
 }
 let gifSearchT = null;
-$('#pk-search').addEventListener('input', (e) => {
-  const q = e.target.value;
-  renderEmojiGrid(q);
-  if (S.picker?.mode === 'react') return; // reactions are emoji-only
-  clearTimeout(gifSearchT);
-  if (!q.trim()) { loadGifTrending(); return; }
-  setPickerTab('gifs');
-  gifSearchT = setTimeout(() => loadGifSearch(q.trim()), 350);
-});
+function applyPickerSearch(q) {
+  const gifsActive = document.querySelector('.pk-tab.active')?.dataset.ptab === 'gifs';
+  if (gifsActive && S.picker?.mode !== 'react') {
+    clearTimeout(gifSearchT);
+    if (!q.trim()) { loadGifTrending(); return; }
+    gifSearchT = setTimeout(() => loadGifSearch(q.trim()), 350);
+  } else {
+    renderEmojiGrid(q);
+  }
+}
+$('#pk-search').addEventListener('input', (e) => applyPickerSearch(e.target.value));
 function renderGifGrid(gifs) {
   const box = $('#pk-gifs');
   box.innerHTML = '';
@@ -3611,8 +3613,15 @@ function openSettings(tab = 'profile') {
   setSettingsTab(tab);
   $('#set-display').value = S.me.display_name || '';
   $('#set-namecustom').checked = !!(S.me.name_color || S.me.name_gradient);
-  $('#set-namecolor').value = S.me.name_color || '#aac7ff';
-  $('#set-namegrad').value = S.me.name_gradient || S.me.name_color || '#aac7ff';
+  const remNc = rememberedNameColors();
+  $('#set-namecolor').value = S.me.name_color || remNc.c || '#aac7ff';
+  $('#set-namegrad').value = S.me.name_gradient || S.me.name_color || remNc.g || remNc.c || '#aac7ff';
+  $('#set-namecustom').onchange = () => {
+    if (!$('#set-namecustom').checked) return;
+    const rem = rememberedNameColors();
+    if (rem.c && $('#set-namecolor').value === '#aac7ff') $('#set-namecolor').value = rem.c;
+    if (rem.g && $('#set-namegrad').value === '#aac7ff') $('#set-namegrad').value = rem.g;
+  };
   $('#set-status').value = S.me.status || 'online';
   $('#set-statustext').value = S.me.status_text || '';
   $('#set-bio').value = S.me.bio || '';
@@ -3864,10 +3873,12 @@ $('#set-banner-rm').onclick = async () => {
   try { const { user } = await api('/api/me/banner', { method: 'DELETE' }); S.me = { ...S.me, ...user }; $('#set-banner-prev').style.backgroundImage = ''; }
   catch { toast('Remove failed'); }
 };
+function rememberedNameColors() { try { return JSON.parse(localStorage.getItem('cf_namecolors') || 'null') || {}; } catch { return {}; } }
 function updateBioCount() { const b = $('#set-bio'); if (b) $('#set-bio-count').textContent = `${b.value.length} / 300`; }
 $('#set-bio').addEventListener('input', updateBioCount);
 $('#set-profile-save').onclick = async () => {
   try {
+    if ($('#set-namecustom').checked) { try { localStorage.setItem('cf_namecolors', JSON.stringify({ c: $('#set-namecolor').value, g: $('#set-namegrad').value })); } catch {} }
     const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify({
       displayName: $('#set-display').value.trim(),
       status: $('#set-status').value,
