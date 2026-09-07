@@ -228,7 +228,7 @@ h1,h2,h3{letter-spacing:-0.01em}
 .uc-name{font-weight:700;margin-top:.35rem}
 .uc-sub{font-size:.8rem;color:var(--muted)}
 .uc-status{display:flex;align-items:center;gap:.4rem;font-size:.82rem;margin-top:.45rem}
-.uc-statustext{font-size:.85rem;margin-top:.3rem;background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:.4rem .55rem}
+.uc-statustext{font-size:.85rem;margin-top:.3rem;background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:.4rem .55rem;overflow-wrap:anywhere}
 .uc-since{font-size:.75rem;color:var(--muted);margin-top:.5rem}
 .uc-actions{display:flex;gap:.4rem;margin-top:.6rem}
 .avatar.big{width:56px;height:56px;font-size:1.3rem}

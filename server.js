@@ -417,7 +417,7 @@ app.patch('/api/me', authRequired, (req, res) => {
     sets.push('status = ?'); vals.push(status);
   }
   if (statusText !== undefined) {
-    sets.push('status_text = ?'); vals.push(String(statusText).slice(0, 128));
+    sets.push('status_text = ?'); vals.push(String(statusText).slice(0, 64));
   }
   if (!sets.length) return res.status(400).json({ error: 'nothing_to_update' });
   vals.push(req.user.id);

@@ -111,6 +111,8 @@ CREATE TABLE IF NOT EXISTS server_folders (
 `);
 addColumn('server_members', 'position', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('server_members', 'folder_id', 'TEXT');
+// status_text cap lowered to 64: trim any legacy longer values (idempotent)
+try { raw.exec('UPDATE users SET status_text = substr(status_text, 1, 64) WHERE length(status_text) > 64'); } catch {}
 
 // Minimal better-sqlite3-compatible wrapper around DatabaseSync.
 const db = {

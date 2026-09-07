@@ -424,7 +424,7 @@ function renderMembers() {
     const div = document.createElement('div');
     div.className = 'member' + (st === 'offline' ? ' off' : '');
     div.dataset.uid = m.id;
-    div.innerHTML = `<span class="avatar"></span><span class="mnames"><span>${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${m.status_text && st !== 'offline' ? `<span class="mstatus">${esc(m.status_text)}</span>` : ''}</span><span class="status-dot ${st}"></span>`;
+    div.innerHTML = `<span class="avatar"></span><span class="mnames"><span>${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${m.status_text && st !== 'offline' ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ''}</span><span class="status-dot ${st}"></span>`;
     paintAvatar(div.querySelector('.avatar'), m);
     box.appendChild(div);
   }
