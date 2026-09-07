@@ -246,11 +246,16 @@ h1,h2,h3{letter-spacing:-0.01em}
 
 /* ---------- settings ---------- */
 #settings-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:100;padding:1rem}
-.settings{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:100%;max-width:560px;max-height:88dvh;display:flex;flex-direction:column;overflow:hidden}
-.set-tabs{display:flex;gap:.25rem;align-items:center;padding:.6rem .7rem;border-bottom:1px solid var(--rail)}
+.settings{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:100%;max-width:560px;max-height:88dvh;display:flex;flex-direction:row;overflow:hidden}
+.set-tabs{display:flex;flex-direction:column;gap:.25rem;align-items:stretch;padding:.6rem .55rem;border-right:1px solid var(--rail);min-width:128px}
+.set-tab{text-align:left}
 .set-tab{border:0;background:transparent;color:var(--muted);font-weight:700;font-size:.88rem;padding:.5rem .8rem;border-radius:6px;cursor:pointer}
 .set-tab.active{background:var(--panel-2);color:var(--text)}
-.set-body{overflow-y:auto;padding:1rem 1.1rem}
+.set-body{flex:1;min-width:0;overflow-y:auto;padding:1rem 1.1rem}
+@media (max-width:520px){
+  .settings{flex-direction:column}
+  .set-tabs{flex-direction:row;align-items:center;border-right:0;border-bottom:1px solid var(--rail);min-width:0}
+}
 .set-pane label{display:block;font-size:.82rem;font-weight:600;color:var(--muted);margin:.65rem 0}
 .set-pane input,.set-pane select{width:100%;margin-top:.3rem;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:.6rem .7rem;font-size:.92rem;outline:none}
 .set-pane input:focus,.set-pane select:focus{border-color:var(--accent)}

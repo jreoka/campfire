@@ -159,13 +159,13 @@ function prettyError(e) {
   };
   return map[e] || e.replace(/_/g, ' ');
 }
-$('#btn-logout').onclick = async () => {
+async function doLogout() {
   try { await api('/api/logout', { method: 'POST' }); } catch {}
-  leaveVoice();
-  S.ws?.close();
+  try { leaveVoice(true); } catch {}
+  try { S.ws?.close(); } catch {}
   store.token = '';
   location.reload();
-};
+}
 
 // ---------- boot ----------
 async function boot() {
@@ -1705,7 +1705,9 @@ $('#set-pw-save').onclick = async () => {
     toast('Password changed');
   } catch (err) { toast('Failed: ' + prettyError(err.message)); }
 };
-$('#set-logout').onclick = () => $('#btn-logout').click();
+$('#set-logout').onclick = doLogout;
+$('#me-card').style.cursor = 'pointer';
+$('#me-card').onclick = () => openSettings('profile');
 function renderServerTab() {
   const box = $('#set-server');
   const d = S.serverDetail;
