@@ -181,6 +181,13 @@ CREATE TABLE IF NOT EXISTS dm_bans (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (thread_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS blocks (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blocked_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, blocked_id),
+  CHECK (user_id != blocked_id)
+);
 `);
 addColumn('dm_messages', 'sys', 'TEXT');
 addColumn('server_members', 'position', 'INTEGER NOT NULL DEFAULT 0');

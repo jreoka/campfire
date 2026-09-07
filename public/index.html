@@ -79,9 +79,16 @@
           <input id="in-friend" maxlength="24" placeholder="username" autocomplete="off" />
           <button id="btn-friend-add" class="btn small primary">Add</button>
         </div>
-        <div id="friend-reqs-wrap"><div class="chan-group-label">REQUESTS <span id="req-count"></span></div><div id="friend-reqs"></div></div>
         <div class="chan-group-label">FRIENDS</div>
+        <div class="ftabs" id="friend-tabs">
+          <button data-ftab="online" class="ftab">Online</button>
+          <button data-ftab="all" class="ftab active">All</button>
+          <button data-ftab="pending" class="ftab">Pending <span id="req-count"></span></button>
+          <button data-ftab="blocked" class="ftab">Blocked</button>
+        </div>
+        <div id="friend-reqs-wrap"><div class="chan-group-label">REQUESTS</div><div id="friend-reqs"></div></div>
         <div id="friend-list"></div>
+        <div id="blocked-list"></div>
         <div class="chan-group-label">DIRECT MESSAGES</div>
         <div id="dm-list"></div>
         <div class="chan-group-label row-between">GROUP CHATS <button id="btn-group-new" class="mini" title="New group chat">＋</button></div>

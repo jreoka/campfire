@@ -26,7 +26,8 @@ const S = {
   serverMeta: new Map(), // serverId -> {folderId, position}
   rootOrder: [], // [{kind:'server'|'folder', id}] rail order top-to-bottom
   view: 'server', // 'server' | 'home'
-  dms: [], friends: { friends: [], pendingIn: [], pendingOut: [] },
+  dms: [], friends: { friends: [], pendingIn: [], pendingOut: [], blocked: [] },
+  friendTab: 'all', // friends sidebar tab: 'online' | 'all' | 'pending' | 'blocked'
   dmThreadId: null, dmMessages: new Map(), // threadId -> [msgs]
   voiceOccupancy: new Map(), // channelId -> [peers]
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
@@ -84,6 +85,7 @@ function memberById(id) {
   if (S.me && S.me.id === id) return S.me;
   return (S.serverDetail?.members || []).find((m) => m.id === id)
     || (S.dms.find((t) => t.id === S.dmThreadId)?.members || []).find((m) => m.id === id)
+    || [...S.friends.friends, ...S.friends.pendingIn, ...S.friends.pendingOut, ...(S.friends.blocked || [])].find((m) => m.id === id)
     || null;
 }
 // Escape + code/bold/italic/strike + custom emoji + @mentions + links.
@@ -397,6 +399,7 @@ async function selectChannel(id) {
   renderChannels();
   const ch = S.serverDetail.channels.find((c) => c.id === id);
   $('#chan-name').textContent = ch ? ch.name : '—';
+  $('#composer').classList.remove('hidden');
   $('#in-message').placeholder = ch ? `Message #${ch.name}` : 'Message…';
   $('#messages').innerHTML = '<p class="muted">Loading…</p>';
   try {
@@ -1333,6 +1336,8 @@ function memberCtxMenu(uid, x, y) {
       const t = S.dms.find((t) => t.id === S.dmThreadId);
       if (t && t.isGroup) modGroupItems(items, t, u);
     }
+    if (isBlocked(uid)) items.push({ label: `Unblock @${u.username}`, icon: '⊘', fn: () => unblockUser(uid) });
+    else items.push({ label: `Block @${u.username}`, icon: '⊘', danger: true, fn: () => blockUser(uid, u.username) });
   }
   openCtx(x, y, items);
 }
@@ -1664,7 +1669,7 @@ function friendRowEl(u, extra) {
   div.innerHTML = `<span class="avatar"></span><span class="dmmain"><span class="dmname">${esc(u.display_name)}</span><br/><span class="dmlast">@${esc(u.username)}${u.status_text ? ' · ' + esc(u.status_text) : ''}</span></span>`;
   paintAvatar(div.querySelector('.avatar'), u);
   const dot = document.createElement('span');
-  dot.className = 'status-dot ' + (S.online[u.id] || (u.id === S.me.id ? (S.me.status || 'online') : 'offline'));
+  dot.className = 'status-dot ' + statusOf(u.id);
   div.appendChild(dot);
   if (extra) div.appendChild(extra);
   div.onclick = (e) => { if (e.target.closest('button')) return; openUserCard(u.id, e.clientX, e.clientY); };
@@ -1677,38 +1682,87 @@ function smallBtn(label, fn, danger) {
   b.onclick = (e) => { e.stopPropagation(); fn(); };
   return b;
 }
+function isBlocked(id) { return (S.friends.blocked || []).some((u) => u.id === id); }
+async function blockUser(id, username) {
+  const ok = await openConfirmModal({
+    title: `Block @${username || 'user'}?`,
+    message: 'They will be removed from your friends and you will not see new requests from them.',
+    okLabel: 'Block',
+  });
+  if (!ok) return;
+  try {
+    await api('/api/blocks', { method: 'POST', body: JSON.stringify({ userId: id }) });
+    await refreshFriends();
+    toast('User blocked');
+  } catch (err) { toast('Block failed: ' + prettyError(err.message)); }
+}
+async function unblockUser(id) {
+  try { await api(`/api/blocks/${id}`, { method: 'DELETE' }); await refreshFriends(); }
+  catch (err) { toast('Unblock failed: ' + prettyError(err.message)); }
+}
 function renderFriendLists() {
   const f = S.friends;
+  document.querySelectorAll('#friend-tabs .ftab').forEach((b) => {
+    b.classList.toggle('active', b.dataset.ftab === S.friendTab);
+    b.onclick = () => { S.friendTab = b.dataset.ftab; renderFriendLists(); };
+  });
+  const nReq = f.pendingIn.length + f.pendingOut.length;
+  $('#req-count').textContent = nReq ? ` (${nReq})` : '';
+  // pending requests tab
   const rq = $('#friend-reqs');
   rq.innerHTML = '';
-  $('#req-count').textContent = f.pendingIn.length ? `(${f.pendingIn.length})` : '';
-  $('#friend-reqs-wrap').style.display = (f.pendingIn.length || f.pendingOut.length) ? '' : 'none';
-  for (const u of f.pendingIn) {
-    const row = friendRowEl(u);
-    const wrap = document.createElement('div');
-    wrap.className = 'row'; wrap.style.cssText = 'padding:0 .55rem';
-    wrap.appendChild(row);
-    const go = document.createElement('div'); go.className = 'row';
-    const ok = smallBtn('Accept', async () => { await api(`/api/friends/${u.id}/accept`, { method: 'POST' }); refreshFriends(); });
-    const no = smallBtn('Decline', async () => { await api(`/api/friends/${u.id}`, { method: 'DELETE' }); refreshFriends(); }, true);
-    go.append(ok, no); wrap.appendChild(go);
-    rq.appendChild(wrap);
+  $('#friend-reqs-wrap').style.display = S.friendTab === 'pending' ? '' : 'none';
+  if (S.friendTab === 'pending') {
+    if (!nReq) rq.innerHTML = '<p class="muted small" style="padding:0 .7rem">No pending requests.</p>';
+    for (const u of f.pendingIn) {
+      const row = friendRowEl(u);
+      const wrap = document.createElement('div');
+      wrap.className = 'row'; wrap.style.cssText = 'padding:0 .55rem';
+      wrap.appendChild(row);
+      const go = document.createElement('div'); go.className = 'row';
+      const ok = smallBtn('Accept', async () => { await api(`/api/friends/${u.id}/accept`, { method: 'POST' }); refreshFriends(); });
+      const no = smallBtn('Decline', async () => { await api(`/api/friends/${u.id}`, { method: 'DELETE' }); refreshFriends(); }, true);
+      go.append(ok, no); wrap.appendChild(go);
+      rq.appendChild(wrap);
+    }
+    for (const u of f.pendingOut) {
+      const row = friendRowEl(u);
+      const wrap = document.createElement('div');
+      wrap.className = 'row'; wrap.style.cssText = 'padding:0 .55rem';
+      wrap.appendChild(row);
+      wrap.appendChild(smallBtn('Cancel', async () => { await api(`/api/friends/${u.id}`, { method: 'DELETE' }); refreshFriends(); }, true));
+      rq.appendChild(wrap);
+    }
   }
-  for (const u of f.pendingOut) {
-    const row = friendRowEl(u);
-    const wrap = document.createElement('div');
-    wrap.className = 'row'; wrap.style.cssText = 'padding:0 .55rem';
-    wrap.appendChild(row);
-    wrap.appendChild(smallBtn('Cancel', async () => { await api(`/api/friends/${u.id}`, { method: 'DELETE' }); refreshFriends(); }, true));
-    rq.appendChild(wrap);
-  }
+  // online / all friends tabs
   const fl = $('#friend-list');
   fl.innerHTML = '';
-  if (!f.friends.length) fl.innerHTML = '<p class="muted small" style="padding:0 .7rem">No friends yet — add someone above.</p>';
-  for (const u of f.friends) {
-    const row = friendRowEl(u);
-    row.appendChild(smallBtn('Message', () => openDmWith(u.id)));
-    fl.appendChild(row);
+  const showFriends = S.friendTab === 'online' || S.friendTab === 'all';
+  fl.style.display = showFriends ? '' : 'none';
+  if (showFriends) {
+    const list = S.friendTab === 'online' ? f.friends.filter((u) => statusOf(u.id) !== 'offline') : f.friends;
+    if (!list.length) fl.innerHTML = S.friendTab === 'online'
+      ? '<p class="muted small" style="padding:0 .7rem">No friends online right now.</p>'
+      : '<p class="muted small" style="padding:0 .7rem">No friends yet — add someone above.</p>';
+    for (const u of list) {
+      const row = friendRowEl(u);
+      row.appendChild(smallBtn('Message', () => openDmWith(u.id)));
+      row.appendChild(smallBtn('Block', () => blockUser(u.id, u.username), true));
+      fl.appendChild(row);
+    }
+  }
+  // blocked tab
+  const bl = $('#blocked-list');
+  bl.innerHTML = '';
+  bl.style.display = S.friendTab === 'blocked' ? '' : 'none';
+  if (S.friendTab === 'blocked') {
+    const blocked = f.blocked || [];
+    if (!blocked.length) bl.innerHTML = '<p class="muted small" style="padding:0 .7rem">Nobody blocked.</p>';
+    for (const u of blocked) {
+      const row = friendRowEl(u);
+      row.appendChild(smallBtn('Unblock', () => unblockUser(u.id)));
+      bl.appendChild(row);
+    }
   }
 }
 function dmRowEl(t) {
@@ -1784,6 +1838,7 @@ async function selectDmThread(id) {
   const t = S.dms.find((x) => x.id === id);
   if (!t) { renderDmBlank(); return; }
   document.body.classList.add('dm-open');
+  $('#composer').classList.remove('hidden');
   renderDmMembers();
   $('#chan-hash').textContent = t.isGroup ? '' : '@';
   const peer = dmPeer(t);
@@ -1802,6 +1857,7 @@ async function selectDmThread(id) {
 }
 function renderDmBlank() {
   document.body.classList.remove('dm-open');
+  $('#composer').classList.add('hidden');
   $('#chan-hash').textContent = '';
   $('#chan-name').textContent = 'Home';
   $('#typing').textContent = '';
@@ -2184,7 +2240,7 @@ function openUserCard(uid, x, y) {
       <div class="uc-status"><span class="status-dot ${st}"></span><span>${stLabel}</span></div>
       ${u.status_text ? `<div class="uc-statustext">${esc(u.status_text)}</div>` : ''}
       ${u.created_at ? `<div class="uc-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
-      <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}<button class="btn small" id="uc-close">Close</button></div>
+      <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}${uid !== S.me.id ? `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="uc-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>` : ''}<button class="btn small" id="uc-close">Close</button></div>
     </div>`;
   paintAvatar(card.querySelector('.avatar'), u);
   card.classList.remove('hidden');
@@ -2194,6 +2250,8 @@ function openUserCard(uid, x, y) {
   $('#uc-close').onclick = closeUserCard;
   const men = $('#uc-mention');
   if (men) men.onclick = () => { insertAtCursor($('#in-message'), '@' + u.username + ' '); closeUserCard(); $('#in-message').focus(); };
+  const blk = $('#uc-block');
+  if (blk) blk.onclick = () => { const was = isBlocked(uid), nm = u.username; closeUserCard(); if (was) unblockUser(uid); else blockUser(uid, nm); };
 }
 function closeUserCard() { $('#usercard').classList.add('hidden'); }
 

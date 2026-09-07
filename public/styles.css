@@ -324,7 +324,12 @@ h1,h2,h3{letter-spacing:-0.01em}
 .pad-x{padding:0 .7rem}
 #in-friend{flex:1;min-width:0;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:.45rem .7rem;font-size:.85rem;outline:none}
 #in-friend:focus{border-color:var(--accent)}
-#friend-reqs:empty,#friend-list:empty,#dm-list:empty,#group-list:empty{display:none}
+#friend-reqs:empty,#friend-list:empty,#dm-list:empty,#group-list:empty,#blocked-list:empty{display:none}
+.ftabs{display:flex;gap:.25rem;padding:.15rem .7rem .35rem}
+.ftab{flex:1;border:0;background:transparent;color:var(--muted);border-radius:999px;padding:.42rem .1rem;font-size:.78rem;font-weight:700;cursor:pointer;white-space:nowrap}
+.ftab:hover{background:var(--panel-2);color:var(--text)}
+.ftab.active{background:var(--panel-3);color:var(--text)}
+.ftab #req-count{color:var(--accent)}
 .dmrow{display:flex;align-items:center;gap:.5rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:12px;padding:.4rem .55rem;cursor:pointer}
 .dmrow:hover{background:var(--panel-2)}
 .dmrow.active{background:var(--panel-3)}

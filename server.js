@@ -883,8 +883,10 @@ app.get('/api/users/search', authRequired, (req, res) => {
 app.get('/api/friends', authRequired, (req, res) => {
   const rows = db.prepare('SELECT * FROM friendships WHERE user_a = ? OR user_b = ?').all(req.user.id, req.user.id);
   const ids = rows.map((f) => (f.user_a === req.user.id ? f.user_b : f.user_a));
-  const byId = new Map(ids.length
-    ? db.prepare(`SELECT ${USER_COLS} FROM users WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids).map((u) => [u.id, publicUser(u)])
+  const blockedIds = db.prepare('SELECT blocked_id FROM blocks WHERE user_id = ?').all(req.user.id).map((r) => r.blocked_id);
+  const allIds = [...new Set([...ids, ...blockedIds])];
+  const byId = new Map(allIds.length
+    ? db.prepare(`SELECT ${USER_COLS} FROM users WHERE id IN (${allIds.map(() => '?').join(',')})`).all(...allIds).map((u) => [u.id, publicUser(u)])
     : []);
   const friends = [], pin = [], pout = [];
   for (const f of rows) {
@@ -894,12 +896,15 @@ app.get('/api/friends', authRequired, (req, res) => {
     else if (f.action_by === req.user.id) pout.push(u);
     else pin.push(u);
   }
-  res.json({ friends, pendingIn: pin, pendingOut: pout });
+  const blocked = blockedIds.map((id) => byId.get(id)).filter(Boolean);
+  res.json({ friends, pendingIn: pin, pendingOut: pout, blocked });
 });
 app.post('/api/friends', authRequired, (req, res) => {
   const username = String(req.body?.username || '').trim().toLowerCase();
   const target = db.prepare(`SELECT ${USER_COLS} FROM users WHERE username = ?`).get(username);
   if (!target || target.id === req.user.id) return res.status(404).json({ error: 'user_not_found' });
+  if (db.prepare('SELECT 1 FROM blocks WHERE user_id = ? AND blocked_id = ?').get(target.id, req.user.id)) return res.status(404).json({ error: 'user_not_found' });
+  if (db.prepare('SELECT 1 FROM blocks WHERE user_id = ? AND blocked_id = ?').get(req.user.id, target.id)) return res.status(403).json({ error: 'unblock_first' });
   if (friendRow(req.user.id, target.id)) return res.status(409).json({ error: 'already_added' });
   const [x, y] = req.user.id < target.id ? [req.user.id, target.id] : [target.id, req.user.id];
   db.prepare('INSERT INTO friendships (user_a,user_b,status,action_by,created_at) VALUES (?,?,?,?,?)').run(x, y, 'pending', req.user.id, now());
@@ -909,6 +914,7 @@ app.post('/api/friends', authRequired, (req, res) => {
 app.post('/api/friends/:oid/accept', authRequired, (req, res) => {
   const f = friendRow(req.user.id, req.params.oid);
   if (!f || f.status !== 'pending' || f.action_by === req.user.id) return res.status(404).json({ error: 'no_request' });
+  if (db.prepare('SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)').get(req.user.id, req.params.oid, req.params.oid, req.user.id)) return res.status(404).json({ error: 'no_request' });
   db.prepare('UPDATE friendships SET status = ? WHERE user_a = ? AND user_b = ?').run('accepted', f.user_a, f.user_b);
   notifyUser(req.params.oid, { t: 'friends-changed' });
   notifyUser(req.user.id, { t: 'friends-changed' });
@@ -919,6 +925,23 @@ app.delete('/api/friends/:oid', authRequired, (req, res) => {
   if (!f) return res.status(404).json({ error: 'not_found' });
   db.prepare('DELETE FROM friendships WHERE user_a = ? AND user_b = ?').run(f.user_a, f.user_b);
   notifyUser(req.params.oid, { t: 'friends-changed' });
+  res.json({ ok: true });
+});
+app.post('/api/blocks', authRequired, (req, res) => {
+  const target = db.prepare('SELECT id FROM users WHERE id = ?').get(String(req.body?.userId || ''));
+  if (!target || target.id === req.user.id) return res.status(404).json({ error: 'user_not_found' });
+  const f = friendRow(req.user.id, target.id);
+  db.transaction(() => {
+    if (f) db.prepare('DELETE FROM friendships WHERE user_a = ? AND user_b = ?').run(f.user_a, f.user_b);
+    db.prepare('INSERT OR IGNORE INTO blocks (user_id, blocked_id, created_at) VALUES (?,?,?)').run(req.user.id, target.id, now());
+  })();
+  notifyUser(req.user.id, { t: 'friends-changed' });
+  notifyUser(target.id, { t: 'friends-changed' });
+  res.json({ ok: true });
+});
+app.delete('/api/blocks/:oid', authRequired, (req, res) => {
+  db.prepare('DELETE FROM blocks WHERE user_id = ? AND blocked_id = ?').run(req.user.id, String(req.params.oid));
+  notifyUser(req.user.id, { t: 'friends-changed' });
   res.json({ ok: true });
 });
 app.get('/api/dms', authRequired, (req, res) => {
