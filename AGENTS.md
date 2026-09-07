@@ -155,6 +155,10 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
       item rendered narrower than the button. Rail icons (and settings preview) now
       paint via `background-image: cover`, which fills by construction; broken URLs
       fall back to the letter via a preload probe.
+- [x] Poisoned-cache lesson (2026-09-07): a once-404 upload URL can stick in a
+      browser/SW cache even after the file exists. Fix without user action: copy
+      the file to a fresh random name (+ `?v=`), point the db row at it. All new
+      uploads already get `?v=` keys so this class is dead going forward.
 - [x] Rail upgrades (2026-09-07): settings moved to a gear at the bottom of the
       server rail. Discord-style folders: drag servers to reorder, drop one onto
       another to auto-create a folder, drag into/out of folders, right-click (or
