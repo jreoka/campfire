@@ -256,9 +256,11 @@ app.post('/api/servers/join', authRequired, (req, res) => {
   if (!code) return res.status(400).json({ error: 'code_required' });
   const s = db.prepare('SELECT * FROM servers WHERE invite_code = ?').get(code);
   if (!s) return res.status(404).json({ error: 'bad_invite' });
+  if (isBanned(s.id, req.user.id)) return res.status(403).json({ error: 'banned' });
   if (!isMember(s.id, req.user.id)) {
     const maxP = db.prepare('SELECT COALESCE(MAX(position),-1) m FROM server_members WHERE user_id = ?').get(req.user.id).m;
     db.prepare('INSERT INTO server_members (server_id,user_id,joined_at,position) VALUES (?,?,?,?)').run(s.id, req.user.id, now(), maxP + 1);
+    postServerSys(s.id, `${displayOf(req.user)} joined the server`);
   }
   res.json({ server: serverView(s.id) });
 });
@@ -306,6 +308,7 @@ app.post('/api/servers/:id/leave', authRequired, (req, res) => {
   if (!s) return res.status(404).json({ error: 'no_server' });
   if (s.owner_id === req.user.id) return res.status(400).json({ error: 'owner_cannot_leave_delete_instead' });
   db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(s.id, req.user.id);
+  postServerSys(s.id, `${displayOf(req.user)} left the server`);
   broadcastToServer(s.id, { t: 'member-left', serverId: s.id, userId: req.user.id });
   res.json({ ok: true });
 });
@@ -327,6 +330,65 @@ app.post('/api/servers/:id/invite/reset', authRequired, (req, res) => {
   db.prepare('UPDATE servers SET invite_code = ? WHERE id = ?').run(code, s.id);
   broadcastToServer(s.id, { t: 'invite-updated', serverId: s.id, invite_code: code });
   res.json({ invite_code: code });
+});
+
+app.post('/api/servers/:id/members/:uid/kick', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  const target = String(req.params.uid);
+  if (target === s.owner_id) return res.status(400).json({ error: 'cannot_kick_owner' });
+  if (!isMember(s.id, target)) return res.status(404).json({ error: 'not_member' });
+  const u = publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(target));
+  db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(s.id, target);
+  postServerSys(s.id, `${displayOf(u)} was kicked`);
+  broadcastToServer(s.id, { t: 'member-left', serverId: s.id, userId: target });
+  evictFromServer(s.id, target);
+  notifyUser(target, { t: 'removed-from-server', serverId: s.id, reason: 'kicked' });
+  res.json({ ok: true });
+});
+
+app.post('/api/servers/:id/members/:uid/ban', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  const target = String(req.params.uid);
+  if (target === s.owner_id) return res.status(400).json({ error: 'cannot_kick_owner' });
+  if (!isMember(s.id, target)) return res.status(404).json({ error: 'not_member' });
+  const reason = String(req.body?.reason || '').trim().slice(0, 140);
+  const u = publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(target));
+  db.transaction(() => {
+    db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(s.id, target);
+    db.prepare('INSERT OR IGNORE INTO server_bans (server_id,user_id,reason,created_at) VALUES (?,?,?,?)').run(s.id, target, reason, now());
+  })();
+  postServerSys(s.id, `${displayOf(u)} was banned`);
+  broadcastToServer(s.id, { t: 'member-left', serverId: s.id, userId: target });
+  evictFromServer(s.id, target);
+  notifyUser(target, { t: 'removed-from-server', serverId: s.id, reason: 'banned' });
+  res.json({ ok: true });
+});
+
+app.get('/api/servers/:id/bans', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  const rows = db.prepare('SELECT user_id, reason, created_at FROM server_bans WHERE server_id = ? ORDER BY created_at DESC').all(s.id);
+  const bans = rows.map((r) => {
+    const u = publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(r.user_id));
+    return { ...u, reason: r.reason || '', banned_at: r.created_at };
+  });
+  res.json({ bans });
+});
+
+app.delete('/api/servers/:id/bans/:uid', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  const target = String(req.params.uid);
+  db.prepare('DELETE FROM server_bans WHERE server_id = ? AND user_id = ?').run(s.id, target);
+  const u = publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(target));
+  postServerSys(s.id, `${displayOf(u)} was unbanned`);
+  res.json({ ok: true });
 });
 
 app.get('/api/servers/:id/channels/:chId/messages', authRequired, (req, res) => {
@@ -712,13 +774,57 @@ function dmThreadView(t) {
   const members = db.prepare(`SELECT ${USER_COLS} FROM users WHERE id IN (SELECT user_id FROM dm_members WHERE thread_id = ?)`).all(t.id).map(publicUser);
   const last = db.prepare('SELECT m.content, m.created_at, u.display_name AS dname FROM dm_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.thread_id = ? ORDER BY m.created_at DESC LIMIT 1').get(t.id);
   return {
-    id: t.id, name: t.name, isGroup: !!t.is_group, created_at: t.created_at, members,
+    id: t.id, name: t.name, isGroup: !!t.is_group, created_by: t.created_by || null, created_at: t.created_at, members,
     last: last ? { content: last.content, created_at: last.created_at, author: last.dname || '?' } : null,
   };
 }
 function dmNotify(threadId, obj) {
   const mems = db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ?').all(threadId).map((r) => r.user_id);
   for (const uid of mems) notifyUser(uid, obj);
+}
+function firstTextChannel(serverId) {
+  return db.prepare("SELECT * FROM channels WHERE server_id = ? AND type = 'text' ORDER BY position ASC, created_at ASC LIMIT 1").get(serverId);
+}
+function postServerSys(serverId, text) {
+  const ch = firstTextChannel(serverId);
+  if (!ch) return;
+  const mid = uid();
+  db.prepare('INSERT INTO messages (id,server_id,channel_id,user_id,content,sys,created_at) VALUES (?,?,?,?,?,?,?)')
+    .run(mid, serverId, ch.id, null, String(text).slice(0, 200), 'info', now());
+  broadcastToServer(serverId, { t: 'message-new', serverId, channelId: ch.id, message: fullMessage(mid, null) });
+}
+function postDmSys(threadId, text) {
+  const mid = uid();
+  db.prepare('INSERT INTO dm_messages (id,thread_id,user_id,content,sys,created_at) VALUES (?,?,?,?,?,?)')
+    .run(mid, threadId, null, String(text).slice(0, 200), 'info', now());
+  dmNotify(threadId, { t: 'dm-new', message: fullDm(mid, null) });
+}
+function isBanned(serverId, userId) {
+  return !!db.prepare('SELECT 1 FROM server_bans WHERE server_id = ? AND user_id = ?').get(serverId, userId);
+}
+function dmBanned(threadId, userId) {
+  return !!db.prepare('SELECT 1 FROM dm_bans WHERE thread_id = ? AND user_id = ?').get(threadId, userId);
+}
+function displayOf(u) { return (u && (u.display_name || u.username)) || 'Someone'; }
+// drop a user's live sockets from a server (membership gone): stop server
+// broadcasts + pull them out of its voice rooms
+function evictFromServer(serverId, userId) {
+  for (const c of clients) {
+    if (!c.meta || c.meta.userId !== userId) continue;
+    c.meta.servers?.delete(serverId);
+  }
+  for (const [key, set] of voiceRooms) {
+    const [srv, ch] = key.split(':');
+    if (srv !== serverId) continue;
+    for (const c of [...set]) {
+      if (c.meta && c.meta.userId === userId) {
+        set.delete(c);
+        c.voice = null;
+        safeSend(c, { t: 'voice-kicked', serverId, channelId: ch });
+      }
+    }
+    if (set.size === 0) voiceRooms.delete(key);
+  }
 }
 const DM_JOIN = `SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,
   p.content AS p_content, pu.display_name AS p_name
@@ -740,6 +846,7 @@ function hydrateDm(rows, meId) {
   }
   return rows.map((r) => ({
     id: r.id, threadId: r.thread_id, content: r.content, created_at: r.created_at,
+    sys: r.sys || null,
     replyTo: r.reply_to_id ? { id: r.reply_to_id, author: r.p_name || '?', snippet: String(r.p_content || '').slice(0, 140) } : null,
     threadCount: 0, edited: !!r.edited_at, _dm: true,
     attachments: attBy[r.id] || [],
@@ -865,6 +972,7 @@ app.post('/api/dms/:tid/members', authRequired, (req, res) => {
   const oid = String(req.body?.userId || '');
   if (oid === req.user.id || !db.prepare('SELECT 1 FROM users WHERE id = ?').get(oid)) return res.status(404).json({ error: 'user_not_found' });
   if (!areFriends(req.user.id, oid)) return res.status(403).json({ error: 'add_friend_first' });
+  if (dmBanned(t.id, oid)) return res.status(403).json({ error: 'banned_from_group' });
   db.prepare('INSERT OR IGNORE INTO dm_members (thread_id,user_id,joined_at) VALUES (?,?,?)').run(t.id, oid, now());
   if (!t.is_group) db.prepare('UPDATE dm_threads SET is_group = 1 WHERE id = ?').run(t.id);
   dmNotify(t.id, { t: 'dm-threads-changed' });
@@ -874,10 +982,66 @@ app.post('/api/dms/:tid/leave', authRequired, (req, res) => {
   const t = dmThreadFor(req.user.id, req.params.tid);
   if (!t) return res.status(404).json({ error: 'no_thread' });
   db.prepare('DELETE FROM dm_members WHERE thread_id = ? AND user_id = ?').run(t.id, req.user.id);
+  postDmSys(t.id, `${displayOf(req.user)} left ${t.is_group ? 'the group' : 'the chat'}`);
   dmNotify(t.id, { t: 'dm-threads-changed' });
   if (!db.prepare('SELECT COUNT(*) c FROM dm_members WHERE thread_id = ?').get(t.id).c) {
     db.prepare('DELETE FROM dm_threads WHERE id = ?').run(t.id);
   }
+  res.json({ ok: true });
+});
+
+app.post('/api/dms/:tid/members/:uid/remove', authRequired, (req, res) => {
+  const t = dmThreadFor(req.user.id, req.params.tid);
+  if (!t) return res.status(404).json({ error: 'no_thread' });
+  if (!t.is_group) return res.status(400).json({ error: 'not_group' });
+  if (t.created_by !== req.user.id) return res.status(403).json({ error: 'creator_only' });
+  const target = String(req.params.uid);
+  if (target === req.user.id || target === t.created_by) return res.status(400).json({ error: 'cannot_remove' });
+  if (!db.prepare('SELECT 1 FROM dm_members WHERE thread_id = ? AND user_id = ?').get(t.id, target)) return res.status(404).json({ error: 'not_member' });
+  const u = publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(target));
+  db.prepare('DELETE FROM dm_members WHERE thread_id = ? AND user_id = ?').run(t.id, target);
+  postDmSys(t.id, `${displayOf(u)} was removed`);
+  dmNotify(t.id, { t: 'dm-threads-changed' });
+  notifyUser(target, { t: 'removed-from-dm', threadId: t.id });
+  res.json({ ok: true });
+});
+
+app.post('/api/dms/:tid/members/:uid/ban', authRequired, (req, res) => {
+  const t = dmThreadFor(req.user.id, req.params.tid);
+  if (!t) return res.status(404).json({ error: 'no_thread' });
+  if (!t.is_group) return res.status(400).json({ error: 'not_group' });
+  if (t.created_by !== req.user.id) return res.status(403).json({ error: 'creator_only' });
+  const target = String(req.params.uid);
+  if (target === req.user.id || target === t.created_by) return res.status(400).json({ error: 'cannot_remove' });
+  if (!db.prepare('SELECT 1 FROM dm_members WHERE thread_id = ? AND user_id = ?').get(t.id, target)) return res.status(404).json({ error: 'not_member' });
+  const u = publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(target));
+  db.transaction(() => {
+    db.prepare('DELETE FROM dm_members WHERE thread_id = ? AND user_id = ?').run(t.id, target);
+    db.prepare('INSERT OR IGNORE INTO dm_bans (thread_id,user_id,created_at) VALUES (?,?,?)').run(t.id, target, now());
+  })();
+  postDmSys(t.id, `${displayOf(u)} was banned`);
+  dmNotify(t.id, { t: 'dm-threads-changed' });
+  notifyUser(target, { t: 'removed-from-dm', threadId: t.id });
+  res.json({ ok: true });
+});
+
+app.get('/api/dms/:tid/bans', authRequired, (req, res) => {
+  const t = dmThreadFor(req.user.id, req.params.tid);
+  if (!t) return res.status(404).json({ error: 'no_thread' });
+  if (t.created_by !== req.user.id) return res.status(403).json({ error: 'creator_only' });
+  const rows = db.prepare('SELECT user_id, created_at FROM dm_bans WHERE thread_id = ? ORDER BY created_at DESC').all(t.id);
+  const bans = rows.map((r) => {
+    const u = publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(r.user_id));
+    return { ...u, banned_at: r.created_at };
+  });
+  res.json({ bans });
+});
+
+app.delete('/api/dms/:tid/bans/:uid', authRequired, (req, res) => {
+  const t = dmThreadFor(req.user.id, req.params.tid);
+  if (!t) return res.status(404).json({ error: 'no_thread' });
+  if (t.created_by !== req.user.id) return res.status(403).json({ error: 'creator_only' });
+  db.prepare('DELETE FROM dm_bans WHERE thread_id = ? AND user_id = ?').run(t.id, String(req.params.uid));
   res.json({ ok: true });
 });
 app.get('/api/dms/:tid/messages', authRequired, (req, res) => {
@@ -981,6 +1145,7 @@ function fmtMsg(r) {
     content: r.content, created_at: r.created_at,
     replyTo: r.reply_to_id ? { id: r.reply_to_id, author: r.p_name || 'deleted', snippet: String(r.p_content || '').slice(0, 140) } : null,
     threadRoot: r.thread_root_id || null,
+    sys: r.sys || null,
     threadCount: 0, edited: !!r.edited_at,
     attachments: [], reactions: [],
     user: r.user_id ? publicUser({ id: r.user_id, username: r.username, display_name: r.display_name, avatar_color: r.avatar_color, avatar_url: r.avatar_url }) : null,

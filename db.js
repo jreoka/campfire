@@ -68,6 +68,7 @@ addColumn('users', 'banner_url', 'TEXT');
 addColumn('users', 'sidebar_banner_url', 'TEXT');
 addColumn('servers', 'icon_url', 'TEXT');
 addColumn('messages', 'reply_to_id', 'TEXT');
+addColumn('messages', 'sys', 'TEXT');
 addColumn('messages', 'thread_root_id', 'TEXT');
 addColumn('messages', 'edited_at', 'INTEGER');
 raw.exec(`
@@ -167,7 +168,21 @@ CREATE TABLE IF NOT EXISTS server_folders (
   open INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS server_bans (
+  server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (server_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS dm_bans (
+  thread_id TEXT NOT NULL REFERENCES dm_threads(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (thread_id, user_id)
+);
 `);
+addColumn('dm_messages', 'sys', 'TEXT');
 addColumn('server_members', 'position', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('server_members', 'folder_id', 'TEXT');
 // status_text cap lowered to 64: trim any legacy longer values (idempotent)

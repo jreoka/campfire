@@ -161,7 +161,7 @@ function prettyError(e) {
   const map = {
     invalid_login: 'Wrong username or password.', username_taken: 'That username is taken.',
     bad_username: 'Username needs 2–24 chars (a-z, 0-9, _ .).', bad_invite: 'Invite code not found.',
-    slow_down: 'Slow down — you\'re sending too fast.', owner_only: 'Only the server owner can do that.',
+    slow_down: 'Slow down — you\'re sending too fast.', owner_only: 'Only the server owner can do that.', banned: 'You are banned from this server.',
   };
   return map[e] || e.replace(/_/g, ' ');
 }
@@ -500,6 +500,12 @@ function reactionsHTML(m) {
 }
 function messageEl(m, opts = {}) {
   const div = document.createElement('div');
+  if (m.sys) {
+    div.className = 'msg sys';
+    div.dataset.mid = m.id;
+    div.textContent = m.content;
+    return div;
+  }
   div.className = 'msg';
   div.dataset.mid = m.id;
   const own = m.user && m.user.id === S.me.id;
@@ -689,9 +695,9 @@ function onWS(m) {
         S.messages.set(m.channelId, arr);
         if (m.channelId === S.channelId) {
           renderMessages();
-          if (document.hidden && !dnd) notifyMsg(msg);
-          else if (!document.hidden && !dnd && mentionsMe(msg)) toast(`${msg.user.display_name} mentioned you`);
-        } else if (!dnd) {
+          if (!msg.sys && document.hidden && !dnd) notifyMsg(msg);
+          else if (!msg.sys && !document.hidden && !dnd && mentionsMe(msg)) toast(`${msg.user.display_name} mentioned you`);
+        } else if (!msg.sys && !dnd) {
           toast(`#${chanName(m.channelId)}: ${msg.user.display_name}: ${(msg.content || '[attachment]').slice(0, 60)}`);
         }
       }
@@ -730,10 +736,10 @@ function onWS(m) {
       const ddnd = S.me && S.me.status === 'dnd';
       if (S.view === 'home' && S.dmThreadId === msg.threadId) {
         renderDmMessages();
-        if (document.hidden && !ddnd) notifyMsg(msg);
+        if (!msg.sys && document.hidden && !ddnd) notifyMsg(msg);
       } else {
         refreshDms();
-        if (!ddnd) toast(`DM from ${msg.user.display_name}: ${(msg.content || '[attachment]').slice(0, 60)}`);
+        if (!msg.sys && !ddnd) toast(`DM from ${msg.user.display_name}: ${(msg.content || '[attachment]').slice(0, 60)}`);
       }
       break;
     }
@@ -844,6 +850,17 @@ function onWS(m) {
     case 'member-left':
       if (m.serverId === S.serverId) selectServer(S.serverId);
       break;
+    case 'removed-from-server':
+      if (S.voice && S.voice.serverId === m.serverId) leaveVoice(true);
+      toast(m.reason === 'banned' ? 'You were banned from a server' : 'You were kicked from a server');
+      S.ws?.send(JSON.stringify({ t: 'subscribe' }));
+      refreshServers();
+      break;
+    case 'removed-from-dm':
+      if (S.dmThreadId === m.threadId) { S.dmThreadId = null; renderDmBlank(); }
+      refreshDms();
+      toast('You were removed from a group chat');
+      break;
     case 'server-deleted':
       toast('Server was deleted'); refreshServers(); break;
     case 'invite-updated':
@@ -897,6 +914,7 @@ function chanName(id) {
   return (S.serverDetail?.channels.find((c) => c.id === id) || {}).name || 'chat';
 }
 function notifyMsg(m) {
+  if (!m.user) return;
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   try { new Notification(m.threadId ? `${m.user.display_name} (DM)` : `${m.user.display_name} (#${chanName(m.channelId)})`, { body: (m.content || '[attachment]').slice(0, 120) }); } catch {}
 }
@@ -1282,6 +1300,12 @@ function openCtx(x, y, items) {
 function messageCtxMenu(mid, x, y) {
   const m = msgById(mid);
   if (!m) return;
+  if (m.sys) {
+    openCtx(x, y, [
+      { label: 'Copy text', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(m.content || ''); toast('Copied'); } catch {} } },
+    ]);
+    return;
+  }
   const own = m.user && m.user.id === S.me.id;
   const items = [
     { label: 'Add reaction…', icon: '➕', fn: () => openPicker('react', mid, 'emoji', { x, y }) },
@@ -1297,10 +1321,51 @@ function messageCtxMenu(mid, x, y) {
 function memberCtxMenu(uid, x, y) {
   const u = memberById(uid);
   if (!u) return;
-  openCtx(x, y, [
+  const items = [
     { label: 'View profile', icon: '👤', fn: () => openUserCard(uid, x, y) },
     { label: `Mention @${u.username}`, icon: '@', fn: () => { insertAtCursor($('#in-message'), '@' + u.username + ' '); $('#in-message').focus(); } },
-  ]);
+  ];
+  if (S.me && uid !== S.me.id) {
+    if (S.view === 'server' && S.serverDetail && S.serverDetail.owner_id === S.me.id && uid !== S.serverDetail.owner_id) {
+      items.push({ label: `Kick @${u.username}`, icon: '→', danger: true, fn: () => modServerMember('kick', u) });
+      items.push({ label: `Ban @${u.username}`, icon: '⊘', danger: true, fn: () => modServerMember('ban', u) });
+    } else if (S.view === 'home' && S.dmThreadId) {
+      const t = S.dms.find((t) => t.id === S.dmThreadId);
+      if (t && t.isGroup) modGroupItems(items, t, u);
+    }
+  }
+  openCtx(x, y, items);
+}
+async function modServerMember(kind, u) {
+  const d = S.serverDetail;
+  if (!d) return;
+  const ok = await openConfirmModal({
+    title: `${kind === 'ban' ? 'Ban' : 'Kick'} @${u.username}?`,
+    message: kind === 'ban' ? 'They will be removed and blocked from rejoining with invites.' : 'They will be removed from the server.',
+    okLabel: kind === 'ban' ? 'Ban' : 'Kick',
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/servers/${d.id}/members/${u.id}/${kind}`, { method: 'POST' });
+  } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+}
+function modGroupItems(items, t, u) {
+  if (!t.created_by || t.created_by !== S.me.id) return;
+  if (u.id === t.created_by) return;
+  items.push({ label: `Remove @${u.username}`, icon: '→', danger: true, fn: () => modGroupMember('remove', t, u) });
+  items.push({ label: `Ban @${u.username}`, icon: '⊘', danger: true, fn: () => modGroupMember('ban', t, u) });
+}
+async function modGroupMember(kind, t, u) {
+  const ok = await openConfirmModal({
+    title: `${kind === 'ban' ? 'Ban' : 'Remove'} @${u.username}?`,
+    message: kind === 'ban' ? 'They will be removed and blocked from being re-added.' : 'They will be removed from the group.',
+    okLabel: kind === 'ban' ? 'Ban' : 'Remove',
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/dms/${t.id}/members/${u.id}/${kind}`, { method: 'POST' });
+    refreshDms().then(() => renderDmMembers());
+  } catch (err) { toast('Failed: ' + prettyError(err.message)); }
 }
 function serverCtxMenu(sid, x, y) {
   const s = S.servers.find((v) => v.id === sid);
@@ -1687,14 +1752,31 @@ function openGroupModal() {
   });
 }
 function dmCtxMenu(tid, x, y) {
-  openCtx(x, y, [
+  const t = S.dms.find((t) => t.id === tid);
+  const items = [
     { label: 'Open', icon: '→', fn: () => selectDmThread(tid) },
-    { label: 'Leave chat', icon: '🗑', danger: true, fn: async () => {
-      try { await api(`/api/dms/${tid}/leave`, { method: 'POST' }); } catch {}
-      if (S.dmThreadId === tid) { S.dmThreadId = null; renderDmBlank(); }
-      refreshDms();
-    } },
-  ]);
+  ];
+  if (t && t.isGroup && t.created_by === S.me?.id) {
+    items.push({ label: 'Banned members…', icon: '⊘', fn: () => openGroupBans(tid) });
+  }
+  items.push({ label: 'Leave chat', icon: '🗑', danger: true, fn: async () => {
+    try { await api(`/api/dms/${tid}/leave`, { method: 'POST' }); } catch {}
+    if (S.dmThreadId === tid) { S.dmThreadId = null; renderDmBlank(); }
+    refreshDms();
+  } });
+  openCtx(x, y, items);
+}
+async function openGroupBans(tid) {
+  let bans = [];
+  try { ({ bans } = await api(`/api/dms/${tid}/bans`)); } catch { toast('Could not load banned list'); return; }
+  openModal('Banned members', bans.length
+    ? `<div id="m-banlist">${bans.map((u) => `<div class="row" style="justify-content:space-between;padding:.3rem 0"><span>${esc(u.display_name)} <span class="muted small">@${esc(u.username)}</span></span><button class="mini" data-unban="${u.id}">Unban</button></div>`).join('')}</div>`
+    : '<p class="muted small">Nobody is banned from this group.</p>', 'Done', null);
+  document.querySelectorAll('#m-banlist [data-unban]').forEach((b) => (b.onclick = async () => {
+    try { await api(`/api/dms/${tid}/bans/${b.dataset.unban}`, { method: 'DELETE' }); } catch {}
+    $('#modal-backdrop').classList.add('hidden');
+    openGroupBans(tid);
+  }));
 }
 async function selectDmThread(id) {
   S.dmThreadId = id;
@@ -2398,6 +2480,27 @@ function renderServerTab() {
     } catch (err) { toast('Emoji failed: ' + prettyError(err.message)); }
   };
   eadd.appendChild(epick); box.appendChild(eadd); box.appendChild(efile);
+  // banned members (owner only)
+  if (owner) {
+    h('Banned members');
+    const banBox = document.createElement('div');
+    banBox.innerHTML = '<p class="muted small">Loading…</p>';
+    box.appendChild(banBox);
+    api(`/api/servers/${d.id}/bans`).then(({ bans }) => {
+      banBox.innerHTML = '';
+      if (!bans.length) banBox.innerHTML = '<p class="muted small">Nobody is banned.</p>';
+      for (const u of bans || []) {
+        const row = document.createElement('div');
+        row.className = 'set-row';
+        row.innerHTML = `<span class="avatar" style="width:26px;height:26px;font-size:.65rem"></span><span class="grow">${esc(u.display_name)} <span class="muted">@${esc(u.username)}</span>${u.reason ? ` — ${esc(u.reason)}` : ''}</span>`;
+        paintAvatar(row.querySelector('.avatar'), u);
+        const un = document.createElement('button'); un.className = 'mini'; un.textContent = 'Unban';
+        un.onclick = async () => { try { await api(`/api/servers/${d.id}/bans/${u.id}`, { method: 'DELETE' }); renderServerTab(); } catch (err) { toast('Failed: ' + prettyError(err.message)); } };
+        row.appendChild(un);
+        banBox.appendChild(row);
+      }
+    }).catch(() => { banBox.innerHTML = '<p class="muted small">Could not load bans.</p>'; });
+  }
   // danger / leave
   const dz = document.createElement('div'); dz.className = 'danger-zone';
   dz.innerHTML = `<h4>${owner ? 'Danger zone' : 'Leave'}</h4>`;
