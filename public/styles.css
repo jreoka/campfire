@@ -298,7 +298,10 @@ h1,h2,h3{letter-spacing:-0.01em}
 .danger-zone h4{margin:.1rem 0 .5rem;color:var(--red)}
 
 /* ---------- thread panel ---------- */
-#thread-panel{width:320px;background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;flex-shrink:0;order:4}
+#thread-panel{width:320px;background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;flex-shrink:0;order:4;position:relative}
+#thread-resizer{position:absolute;left:-5px;top:0;bottom:0;width:10px;cursor:ew-resize;touch-action:none;z-index:6;border-radius:6px}
+#thread-resizer:hover{background:#aac7ff2e}
+body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew-resize!important}
 #thread-panel header{display:flex;align-items:center;gap:.5rem;padding:.7rem .9rem;border-bottom:1px solid var(--line)}
 #thread-root{padding:.6rem .8rem;border-bottom:1px solid var(--line)}
 #thread-replies{flex:1;overflow-y:auto;padding:.4rem .4rem}
@@ -376,7 +379,8 @@ body{touch-action:manipulation}
   #composer .tool-btn,#composer .gif-btn{min-height:44px;min-width:44px;justify-content:center}
   #picker{left:0;right:0;bottom:0;width:auto;max-height:62dvh;border-radius:20px 20px 0 0}
   #mention-pop{left:.5rem;right:.5rem}
-  #thread-panel{width:min(360px,100vw)}
+  #thread-panel{width:min(360px,100vw)!important}
+  #thread-resizer{display:none}
   #usercard{width:min(300px,calc(100vw - 16px))}
   #settings-backdrop{padding:0}
   .settings{max-width:none;max-height:none;height:100dvh;border-radius:0}

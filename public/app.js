@@ -2302,6 +2302,36 @@ function closeThread(silent) {
   if (p) p.classList.add('hidden');
 }
 $('#thread-close').onclick = () => closeThread();
+// thread sidebar resize (drag left edge, clamped + remembered)
+const THREAD_W_MIN = 280, THREAD_W_MAX = 620;
+const threadWMax = () => Math.max(THREAD_W_MIN + 40, Math.min(THREAD_W_MAX, Math.floor(innerWidth * 0.6)));
+const clampThreadW = (w) => Math.min(threadWMax(), Math.max(THREAD_W_MIN, Math.round(w)));
+try {
+  const w = parseInt(localStorage.getItem('cf_thread_w') || '', 10);
+  if (w >= THREAD_W_MIN) $('#thread-panel').style.width = clampThreadW(w) + 'px';
+} catch {}
+$('#thread-resizer').addEventListener('pointerdown', (e) => {
+  if (matchMedia('(max-width: 700px)').matches) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  e.preventDefault();
+  const panel = $('#thread-panel');
+  const rz = e.currentTarget;
+  const startX = e.clientX, startW = panel.getBoundingClientRect().width;
+  document.body.classList.add('thread-resizing');
+  try { rz.setPointerCapture(e.pointerId); } catch {}
+  const move = (ev) => { panel.style.width = clampThreadW(startW + (startX - ev.clientX)) + 'px'; };
+  const done = (ev) => {
+    panel.style.width = clampThreadW(startW + (startX - ev.clientX)) + 'px';
+    try { localStorage.setItem('cf_thread_w', panel.style.width.replace('px', '')); } catch {}
+    document.body.classList.remove('thread-resizing');
+    rz.removeEventListener('pointermove', move);
+    rz.removeEventListener('pointerup', done);
+    rz.removeEventListener('pointercancel', done);
+  };
+  rz.addEventListener('pointermove', move);
+  rz.addEventListener('pointerup', done);
+  rz.addEventListener('pointercancel', done);
+});
 $('#thread-composer').addEventListener('submit', (e) => {
   e.preventDefault();
   if (!S.thread) return;
