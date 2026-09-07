@@ -489,7 +489,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 /* ---------- rail settings + server folders ---------- */
 .rail-gear{color:var(--muted);padding:.55rem;border-radius:999px;margin-bottom:.2rem}
 .rail-gear:hover{background:var(--panel-2);color:var(--text)}
-.folder-children{display:flex;flex-direction:column;gap:5px;align-items:center;padding:4px 3px;border:1px solid transparent;border-radius:14px}
+.folder-children{display:flex;flex-direction:column;gap:5px;align-items:center;padding:4px 0;border:0;border-radius:14px}
 .folder-btn.open{outline:2px solid #ffffff55;outline-offset:1px}
 #drop-marker{position:fixed;height:3px;background:var(--accent);border-radius:2px;z-index:300;pointer-events:none;display:none}
 .drop-combine{outline:2px solid var(--accent)!important;outline-offset:1px}
@@ -701,6 +701,7 @@ body{touch-action:manipulation}
   body.nav-open #left{transform:none}
   #left #rail{width:60px;flex-shrink:0}
   #left .server-btn,#left #btn-add-server{width:44px;height:44px}
+  .folder-wrap.open{padding:3px}
   #home-wrap{width:44px;height:44px}
   #home-wrap:has(> .active)::before{left:-5px;width:4px;height:22px}
   #server-list{overflow-x:hidden;padding:0}
