@@ -425,7 +425,9 @@ function confirmDeleteChannel(c) {
 async function selectChannel(id) {
   S.channelId = id;
   S.callOpen = false;
+  $('#chat').classList.remove('call-open');
   renderChannels();
+  renderStage();
   const ch = S.serverDetail.channels.find((c) => c.id === id);
   $('#chan-name').textContent = ch ? ch.name : '—';
   $('#composer').classList.remove('hidden');
@@ -1318,16 +1320,28 @@ function callViewOpen() { return !!S.callOpen; }
 function openCallView() {
   if (!S.voice) return;
   S.callOpen = true;
+  $('#chat').classList.add('call-open');
   const ch = S.serverDetail?.channels.find((c) => c.id === S.voice.channelId);
   $('#stage-name').textContent = ch ? ch.name : 'voice';
   $('#messages').classList.add('hidden');
   $('#friends-page').classList.add('hidden');
+  $('#composer').classList.add('hidden');
+  $('#attach-preview').classList.add('hidden');
+  $('#mention-pop').classList.add('hidden');
+  $('#voice-fab').classList.add('hidden');
   renderStage();
 }
 function closeCallView() {
   S.callOpen = false;
+  $('#chat').classList.remove('call-open');
   if (S.view === 'home' && !S.dmThreadId) renderDmBlank();
-  else { $('#friends-page').classList.add('hidden'); $('#messages').classList.remove('hidden'); }
+  else {
+    $('#friends-page').classList.add('hidden');
+    $('#messages').classList.remove('hidden');
+    $('#composer').classList.remove('hidden');
+    if (S.voice) $('#voice-fab').classList.remove('hidden');
+    renderComposerMeta();
+  }
   renderStage();
 }
 function updateCallHead() {
@@ -1369,8 +1383,9 @@ function leaveVoice(silent) {
   S.voice.screenStream?.getTracks().forEach((t) => t.stop());
   for (const [, el] of S.voice.audioEls) { try { el.remove(); } catch {} }
   S.callOpen = false;
+  $('#chat').classList.remove('call-open');
   if (S.view === 'home' && !S.dmThreadId) renderDmBlank();
-  else { $('#friends-page').classList.add('hidden'); $('#messages').classList.remove('hidden'); }
+  else { $('#friends-page').classList.add('hidden'); $('#messages').classList.remove('hidden'); $('#composer').classList.remove('hidden'); renderComposerMeta(); }
   $('#stage').classList.add('hidden');
   $('#stage-grid').innerHTML = '';
   const { serverId, channelId } = S.voice;
@@ -2260,6 +2275,7 @@ function dmTitle(t) { return t.isGroup ? (t.name || 'Group chat') : ((dmPeer(t) 
 function openServerView() {
   S.view = 'server';
   S.callOpen = false;
+  $('#chat').classList.remove('call-open');
   document.body.classList.remove('view-home', 'dm-open');
   $('#friends-page').classList.add('hidden');
   $('#messages').classList.remove('hidden');
@@ -2270,6 +2286,7 @@ function openServerView() {
 async function openHome() {
   S.view = 'home';
   S.callOpen = false;
+  $('#chat').classList.remove('call-open');
   document.body.classList.add('view-home');
   document.body.classList.remove('nav-open');
   $('#server-ui').classList.add('hidden');
@@ -2498,6 +2515,8 @@ $('#chan-topic').onclick = () => {
 async function selectDmThread(id) {
   S.dmThreadId = id;
   S.callOpen = false;
+  $('#chat').classList.remove('call-open');
+  renderStage();
   document.querySelectorAll('.dmrow').forEach((b) => b.classList.toggle('active', b.dataset.dmthread === id));
   const t = S.dms.find((x) => x.id === id);
   if (!t) { renderDmBlank(); return; }

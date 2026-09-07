@@ -136,6 +136,10 @@ h1,h2,h3{letter-spacing:-0.01em}
 }
 /* ---------- voice stage (video grid) ---------- */
 #stage{border-bottom:1px solid var(--line);background:var(--inset);padding:.6rem;max-height:46dvh;overflow-y:auto;flex-shrink:0}
+/* full call view: stage takes the entire chat area */
+#chat.call-open #stage{flex:1;min-height:0;max-height:none;border-bottom:0;display:flex;flex-direction:column;overflow:hidden}
+#chat.call-open #stage-grid{flex:1;min-height:0;overflow-y:auto;align-content:center;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+#chat.call-open #voice-fab{display:none!important}
 #stage-head{display:flex;align-items:center;gap:.5rem;padding:.1rem .2rem .55rem}
 #stage-head strong{font-size:.92rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #stage-head .muted{font-size:.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
