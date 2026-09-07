@@ -436,7 +436,6 @@ function folderEl(f, kids) {
     if (/^#[0-9a-fA-F]{6}$/.test(f.color || '')) {
       kidsBox.style.background = f.color + '26';
       kidsBox.style.borderColor = f.color + '66';
-      kidsBox.style.borderTopColor = f.color;
     }
     for (const s of kids) kidsBox.appendChild(serverBtn(s));
     wrap.appendChild(kidsBox);
@@ -2860,7 +2859,12 @@ async function persistLayout() {
   for (const f of S.layoutFolders) if (!folders.includes(f)) folders.push(f);
   const pos = new Map();
   S.rootOrder.forEach((it, i) => { if (it.kind === 'server') pos.set(it.id, { folderId: null, position: i }); });
-  folders.forEach((f) => { (f.servers || []).forEach((sid, i) => pos.set(sid, { folderId: f.id, position: i })); });
+  folders.forEach((f) => {
+    // Folders hold servers only: strip stale ids (and folder ids most of
+    // all) before persisting, so nesting can never be saved.
+    f.servers = (f.servers || []).filter((sid) => S.servers.some((s) => s.id === sid));
+    f.servers.forEach((sid, i) => pos.set(sid, { folderId: f.id, position: i }));
+  });
   try {
     await api('/api/me/layout', { method: 'PUT', body: JSON.stringify({
       folders: folders.map((f) => ({
@@ -2873,6 +2877,9 @@ async function persistLayout() {
 }
 function applyDrop(dd, t) {
   if (!dd || !t) return;
+  // No nested folders, ever: a dragged folder can only reorder at root, so a
+  // folder-on-folder drop lands after the target instead of inside it.
+  if (dd.kind === 'folder' && t.zone === 'folder') t = { zone: 'after-folder', id: t.id };
   if (dd.kind === 'server') {
     if (t.zone === 'folder') {
       const f = folderById(t.id);
