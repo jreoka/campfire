@@ -576,6 +576,19 @@ app.get('/api/servers/:id/channels/:chId/messages', authRequired, (req, res) => 
   const { id, chId } = req.params;
   if (!isMember(id, req.user.id)) return res.status(403).json({ error: 'not_member' });
   const limit = Math.min(parseInt(req.query.limit || '50', 10), 100);
+  const around = String(req.query.around || '');
+  if (around) {
+    // context window around one message (for jump-to-pin): half older, half newer
+    const target = db.prepare('SELECT * FROM messages WHERE id = ? AND server_id = ? AND channel_id = ? AND thread_root_id IS NULL').get(around, id, chId);
+    if (!target) return res.status(404).json({ error: 'no_message' });
+    const half = Math.floor(limit / 2);
+    const older = db.prepare('SELECT id FROM messages WHERE server_id = ? AND channel_id = ? AND thread_root_id IS NULL AND created_at <= ? ORDER BY created_at DESC LIMIT ?').all(id, chId, target.created_at, half + 1).map((r) => r.id);
+    const seen = new Set(older);
+    const newer = db.prepare('SELECT id FROM messages WHERE server_id = ? AND channel_id = ? AND thread_root_id IS NULL AND created_at > ? ORDER BY created_at ASC LIMIT ?').all(id, chId, target.created_at, Math.max(0, limit - older.length)).map((r) => r.id).filter((x) => !seen.has(x));
+    const msgs = [...older, ...newer].map((x) => fullMessage(x, req.user.id)).filter(Boolean)
+      .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1));
+    return res.json({ messages: msgs });
+  }
   const before = parseInt(req.query.before || String(Date.now() + 1), 10);
   const rows = db.prepare(`
     SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,
@@ -596,7 +609,48 @@ app.delete('/api/messages/:mid', authRequired, (req, res) => {
   const canDelete = m.user_id === req.user.id || (s && isAdmin(s.id, req.user.id));
   if (!canDelete) return res.status(403).json({ error: 'forbidden' });
   db.prepare('DELETE FROM messages WHERE id = ?').run(m.id);
+  if (db.prepare('DELETE FROM message_pins WHERE message_id = ?').run(m.id).changes) {
+    broadcastToServer(m.server_id, { t: 'pins-changed', serverId: m.server_id, channelId: m.channel_id });
+  }
   broadcastToServer(m.server_id, { t: 'message-deleted', serverId: m.server_id, channelId: m.channel_id, messageId: m.id });
+  res.json({ ok: true });
+});
+
+// ---------- pinned messages (server channels) ----------
+function pinInfo(pinRow) {
+  const u = pinRow.pinned_by ? db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(pinRow.pinned_by) : null;
+  return { pinned_at: pinRow.created_at, pinned_by: u ? { id: u.id, display_name: u.display_name, username: u.username } : null };
+}
+app.get('/api/servers/:id/channels/:chId/pins', authRequired, (req, res) => {
+  const { id, chId } = req.params;
+  if (!isMember(id, req.user.id)) return res.status(403).json({ error: 'not_member' });
+  const rows = db.prepare('SELECT * FROM message_pins WHERE server_id = ? AND channel_id = ? ORDER BY created_at DESC LIMIT 50').all(id, chId);
+  const pins = [];
+  for (const p of rows) {
+    const full = fullMessage(p.message_id, req.user.id);
+    if (full) pins.push({ ...full, ...pinInfo(p) });
+  }
+  res.json({ pins });
+});
+app.post('/api/servers/:id/channels/:chId/pins', authRequired, (req, res) => {
+  const { id, chId } = req.params;
+  if (!isMember(id, req.user.id)) return res.status(403).json({ error: 'not_member' });
+  const mid = String(req.body?.messageId || '');
+  const m = db.prepare('SELECT * FROM messages WHERE id = ? AND server_id = ? AND channel_id = ? AND thread_root_id IS NULL').get(mid, id, chId);
+  if (!m) return res.status(404).json({ error: 'no_message' });
+  if (db.prepare('SELECT 1 FROM message_pins WHERE message_id = ?').get(mid)) return res.status(409).json({ error: 'already_pinned' });
+  db.prepare('INSERT INTO message_pins (server_id,channel_id,message_id,pinned_by,created_at) VALUES (?,?,?,?,?)').run(id, chId, mid, req.user.id, now());
+  broadcastToServer(id, { t: 'pins-changed', serverId: id, channelId: chId });
+  res.json({ ok: true });
+});
+app.delete('/api/servers/:id/channels/:chId/pins/:mid', authRequired, (req, res) => {
+  const { id, chId, mid } = req.params;
+  if (!isMember(id, req.user.id)) return res.status(403).json({ error: 'not_member' });
+  const p = db.prepare('SELECT * FROM message_pins WHERE message_id = ? AND server_id = ? AND channel_id = ?').get(mid, id, chId);
+  if (!p) return res.status(404).json({ error: 'not_pinned' });
+  if (p.pinned_by !== req.user.id && !isAdmin(id, req.user.id)) return res.status(403).json({ error: 'forbidden' });
+  db.prepare('DELETE FROM message_pins WHERE message_id = ?').run(mid);
+  broadcastToServer(id, { t: 'pins-changed', serverId: id, channelId: chId });
   res.json({ ok: true });
 });
 
@@ -1417,6 +1471,19 @@ app.get('/api/dms/:tid/messages', authRequired, (req, res) => {
   const t = dmThreadFor(req.user.id, req.params.tid);
   if (!t) return res.status(404).json({ error: 'no_thread' });
   const limit = Math.min(parseInt(req.query.limit || '50', 10), 100);
+  const around = String(req.query.around || '');
+  if (around) {
+    // context window around one message (for jump-to-pin): half older, half newer
+    const target = db.prepare('SELECT * FROM dm_messages WHERE id = ? AND thread_id = ?').get(around, t.id);
+    if (!target) return res.status(404).json({ error: 'no_message' });
+    const half = Math.floor(limit / 2);
+    const older = db.prepare('SELECT id FROM dm_messages WHERE thread_id = ? AND created_at <= ? ORDER BY created_at DESC LIMIT ?').all(t.id, target.created_at, half + 1).map((r) => r.id);
+    const seen = new Set(older);
+    const newer = db.prepare('SELECT id FROM dm_messages WHERE thread_id = ? AND created_at > ? ORDER BY created_at ASC LIMIT ?').all(t.id, target.created_at, Math.max(0, limit - older.length)).map((r) => r.id).filter((x) => !seen.has(x));
+    const msgs = [...older, ...newer].map((x) => fullDm(x, req.user.id)).filter(Boolean)
+      .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1));
+    return res.json({ messages: msgs });
+  }
   const before = parseInt(req.query.before || String(Date.now() + 1), 10);
   const rows = db.prepare(`${DM_JOIN} WHERE m.thread_id = ? AND m.created_at < ? ORDER BY m.created_at DESC LIMIT ?`).all(t.id, before, limit);
   res.json({ messages: hydrateDm(rows.reverse(), req.user.id) });
@@ -1438,7 +1505,43 @@ app.delete('/api/dms/messages/:mid', authRequired, (req, res) => {
   if (!m || !dmThreadFor(req.user.id, m.thread_id)) return res.status(404).json({ error: 'no_message' });
   if (m.user_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
   db.prepare('DELETE FROM dm_messages WHERE id = ?').run(m.id);
+  if (db.prepare('DELETE FROM dm_pins WHERE message_id = ?').run(m.id).changes) {
+    dmNotify(m.thread_id, { t: 'dm-pins-changed', threadId: m.thread_id });
+  }
   dmNotify(m.thread_id, { t: 'dm-deleted', threadId: m.thread_id, messageId: m.id });
+  res.json({ ok: true });
+});
+
+// ---------- pinned messages (DM threads: 1:1 and groups) ----------
+app.get('/api/dms/:tid/pins', authRequired, (req, res) => {
+  const t = dmThreadFor(req.user.id, req.params.tid);
+  if (!t) return res.status(404).json({ error: 'no_thread' });
+  const rows = db.prepare('SELECT * FROM dm_pins WHERE thread_id = ? ORDER BY created_at DESC LIMIT 50').all(t.id);
+  const pins = [];
+  for (const p of rows) {
+    const full = fullDm(p.message_id, req.user.id);
+    if (full) pins.push({ ...full, ...pinInfo(p) });
+  }
+  res.json({ pins });
+});
+app.post('/api/dms/:tid/pins', authRequired, (req, res) => {
+  const t = dmThreadFor(req.user.id, req.params.tid);
+  if (!t) return res.status(404).json({ error: 'no_thread' });
+  const mid = String(req.body?.messageId || '');
+  const m = db.prepare('SELECT * FROM dm_messages WHERE id = ? AND thread_id = ?').get(mid, t.id);
+  if (!m) return res.status(404).json({ error: 'no_message' });
+  if (db.prepare('SELECT 1 FROM dm_pins WHERE message_id = ?').get(mid)) return res.status(409).json({ error: 'already_pinned' });
+  db.prepare('INSERT INTO dm_pins (thread_id,message_id,pinned_by,created_at) VALUES (?,?,?,?)').run(t.id, mid, req.user.id, now());
+  dmNotify(t.id, { t: 'dm-pins-changed', threadId: t.id });
+  res.json({ ok: true });
+});
+app.delete('/api/dms/:tid/pins/:mid', authRequired, (req, res) => {
+  const t = dmThreadFor(req.user.id, req.params.tid);
+  if (!t) return res.status(404).json({ error: 'no_thread' });
+  const p = db.prepare('SELECT * FROM dm_pins WHERE message_id = ? AND thread_id = ?').get(req.params.mid, t.id);
+  if (!p) return res.status(404).json({ error: 'not_pinned' });
+  db.prepare('DELETE FROM dm_pins WHERE message_id = ?').run(req.params.mid);
+  dmNotify(t.id, { t: 'dm-pins-changed', threadId: t.id });
   res.json({ ok: true });
 });
 app.post('/api/dms/messages/:mid/reactions', authRequired, (req, res) => {

@@ -181,6 +181,19 @@ CREATE TABLE IF NOT EXISTS dm_bans (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (thread_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS message_pins (
+  server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL PRIMARY KEY,
+  pinned_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS dm_pins (
+  thread_id TEXT NOT NULL REFERENCES dm_threads(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL PRIMARY KEY,
+  pinned_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS blocks (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   blocked_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

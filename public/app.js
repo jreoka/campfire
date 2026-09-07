@@ -21,6 +21,11 @@ const S = {
   replyTo: null, // message being replied to
   pendingAtts: [], // uploaded attachments awaiting send
   thread: null, // {rootId, channelId, root, replies[]}
+  histMode: null, // {kind:'server'|'dm', id, serverId?} — viewing older (jump-to-pin) context
+  histNew: 0, // live arrivals while viewing history (drives the jump pill)
+  pinIds: new Set(), // pinned message ids in the current channel/thread
+  pinCount: 0,
+  pinsCtx: null, // context the pins popup is open for
   editing: null, // message id being edited
   layoutFolders: [], // [{id,name,color,open,position,servers:[serverIds]}]
   serverMeta: new Map(), // serverId -> {folderId, position}
@@ -471,7 +476,11 @@ async function selectChannel(id) {
     const { messages } = await api(`/api/servers/${S.serverId}/channels/${id}/messages?limit=80`);
     S.messages.set(id, messages);
     S.editing = null;
+    S.histMode = null;
+    S.histNew = 0;
     renderMessages(true);
+    refreshPinsCount();
+    updatePill();
   } catch { $('#messages').innerHTML = '<p class="error">Could not load messages.</p>'; }
 }
 function statusOf(id) {
@@ -675,6 +684,7 @@ function renderMessages(force = false) {
   }
   if (!msgs.length) box.innerHTML += '<p class="muted" style="text-align:center">No messages yet — say hello.</p>';
   if (force || nearBottom) box.scrollTop = box.scrollHeight;
+  updatePill();
 }
 function renderComposerMeta() {
   const box = $('#attach-preview');
@@ -863,6 +873,17 @@ function onWS(m) {
           if (document.hidden && !dnd) notifyMsg(msg);
         }
       } else {
+        const inHist = S.histMode && S.histMode.kind === 'server' && S.histMode.id === m.channelId;
+        if (inHist) {
+          // viewing older messages: hold the window, count up the jump pill
+          if (!msg.sys) {
+            S.histNew++;
+            updatePill();
+            if (!dnd) { sfx.msg(); toast(`#${chanName(m.channelId)}: ${msg.user.display_name}: ${(msg.content || '[attachment]').slice(0, 60)}`); }
+            if (document.hidden && !dnd) notifyMsg(msg);
+          }
+          break;
+        }
         const arr = S.messages.get(m.channelId) || [];
         arr.push(msg);
         S.messages.set(m.channelId, arr);
@@ -879,7 +900,8 @@ function onWS(m) {
     }
     case 'message-updated': {
       updateMsgInCaches(m.message.id, (old) => Object.assign(old, m.message));
-      if (m.channelId === S.channelId) renderMessages();
+      const inHistUp = S.histMode && S.histMode.kind === 'server' && S.histMode.id === m.channelId;
+      if (m.channelId === S.channelId && !inHistUp) renderMessages();
       if (S.thread && (S.thread.rootId === m.message.id || S.thread.replies.some((r) => r.id === m.message.id))) renderThread();
       break;
     }
@@ -887,8 +909,8 @@ function onWS(m) {
       updateMsgInCaches(m.messageId, (old) => {
         old.reactions = (m.reactions || []).map((r) => ({ emoji: r.emoji, count: r.count, me: (r.users || []).includes(S.me.id) }));
       });
-      if (m.channelId === S.channelId) renderMessages();
-      if (S.thread && S.thread.replies.some((r) => r.id === m.messageId)) renderThread();
+      const inHistRx = S.histMode && S.histMode.kind === 'server' && S.histMode.id === m.channelId;
+      if (m.channelId === S.channelId && !inHistRx) renderMessages();
       break;
     }
     case 'message-deleted': {
@@ -899,18 +921,32 @@ function onWS(m) {
         else S.thread.replies = S.thread.replies.filter((x) => x.id !== m.messageId);
         renderThread();
       }
-      if (m.channelId === S.channelId) renderMessages();
+      const inHistDel = S.histMode && S.histMode.kind === 'server' && S.histMode.id === m.channelId;
+      if (m.channelId === S.channelId && !inHistDel) renderMessages();
       break;
     }
     case 'dm-new': {
       const msg = m.message;
-      const arr = S.dmMessages.get(msg.threadId) || [];
-      arr.push(msg);
-      S.dmMessages.set(msg.threadId, arr);
+      const inHistDm = S.histMode && S.histMode.kind === 'dm' && S.histMode.id === msg.threadId;
+      if (!inHistDm) {
+        const arr = S.dmMessages.get(msg.threadId) || [];
+        arr.push(msg);
+        S.dmMessages.set(msg.threadId, arr);
+      }
       const ddnd = S.me && S.me.status === 'dnd';
       if (S.view === 'home' && S.dmThreadId === msg.threadId) {
-        renderDmMessages();
-        if (!msg.sys && document.hidden && !ddnd) notifyMsg(msg);
+        if (inHistDm) {
+          // viewing older messages: hold the window, count up the jump pill
+          if (!msg.sys) {
+            S.histNew++;
+            updatePill();
+            if (!ddnd) { sfx.msg(); toast(`DM from ${msg.user.display_name}: ${(msg.content || '[attachment]').slice(0, 60)}`); }
+            if (document.hidden && !ddnd) notifyMsg(msg);
+          }
+        } else {
+          renderDmMessages();
+          if (!msg.sys && document.hidden && !ddnd) notifyMsg(msg);
+        }
       } else {
         refreshDms();
         if (!msg.sys && !ddnd) { sfx.msg(); toast(`DM from ${msg.user.display_name}: ${(msg.content || '[attachment]').slice(0, 60)}`); }
@@ -919,22 +955,37 @@ function onWS(m) {
     }
     case 'dm-updated': {
       updateMsgInCaches(m.message.id, (old) => Object.assign(old, m.message));
-      if (S.view === 'home' && S.dmThreadId === m.message.threadId) renderDmMessages();
+      const inHistDu = S.histMode && S.histMode.kind === 'dm' && S.histMode.id === m.message.threadId;
+      if (S.view === 'home' && S.dmThreadId === m.message.threadId && !inHistDu) renderDmMessages();
       break;
     }
     case 'dm-deleted': {
       const darr = (S.dmMessages.get(m.threadId) || []).filter((x) => x.id !== m.messageId);
       S.dmMessages.set(m.threadId, darr);
-      if (S.view === 'home' && S.dmThreadId === m.threadId) renderDmMessages();
+      const inHistDd = S.histMode && S.histMode.kind === 'dm' && S.histMode.id === m.threadId;
+      if (S.view === 'home' && S.dmThreadId === m.threadId && !inHistDd) renderDmMessages();
       break;
     }
     case 'dm-reaction': {
       updateMsgInCaches(m.messageId, (old) => {
         old.reactions = (m.reactions || []).map((r) => ({ emoji: r.emoji, count: r.count, me: (r.users || []).includes(S.me.id) }));
       });
-      if (S.view === 'home' && S.dmThreadId === m.threadId) renderDmMessages();
+      const inHistDr = S.histMode && S.histMode.kind === 'dm' && S.histMode.id === m.threadId;
+      if (S.view === 'home' && S.dmThreadId === m.threadId && !inHistDr) renderDmMessages();
       break;
     }
+    case 'pins-changed':
+      if (m.serverId === S.serverId && m.channelId === S.channelId) {
+        refreshPinsCount();
+        if (S.pinsCtx && S.pinsCtx.kind === 'server' && S.pinsCtx.id === m.channelId) renderPinsList();
+      }
+      break;
+    case 'dm-pins-changed':
+      if (S.view === 'home' && S.dmThreadId === m.threadId) {
+        refreshPinsCount();
+        if (S.pinsCtx && S.pinsCtx.kind === 'dm' && S.pinsCtx.id === m.threadId) renderPinsList();
+      }
+      break;
     case 'dm-threads-changed':
       if (S.view === 'home') {
         refreshDms().then(() => {
@@ -1942,6 +1993,7 @@ function openCtx(x, y, items) {
   m.style.visibility = '';
   ctxEl = m;
 }
+const PIN_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l1 7 3 3v2H5v-2l3-3z"/><path d="M12 16v5"/></svg>';
 function messageCtxMenu(mid, x, y) {
   const m = msgById(mid);
   if (!m) return;
@@ -1951,15 +2003,17 @@ function messageCtxMenu(mid, x, y) {
     ]);
     return;
   }
+  const dm = !!m._dm;
   const own = m.user && m.user.id === S.me.id;
   const items = [
     { label: 'Add reaction…', icon: '➕', fn: () => openPicker('react', mid, 'emoji', { x, y }) },
     { label: 'Reply', icon: '↩', fn: () => { S.replyTo = m; renderComposerMeta(); $('#in-message').focus(); } },
-    { label: 'Open thread', icon: '💬', fn: () => openThread(mid) },
-    { sep: true },
   ];
+  if (!dm) items.push({ label: 'Open thread', icon: '💬', fn: () => openThread(mid) });
+  if (!m.threadRoot) items.push({ label: S.pinIds.has(mid) ? 'Unpin message' : 'Pin message', icon: PIN_SVG, fn: () => togglePin(mid) });
+  items.push({ sep: true });
   if (own) items.push({ label: 'Edit message', icon: '✎', fn: () => startEdit(mid) });
-  if (canMod(m)) items.push({ label: 'Delete message', icon: '🗑', danger: true, fn: () => api('/api/messages/' + mid, { method: 'DELETE' }).catch(() => toast('Delete failed')) });
+  if (canMod(m)) items.push({ label: 'Delete message', icon: '🗑', danger: true, fn: () => api((dm ? '/api/dms/messages/' : '/api/messages/') + mid, { method: 'DELETE' }).catch(() => toast('Delete failed')) });
   items.push({ label: 'Copy text', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(m.content || ''); toast('Copied'); } catch {} } });
   openCtx(x, y, items);
 }
@@ -2525,6 +2579,173 @@ async function openGroupBans(tid) {
     openGroupBans(tid);
   }));
 }
+/* ================= pins + jump-to-present ================= */
+function pinsCtx() {
+  if (S.view === 'home') return S.dmThreadId ? { kind: 'dm', id: S.dmThreadId } : null;
+  return (S.serverId && S.channelId) ? { kind: 'server', id: S.channelId, serverId: S.serverId } : null;
+}
+function pinsUrl(ctx, suffix = '') {
+  return ctx.kind === 'dm' ? `/api/dms/${ctx.id}/pins${suffix}` : `/api/servers/${ctx.serverId}/channels/${ctx.id}/pins${suffix}`;
+}
+function sameCtx(a, b) { return !!a && !!b && a.kind === b.kind && a.id === b.id; }
+async function refreshPinsCount() {
+  const ctx = pinsCtx();
+  if (!ctx) { S.pinCount = 0; S.pinIds = new Set(); paintPinsBtn(); return; }
+  try {
+    const { pins } = await api(pinsUrl(ctx));
+    if (!sameCtx(pinsCtx(), ctx)) return;
+    S.pinCount = pins.length;
+    S.pinIds = new Set(pins.map((p) => p.id));
+  } catch { S.pinCount = 0; S.pinIds = new Set(); }
+  paintPinsBtn();
+}
+function paintPinsBtn() {
+  $('#btn-pins').classList.toggle('hidden', !pinsCtx());
+  const b = $('#pins-count');
+  b.textContent = S.pinCount > 0 ? String(S.pinCount) : '';
+  b.classList.toggle('hidden', !S.pinCount);
+}
+async function togglePin(mid) {
+  const ctx = pinsCtx();
+  if (!ctx) return;
+  const pinned = S.pinIds.has(mid);
+  try {
+    if (pinned) await api(pinsUrl(ctx, '/' + mid), { method: 'DELETE' });
+    else await api(pinsUrl(ctx), { method: 'POST', body: JSON.stringify({ messageId: mid }) });
+    toast(pinned ? 'Unpinned' : 'Pinned to this ' + (ctx.kind === 'dm' ? 'chat' : 'channel'));
+    refreshPinsCount();
+  } catch (err) { toast(prettyError(err.message)); }
+}
+async function openPins() {
+  const ctx = pinsCtx();
+  if (!ctx) return;
+  S.pinsCtx = ctx;
+  openModal('Pinned messages', '<div class="pins-list"><p class="muted small" style="text-align:center;padding:1rem">Loading…</p></div>', 'Close', null, { wide: true });
+  await renderPinsList();
+}
+async function renderPinsList() {
+  const ctx = S.pinsCtx;
+  const box = document.querySelector('#modal-body .pins-list');
+  if (!ctx || !box) return;
+  let pins = [];
+  try { ({ pins } = await api(pinsUrl(ctx))); }
+  catch { box.innerHTML = '<p class="error">Could not load pins.</p>'; return; }
+  if (!sameCtx(pinsCtx(), ctx)) return;
+  S.pinCount = pins.length;
+  S.pinIds = new Set(pins.map((p) => p.id));
+  paintPinsBtn();
+  if (!pins.length) { box.innerHTML = '<p class="muted small" style="text-align:center;padding:1rem">No pinned messages yet — right-click (or long-press) a message to pin it.</p>'; return; }
+  box.innerHTML = '';
+  for (const p of pins) {
+    const row = document.createElement('div');
+    row.className = 'pin-row';
+    const text = p.content ? (p.content.length > 220 ? p.content.slice(0, 220) + '…' : p.content)
+      : (p.attachments?.length ? `[${p.attachments.length} attachment${p.attachments.length === 1 ? '' : 's'}]` : '[no text]');
+    row.innerHTML = '<span class="avatar"></span><div class="pin-main"><div class="pin-head"><span class="who"></span><span class="when"></span></div><div class="pin-text"></div><div class="pin-meta"></div></div>';
+    const who = row.querySelector('.who');
+    who.textContent = p.user ? p.user.display_name : 'deleted';
+    if (p.user) who.style.cssText = nameStyleFor(p.user);
+    row.querySelector('.when').textContent = fmtTime(p.created_at);
+    row.querySelector('.pin-text').textContent = text;
+    row.querySelector('.pin-meta').textContent = 'Pinned by ' + (p.pinned_by ? p.pinned_by.display_name : '?');
+    paintAvatar(row.querySelector('.avatar'), p.user);
+    const btns = document.createElement('div');
+    btns.className = 'pin-btns';
+    const jump = document.createElement('button');
+    jump.className = 'mini'; jump.textContent = 'Jump';
+    jump.onclick = () => { S.pinsCtx = null; cancelModal(); jumpToPin(ctx, p.id); };
+    btns.appendChild(jump);
+    if (ctx.kind === 'dm' || (p.pinned_by && p.pinned_by.id === S.me.id) || canManage()) {
+      const un = document.createElement('button');
+      un.className = 'mini danger'; un.textContent = 'Unpin';
+      un.onclick = async () => {
+        try { await api(pinsUrl(ctx, '/' + p.id), { method: 'DELETE' }); }
+        catch (err) { toast(prettyError(err.message)); return; }
+        renderPinsList();
+      };
+      btns.appendChild(un);
+    }
+    row.appendChild(btns);
+    box.appendChild(row);
+  }
+}
+function flashMsgEl(el) {
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+}
+async function jumpToPin(ctx, mid) {
+  const sel = `#messages [data-mid="${CSS.escape(mid)}"]`;
+  const el = document.querySelector(sel);
+  if (el) { flashMsgEl(el); return; }
+  let msgs = [];
+  try {
+    const url = ctx.kind === 'dm'
+      ? `/api/dms/${ctx.id}/messages?limit=60&around=${encodeURIComponent(mid)}`
+      : `/api/servers/${ctx.serverId}/channels/${ctx.id}/messages?limit=60&around=${encodeURIComponent(mid)}`;
+    ({ messages: msgs } = await api(url));
+  } catch { toast('Message not found'); return; }
+  if (!sameCtx(pinsCtx(), ctx)) return;
+  if (ctx.kind === 'dm') S.dmMessages.set(ctx.id, msgs);
+  else S.messages.set(ctx.id, msgs);
+  S.histMode = { ...ctx };
+  S.histNew = 0;
+  if (ctx.kind === 'dm') renderDmMessages();
+  else renderMessages();
+  requestAnimationFrame(() => {
+    const target = document.querySelector(sel);
+    if (target) flashMsgEl(target);
+    updatePill();
+  });
+}
+function jumpToPresent() {
+  const box = $('#messages');
+  S.histNew = 0;
+  if (S.histMode) {
+    const ctx = S.histMode;
+    S.histMode = null;
+    updatePill();
+    reloadLatest(ctx);
+  } else {
+    box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+    updatePill();
+  }
+}
+async function reloadLatest(ctx) {
+  try {
+    if (ctx.kind === 'dm') {
+      const { messages } = await api(`/api/dms/${ctx.id}/messages?limit=80`);
+      if (!sameCtx(pinsCtx(), ctx)) return;
+      S.dmMessages.set(ctx.id, messages);
+      renderDmMessages(true);
+    } else {
+      const { messages } = await api(`/api/servers/${ctx.serverId}/channels/${ctx.id}/messages?limit=80`);
+      if (!sameCtx(pinsCtx(), ctx)) return;
+      S.messages.set(ctx.id, messages);
+      renderMessages(true);
+    }
+  } catch { toast('Could not load messages'); }
+  updatePill();
+}
+function updatePill() {
+  const pill = $('#jump-present'), box = $('#messages');
+  if (!pill || !box) return;
+  if (!pinsCtx() || box.classList.contains('hidden')) { pill.classList.add('hidden'); return; }
+  if (S.histMode) {
+    $('#jp-text').textContent = "You're viewing older messages · Jump to present";
+    pill.classList.remove('hidden');
+    return;
+  }
+  const dist = box.scrollHeight - box.scrollTop - box.clientHeight;
+  if (dist > 400) {
+    $('#jp-text').textContent = S.histNew > 0
+      ? `${S.histNew} new message${S.histNew === 1 ? '' : 's'}`
+      : 'Jump to present';
+    pill.classList.remove('hidden');
+  } else {
+    S.histNew = 0;
+    pill.classList.add('hidden');
+  }
+}
 function renderTopic() {
   const el = $('#chan-topic');
   const ch = S.view === 'server' ? (S.serverDetail?.channels || []).find((c) => c.id === S.channelId) : null;
@@ -2570,10 +2791,18 @@ async function selectDmThread(id) {
     const { messages } = await api(`/api/dms/${id}/messages?limit=80`);
     if (S.dmThreadId !== id) return;
     S.dmMessages.set(id, messages);
+    S.histMode = null;
+    S.histNew = 0;
     renderDmMessages(true);
+    refreshPinsCount();
+    updatePill();
   } catch { $('#messages').innerHTML = '<p class="error">Could not load messages.</p>'; }
 }
 function renderDmBlank() {
+  document.body.classList.remove('dm-open');
+  S.histMode = null;
+  S.histNew = 0;
+  updatePill();
   document.body.classList.remove('dm-open');
   $('#composer').classList.add('hidden');
   $('#messages').classList.add('hidden');
@@ -2596,6 +2825,7 @@ function renderDmMessages(force = false) {
   }
   if (!msgs.length) box.innerHTML += '<p class="muted" style="text-align:center">No messages yet — say hello.</p>';
   if (force || nearBottom) box.scrollTop = box.scrollHeight;
+  updatePill();
 }
 function sendDm(content, opts = {}) {
   if (!S.dmThreadId) return;
@@ -2809,6 +3039,7 @@ async function jumpToMessage(id) {
 function startEdit(mid) {
   S.editing = mid;
   if (S.channelId) renderMessages();
+  if (S.view === 'home' && S.dmThreadId) renderDmMessages();
   if (S.thread) renderThread();
   setTimeout(() => { const t = $('#edit-area'); if (t) { t.focus(); t.selectionStart = t.value.length; } }, 0);
 }
@@ -2850,7 +3081,7 @@ async function saveEdit(mid) {
     else if (act === 'thread' && mid) openThread(mid);
     else if (act === 'edit' && mid) startEdit(mid);
     else if (act === 'edit-save' && mid) saveEdit(mid);
-    else if (act === 'edit-cancel') { S.editing = null; if (S.channelId) renderMessages(); if (S.thread) renderThread(); }
+    else if (act === 'edit-cancel') { S.editing = null; if (S.channelId) renderMessages(); if (S.view === 'home' && S.dmThreadId) renderDmMessages(); if (S.thread) renderThread(); }
     else if (act === 'del' && mid) {
       const base = msgById(mid)?._dm ? '/api/dms/messages/' : '/api/messages/';
       api(base + mid, { method: 'DELETE' }).catch(() => toast('Delete failed'));
@@ -3212,6 +3443,9 @@ function setSettingsTab(t) {
 document.querySelectorAll('.set-tab').forEach((b) => (b.onclick = () => setSettingsTab(b.dataset.tab)));
 $('#btn-settings-rail').onclick = () => openSettings('profile');
 $('#btn-home').onclick = openHome;
+$('#btn-pins').onclick = openPins;
+$('#jump-present').onclick = jumpToPresent;
+$('#messages').addEventListener('scroll', () => updatePill(), { passive: true });
 $('#btn-friend-add').onclick = async () => {
   const v = $('#in-friend').value.trim();
   if (!v) return;
