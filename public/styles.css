@@ -75,11 +75,12 @@ h1,h2,h3{letter-spacing:-0.01em}
 #view-main{display:flex;height:100vh;height:100dvh;overflow:hidden}
 #view-main{height:100%}
 #left{display:contents}
-#rail{width:76px;background:var(--rail);display:flex;flex-direction:column;align-items:center;padding:.7rem .4rem .7rem .2rem;gap:.5rem;flex-shrink:0}
-#server-list{display:flex;flex-direction:column;gap:.5rem;width:100%;align-items:center;overflow-y:auto;padding:0 4px 0 2px}
+#rail{width:76px;background:var(--rail);display:flex;flex-direction:column;align-items:center;padding:.7rem .4rem .7rem 1px;gap:.5rem;flex-shrink:0}
+#server-list{display:flex;flex-direction:column;gap:.5rem;width:100%;align-items:center;overflow-y:auto;padding:0 4px 0 0}
 .server-btn{width:48px;height:48px;border-radius:18px;border:0;background:var(--panel-2);color:var(--text);font-size:1.15rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;position:relative;flex-shrink:0}
 .server-btn img{border-radius:inherit}
-.server-btn.active::before{content:'';position:absolute;left:-7px;top:50%;transform:translateY(-50%);width:6px;height:26px;border-radius:999px;background:#fff;z-index:2}
+.server-btn.active::before{content:'';position:absolute;left:-8px;top:50%;transform:translateY(-50%);width:6px;height:26px;border-radius:0 999px 999px 0;background:#fff;z-index:2}
+.home-btn.active::before{left:-10px}
 .server-btn:hover{background:var(--panel-3)}
 .server-btn.active{background:var(--accent);color:var(--on-accent)}
 .server-btn.has-icon{background-color:transparent;background-size:cover;background-position:center}
@@ -675,7 +676,7 @@ body{touch-action:manipulation}
   #left #rail{width:60px;flex-shrink:0}
   #left .server-btn,#left #btn-add-server{width:44px;height:44px}
   #server-list{overflow-x:hidden;padding:0}
-  .server-btn.active::before{left:-1px;width:5px;height:22px}
+  .server-btn.active::before{left:-2px;width:4px;height:22px}
   #left #sidebar{position:static;transform:none;width:auto;flex:1;min-width:0;border-left:1px solid var(--line)}
   #sidebar-scrim{display:block;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:20;opacity:0;pointer-events:none;transition:opacity .2s}
   body.nav-open #sidebar-scrim{opacity:1;pointer-events:auto}
