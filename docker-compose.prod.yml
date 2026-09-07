@@ -20,7 +20,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     environment:
-      - DOMAIN=${DOMAIN:?Set DOMAIN in .env for production}
+      - "DOMAIN=${DOMAIN:?Set DOMAIN in .env for production}"
     depends_on:
       - campfire
 
