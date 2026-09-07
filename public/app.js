@@ -249,19 +249,24 @@ function buildRootOrder() {
 }
 function serverBtn(s) {
   const b = document.createElement('button');
+  const label = s.name.trim().charAt(0).toUpperCase() || '?';
   b.className = 'server-btn' + (s.id === S.serverId ? ' active' : '') + (s.icon_url ? ' has-icon' : '');
   b.title = s.name;
   b.draggable = true;
   b.dataset.drag = 'server:' + s.id;
   if (s.icon_url) {
-    b.innerHTML = '';
-    const img = document.createElement('img');
-    img.src = s.icon_url; img.alt = ''; img.draggable = false;
-    img.style.cssText = 'width:100%;height:100%;border-radius:inherit;object-fit:cover;display:block;pointer-events:none';
-    img.onerror = () => { b.classList.remove('has-icon'); b.innerHTML = ''; b.textContent = s.name.trim().charAt(0).toUpperCase() || '?'; };
-    b.appendChild(img);
+    // background-image (not <img>): immune to flex-item sizing quirks, always fills
+    b.style.backgroundImage = `url("${s.icon_url}")`;
+    const probe = new Image();
+    probe.onerror = () => {
+      if (!document.contains(b)) return;
+      b.classList.remove('has-icon');
+      b.style.backgroundImage = '';
+      b.textContent = label;
+    };
+    probe.src = s.icon_url;
   } else {
-    b.textContent = s.name.trim().charAt(0).toUpperCase() || '?';
+    b.textContent = label;
   }
   b.onclick = () => selectServer(s.id);
   wireDrag(b, 'server', s.id);
@@ -1709,15 +1714,18 @@ function renderServerTab() {
   iconRow.style.margin = '.5rem 0';
   iconRow.innerHTML = `<span class="server-btn" style="width:40px;height:40px;font-size:1rem"></span>`;
   const prev = iconRow.querySelector('.server-btn');
-  if (d.icon_url) { prev.innerHTML = ''; const im = document.createElement('img'); im.src = d.icon_url; im.style.cssText = 'width:100%;height:100%;border-radius:inherit;object-fit:cover'; prev.appendChild(im); }
-  else prev.textContent = d.name.trim().charAt(0).toUpperCase();
+  const paintPrev = () => {
+    if (d.icon_url) { prev.textContent = ''; prev.classList.add('has-icon'); prev.style.backgroundImage = `url("${d.icon_url}")`; }
+    else { prev.classList.remove('has-icon'); prev.style.backgroundImage = ''; prev.textContent = d.name.trim().charAt(0).toUpperCase(); }
+  };
+  paintPrev();
   if (owner) {
     const ch = document.createElement('button'); ch.className = 'btn small'; ch.textContent = 'Change icon';
     const rm = document.createElement('button'); rm.className = 'btn small'; rm.textContent = 'Remove';
     const fi = document.createElement('input'); fi.type = 'file'; fi.accept = 'image/png,image/jpeg,image/gif,image/webp'; fi.className = 'hidden';
     ch.onclick = () => fi.click();
-    fi.onchange = async () => { if (!fi.files[0]) return; try { await uploadImage(`/api/servers/${d.id}/icon`, fi.files[0]); } catch (err) { toast('Icon failed: ' + prettyError(err.message)); } };
-    rm.onclick = async () => { try { await api(`/api/servers/${d.id}/icon`, { method: 'DELETE' }); } catch {} };
+    fi.onchange = async () => { if (!fi.files[0]) return; try { await uploadImage(`/api/servers/${d.id}/icon`, fi.files[0]); renderServerTab(); } catch (err) { toast('Icon failed: ' + prettyError(err.message)); } };
+    rm.onclick = async () => { try { await api(`/api/servers/${d.id}/icon`, { method: 'DELETE' }); renderServerTab(); } catch {} };
     const sv = document.createElement('button'); sv.className = 'btn small primary'; sv.textContent = 'Save name';
     sv.onclick = async () => { try { await api(`/api/servers/${d.id}`, { method: 'PATCH', body: JSON.stringify({ name: box.querySelector('#srv-name').value }) }); toast('Server saved'); } catch (err) { toast('Save failed: ' + prettyError(err.message)); } };
     iconRow.append(ch, rm, sv);
