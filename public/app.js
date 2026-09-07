@@ -2943,6 +2943,19 @@ async function friendCardAction(uid, x, y) {
     openUserCard(uid, x, y);
   } catch (err) { toast(prettyError(err.message)); }
 }
+async function unfriendUser(id, username) {
+  const ok = await openConfirmModal({
+    title: `Unfriend @${username || 'user'}?`,
+    message: 'They will be removed from your friends list.',
+    okLabel: 'Unfriend',
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/friends/${id}`, { method: 'DELETE' });
+    toast('Unfriended');
+    await refreshFriends();
+  } catch (err) { toast(prettyError(err.message)); }
+}
 async function blockUser(id, username) {
   const ok = await openConfirmModal({
     title: `Block @${username || 'user'}?`,
@@ -3007,6 +3020,7 @@ function renderFriendLists() {
     for (const u of list) {
       const row = friendRowEl(u);
       row.appendChild(smallBtn('Message', () => openDmWith(u.id)));
+      row.appendChild(smallBtn('Unfriend', () => unfriendUser(u.id, u.username), true));
       row.appendChild(smallBtn('Block', () => blockUser(u.id, u.username), true));
       fl.appendChild(row);
     }
