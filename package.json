@@ -2,6 +2,7 @@
   "name": "campfire",
   "version": "1.0.0",
   "description": "Simple self-hosted chat + voice servers. Docker-friendly Mattermost/Steam-chat alternative with PWA support.",
+  "license": "MIT",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
