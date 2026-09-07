@@ -240,7 +240,6 @@
       <button data-tab="profile" class="set-tab active">Profile</button>
       <button data-tab="account" class="set-tab">Account</button>
       <button data-tab="notifs" class="set-tab">Notifications</button>
-      <button data-tab="server" class="set-tab">Server</button>
       <span class="spacer"></span>
       <button id="settings-close" class="mini">✕</button>
     </div>
@@ -307,8 +306,17 @@
           <button id="set-pw-save" class="btn primary">Change password</button>
         </div>
       </div>
-      <div id="set-server" class="set-pane hidden"></div>
       <div id="set-notifs" class="set-pane hidden"></div>
+    </div>
+  </div>
+</div>
+
+<!-- server settings (per-server, separate from user settings) -->
+<div id="srv-settings-backdrop" class="hidden">
+  <div class="settings">
+    <div class="set-body">
+      <div class="srvset-head"><strong id="srv-settings-title">Server settings</strong><span class="spacer"></span><button id="srv-settings-close" class="mini">✕</button></div>
+      <div id="srvset-body" class="set-pane"></div>
     </div>
   </div>
 </div>

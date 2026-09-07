@@ -212,7 +212,10 @@ button.role-pill{cursor:pointer}
 button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .mini.on{background:var(--accent-container);border-color:transparent;color:var(--on-container)}
 .rdot{width:14px;height:14px;border-radius:50%;background:var(--panel-3);flex-shrink:0}
-#set-server input.clr{width:36px;flex:0 0 auto;padding:1px 2px;height:30px;margin-top:0}
+#srv-settings-backdrop .settings{flex-direction:column}
+.srvset-head{display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem}
+#srv-settings-title{font-size:1.05rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#srvset-body input.clr{width:36px;flex:0 0 auto;padding:1px 2px;height:30px;margin-top:0}
 #srv-newrole{flex:1;min-width:0}
 #srv-banner{height:84px;background-size:cover;background-position:center;border-bottom:1px solid var(--line);flex-shrink:0}
 
@@ -354,7 +357,7 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 #lightbox img{max-width:100%;max-height:100%;border-radius:16px}
 
 /* ---------- settings ---------- */
-#settings-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100;padding:1rem}
+#settings-backdrop,#srv-settings-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100;padding:1rem}
 .settings{background:var(--panel-2);border:0;border-radius:28px;width:100%;max-width:760px;max-height:88dvh;display:flex;flex-direction:row;overflow:hidden}
 @media (max-width:820px){
   .settings{max-width:600px}
@@ -523,7 +526,7 @@ body{touch-action:manipulation}
   #thread-panel{width:min(360px,100vw)!important}
   #thread-resizer{display:none}
   #usercard{width:min(300px,calc(100vw - 16px))}
-  #settings-backdrop{padding:0}
+  #settings-backdrop,#srv-settings-backdrop{padding:0}
   .settings{max-width:none;max-height:none;height:100%;border-radius:0}
   .modal{max-width:calc(100vw - 2rem)}
   #voice-fab{display:flex;align-items:center;gap:.5rem;margin:.5rem .6rem 0;padding:.55rem .7rem;background:var(--panel-2);border:1px solid var(--line);border-radius:999px;font-size:.85rem}

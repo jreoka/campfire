@@ -415,6 +415,7 @@ async function selectServer(id) {
     if (texts.length && !texts.find((c) => c.id === S.channelId)) S.channelId = texts[0].id;
     renderChannels();
     renderMembers();
+    if (S.srvSetId) { if (server.id === S.srvSetId) renderServerTab(); else closeServerSettings(); }
     if (S.channelId) selectChannel(S.channelId);
     else { $('#chan-name').textContent = '—'; $('#messages').innerHTML = ''; }
   } catch (err) {
@@ -1348,45 +1349,6 @@ function showInvite(srv) {
     } catch (err) { toast('Invite failed: ' + prettyError(err.message)); }
   };
 }
-$('#btn-server-menu').onclick = () => {
-  const d = S.serverDetail;
-  if (!d) return;
-  const owner = d.owner_id === S.me.id;
-  const mgr = canManage();
-  openModal(d.name, `
-    ${mgr ? `<label>New text channel<input id="m-chan" maxlength="32" placeholder="e.g. clips" /></label>
-    <div class="row" style="margin:.6rem 0"><button class="btn" id="m-mkchan">Create channel</button></div>` : ''}
-    ${mgr ? `<div class="row"><button class="btn" id="m-reset">Reset invite</button>
-      ${owner ? `<button class="btn danger" id="m-del">Delete server</button>` : ''}</div>` : ''}
-    ${!owner ? `<button class="btn danger" id="m-leave">Leave server</button>` : ''}
-  `, 'Close', null);
-  const mkc = $('#m-mkchan');
-  mkc && (mkc.onclick = async () => {
-    const name = $('#m-chan').value.trim().replace(/\s+/g, '-');
-    if (!name) return;
-    await api(`/api/servers/${d.id}/channels`, { method: 'POST', body: JSON.stringify({ name, type: 'text' }) });
-    $('#modal-backdrop').classList.add('hidden');
-    selectServer(d.id);
-  });
-  $('#m-reset') && ($('#m-reset').onclick = async () => {
-    const { invite_code } = await api(`/api/servers/${d.id}/invite/reset`, { method: 'POST' });
-    S.serverDetail.invite_code = invite_code;
-    showInvite({ ...d, invite_code });
-  });
-  $('#m-leave') && ($('#m-leave').onclick = async () => {
-    await api(`/api/servers/${d.id}/leave`, { method: 'POST' });
-    $('#modal-backdrop').classList.add('hidden');
-    S.ws?.send(JSON.stringify({ t: 'subscribe' }));
-    refreshServers();
-  });
-  $('#m-del') && ($('#m-del').onclick = async () => {
-    const ok = await openConfirmModal({ title: `Delete "${d.name}"?`, message: 'This server and all its messages are deleted forever.', okLabel: 'Delete' });
-    if (!ok) return;
-    await api(`/api/servers/${d.id}`, { method: 'DELETE' });
-    $('#modal-backdrop').classList.add('hidden');
-    refreshServers();
-  });
-};
 $('#btn-add-voice').onclick = async () => {
   const name = await openPromptModal({ title: 'New voice room', label: 'Voice room name', initial: 'Hangout', placeholder: 'e.g. Hangout', okLabel: 'Create', maxlength: 32 });
   if (name === null || !name.trim()) return;
@@ -2346,7 +2308,7 @@ function serverCtxMenu(sid, x, y) {
   openCtx(x, y, [
     { label: 'Open', icon: '→', fn: () => selectServer(sid) },
     { label: 'Copy invite link', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(`${location.origin}${location.pathname}?invite=${s.invite_code}`); toast('Link copied'); } catch {} } },
-    { label: 'Server settings', icon: '⚙', fn: async () => { if (sid !== S.serverId) await selectServer(sid); openSettings('server'); } },
+    { label: 'Server settings', icon: '⚙', fn: async () => { if (sid !== S.serverId) await selectServer(sid); openServerSettings(); } },
   ]);
 }
 function channelCtxMenu(cid, ctype, x, y) {
@@ -2622,6 +2584,7 @@ function openServerView() {
   $('#btn-home').classList.remove('active');
 }
 async function openHome() {
+  closeServerSettings();
   S.view = 'home';
   S.callOpen = false;
   $('#chat').classList.remove('call-open');
@@ -3585,7 +3548,6 @@ function openSettings(tab = 'profile') {
   const sb = $('#set-sidebar-prev');
   if (sb) sb.style.backgroundImage = S.me.sidebar_banner_url ? `url('${S.me.sidebar_banner_url}')` : '';
   loadMediaHist();
-  renderServerTab();
   $('#settings-backdrop').classList.remove('hidden');
 }
 function closeSettings() { closePicker(); $('#settings-backdrop').classList.add('hidden'); }
@@ -3667,7 +3629,7 @@ async function renderNotifsTab() {
     box.appendChild(row);
   }
   const note = document.createElement('p'); note.className = 'muted small';
-  note.textContent = 'Per-channel rules live in each channel’s settings (Server tab → Channels → Edit). DMs follow the default rule.';
+  note.textContent = 'Per-channel rules live in each channel’s settings (Server settings → Channels → Edit). DMs follow the default rule.';
   box.appendChild(note);
 }
 function urlB64ToU8(s) {
@@ -3706,7 +3668,6 @@ function setSettingsTab(t) {
   $('#set-profile').classList.toggle('hidden', t !== 'profile');
   $('#set-account').classList.toggle('hidden', t !== 'account');
   $('#set-notifs').classList.toggle('hidden', t !== 'notifs');
-  $('#set-server').classList.toggle('hidden', t !== 'server');
   if (t === 'notifs') renderNotifsTab();
 }
 document.querySelectorAll('.set-tab').forEach((b) => (b.onclick = () => setSettingsTab(b.dataset.tab)));
@@ -3726,9 +3687,11 @@ $('#btn-friend-add').onclick = async () => {
   } catch (err) { toast(prettyError(err.message)); }
 };
 $('#btn-group-new').onclick = openGroupModal;
-$('#btn-server-menu').onclick = () => openSettings('server');
+$('#btn-server-menu').onclick = () => openServerSettings();
 $('#settings-close').onclick = closeSettings;
 $('#settings-backdrop').addEventListener('click', (e) => { if (e.target.id === 'settings-backdrop') closeSettings(); });
+$('#srv-settings-close').onclick = closeServerSettings;
+$('#srv-settings-backdrop').addEventListener('click', (e) => { if (e.target.id === 'srv-settings-backdrop') closeServerSettings(); });
 async function uploadImage(url, file) {
   const fd = new FormData();
   fd.append('file', file);
@@ -3867,10 +3830,20 @@ async function refreshServerTab() {
     renderServerHeader();
   } catch {}
 }
-function renderServerTab() {
-  const box = $('#set-server');
+function openServerSettings() {
   const d = S.serverDetail;
-  if (!d) { box.innerHTML = '<p class="muted">No server selected.</p>'; return; }
+  if (!d) return;
+  S.srvSetId = d.id;
+  renderServerTab();
+  $('#srv-settings-backdrop').classList.remove('hidden');
+}
+function closeServerSettings() { S.srvSetId = null; $('#srv-settings-backdrop')?.classList.add('hidden'); }
+function renderServerTab() {
+  const box = $('#srvset-body');
+  if (!box) return;
+  const d = S.serverDetail;
+  if (!d || (S.srvSetId && d.id !== S.srvSetId)) { box.innerHTML = '<p class="muted">No server selected.</p>'; return; }
+  $('#srv-settings-title').textContent = d.name;
   const owner = d.owner_id === S.me.id;
   const mgr = canManage();
   const scroller = box.parentElement;
@@ -4119,7 +4092,7 @@ function renderServerTab() {
     try {
       if (owner) await api(`/api/servers/${d.id}`, { method: 'DELETE' });
       else await api(`/api/servers/${d.id}/leave`, { method: 'POST' });
-      closeSettings();
+      closeServerSettings();
       S.ws?.send(JSON.stringify({ t: 'subscribe' }));
       refreshServers();
     } catch (err) { toast('Failed: ' + prettyError(err.message)); }
@@ -4175,7 +4148,7 @@ function poke() {
   if (document.body.classList.contains('members-open') && !e.target.closest('#members') && !e.target.closest('#btn-members')) document.body.classList.remove('members-open');
 });
  document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeStatusMenu(); closeFolderMenu(); closeCtx(); closeSettings(); cancelModal(); $('#lightbox').classList.add('hidden'); }
+  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeStatusMenu(); closeFolderMenu(); closeCtx(); closeSettings(); closeServerSettings(); cancelModal(); $('#lightbox').classList.add('hidden'); }
 });
 $('#btn-emoji').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'emoji') : closePicker(); };
 $('#btn-gif').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'gifs') : closePicker(); };
