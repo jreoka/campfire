@@ -3100,6 +3100,40 @@ function paintHomeBadge() {
   const n = dmUnreadTotal() + ((S.friends && S.friends.pendingIn) || []).length;
   b.textContent = n > 99 ? '99+' : String(n);
   b.classList.toggle('hidden', !n);
+  renderDmRail();
+}
+// Unread DM senders park under Home: avatar + red per-thread count.
+// Clicking opens the DM, which clears the unread and dismisses the avatar.
+function renderDmRail() {
+  const box = $('#dm-rail');
+  if (!box || !S.me) return;
+  box.innerHTML = '';
+  for (const [tid, count] of S.dmUnread) {
+    if (!count) continue;
+    const t = S.dms.find((x) => x.id === tid);
+    if (!t) continue;
+    const b = document.createElement('button');
+    b.className = 'server-btn';
+    b.title = dmTitle(t);
+    const av = t.isGroup ? null : dmPeer(t);
+    if (av) {
+      const a = document.createElement('span');
+      a.className = 'avatar';
+      paintAvatar(a, av);
+      b.appendChild(a);
+    } else {
+      const g = document.createElement('span');
+      g.textContent = t.isGroup ? '#' : '?';
+      g.style.fontWeight = '700';
+      b.appendChild(g);
+    }
+    const badge = document.createElement('span');
+    badge.className = 'rail-dm-badge';
+    badge.textContent = count > 99 ? '99+' : String(count);
+    b.appendChild(badge);
+    b.onclick = async () => { if (S.view !== 'home') await openHome(); selectDmThread(tid); };
+    box.appendChild(b);
+  }
 }
 function friendRowEl(u, extra) {
   const div = document.createElement('div');
