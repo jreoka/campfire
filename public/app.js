@@ -523,10 +523,9 @@ function memberSort(a, b) {
 function renderMembers() {
   const d = S.serverDetail;
   if (!d) return;
-  $('#members-title').textContent = 'ONLINE';
+  $('#members-head').classList.add('hidden');
   const box = $('#member-list');
   box.innerHTML = '';
-  $('#online-count').textContent = d.members.filter((m) => statusOf(m.id) !== 'offline').length;
   const hoisted = (d.roles || []).filter((r) => r.hoist);
   const shown = new Set();
   for (const r of hoisted) {
@@ -538,19 +537,29 @@ function renderMembers() {
     box.appendChild(head);
     for (const m of mems) { box.appendChild(memberRowEl(m)); shown.add(m.id); }
   }
-  const rest = d.members.filter((m) => !shown.has(m.id)).sort(memberSort);
-  if (rest.length && shown.size) {
+  const rest = d.members.filter((m) => !shown.has(m.id));
+  const on = rest.filter((m) => statusOf(m.id) !== 'offline').sort(memberSort);
+  const off = rest.filter((m) => statusOf(m.id) === 'offline').sort(memberSort);
+  if (on.length) {
     const head = document.createElement('div');
     head.className = 'role-head';
-    head.innerHTML = '<span>MEMBERS</span>';
+    head.innerHTML = `<span>ONLINE</span><span class="muted"> — ${on.length}</span>`;
     box.appendChild(head);
+    for (const m of on) box.appendChild(memberRowEl(m));
   }
-  for (const m of rest) box.appendChild(memberRowEl(m));
+  if (off.length) {
+    const head = document.createElement('div');
+    head.className = 'role-head';
+    head.innerHTML = `<span>OFFLINE</span><span class="muted"> — ${off.length}</span>`;
+    box.appendChild(head);
+    for (const m of off) box.appendChild(memberRowEl(m));
+  }
 }
 function renderDmMembers() {
   if (S.view !== 'home') return;
   const t = S.dms.find((x) => x.id === S.dmThreadId);
   if (!t) return;
+  $('#members-head').classList.remove('hidden');
   $('#members-title').textContent = 'MEMBERS';
   const box = $('#member-list');
   box.innerHTML = '';
@@ -4191,8 +4200,13 @@ function poke() {
  document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { closePicker(); closeUserCard(); closeStatusMenu(); closeFolderMenu(); closeCtx(); closeSettings(); closeServerSettings(); $('#composer-more')?.classList.add('hidden'); cancelModal(); $('#lightbox').classList.add('hidden'); }
 });
-$('#btn-emoji').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'emoji') : closePicker(); };
-$('#btn-gif').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'gifs') : closePicker(); };
+function composerAnchor() {
+  const t = $('#composer-tools')?.getBoundingClientRect();
+  if (!t || !t.width) return null;
+  return { x: t.right - 180, y: t.top };
+}
+$('#btn-emoji').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'emoji', composerAnchor()) : closePicker(); };
+$('#btn-gif').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'gifs', composerAnchor()) : closePicker(); };
 // Mobile: composer options live under a + menu (attach / emoji / GIF stay visible on desktop)
 $('#btn-more').onclick = (e) => { e.stopPropagation(); closePicker(); $('#composer-more').classList.toggle('hidden'); };
 $('#cm-attach').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); $('#btn-attach').click(); };
