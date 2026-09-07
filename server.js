@@ -278,6 +278,12 @@ app.post('/api/servers', authRequired, (req, res) => {
   res.json({ server: serverView(s.id) });
 });
 
+app.get('/api/invite/:code', (req, res) => {
+  const s = db.prepare('SELECT * FROM servers WHERE invite_code = ?').get(String(req.params.code || '').trim());
+  if (!s) return res.status(404).json({ error: 'bad_invite' });
+  const memberCount = db.prepare('SELECT COUNT(*) c FROM server_members WHERE server_id = ?').get(s.id).c;
+  res.json({ name: s.name, description: s.description || '', banner_url: s.banner_url || null, icon_url: s.icon_url || null, memberCount });
+});
 app.post('/api/servers/join', authRequired, (req, res) => {
   const code = String(req.body?.inviteCode || req.body?.code || '').trim();
   if (!code) return res.status(400).json({ error: 'code_required' });
@@ -770,7 +776,10 @@ app.patch('/api/servers/:id', authRequired, (req, res) => {
   if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
   const name = String(req.body?.name || '').trim().slice(0, 48);
   if (!name) return res.status(400).json({ error: 'name_required' });
-  db.prepare('UPDATE servers SET name = ? WHERE id = ?').run(name, s.id);
+  const sets = ['name = ?'], params = [name];
+  if (req.body?.description !== undefined) { sets.push('description = ?'); params.push(String(req.body.description).slice(0, 200)); }
+  params.push(s.id);
+  db.prepare(`UPDATE servers SET ${sets.join(', ')} WHERE id = ?`).run(...params);
   broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
   res.json({ server: serverView(s.id) });
 });

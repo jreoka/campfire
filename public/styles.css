@@ -77,8 +77,9 @@ h1,h2,h3{letter-spacing:-0.01em}
 .server-btn.has-icon{background-color:transparent;background-size:cover;background-position:center}
 .server-btn.has-icon:hover{background-color:transparent}
 .server-btn.has-icon.active{border-radius:12px}
-#btn-add-server{width:52px;height:52px;border-radius:16px;border:0;background:var(--accent);color:var(--on-accent);font-size:1.5rem;font-weight:400;cursor:pointer}
+#btn-add-server{width:52px;height:52px;border-radius:16px;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:flex;align-items:center;justify-content:center}
 #btn-add-server:hover{background:var(--accent-hover)}
+#btn-add-server svg{display:block}
 
 #sidebar{width:264px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;flex-shrink:0;z-index:30}
 #server-header{padding:.85rem .9rem;border-bottom:1px solid var(--line)}
@@ -194,6 +195,17 @@ h1,h2,h3{letter-spacing:-0.01em}
 .edit-box .row{margin-top:.35rem}
 .msg .text code{background:var(--panel-3);border:0;border-radius:6px;padding:.05rem .35rem;font-size:.85em}
 .member.off{opacity:.45}
+/* ---------- invite landing ---------- */
+#invite-view{position:fixed;inset:0;background:var(--bg);z-index:250;display:flex;align-items:center;justify-content:center;padding:1rem}
+.invite-card{width:100%;max-width:420px;background:var(--panel);border:0;border-radius:28px;overflow:hidden;text-align:center}
+#inv-banner{height:140px;background:var(--panel-3);background-size:cover;background-position:center}
+.invite-body{padding:0 1.5rem 1.5rem;display:flex;flex-direction:column;align-items:center;gap:.4rem}
+#inv-icon{width:72px;height:72px;font-size:1.8rem;margin-top:-36px;border:4px solid var(--panel);overflow:hidden;flex-shrink:0}
+#inv-icon img{width:100%;height:100%;object-fit:cover;display:block}
+#inv-name{margin:.2rem 0 0;font-size:1.3rem}
+#inv-desc{margin:0;overflow-wrap:anywhere}
+#inv-count{margin:0}
+#inv-actions{justify-content:center;margin-top:.7rem}
 .role-head{font-size:.72rem;font-weight:700;letter-spacing:.06em;padding:.7rem .55rem .25rem;color:var(--muted)}
 .uc-roles{display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.55rem}
 .role-pill{border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;padding:.2rem .6rem;font-size:.75rem;font-weight:700}

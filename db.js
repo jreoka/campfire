@@ -227,6 +227,7 @@ addColumn('dm_messages', 'sys', 'TEXT');
 addColumn('channels', 'slowmode', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('channels', 'description', "TEXT NOT NULL DEFAULT ''");
 addColumn('servers', 'banner_url', 'TEXT');
+addColumn('servers', 'description', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'name_color', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'name_gradient', "TEXT NOT NULL DEFAULT ''");
 addColumn('server_members', 'position', 'INTEGER NOT NULL DEFAULT 0');

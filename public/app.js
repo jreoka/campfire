@@ -185,7 +185,10 @@ async function boot() {
     const { user } = await api('/api/me');
     S.me = user;
   } catch {
+    const inv0 = new URLSearchParams(location.search).get('invite');
+    if (inv0) { history.replaceState(null, '', location.pathname); sessionStorage.setItem('cf_invite', inv0); }
     showAuth();
+    if (inv0) showInviteLanding(inv0);
     return;
   }
   showMain();
@@ -198,15 +201,15 @@ async function boot() {
   connectWS();
   pollVersion();
   pushSetup();
-  // auto-join via ?invite=CODE
+  // invite landing (?invite=CODE)
   const inv = new URLSearchParams(location.search).get('invite');
   if (inv) {
     history.replaceState(null, '', location.pathname);
-    try {
-      const { server } = await api('/api/servers/join', { method: 'POST', body: JSON.stringify({ inviteCode: inv }) });
-      await refreshServers(server.id);
-      toast('Joined "' + server.name + '"');
-    } catch (err) { toast('Invite failed: ' + prettyError(err.message)); }
+    sessionStorage.setItem('cf_invite', inv);
+    showInviteLanding(inv);
+  } else {
+    const pending = sessionStorage.getItem('cf_invite');
+    if (pending) { sessionStorage.removeItem('cf_invite'); showInviteLanding(pending); }
   }
   // deep links from push notifications (?server=ID&channel=ID, ?dm=ID)
   try {
@@ -1136,6 +1139,43 @@ function openAddServer() {
   };
 }
 $('#btn-add-server').onclick = openAddServer;
+async function showInviteLanding(code) {
+  let info;
+  try {
+    const r = await fetch('/api/invite/' + encodeURIComponent(code));
+    info = await r.json();
+    if (!r.ok) throw new Error(info.error || 'bad_invite');
+  } catch (err) { toast('Invite failed: ' + prettyError(err.message || 'bad_invite')); return; }
+  $('#inv-name').textContent = info.name || 'Server';
+  $('#inv-banner').style.backgroundImage = info.banner_url ? `url('${info.banner_url}')` : '';
+  const icon = $('#inv-icon');
+  if (info.icon_url) icon.innerHTML = `<img src="${esc(info.icon_url)}" alt="" />`;
+  else { icon.innerHTML = ''; icon.textContent = (info.name || 'S').trim().charAt(0).toUpperCase(); }
+  const dd = $('#inv-desc');
+  if (info.description) { dd.textContent = info.description; dd.classList.remove('hidden'); }
+  else dd.classList.add('hidden');
+  const n = info.memberCount || 0;
+  $('#inv-count').textContent = n === 1 ? '1 member' : `${n} members`;
+  const acts = $('#inv-actions');
+  acts.innerHTML = '';
+  const mkBtn = (label, primary, fn) => { const b = document.createElement('button'); b.className = 'btn' + (primary ? ' primary' : ''); b.textContent = label; b.onclick = fn; acts.appendChild(b); };
+  if (store.token) {
+    mkBtn('Join server', true, async () => {
+      try {
+        const { server } = await api('/api/servers/join', { method: 'POST', body: JSON.stringify({ inviteCode: code }) });
+        $('#invite-view').classList.add('hidden');
+        await refreshServers(server.id);
+        S.ws?.send(JSON.stringify({ t: 'subscribe' }));
+        toast(`Joined "${server.name}"`);
+      } catch (err) { toast('Join failed: ' + prettyError(err.message)); }
+    });
+    mkBtn('Cancel', false, () => $('#invite-view').classList.add('hidden'));
+  } else {
+    mkBtn('Sign in', true, () => { sessionStorage.setItem('cf_invite', code); $('#invite-view').classList.add('hidden'); setMode('login'); });
+    mkBtn('Sign up', false, () => { sessionStorage.setItem('cf_invite', code); $('#invite-view').classList.add('hidden'); setMode('register'); });
+  }
+  $('#invite-view').classList.remove('hidden');
+}
 $('#btn-invite').onclick = () => showInvite(S.serverDetail);
 function showInvite(srv) {
   if (!srv) return;
@@ -2530,10 +2570,11 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null) {
     pk.style.left = ''; pk.style.top = '';
   }
   setPickerTab(tab);
+  document.querySelector('#picker .pk-tabs').style.display = mode === 'react' ? 'none' : '';
   $('#pk-search').value = '';
   renderEmojiGrid('');
   ensureEmojiData().then(() => { if (S.picker) renderEmojiGrid($('#pk-search').value); });
-  loadGifTrending();
+  if (mode !== 'react') loadGifTrending();
   setTimeout(() => $('#pk-search').focus(), 0);
 }
 function closePicker() { $('#picker').classList.add('hidden'); S.picker = null; S.gifPick = null; }
@@ -2627,6 +2668,7 @@ let gifSearchT = null;
 $('#pk-search').addEventListener('input', (e) => {
   const q = e.target.value;
   renderEmojiGrid(q);
+  if (S.picker?.mode === 'react') return; // reactions are emoji-only
   clearTimeout(gifSearchT);
   if (!q.trim()) { loadGifTrending(); return; }
   setPickerTab('gifs');
@@ -3270,6 +3312,9 @@ function renderServerTab() {
   const nameRow = document.createElement('div');
   nameRow.innerHTML = `<label style="flex:1">Server name<input id="srv-name" maxlength="48" value="${esc(d.name)}" ${mgr ? '' : 'disabled'} /></label>`;
   box.appendChild(nameRow);
+  const descRow = document.createElement('div');
+  descRow.innerHTML = `<label style="flex:1">Description (shown on invites)<input id="srv-desc" maxlength="200" placeholder="What is this server about?" value="${esc(d.description || '')}" ${mgr ? '' : 'disabled'} /></label>`;
+  box.appendChild(descRow);
   const iconRow = document.createElement('div');
   iconRow.className = 'row';
   iconRow.style.margin = '.5rem 0';
@@ -3296,7 +3341,7 @@ function renderServerTab() {
     fi.onchange = async () => { if (!fi.files[0]) return; try { await uploadImage(`/api/servers/${d.id}/icon`, fi.files[0]); renderServerTab(); } catch (err) { toast('Icon failed: ' + prettyError(err.message)); } };
     rm.onclick = async () => { try { await api(`/api/servers/${d.id}/icon`, { method: 'DELETE' }); renderServerTab(); } catch {} };
     const sv = document.createElement('button'); sv.className = 'btn small primary'; sv.textContent = 'Save name';
-    sv.onclick = async () => { try { await api(`/api/servers/${d.id}`, { method: 'PATCH', body: JSON.stringify({ name: box.querySelector('#srv-name').value }) }); toast('Server saved'); } catch (err) { toast('Save failed: ' + prettyError(err.message)); } };
+    sv.onclick = async () => { try { await api(`/api/servers/${d.id}`, { method: 'PATCH', body: JSON.stringify({ name: box.querySelector('#srv-name').value, description: box.querySelector('#srv-desc').value }) }); toast('Server saved'); } catch (err) { toast('Save failed: ' + prettyError(err.message)); } };
     iconRow.append(ch, rm, sv);
   }
   box.appendChild(iconRow);
