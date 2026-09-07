@@ -44,7 +44,7 @@ function poke() {
   if (statusMenuEl && !e.target.closest('#status-pop') && !e.target.closest('#me-avatar')) closeStatusMenu();
   if (ctxEl && !e.target.closest('#ctx-menu') && !e.target.closest('.msg-actions')) closeCtx();
   if (folderFlyoutEl && !e.target.closest('#folder-menu')) closeFolderFlyout();
-  if (S.openFolderId && !e.target.closest('#folder-popout') && !e.target.closest('.folder-btn')) closeFolderPopout();
+  if (S.openFolderId && !e.target.closest('.folder-btn')) closeFolderPopout();
   if (document.body.classList.contains('members-open') && !e.target.closest('#members') && !e.target.closest('#btn-members')) document.body.classList.remove('members-open');
   if (!e.target.closest('#composer-more') && !e.target.closest('#btn-more') && !e.target.closest('#btn-plus')) $('#composer-more')?.classList.add('hidden');
 });

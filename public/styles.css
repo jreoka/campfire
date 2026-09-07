@@ -525,10 +525,10 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .fc-empty{font-size:.9rem}
 .drop-target{outline:2px solid var(--accent)!important;outline-offset:1px;border-radius:18px}
 
-/* folder pop-out panel */
-#folder-popout{position:fixed;z-index:400;border-radius:16px;padding:8px;display:flex;flex-direction:column;align-items:center;box-shadow:0 8px 24px rgba(0,0,0,.5);min-width:48px}
-#folder-popout .fp-title{font-size:.8rem;font-weight:700;color:#fff;margin:0 0 6px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 1px 2px rgba(0,0,0,.45)}
-#folder-popout .fp-list{display:flex;flex-direction:column;gap:6px}
+/* folder open (inline expansion below the button) */
+.folder-open{display:flex;flex-direction:column;gap:6px;align-items:center;width:52px;padding:6px 2px;margin:0 0 1px;border-radius:14px;box-shadow:0 4px 12px rgba(0,0,0,.35);background:linear-gradient(rgba(0,0,0,.5), rgba(0,0,0,.5)), color-mix(in srgb, var(--fcolor, #5865f2) 60%, transparent)}
+.folder-open > .server-btn{background:var(--panel-2)}
+.folder-open > .server-btn.active{background:var(--accent);color:var(--on-accent)}
 
 /* folder context flyout */
 #folder-menu{position:fixed;z-index:400;background:var(--panel-2);border:0;border-radius:14px;padding:6px;min-width:200px;box-shadow:0 8px 24px rgba(0,0,0,.5)}
@@ -731,6 +731,7 @@ body{touch-action:manipulation}
   #left #rail{width:60px;flex-shrink:0;padding:.6rem 0}
   #left .server-btn,#left #btn-add-server{width:44px;height:44px}
   #left .fwrap,#left .folder-btn{width:44px;height:44px}
+  #left .folder-open{width:48px;padding:5px 2px}
   #left .fwrap.active .folder-btn::before{left:-6px;width:6px;height:22px}
   #left .fg1{grid-template-columns:20px}
   #left .fg2,#left .fg3,#left .fg4{grid-template-columns:repeat(2,15px)}

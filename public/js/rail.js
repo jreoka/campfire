@@ -99,7 +99,6 @@ function applyDrop(dd, t) {
   const { kind, id } = dd;
   if (t.zone === 'combine') { if (kind === 'server' && id !== t.id) createFolderFromServers([id, t.id]); return; }
   if (t.zone === 'into-folder') { if (kind === 'server') moveServerToFolder(id, t.folderId); return; }
-  if (t.zone === 'leave-folder') { if (kind === 'server') removeServerFromFolder(id); return; }
   if (t.zone === 'reorder') { if (kind === 'server') reorderRootServer(id, t.id, t.edge); else if (kind === 'folder') reorderFolder(id, t.id, t.edge); return; }
   if (t.zone === 'reorder-in-folder') { if (kind === 'server') reorderServerInFolder(id, t.folderId, t.id, t.edge); return; }
 }
@@ -183,49 +182,41 @@ $('#rail').addEventListener('drop', (e) => {
   else if (dd.kind === 'folder') { return; }
   normalizeAndSave();
 });
-/* ---- folder pop-out drag (leave folder / reorder inside) ---- */
-function wirePopoutDrop(list, fid) {
-  list.addEventListener('dragover', (e) => {
+/* ---- folder open (inline) drop: reorder inside / add to folder ---- */
+function wireFolderOpenDrop(box, fid) {
+  box.addEventListener('dragover', (e) => {
     if (!dragPayload || dragPayload.kind !== 'server') return;
-    const sb = e.target.closest && e.target.closest('[data-drag]');
-    if (!sb) { clearDropMarks(); hideMarker(); return; }
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    const r = sb.getBoundingClientRect();
-    const frac = (e.clientY - r.top) / r.height;
-    clearDropMarks(); hideMarker();
-    const sid = sb.dataset.drag.split(':')[1];
-    if (dragPayload.id !== sid && serverFolder(dragPayload.id) === fid && frac >= 0.3 && frac <= 0.7) dropTarget = { zone: 'reorder-in-folder', folderId: fid, id: sid, edge: 'after' };
-    else { const edge = frac < 0.5 ? 'before' : 'after'; showMarker(r, edge); dropTarget = { zone: 'reorder-in-folder', folderId: fid, id: sid, edge }; }
-  });
-  list.addEventListener('dragleave', () => hideMarker());
-  list.addEventListener('drop', (e) => {
+    clearDropMarks();
+    hideMarker();
     const sb = e.target.closest && e.target.closest('[data-drag]');
-    if (!dragPayload || !sb) return;
+    if (sb) {
+      const hs = sb.dataset.drag.split(':')[1];
+      if (dragPayload.id === hs) return;
+      const r = sb.getBoundingClientRect();
+      const frac = (e.clientY - r.top) / r.height;
+      if (serverFolder(dragPayload.id) === fid) {
+        const edge = frac < 0.5 ? 'before' : 'after';
+        showMarker(r, edge);
+        dropTarget = { zone: 'reorder-in-folder', folderId: fid, id: hs, edge };
+      } else {
+        box.classList.add('drop-target');
+        dropTarget = { zone: 'into-folder', folderId: fid };
+      }
+    } else {
+      box.classList.add('drop-target');
+      dropTarget = { zone: 'into-folder', folderId: fid };
+    }
+  });
+  box.addEventListener('dragleave', () => { box.classList.remove('drop-target'); hideMarker(); });
+  box.addEventListener('drop', (e) => {
+    if (!dragPayload) return;
     e.preventDefault();
     const dd = dragPayload; dragPayload = null; clearDropMarks(); hideMarker();
     applyDrop(dd, dropTarget); dropTarget = null;
   });
 }
-/* ---- drag a server out of the popout: drop anywhere outside = leave folder ---- */
-document.addEventListener('dragover', (e) => {
-  if (!dragPayload || dragPayload.kind !== 'server' || !document.querySelector('#folder-popout')) return;
-  const rail = document.querySelector('#rail');
-  if (rail && rail.contains(e.target)) return;
-  if (e.target.closest && e.target.closest('#folder-popout')) return;
-  e.preventDefault();
-  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-  dropTarget = { zone: 'leave-folder', id: dragPayload.id };
-});
-document.addEventListener('drop', (e) => {
-  if (!dragPayload || dragPayload.kind !== 'server' || !document.querySelector('#folder-popout')) return;
-  const rail = document.querySelector('#rail');
-  if (rail && rail.contains(e.target)) return;
-  if (e.target.closest && e.target.closest('#folder-popout')) return;
-  e.preventDefault();
-  const dd = dragPayload; dragPayload = null; hideMarker();
-  applyDrop(dd, dropTarget); dropTarget = null;
-});
 /* ---- folder context flyout ---- */
 const FOLDER_COLORS = ['#5865f2', '#3ba55d', '#ed4245', '#faa81a', '#9b59b6', '#1abc9c', '#e91e63', '#00b0f4'];
 function closeFolderFlyout() { if (folderFlyoutEl) { folderFlyoutEl.remove(); folderFlyoutEl = null; } }

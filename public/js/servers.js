@@ -42,12 +42,6 @@ function buildRootOrder() {
   ].sort((x, y) => x.pos - y.pos);
 }
 function isFolderActive(f) { return (f.servers || []).includes(S.serverId); }
-function hexToRgba(hex, alpha) {
-  const m = /^#([0-9a-f]{6})$/i.exec(hex || '');
-  if (!m) return 'rgba(88,101,242,' + alpha + ')';
-  const n = parseInt(m[1], 16);
-  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + alpha + ')';
-}
 function iconCell(s) {
   const label = (s.name || '?').trim().charAt(0).toUpperCase() || '?';
   if (s.icon_url) {
@@ -108,7 +102,10 @@ function renderServerList() {
   for (const it of S.rootOrder) {
     if (it.kind === 'folder') {
       const f = folderById(it.id);
-      if (f) box.appendChild(folderBtn(f));
+      if (f) {
+        box.appendChild(folderBtn(f));
+        if (S.openFolderId === f.id) box.appendChild(folderOpenBox(f));
+      }
     } else {
       const s = byId.get(it.id);
       if (s) box.appendChild(serverBtn(s));
@@ -117,53 +114,27 @@ function renderServerList() {
   for (const s of S.servers) {
     if (!S.rootOrder.some((it) => it.kind === 'server' && it.id === s.id) && !inFolder.has(s.id)) box.appendChild(serverBtn(s));
   }
-  renderFolderPopout();
 }
 function toggleFolder(id) {
   S.openFolderId = (S.openFolderId === id) ? null : id;
   renderServerList();
 }
 function closeFolderPopout() { if (S.openFolderId) { S.openFolderId = null; renderServerList(); } }
-function renderFolderPopout() {
-  const old = document.getElementById('folder-popout'); if (old) old.remove();
-  if (!S.openFolderId) return;
-  const f = folderById(S.openFolderId);
-  if (!f) { S.openFolderId = null; return; }
-  const btn = document.querySelector('[data-drag="folder:' + f.id + '"]');
-  if (!btn) return;
+function folderOpenBox(f) {
   const color = f.color || '#5865f2';
-  const po = document.createElement('div');
-  po.id = 'folder-popout';
-  po.className = 'folder-popout';
-  po.style.setProperty('--fcolor', color);
-  po.style.backgroundImage = 'linear-gradient(rgba(0,0,0,.5), rgba(0,0,0,.5))';
-  po.style.backgroundColor = hexToRgba(color, 0.55);
-  const label = document.createElement('div');
-  label.className = 'fp-title';
-  label.textContent = f.name || 'Folder';
-  po.appendChild(label);
-  const list = document.createElement('div');
-  list.className = 'fp-list';
+  const box = document.createElement('div');
+  box.className = 'folder-open';
+  box.dataset.fid = f.id;
+  box.style.setProperty('--fcolor', color);
   for (const id of (f.servers || [])) {
     const s = S.servers.find((x) => x.id === id);
     if (!s) continue;
     const sb = serverBtn(s);
     sb.addEventListener('click', () => closeFolderPopout());
-    list.appendChild(sb);
+    box.appendChild(sb);
   }
-  po.appendChild(list);
-  po.addEventListener('click', (e) => { if (!e.target.closest('[data-drag]')) closeFolderPopout(); });
-  wirePopoutDrop(list, f.id);
-  document.body.appendChild(po);
-  const r = btn.getBoundingClientRect();
-  const w = po.offsetWidth, h = po.offsetHeight;
-  let left = r.right + 10;
-  let top = r.top - 6;
-  if (left + w > innerWidth - 8) left = innerWidth - w - 8;
-  if (top + h > innerHeight - 8) top = innerHeight - h - 8;
-  if (top < 8) top = 8;
-  po.style.left = left + 'px';
-  po.style.top = top + 'px';
+  wireFolderOpenDrop(box, f.id);
+  return box;
 }
 
 
