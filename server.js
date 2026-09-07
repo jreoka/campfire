@@ -1862,7 +1862,9 @@ app.get('/api/dms', authRequired, (req, res) => {
 app.post('/api/dms', authRequired, (req, res) => {
   const target = db.prepare('SELECT id FROM users WHERE id = ?').get(String(req.body?.userId || ''));
   if (!target || target.id === req.user.id) return res.status(404).json({ error: 'user_not_found' });
-  if (!areFriends(req.user.id, target.id)) return res.status(403).json({ error: 'add_friend_first' });
+  // No friendship required for 1:1 DMs — but blocks still apply both ways.
+  if (db.prepare('SELECT 1 FROM blocks WHERE user_id = ? AND blocked_id = ?').get(target.id, req.user.id)) return res.status(404).json({ error: 'user_not_found' });
+  if (db.prepare('SELECT 1 FROM blocks WHERE user_id = ? AND blocked_id = ?').get(req.user.id, target.id)) return res.status(403).json({ error: 'unblock_first' });
   const mine = db.prepare('SELECT thread_id FROM dm_members WHERE user_id = ?').all(req.user.id).map((r) => r.thread_id);
   for (const tid of mine) {
     const t = db.prepare('SELECT * FROM dm_threads WHERE id = ? AND (is_group IS NULL OR is_group = 0)').get(tid);

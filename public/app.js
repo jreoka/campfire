@@ -3088,6 +3088,13 @@ async function openDmWith(userId) {
     selectDmThread(thread.id);
   } catch (err) { toast(prettyError(err.message)); }
 }
+// User card → Message: jump to Home if needed, then open (or create) the 1:1.
+// No friendship required — strangers can DM each other unless blocked.
+async function messageUser(uid) {
+  closeUserCard();
+  if (S.view !== 'home') await openHome();
+  await openDmWith(uid);
+}
 async function closeDm(tid) {
   try { await api(`/api/dms/${tid}/close`, { method: 'POST' }); } catch {}
   if (S.dmThreadId === tid) { S.dmThreadId = null; renderDmBlank(); }
@@ -3875,7 +3882,7 @@ async function openUserCard(uid, x, y) {
       ${u.bio ? `<div class="uc-bio">${renderRich(u.bio)}</div>` : ''}
       ${u.created_at ? `<div class="uc-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
       ${cardRolesHTML(uid)}
-      <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid) : ''}${canMod ? '<button class="btn small danger" id="uc-kick">Kick</button><button class="btn small danger" id="uc-ban">Ban</button>' : ''}${uid !== S.me.id ? `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="uc-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>` : ''}<button class="btn small" id="uc-close">Close</button></div>
+      <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? '<button class="btn small primary" id="uc-message">Message</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid) : ''}${canMod ? '<button class="btn small danger" id="uc-kick">Kick</button><button class="btn small danger" id="uc-ban">Ban</button>' : ''}${uid !== S.me.id ? `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="uc-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>` : ''}<button class="btn small" id="uc-close">Close</button></div>
     </div>`;
   paintAvatar(card.querySelector('.avatar'), u);
   card.classList.remove('hidden');
@@ -3885,6 +3892,8 @@ async function openUserCard(uid, x, y) {
   $('#uc-close').onclick = closeUserCard;
   const men = $('#uc-mention');
   if (men) men.onclick = () => { insertAtCursor($('#in-message'), '@' + u.username + ' '); closeUserCard(); $('#in-message').focus(); };
+  const msg = $('#uc-message');
+  if (msg) msg.onclick = () => messageUser(uid);
   const blk = $('#uc-block');
   if (blk) blk.onclick = () => { const was = isBlocked(uid), nm = u.username; closeUserCard(); if (was) unblockUser(uid); else blockUser(uid, nm); };
   const fr = $('#uc-friend');
