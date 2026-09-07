@@ -7,7 +7,7 @@
  *   once so nobody gets stuck on an ancient version. Tabs with the updater
  *   reply to the ping and handle it themselves (voice-aware, draft-safe).
  */
-const CACHE = 'campfire-v38';
+const CACHE = 'campfire-v39';
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/emoji.json'];
 
 self.addEventListener('install', (e) => {
