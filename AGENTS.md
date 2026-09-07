@@ -125,6 +125,17 @@ replies/threads/reactions/edits/mentions/markdown, presence + statuses, user
 cards, tabbed settings, rail folders + DnD, B&W theme, ctx menus, auto-update.
 Detail per change lives in `git log` — don't duplicate it here.
 
+## Deployment (owner directive)
+
+**Every change must be deployed to the live production instance** — never stop
+at local edits. Finish each task end-to-end: edit → verify → commit → push →
+deploy → confirm the live site serves the change.
+- Local repo commits to `origin/main` (`https://github.com/jreoka/campfire`).
+- Production VPS is reachable via SSH key: `ssh root@campfire.dill.moe`, app lives
+  in `/opt/campfire`. Deploy there with:
+  `git pull` then `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`.
+- After deploying, confirm the live site responds (e.g. `curl https://campfire.dill.moe/api/config`).
+
 Non-obvious rules (learned the hard way): uploads must live next to the DB on
 the persistent volume (never the image layer); new uploads get `?v=` cache keys;
 missing `/uploads/*` must 404 (never SPA fallback); bump the SW `CACHE` version

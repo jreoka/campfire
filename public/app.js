@@ -387,7 +387,7 @@ function confirmDeleteChannel(c) {
     if (S.channelId === c.id) S.channelId = (S.serverDetail.channels.find((x) => x.type === 'text') || {}).id || null;
     renderChannels();
     if (S.channelId) selectChannel(S.channelId);
-  });
+  }, { danger: true });
 }
 async function selectChannel(id) {
   S.channelId = id;
@@ -875,21 +875,50 @@ if ('Notification' in window && Notification.permission === 'default') {
   });
 }
 
-// ---------- modals ----------
+// ---------- modals (in-app dialogs — no native alert/confirm/prompt) ----------
 let modalOkFn = null;
-function openModal(title, bodyHTML, okLabel, onOk) {
+let modalCancelFn = null;
+function openModal(title, bodyHTML, okLabel, onOk, opts = {}) {
   $('#modal-title').textContent = title;
   $('#modal-body').innerHTML = bodyHTML;
-  $('#modal-ok').textContent = okLabel || 'OK';
+  const ok = $('#modal-ok');
+  ok.textContent = okLabel || 'OK';
+  ok.classList.toggle('danger', !!opts.danger);
+  ok.classList.toggle('primary', !opts.danger);
+  $('#modal-close').textContent = opts.cancelLabel || 'Cancel';
   modalOkFn = onOk || null;
+  modalCancelFn = opts.onCancel || null;
   $('#modal-backdrop').classList.remove('hidden');
+  const input = $('#modal-body input');
+  if (input) setTimeout(() => { try { input.focus(); input.select?.(); } catch {} }, 0);
 }
-$('#modal-close').onclick = () => $('#modal-backdrop').classList.add('hidden');
-$('#modal-backdrop').addEventListener('click', (e) => { if (e.target.id === 'modal-backdrop') $('#modal-backdrop').classList.add('hidden'); });
+function cancelModal() {
+  if ($('#modal-backdrop').classList.contains('hidden')) return;
+  $('#modal-backdrop').classList.add('hidden');
+  const fn = modalCancelFn;
+  modalCancelFn = null;
+  if (fn) { try { fn(); } catch {} }
+}
+$('#modal-close').onclick = () => cancelModal();
+$('#modal-backdrop').addEventListener('click', (e) => { if (e.target.id === 'modal-backdrop') cancelModal(); });
 $('#modal-ok').onclick = async () => {
   $('#modal-backdrop').classList.add('hidden');
+  modalCancelFn = null;
   if (modalOkFn) { try { await modalOkFn(); } catch (err) { toast('Failed: ' + prettyError(err.message)); } }
 };
+// Promise-based confirm dialog. Resolves true on confirm, false on cancel/dismiss.
+function openConfirmModal({ title, message, okLabel = 'Delete', cancelLabel = 'Cancel', danger = true }) {
+  return new Promise((resolve) => {
+    openModal(title, `<p class="muted">${esc(message)}</p>`, okLabel, () => resolve(true), { danger, cancelLabel, onCancel: () => resolve(false) });
+  });
+}
+// Promise-based text-input dialog. Resolves the entered string on confirm, null on cancel/dismiss.
+function openPromptModal({ title, label, initial = '', placeholder = '', okLabel = 'Create', cancelLabel = 'Cancel', maxlength = 32 }) {
+  return new Promise((resolve) => {
+    openModal(title, `<label>${esc(label)}<input id="m-prompt-input" maxlength="${maxlength}" placeholder="${esc(placeholder)}" value="${esc(initial)}" /></label>`, okLabel, () => resolve($('#m-prompt-input')?.value ?? null), { cancelLabel, onCancel: () => resolve(null) });
+    $('#m-prompt-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#modal-ok').click(); } });
+  });
+}
 function openAddServer() {
   openModal('Servers', `
     <label>Create a new server<input id="m-server-name" maxlength="48" placeholder="e.g. The Crew" /></label>
@@ -963,15 +992,16 @@ $('#btn-server-menu').onclick = () => {
     refreshServers();
   });
   $('#m-del') && ($('#m-del').onclick = async () => {
-    if (!confirm('Delete this server forever?')) return;
+    const ok = await openConfirmModal({ title: `Delete "${d.name}"?`, message: 'This server and all its messages are deleted forever.', okLabel: 'Delete' });
+    if (!ok) return;
     await api(`/api/servers/${d.id}`, { method: 'DELETE' });
     $('#modal-backdrop').classList.add('hidden');
     refreshServers();
   });
 };
 $('#btn-add-voice').onclick = async () => {
-  const name = prompt('Voice room name:', 'Hangout');
-  if (!name) return;
+  const name = await openPromptModal({ title: 'New voice room', label: 'Voice room name', initial: 'Hangout', placeholder: 'e.g. Hangout', okLabel: 'Create', maxlength: 32 });
+  if (name === null || !name.trim()) return;
   try {
     await api(`/api/servers/${S.serverId}/channels`, { method: 'POST', body: JSON.stringify({ name: name.trim().slice(0, 32), type: 'voice' }) });
     selectServer(S.serverId);
@@ -1460,10 +1490,10 @@ $('#server-list').addEventListener('drop', (e) => {
   normalizeAndSave();
 });
 function closeFolderMenu() { if (folderMenuEl) { folderMenuEl.remove(); folderMenuEl = null; } }
-function renameFolder(fid) {
+async function renameFolder(fid) {
   const f = folderById(fid);
   if (!f) return;
-  const n = prompt('Folder name:', f.name);
+  const n = await openPromptModal({ title: 'Rename folder', label: 'Folder name', initial: f.name, placeholder: 'e.g. Favorites', okLabel: 'Save', maxlength: 32 });
   if (n === null) return;
   f.name = n.trim().slice(0, 32) || 'Folder';
   saveLayout(); renderServerList();
@@ -2324,7 +2354,10 @@ function renderServerTab() {
   lb.className = 'btn danger small';
   lb.textContent = owner ? 'Delete server' : 'Leave server';
   lb.onclick = async () => {
-    if (owner && !confirm('Delete this server forever?')) return;
+    if (owner) {
+      const ok = await openConfirmModal({ title: `Delete "${d.name}"?`, message: 'This server and all its messages are deleted forever.', okLabel: 'Delete' });
+      if (!ok) return;
+    }
     try {
       if (owner) await api(`/api/servers/${d.id}`, { method: 'DELETE' });
       else await api(`/api/servers/${d.id}/leave`, { method: 'POST' });
@@ -2383,7 +2416,7 @@ function poke() {
   if (document.body.classList.contains('members-open') && !e.target.closest('#members') && !e.target.closest('#btn-members')) document.body.classList.remove('members-open');
 });
  document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeStatusMenu(); closeFolderMenu(); closeCtx(); closeSettings(); $('#lightbox').classList.add('hidden'); }
+  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeStatusMenu(); closeFolderMenu(); closeCtx(); closeSettings(); cancelModal(); $('#lightbox').classList.add('hidden'); }
 });
 $('#btn-emoji').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'emoji') : closePicker(); };
 $('#btn-gif').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'gifs') : closePicker(); };
