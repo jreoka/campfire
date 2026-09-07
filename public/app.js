@@ -3311,6 +3311,9 @@ function renderDmBlank() {
   document.body.classList.remove('dm-open');
   S.histMode = null;
   S.histNew = 0;
+  // Friends screen has no conversation: clear any stale pins state so the
+  // header pins icon from the previous channel/DM doesn't linger.
+  S.pinCount = 0; S.pinIds = new Set(); paintPinsBtn();
   updatePill();
   document.body.classList.remove('dm-open');
   $('#composer').classList.add('hidden');
