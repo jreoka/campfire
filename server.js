@@ -1249,7 +1249,7 @@ app.put('/api/notifs/prefs', authRequired, (req, res) => {
   res.json({ ok: true });
 });
 app.get('/api/dms', authRequired, (req, res) => {
-  const ids = db.prepare('SELECT thread_id FROM dm_members WHERE user_id = ?').all(req.user.id).map((r) => r.thread_id);
+  const ids = db.prepare('SELECT thread_id FROM dm_members WHERE user_id = ? AND (hidden IS NULL OR hidden = 0)').all(req.user.id).map((r) => r.thread_id);
   const out = [];
   for (const id of ids) {
     const t = db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(id);
@@ -1266,7 +1266,10 @@ app.post('/api/dms', authRequired, (req, res) => {
     const t = db.prepare('SELECT * FROM dm_threads WHERE id = ? AND (is_group IS NULL OR is_group = 0)').get(tid);
     if (!t) continue;
     const mems = db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ?').all(tid).map((r) => r.user_id);
-    if (mems.length === 2 && mems.includes(target.id)) return res.json({ thread: dmThreadView(t) });
+    if (mems.length === 2 && mems.includes(target.id)) {
+      db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ? AND user_id = ?').run(tid, req.user.id);
+      return res.json({ thread: dmThreadView(t) });
+    }
   }
   const id = uid();
   db.transaction(() => {
@@ -1315,6 +1318,21 @@ app.post('/api/dms/:tid/leave', authRequired, (req, res) => {
     db.prepare('DELETE FROM dm_threads WHERE id = ?').run(t.id);
   }
   res.json({ ok: true });
+});
+// Dismiss a DM from your list (per-user hide; membership kept, peer not notified).
+// Reappears on new messages or when reopened via POST /api/dms or /open.
+app.post('/api/dms/:tid/close', authRequired, (req, res) => {
+  const t = dmThreadFor(req.user.id, req.params.tid);
+  if (!t) return res.status(404).json({ error: 'no_thread' });
+  db.prepare('UPDATE dm_members SET hidden = 1 WHERE thread_id = ? AND user_id = ?').run(t.id, req.user.id);
+  notifyUser(req.user.id, { t: 'dm-threads-changed' });
+  res.json({ ok: true });
+});
+app.post('/api/dms/:tid/open', authRequired, (req, res) => {
+  const t = dmThreadFor(req.user.id, req.params.tid);
+  if (!t) return res.status(404).json({ error: 'no_thread' });
+  db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ? AND user_id = ?').run(t.id, req.user.id);
+  res.json({ thread: dmThreadView(t) });
 });
 
 app.post('/api/dms/:tid/members/:uid/remove', authRequired, (req, res) => {
@@ -1695,6 +1713,7 @@ wss.on('connection', (ws, req) => {
       const mid = uid();
       db.prepare('INSERT INTO dm_messages (id,thread_id,user_id,content,reply_to_id,created_at) VALUES (?,?,?,?,?,?)')
         .run(mid, threadId, me.userId, content, replyTo, now());
+      db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ?').run(threadId);
       const insAtt = db.prepare('INSERT INTO dm_attachments (id,message_id,url,filename,mime,size,kind,created_at) VALUES (?,?,?,?,?,?,?,?)');
       for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, now());
       dmNotify(threadId, { t: 'dm-new', message: fullDm(mid, null) });

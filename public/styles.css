@@ -419,6 +419,10 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .dmrow .dmname{font-size:.88rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dmrow .dmlast{font-size:.74rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dmrow .mini{flex-shrink:0}
+.dm-close{flex-shrink:0;width:24px;height:24px;border:0;border-radius:8px;background:transparent;color:var(--muted);font-size:1.05rem;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0}
+.dmrow:hover .dm-close,.dmrow:focus-within .dm-close{opacity:1}
+.dm-close:hover{background:var(--panel-3);color:var(--text)}
+@media (hover:none){.dm-close{opacity:1}}
 .home-btn{padding:0;background:transparent}
 .home-btn img{width:100%;height:100%;object-fit:cover;display:block;border-radius:inherit}
 .home-btn:hover{background:transparent}

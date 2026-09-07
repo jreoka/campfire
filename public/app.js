@@ -219,6 +219,14 @@ async function boot() {
     if (qdm) {
       await openHome();
       if (S.dms.some((t) => t.id === qdm)) selectDmThread(qdm);
+      else {
+        // dismissed (hidden) thread from a notification link — reopen it
+        try {
+          const { thread } = await api(`/api/dms/${qdm}/open`, { method: 'POST' });
+          await refreshDms();
+          selectDmThread(thread.id);
+        } catch {}
+      }
     } else if (qserv && S.servers.some((s) => s.id === qserv)) {
       await selectServer(qserv);
       if (S.serverDetail?.channels.some((c) => c.id === qchan && c.type === 'text')) await selectChannel(qchan);
@@ -2390,6 +2398,18 @@ function dmRowEl(t) {
   if (av) paintAvatar(b.querySelector('.avatar'), av);
   else { const a = b.querySelector('.avatar'); a.style.background = 'var(--panel-3)'; }
   b.onclick = () => selectDmThread(t.id);
+  if (!t.isGroup) {
+    const x = document.createElement('span');
+    x.className = 'dm-close';
+    x.textContent = '×';
+    x.title = 'Close DM';
+    x.setAttribute('role', 'button');
+    x.tabIndex = 0;
+    const doClose = (e) => { e.stopPropagation(); closeDm(t.id); };
+    x.onclick = doClose;
+    x.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doClose(e); } };
+    b.appendChild(x);
+  }
   return b;
 }
 function renderDmLists() {
@@ -2404,6 +2424,11 @@ async function openDmWith(userId) {
     await refreshDms();
     selectDmThread(thread.id);
   } catch (err) { toast(prettyError(err.message)); }
+}
+async function closeDm(tid) {
+  try { await api(`/api/dms/${tid}/close`, { method: 'POST' }); } catch {}
+  if (S.dmThreadId === tid) { S.dmThreadId = null; renderDmBlank(); }
+  refreshDms();
 }
 function openGroupModal() {
   const friends = S.friends.friends;
@@ -2426,6 +2451,9 @@ function dmCtxMenu(tid, x, y) {
   const items = [
     { label: 'Open', icon: '→', fn: () => selectDmThread(tid) },
   ];
+  if (t && !t.isGroup) {
+    items.push({ label: 'Close DM', icon: '×', fn: () => closeDm(tid) });
+  }
   if (t && t.isGroup && t.created_by === S.me?.id) {
     items.push({ label: 'Banned members…', icon: '⊘', fn: () => openGroupBans(tid) });
   }
