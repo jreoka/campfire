@@ -277,7 +277,7 @@ async function saveEdit(mid) {
     }
     else if (act === 'more' && mid) openPicker('react', mid, 'emoji', { x: e.clientX, y: e.clientY });
     else if (act === 'menu' && mid) messageCtxMenu(mid, e.clientX, e.clientY);
-    else if (act === 'reply' && mid) { S.replyTo = msgById(mid); renderComposerMeta(); $('#in-message').focus(); }
+    else if (act === 'reply' && mid) replyToMsg(msgById(mid));
     else if (act === 'thread' && mid) openThread(mid);
     else if (act === 'vote' && mid) votePoll(mid, actEl.dataset.opt);
     else if (act === 'expand-file') expandTextFile(actEl);
@@ -340,6 +340,7 @@ async function openThread(rootId) {
   try {
     const { root, replies } = await api(`/api/servers/${S.serverId}/channels/${S.channelId}/threads/${rootId}`);
     S.thread = { rootId, channelId: S.channelId, root, replies };
+    S.threadReplyTo = null; renderThreadComposerMeta();
     $('#thread-sub').textContent = '#' + chanName(S.channelId);
     $('#thread-panel').classList.remove('hidden');
     renderThread(true);
@@ -358,6 +359,7 @@ function renderThread(scroll = false) {
 }
 function closeThread(silent) {
   S.thread = null;
+  S.threadReplyTo = null; renderThreadComposerMeta();
   const p = $('#thread-panel');
   if (p) p.classList.add('hidden');
 }
@@ -422,7 +424,9 @@ $('#thread-composer').addEventListener('submit', (e) => {
   const content = inp.value.trim();
   if (!content) return;
   inp.value = '';
-  sendChat(content, { threadRoot: S.thread.rootId });
+  sendChat(content, { threadRoot: S.thread.rootId, replyTo: S.threadReplyTo?.id || null });
+  S.threadReplyTo = null;
+  renderThreadComposerMeta();
 });
 
 // ---------- lightbox ----------

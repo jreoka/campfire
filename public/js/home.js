@@ -255,8 +255,10 @@ function dmRowEl(t) {
   b.dataset.dmthread = t.id;
   const av = t.isGroup ? null : dmPeer(t);
   b.innerHTML = `<span class="avatar">${t.isGroup ? '#' : ''}</span><span class="dmmain"><span class="dmname" style="${!t.isGroup && av ? nameStyleFor(av) : ''}">${esc(dmTitle(t))}</span><br/><span class="dmlast">${esc(t.last ? `${t.last.author}: ${t.last.content}`.slice(0, 60) : 'No messages yet')}</span></span>`;
-  if (av) paintAvatar(b.querySelector('.avatar'), av);
-  else { const a = b.querySelector('.avatar'); a.style.background = 'var(--panel-3)'; }
+  const avSpan = b.querySelector('.avatar');
+  if (av) paintAvatar(avSpan, av);
+  else avSpan.style.background = 'var(--panel-3)';
+  avSpan.style.boxShadow = 'none'; // no grey ring on sidebar DM pfps (matches the DM rail)
   if (av && av.sidebar_banner_url && statusOf(av.id) !== 'offline') {
     b.style.backgroundImage = `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${av.sidebar_banner_url}")`;
     b.style.backgroundSize = 'cover';

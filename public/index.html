@@ -215,8 +215,11 @@
       <div id="thread-root"></div>
       <div id="thread-replies"></div>
       <form id="thread-composer">
-        <input id="in-thread" autocomplete="off" maxlength="5000" placeholder="Reply in thread" />
-        <button class="btn primary small" type="submit">Reply</button>
+        <div id="thread-reply-meta" class="hidden"></div>
+        <div id="thread-composer-row">
+          <input id="in-thread" autocomplete="off" maxlength="5000" placeholder="Reply in thread" />
+          <button class="btn primary small" type="submit">Reply</button>
+        </div>
       </form>
     </aside>
   </section>

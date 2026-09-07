@@ -314,6 +314,36 @@ function renderComposerMeta() {
   });
   syncComposerRender();
 }
+// Reply chip for the thread composer (mirrors the main-composer reply meta).
+function renderThreadComposerMeta() {
+  const box = $('#thread-reply-meta');
+  if (!box) return;
+  box.innerHTML = '';
+  box.classList.toggle('hidden', !S.threadReplyTo);
+  if (!S.threadReplyTo) return;
+  const chip = document.createElement('div');
+  chip.className = 'att-chip';
+  chip.innerHTML = `<span>Replying to <b>${esc(S.threadReplyTo.user ? S.threadReplyTo.user.display_name : '?')}</b>: ${esc(String(S.threadReplyTo.content || '').slice(0, 60))}</span>`;
+  const x = document.createElement('button'); x.className = 'mini'; x.textContent = '✕'; x.type = 'button';
+  x.onclick = () => { S.threadReplyTo = null; renderThreadComposerMeta(); };
+  chip.appendChild(x); box.appendChild(chip);
+}
+// Dispatch a Reply from a message. Inside an open thread it replies in-thread;
+// otherwise it replies in the main channel. Fixes replying to an in-thread
+// message landing outside the thread.
+function replyToMsg(m) {
+  if (!m) return;
+  const inThread = S.thread && S.thread.rootId && (m.id === S.thread.rootId || m.threadRoot === S.thread.rootId);
+  if (inThread) {
+    S.replyTo = null; S.threadReplyTo = m;
+    renderThreadComposerMeta();
+    const ti = $('#in-thread'); if (ti) ti.focus();
+  } else {
+    S.threadReplyTo = null; S.replyTo = m;
+    renderComposerMeta();
+    const im = $('#in-message'); if (im) im.focus();
+  }
+}
 async function uploadAndAttach(file) {
   if (!file) return;
   if (file.size > 100 * 1024 * 1024) { toast('File too big (max 100MB)'); return; }
