@@ -262,7 +262,7 @@ function serverBtn(s) {
     const img = document.createElement('img');
     img.src = s.icon_url; img.alt = ''; img.draggable = false;
     img.width = 48; img.height = 48;
-    img.style.cssText = 'width:48px!important;height:48px!important;object-fit:cover!important;border-radius:14px!important;display:block!important;pointer-events:none!important';
+    img.style.cssText = 'width:48px!important;height:48px!important;object-fit:cover!important;border-radius:inherit!important;display:block!important;pointer-events:none!important';
     img.onerror = () => { b.classList.remove('has-icon'); b.innerHTML = ''; b.textContent = label; };
     b.appendChild(img);
   } else {

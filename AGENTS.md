@@ -54,14 +54,15 @@ campfire/
 
 ## Design language (owner directive)
 
-**Flat, polished, professional. Never "AI-coded" looking.** Black-and-white theme:
-- Pure black surfaces (`#000` base/panels/rail), **white 1px dividing lines**
-  between sections, white component borders, white text, grey secondary text.
-  Primary buttons invert (white bg, black text). **No gradients, no box-shadows.**
+**Flat, polished, professional. Never "AI-coded" looking.** Google Material 3 dark theme:
+- Tonal green surfaces (no gradients, no shadows — elevation is tonal steps).
+  Hairline `outline-variant` dividers between sections; borderless tonal cards,
+  pill buttons/chips/inputs, 28px dialogs, expressive radii.
+- Primary buttons invert per M3 (light green bg, dark text). Toast is an inverse
+  snackbar (light bg, dark text). FAB-style add-server button.
 - Semantic colors only where they carry meaning: green (online/speaking/live),
   amber (away), red (danger/DND/muted). User-chosen colors (avatars, folders,
   banners) and user content stay as-is.
-- 6–8px radii. Inputs get white border on focus.
 - **No emoji in UI chrome** (use SVG/text: `Invite`, `···`, `Mute`, `↩`, `⋯`).
   Exceptions, both user-driven content: message text/reactions, and the hover
   bar's most-used emoji. Toast copy is plain text, no emoji.
