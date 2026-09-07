@@ -331,6 +331,9 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .msg:hover .msg-actions{display:flex}
 .msg-actions button{border:0;background:transparent;color:var(--text);border-radius:999px;padding:.2rem .35rem;font-size:1rem;line-height:1.2;cursor:pointer;min-width:30px}
 .msg-actions button:hover{background:var(--panel-3)}
+/* messages near the top of a scroll list (e.g. first thread reply under the
+   root section): pin the hover bar inside so it isn't clipped above */
+.msg.flip-actions .msg-actions{top:2px}
 .thread-link{border:0;background:transparent;color:var(--accent);font-size:.78rem;font-weight:600;cursor:pointer;padding:.15rem 0}
 .thread-link:hover{text-decoration:underline}
 .edited{font-size:.7rem;color:var(--muted)}

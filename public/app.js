@@ -3585,6 +3585,29 @@ function closeThread(silent) {
   const p = $('#thread-panel');
   if (p) p.classList.add('hidden');
 }
+// Keep the hover quick-action bar usable near the top of a scroll list: when
+// a message sits within the bar's clearance (~36px) of the scrollport top
+// (e.g. the first thread reply right under the root section), pin the bar
+// inside the message instead of letting it clip above.
+let flipMsgEl = null;
+function positionFlipActions(msgEl) {
+  if (!msgEl || !msgEl.isConnected) return;
+  const scroller = msgEl.closest('#messages,#thread-replies');
+  if (!scroller) { msgEl.classList.remove('flip-actions'); return; }
+  const top = msgEl.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+  msgEl.classList.toggle('flip-actions', top < 36);
+}
+document.addEventListener('mouseover', (e) => {
+  const m = e.target && e.target.closest ? e.target.closest('.msg') : null;
+  if (m === flipMsgEl) return;
+  if (flipMsgEl) flipMsgEl.classList.remove('flip-actions');
+  flipMsgEl = m;
+  if (m) positionFlipActions(m);
+});
+for (const sid of ['#messages', '#thread-replies']) {
+  const sc = $(sid);
+  if (sc) sc.addEventListener('scroll', () => positionFlipActions(flipMsgEl), { passive: true });
+}
 $('#thread-close').onclick = () => closeThread();
 // thread sidebar resize (drag left edge, clamped + remembered)
 const THREAD_W_MIN = 280, THREAD_W_MAX = 620;
