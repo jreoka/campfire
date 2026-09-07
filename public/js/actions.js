@@ -519,7 +519,11 @@ function ctxFor(el, x, y) {
 }
 document.addEventListener('contextmenu', (e) => {
   if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"], a')) return;
-  if (isCoarse() && e.target.closest && e.target.closest('.msg[data-mid]')) { e.preventDefault(); return; } // touch sheet owns message long-press
+  // On touch-primary devices the long-press is owned by the bottom-sheet/popup
+  // handler below. Suppress the native menu AND the desktop-style popup here so
+  // they don't both appear alongside the slide-up sheet. Desktop right-click
+  // keeps the ctxFor popup.
+  if (isCoarse()) { e.preventDefault(); return; }
   if (ctxFor(e.target, e.clientX, e.clientY)) e.preventDefault();
 });
 // touch-hold (long press): bottom sheet for messages, popup menus elsewhere
