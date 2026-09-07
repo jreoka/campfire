@@ -2,4 +2,16 @@
 # Caddy fetches and renews a Let's Encrypt certificate automatically.
 {$DOMAIN} {
 	reverse_proxy campfire:3000
+	# TEMP debug: per-request log to catch a stuck client (remove after).
+	log {
+		output stdout
+		format filter {
+			wrap console
+			fields {
+				common_log delete
+				request>headers delete
+				resp_headers delete
+			}
+		}
+	}
 }
