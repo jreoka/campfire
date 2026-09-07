@@ -157,6 +157,12 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
       item rendered narrower than the button. Rail icons (and settings preview) now
       paint via `background-image: cover`, which fills by construction; broken URLs
       fall back to the letter via a preload probe.
+- [x] Black-and-white theme + menus + reaction bar (2026-09-07): full mono theme
+      (black surfaces, white dividing lines/borders, inverted primary buttons;
+      semantic colors kept only for status/VAD/danger/user content). Generic
+      right-click + touch-hold context menus for messages, channels, members,
+      servers, voice users (native menu preserved in inputs/links). Hover bar is
+      now most-used emoji (tracked locally) + ➕ + ↩ + ⋯ overflow menu.
 - [x] Poisoned-cache lesson (2026-09-07): a once-404 upload URL can stick in a
       browser/SW cache even after the file exists. Fix without user action: copy
       the file to a fresh random name (+ `?v=`), point the db row at it. All new
