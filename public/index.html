@@ -168,19 +168,29 @@
     </div>
     <div class="set-body">
       <div id="set-profile" class="set-pane">
-        <div id="set-banner-prev" class="set-banner"></div>
-        <div class="row" style="margin-top:-22px">
-          <span id="set-avatar-prev" class="avatar big"></span>
+        <div class="pf-sec-label">Avatar</div>
+        <div class="pfp-row">
+          <span id="set-avatar-prev" class="avatar big clickable" title="Upload a new avatar"></span>
+          <div class="pfp-btns">
+            <div class="row">
+              <button class="btn small primary" id="set-avatar-btn">Upload</button>
+              <button class="btn small" id="set-avatar-gif">Use GIF</button>
+              <button class="btn small" id="set-avatar-rm">Remove</button>
+            </div>
+            <div id="set-avatar-hist" class="hist-row"></div>
+          </div>
         </div>
-        <div class="row" style="margin:.6rem 0">
-          <button class="btn small" id="set-avatar-btn">Change avatar</button>
-          <button class="btn small" id="set-avatar-rm">Remove</button>
-          <button class="btn small" id="set-banner-btn">Change banner</button>
+        <div class="pf-sec-label">Banner</div>
+        <div id="set-banner-prev" class="set-banner clickable" title="Upload a new banner"></div>
+        <div class="row" style="margin-top:.55rem">
+          <button class="btn small primary" id="set-banner-btn">Upload</button>
+          <button class="btn small" id="set-banner-gif">Use GIF</button>
           <button class="btn small" id="set-banner-rm">Remove</button>
         </div>
+        <div id="set-banner-hist" class="hist-row"></div>
         <input id="set-avatar-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" />
         <input id="set-banner-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" />
-        <p class="muted small">Avatars and banners can be animated GIFs.</p>
+        <p class="muted small">Avatars, banners and emoji can be animated GIFs. Click a preview to upload, or pick a GIF.</p>
         <label>Display name<input id="set-display" maxlength="32" /></label>
         <div class="row" style="margin-top:.7rem">
           <label style="flex:1">Status

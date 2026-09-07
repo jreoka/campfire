@@ -379,12 +379,24 @@ function imgSingle(up) {
 function freshUser(id) {
   return publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(id));
 }
+function recordMedia(userId, kind, url) {
+  if (!url) return;
+  db.prepare('INSERT INTO media_history (id,user_id,kind,url,created_at) VALUES (?,?,?,?,?)')
+    .run(uid(), userId, kind, url, now());
+  db.prepare(`DELETE FROM media_history WHERE user_id = ? AND kind = ? AND id NOT IN
+    (SELECT id FROM media_history WHERE user_id = ? AND kind = ? ORDER BY created_at DESC LIMIT 8)`)
+    .run(userId, kind, userId, kind);
+}
+function mediaHist(userId, kind) {
+  return db.prepare('SELECT id,url,created_at FROM media_history WHERE user_id = ? AND kind = ? ORDER BY created_at DESC LIMIT 8').all(userId, kind);
+}
 
 // ---------- profile ----------
 app.post('/api/me/avatar', authRequired, imgSingle(upImg), (req, res) => {
   const url = uploadUrl('avatars', req.file);
   deleteUploaded(req.user.avatar_url);
   db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(url, req.user.id);
+  recordMedia(req.user.id, 'avatar', url);
   const u = freshUser(req.user.id);
   broadcastUserUpdate(u);
   res.json({ user: u });
@@ -400,6 +412,7 @@ app.post('/api/me/banner', authRequired, imgSingle(upBanner), (req, res) => {
   const url = uploadUrl('banners', req.file);
   deleteUploaded(req.user.banner_url);
   db.prepare('UPDATE users SET banner_url = ? WHERE id = ?').run(url, req.user.id);
+  recordMedia(req.user.id, 'banner', url);
   const u = freshUser(req.user.id);
   broadcastUserUpdate(u);
   res.json({ user: u });
@@ -439,6 +452,28 @@ app.patch('/api/me', authRequired, (req, res) => {
   // sync live sockets' presence state
   for (const c of clients) if (c.meta && c.meta.userId === u.id) c.meta.status = u.status;
   res.json({ user: u });
+});
+// set avatar/banner from a URL (e.g. a Klipy GIF) instead of an upload
+function setProfileUrl(req, res, col, kind) {
+  const url = String(req.body?.url || '').trim().slice(0, 500);
+  if (!/^https:\/\//.test(url)) return res.status(400).json({ error: 'bad_url (https only)' });
+  deleteUploaded(req.user[col]);
+  db.prepare(`UPDATE users SET ${col} = ? WHERE id = ?`).run(url, req.user.id);
+  recordMedia(req.user.id, kind, url);
+  const u = freshUser(req.user.id);
+  broadcastUserUpdate(u);
+  res.json({ user: u, history: mediaHist(req.user.id, kind) });
+}
+app.post('/api/me/avatar/url', authRequired, (req, res) => setProfileUrl(req, res, 'avatar_url', 'avatar'));
+app.post('/api/me/banner/url', authRequired, (req, res) => setProfileUrl(req, res, 'banner_url', 'banner'));
+app.get('/api/me/media-history', authRequired, (req, res) => {
+  res.json({ avatar: mediaHist(req.user.id, 'avatar'), banner: mediaHist(req.user.id, 'banner') });
+});
+app.delete('/api/me/media-history/:hid', authRequired, (req, res) => {
+  const row = db.prepare('SELECT * FROM media_history WHERE id = ? AND user_id = ?').get(req.params.hid, req.user.id);
+  if (!row) return res.status(404).json({ error: 'no_entry' });
+  db.prepare('DELETE FROM media_history WHERE id = ?').run(row.id);
+  res.json({ ok: true });
 });
 app.post('/api/me/password', authRequired, async (req, res) => {
   const { current, next } = req.body || {};

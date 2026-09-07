@@ -99,6 +99,14 @@ CREATE TABLE IF NOT EXISTS custom_emoji (
 CREATE INDEX IF NOT EXISTS idx_reactions_msg ON message_reactions(message_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_msg ON attachments(message_id);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_root_id);
+CREATE TABLE IF NOT EXISTS media_history (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('avatar','banner')),
+  url TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_media_history_user ON media_history(user_id, kind, created_at);
 CREATE TABLE IF NOT EXISTS server_folders (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

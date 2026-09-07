@@ -427,6 +427,11 @@ function renderMembers() {
     const div = document.createElement('div');
     div.className = 'member' + (st === 'offline' ? ' off' : '');
     div.dataset.uid = m.id;
+    if (m.banner_url && st !== 'offline') {
+      div.style.backgroundImage = `linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${m.banner_url}")`;
+      div.style.backgroundSize = 'cover';
+      div.style.backgroundPosition = 'right center';
+    }
     div.innerHTML = `<span class="avatar"></span><span class="mnames"><span>${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${m.status_text && st !== 'offline' ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ''}</span><span class="status-dot ${st}"></span>`;
     paintAvatar(div.querySelector('.avatar'), m);
     box.appendChild(div);
@@ -1445,7 +1450,8 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji') {
   loadGifTrending();
   setTimeout(() => $('#pk-search').focus(), 0);
 }
-function closePicker() { $('#picker').classList.add('hidden'); S.picker = null; }
+function closePicker() { $('#picker').classList.add('hidden'); S.picker = null; S.gifPick = null; }
+S.gifPick = null; // 'avatar'|'banner' when the GIF picker is choosing profile media
 function setPickerTab(t) {
   document.querySelectorAll('.pk-tab').forEach((b) => b.classList.toggle('active', b.dataset.ptab === t));
   $('#pk-emoji').classList.toggle('hidden', t !== 'emoji');
@@ -1569,9 +1575,12 @@ async function loadGifSearch(q) {
   } catch { box.innerHTML = '<div class="pk-empty">Search failed.</div>'; }
 }
 function sendGif(g) {
+  const url = g.gif || g.mp4;
+  const pick = S.gifPick;
   closePicker();
-  if (!S.serverId || !S.channelId) return;
-  sendChat('', { attachments: [{ url: g.gif, name: (g.title || 'gif').slice(0, 80) + '.gif', mime: 'image/gif', size: 0, kind: 'image' }] });
+  if (pick === 'avatar' || pick === 'banner') { if (url) applyProfileUrl(pick, url); return; }
+  if (!S.serverId || !S.channelId || !url) return;
+  sendChat('', { attachments: [{ url, name: (g.title || 'gif').slice(0, 80) + '.gif', mime: 'image/gif', size: 0, kind: 'image' }] });
 }
 
 // ---------- reactions / reply / edit / thread actions ----------
@@ -1648,6 +1657,45 @@ async function saveEdit(mid) {
 });
 
 // ---------- threads ----------
+async function applyProfileUrl(kind, url) {
+  try {
+    const { user } = await api(`/api/me/${kind}/url`, { method: 'POST', body: JSON.stringify({ url }) });
+    S.me = { ...S.me, ...user };
+    paintMe(); renderMembers();
+    if (kind === 'avatar') paintAvatar($('#set-avatar-prev'), S.me);
+    else $('#set-banner-prev').style.backgroundImage = S.me.banner_url ? `url('${S.me.banner_url}')` : '';
+    loadMediaHist();
+    toast(kind === 'avatar' ? 'Avatar updated' : 'Banner updated');
+  } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+}
+async function loadMediaHist() {
+  try {
+    const h = await api('/api/me/media-history');
+    renderHistRow($('#set-avatar-hist'), h.avatar || [], 'avatar', false);
+    renderHistRow($('#set-banner-hist'), h.banner || [], 'banner', true);
+  } catch {}
+}
+function renderHistRow(box, items, kind, wide) {
+  if (!box) return;
+  box.innerHTML = '';
+  for (const it of items) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'hist-dot' + (wide ? ' wide' : '');
+    b.style.backgroundImage = `url("${it.url}")`;
+    b.title = 'Use this ' + kind;
+    b.onclick = () => applyProfileUrl(kind, it.url);
+    const x = document.createElement('span');
+    x.className = 'hist-x'; x.textContent = '✕'; x.title = 'Forget';
+    x.onclick = async (e) => {
+      e.stopPropagation();
+      try { await api('/api/me/media-history/' + it.id, { method: 'DELETE' }); loadMediaHist(); }
+      catch {}
+    };
+    b.appendChild(x);
+    box.appendChild(b);
+  }
+}
 async function openThread(rootId) {
   try {
     const { root, replies } = await api(`/api/servers/${S.serverId}/channels/${S.channelId}/threads/${rootId}`);
@@ -1777,6 +1825,7 @@ function openSettings(tab = 'profile') {
   paintAvatar($('#set-avatar-prev'), S.me);
   const b = $('#set-banner-prev');
   b.style.backgroundImage = S.me.banner_url ? `url('${S.me.banner_url}')` : '';
+  loadMediaHist();
   renderServerTab();
   $('#settings-backdrop').classList.remove('hidden');
 }
@@ -1802,16 +1851,20 @@ async function uploadImage(url, file) {
 }
 $('#set-avatar-btn').onclick = () => $('#set-avatar-file').click();
 $('#set-banner-btn').onclick = () => $('#set-banner-file').click();
+$('#set-avatar-gif').onclick = () => { S.gifPick = 'avatar'; openPicker('insert', null, 'gifs'); };
+$('#set-banner-gif').onclick = () => { S.gifPick = 'banner'; openPicker('insert', null, 'gifs'); };
+$('#set-avatar-prev').onclick = () => $('#set-avatar-file').click();
+$('#set-banner-prev').onclick = () => $('#set-banner-file').click();
 $('#set-avatar-file').addEventListener('change', async (e) => {
   const f = e.target.files[0]; e.target.value = '';
   if (!f) return;
-  try { const { user } = await uploadImage('/api/me/avatar', f); S.me = { ...S.me, ...user }; paintMe(); paintAvatar($('#set-avatar-prev'), S.me); toast('Avatar updated'); }
+  try { const { user } = await uploadImage('/api/me/avatar', f); S.me = { ...S.me, ...user }; paintMe(); paintAvatar($('#set-avatar-prev'), S.me); loadMediaHist(); toast('Avatar updated'); }
   catch (err) { toast('Avatar failed: ' + prettyError(err.message)); }
 });
 $('#set-banner-file').addEventListener('change', async (e) => {
   const f = e.target.files[0]; e.target.value = '';
   if (!f) return;
-  try { const { user } = await uploadImage('/api/me/banner', f); S.me = { ...S.me, ...user }; $('#set-banner-prev').style.backgroundImage = `url('${S.me.banner_url}')`; toast('Banner updated'); }
+  try { const { user } = await uploadImage('/api/me/banner', f); S.me = { ...S.me, ...user }; $('#set-banner-prev').style.backgroundImage = `url('${S.me.banner_url}')`; loadMediaHist(); toast('Banner updated'); }
   catch (err) { toast('Banner failed: ' + prettyError(err.message)); }
 });
 $('#set-avatar-rm').onclick = async () => {
@@ -2020,11 +2073,11 @@ function poke() {
 
 // ---------- global closers ----------
  document.addEventListener('click', (e) => {
-  if (!e.target.closest('#picker') && !e.target.closest('#btn-emoji') && !e.target.closest('#btn-gif') && !e.target.closest('[data-act="react"]')) closePicker();
+  if (!e.target.closest('#picker') && !e.target.closest('#btn-emoji') && !e.target.closest('#btn-gif') && !e.target.closest('.msg-actions')) closePicker();
   if (!e.target.closest('#usercard') && !e.target.closest('[data-uid]') && !e.target.closest('.member')) closeUserCard();
   if (statusMenuEl && !e.target.closest('#status-pop') && !e.target.closest('#me-avatar')) closeStatusMenu();
   if (folderMenuEl && !e.target.closest('#folder-menu')) closeFolderMenu();
-  if (ctxEl && !e.target.closest('#ctx-menu')) closeCtx();
+  if (ctxEl && !e.target.closest('#ctx-menu') && !e.target.closest('.msg-actions')) closeCtx();
 });
  document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { closePicker(); closeUserCard(); closeStatusMenu(); closeFolderMenu(); closeCtx(); closeSettings(); $('#lightbox').classList.add('hidden'); }
