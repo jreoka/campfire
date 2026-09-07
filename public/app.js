@@ -766,7 +766,7 @@ function attDl(a) { return `<a class="att-dl" href="${esc(a.url)}" download="${e
 function attachmentHTML(a) {
   if (a.kind === 'image') return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'video') return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><video class="att-vid" src="${esc(a.url)}" controls preload="metadata"></video>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
-  if (a.kind === 'audio') return `<audio src="${esc(a.url)}" controls preload="metadata"></audio>`;
+  if (a.kind === 'audio') return audioPlayerHTML(a);
   return `<a class="file-card" href="${esc(a.url)}" target="_blank" rel="noopener"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span><span class="fname">${esc(a.name)}</span><br/><span class="fsize">${fmtSize(a.size)}</span></span></a>`;
 }
 function reactionsHTML(m) {
@@ -777,6 +777,129 @@ function reactionsHTML(m) {
       : esc(r.emoji);
     return `<button class="reaction${r.me ? ' me' : ''}" data-act="react" data-emoji="${esc(r.emoji)}" title="${r.count}">${label} ${r.count}</button>`;
   }).join('') + '</div>';
+}
+function fmtClock(s) {
+  s = Math.max(0, Math.floor(s || 0));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+// ---------- voice/audio player (one shared look for every audio embed) ----------
+let vpSeq = 0;
+const VP_BARS = 36;
+function audioPlayerHTML(a) {
+  const tag = 'vp' + (++vpSeq).toString(36) + Date.now().toString(36).slice(-3);
+  return `<div class="vplayer" data-vp="${tag}" data-url="${esc(a.url)}" data-size="${a.size || 0}">`
+    + `<button type="button" class="vp-play" data-vp-toggle title="Play"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path class="vp-ic-play" d="M8 5v14l11-7z"/><path class="vp-ic-pause" d="M7 5h4v14H7zM13 5h4v14h-4z" style="display:none"/></svg></button>`
+    + `<audio src="${esc(a.url)}" preload="metadata"></audio>`
+    + `<div class="vp-body"><div class="vp-bars" data-vp-seek>${'<i></i>'.repeat(VP_BARS)}</div>`
+    + `<div class="vp-meta"><span data-vp-cur>0:00</span><span class="vp-dur">…</span></div></div>`
+    + attDl(a) + `</div>`;
+}
+function vpAudio(root) { return root ? root.querySelector('audio') : null; }
+function vpPaint(root) {
+  const audio = vpAudio(root);
+  if (!audio) return;
+  const dur = audio.duration || 0, cur = audio.currentTime || 0;
+  const ratio = dur > 0 ? Math.min(1, cur / dur) : 0;
+  const bars = root.querySelectorAll('.vp-bars i');
+  const n = Math.round(ratio * bars.length);
+  bars.forEach((b, i) => b.classList.toggle('on', i < n));
+  const ce = root.querySelector('[data-vp-cur]');
+  if (ce) ce.textContent = fmtClock(cur);
+  const playing = !audio.paused && !audio.ended;
+  const play = root.querySelector('.vp-ic-play'), pause = root.querySelector('.vp-ic-pause');
+  if (play) play.style.display = playing ? 'none' : '';
+  if (pause) pause.style.display = playing ? '' : 'none';
+  const tg = root.querySelector('[data-vp-toggle]');
+  if (tg) tg.title = playing ? 'Pause' : 'Play';
+}
+// Real waveform peaks, decoded lazily once the clip's metadata is in.
+// Big files skip decoding and keep the flat segmented track.
+let vpAC = null;
+async function paintPeaks(root, audio) {
+  if (!root || root.dataset.peaks) return;
+  const size = parseInt(root.dataset.size || '0', 10) || 0;
+  if (size > 25 * 1024 * 1024) return;
+  root.dataset.peaks = '1';
+  try {
+    if (!vpAC) vpAC = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = await (await fetch(audio.currentSrc || audio.src)).arrayBuffer();
+    const dec = await vpAC.decodeAudioData(buf);
+    if (!dec || !dec.length) return;
+    const ch = dec.getChannelData(0);
+    const out = new Array(VP_BARS).fill(0);
+    const per = Math.max(1, Math.floor(ch.length / VP_BARS));
+    for (let i = 0; i < VP_BARS; i++) {
+      let m = 0;
+      const s = i * per;
+      for (let j = s; j < Math.min(s + per, ch.length); j += 11) { const v = Math.abs(ch[j]); if (v > m) m = v; }
+      out[i] = m;
+    }
+    const mx = Math.max(...out, 0.02);
+    root.querySelectorAll('.vp-bars i').forEach((b, i) => { b.style.height = Math.max(14, Math.round((out[i] / mx) * 100)) + '%'; });
+  } catch { delete root.dataset.peaks; }
+}
+document.addEventListener('click', (e) => {
+  const tg = e.target.closest('[data-vp-toggle]');
+  const sk = e.target.closest('[data-vp-seek]');
+  if (tg) {
+    const root = tg.closest('.vplayer'), audio = vpAudio(root);
+    if (!audio) return;
+    if (audio.paused) {
+      // one clip at a time: stop anything else playing first
+      document.querySelectorAll('.vplayer audio').forEach((o) => { if (o !== audio && !o.paused) o.pause(); });
+      audio.play().catch(() => {});
+    } else audio.pause();
+    return;
+  }
+  if (sk) {
+    const root = sk.closest('.vplayer'), audio = vpAudio(root);
+    if (audio && audio.duration) {
+      const r = sk.getBoundingClientRect();
+      audio.currentTime = Math.min(0.999, Math.max(0, (e.clientX - r.left) / Math.max(1, r.width))) * audio.duration;
+      vpPaint(root);
+    }
+    return;
+  }
+});
+['play', 'pause', 'timeupdate', 'ended'].forEach((ev) => document.addEventListener(ev, (e) => {
+  const t = e.target;
+  if (t && t.tagName === 'AUDIO' && t.closest) {
+    const root = t.closest('.vplayer');
+    if (root) vpPaint(root);
+  }
+}, true));
+document.addEventListener('loadedmetadata', (e) => {
+  const t = e.target;
+  if (!t || t.tagName !== 'AUDIO' || !t.closest) return;
+  const root = t.closest('.vplayer');
+  if (!root) return;
+  const de = root.querySelector('.vp-dur');
+  if (de && isFinite(t.duration)) de.textContent = fmtClock(t.duration);
+  vpPaint(root);
+  paintPeaks(root, t);
+}, true);
+// ---------- polls ----------
+function pollHTML(m) {
+  const p = m.poll;
+  if (!p) return '';
+  const total = p.total || 0;
+  const opts = (p.options || []).map((o) => {
+    const mine = !!(S.me && (o.voters || []).includes(S.me.id));
+    const pct = total ? Math.round(((o.votes || 0) / total) * 100) : 0;
+    return `<button type="button" class="poll-opt${mine ? ' voted' : ''}" data-act="vote" data-opt="${o.id}" title="${o.votes || 0} vote${(o.votes || 0) === 1 ? '' : 's'}">`
+      + `<span class="poll-fill" style="width:${pct}%"></span>`
+      + `<span class="poll-label">${esc(o.label)}</span>`
+      + `<span class="poll-meta">${mine ? '✓ ' : ''}${o.votes || 0} · ${pct}%</span></button>`;
+  }).join('');
+  return `<div class="poll" data-poll="${p.id}"><div class="poll-opts">${opts}</div>`
+    + `<div class="poll-foot">${total} vote${total === 1 ? '' : 's'} · tap an option to vote</div></div>`;
+}
+async function votePoll(mid, optionId) {
+  const m = msgById(mid);
+  const pid = m && m.poll && m.poll.id;
+  if (!pid || !optionId) return;
+  try { await api(`/api/polls/${pid}/vote`, { method: 'POST', body: JSON.stringify({ optionId }) }); }
+  catch (err) { toast(prettyError(err.message)); }
 }
 function messageEl(m, opts = {}) {
   const div = document.createElement('div');
@@ -808,6 +931,7 @@ function messageEl(m, opts = {}) {
   if (m.attachments?.length) {
     inner += '<div class="msg-atts">' + m.attachments.map(attachmentHTML).join('') + '</div>';
   }
+  if (m.poll) inner += pollHTML(m);
   inner += reactionsHTML(m);
   if (!opts.inThread && !m.threadRoot && m.threadCount > 0) {
     inner += `<button class="thread-link" data-act="thread">${m.threadCount} ${m.threadCount === 1 ? 'reply' : 'replies'} →</button>`;
@@ -3441,6 +3565,114 @@ function sendDm(content, opts = {}) {
     renderDmMessages(true);
   } else toast('Reconnecting… try again in a second');
 }
+// ---------- voice messages (record → attach → Send) ----------
+let recSt = null; // {rec, stream, chunks, t0, timer, cancelled}
+const REC_MAX_MS = 5 * 60 * 1000;
+function recMime() {
+  if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return '';
+  try {
+    return ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find((t) => MediaRecorder.isTypeSupported(t)) || '';
+  } catch { return ''; }
+}
+async function startVoiceRec() {
+  if (recSt) { toast('Already recording'); return; }
+  if (!composerTargetReady()) { toast('Pick a chat first, then record'); return; }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch { toast('Microphone blocked — allow mic access to record'); return; }
+  const mt = recMime();
+  let rec;
+  try { rec = new MediaRecorder(stream, mt ? { mimeType: mt } : undefined); }
+  catch { try { stream.getTracks().forEach((t) => t.stop()); } catch {} toast('Recording is not supported here'); return; }
+  recSt = { rec, stream, chunks: [], t0: Date.now(), timer: null, cancelled: false };
+  rec.ondataavailable = (e) => { if (recSt && e.data && e.data.size) recSt.chunks.push(e.data); };
+  rec.onstop = finishVoiceRec;
+  try { rec.start(); } catch { cancelVoiceRec(); return; }
+  paintRecBar();
+  recSt.timer = setInterval(() => {
+    if (!recSt) return;
+    paintRecTime();
+    if (Date.now() - recSt.t0 >= REC_MAX_MS) stopVoiceRec(); // cap: auto-finish
+  }, 500);
+}
+function paintRecBar() {
+  const bar = $('#rec-bar');
+  if (!bar) return;
+  bar.classList.toggle('hidden', !recSt);
+  paintRecTime();
+}
+function paintRecTime() {
+  const t = $('#rec-time');
+  if (t) t.textContent = fmtClock(recSt ? (Date.now() - recSt.t0) / 1000 : 0);
+}
+function stopVoiceRec() {
+  if (recSt && !recSt.cancelled) { try { recSt.rec.stop(); } catch {} }
+}
+function cancelVoiceRec() {
+  if (!recSt) return;
+  recSt.cancelled = true;
+  try { recSt.rec.stop(); } catch { finishVoiceRec(); }
+}
+function finishVoiceRec() {
+  const st = recSt;
+  recSt = null;
+  if (st) {
+    if (st.timer) clearInterval(st.timer);
+    try { st.stream.getTracks().forEach((t) => t.stop()); } catch {}
+  }
+  paintRecBar();
+  if (!st || st.cancelled || !st.chunks.length) return;
+  const type = String((st.rec.mimeType || 'audio/webm')).split(';')[0] || 'audio/webm';
+  const file = new File(st.chunks, 'voice-message.' + (type === 'audio/mp4' ? 'm4a' : 'webm'), { type });
+  if (!composerTargetReady()) { toast('Pick a chat first, then record'); return; }
+  uploadAndAttach(file);
+  $('#in-message').focus();
+}
+// ---------- polls ----------
+function sendPoll(question, options) {
+  question = String(question || '').trim().slice(0, 200);
+  options = [...new Set((options || []).map((o) => String(o || '').trim().slice(0, 60)).filter(Boolean))].slice(0, 8);
+  if (!question || options.length < 2) return;
+  if (!S.ws || S.ws.readyState !== 1) { toast('Reconnecting… try again in a second'); return; }
+  if (S.view === 'home') {
+    if (!S.dmThreadId) { toast('Pick a chat first'); return; }
+    S.ws.send(JSON.stringify({ t: 'dm', threadId: S.dmThreadId, content: question, attachments: [], replyTo: null, poll: { options } }));
+    renderDmMessages(true);
+  } else {
+    if (!S.serverId || !S.channelId) { toast('Pick a chat first'); return; }
+    S.ws.send(JSON.stringify({ t: 'message', serverId: S.serverId, channelId: S.channelId, content: question, attachments: [], replyTo: null, threadRoot: null, poll: { options } }));
+    renderMessages(true);
+  }
+}
+function openPollModal(q = '', opts = []) {
+  const cur = opts.length ? opts : ['', ''];
+  openModal('Create a poll', `
+    <label>Question<input id="m-poll-q" maxlength="200" placeholder="What should we ask?" value="${esc(q)}" /></label>
+    <div id="m-poll-opts" style="margin-top:.6rem;display:flex;flex-direction:column;gap:.4rem">
+      ${cur.map((o, i) => `<input class="m-poll-opt" maxlength="60" placeholder="Option ${i + 1}" value="${esc(o)}" />`).join('')}
+    </div>
+    <div class="row" style="margin-top:.5rem"><button type="button" class="btn small" id="m-poll-add">Add option</button></div>
+    <p class="muted small">2–8 options · one vote per person · tap your vote again to take it back</p>
+  `, 'Post poll', () => {
+    const question = ($('#m-poll-q') || {}).value.trim();
+    const options = [...document.querySelectorAll('.m-poll-opt')].map((i) => i.value.trim()).filter(Boolean);
+    if (!question || options.length < 2) {
+      toast(!question ? 'Ask a question first' : 'Add at least 2 options');
+      setTimeout(() => openPollModal(question, [...document.querySelectorAll('.m-poll-opt')].map((i) => i.value)), 0);
+      return;
+    }
+    sendPoll(question, options);
+  });
+  $('#m-poll-add').onclick = () => {
+    const box = $('#m-poll-opts');
+    const n = box.querySelectorAll('.m-poll-opt').length;
+    if (n >= 8) { toast('Max 8 options'); return; }
+    const inp = document.createElement('input');
+    inp.className = 'm-poll-opt'; inp.maxLength = 60; inp.placeholder = `Option ${n + 1}`;
+    box.appendChild(inp);
+    inp.focus();
+  };
+}
 
 /* ================= v2 features: emoji, GIFs, replies, threads, reactions, cards, settings ================= */
 const EMOJI = [
@@ -3713,6 +3945,7 @@ async function saveEdit(mid) {
     else if (act === 'menu' && mid) messageCtxMenu(mid, e.clientX, e.clientY);
     else if (act === 'reply' && mid) { S.replyTo = msgById(mid); renderComposerMeta(); $('#in-message').focus(); }
     else if (act === 'thread' && mid) openThread(mid);
+    else if (act === 'vote' && mid) votePoll(mid, actEl.dataset.opt);
     else if (act === 'edit' && mid) startEdit(mid);
     else if (act === 'edit-save' && mid) saveEdit(mid);
     else if (act === 'edit-cancel') { S.editing = null; if (S.channelId) renderMessages(); if (S.view === 'home' && S.dmThreadId) renderDmMessages(); if (S.thread) renderThread(); }
@@ -4936,6 +5169,10 @@ $('#btn-more').onclick = (e) => { e.stopPropagation(); closePicker(); $('#compos
 $('#cm-attach').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); $('#btn-attach').click(); };
 $('#cm-emoji').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); $('#btn-emoji').click(); };
 $('#cm-gif').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); $('#btn-gif').click(); };
+$('#cm-voice').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); startVoiceRec(); };
+$('#cm-poll').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); openPollModal(); };
+$('#rec-cancel').onclick = cancelVoiceRec;
+$('#rec-done').onclick = stopVoiceRec;
 // Live markdown preview: rendered backdrop behind the transparent input text.
 function syncComposerRender() {
   const inp = $('#in-message'), r = $('#in-render-inner');

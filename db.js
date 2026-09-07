@@ -194,6 +194,30 @@ CREATE TABLE IF NOT EXISTS dm_pins (
   pinned_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS polls (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL, -- 'server' | 'dm'
+  server_id TEXT REFERENCES servers(id) ON DELETE CASCADE,
+  channel_id TEXT REFERENCES channels(id) ON DELETE CASCADE,
+  thread_id TEXT REFERENCES dm_threads(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL,
+  question TEXT NOT NULL,
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS poll_options (
+  id TEXT PRIMARY KEY,
+  poll_id TEXT NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS poll_votes (
+  poll_id TEXT NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+  option_id TEXT NOT NULL REFERENCES poll_options(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (poll_id, user_id) -- single choice: one vote per user per poll
+);
 CREATE TABLE IF NOT EXISTS blocks (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   blocked_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

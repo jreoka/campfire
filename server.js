@@ -69,8 +69,8 @@ const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(path.dirname(db.DB_PATH),
 const MAX_FILE_BYTES = parseInt(process.env.MAX_FILE_MB || '100', 10) * 1024 * 1024;
 const MAX_IMG_BYTES = 8 * 1024 * 1024;
 const IMG_MIMES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
-const FILE_MIMES = [...IMG_MIMES, 'video/mp4', 'video/webm', 'audio/mpeg', 'audio/ogg', 'audio/wav', 'application/pdf', 'text/plain', 'text/markdown', 'application/zip'];
-const EXT_BY_MIME = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/wav': '.wav', 'application/pdf': '.pdf', 'text/plain': '.txt', 'text/markdown': '.md', 'application/zip': '.zip' };
+const FILE_MIMES = [...IMG_MIMES, 'video/mp4', 'video/webm', 'audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm', 'audio/mp4', 'application/pdf', 'text/plain', 'text/markdown', 'application/zip'];
+const EXT_BY_MIME = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/wav': '.wav', 'audio/webm': '.webm', 'audio/mp4': '.m4a', 'application/pdf': '.pdf', 'text/plain': '.txt', 'text/markdown': '.md', 'application/zip': '.zip' };
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 function uploader(sub, mimes, maxBytes) {
   // S3 mode buffers in memory and uploads to the bucket in persistUpload()
@@ -1059,8 +1059,9 @@ app.delete('/api/messages/:mid', authRequired, (req, res) => {
   if (!canDelete) return res.status(403).json({ error: 'forbidden' });
   // Deleting a thread root removes its replies too (threads are 1 level deep).
   let pinsChanged = false;
+  let kidIds = [];
   if (!m.thread_root_id) {
-    const kidIds = db.prepare('SELECT id FROM messages WHERE thread_root_id = ?').all(m.id).map((r) => r.id);
+    kidIds = db.prepare('SELECT id FROM messages WHERE thread_root_id = ?').all(m.id).map((r) => r.id);
     if (kidIds.length) {
       const ph = kidIds.map(() => '?').join(',');
       if (db.prepare(`DELETE FROM message_pins WHERE message_id IN (${ph})`).run(...kidIds).changes) pinsChanged = true;
@@ -1068,6 +1069,7 @@ app.delete('/api/messages/:mid', authRequired, (req, res) => {
     }
   }
   db.prepare('DELETE FROM messages WHERE id = ?').run(m.id);
+  deletePollsFor('server', kidIds.length ? [m.id, ...kidIds] : [m.id]);
   if (db.prepare('DELETE FROM message_pins WHERE message_id = ?').run(m.id).changes) pinsChanged = true;
   if (pinsChanged) {
     broadcastToServer(m.server_id, { t: 'pins-changed', serverId: m.server_id, channelId: m.channel_id });
@@ -1504,6 +1506,7 @@ function dmNotify(threadId, obj) {
 // left with zero members (last leave, remove, or ban) — explicit deletes so
 // no messages/attachments/reactions/pins dangle even if FK cascades lag.
 function deleteDmThread(threadId) {
+  deletePollsFor('dm', db.prepare('SELECT id FROM dm_messages WHERE thread_id = ?').all(threadId).map((r) => r.id));
   db.transaction(() => {
     db.prepare('DELETE FROM dm_attachments WHERE message_id IN (SELECT id FROM dm_messages WHERE thread_id = ?)').run(threadId);
     db.prepare('DELETE FROM dm_reactions WHERE message_id IN (SELECT id FROM dm_messages WHERE thread_id = ?)').run(threadId);
@@ -1694,6 +1697,7 @@ const DM_JOIN = `SELECT m.*, u.username, u.display_name, u.avatar_color, u.avata
 function hydrateDm(rows, meId) {
   const ids = rows.map((r) => r.id);
   const attBy = {}, reactBy = {};
+  const pollBy = pollsForMessages('dm', ids);
   if (ids.length) {
     const ph = ids.map(() => '?').join(',');
     for (const a of db.prepare(`SELECT * FROM dm_attachments WHERE message_id IN (${ph}) ORDER BY created_at ASC`).all(...ids)) {
@@ -1712,6 +1716,7 @@ function hydrateDm(rows, meId) {
     replyTo: r.reply_to_id ? { id: r.reply_to_id, author: r.p_name || '?', snippet: String(r.p_content || '').slice(0, 140) } : null,
     threadCount: 0, edited: !!r.edited_at, _dm: true,
     attachments: attBy[r.id] || [],
+    poll: pollBy[r.id] || null,
     reactions: Object.values(reactBy[r.id] || {}).map((t) => ({ emoji: t.emoji, count: t.count, me: t.users.includes(meId) })),
     user: r.user_id ? publicUser({ id: r.user_id, username: r.username, display_name: r.display_name, avatar_color: r.avatar_color, avatar_url: r.avatar_url }) : null,
   }));
@@ -1736,6 +1741,54 @@ function cleanAttachments(atts) {
     });
   }
   return out;
+}
+// ---------- polls (single-choice, live-tallying) ----------
+function normalizePollOptions(v) {
+  const raw = Array.isArray(v?.options) ? v.options : [];
+  const labels = [...new Set(raw.map((s) => String(s || '').trim().slice(0, 60)).filter(Boolean))].slice(0, 8);
+  return labels.length >= 2 ? labels : null;
+}
+function createPoll(kind, ctx, messageId, userId, question, labels) {
+  const pid = uid();
+  db.transaction(() => {
+    db.prepare('INSERT INTO polls (id,kind,server_id,channel_id,thread_id,message_id,question,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run(pid, kind, ctx.serverId || null, ctx.channelId || null, ctx.threadId || null, messageId, String(question).slice(0, 200), userId, now());
+    const ins = db.prepare('INSERT INTO poll_options (id,poll_id,label,position) VALUES (?,?,?,?)');
+    labels.forEach((l, i) => ins.run(uid(), pid, l, i));
+  })();
+  return pid;
+}
+function assemblePoll(p, opts, votes) {
+  const byOpt = {};
+  for (const o of opts) byOpt[o.id] = { id: o.id, label: o.label, votes: 0, voters: [] };
+  for (const v of votes) if (byOpt[v.option_id]) { byOpt[v.option_id].votes++; byOpt[v.option_id].voters.push(v.user_id); }
+  return { id: p.id, question: p.question, createdBy: p.created_by, createdAt: p.created_at, total: votes.length, options: opts.map((o) => byOpt[o.id]) };
+}
+// Batched: one poll payload per message id (messages without polls cost one shared query).
+function pollsForMessages(kind, ids) {
+  const out = {};
+  if (!ids.length) return out;
+  const ph = ids.map(() => '?').join(',');
+  const polls = db.prepare(`SELECT * FROM polls WHERE kind = ? AND message_id IN (${ph})`).all(kind, ...ids);
+  if (!polls.length) return out;
+  const pids = polls.map((p) => p.id);
+  const pph = pids.map(() => '?').join(',');
+  const opts = db.prepare(`SELECT * FROM poll_options WHERE poll_id IN (${pph}) ORDER BY position ASC`).all(...pids);
+  const votes = db.prepare(`SELECT poll_id, option_id, user_id FROM poll_votes WHERE poll_id IN (${pph})`).all(...pids);
+  for (const p of polls) {
+    out[p.message_id] = assemblePoll(p, opts.filter((o) => o.poll_id === p.id), votes.filter((v) => v.poll_id === p.id));
+  }
+  return out;
+}
+function deletePollsFor(kind, messageIds) {
+  if (!messageIds.length) return;
+  const ph = messageIds.map(() => '?').join(',');
+  const pids = db.prepare(`SELECT id FROM polls WHERE kind = ? AND message_id IN (${ph})`).all(kind, ...messageIds).map((r) => r.id);
+  if (!pids.length) return;
+  const pph = pids.map(() => '?').join(',');
+  db.prepare(`DELETE FROM poll_votes WHERE poll_id IN (${pph})`).run(...pids);
+  db.prepare(`DELETE FROM poll_options WHERE poll_id IN (${pph})`).run(...pids);
+  db.prepare(`DELETE FROM polls WHERE id IN (${pph})`).run(...pids);
 }
 app.get('/api/users/search', authRequired, (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase().replace(/[^a-z0-9_.]/g, '').slice(0, 24);
@@ -2033,6 +2086,7 @@ app.delete('/api/dms/messages/:mid', authRequired, (req, res) => {
   if (!m || !dmThreadFor(req.user.id, m.thread_id)) return res.status(404).json({ error: 'no_message' });
   if (m.user_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
   db.prepare('DELETE FROM dm_messages WHERE id = ?').run(m.id);
+  deletePollsFor('dm', [m.id]);
   if (db.prepare('DELETE FROM dm_pins WHERE message_id = ?').run(m.id).changes) {
     dmNotify(m.thread_id, { t: 'dm-pins-changed', threadId: m.thread_id });
   }
@@ -2086,6 +2140,26 @@ app.post('/api/dms/messages/:mid/reactions', authRequired, (req, res) => {
   const out = Object.values(t);
   dmNotify(m.thread_id, { t: 'dm-reaction', threadId: m.thread_id, messageId: m.id, reactions: out });
   res.json({ reactions: out.map((e) => ({ emoji: e.emoji, count: e.count, me: e.users.includes(req.user.id) })) });
+});
+// ---------- polls: vote (single choice per user; tap again to retract) ----------
+app.post('/api/polls/:id/vote', authRequired, (req, res) => {
+  const p = db.prepare('SELECT * FROM polls WHERE id = ?').get(String(req.params.id || ''));
+  if (!p) return res.status(404).json({ error: 'no_poll' });
+  if (p.kind === 'server') {
+    if (!isMember(p.server_id, req.user.id)) return res.status(403).json({ error: 'not_member' });
+  } else if (!dmThreadFor(req.user.id, p.thread_id)) return res.status(403).json({ error: 'not_member' });
+  const opt = db.prepare('SELECT * FROM poll_options WHERE id = ? AND poll_id = ?').get(String(req.body?.optionId || ''), p.id);
+  if (!opt) return res.status(400).json({ error: 'bad_option' });
+  const cur = db.prepare('SELECT option_id FROM poll_votes WHERE poll_id = ? AND user_id = ?').get(p.id, req.user.id);
+  if (cur && cur.option_id === opt.id) db.prepare('DELETE FROM poll_votes WHERE poll_id = ? AND user_id = ?').run(p.id, req.user.id);
+  else db.prepare('INSERT OR REPLACE INTO poll_votes (poll_id,option_id,user_id,created_at) VALUES (?,?,?,?)').run(p.id, opt.id, req.user.id, now());
+  // Push the refreshed tally through the normal message-update fanout.
+  if (p.kind === 'server') {
+    broadcastToServer(p.server_id, { t: 'message-updated', serverId: p.server_id, channelId: p.channel_id, message: fullMessage(p.message_id, req.user.id) });
+  } else {
+    dmNotify(p.thread_id, { t: 'dm-updated', message: fullDm(p.message_id, req.user.id) });
+  }
+  res.json({ ok: true });
 });
 
 // ---------- GIF search (Klipy, key stays server-side) ----------
@@ -2156,6 +2230,7 @@ function fmtMsg(r) {
 function hydrateMessages(rows, meId) {
   const ids = rows.map((r) => r.id);
   const attBy = {}, reactBy = {}, countBy = {};
+  const pollBy = pollsForMessages('server', ids);
   if (ids.length) {
     const ph = ids.map(() => '?').join(',');
     for (const a of db.prepare(`SELECT * FROM attachments WHERE message_id IN (${ph}) ORDER BY created_at ASC`).all(...ids)) {
@@ -2173,6 +2248,7 @@ function hydrateMessages(rows, meId) {
   return rows.map((r) => {
     const m = fmtMsg(r);
     m.attachments = attBy[r.id] || [];
+    m.poll = pollBy[r.id] || null;
     const tally = Object.values(reactBy[r.id] || {});
     m.reactions = tally.map((t) => ({ emoji: t.emoji, count: t.count, me: t.users.includes(meId) }));
     m.threadCount = countBy[r.id] || 0;
@@ -2309,7 +2385,8 @@ wss.on('connection', (ws, req) => {
       const replyTo = String(msg.replyTo || '') || null;
       let threadRoot = String(msg.threadRoot || '') || null;
       const atts = Array.isArray(msg.attachments) ? msg.attachments.slice(0, 5) : [];
-      if ((!content && !atts.length) || !serverId || !channelId) return;
+      const pollOpts = normalizePollOptions(msg.poll);
+      if ((!content && !atts.length && !pollOpts) || !serverId || !channelId) return;
       if (!me.servers.has(serverId) || !isMember(serverId, me.userId)) return;
       const ch = db.prepare('SELECT * FROM channels WHERE id = ? AND server_id = ?').get(channelId, serverId);
       if (!ch || ch.type !== 'text') return;
@@ -2343,13 +2420,17 @@ wss.on('connection', (ws, req) => {
           : 'image';
         cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, 100 * 1024 * 1024)), kind, spoiler: a?.spoiler ? 1 : 0 });
       }
-      if (!content && !cleanAtts.length) return;
+      if (!content && !cleanAtts.length && !pollOpts) return;
       const mid = uid();
       const fwdFrom = String(msg.fwdFrom || '').trim().slice(0, 64) || null;
       db.prepare('INSERT INTO messages (id,server_id,channel_id,user_id,content,reply_to_id,thread_root_id,fwd_from,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
         .run(mid, serverId, channelId, me.userId, content, replyTo, threadRoot, fwdFrom, now());
       const insAtt = db.prepare('INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,spoiler,created_at) VALUES (?,?,?,?,?,?,?,?,?)');
       for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, now());
+      if (pollOpts) {
+        if (!content) return; // a poll needs its question as the message text
+        createPoll('server', { serverId, channelId }, mid, me.userId, content, pollOpts);
+      }
       const full = fullMessage(mid, null);
       broadcastToServer(serverId, { t: 'message-new', serverId, channelId, message: full });
       notifyServerMessage(serverId, channelId, me, content, mid);
@@ -2371,7 +2452,8 @@ wss.on('connection', (ws, req) => {
       const content = squashBreaks(String(msg.content || '')).trim().slice(0, 5000);
       const replyTo = String(msg.replyTo || '') || null;
       const cleanAtts = cleanAttachments(msg.attachments);
-      if (!content && !cleanAtts.length) return;
+      const pollOpts = normalizePollOptions(msg.poll);
+      if (!content && !cleanAtts.length && !pollOpts) return;
       if (!rateOk(me.userId)) { safeSend(ws, { t: 'error', error: 'slow_down' }); return; }
       if (replyTo && !db.prepare('SELECT id FROM dm_messages WHERE id = ? AND thread_id = ?').get(replyTo, threadId)) return;
       const mid = uid();
@@ -2381,6 +2463,10 @@ wss.on('connection', (ws, req) => {
       db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ?').run(threadId);
       const insAtt = db.prepare('INSERT INTO dm_attachments (id,message_id,url,filename,mime,size,kind,spoiler,created_at) VALUES (?,?,?,?,?,?,?,?,?)');
       for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, now());
+      if (pollOpts) {
+        if (!content) return; // a poll needs its question as the message text
+        createPoll('dm', { threadId }, mid, me.userId, content, pollOpts);
+      }
       dmNotify(threadId, { t: 'dm-new', message: fullDm(mid, null) });
       notifyDmMessage(t, me, content, mid);
       return;
