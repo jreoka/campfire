@@ -929,6 +929,7 @@ function onWS(m) {
       else renderVoiceUsers();
       if (S.voice && S.voice.serverId === m.serverId && S.voice.channelId === m.channelId) {
         onVoicePeers(m.peers);
+        renderStage();
       }
       break;
     }
@@ -941,18 +942,21 @@ function onWS(m) {
         S.ws.send(JSON.stringify({ t: 'subscribe' }));
       }
       renderVoiceUsers();
+      renderStage();
       break;
     }
     case 'voice-peer-left': {
       closePeer(m.userId);
       renderVoiceUsers();
+      renderStage();
       break;
     }
     case 'voice-state': {
       const occ = S.voiceOccupancy.get(m.channelId) || [];
       const p = occ.find((x) => x.id === m.userId);
-      if (p) { p.muted = m.muted; p.speaking = !!m.speaking; }
+      if (p) { p.muted = m.muted; p.speaking = !!m.speaking; p.deafened = !!m.deafened; p.camera = !!m.camera; p.sharing = !!m.sharing; }
       if (m.serverId === S.serverId) renderVoiceUsers();
+      if (S.voice && S.voice.channelId === m.channelId) renderStage();
       break;
     }
     case 'voice-signal':
@@ -1122,10 +1126,30 @@ $('#btn-members').onclick = (e) => { e.stopPropagation(); document.body.classLis
 $('#sidebar-scrim').onclick = () => document.body.classList.remove('nav-open');
 
 // ---------- VOICE (WebRTC mesh) ----------
+const VB_SVG = {
+  mic: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/></svg>',
+  deaf: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>',
+  cam: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="13" height="12" rx="2.5"/><path d="M15 10.5l6-3.5v10l-6-3.5"/></svg>',
+  share: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M12 17v4M8 21h8"/></svg>',
+};
+for (const [id, svg] of [['#btn-mute', VB_SVG.mic], ['#vf-mute', VB_SVG.mic], ['#btn-deafen', VB_SVG.deaf], ['#vf-deafen', VB_SVG.deaf], ['#btn-camera', VB_SVG.cam], ['#vf-camera', VB_SVG.cam], ['#btn-share', VB_SVG.share], ['#vf-share', VB_SVG.share]]) {
+  const b = $(id); if (b && !b.innerHTML.trim()) b.innerHTML = svg;
+}
+if ($('#btn-voice-leave') && !$('#btn-voice-leave').innerHTML.trim()) $('#btn-voice-leave').innerHTML = '✕';
+try { S.voiceQuality = localStorage.getItem('cf_vq') || 'high'; } catch { S.voiceQuality = 'high'; }
+if ($('#sel-quality')) $('#sel-quality').value = S.voiceQuality;
 $('#btn-voice-leave').onclick = () => leaveVoice();
 $('#vf-leave').onclick = () => leaveVoice();
 $('#vf-mute').onclick = () => toggleMute();
 $('#btn-mute').onclick = () => toggleMute();
+$('#vf-deafen').onclick = () => toggleDeafen();
+$('#btn-deafen').onclick = () => toggleDeafen();
+$('#vf-camera').onclick = () => toggleCamera();
+$('#btn-camera').onclick = () => toggleCamera();
+$('#vf-share').onclick = () => toggleScreen();
+$('#btn-share').onclick = () => toggleScreen();
+if ($('#sel-quality')) $('#sel-quality').onchange = (e) => setQuality(e.target.value);
+paintVoiceControls();
 
 async function joinVoice(serverId, channelId) {
   if (S.voice && S.voice.serverId === serverId && S.voice.channelId === channelId) return; // already here
@@ -1138,11 +1162,13 @@ async function joinVoice(serverId, channelId) {
     return;
   }
   const ch = S.serverDetail?.channels.find((c) => c.id === channelId);
-  S.voice = { serverId, channelId, stream, pcs: new Map(), muted: false, speaking: false, audioEls: new Map() };
+  S.voice = { serverId, channelId, stream, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, cameraOn: false, sharing: false, quality: S.voiceQuality || 'high', speaking: false, audioEls: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
   $('#voice-bar').classList.remove('hidden');
   $('#voice-fab').classList.remove('hidden');
   $('#voice-chan-name').textContent = ch ? ch.name : 'voice';
-  $('#btn-mute').textContent = 'Mute';
+  $('#vf-name').textContent = ch ? ch.name : 'voice';
+  paintVoiceControls();
+  renderStage();
   S.ws?.send(JSON.stringify({ t: 'voice-join', serverId, channelId }));
   renderChannels();
   startSpeakingMonitor();
@@ -1152,12 +1178,17 @@ function leaveVoice(silent) {
   if (!S.voice) return;
   for (const [, pc] of S.voice.pcs) { try { pc.close(); } catch {} }
   S.voice.stream?.getTracks().forEach((t) => t.stop());
+  S.voice.camStream?.getTracks().forEach((t) => t.stop());
+  S.voice.screenStream?.getTracks().forEach((t) => t.stop());
   for (const [, el] of S.voice.audioEls) { try { el.remove(); } catch {} }
+  $('#stage').classList.add('hidden');
+  $('#stage-grid').innerHTML = '';
   const { serverId, channelId } = S.voice;
   S.voice = null;
   stopSpeakingMonitor();
   $('#voice-bar').classList.add('hidden');
   $('#voice-fab').classList.add('hidden');
+  paintVoiceControls();
   // optimistically drop self so the sidebar clears instantly (server echo confirms)
   const occ = S.voiceOccupancy.get(channelId) || [];
   S.voiceOccupancy.set(channelId, occ.filter((p) => p.id !== S.me.id));
@@ -1165,26 +1196,204 @@ function leaveVoice(silent) {
   renderChannels();
   if (S.updateReady && !silent) location.reload();
 }
+function sendVoiceState() {
+  if (!S.voice) return;
+  S.ws?.send(JSON.stringify({ t: 'voice-state',
+    muted: S.voice.muted, deafened: S.voice.deafened,
+    camera: S.voice.cameraOn, sharing: S.voice.sharing,
+    speaking: (!S.voice.muted && !S.voice.deafened) && !!S.voice.speaking }));
+}
+function paintVoiceControls() {
+  const v = S.voice;
+  const set = (id, off, label) => { const b = $(id); if (!b) return; b.classList.toggle('off', !!off); b.title = label; };
+  if ($('#sel-quality')) $('#sel-quality').value = v?.quality || S.voiceQuality || 'high';
+  set('#btn-mute', v?.muted, v?.muted ? 'Unmute mic' : 'Mute mic');
+  set('#vf-mute', v?.muted, v?.muted ? 'Unmute mic' : 'Mute mic');
+  set('#btn-deafen', v?.deafened, v?.deafened ? 'Undeafen' : 'Deafen');
+  set('#vf-deafen', v?.deafened, v?.deafened ? 'Undeafen' : 'Deafen');
+  set('#btn-camera', !v?.cameraOn, v?.cameraOn ? 'Turn camera off' : 'Turn camera on');
+  set('#vf-camera', !v?.cameraOn, v?.cameraOn ? 'Turn camera off' : 'Turn camera on');
+  set('#btn-share', v?.sharing, v?.sharing ? 'Stop sharing screen' : 'Share screen');
+  set('#vf-share', v?.sharing, v?.sharing ? 'Stop sharing screen' : 'Share screen');
+}
+function applyMicState() {
+  if (!S.voice) return;
+  const off = S.voice.muted || S.voice.deafened;
+  S.voice.stream.getAudioTracks().forEach((t) => (t.enabled = !off));
+  if (off) { S.voice.speaking = false; setSpeakingUI(S.me.id, false); }
+}
 function toggleMute() {
   if (!S.voice) return;
   S.voice.muted = !S.voice.muted;
-  S.voice.stream.getAudioTracks().forEach((t) => (t.enabled = !S.voice.muted));
-  $('#btn-mute').textContent = S.voice.muted ? 'Unmute' : 'Mute';
-  $('#vf-mute').textContent = S.voice.muted ? 'Unmute' : 'Mute';
+  applyMicState();
   $('#vf-name').textContent = (S.serverDetail?.channels.find((c) => c.id === S.voice.channelId) || {}).name || 'voice';
-  if (S.voice.muted) { S.voice.speaking = false; setSpeakingUI(S.me.id, false); }
-  S.ws?.send(JSON.stringify({ t: 'voice-state', muted: S.voice.muted, speaking: S.voice.muted ? false : !!S.voice.speaking }));
+  sendVoiceState();
+  paintVoiceControls();
   renderVoiceUsers();
+  renderStage();
+}
+function toggleDeafen() {
+  if (!S.voice) return;
+  S.voice.deafened = !S.voice.deafened;
+  applyMicState();
+  for (const [, el] of S.voice.audioEls) el.muted = S.voice.deafened;
+  sendVoiceState();
+  paintVoiceControls();
+  renderVoiceUsers();
+  renderStage();
+  toast(S.voice.deafened ? 'Deafened' : 'Undeafened');
+}
+const V_QUALITY = {
+  high: { label: '720p', w: 1280, h: 720, br: 2500000 },
+  medium: { label: '480p', w: 854, h: 480, br: 1000000 },
+  low: { label: '360p', w: 640, h: 360, br: 500000 },
+};
+function applySenderQuality(sender) {
+  if (!sender || !S.voice) return;
+  const q = V_QUALITY[S.voice.quality] || V_QUALITY.high;
+  try {
+    const p = sender.getParameters();
+    p.encodings = (p.encodings && p.encodings.length) ? p.encodings : [{}];
+    p.encodings[0].maxBitrate = q.br;
+    sender.setParameters(p).catch(() => {});
+  } catch {}
+}
+function setQuality(q) {
+  if (!V_QUALITY[q]) return;
+  S.voiceQuality = q;
+  try { localStorage.setItem('cf_vq', q); } catch {}
+  if (!S.voice) { paintVoiceControls(); return; }
+  S.voice.quality = q;
+  const spec = V_QUALITY[q];
+  if (S.voice.cameraOn && S.voice.camStream) {
+    const vt = S.voice.camStream.getVideoTracks()[0];
+    if (vt) vt.applyConstraints({ width: { ideal: spec.w }, height: { ideal: spec.h } }).catch(() => {});
+  }
+  for (const [, s] of S.voice.senders) { applySenderQuality(s.camera); applySenderQuality(s.screen); }
+  paintVoiceControls();
+  toast('Stream quality: ' + spec.label);
+}
+async function toggleCamera() {
+  if (!S.voice) return;
+  if (S.voice.cameraOn) { stopCamera(); return; }
+  const q = V_QUALITY[S.voice.quality] || V_QUALITY.high;
+  let cam;
+  try {
+    cam = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: 30 } }, audio: false });
+  } catch { toast('Camera blocked — allow camera access'); return; }
+  S.voice.camStream = cam;
+  S.voice.cameraOn = true;
+  const track = cam.getVideoTracks()[0];
+  for (const [pid, pc] of S.voice.pcs) {
+    try {
+      const sender = pc.addTrack(track, cam);
+      S.voice.senders.get(pid).camera = sender;
+      applySenderQuality(sender);
+      S.ws?.send(JSON.stringify({ t: 'voice-signal', to: pid, data: { kind: 'track-meta', trackId: track.id, media: 'camera' } }));
+    } catch {}
+  }
+  sendVoiceState();
+  paintVoiceControls();
+  renderStage();
+}
+function stopCamera() {
+  if (!S.voice || !S.voice.cameraOn) return;
+  S.voice.camStream?.getVideoTracks().forEach((t) => { try { t.stop(); } catch {} });
+  S.voice.camStream = null;
+  S.voice.cameraOn = false;
+  for (const [pid, pc] of S.voice.pcs) {
+    const s = S.voice.senders.get(pid);
+    if (s?.camera) { try { pc.removeTrack(s.camera); } catch {} s.camera = null; }
+  }
+  sendVoiceState();
+  paintVoiceControls();
+  renderStage();
+}
+async function toggleScreen() {
+  if (!S.voice) return;
+  if (S.voice.sharing) { stopScreen(); return; }
+  if (!navigator.mediaDevices?.getDisplayMedia) { toast('Screen sharing is not supported here'); return; }
+  let screen;
+  try {
+    screen = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30 } }, audio: false });
+  } catch { return; }
+  S.voice.screenStream = screen;
+  S.voice.sharing = true;
+  const track = screen.getVideoTracks()[0];
+  if (track) track.onended = () => { if (S.voice?.sharing) stopScreen(); };
+  for (const [pid, pc] of S.voice.pcs) {
+    try {
+      const sender = pc.addTrack(track, screen);
+      S.voice.senders.get(pid).screen = sender;
+      applySenderQuality(sender);
+      S.ws?.send(JSON.stringify({ t: 'voice-signal', to: pid, data: { kind: 'track-meta', trackId: track.id, media: 'screen' } }));
+    } catch {}
+  }
+  sendVoiceState();
+  paintVoiceControls();
+  renderStage();
+  toast('You are sharing your screen');
+}
+function stopScreen() {
+  if (!S.voice || !S.voice.sharing) return;
+  S.voice.screenStream?.getTracks().forEach((t) => { try { t.stop(); } catch {} });
+  S.voice.screenStream = null;
+  S.voice.sharing = false;
+  for (const [pid, pc] of S.voice.pcs) {
+    const s = S.voice.senders.get(pid);
+    if (s?.screen) { try { pc.removeTrack(s.screen); } catch {} s.screen = null; }
+  }
+  sendVoiceState();
+  paintVoiceControls();
+  renderStage();
+}
+function renegotiate(peerId) {
+  if (!S.voice) return;
+  const pc = S.voice.pcs.get(peerId);
+  if (!pc || pc.signalingState !== 'stable') return;
+  pc.createOffer().then((offer) => pc.setLocalDescription(offer)).then(() => {
+    S.ws?.send(JSON.stringify({ t: 'voice-signal', to: peerId, data: { kind: 'offer', sdp: pc.localDescription } }));
+  }).catch(() => {});
 }
 function ensurePeer(peerId, initiator) {
   if (!S.voice || peerId === S.me.id || S.voice.pcs.has(peerId)) return S.voice?.pcs.get(peerId);
   const pc = new RTCPeerConnection({ iceServers: S.iceServers });
+  pc._initiator = !!initiator;
+  pc._remoteOfferSeen = false;
   S.voice.pcs.set(peerId, pc);
-  for (const track of S.voice.stream.getTracks()) pc.addTrack(track, S.voice.stream);
+  S.voice.senders.set(peerId, { audio: null, camera: null, screen: null });
+  const senders = S.voice.senders.get(peerId);
+  for (const track of S.voice.stream.getTracks()) senders.audio = pc.addTrack(track, S.voice.stream);
+  if (S.voice.cameraOn && S.voice.camStream) {
+    const ct = S.voice.camStream.getVideoTracks()[0];
+    if (ct) {
+      senders.camera = pc.addTrack(ct, S.voice.camStream);
+      applySenderQuality(senders.camera);
+      S.ws?.send(JSON.stringify({ t: 'voice-signal', to: peerId, data: { kind: 'track-meta', trackId: ct.id, media: 'camera' } }));
+    }
+  }
+  if (S.voice.sharing && S.voice.screenStream) {
+    const st = S.voice.screenStream.getVideoTracks()[0];
+    if (st) {
+      senders.screen = pc.addTrack(st, S.voice.screenStream);
+      applySenderQuality(senders.screen);
+      S.ws?.send(JSON.stringify({ t: 'voice-signal', to: peerId, data: { kind: 'track-meta', trackId: st.id, media: 'screen' } }));
+    }
+  }
+  pc.onnegotiationneeded = () => {
+    if (pc._politeWait) return; // non-initiator: wait for the other side's offer first
+    renegotiate(peerId);
+  };
+  if (!initiator) pc._politeWait = true;
   pc.onicecandidate = (e) => {
     if (e.candidate) S.ws?.send(JSON.stringify({ t: 'voice-signal', to: peerId, data: { kind: 'ice', candidate: e.candidate } }));
   };
-  pc.ontrack = (e) => attachRemoteAudio(peerId, e.streams[0]);
+  pc.ontrack = (e) => {
+    if (!e.track) return;
+    if (e.track.kind === 'audio') { attachRemoteAudio(peerId, (e.streams && e.streams[0]) || new MediaStream([e.track])); return; }
+    const media = (S.voice.trackMeta.get(e.track.id)) || guessRemoteMedia(peerId);
+    attachRemoteVideo(peerId, media, e.track);
+  };
   pc.onconnectionstatechange = () => {
     if (['failed', 'closed'].includes(pc.connectionState)) closePeer(peerId);
   };
@@ -1197,9 +1406,29 @@ function ensurePeer(peerId, initiator) {
 }
 async function onVoiceSignal(fromId, data) {
   if (!S.voice || !data) return;
+  if (data.kind === 'track-meta' && data.trackId) {
+    const want = data.media === 'screen' ? 'screen' : 'camera';
+    S.voice.trackMeta.set(data.trackId, want);
+    // relocate the track if it arrived before its label did
+    for (const [, rv] of S.voice.remoteVideo) {
+      for (const key of ['camera', 'screen']) {
+        if (key === want) continue;
+        const tr = rv[key].getVideoTracks().find((t) => t.id === data.trackId);
+        if (tr) { try { rv[key].removeTrack(tr); rv[want].addTrack(tr); } catch {} }
+      }
+    }
+    renderStage();
+    return;
+  }
   if (data.kind === 'offer') {
     const pc = ensurePeer(fromId, false);
+    pc._remoteOfferSeen = true;
+    pc._politeWait = false;
     try {
+      if (pc.signalingState !== 'stable') {
+        if (pc._initiator) return; // glare: our offer wins, ignore theirs
+        try { await pc.setLocalDescription({ type: 'rollback' }); } catch {}
+      }
       await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
       const ans = await pc.createAnswer();
       await pc.setLocalDescription(ans);
@@ -1229,8 +1458,11 @@ function closePeer(peerId) {
   if (!S.voice) return;
   const pc = S.voice.pcs.get(peerId);
   if (pc) { try { pc.close(); } catch {} S.voice.pcs.delete(peerId); }
+  S.voice.senders.delete(peerId);
+  S.voice.remoteVideo.delete(peerId);
   const el = S.voice.audioEls.get(peerId);
   if (el) { try { el.remove(); } catch {} S.voice.audioEls.delete(peerId); }
+  renderStage();
 }
 function attachRemoteAudio(peerId, stream) {
   if (!S.voice) return;
@@ -1242,7 +1474,122 @@ function attachRemoteAudio(peerId, stream) {
     document.body.appendChild(el);
     S.voice.audioEls.set(peerId, el);
   }
+  el.muted = !!S.voice.deafened;
   el.srcObject = stream;
+}
+function guessRemoteMedia(peerId) {
+  const rv = S.voice.remoteVideo.get(peerId);
+  if (rv && rv.camera.getVideoTracks().some((t) => t.readyState === 'live') && !rv.screen.getVideoTracks().some((t) => t.readyState === 'live')) return 'screen';
+  return 'camera';
+}
+function attachRemoteVideo(peerId, media, track) {
+  if (!S.voice) return;
+  let rv = S.voice.remoteVideo.get(peerId);
+  if (!rv) { rv = { camera: new MediaStream(), screen: new MediaStream() }; S.voice.remoteVideo.set(peerId, rv); }
+  const ms = media === 'screen' ? rv.screen : rv.camera;
+  ms.getVideoTracks().forEach((t) => { if (t.id !== track.id) { try { ms.removeTrack(t); } catch {} } });
+  try { if (!ms.getVideoTracks().some((t) => t.id === track.id)) ms.addTrack(track); } catch {}
+  track.onended = () => { try { ms.removeTrack(track); } catch {} renderStage(); };
+  renderStage();
+}
+// ---------- voice stage (video grid) ----------
+function liveVideoTracks(ms) { return ms ? ms.getVideoTracks().filter((t) => t.readyState === 'live') : []; }
+function stageVisible() {
+  if (!S.voice) return false;
+  if (S.voice.cameraOn || S.voice.sharing) return true;
+  for (const [, rv] of S.voice.remoteVideo) {
+    if (liveVideoTracks(rv.camera).length || liveVideoTracks(rv.screen).length) return true;
+  }
+  return false;
+}
+function voicePeerInfo(id) {
+  if (id === 'me' || (S.me && id === S.me.id)) {
+    return {
+      id: S.me.id, display_name: S.me.display_name, username: S.me.username,
+      avatar_color: S.me.avatar_color, avatar_url: S.me.avatar_url || null,
+      muted: !!S.voice?.muted, deafened: !!S.voice?.deafened,
+      camera: !!S.voice?.cameraOn, sharing: !!S.voice?.sharing,
+      speaking: !!S.voice?.speaking, me: true,
+    };
+  }
+  const p = (S.voiceOccupancy.get(S.voice?.channelId) || []).find((x) => x.id === id);
+  return p || { id, display_name: '?', username: '?', avatar_color: '#555', avatar_url: null };
+}
+function tileStream(key) {
+  if (!S.voice) return null;
+  if (key === 'me:cam') return S.voice.camStream;
+  if (key === 'me:screen') return S.voice.screenStream;
+  const [pid, media] = key.split(':');
+  const rv = S.voice.remoteVideo.get(pid);
+  return rv ? rv[media === 'screen' ? 'screen' : 'camera'] : null;
+}
+function paintTile(key, el) {
+  const [pid, media] = key.split(':');
+  const isScreen = media === 'screen';
+  const u = voicePeerInfo(pid);
+  const ms = tileStream(key);
+  const live = liveVideoTracks(ms).length > 0;
+  let video = el.querySelector('video');
+  let fb = el.querySelector('.vfallback');
+  if (live) {
+    if (!video) { video = document.createElement('video'); video.autoplay = true; video.playsInline = true; video.muted = true; el.prepend(video); }
+    if (video.srcObject !== ms) video.srcObject = ms;
+    video.classList.toggle('mirror', key === 'me:cam');
+    video.style.display = '';
+    if (fb) fb.style.display = 'none';
+  } else {
+    if (video) video.style.display = 'none';
+    if (!fb) {
+      fb = document.createElement('div');
+      fb.className = 'vfallback';
+      fb.innerHTML = '<span class="avatar"></span>';
+      paintAvatar(fb.querySelector('.avatar'), u);
+      el.prepend(fb);
+    }
+    fb.style.display = '';
+  }
+  el.querySelector('.vname').textContent = isScreen ? `${u.display_name}’s screen` : (u.me ? `${u.display_name} (you)` : u.display_name);
+  const icons = el.querySelector('.vicons');
+  icons.innerHTML = '';
+  const badge = (svg, cls, title) => { const s = document.createElement('span'); if (cls) s.className = cls; s.title = title; s.innerHTML = svg; icons.appendChild(s); };
+  if (u.deafened) badge(VB_SVG.deaf, '', 'Deafened');
+  else if (u.muted) badge(VB_SVG.mic, '', 'Muted');
+  if (!isScreen && u.sharing) badge(VB_SVG.share, 'ok', 'Sharing screen');
+  el.classList.toggle('speaking', !!u.speaking && !u.muted && !u.deafened);
+  el.dataset.vuser = pid === 'me' ? (S.me?.id || 'me') : pid;
+}
+function renderStage() {
+  const stage = $('#stage'), grid = $('#stage-grid');
+  if (!stageVisible() || !S.voice) { stage.classList.add('hidden'); return; }
+  stage.classList.remove('hidden');
+  const occ = S.voiceOccupancy.get(S.voice.channelId) || [];
+  const order = ['me:cam'];
+  if (S.voice.sharing) order.push('me:screen');
+  for (const p of occ) {
+    if (p.id === S.me.id) continue;
+    order.push(p.id + ':cam');
+  }
+  for (const p of occ) {
+    if (p.id === S.me.id) continue;
+    const rv = S.voice.remoteVideo.get(p.id);
+    if (rv && liveVideoTracks(rv.screen).length) order.push(p.id + ':screen');
+  }
+  const want = new Set(order);
+  for (const [k, el] of [...S.voice.tiles]) {
+    if (!want.has(k)) { el.remove(); S.voice.tiles.delete(k); }
+  }
+  for (const k of order) {
+    let el = S.voice.tiles.get(k);
+    if (!el || !el.isConnected) {
+      el = document.createElement('div');
+      el.className = 'vtile';
+      el.dataset.vtile = k;
+      el.innerHTML = '<div class="vname"></div><div class="vicons"></div>';
+      S.voice.tiles.set(k, el);
+      grid.appendChild(el);
+    }
+    paintTile(k, el);
+  }
 }
 const MIC_OFF_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3M2 2l20 20"/></svg>';
 // Discord-style: occupants listed under their voice channel, green ring while talking.
@@ -1256,18 +1603,26 @@ function renderVoiceUsers() {
     box.innerHTML = '';
     for (const p of occ) {
       const u = document.createElement('div');
-      u.className = 'vuser' + (p.speaking && !p.muted ? ' speaking' : '');
+      u.className = 'vuser' + (p.speaking && !p.muted && !p.deafened ? ' speaking' : '');
       u.dataset.vuser = p.id;
       u.dataset.uid = p.id;
-      u.innerHTML = `<span class="avatar"></span><span class="vname">${esc(p.display_name)}${p.id === S.me.id ? ' (you)' : ''}</span>${p.muted ? '<span class="vmic">' + MIC_OFF_SVG + '</span>' : ''}`;
+      let stat = '';
+      if (p.deafened) stat = '<span class="vstat"><span class="bad" title="Deafened">' + VB_SVG.deaf + '</span></span>';
+      else if (p.muted) stat = '<span class="vstat"><span class="bad" title="Muted">' + VB_SVG.mic + '</span></span>';
+      else {
+        const subs = [];
+        if (p.camera) subs.push('<span class="on" title="Camera on">' + VB_SVG.cam + '</span>');
+        if (p.sharing) subs.push('<span class="on" title="Sharing screen">' + VB_SVG.share + '</span>');
+        if (subs.length) stat = '<span class="vstat">' + subs.join('') + '</span>';
+      }
+      u.innerHTML = `<span class="avatar"></span><span class="vname">${esc(p.display_name)}${p.id === S.me.id ? ' (you)' : ''}</span>${stat || (p.muted ? '<span class="vmic">' + MIC_OFF_SVG + '</span>' : '')}`;
       paintAvatar(u.querySelector('.avatar'), p);
       box.appendChild(u);
     }
   }
 }
 function setSpeakingUI(userId, speaking) {
-  const el = document.querySelector('[data-vuser="' + CSS.escape(userId) + '"]');
-  if (el) el.classList.toggle('speaking', speaking);
+  document.querySelectorAll('[data-vuser="' + CSS.escape(userId) + '"]').forEach((el) => el.classList.toggle('speaking', speaking));
 }
 // Voice activity detection: local mic level → broadcast speech state so every
 // client sees green rings (works for all rooms, not just the one you're in).
@@ -1288,7 +1643,7 @@ function startSpeakingMonitor() {
       for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
       const lvl = Math.sqrt(sum / buf.length);
       let talking = speakOn;
-      if (S.voice.muted) { talking = false; speakQuiet = 0; }
+      if (S.voice.muted || S.voice.deafened) { talking = false; speakQuiet = 0; }
       else if (lvl > 0.09) { talking = true; speakQuiet = 0; }
       else if (speakOn && ++speakQuiet >= 3) { talking = false; speakQuiet = 0; }
       if (talking !== speakOn) {
@@ -1298,7 +1653,7 @@ function startSpeakingMonitor() {
         const occ = S.voiceOccupancy.get(S.voice.channelId) || [];
         const me = occ.find((p) => p.id === S.me.id);
         if (me) me.speaking = talking;
-        S.ws?.send(JSON.stringify({ t: 'voice-state', muted: S.voice.muted, speaking: talking }));
+        sendVoiceState();
       }
     }, 200);
   } catch {}

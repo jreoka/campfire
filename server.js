@@ -1278,6 +1278,9 @@ function voicePeersPayload(key) {
     avatar_url: ws.meta.avatar_url || null,
     muted: !!(ws.meta.voice && ws.meta.voice.muted),
     speaking: !!(ws.meta.voice && ws.meta.voice.speaking),
+    deafened: !!(ws.meta.voice && ws.meta.voice.deafened),
+    camera: !!(ws.meta.voice && ws.meta.voice.camera),
+    sharing: !!(ws.meta.voice && ws.meta.voice.sharing),
   }));
 }
 function findWsInVoice(key, userId) {
@@ -1444,7 +1447,7 @@ wss.on('connection', (ws, req) => {
       const ch = db.prepare('SELECT * FROM channels WHERE id = ? AND server_id = ?').get(channelId, serverId);
       if (!ch || ch.type !== 'voice') return;
       if (me.voice) leaveVoice(ws);
-      me.voice = { serverId, channelId, muted: false };
+      me.voice = { serverId, channelId, muted: false, deafened: false, camera: false, sharing: false };
       const key = voiceKey(serverId, channelId);
       if (!voiceRooms.has(key)) voiceRooms.set(key, new Set());
       voiceRooms.get(key).add(ws);
@@ -1453,7 +1456,7 @@ wss.on('connection', (ws, req) => {
       // tell others someone joined
       broadcastToServer(serverId, {
         t: 'voice-peer-joined', serverId, channelId,
-        peer: { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, avatar_url: me.avatar_url || null, muted: false, speaking: false },
+        peer: { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, avatar_url: me.avatar_url || null, muted: false, speaking: false, deafened: false, camera: false, sharing: false },
       }, ws);
       // also broadcast updated occupancy to whole server (for channel user counts)
       broadcastToServer(serverId, { t: 'voice-peers', serverId, channelId, peers: voicePeersPayload(key) }, ws);
@@ -1468,11 +1471,15 @@ wss.on('connection', (ws, req) => {
     if (msg.t === 'voice-state') {
       if (!me.voice) return;
       me.voice.muted = !!msg.muted;
+      me.voice.deafened = !!msg.deafened;
+      me.voice.camera = !!msg.camera;
+      me.voice.sharing = !!msg.sharing;
       if (typeof msg.speaking === 'boolean') me.voice.speaking = msg.speaking;
-      if (me.voice.muted) me.voice.speaking = false;
+      if (me.voice.muted || me.voice.deafened) me.voice.speaking = false;
       broadcastToServer(me.voice.serverId, {
         t: 'voice-state', serverId: me.voice.serverId, channelId: me.voice.channelId,
         userId: me.userId, muted: me.voice.muted, speaking: !!me.voice.speaking,
+        deafened: me.voice.deafened, camera: me.voice.camera, sharing: me.voice.sharing,
       });
       return;
     }

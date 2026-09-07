@@ -91,10 +91,18 @@
       </div>
       <div id="voice-bar" class="hidden">
         <span id="voice-status"><span class="live-dot"></span><b id="voice-chan-name">—</b></span>
-        <span class="row">
-          <button id="btn-mute" class="mini" title="Mute">Mute</button>
-          <button id="btn-voice-leave" class="mini danger" title="Disconnect">✕</button>
-        </span>
+        <div class="vb-btns">
+          <button id="btn-mute" class="vb-btn" title="Mute"></button>
+          <button id="btn-deafen" class="vb-btn" title="Deafen"></button>
+          <button id="btn-camera" class="vb-btn" title="Turn on camera"></button>
+          <button id="btn-share" class="vb-btn" title="Share screen"></button>
+          <select id="sel-quality" title="Stream quality">
+            <option value="high">720p</option>
+            <option value="medium">480p</option>
+            <option value="low">360p</option>
+          </select>
+          <button id="btn-voice-leave" class="vb-btn danger" title="Disconnect"></button>
+        </div>
       </div>
     </aside>
     <div id="sidebar-scrim"></div>
@@ -123,13 +131,20 @@
         <div id="blocked-list"></div>
       </div>
 
+      <div id="stage" class="hidden">
+        <div id="stage-grid"></div>
+      </div>
+
       <div id="messages"></div>
 
       <div id="voice-fab" class="hidden">
         <span class="live-dot"></span><b id="vf-name">voice</b>
         <span class="spacer"></span>
-        <button id="vf-mute" class="mini">Mute</button>
-        <button id="vf-leave" class="mini danger">Leave</button>
+        <button id="vf-mute" class="vb-btn" title="Mute"></button>
+        <button id="vf-deafen" class="vb-btn" title="Deafen"></button>
+        <button id="vf-camera" class="vb-btn" title="Camera"></button>
+        <button id="vf-share" class="vb-btn" title="Share screen"></button>
+        <button id="vf-leave" class="vb-btn danger" title="Leave">✕</button>
       </div>
       <div id="attach-preview" class="hidden"></div>
       <div id="mention-pop" class="hidden"></div>
