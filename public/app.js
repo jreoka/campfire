@@ -3496,7 +3496,7 @@ function cardRolesHTML(uid) {
   const m = d.members.find((x) => x.id === uid);
   if (!m || !(d.roles || []).length) return '';
   const mine = new Set(m.roleIds || []);
-  const editable = canManage() && uid !== d.owner_id;
+  const editable = canManage() && (uid !== d.owner_id || isOwner());
   let h = '<div class="uc-roles">';
   for (const r of d.roles) {
     const has = mine.has(r.id);

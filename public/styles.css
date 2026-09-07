@@ -177,8 +177,12 @@ h1,h2,h3{letter-spacing:-0.01em}
 .msg.sys{justify-content:center;color:var(--muted);font-size:.85rem}
 #composer{display:flex;gap:.5rem;padding:.7rem .9rem;padding-bottom:calc(.7rem + var(--safe-b));border-top:1px solid var(--line);background:var(--panel);min-width:0;position:relative}
 #btn-more{display:none}
-#composer-more{position:absolute;left:.5rem;bottom:calc(100% + .4rem);z-index:60;background:var(--panel-2);border:0;border-radius:12px;padding:.3rem;min-width:200px}
+#composer-more{position:absolute;left:0;bottom:calc(100% + .4rem);z-index:60;background:var(--panel-2);border:0;border-radius:12px;padding:.3rem;min-width:200px}
 #composer .tool-btn,#composer .gif-btn,#composer .btn{flex-shrink:0}
+#composer-box{position:relative;flex:1;min-width:0;display:flex}
+#composer-box #in-message{width:100%;padding-right:7.2rem}
+#composer-tools{position:absolute;right:.35rem;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:.15rem}
+#composer-tools .tool-btn{padding:.45rem}
 #in-message{flex:1;min-width:0;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:20px;padding:.65rem 1rem;font-size:.93rem;outline:none}
 #in-message:focus{border-color:var(--accent)}
 #in-message::placeholder{color:#6d6f78}
@@ -529,6 +533,7 @@ body{touch-action:manipulation}
   #composer{gap:.4rem;padding:.6rem;padding-bottom:calc(.6rem + var(--safe-b))}
   #composer .btn{padding:.7rem .9rem;min-height:44px}
   #composer .tool-btn,#composer .gif-btn{min-height:44px;min-width:44px;justify-content:center}
+  #composer-box #in-message{padding-right:3.4rem}
   #btn-attach,#btn-emoji,#btn-gif{display:none}
   #btn-more{display:inline-flex;align-items:center;justify-content:center}
   #picker{left:0;right:0;bottom:0;width:auto;max-height:62dvh;border-radius:20px 20px 0 0}

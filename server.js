@@ -580,7 +580,7 @@ app.post('/api/servers/:id/roles/:rid/members', authRequired, (req, res) => {
   const r = db.prepare('SELECT * FROM roles WHERE id = ? AND server_id = ?').get(req.params.rid, s.id);
   if (!r) return res.status(404).json({ error: 'no_role' });
   const target = String(req.body?.userId || '');
-  if (!isMember(s.id, target) || target === s.owner_id) return res.status(400).json({ error: 'bad_member' });
+  if (!isMember(s.id, target) || (target === s.owner_id && req.user.id !== s.owner_id)) return res.status(400).json({ error: 'bad_member' });
   db.prepare('INSERT OR IGNORE INTO member_roles (server_id,user_id,role_id) VALUES (?,?,?)').run(s.id, target, r.id);
   broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
   res.json({ ok: true });
