@@ -7,6 +7,7 @@ const store = {
   get token() { return localStorage.getItem('cf_token') || ''; },
   set token(v) { v ? localStorage.setItem('cf_token', v) : localStorage.removeItem('cf_token'); },
 };
+const isCoarse = () => window.matchMedia && matchMedia('(hover: none)').matches;
 
 const S = {
   me: null,
@@ -465,6 +466,7 @@ function confirmDeleteChannel(c) {
 async function selectChannel(id) {
   S.channelId = id;
   S.callOpen = false;
+  document.body.classList.remove('nav-open');
   $('#chat').classList.remove('call-open');
   renderChannels();
   renderStage();
@@ -2056,15 +2058,10 @@ function openCtx(x, y, items) {
   ctxEl = m;
 }
 const PIN_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l1 7 3 3v2H5v-2l3-3z"/><path d="M12 16v5"/></svg>';
-function messageCtxMenu(mid, x, y) {
-  const m = msgById(mid);
-  if (!m) return;
-  if (m.sys) {
-    openCtx(x, y, [
-      { label: 'Copy text', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(m.content || ''); toast('Copied'); } catch {} } },
-    ]);
-    return;
-  }
+function sysMenuItems(m) {
+  return [{ label: 'Copy text', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(m.content || ''); toast('Copied'); } catch {} } }];
+}
+function messageMenuItems(m, mid, x, y) {
   const dm = !!m._dm;
   const own = m.user && m.user.id === S.me.id;
   const items = [
@@ -2078,7 +2075,91 @@ function messageCtxMenu(mid, x, y) {
   if (own) items.push({ label: 'Edit message', icon: '✎', fn: () => startEdit(mid) });
   if (canMod(m)) items.push({ label: 'Delete message', icon: '🗑', danger: true, fn: () => api((dm ? '/api/dms/messages/' : '/api/messages/') + mid, { method: 'DELETE' }).catch(() => toast('Delete failed')) });
   items.push({ label: 'Copy text', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(m.content || ''); toast('Copied'); } catch {} } });
-  openCtx(x, y, items);
+  return items;
+}
+function messageCtxMenu(mid, x, y) {
+  const m = msgById(mid);
+  if (!m) return;
+  if (m.sys) { openCtx(x, y, sysMenuItems(m)); return; }
+  openCtx(x, y, messageMenuItems(m, mid, x, y));
+}
+function reactLabel(e) {
+  return (e.startsWith(':') && e.endsWith(':') && S.emoji[e.slice(1, -1)])
+    ? `<img class="cemoi" src="${S.emoji[e.slice(1, -1)]}" alt="${esc(e)}">` : esc(e);
+}
+function closeMsgSheet(instant) {
+  const bd = document.querySelector('#sheet-backdrop'), sh = document.querySelector('#sheet');
+  if (!bd && !sh) return;
+  if (instant) { bd?.remove(); sh?.remove(); return; }
+  bd?.classList.remove('open'); sh?.classList.remove('open');
+  setTimeout(() => { document.querySelector('#sheet-backdrop')?.remove(); document.querySelector('#sheet')?.remove(); }, 240);
+}
+function openMsgSheet(mid) {
+  const m = msgById(mid);
+  if (!m) return;
+  closeCtx();
+  closeMsgSheet(true);
+  const bd = document.createElement('div');
+  bd.id = 'sheet-backdrop';
+  bd.onclick = () => closeMsgSheet();
+  const sh = document.createElement('div');
+  sh.id = 'sheet';
+  sh.setAttribute('role', 'dialog');
+  sh.innerHTML = '<div class="sheet-handle"></div>';
+  const head = document.createElement('div');
+  head.className = 'sheet-head';
+  head.innerHTML = '<span class="avatar"></span><div style="min-width:0;flex:1"><div class="sheet-who"></div><div class="sheet-snip"></div></div>';
+  if (m.sys) {
+    paintAvatar(head.querySelector('.avatar'), null);
+    head.querySelector('.sheet-who').textContent = 'Message';
+    head.querySelector('.sheet-snip').textContent = m.content || '';
+  } else {
+    const lu = liveUserFor(m.user);
+    paintAvatar(head.querySelector('.avatar'), lu);
+    head.querySelector('.sheet-who').innerHTML = `<span style="${nameStyleFor(lu)}">${esc(lu ? lu.display_name : 'deleted')}</span><span class="when">${fmtTime(m.created_at)}</span>`;
+    head.querySelector('.sheet-snip').textContent = m.content
+      ? (m.content.length > 120 ? m.content.slice(0, 120) + '…' : m.content)
+      : (m.attachments?.length ? `[${m.attachments.length} attachment${m.attachments.length === 1 ? '' : 's'}]` : '');
+  }
+  sh.appendChild(head);
+  if (!m.sys) {
+    const reacts = document.createElement('div');
+    reacts.className = 'sheet-reacts';
+    for (const e of topReactions()) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.innerHTML = reactLabel(e);
+      b.onclick = () => { closeMsgSheet(); toggleReaction(mid, e); };
+      reacts.appendChild(b);
+    }
+    sh.appendChild(reacts);
+  }
+  const rows = document.createElement('div');
+  rows.className = 'sheet-rows';
+  for (const it of (m.sys ? sysMenuItems(m) : messageMenuItems(m, mid, 0, 0))) {
+    if (it.sep) { const s = document.createElement('div'); s.className = 'sheet-sep'; rows.appendChild(s); continue; }
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'sheet-row' + (it.danger ? ' danger' : '');
+    b.innerHTML = `<span class="ctx-ic">${it.icon || ''}</span>`;
+    const lb = document.createElement('span');
+    lb.textContent = it.label;
+    b.appendChild(lb);
+    b.onclick = () => { closeMsgSheet(); it.fn && it.fn(); };
+    rows.appendChild(b);
+  }
+  sh.appendChild(rows);
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'sheet-cancel';
+  cancel.textContent = 'Cancel';
+  cancel.onclick = () => closeMsgSheet();
+  sh.appendChild(cancel);
+  document.body.appendChild(bd);
+  document.body.appendChild(sh);
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    bd.classList.add('open'); sh.classList.add('open');
+  }));
 }
 /* ================= forward messages ================= */
 S.fwdSrc = null; S.fwdPick = null;
@@ -2299,10 +2380,16 @@ function ctxFor(el, x, y) {
 }
 document.addEventListener('contextmenu', (e) => {
   if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"], a')) return;
+  if (isCoarse() && e.target.closest && e.target.closest('.msg[data-mid]')) { e.preventDefault(); return; } // touch sheet owns message long-press
   if (ctxFor(e.target, e.clientX, e.clientY)) e.preventDefault();
 });
-// touch-hold (long press) opens the same menus on phones/tablets
+// touch-hold (long press): bottom sheet for messages, popup menus elsewhere
 let holdT = null;
+let holdSheet = false; // long-press opened the sheet: swallow the lift-off click
+// (non-passive so preventDefault() can cancel the synthetic click)
+document.addEventListener('touchend', (e) => {
+  if (holdSheet) { holdSheet = false; try { e.preventDefault(); } catch {} }
+}, { passive: false });
 document.addEventListener('touchstart', (e) => {
   if (!e.target.closest || e.target.closest('input, textarea, select, a')) return;
   const t = e.target.closest('.msg,.chan,.member,.server-btn,.vuser');
@@ -2312,7 +2399,9 @@ document.addEventListener('touchstart', (e) => {
   holdT = setTimeout(() => {
     holdT = null;
     try { navigator.vibrate && navigator.vibrate(10); } catch {}
-    ctxFor(t, x, y);
+    const mt = t.closest('.msg[data-mid]');
+    if (mt && isCoarse()) { holdSheet = true; openMsgSheet(mt.dataset.mid); }
+    else ctxFor(t, x, y);
   }, 550);
 }, { passive: true });
 ['touchend', 'touchcancel', 'touchmove'].forEach((ev) => document.addEventListener(ev, () => { clearTimeout(holdT); holdT = null; }, { passive: true }));
@@ -2931,6 +3020,7 @@ $('#chan-topic').onclick = () => {
 async function selectDmThread(id) {
   S.dmThreadId = id;
   S.callOpen = false;
+  document.body.classList.remove('nav-open');
   $('#chat').classList.remove('call-open');
   renderStage();
   document.querySelectorAll('.dmrow').forEach((b) => b.classList.toggle('active', b.dataset.dmthread === id));
@@ -4165,17 +4255,6 @@ function pollVersion() {
 window.addEventListener('beforeunload', () => {
   try { sessionStorage.setItem('cf_draft', JSON.stringify({ s: S.serverId, c: S.channelId, t: document.querySelector('#in-message') ? document.querySelector('#in-message').value : '' })); } catch {}
 });
-
-// touch devices have no hover: tapping a message toggles its action bar
-if (window.matchMedia && matchMedia('(hover: none)').matches) {
-  document.addEventListener('click', (e) => {
-    const msg = e.target.closest && e.target.closest('.msg[data-mid]');
-    if (!msg || e.target.closest('a,button,.msg-actions,.reaction,.reply-quote,input,textarea')) return;
-    const was = msg.classList.contains('show-actions');
-    document.querySelectorAll('.msg.show-actions').forEach((m) => m.classList.remove('show-actions'));
-    if (!was) msg.classList.add('show-actions');
-  });
-}
 
 // ---------- go ----------
 setMode('login');
