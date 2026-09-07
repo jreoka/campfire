@@ -137,3 +137,5 @@ function normalizeArgs(args) {
 }
 
 module.exports = db;
+// Single source of truth for the database location (used for sibling paths like uploads).
+module.exports.DB_PATH = DB_PATH;
