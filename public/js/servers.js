@@ -4,15 +4,15 @@ async function refreshServers(selectId) {
   const { servers } = await api('/api/servers');
   S.servers = servers;
   try {
-    const { order } = await api('/api/me/layout');
-    S.serverMeta = new Map((order || []).map((o) => [o.server_id, { position: o.position }]));
-  } catch { S.serverMeta = new Map(); }
+    const { folders, order } = await api('/api/me/layout');
+    S.layoutFolders = (folders || []).map((f) => ({ ...f, open: f.open !== 0, servers: [] }));
+    S.serverMeta = new Map((order || []).map((o) => [o.server_id, { folderId: o.folder_id, position: o.position }]));
+  } catch { S.layoutFolders = []; S.serverMeta = new Map(); }
   buildRootOrder();
+  S.openFolderId = null;
   if (!servers.length) {
     S.serverId = null;
     renderServerList();
-    // No auto-popping Servers dialog on first login/signup — land on Home
-    // (friends + DMs); the rail + button is there when they want a server.
     await openHome();
     return;
   }
@@ -21,11 +21,45 @@ async function refreshServers(selectId) {
   renderServerList();
   await selectServer(S.serverId);
 }
+function folderById(id) { return S.layoutFolders.find((f) => f.id === id); }
 function buildRootOrder() {
-  // Flat rail: servers sorted by saved position (stable — new joins keep
-  // membership order at the end). Anything without a position sinks to 999.
+  // Assign each server to its folder (by folder_id) or leave it unfiled, then
+  // build one sorted rail list of folders + unfiled servers using scalar position.
+  for (const f of S.layoutFolders) f.servers = [];
+  for (const s of S.servers) {
+    const m = S.serverMeta.get(s.id);
+    const f = m && m.folderId ? folderById(m.folderId) : null;
+    if (f) f.servers.push(s.id);
+  }
+  for (const f of S.layoutFolders) {
+    f.servers.sort((x, y) => (S.serverMeta.get(x)?.position ?? 999) - (S.serverMeta.get(y)?.position ?? 999));
+  }
   const pos = (id) => S.serverMeta.get(id)?.position ?? 999;
-  S.rootOrder = S.servers.map((s) => s.id).sort((a, b) => pos(a) - pos(b));
+  const fpos = (id) => (folderById(id)?.position ?? 999);
+  S.rootOrder = [
+    ...S.layoutFolders.map((f) => ({ kind: 'folder', id: f.id, pos: fpos(f.id) })),
+    ...S.servers.filter((s) => !(S.serverMeta.get(s.id)?.folderId && folderById(S.serverMeta.get(s.id).folderId))).map((s) => ({ kind: 'server', id: s.id, pos: pos(s.id) })),
+  ].sort((x, y) => x.pos - y.pos);
+}
+function isFolderActive(f) { return (f.servers || []).includes(S.serverId); }
+function hexToRgba(hex, alpha) {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return 'rgba(88,101,242,' + alpha + ')';
+  const n = parseInt(m[1], 16);
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + alpha + ')';
+}
+function iconCell(s) {
+  const label = (s.name || '?').trim().charAt(0).toUpperCase() || '?';
+  if (s.icon_url) {
+    return '<span class="fc"><img src="' + esc(s.icon_url) + '" alt="" loading="lazy" draggable="false" onerror="this.style.display=\'none\'" /><span class="fc-letter">' + esc(label) + '</span></span>';
+  }
+  return '<span class="fc"><span class="fc-letter">' + esc(label) + '</span></span>';
+}
+function folderGridHtml(f) {
+  const kids = (f.servers || []).map((id) => S.servers.find((s) => s.id === id)).filter(Boolean);
+  if (!kids.length) return '<span class="fgrid fg0"><span class="fc-letter fg-empty">' + esc((f.name || 'F').trim().charAt(0).toUpperCase()) + '</span></span>';
+  const shown = kids.slice(0, 4);
+  return '<span class="fgrid fg' + shown.length + '">' + shown.map(iconCell).join('') + '</span>';
 }
 function serverBtn(s) {
   const b = document.createElement('button');
@@ -36,9 +70,6 @@ function serverBtn(s) {
   b.dataset.drag = 'server:' + s.id;
   b.dataset.sid = s.id;
   if (s.icon_url) {
-    // Explicit <img> with every property inline: renders identically no matter
-    // what state any stylesheet is in (opaque + fully covering, so no
-    // background rule can affect it). Broken URLs fall back to the letter.
     const img = document.createElement('img');
     img.src = s.icon_url; img.alt = ''; img.draggable = false;
     img.width = 48; img.height = 48;
@@ -49,23 +80,93 @@ function serverBtn(s) {
     b.textContent = label;
   }
   b.onclick = () => selectServer(s.id);
-  wireDrag(b, s.id);
+  wireDrag(b, 'server', s.id);
   return b;
+}
+function folderBtn(f) {
+  const w = document.createElement('div');
+  w.className = 'fwrap' + (isFolderActive(f) ? ' active' : '');
+  const b = document.createElement('button');
+  b.className = 'folder-btn' + (S.openFolderId === f.id ? ' open' : '');
+  b.title = f.name || 'Folder';
+  b.draggable = true;
+  b.dataset.drag = 'folder:' + f.id;
+  b.dataset.fid = f.id;
+  b.style.setProperty('--fcolor', f.color || '#5865f2');
+  b.innerHTML = folderGridHtml(f);
+  b.onclick = (e) => { e.stopPropagation(); toggleFolder(f.id); };
+  b.oncontextmenu = (e) => { e.preventDefault(); e.stopPropagation(); openFolderMenu(f.id, e.clientX, e.clientY); };
+  wireDrag(b, 'folder', f.id);
+  w.appendChild(b);
+  return w;
 }
 function renderServerList() {
   const box = $('#server-list');
   box.innerHTML = '';
   const byId = new Map(S.servers.map((s) => [s.id, s]));
-  for (const id of S.rootOrder) {
-    const s = byId.get(id);
-    if (s) box.appendChild(serverBtn(s));
+  const inFolder = new Set([...S.layoutFolders].flatMap((f) => f.servers || []));
+  for (const it of S.rootOrder) {
+    if (it.kind === 'folder') {
+      const f = folderById(it.id);
+      if (f) box.appendChild(folderBtn(f));
+    } else {
+      const s = byId.get(it.id);
+      if (s) box.appendChild(serverBtn(s));
+    }
   }
-  // Servers missing from the saved order (e.g. joined on another device)
-  // append at the end instead of vanishing.
   for (const s of S.servers) {
-    if (!S.rootOrder.includes(s.id)) box.appendChild(serverBtn(s));
+    if (!S.rootOrder.some((it) => it.kind === 'server' && it.id === s.id) && !inFolder.has(s.id)) box.appendChild(serverBtn(s));
   }
+  renderFolderPopout();
 }
+function toggleFolder(id) {
+  S.openFolderId = (S.openFolderId === id) ? null : id;
+  renderServerList();
+}
+function closeFolderPopout() { if (S.openFolderId) { S.openFolderId = null; renderServerList(); } }
+function renderFolderPopout() {
+  const old = document.getElementById('folder-popout'); if (old) old.remove();
+  if (!S.openFolderId) return;
+  const f = folderById(S.openFolderId);
+  if (!f) { S.openFolderId = null; return; }
+  const btn = document.querySelector('[data-drag="folder:' + f.id + '"]');
+  if (!btn) return;
+  const color = f.color || '#5865f2';
+  const po = document.createElement('div');
+  po.id = 'folder-popout';
+  po.className = 'folder-popout';
+  po.style.setProperty('--fcolor', color);
+  po.style.backgroundImage = 'linear-gradient(rgba(0,0,0,.5), rgba(0,0,0,.5))';
+  po.style.backgroundColor = hexToRgba(color, 0.55);
+  const label = document.createElement('div');
+  label.className = 'fp-title';
+  label.textContent = f.name || 'Folder';
+  po.appendChild(label);
+  const list = document.createElement('div');
+  list.className = 'fp-list';
+  for (const id of (f.servers || [])) {
+    const s = S.servers.find((x) => x.id === id);
+    if (!s) continue;
+    const sb = serverBtn(s);
+    sb.addEventListener('click', () => closeFolderPopout());
+    list.appendChild(sb);
+  }
+  po.appendChild(list);
+  po.addEventListener('click', (e) => { if (!e.target.closest('[data-drag]')) closeFolderPopout(); });
+  wirePopoutDrop(list, f.id);
+  document.body.appendChild(po);
+  const r = btn.getBoundingClientRect();
+  const w = po.offsetWidth, h = po.offsetHeight;
+  let left = r.right + 10;
+  let top = r.top - 6;
+  if (left + w > innerWidth - 8) left = innerWidth - w - 8;
+  if (top + h > innerHeight - 8) top = innerHeight - h - 8;
+  if (top < 8) top = 8;
+  po.style.left = left + 'px';
+  po.style.top = top + 'px';
+}
+
+
 async function selectServer(id) {
   openServerView();
   S.serverId = id;

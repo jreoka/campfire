@@ -379,6 +379,17 @@ async function openChannelNotifSettings(cid) {
     renderChannels();
   });
 }
+function folderMoveItems(sid) {
+  const current = serverFolder(sid);
+  const items = [{ label: 'New folder', icon: '＋', fn: () => createFolderFromServers([sid]) }];
+  if (current) items.push({ label: 'Remove from folder', icon: '↩', fn: () => removeServerFromFolder(sid) });
+  const others = S.layoutFolders.filter((f) => f.id !== (current && current.id));
+  if (others.length) {
+    items.push({ sep: true });
+    for (const f of others) items.push({ label: 'Move to ' + (f.name || 'Folder'), icon: '▸', fn: () => moveServerToFolder(sid, f.id) });
+  }
+  return items;
+}
 function serverCtxMenu(sid, x, y) {
   const s = S.servers.find((v) => v.id === sid);
   if (!s) return;
@@ -389,6 +400,8 @@ function serverCtxMenu(sid, x, y) {
     { label: 'Open', icon: '→', fn: () => selectServer(sid) },
     { label: 'Copy invite link', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(`${location.origin}/invite/${s.invite_code}`); toast('Link copied'); } catch {} } },
     { label: 'Server settings', icon: '⚙', fn: async () => { if (sid !== S.serverId) await selectServer(sid); openServerSettings(); } },
+    { sep: true },
+    ...folderMoveItems(sid),
     { sep: true },
     muteToggleItem(serverMuted(sid), own === 'muted', 'server', 's:' + sid),
     { label: 'Notification settings', icon: BELL_SVG, fn: () => openServerNotifSettings(sid) },

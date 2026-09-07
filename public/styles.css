@@ -499,6 +499,51 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .rail-gear{color:var(--muted);padding:.55rem;border-radius:999px;margin-bottom:.2rem}
 .rail-gear:hover{background:var(--panel-2);color:var(--text)}
 #drop-marker{position:fixed;height:3px;background:var(--accent);border-radius:2px;z-index:300;pointer-events:none;display:none}
+
+/* ---------- server folders (Discord-style) ---------- */
+.fwrap{position:relative;width:48px;height:48px;flex-shrink:0}
+.folder-btn{
+  width:48px;height:48px;border-radius:18px;border:0;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;position:relative;flex-shrink:0;
+  background:color-mix(in srgb, var(--fcolor, #5865f2) 30%, var(--panel-2));
+  transition:background .12s ease;
+}
+.folder-btn:hover{background:color-mix(in srgb, var(--fcolor, #5865f2) 44%, var(--panel-2))}
+.folder-btn.open{box-shadow:inset 0 0 0 2px var(--fcolor, #5865f2)}
+.folder-btn.open:hover{background:color-mix(in srgb, var(--fcolor, #5865f2) 40%, var(--panel-2))}
+.fwrap.active .folder-btn::before{content:'';position:absolute;left:-10px;top:50%;transform:translateY(-50%);width:8px;height:28px;border-radius:0 999px 999px 0;background:#fff;z-index:2}
+.fgray-block{pointer-events:none}
+.fgrid{display:grid;gap:2px;pointer-events:none}
+.fg1{grid-template-columns:22px}
+.fg2{grid-template-columns:repeat(2,17px)}
+.fg3,.fg4{grid-template-columns:repeat(2,17px)}
+.fc{position:relative;width:17px;height:17px;border-radius:4px;overflow:hidden;background:rgba(0,0,0,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.fg1 .fc{width:22px;height:22px;border-radius:5px}
+.fc img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;border-radius:inherit;pointer-events:none}
+.fc-letter{position:relative;font-size:8px;font-weight:800;color:#fff;line-height:1;font-family:inherit}
+.fg1 .fc-letter{font-size:.78rem}
+.fc-empty{font-size:.9rem}
+.drop-target{outline:2px solid var(--accent)!important;outline-offset:1px;border-radius:18px}
+
+/* folder pop-out panel */
+#folder-popout{position:fixed;z-index:400;border-radius:16px;padding:8px;display:flex;flex-direction:column;align-items:center;box-shadow:0 8px 24px rgba(0,0,0,.5);min-width:48px}
+#folder-popout .fp-title{font-size:.8rem;font-weight:700;color:#fff;margin:0 0 6px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 1px 2px rgba(0,0,0,.45)}
+#folder-popout .fp-list{display:flex;flex-direction:column;gap:6px}
+
+/* folder context flyout */
+#folder-menu{position:fixed;z-index:400;background:var(--panel-2);border:0;border-radius:14px;padding:6px;min-width:200px;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+#folder-menu .fm-name{display:flex;justify-content:space-between;align-items:center;gap:.5rem;width:100%;background:transparent;border:0;color:var(--text);font-weight:700;font-size:.9rem;padding:.5rem .6rem;cursor:pointer;border-radius:8px}
+#folder-menu .fm-name:hover{background:var(--panel-3)}
+#folder-menu .fm-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#folder-menu .fm-edit{opacity:.55;font-size:.8rem}
+#folder-menu .fm-swatches{display:flex;flex-wrap:wrap;gap:6px;padding:.4rem .6rem .5rem}
+#folder-menu .fm-sw{width:20px;height:20px;border-radius:50%;cursor:pointer;border:2px solid transparent}
+#folder-menu .fm-sw:hover{transform:scale(1.1)}
+#folder-menu .fm-sw.sel{border-color:#fff;box-shadow:0 0 0 2px rgba(0,0,0,.4)}
+#folder-menu .fm-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:8px;padding:.5rem .6rem;font-size:.86rem;font-weight:600;cursor:pointer}
+#folder-menu .fm-item:hover{background:var(--panel-3)}
+#folder-menu .fm-item.danger{color:var(--red)}
+
 /* ---------- home (friends + DMs) ---------- */
 #server-ui{display:contents}
 .home-head{padding:.85rem .9rem;border-bottom:1px solid var(--line)}
@@ -685,6 +730,11 @@ body{touch-action:manipulation}
   body.nav-open #left{transform:none}
   #left #rail{width:60px;flex-shrink:0;padding:.6rem 0}
   #left .server-btn,#left #btn-add-server{width:44px;height:44px}
+  #left .fwrap,#left .folder-btn{width:44px;height:44px}
+  #left .fwrap.active .folder-btn::before{left:-6px;width:6px;height:22px}
+  #left .fg1{grid-template-columns:20px}
+  #left .fg2,#left .fg3,#left .fg4{grid-template-columns:repeat(2,15px)}
+  #left .fc,#left .fg1 .fc{width:15px;height:15px}
   #home-wrap{width:44px;height:44px}
   #home-wrap:has(> .active)::before{left:-6px;width:6px;height:22px}
   #server-list{overflow-x:hidden;align-items:flex-start;padding:0 4px 0 8px}

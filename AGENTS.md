@@ -64,7 +64,7 @@ campfire/
 - Primary buttons invert per M3 (light green bg, dark text). Toast is an inverse
   snackbar (light bg, dark text). FAB-style add-server button.
 - Semantic colors only where they carry meaning: green (online/speaking/live),
-  amber (away), red (danger/DND/muted). User-chosen colors (avatars,
+  amber (away), red (danger/DND/muted). User-chosen colors (avatars, folders,
   banners) and user content stay as-is.
 - **No emoji in UI chrome** (use SVG/text: `Invite`, `···`, `Mute`, `↩`, `⋯`).
   Exceptions, both user-driven content: message text/reactions, and the hover
@@ -125,7 +125,7 @@ up -d --build`. Secrets live in server + local `.env` (never committed).
 Shipped: auth, servers/invites, text channels, voice rooms (mesh WebRTC, sidebar
 occupants + VAD rings), uploads, emoji (Emojibase set + custom + Klipy GIFs),
 replies/threads/reactions/edits/mentions/markdown, presence + statuses, user
-cards, tabbed settings, rail DnD, B&W theme, ctx menus, auto-update,
+cards, tabbed settings, rail folders + DnD, B&W theme, ctx menus, auto-update,
 TOTP 2FA + passkeys + sessions, notification inbox.
 Detail per change lives in `git log` — don't duplicate it here.
 

@@ -1300,27 +1300,42 @@ app.post('/api/me/password', authRequired, async (req, res) => {
   res.json({ ok: true });
 });
 
-// ---------- server layout (rail order, per user) ----------
-// Folders were removed: the endpoints keep their shape ({folders: [], order})
-// so old clients degrade gracefully, but folder rows are never written.
+// ---------- server layout (rail order + folders, per user) ----------
+// Folders: server_folders rows (id/name/color/position/open) plus each
+// server_members.folder_id + position. Positions are global rail indexes so
+// unfiled servers and folders interleave; inside a folder, servers order by
+// their position too.
 app.get('/api/me/layout', authRequired, (req, res) => {
+  const folders = db.prepare('SELECT id,name,color,position,open FROM server_folders WHERE user_id = ? ORDER BY position ASC').all(req.user.id);
   const order = db.prepare('SELECT server_id,folder_id,position FROM server_members WHERE user_id = ?').all(req.user.id);
-  res.json({ folders: [], order });
+  res.json({ folders, order });
 });
 app.put('/api/me/layout', authRequired, (req, res) => {
-  const { servers } = req.body || {};
-  if (!Array.isArray(servers)) return res.status(400).json({ error: 'bad_layout' });
-  if (servers.length > 200) return res.status(400).json({ error: 'layout_too_big' });
+  const { servers, folders } = req.body || {};
+  if (!Array.isArray(servers) || !Array.isArray(folders)) return res.status(400).json({ error: 'bad_layout' });
+  if (servers.length > 200 || folders.length > 50) return res.status(400).json({ error: 'layout_too_big' });
   const myServers = new Set(db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(req.user.id).map((r) => r.server_id));
   const tx = db.transaction(() => {
-    // Drop any leftover folder rows for this user and unfile everything;
-    // only rail positions are persisted from here on.
-    db.prepare('DELETE FROM server_folders WHERE user_id = ?').run(req.user.id);
-    db.prepare('UPDATE server_members SET folder_id = NULL WHERE user_id = ?').run(req.user.id);
-    const upd = db.prepare('UPDATE server_members SET position = ? WHERE user_id = ? AND server_id = ?');
+    const seen = new Set();
+    for (const f of folders) {
+      if (!f || typeof f.id !== 'string' || !f.id || f.id.length > 64) continue;
+      const name = String(f.name || '').trim().slice(0, 32) || 'Folder';
+      const color = /^#[0-9a-fA-F]{6}$/.test(f.color || '') ? f.color : '#5865f2';
+      const open = f.open === false ? 0 : 1;
+      const position = Math.max(0, Math.min(500, parseInt(f.position, 10) || 0));
+      const ex = db.prepare('SELECT id FROM server_folders WHERE id = ? AND user_id = ?').get(f.id, req.user.id);
+      if (ex) db.prepare('UPDATE server_folders SET name=?,color=?,position=?,open=? WHERE id=?').run(name, color, position, open, f.id);
+      else db.prepare('INSERT INTO server_folders (id,user_id,name,color,position,open,created_at) VALUES (?,?,?,?,?,?,?)').run(f.id, req.user.id, name, color, position, open, now());
+      seen.add(f.id);
+    }
+    if (seen.size) db.prepare(`DELETE FROM server_folders WHERE user_id = ? AND id NOT IN (${[...seen].map(() => '?').join(',')})`).run(req.user.id, ...[...seen]);
+    else db.prepare('DELETE FROM server_folders WHERE user_id = ?').run(req.user.id);
+    db.prepare('UPDATE server_members SET folder_id = NULL WHERE user_id = ? AND folder_id IS NOT NULL AND folder_id NOT IN (SELECT id FROM server_folders WHERE user_id = ?)').run(req.user.id, req.user.id);
+    const upd = db.prepare('UPDATE server_members SET folder_id = ?, position = ? WHERE user_id = ? AND server_id = ?');
     for (const s of servers) {
       if (!s || !myServers.has(s.id)) continue;
-      upd.run(Math.max(0, Math.min(500, parseInt(s.position, 10) || 0)), req.user.id, s.id);
+      const fid = (typeof s.folderId === 'string' && seen.has(s.folderId)) ? s.folderId : null;
+      upd.run(fid, Math.max(0, Math.min(500, parseInt(s.position, 10) || 0)), req.user.id, s.id);
     }
   });
   try { tx(); } catch { return res.status(400).json({ error: 'bad_layout' }); }

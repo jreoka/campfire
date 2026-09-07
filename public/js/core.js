@@ -31,8 +31,10 @@ const S = {
   pinCount: 0,
   pinsCtx: null, // context the pins popup is open for
   editing: null, // message id being edited
-  serverMeta: new Map(), // serverId -> {position}
-  rootOrder: [], // [serverId] rail order top-to-bottom
+  layoutFolders: [], // [{id,name,color,open,position,servers:[serverId]}]
+  serverMeta: new Map(), // serverId -> {folderId, position}
+  rootOrder: [], // [{kind:'server'|'folder', id, pos}] rail order top-to-bottom
+  openFolderId: null, // id of the folder whose pop-out is expanded (null = none)
   view: 'server', // 'server' | 'home'
   dms: [], friends: { friends: [], pendingIn: [], pendingOut: [], blocked: [] },
   friendTab: 'all', // friends sidebar tab: 'online' | 'all' | 'pending' | 'blocked'
