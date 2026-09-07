@@ -160,6 +160,8 @@ function setSettingsTab(t) {
 }
 document.querySelectorAll('.set-tab').forEach((b) => (b.onclick = () => { setSettingsTab(b.dataset.tab); if (b.dataset.tab === 'account') renderSecurityTab(); }));
 $('#btn-settings-rail').onclick = () => openSettings('profile');
+$('#set-noise').checked = noiseSuppressionEnabled();
+$('#set-noise').addEventListener('change', (e) => setNoiseSuppression(e.target.checked));
 $('#btn-home').onclick = openHome;
 $('#btn-pins').onclick = openPins;
 $('#jump-present').onclick = jumpToPresent;

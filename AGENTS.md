@@ -46,9 +46,10 @@ campfire/
   public/
     index.html       # SPA shell (auth view + main view + modals)
     styles.css       # flat professional dark UI (see design rules below)
-    js/              # SPA modules (ordered classic scripts): core, auth, servers,
-                     # messages, socket, ui, voice, actions, rail, home, pins,
-                     # compose, pickers, settings, security, final
+    js/              # SPA modules (ordered classic scripts): core, auth, noise,
+                     # servers, messages, socket, ui, voice, actions, rail, home,
+                     # pins, compose, pickers, settings, security, final
+    vendor/rnnoise/  # RNNoise wasm + worklet (mic noise suppression) vendored
     manifest.webmanifest
     service-worker.js   # bump CACHE ('campfire-vN') on every frontend change
     icons/           # generated PNGs (committed so static serving works w/o build)

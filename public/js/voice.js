@@ -105,8 +105,14 @@ async function joinVoice(serverId, channelId) {
     toast('Microphone blocked — allow mic access to join voice');
     return;
   }
+  let sendStream = stream; // stream actually sent to peers (denoised when RNNoise on)
+  let noise = null;
+  if (noiseSuppressionEnabled()) {
+    try { const r = await applyNoiseSuppression(stream); sendStream = r.stream; noise = r; }
+    catch { sendStream = stream; } // fall back to raw mic if RNNoise can't start
+  }
   const ch = S.serverDetail?.channels.find((c) => c.id === channelId);
-  S.voice = { serverId, channelId, stream, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, cameraOn: false, sharing: false, quality: 'high', speaking: false, audioEls: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
+  S.voice = { serverId, channelId, stream: sendStream, micStream: stream, noise, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, cameraOn: false, sharing: false, quality: 'high', speaking: false, audioEls: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
   $('#voice-bar').classList.remove('hidden');
   $('#voice-fab').classList.remove('hidden');
   $('#voice-chan-name').textContent = ch ? ch.name : 'voice';
@@ -121,7 +127,9 @@ async function joinVoice(serverId, channelId) {
 function leaveVoice(silent) {
   if (!S.voice) return;
   for (const [, pc] of S.voice.pcs) { try { pc.close(); } catch {} }
+  try { S.voice.noise?.stop(); } catch {}
   S.voice.stream?.getTracks().forEach((t) => t.stop());
+  S.voice.micStream?.getTracks().forEach((t) => t.stop());
   S.voice.camStream?.getTracks().forEach((t) => t.stop());
   S.voice.screenStream?.getTracks().forEach((t) => t.stop());
   for (const [, el] of S.voice.audioEls) { try { el.remove(); } catch {} }

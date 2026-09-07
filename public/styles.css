@@ -461,6 +461,8 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
   .set-tabs{flex-direction:row;align-items:center;min-width:0}
 }
 .set-pane label{display:block;font-size:.82rem;font-weight:600;color:var(--muted);margin:.65rem 0}
+.set-check{display:flex;align-items:center;gap:.55rem;font-size:.85rem;font-weight:500;color:var(--text);cursor:pointer}
+.set-check input{flex-shrink:0;width:auto;margin:0;accent-color:var(--accent);width:1.05rem;height:1.05rem}
 .set-pane input,.set-pane select,.set-pane textarea{width:100%;margin-top:.3rem;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:var(--radius);padding:.6rem .7rem;font-size:.92rem;outline:none}
 .set-pane input:focus,.set-pane select:focus,.set-pane textarea:focus{border-color:var(--accent)}
 .set-pane textarea{resize:vertical;min-height:70px}

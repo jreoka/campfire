@@ -14,11 +14,16 @@ async function startVoiceRec() {
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
   catch { toast('Microphone blocked — allow mic access to record'); return; }
+  let recStream = stream, noise = null;
+  if (noiseSuppressionEnabled()) {
+    try { const r = await applyNoiseSuppression(stream); recStream = r.stream; noise = r; }
+    catch { recStream = stream; } // fall back to raw mic if RNNoise can't start
+  }
   const mt = recMime();
   let rec;
-  try { rec = new MediaRecorder(stream, mt ? { mimeType: mt } : undefined); }
-  catch { try { stream.getTracks().forEach((t) => t.stop()); } catch {} toast('Recording is not supported here'); return; }
-  recSt = { rec, stream, chunks: [], t0: Date.now(), timer: null, cancelled: false };
+  try { rec = new MediaRecorder(recStream, mt ? { mimeType: mt } : undefined); }
+  catch { try { stream.getTracks().forEach((t) => t.stop()); } catch {} try { noise?.stop(); } catch {} toast('Recording is not supported here'); return; }
+  recSt = { rec, stream, noise, chunks: [], t0: Date.now(), timer: null, cancelled: false };
   rec.ondataavailable = (e) => { if (recSt && e.data && e.data.size) recSt.chunks.push(e.data); };
   rec.onstop = finishVoiceRec;
   try { rec.start(); } catch { cancelVoiceRec(); return; }
@@ -52,6 +57,7 @@ function finishVoiceRec() {
   recSt = null;
   if (st) {
     if (st.timer) clearInterval(st.timer);
+    try { st.noise?.stop(); } catch {}
     try { st.stream.getTracks().forEach((t) => t.stop()); } catch {}
   }
   paintRecBar();
