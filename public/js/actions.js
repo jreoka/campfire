@@ -146,6 +146,83 @@ function openMsgSheet(mid) {
     bd.classList.add('open'); sh.classList.add('open');
   }));
 }
+/* generic slide-up bottom sheet for right-click-style menus (mobile long-press) */
+function closeCtxSheet() {
+  document.querySelector('#sheet-backdrop')?.remove();
+  document.querySelector('#sheet')?.remove();
+}
+function openServerSheet(sid) {
+  const s = S.servers.find((v) => v.id === sid);
+  if (!s) return;
+  openCtxSheet(serverMenuItems(sid), { title: s.name, sub: '', serverUser: { display_name: s.name, avatar_color: '#5865f2', avatar_url: s.icon_url || null } });
+}
+function openChannelSheet(cid, ctype) {
+  const c = S.serverDetail?.channels.find((v) => v.id === cid);
+  if (!c) return;
+  openCtxSheet(channelMenuItems(cid, ctype), { title: c.name, sub: ctype === 'voice' ? 'Voice channel' : 'Text channel', glyph: ctype === 'voice' ? '♪' : '#', color: 'var(--panel-3)' });
+}
+function openFolderSheet(fid) {
+  const f = folderById(fid);
+  if (!f) return;
+  openCtxSheet(folderSheetItems(fid), { title: f.name || 'Folder', sub: (f.servers || []).length + ' server' + ((f.servers || []).length === 1 ? '' : 's'), glyph: (f.name || 'F').trim().charAt(0).toUpperCase(), color: f.color || '#5865f2' });
+}
+function openCtxSheet(items, head) {
+  if (!items || !items.length) return;
+  closeCtx();
+  closeMsgSheet(true);
+  closeCtxSheet();
+  const bd = document.createElement('div');
+  bd.id = 'sheet-backdrop';
+  bd.onclick = () => closeCtxSheet();
+  const sh = document.createElement('div');
+  sh.id = 'sheet';
+  sh.setAttribute('role', 'dialog');
+  sh.innerHTML = '<div class="sheet-handle"></div>';
+  if (head && (head.title || head.sub)) {
+    const h = document.createElement('div');
+    h.className = 'sheet-head';
+    h.innerHTML = '<span class="avatar"></span><div style="min-width:0;flex:1"><div class="sheet-who"></div><div class="sheet-snip"></div></div>';
+    const av = h.querySelector('.avatar');
+    if (head.serverUser) paintAvatar(av, head.serverUser);
+    else if (head.avatarEl) av.appendChild(head.avatarEl);
+    else { av.textContent = head.glyph || (head.title ? head.title.trim().charAt(0).toUpperCase() : '?'); av.style.background = head.color || 'var(--panel-3)'; }
+    h.querySelector('.sheet-who').textContent = head.title || '';
+    h.querySelector('.sheet-snip').textContent = head.sub || '';
+    sh.appendChild(h);
+  }
+  const rows = document.createElement('div');
+  rows.className = 'sheet-rows';
+  for (const it of items) {
+    if (it.sep) { const s = document.createElement('div'); s.className = 'sheet-sep'; rows.appendChild(s); continue; }
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'sheet-row' + (it.danger ? ' danger' : '');
+    b.innerHTML = `<span class="ctx-ic">${it.icon || ''}</span>`;
+    const lb = document.createElement('span');
+    lb.textContent = it.label;
+    b.appendChild(lb);
+    b.onclick = () => { closeCtxSheet(); it.fn && it.fn(); };
+    rows.appendChild(b);
+  }
+  sh.appendChild(rows);
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'sheet-cancel';
+  cancel.textContent = 'Cancel';
+  cancel.onclick = () => closeCtxSheet();
+  sh.appendChild(cancel);
+  document.body.appendChild(bd);
+  document.body.appendChild(sh);
+  requestAnimationFrame(() => requestAnimationFrame(() => { bd.classList.add('open'); sh.classList.add('open'); }));
+}
+function folderSheetItems(fid) {
+  const f = folderById(fid); if (!f) return [];
+  return [
+    { label: S.openFolderId === fid ? 'Collapse folder' : 'Expand folder', icon: S.openFolderId === fid ? '▴' : '▾', fn: () => toggleFolder(fid) },
+    { label: 'Rename folder', icon: '✎', fn: () => renameFolder(fid) },
+    { label: 'Delete folder', icon: '🗑', danger: true, fn: () => deleteFolder(fid) },
+  ];
+}
 /* ================= forward messages ================= */
 S.fwdSrc = null; S.fwdPick = null;
 let fwdDestCache = null;
@@ -390,13 +467,11 @@ function folderMoveItems(sid) {
   }
   return items;
 }
-function serverCtxMenu(sid, x, y) {
+function serverMenuItems(sid) {
   const s = S.servers.find((v) => v.id === sid);
-  if (!s) return;
-  const d = S.serverDetail && S.serverDetail.id === sid ? S.serverDetail : null;
-  const owner = d ? d.owner_id === S.me.id : false;
+  if (!s) return [];
   const own = notifPrefsCache['s:' + sid] || '';
-  openCtx(x, y, [
+  return [
     { label: 'Open', icon: '→', fn: () => selectServer(sid) },
     { label: 'Copy invite link', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(`${location.origin}/invite/${s.invite_code}`); toast('Link copied'); } catch {} } },
     { label: 'Server settings', icon: '⚙', fn: async () => { if (sid !== S.serverId) await selectServer(sid); openServerSettings(); } },
@@ -405,11 +480,12 @@ function serverCtxMenu(sid, x, y) {
     { sep: true },
     muteToggleItem(serverMuted(sid), own === 'muted', 'server', 's:' + sid),
     { label: 'Notification settings', icon: BELL_SVG, fn: () => openServerNotifSettings(sid) },
-  ]);
+  ];
 }
-function channelCtxMenu(cid, ctype, x, y) {
+function serverCtxMenu(sid, x, y) { openCtx(x, y, serverMenuItems(sid)); }
+function channelMenuItems(cid, ctype) {
   const c = S.serverDetail?.channels.find((v) => v.id === cid);
-  if (!c) return;
+  if (!c) return [];
   const owner = canManage();
   const items = ctype === 'voice'
     ? [{ label: 'Join voice', icon: '→', fn: () => openVoiceChannel(S.serverId, cid) }]
@@ -422,8 +498,9 @@ function channelCtxMenu(cid, ctype, x, y) {
     items.push({ label: 'Notification settings', icon: BELL_SVG, fn: () => openChannelNotifSettings(cid) });
   }
   if (owner) items.push({ label: 'Delete channel', icon: '🗑', danger: true, fn: () => confirmDeleteChannel(c) });
-  openCtx(x, y, items);
+  return items;
 }
+function channelCtxMenu(cid, ctype, x, y) { openCtx(x, y, channelMenuItems(cid, ctype)); }
 function ctxFor(el, x, y) {
   if (!el || !el.closest) return false;
   const msg = el.closest('.msg[data-mid]');
@@ -457,7 +534,7 @@ document.addEventListener('touchend', (e) => {
 }, { passive: false });
 document.addEventListener('touchstart', (e) => {
   if (!e.target.closest || e.target.closest('input, textarea, select, a')) return;
-  const t = e.target.closest('.msg,.chan,.member,.server-btn,.vuser,[data-dmthread]');
+  const t = e.target.closest('.msg,.chan,.member,.server-btn,.folder-btn,.vuser,[data-dmthread]');
   if (!t) return;
   const touch = e.touches[0];
   const x = touch.clientX, y = touch.clientY;
@@ -467,8 +544,14 @@ document.addEventListener('touchstart', (e) => {
     holdT = null;
     try { navigator.vibrate && navigator.vibrate(10); } catch {}
     const mt = t.closest('.msg[data-mid]');
-    if (mt && isCoarse()) { holdSheet = true; openMsgSheet(mt.dataset.mid); }
-    else if (ctxFor(t, x, y)) holdMenu = true;
+    if (mt && isCoarse()) { holdSheet = true; openMsgSheet(mt.dataset.mid); return; }
+    const ch = t.closest('.chan[data-cid]');
+    if (ch && isCoarse()) { holdSheet = true; openChannelSheet(ch.dataset.cid, ch.dataset.ctype); return; }
+    const sb = t.closest('.server-btn[data-sid]');
+    if (sb && isCoarse()) { holdSheet = true; openServerSheet(sb.dataset.sid); return; }
+    const fb = t.closest('.folder-btn[data-fid]');
+    if (fb && isCoarse()) { holdSheet = true; openFolderSheet(fb.dataset.fid); return; }
+    if (ctxFor(t, x, y)) holdMenu = true;
   }, 550);
 }, { passive: true });
 ['touchend', 'touchcancel'].forEach((ev) => document.addEventListener(ev, () => { clearTimeout(holdT); holdT = null; }, { passive: true }));
