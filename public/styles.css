@@ -195,13 +195,15 @@ h1,h2,h3{letter-spacing:-0.01em}
 #composer-more{position:absolute;left:0;bottom:calc(100% + .4rem);z-index:60;background:var(--panel-2);border:0;border-radius:12px;padding:.3rem;min-width:200px}
 #composer .tool-btn,#composer .gif-btn,#composer .btn{flex-shrink:0}
 #composer-box{position:relative;flex:1;min-width:0;display:flex}
-#composer-box #in-message{width:100%;padding-right:7.2rem}
+#composer-box #in-message{width:100%;padding-right:4.2rem;padding-left:2.8rem}
+#btn-plus{display:inline-flex;align-items:center;justify-content:center;position:absolute;left:.35rem;top:50%;transform:translateY(-50%)}
+#btn-attach{display:none}
 #composer-tools{position:absolute;right:.35rem;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:.15rem}
 #composer-tools .tool-btn{padding:.45rem}
 #in-message{flex:1;min-width:0;background:transparent;border:1px solid transparent;color:transparent;caret-color:var(--text);border-radius:20px;padding:.65rem 1rem;outline:none;position:relative;font:inherit;font-size:.93rem}
 #in-message:focus{border-color:transparent}
 #composer-box:focus-within #in-render{border-color:var(--accent)}
-#in-render{position:absolute;inset:0;display:flex;align-items:center;overflow:hidden;white-space:pre;pointer-events:none;background:var(--inset);border:1px solid var(--line);border-radius:20px;padding-left:1rem;padding-right:7.2rem;font:inherit;font-size:.93rem;color:var(--text)}
+#in-render{position:absolute;inset:0;display:flex;align-items:center;overflow:hidden;white-space:pre;pointer-events:none;background:var(--inset);border:1px solid var(--line);border-radius:20px;padding-left:2.8rem;padding-right:4.2rem;font:inherit;font-size:.93rem;color:var(--text)}
 #in-render-inner{white-space:pre}
 #in-render .spoiler{background:var(--panel-3);color:var(--muted);border-radius:6px;padding:0 .3rem}
 #in-render strong{font-weight:700}#in-render em{font-style:italic}#in-render del{text-decoration:line-through}#in-render code{background:var(--panel-3);border-radius:6px;padding:.05rem .3rem;font-size:.85em}
@@ -670,6 +672,7 @@ body{touch-action:manipulation}
   #composer-box #in-message{padding-right:3.4rem}
   #in-render{padding-right:3.4rem}
   #btn-attach,#btn-emoji,#btn-gif{display:none}
+  #btn-plus{display:none}
   #btn-more{display:inline-flex;align-items:center;justify-content:center}
   #picker{left:0;right:0;bottom:0;width:auto;max-height:62dvh;border-radius:20px 20px 0 0}
   #mention-pop{left:.5rem;right:.5rem}
