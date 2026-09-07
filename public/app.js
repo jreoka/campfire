@@ -1904,12 +1904,23 @@ function fitStage() {
   if (!S.callOpen || !S.voice || !n) { grid.style.gridTemplateColumns = ''; grid.style.justifyContent = ''; return; }
   const gap = 8, W = grid.clientWidth, H = grid.clientHeight;
   if (!W || !H) return;
-  let cols = n, w = (W - (n - 1) * gap) / n;
+  // Widest tile that still fits: cap every column layout by the available height.
+  let best = null;
   for (let c = 1; c <= n; c++) {
-    const rows = Math.ceil(n / c), tw = (W - (c - 1) * gap) / c, th = (tw * 9) / 16;
-    if (rows * th + (rows - 1) * gap <= H) { cols = c; w = tw; break; }
+    const rows = Math.ceil(n / c);
+    const w = Math.min((W - (c - 1) * gap) / c, ((H - (rows - 1) * gap) / rows) * 16 / 9);
+    if (w <= 0) continue;
+    if (!best || w > best.w) best = { cols: c, w };
   }
-  grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, ${Math.max(120, Math.floor(w))}px))`;
+  if (!best) return;
+  let { cols, w } = best;
+  const MIN = 140;
+  if (w < MIN) {
+    // Tons of people: keep tiles usable and allow the scroll instead.
+    cols = Math.max(1, Math.floor((W + gap) / (MIN + gap)));
+    w = Math.min(MIN, (W - (cols - 1) * gap) / cols);
+  }
+  grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, ${Math.floor(w)}px))`;
   grid.style.justifyContent = 'center';
 }
 window.addEventListener('resize', () => { try { fitStage(); } catch {} });
