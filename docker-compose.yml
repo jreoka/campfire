@@ -1,0 +1,21 @@
+services:
+  campfire:
+    build: .
+    container_name: campfire
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    volumes:
+      - ./data:/data
+    environment:
+      - PORT=3000
+      - DB_PATH=/data/campfire.db
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env — generate with: openssl rand -base64 32}
+      # Optional: custom STUN/TURN for voice outside your LAN.
+      # If friends can't hear each other over the internet, run coturn and set these:
+      # - STUN_URL=stun:stun.l.google.com:19302
+      # - TURN_URL=turn:your-turn-host:3478
+      # - TURN_USER=campfire
+      # - TURN_PASS=change-me
+    env_file:
+      - .env

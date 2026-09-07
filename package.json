@@ -1,0 +1,23 @@
+{
+  "name": "campfire",
+  "version": "1.0.0",
+  "description": "Simple self-hosted chat + voice servers. Docker-friendly Mattermost/Steam-chat alternative with PWA support.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "gen-icons": "node scripts/gen-icons.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.6",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "allowScripts": {
+    "better-sqlite3@11.10.0": true
+  }
+}
