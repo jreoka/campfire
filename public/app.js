@@ -398,133 +398,76 @@ function serverBtn(s) {
   return b;
 }
 function folderGrid(kids) {
-  // Improved grid with better accessibility and error handling
+  // Shrink-wrapped centered rows: big dark previews, symmetric blue all
+  // around — no edge-to-edge bands to read as cut off.
   const shown = kids.slice(0, 4);
-  
+  if (!shown.length) return '';
   const cell = (s) => {
     const label = (s.name || '?').trim().charAt(0).toUpperCase() || '?';
-    if (s.icon_url) {
-      return '<span class="fic has-icon"><img src="' + esc(s.icon_url) + '" alt="" loading="lazy" draggable="false" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'" /><span class="fic-fallback">' + esc(label) + '</span></span>';
-    }
-    return '<span class="fic">' + esc(label) + '</span>';
+    return s.icon_url
+      ? `<span class="fic"><img src="${esc(s.icon_url)}" alt="" loading="lazy" draggable="false" data-fb-letter="${esc(label)}" /></span>`
+      : `<span class="fic">${esc(label)}</span>`;
   };
-  
-  if (shown.length === 1) {
-    return '<span class="fgrid n1" role="group" aria-label="1 server"><span class="frow">' + cell(shown[0]) + '</span></span>';
-  }
-  
+  if (shown.length === 1) return `<span class="fgrid n1"><span class="frow">${cell(shown[0])}</span></span>`;
   const rows = [];
-  for (let i = 0; i < shown.length; i += 2) {
-    const pair = shown.slice(i, i + 2);
-    rows.push('<span class="frow">' + pair.map(cell).join('') + '</span>');
-  }
-  return '<span class="fgrid n' + shown.length + '" role="group" aria-label="' + shown.length + ' servers">' + rows.join('') + '</span>';
+  for (let i = 0; i < shown.length; i += 2) rows.push(`<span class="frow">${shown.slice(i, i + 2).map(cell).join('')}</span>`);
+  return `<span class="fgrid n${shown.length}">${rows.join('')}</span>`;
 }
-
 function folderEl(f, kids) {
   const wrap = document.createElement('div');
   wrap.className = 'folder-wrap' + (f.open ? ' open' : '');
   wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center';
-  wrap.dataset.fid = f.id;
-  
   const b = document.createElement('button');
   b.className = 'server-btn folder-btn' + (f.open ? ' open' : '');
-  b.style.background = f.color || '#5865f2';
-  b.title = f.name || 'Folder';
-  b.setAttribute('aria-label', f.name || 'Folder');
-  b.setAttribute('aria-expanded', f.open ? 'true' : 'false');
+  b.style.background = f.color;
+  b.title = f.name;
   b.draggable = true;
   b.dataset.drag = 'folder:' + f.id;
   b.dataset.fid = f.id;
   b.innerHTML = folderGrid(kids);
-  
-  if (kids.some((k) => k.id === S.serverId)) {
-    b.classList.add('active-folder');
-  }
-  
-  b.onclick = (e) => { 
-    e.stopPropagation();
-    b.setAttribute('aria-expanded', f.open ? 'true' : 'false');
-    saveLayout(); 
-    renderServerList(); 
-  };
-  
-  b.oncontextmenu = (e) => { 
-    e.preventDefault(); 
-    e.stopPropagation();
-    openFolderMenu(f.id, e.clientX, e.clientY); 
-  };
-  
-  if (isCoarse()) {
-    let holdTimer = null;
-    b.addEventListener('touchstart', (e) => {
-      holdTimer = setTimeout(() => {
-        openFolderMenu(f.id, e.touches[0].clientX, e.touches[0].clientY);
-      }, 500);
-      b.dataset._holdTimer = holdTimer;
-    }, { passive: true });
-    
-    ['touchend', 'touchmove', 'touchcancel'].forEach(ev => {
-      b.addEventListener(ev, () => {
-        if (b.dataset._holdTimer) {
-          clearTimeout(parseInt(b.dataset._holdTimer));
-          delete b.dataset._holdTimer;
-        }
-      }, { passive: true });
-    });
-  }
-  
+  if (kids.some((k) => k.id === S.serverId)) b.style.outline = '2px solid #ffffff88';
+  b.onclick = () => { f.open = !f.open; saveLayout(); renderServerList(); };
+  // NOTE: no dblclick-to-rename here — a quick expand+collapse reads as a
+  // double click and would pop the rename box by accident. Rename lives in
+  // the folder's right-click menu.
+  b.oncontextmenu = (e) => { e.preventDefault(); openFolderMenu(f.id, e.clientX, e.clientY); };
   wireDrag(b, 'folder', f.id);
   wrap.appendChild(b);
-  
   if (f.open) {
     const kidsBox = document.createElement('div');
     kidsBox.className = 'folder-children';
-    kidsBox.setAttribute('role', 'group');
-    kidsBox.setAttribute('aria-label', (f.name || 'Folder') + ' servers');
-    
+    // Open folder + dropdown read as one piece: the wash lives on the wrap
+    // so it encapsulates the folder button too (Discord-style).
     if (/^#[0-9a-fA-F]{6}$/.test(f.color || '')) {
-      wrap.style.background = f.color + '22';
+      wrap.style.background = f.color + '33';
     }
-    
-    for (const s of kids) {
-      kidsBox.appendChild(serverBtn(s));
-    }
+    for (const s of kids) kidsBox.appendChild(serverBtn(s));
     wrap.appendChild(kidsBox);
   }
-  
   return wrap;
 }
-
 function renderServerList() {
   const box = $('#server-list');
-  
   box.innerHTML = '';
   const byId = new Map(S.servers.map((s) => [s.id, s]));
-  
   for (const it of S.rootOrder) {
     if (it.kind === 'folder') {
       const f = folderById(it.id);
       if (!f) continue;
-      
-      const validKids = (f.servers || [])
-        .map((id) => byId.get(id))
-        .filter(Boolean);
-      
-      box.appendChild(folderEl(f, validKids));
+      box.appendChild(folderEl(f, (f.servers || []).map((id) => byId.get(id)).filter(Boolean)));
     } else {
       const s = byId.get(it.id);
       if (s) box.appendChild(serverBtn(s));
     }
   }
-  
   for (const s of S.servers) {
     if (S.rootOrder.some((it) => it.kind === 'server' && it.id === s.id)) continue;
+    // Servers living inside a folder render under that folder only — without
+    // this they would duplicate at the bottom of the rail.
     if (S.layoutFolders.some((f) => (f.servers || []).includes(s.id))) continue;
     box.appendChild(serverBtn(s));
   }
 }
-
 async function selectServer(id) {
   openServerView();
   S.serverId = id;
@@ -2897,116 +2840,54 @@ document.addEventListener('touchmove', (e) => {
 }, { passive: true });
 
 /* ================= rail folders + drag reorder ================= */
-// Complete redesign: simplified folder logic, better mobile touch support,
-// cleaner drag-drop with visual feedback, and fixed edge cases
-
 let dragPayload = null, dropTarget = null, dropMarker = null, folderMenuEl = null;
-
-// Improved marker with better visibility and animations
 function showMarker(rect, edge) {
-  if (!dropMarker) {
-    dropMarker = document.createElement('div');
-    dropMarker.id = 'drop-marker';
-    document.body.appendChild(dropMarker);
-  }
+  if (!dropMarker) { dropMarker = document.createElement('div'); dropMarker.id = 'drop-marker'; document.body.appendChild(dropMarker); }
   dropMarker.style.display = 'block';
   dropMarker.style.left = rect.left + 'px';
   dropMarker.style.width = rect.width + 'px';
-  dropMarker.style.top = (edge === 'before' ? rect.top - 3 : rect.bottom + 3) + 'px';
-  dropMarker.className = edge; // for animation direction
+  dropMarker.style.top = (edge === 'before' ? rect.top - 2 : rect.bottom - 1) + 'px';
 }
-
-function hideMarker() { 
-  if (dropMarker) {
-    dropMarker.style.display = 'none';
-    dropMarker.className = '';
-  }
-}
-
-function clearDropMarks() { 
-  document.querySelectorAll('.drop-combine, .drop-hover').forEach((el) => {
-    el.classList.remove('drop-combine', 'drop-hover');
-  }); 
-}
-
+function hideMarker() { if (dropMarker) dropMarker.style.display = 'none'; }
+function clearDropMarks() { document.querySelectorAll('.drop-combine').forEach((el) => el.classList.remove('drop-combine')); }
 function detachServer(sid) {
   S.rootOrder = S.rootOrder.filter((it) => !(it.kind === 'server' && it.id === sid));
-  for (const f of S.layoutFolders) {
-    f.servers = (f.servers || []).filter((id) => id !== sid);
-  }
+  for (const f of S.layoutFolders) f.servers = (f.servers || []).filter((id) => id !== sid);
 }
-
 function containerOf(sid) {
   for (const f of S.layoutFolders) {
     const i = (f.servers || []).indexOf(sid);
     if (i >= 0) return { type: 'folder', f, index: i };
   }
-  const idx = S.rootOrder.findIndex((it) => it.kind === 'server' && it.id === sid);
-  return { type: 'root', index: idx };
+  return { type: 'root', index: S.rootOrder.findIndex((it) => it.kind === 'server' && it.id === sid) };
 }
-
-function normalizeAndSave() { 
-  renderServerList(); 
-  saveLayout(); 
-}
-
+function normalizeAndSave() { renderServerList(); saveLayout(); }
 let saveLayoutT = null;
 function saveLayout() {
   clearTimeout(saveLayoutT);
-  saveLayoutT = setTimeout(persistLayout, 500);
+  saveLayoutT = setTimeout(persistLayout, 400);
 }
-
 async function persistLayout() {
   const folders = [];
-  S.rootOrder.forEach((it, i) => { 
-    if (it.kind === 'folder') { 
-      const f = folderById(it.id); 
-      if (f) folders.push(f); 
-    } 
-  });
-  for (const f of S.layoutFolders) {
-    if (!folders.includes(f)) folders.push(f);
-  }
-  
+  S.rootOrder.forEach((it, i) => { if (it.kind === 'folder') { const f = folderById(it.id); if (f) folders.push(f); } });
+  for (const f of S.layoutFolders) if (!folders.includes(f)) folders.push(f);
   const pos = new Map();
-  S.rootOrder.forEach((it, i) => { 
-    if (it.kind === 'server') {
-      pos.set(it.id, { folderId: null, position: i });
-    }
-  });
-  
+  S.rootOrder.forEach((it, i) => { if (it.kind === 'server') pos.set(it.id, { folderId: null, position: i }); });
   folders.forEach((f) => {
-    // Clean stale server IDs and prevent nested folders
-    f.servers = (f.servers || []).filter((sid) => 
-      S.servers.some((s) => s.id === sid)
-    );
-    f.servers.forEach((sid, i) => {
-      pos.set(sid, { folderId: f.id, position: i });
-    });
+    // Folders hold servers only: strip stale ids (and folder ids most of
+    // all) before persisting, so nesting can never be saved.
+    f.servers = (f.servers || []).filter((sid) => S.servers.some((s) => s.id === sid));
+    f.servers.forEach((sid, i) => pos.set(sid, { folderId: f.id, position: i }));
   });
-  
   try {
-    await api('/api/me/layout', { 
-      method: 'PUT', 
-      body: JSON.stringify({
-        folders: folders.map((f) => ({
-          id: f.id, 
-          name: f.name, 
-          color: f.color, 
-          open: !!f.open,
-          position: Math.max(0, S.rootOrder.findIndex(
-            (it) => it.kind === 'folder' && it.id === f.id
-          )),
-        })),
-        servers: S.servers.map((s) => ({ 
-          id: s.id, 
-          ...(pos.get(s.id) || { folderId: null, position: 999 }) 
-        })),
-      }) 
-    });
-  } catch (err) {
-    console.error('Failed to save layout:', err);
-  }
+    await api('/api/me/layout', { method: 'PUT', body: JSON.stringify({
+      folders: folders.map((f) => ({
+        id: f.id, name: f.name, color: f.color, open: !!f.open,
+        position: Math.max(0, S.rootOrder.findIndex((it) => it.kind === 'folder' && it.id === f.id)),
+      })),
+      servers: S.servers.map((s) => ({ id: s.id, ...(pos.get(s.id) || { folderId: null, position: 999 }) })),
+    }) });
+  } catch {}
 }
 function applyDrop(dd, t) {
   if (!dd || !t) return;
