@@ -45,7 +45,9 @@ function isFolderActive(f) { return (f.servers || []).includes(S.serverId); }
 function iconCell(s) {
   const label = (s.name || '?').trim().charAt(0).toUpperCase() || '?';
   if (s.icon_url) {
-    return '<span class="fc"><img src="' + esc(s.icon_url) + '" alt="" loading="lazy" draggable="false" onerror="this.style.display=\'none\'" /><span class="fc-letter">' + esc(label) + '</span></span>';
+    // Show the image alone once it loads; keep the letter only as a fallback
+    // if the image fails (onerror) — never overlay the letter on a real pfp.
+    return '<span class="fc"><img src="' + esc(s.icon_url) + '" alt="" loading="lazy" draggable="false" onerror="this.style.display=\'none\'" onload="this.nextElementSibling.style.display=\'none\'" /><span class="fc-letter">' + esc(label) + '</span></span>';
   }
   return '<span class="fc"><span class="fc-letter">' + esc(label) + '</span></span>';
 }
