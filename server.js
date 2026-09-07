@@ -61,10 +61,11 @@ const upImg = uploader('avatars', IMG_MIMES, MAX_IMG_BYTES);
 const upBanner = uploader('banners', IMG_MIMES, MAX_IMG_BYTES);
 const upIcon = uploader('icons', IMG_MIMES, MAX_IMG_BYTES);
 const upEmoji = uploader('emoji', IMG_MIMES, 4 * 1024 * 1024);
-function uploadUrl(sub, file) { return `/uploads/${sub}/${file.filename}`; }
+function uploadUrl(sub, file) { return `/uploads/${sub}/${file.filename}?v=${Date.now().toString(36)}`; }
 function deleteUploaded(url) {
   if (!url || !url.startsWith('/uploads/')) return;
-  const p = path.join(UPLOAD_DIR, url.slice('/uploads/'.length));
+  const clean = String(url).split('?')[0];
+  const p = path.join(UPLOAD_DIR, clean.slice('/uploads/'.length));
   if (path.resolve(p).startsWith(path.resolve(UPLOAD_DIR))) fs.unlink(p, () => {});
 }
 
@@ -800,7 +801,7 @@ wss.on('connection', (ws, req) => {
     voice: null,
   };
   clients.add(ws);
-  safeSend(ws, { t: 'hello', user: publicUser(u) });
+  safeSend(ws, { t: 'hello', user: publicUser(u), version: APP_VERSION });
 
   ws.on('message', (raw) => {
     let msg;

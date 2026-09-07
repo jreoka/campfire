@@ -607,7 +607,7 @@ function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(store.token)}`);
   S.ws = ws;
-  ws.onopen = () => ws.send(JSON.stringify({ t: 'subscribe' }));
+  ws.onopen = () => { ws.send(JSON.stringify({ t: 'subscribe' })); checkVersion(); };
   ws.onmessage = (ev) => {
     let m;
     try { m = JSON.parse(ev.data); } catch { return; }
@@ -620,7 +620,14 @@ function connectWS() {
 }
 function onWS(m) {
   switch (m.t) {
-    case 'hello': S.me = m.user; break;
+    case 'hello': {
+      S.me = m.user;
+      // deploys drop + re-establish every WS: version mismatch here means an
+      // update landed while the tab was open — prompt immediately, no waiting
+      if (m.version && S.bootVersion && m.version !== S.bootVersion && !S.updateReady) onUpdateReady();
+      else if (m.version && !S.bootVersion) S.bootVersion = m.version;
+      break;
+    }
     case 'message-new': {
       if (m.serverId !== S.serverId) break;
       const msg = m.message;
