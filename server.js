@@ -563,10 +563,11 @@ app.get('/api/servers/:id/channels/:chId/threads/:rootId', authRequired, (req, r
 
 // ---------- GIF search (Klipy, key stays server-side) ----------
 function normGif(it) {
-  const f = it.file || {}, md = f.md || {}, xs = f.xs || {};
+  const f = it.file || {}, md = f.md || {}, sm = f.sm || {}, xs = f.xs || {};
   return {
     title: it.title || '', slug: it.slug || '',
     gif: (md.gif || {}).url || null, mp4: (md.mp4 || {}).url || null,
+    thumb: (xs.gif || sm.gif || md.gif || {}).url || null,
     preview: (xs.jpg || xs.webp || md.jpg || {}).url || it.blur_preview || null,
     w: (md.gif || {}).width || null, h: (md.gif || {}).height || null,
   };

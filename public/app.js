@@ -1001,6 +1001,7 @@ function openPicker(mode = 'insert', mid = null) {
   setPickerTab('emoji');
   $('#pk-search').value = '';
   renderEmojiGrid('');
+  ensureEmojiData().then(() => { if (S.picker) renderEmojiGrid($('#pk-search').value); });
   loadGifTrending();
   setTimeout(() => $('#pk-search').focus(), 0);
 }
@@ -1011,6 +1012,25 @@ function setPickerTab(t) {
   $('#pk-gifs').classList.toggle('hidden', t !== 'gifs');
 }
 document.querySelectorAll('.pk-tab').forEach((b) => (b.onclick = () => setPickerTab(b.dataset.ptab)));
+let emojiData = null, emojiLoadP = null;
+function ensureEmojiData() {
+  if (emojiData) return Promise.resolve(emojiData);
+  if (!emojiLoadP) {
+    emojiLoadP = fetch('/emoji.json').then((r) => {
+      if (!r.ok) throw new Error('no dataset');
+      return r.json();
+    }).then((j) => { emojiData = j; return j; }).catch(() => null);
+  }
+  return emojiLoadP;
+}
+function emojiButton(box, ch, label, onclick) {
+  const b = document.createElement('button');
+  b.className = 'pk-emoji-btn';
+  b.textContent = ch;
+  if (label) b.title = label;
+  b.onclick = onclick;
+  box.appendChild(b);
+}
 function renderEmojiGrid(filter) {
   const box = $('#pk-emoji');
   box.innerHTML = '';
@@ -1029,10 +1049,32 @@ function renderEmojiGrid(filter) {
   for (const [ch, kw] of EMOJI) {
     if (ch === 'sec') { box.insertAdjacentHTML('beforeend', `<div class="pk-sec">${esc(kw)}</div>`); continue; }
     if (f && !(kw || '').includes(f)) continue;
-    const b = document.createElement('button');
-    b.className = 'pk-emoji-btn'; b.textContent = ch;
-    b.onclick = () => pickEmoji(ch);
-    box.appendChild(b);
+    emojiButton(box, ch, null, () => pickEmoji(ch));
+  }
+  if (emojiData) {
+    box.innerHTML = '';
+    if (custom.length) {
+      box.insertAdjacentHTML('beforeend', '<div class="pk-sec">Custom</div>');
+      for (const [n, url] of custom) {
+        const b = document.createElement('button');
+        b.className = 'pk-emoji-btn'; b.title = ':' + n + ':';
+        b.innerHTML = `<img class="pk-custom" src="${esc(url)}" alt=":${esc(n)}:" />`;
+        b.onclick = () => pickEmoji(':' + n + ':');
+        box.appendChild(b);
+      }
+    }
+    let shown = 0;
+    for (const g of emojiData.groups) {
+      const items = f ? g.items.filter((it) => it[1].includes(f)) : g.items;
+      if (!items.length) continue;
+      const capped = f ? items.slice(0, 120) : items;
+      box.insertAdjacentHTML('beforeend', `<div class="pk-sec">${esc(g.name)}${f && items.length > capped.length ? ` (${items.length})` : ''}</div>`);
+      for (const [ch] of capped) {
+        emojiButton(box, ch, null, () => pickEmoji(ch));
+        if (f && ++shown >= 400) break;
+      }
+      if (f && shown >= 400) break;
+    }
   }
   if (!box.children.length) box.innerHTML = '<div class="pk-empty">No emoji match.</div>';
 }
@@ -1063,7 +1105,7 @@ function renderGifGrid(gifs) {
   for (const g of gifs) {
     const b = document.createElement('button');
     b.className = 'pk-gif'; b.title = g.title || 'GIF';
-    b.innerHTML = `<img src="${esc(g.preview || g.gif)}" alt="${esc(g.title || 'GIF')}" loading="lazy" />`;
+    b.innerHTML = `<img src="${esc(g.thumb || g.preview || g.gif)}" alt="${esc(g.title || 'GIF')}" loading="lazy" />`;
     b.onclick = () => sendGif(g);
     box.appendChild(b);
   }

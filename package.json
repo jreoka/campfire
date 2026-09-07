@@ -6,7 +6,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "gen-icons": "node scripts/gen-icons.js"
+    "gen-icons": "node scripts/gen-icons.js",
+    "build:emoji": "node scripts/build-emoji.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -19,7 +20,7 @@
   "engines": {
     "node": ">=22"
   },
-  "allowScripts": {
-    "better-sqlite3@11.10.0": true
+  "devDependencies": {
+    "emojibase-data": "^17.0.0"
   }
 }

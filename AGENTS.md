@@ -130,6 +130,9 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
       tabbed settings (Profile/Account/Server), animated GIF avatars/banners/icons,
       @mentions + autocomplete + highlight, markdown-lite, image lightbox,
       drag-drop/paste uploads, server icons. E2E-verified incl. live Klipy search.
+- [x] v2.1 (2026-09-07): real emoji dataset (Emojibase, 1914 emoji, keyword search,
+      built to public/emoji.json via `npm run build:emoji`, lazy-loaded in picker),
+      animated GIF thumbnails in picker (xs.gif renditions).
 - [ ] NEXT: iterate on features/polish per owner feedback on the live site.
 - Open ideas (not requested yet): DMs, file/image sharing, push notifications,
   moderation roles beyond owner.
