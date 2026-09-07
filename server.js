@@ -703,6 +703,8 @@ app.post('/api/servers/join', authRequired, (req, res) => {
     const maxP = db.prepare('SELECT COALESCE(MAX(position),-1) m FROM server_members WHERE user_id = ?').get(req.user.id).m;
     db.prepare('INSERT INTO server_members (server_id,user_id,joined_at,position) VALUES (?,?,?,?)').run(s.id, req.user.id, now(), maxP + 1);
     postServerSys(s.id, `${displayOf(req.user)} joined the server`);
+    // Live roster for everyone already here (the joiner refetches via refreshServers).
+    broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
   }
   res.json({ server: serverView(s.id) });
 });

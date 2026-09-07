@@ -1167,7 +1167,7 @@ function onWS(m) {
         renderServerHeader();
         renderTopic();
         if (!m.server.channels.find((c) => c.id === keepChan)) S.channelId = (m.server.channels.find((c) => c.type === 'text') || {}).id || null;
-        renderServerList(); renderChannels();
+        renderServerList(); renderChannels(); renderMembers();
         if (S.channelId && S.channelId !== keepChan) selectChannel(S.channelId);
       } else renderServerList();
       break;
