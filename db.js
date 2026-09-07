@@ -54,6 +54,53 @@ CREATE INDEX IF NOT EXISTS idx_channels_server ON channels(server_id, position);
 CREATE INDEX IF NOT EXISTS idx_members_user ON server_members(user_id);
 `);
 
+// ---------- guarded migrations (never wipe data; additive only) ----------
+function columnExists(table, col) {
+  return raw.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
+}
+function addColumn(table, col, def) {
+  if (!columnExists(table, col)) raw.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+}
+addColumn('users', 'status', "TEXT NOT NULL DEFAULT 'online'");
+addColumn('users', 'status_text', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'avatar_url', 'TEXT');
+addColumn('users', 'banner_url', 'TEXT');
+addColumn('servers', 'icon_url', 'TEXT');
+addColumn('messages', 'reply_to_id', 'TEXT');
+addColumn('messages', 'thread_root_id', 'TEXT');
+addColumn('messages', 'edited_at', 'INTEGER');
+raw.exec(`
+CREATE TABLE IF NOT EXISTS message_reactions (
+  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  emoji TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (message_id, user_id, emoji)
+);
+CREATE TABLE IF NOT EXISTS attachments (
+  id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  filename TEXT NOT NULL,
+  mime TEXT NOT NULL DEFAULT 'application/octet-stream',
+  size INTEGER NOT NULL DEFAULT 0,
+  kind TEXT NOT NULL DEFAULT 'file',
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS custom_emoji (
+  id TEXT PRIMARY KEY,
+  server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE (server_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_reactions_msg ON message_reactions(message_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_msg ON attachments(message_id);
+CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_root_id);
+`);
+
 // Minimal better-sqlite3-compatible wrapper around DatabaseSync.
 const db = {
   exec: (sql) => raw.exec(sql),

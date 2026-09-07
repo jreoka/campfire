@@ -1,10 +1,12 @@
 const path = require('path');
+const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
 const { WebSocketServer } = require('ws');
 const db = require('./db');
 
@@ -14,6 +16,39 @@ if (JWT_SECRET === 'dev-secret-change-me') {
   console.warn('[campfire] WARNING: using default JWT_SECRET. Set JWT_SECRET env var in production!');
 }
 const ORIGIN = process.env.ORIGIN || ''; // e.g. https://chat.example.com (used for hints only)
+const KLIPY_KEY = process.env.KLIPY_KEY || '';
+
+// ---------- uploads ----------
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'data', 'uploads');
+const MAX_FILE_BYTES = parseInt(process.env.MAX_FILE_MB || '25', 10) * 1024 * 1024;
+const MAX_IMG_BYTES = 8 * 1024 * 1024;
+const IMG_MIMES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+const FILE_MIMES = [...IMG_MIMES, 'video/mp4', 'video/webm', 'audio/mpeg', 'audio/ogg', 'audio/wav', 'application/pdf', 'text/plain', 'text/markdown', 'application/zip'];
+const EXT_BY_MIME = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/wav': '.wav', 'application/pdf': '.pdf', 'text/plain': '.txt', 'text/markdown': '.md', 'application/zip': '.zip' };
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+function uploader(sub, mimes, maxBytes) {
+  const dir = path.join(UPLOAD_DIR, sub);
+  fs.mkdirSync(dir, { recursive: true });
+  return multer({
+    storage: multer.diskStorage({
+      destination: dir,
+      filename: (req, file, cb) => cb(null, crypto.randomBytes(16).toString('hex') + (EXT_BY_MIME[file.mimetype] || '.bin')),
+    }),
+    limits: { fileSize: maxBytes, files: 1 },
+    fileFilter: (req, file, cb) => cb(null, mimes.includes(file.mimetype)),
+  });
+}
+const upFile = uploader('files', FILE_MIMES, MAX_FILE_BYTES);
+const upImg = uploader('avatars', IMG_MIMES, MAX_IMG_BYTES);
+const upBanner = uploader('banners', IMG_MIMES, MAX_IMG_BYTES);
+const upIcon = uploader('icons', IMG_MIMES, MAX_IMG_BYTES);
+const upEmoji = uploader('emoji', IMG_MIMES, 4 * 1024 * 1024);
+function uploadUrl(sub, file) { return `/uploads/${sub}/${file.filename}`; }
+function deleteUploaded(url) {
+  if (!url || !url.startsWith('/uploads/')) return;
+  const p = path.join(UPLOAD_DIR, url.slice('/uploads/'.length));
+  if (path.resolve(p).startsWith(path.resolve(UPLOAD_DIR))) fs.unlink(p, () => {});
+}
 
 const app = express();
 app.use(express.json({ limit: '64kb' }));
@@ -23,6 +58,15 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
+app.use('/uploads', express.static(UPLOAD_DIR, {
+  dotfiles: 'deny', index: false, maxAge: '7d',
+  setHeaders(res, filePath) {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (!/\.(png|jpe?g|gif|webp|mp4|webm|mp3|ogg|wav)$/i.test(filePath)) {
+      res.setHeader('Content-Disposition', 'attachment');
+    }
+  },
+}));
 
 // ---------- helpers ----------
 const uid = () => crypto.randomUUID();
@@ -47,7 +91,7 @@ function authRequired(req, res, next) {
   if (!token) return res.status(401).json({ error: 'not_logged_in' });
   try {
     const p = jwt.verify(token, JWT_SECRET);
-    const user = db.prepare('SELECT id, username, display_name, avatar_color, created_at FROM users WHERE id = ?').get(p.sub);
+    const user = db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(p.sub);
     if (!user) return res.status(401).json({ error: 'user_gone' });
     req.user = user;
     next();
@@ -66,7 +110,8 @@ function serverView(serverId) {
   if (!s) return null;
   const channels = db.prepare("SELECT * FROM channels WHERE server_id = ? ORDER BY type DESC, position ASC, created_at ASC").all(serverId);
   const members = db.prepare(`
-    SELECT u.id, u.username, u.display_name, u.avatar_color,
+    SELECT u.id, u.username, u.display_name, u.avatar_color, u.avatar_url, u.banner_url,
+           u.status, u.status_text,
            CASE WHEN u.id = s.owner_id THEN 'owner' ELSE 'member' END as role
     FROM server_members m JOIN users u ON u.id = m.user_id JOIN servers s ON s.id = m.server_id
     WHERE m.server_id = ? ORDER BY u.display_name COLLATE NOCASE ASC
@@ -75,8 +120,14 @@ function serverView(serverId) {
 }
 function publicUser(u) {
   if (!u) return { id: null, username: 'deleted', display_name: 'deleted user', avatar_color: '#555' };
-  return { id: u.id, username: u.username, display_name: u.display_name, avatar_color: u.avatar_color };
+  return {
+    id: u.id, username: u.username, display_name: u.display_name, avatar_color: u.avatar_color || '#5865f2',
+    avatar_url: u.avatar_url || null, banner_url: u.banner_url || null,
+    status: u.status || 'online', status_text: u.status_text || '',
+    created_at: u.created_at || null,
+  };
 }
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, status, status_text, created_at';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -244,12 +295,15 @@ app.get('/api/servers/:id/channels/:chId/messages', authRequired, (req, res) => 
   const limit = Math.min(parseInt(req.query.limit || '50', 10), 100);
   const before = parseInt(req.query.before || String(Date.now() + 1), 10);
   const rows = db.prepare(`
-    SELECT m.*, u.username, u.display_name, u.avatar_color
+    SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,
+           p.content AS p_content, pu.display_name AS p_name
     FROM messages m LEFT JOIN users u ON u.id = m.user_id
-    WHERE m.server_id = ? AND m.channel_id = ? AND m.created_at < ?
+    LEFT JOIN messages p ON p.id = m.reply_to_id
+    LEFT JOIN users pu ON pu.id = p.user_id
+    WHERE m.server_id = ? AND m.channel_id = ? AND m.thread_root_id IS NULL AND m.created_at < ?
     ORDER BY m.created_at DESC LIMIT ?
   `).all(id, chId, before, limit);
-  res.json({ messages: rows.reverse().map(fmtMsg) });
+  res.json({ messages: hydrateMessages(rows.reverse(), req.user.id) });
 });
 
 app.delete('/api/messages/:mid', authRequired, (req, res) => {
@@ -263,12 +317,350 @@ app.delete('/api/messages/:mid', authRequired, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- uploads ----------
+app.post('/api/upload', authRequired, (req, res, next) => {
+  upFile.single('file')(req, res, (err) => {
+    if (err) return res.status(413).json({ error: 'file_too_large (max ' + Math.round(MAX_FILE_BYTES / 1048576) + 'MB)' });
+    next();
+  });
+}, (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'bad_file (images, mp4/webm, mp3, pdf, txt, zip)' });
+  const mt = req.file.mimetype;
+  const kind = mt.startsWith('image/') ? 'image' : mt.startsWith('video/') ? 'video' : mt.startsWith('audio/') ? 'audio' : 'file';
+  res.json({ url: uploadUrl('files', req.file), name: String(req.file.originalname || 'file').slice(0, 120), mime: mt, size: req.file.size, kind });
+});
+
+// image upload middleware: rejects non-images / oversize with a clean 400/413
+function imgSingle(up) {
+  return (req, res, next) => up.single('file')(req, res, (err) => {
+    if (err) return res.status(413).json({ error: 'image_too_large' });
+    if (!req.file) return res.status(400).json({ error: 'bad_image (png, jpg, gif incl. animated, webp)' });
+    next();
+  });
+}
+function freshUser(id) {
+  return publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(id));
+}
+
+// ---------- profile ----------
+app.post('/api/me/avatar', authRequired, imgSingle(upImg), (req, res) => {
+  const url = uploadUrl('avatars', req.file);
+  deleteUploaded(req.user.avatar_url);
+  db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(url, req.user.id);
+  const u = freshUser(req.user.id);
+  broadcastUserUpdate(u);
+  res.json({ user: u });
+});
+app.delete('/api/me/avatar', authRequired, (req, res) => {
+  deleteUploaded(req.user.avatar_url);
+  db.prepare('UPDATE users SET avatar_url = NULL WHERE id = ?').run(req.user.id);
+  const u = freshUser(req.user.id);
+  broadcastUserUpdate(u);
+  res.json({ user: u });
+});
+app.post('/api/me/banner', authRequired, imgSingle(upBanner), (req, res) => {
+  const url = uploadUrl('banners', req.file);
+  deleteUploaded(req.user.banner_url);
+  db.prepare('UPDATE users SET banner_url = ? WHERE id = ?').run(url, req.user.id);
+  const u = freshUser(req.user.id);
+  broadcastUserUpdate(u);
+  res.json({ user: u });
+});
+app.delete('/api/me/banner', authRequired, (req, res) => {
+  deleteUploaded(req.user.banner_url);
+  db.prepare('UPDATE users SET banner_url = NULL WHERE id = ?').run(req.user.id);
+  const u = freshUser(req.user.id);
+  broadcastUserUpdate(u);
+  res.json({ user: u });
+});
+
+const STATUSES = ['online', 'away', 'dnd', 'invisible'];
+app.patch('/api/me', authRequired, (req, res) => {
+  const { displayName, status, statusText } = req.body || {};
+  const sets = [], vals = [];
+  if (displayName !== undefined) {
+    const d = String(displayName).trim().slice(0, 32);
+    if (!d) return res.status(400).json({ error: 'display_name_required' });
+    sets.push('display_name = ?'); vals.push(d);
+  }
+  if (status !== undefined) {
+    if (!STATUSES.includes(status)) return res.status(400).json({ error: 'bad_status' });
+    sets.push('status = ?'); vals.push(status);
+  }
+  if (statusText !== undefined) {
+    sets.push('status_text = ?'); vals.push(String(statusText).slice(0, 128));
+  }
+  if (!sets.length) return res.status(400).json({ error: 'nothing_to_update' });
+  vals.push(req.user.id);
+  db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+  const u = freshUser(req.user.id);
+  broadcastUserUpdate(u);
+  for (const sid of [...clients].filter((c) => c.meta && c.meta.userId === u.id).flatMap((c) => [...c.meta.servers])) {
+    broadcastToServer(sid, { t: 'user-status', serverId: sid, userId: u.id, status: u.status });
+  }
+  // sync live sockets' presence state
+  for (const c of clients) if (c.meta && c.meta.userId === u.id) c.meta.status = u.status;
+  res.json({ user: u });
+});
+app.post('/api/me/password', authRequired, async (req, res) => {
+  const { current, next } = req.body || {};
+  const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
+  if (!await bcrypt.compare(String(current || ''), row.password_hash)) return res.status(401).json({ error: 'wrong_password' });
+  if (String(next || '').length < 4) return res.status(400).json({ error: 'password too short (min 4)' });
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await bcrypt.hash(String(next), 10), req.user.id);
+  res.json({ ok: true });
+});
+
+// ---------- server profile ----------
+app.patch('/api/servers/:id', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  const name = String(req.body?.name || '').trim().slice(0, 48);
+  if (!name) return res.status(400).json({ error: 'name_required' });
+  db.prepare('UPDATE servers SET name = ? WHERE id = ?').run(name, s.id);
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ server: serverView(s.id) });
+});
+app.post('/api/servers/:id/icon', authRequired, imgSingle(upIcon), (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) { deleteUploaded(uploadUrl('icons', req.file)); return res.status(404).json({ error: 'no_server' }); }
+  if (s.owner_id !== req.user.id) { deleteUploaded(uploadUrl('icons', req.file)); return res.status(403).json({ error: 'owner_only' }); }
+  const url = uploadUrl('icons', req.file);
+  deleteUploaded(s.icon_url);
+  db.prepare('UPDATE servers SET icon_url = ? WHERE id = ?').run(url, s.id);
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ server: serverView(s.id) });
+});
+app.delete('/api/servers/:id/icon', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  deleteUploaded(s.icon_url);
+  db.prepare('UPDATE servers SET icon_url = NULL WHERE id = ?').run(s.id);
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ server: serverView(s.id) });
+});
+
+// ---------- custom emoji ----------
+const EMOJI_NAME = /^[a-z0-9_+-]{2,32}$/;
+function serverEmojiNames(serverId) {
+  return new Set(db.prepare('SELECT name FROM custom_emoji WHERE server_id = ?').all(serverId).map((r) => r.name));
+}
+app.get('/api/servers/:id/emoji', authRequired, (req, res) => {
+  if (!isMember(req.params.id, req.user.id)) return res.status(403).json({ error: 'not_member' });
+  res.json({ emoji: db.prepare('SELECT name, url FROM custom_emoji WHERE server_id = ? ORDER BY name ASC').all(req.params.id) });
+});
+app.post('/api/servers/:id/emoji', authRequired, imgSingle(upEmoji), (req, res) => {
+  const s = getServer(req.params.id);
+  const name = String(req.body?.name || '').trim().toLowerCase();
+  if (!s || !isMember(s.id, req.user.id)) { deleteUploaded(uploadUrl('emoji', req.file)); return res.status(403).json({ error: 'not_member' }); }
+  if (!EMOJI_NAME.test(name)) { deleteUploaded(uploadUrl('emoji', req.file)); return res.status(400).json({ error: 'bad_emoji_name (2-32 chars: a-z 0-9 _ + -)' }); }
+  const url = uploadUrl('emoji', req.file);
+  try {
+    db.prepare('INSERT INTO custom_emoji (id, server_id, name, url, created_by, created_at) VALUES (?,?,?,?,?,?)')
+      .run(uid(), s.id, name, url, req.user.id, now());
+  } catch { deleteUploaded(url); return res.status(409).json({ error: 'emoji_name_taken' }); }
+  const list = db.prepare('SELECT name, url FROM custom_emoji WHERE server_id = ? ORDER BY name ASC').all(s.id);
+  broadcastToServer(s.id, { t: 'emoji-updated', serverId: s.id, emoji: list });
+  res.json({ emoji: list });
+});
+app.delete('/api/servers/:id/emoji/:name', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  const row = db.prepare('SELECT * FROM custom_emoji WHERE server_id = ? AND name = ?').get(s.id, req.params.name);
+  if (!row) return res.status(404).json({ error: 'no_emoji' });
+  db.prepare('DELETE FROM custom_emoji WHERE id = ?').run(row.id);
+  deleteUploaded(row.url);
+  const list = db.prepare('SELECT name, url FROM custom_emoji WHERE server_id = ? ORDER BY name ASC').all(s.id);
+  broadcastToServer(s.id, { t: 'emoji-updated', serverId: s.id, emoji: list });
+  res.json({ emoji: list });
+});
+
+// ---------- reactions ----------
+function validReaction(e, names) {
+  if (typeof e !== 'string' || !e) return false;
+  if (e.startsWith(':') && e.endsWith(':') && e.length > 2) {
+    return EMOJI_NAME.test(e.slice(1, -1)) && names.has(e.slice(1, -1));
+  }
+  if (/[:<>"'&]/.test(e)) return false;
+  const len = [...e].length;
+  return len >= 1 && e.length <= 24;
+}
+function getMsg(mid) { return db.prepare('SELECT * FROM messages WHERE id = ?').get(mid); }
+app.post('/api/messages/:mid/reactions', authRequired, (req, res) => {
+  const m = getMsg(req.params.mid);
+  if (!m) return res.status(404).json({ error: 'no_message' });
+  if (!isMember(m.server_id, req.user.id)) return res.status(403).json({ error: 'not_member' });
+  const emoji = String(req.body?.emoji || '');
+  if (!validReaction(emoji, serverEmojiNames(m.server_id))) return res.status(400).json({ error: 'bad_emoji' });
+  const ex = db.prepare('SELECT 1 FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').get(m.id, req.user.id, emoji);
+  if (ex) db.prepare('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').run(m.id, req.user.id, emoji);
+  else db.prepare('INSERT INTO message_reactions (message_id, user_id, emoji, created_at) VALUES (?,?,?,?)').run(m.id, req.user.id, emoji, now());
+  broadcastToServer(m.server_id, { t: 'reaction-update', serverId: m.server_id, channelId: m.channel_id, messageId: m.id, reactions: reactionTally(m.id, null) });
+  res.json({ reactions: reactionTally(m.id, req.user.id) });
+});
+
+// ---------- edit + fetch single message ----------
+app.patch('/api/messages/:mid', authRequired, (req, res) => {
+  const m = getMsg(req.params.mid);
+  if (!m) return res.status(404).json({ error: 'no_message' });
+  if (m.user_id !== req.user.id) return res.status(403).json({ error: 'only_your_own' });
+  const content = String(req.body?.content || '').trim().slice(0, 2000);
+  if (!content) return res.status(400).json({ error: 'empty_message' });
+  db.prepare('UPDATE messages SET content = ?, edited_at = ? WHERE id = ?').run(content, now(), m.id);
+  const full = hydrateMessages([db.prepare(`
+    SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,
+           p.content AS p_content, pu.display_name AS p_name
+    FROM messages m LEFT JOIN users u ON u.id = m.user_id
+    LEFT JOIN messages p ON p.id = m.reply_to_id
+    LEFT JOIN users pu ON pu.id = p.user_id
+    WHERE m.id = ?
+  `).get(m.id)], req.user.id)[0];
+  broadcastToServer(m.server_id, { t: 'message-updated', serverId: m.server_id, channelId: m.channel_id, message: full });
+  res.json({ message: full });
+});
+app.get('/api/messages/:mid', authRequired, (req, res) => {
+  const m = getMsg(req.params.mid);
+  if (!m) return res.status(404).json({ error: 'no_message' });
+  if (!isMember(m.server_id, req.user.id)) return res.status(403).json({ error: 'not_member' });
+  const full = hydrateMessages([db.prepare(`
+    SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,
+           p.content AS p_content, pu.display_name AS p_name
+    FROM messages m LEFT JOIN users u ON u.id = m.user_id
+    LEFT JOIN messages p ON p.id = m.reply_to_id
+    LEFT JOIN users pu ON pu.id = p.user_id
+    WHERE m.id = ?
+  `).get(m.id)], req.user.id)[0];
+  res.json({ message: full });
+});
+
+// ---------- threads ----------
+app.get('/api/servers/:id/channels/:chId/threads/:rootId', authRequired, (req, res) => {
+  const { id, chId, rootId } = req.params;
+  if (!isMember(id, req.user.id)) return res.status(403).json({ error: 'not_member' });
+  const root = db.prepare('SELECT * FROM messages WHERE id = ? AND server_id = ? AND channel_id = ?').get(rootId, id, chId);
+  if (!root) return res.status(404).json({ error: 'no_thread' });
+  const rows = db.prepare(`
+    SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,
+           p.content AS p_content, pu.display_name AS p_name
+    FROM messages m LEFT JOIN users u ON u.id = m.user_id
+    LEFT JOIN messages p ON p.id = m.reply_to_id
+    LEFT JOIN users pu ON pu.id = p.user_id
+    WHERE m.thread_root_id = ? ORDER BY m.created_at ASC LIMIT 200
+  `).all(rootId);
+  const hydRoot = hydrateMessages([db.prepare(`
+    SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,
+           p.content AS p_content, pu.display_name AS p_name
+    FROM messages m LEFT JOIN users u ON u.id = m.user_id
+    LEFT JOIN messages p ON p.id = m.reply_to_id
+    LEFT JOIN users pu ON pu.id = p.user_id
+    WHERE m.id = ?
+  `).get(rootId)], req.user.id)[0];
+  res.json({ root: hydRoot, replies: hydrateMessages(rows, req.user.id) });
+});
+
+// ---------- GIF search (Klipy, key stays server-side) ----------
+function normGif(it) {
+  const f = it.file || {}, md = f.md || {}, xs = f.xs || {};
+  return {
+    title: it.title || '', slug: it.slug || '',
+    gif: (md.gif || {}).url || null, mp4: (md.mp4 || {}).url || null,
+    preview: (xs.jpg || xs.webp || md.jpg || {}).url || it.blur_preview || null,
+    w: (md.gif || {}).width || null, h: (md.gif || {}).height || null,
+  };
+}
+async function klipyFetch(kind, params) {
+  const url = `https://api.klipy.com/api/v1/${KLIPY_KEY}/gifs/${kind}?` + new URLSearchParams({ perPage: '24', contentFilter: 'medium', ...params });
+  const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error('gif_upstream_' + r.status);
+  const j = await r.json();
+  return (j.data?.data || []).map(normGif).filter((g) => g.gif);
+}
+app.get('/api/gifs/search', authRequired, async (req, res) => {
+  if (!KLIPY_KEY) return res.status(501).json({ error: 'gif_not_configured (set KLIPY_KEY)' });
+  const q = String(req.query.q || '').trim().slice(0, 80);
+  if (!q) return res.status(400).json({ error: 'query_required' });
+  try { res.json({ gifs: await klipyFetch('search', { q }) }); }
+  catch { res.status(502).json({ error: 'gif_upstream' }); }
+});
+app.get('/api/gifs/trending', authRequired, async (req, res) => {
+  if (!KLIPY_KEY) return res.status(501).json({ error: 'gif_not_configured (set KLIPY_KEY)' });
+  try { res.json({ gifs: await klipyFetch('trending', {}) }); }
+  catch { res.status(502).json({ error: 'gif_upstream' }); }
+});
+
+function fullMessage(id, meId) {
+  const row = db.prepare(`
+    SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,
+           p.content AS p_content, pu.display_name AS p_name
+    FROM messages m LEFT JOIN users u ON u.id = m.user_id
+    LEFT JOIN messages p ON p.id = m.reply_to_id
+    LEFT JOIN users pu ON pu.id = p.user_id
+    WHERE m.id = ?
+  `).get(id);
+  return row ? hydrateMessages([row], meId)[0] : null;
+}
+function presenceFor(serverId, forUserId) {
+  const map = {};
+  for (const c of clients) {
+    if (!c.meta || !c.meta.servers.has(serverId)) continue;
+    if ((c.meta.status || 'online') === 'invisible' && c.meta.userId !== forUserId) continue;
+    map[c.meta.userId] = c.meta.status || 'online';
+  }
+  return map;
+}
 function fmtMsg(r) {
   return {
     id: r.id, serverId: r.server_id, channelId: r.channel_id,
     content: r.content, created_at: r.created_at,
-    user: r.user_id ? { id: r.user_id, username: r.username, display_name: r.display_name, avatar_color: r.avatar_color } : null,
+    replyTo: r.reply_to_id ? { id: r.reply_to_id, author: r.p_name || 'deleted', snippet: String(r.p_content || '').slice(0, 140) } : null,
+    threadRoot: r.thread_root_id || null,
+    threadCount: 0, edited: !!r.edited_at,
+    attachments: [], reactions: [],
+    user: r.user_id ? publicUser({ id: r.user_id, username: r.username, display_name: r.display_name, avatar_color: r.avatar_color, avatar_url: r.avatar_url }) : null,
   };
+}
+// Batch-load attachments, reaction tallies, and reply counts for a page of messages.
+function hydrateMessages(rows, meId) {
+  const ids = rows.map((r) => r.id);
+  const attBy = {}, reactBy = {}, countBy = {};
+  if (ids.length) {
+    const ph = ids.map(() => '?').join(',');
+    for (const a of db.prepare(`SELECT * FROM attachments WHERE message_id IN (${ph}) ORDER BY created_at ASC`).all(...ids)) {
+      (attBy[a.message_id] = attBy[a.message_id] || []).push({ url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind });
+    }
+    for (const r of db.prepare(`SELECT message_id, emoji, user_id FROM message_reactions WHERE message_id IN (${ph})`).all(...ids)) {
+      const t = (reactBy[r.message_id] = reactBy[r.message_id] || {});
+      const e = (t[r.emoji] = t[r.emoji] || { emoji: r.emoji, count: 0, users: [] });
+      e.count++; e.users.push(r.user_id);
+    }
+    for (const c of db.prepare(`SELECT thread_root_id r, COUNT(*) c FROM messages WHERE thread_root_id IN (${ph}) GROUP BY thread_root_id`).all(...ids)) {
+      countBy[c.r] = c.c;
+    }
+  }
+  return rows.map((r) => {
+    const m = fmtMsg(r);
+    m.attachments = attBy[r.id] || [];
+    const tally = Object.values(reactBy[r.id] || {});
+    m.reactions = tally.map((t) => ({ emoji: t.emoji, count: t.count, me: t.users.includes(meId) }));
+    m.threadCount = countBy[r.id] || 0;
+    return m;
+  });
+}
+function reactionTally(messageId, meId) {
+  const rows = db.prepare('SELECT emoji, user_id FROM message_reactions WHERE message_id = ?').all(messageId);
+  const t = {};
+  for (const r of rows) {
+    const e = (t[r.emoji] = t[r.emoji] || { emoji: r.emoji, count: 0, users: [] });
+    e.count++; e.users.push(r.user_id);
+  }
+  return Object.values(t).map((e) => ({ emoji: e.emoji, count: e.count, me: e.users.includes(meId), users: e.users }));
+}
+function broadcastUserUpdate(user) {
+  const rows = db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(user.id);
+  for (const r of rows) broadcastToServer(r.server_id, { t: 'user-updated', user });
 }
 
 // ---------- WebSocket (live chat + presence + voice signaling) ----------
@@ -295,6 +687,7 @@ function voicePeersPayload(key) {
     username: ws.meta.username,
     display_name: ws.meta.display_name,
     avatar_color: ws.meta.avatar_color,
+    avatar_url: ws.meta.avatar_url || null,
     muted: !!(ws.meta.voice && ws.meta.voice.muted),
   }));
 }
@@ -327,11 +720,12 @@ wss.on('connection', (ws, req) => {
   const token = url.searchParams.get('token') || '';
   let p;
   try { p = jwt.verify(token, JWT_SECRET); } catch { ws.close(4401, 'bad token'); return; }
-  const u = db.prepare('SELECT id, username, display_name, avatar_color FROM users WHERE id = ?').get(p.sub);
+  const u = db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(p.sub);
   if (!u) { ws.close(4401, 'no user'); return; }
   const memberRows = db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(u.id);
   ws.meta = {
     userId: u.id, username: u.username, display_name: u.display_name, avatar_color: u.avatar_color,
+    avatar_url: u.avatar_url || null, status: u.status || 'online',
     servers: new Set(memberRows.map((r) => r.server_id)),
     voice: null,
   };
@@ -348,13 +742,14 @@ wss.on('connection', (ws, req) => {
       // refresh memberships
       const rows = db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(me.userId);
       me.servers = new Set(rows.map((r) => r.server_id));
-      // send presence roster per server
+      // send presence roster per server (invisible users hidden from others)
       for (const sid of me.servers) {
-        const online = [...clients].filter((c) => c.meta && c.meta.servers.has(sid)).map((c) => c.meta.userId);
-        safeSend(ws, { t: 'presence', serverId: sid, online });
+        safeSend(ws, { t: 'presence', serverId: sid, online: presenceFor(sid, me.userId) });
       }
-      // announce online to others
-      for (const sid of me.servers) broadcastToServer(sid, { t: 'user-online', serverId: sid, userId: me.userId }, ws);
+      // announce online to others (unless invisible)
+      if ((me.status || 'online') !== 'invisible') {
+        for (const sid of me.servers) broadcastToServer(sid, { t: 'user-online', serverId: sid, userId: me.userId, status: me.status || 'online' }, ws);
+      }
       // send current voice occupancy for my servers
       for (const [key, set] of voiceRooms) {
         const [srv] = key.split(':');
@@ -370,17 +765,42 @@ wss.on('connection', (ws, req) => {
       const serverId = String(msg.serverId || '');
       const channelId = String(msg.channelId || '');
       const content = String(msg.content || '').trim().slice(0, 2000);
-      if (!content || !serverId || !channelId) return;
+      const replyTo = String(msg.replyTo || '') || null;
+      const threadRoot = String(msg.threadRoot || '') || null;
+      const atts = Array.isArray(msg.attachments) ? msg.attachments.slice(0, 5) : [];
+      if ((!content && !atts.length) || !serverId || !channelId) return;
       if (!me.servers.has(serverId) || !isMember(serverId, me.userId)) return;
       const ch = db.prepare('SELECT * FROM channels WHERE id = ? AND server_id = ?').get(channelId, serverId);
       if (!ch || ch.type !== 'text') return;
       if (!rateOk(me.userId)) { safeSend(ws, { t: 'error', error: 'slow_down' }); return; }
-      const m = { id: uid(), server_id: serverId, channel_id: channelId, user_id: me.userId, content, created_at: now() };
-      db.prepare('INSERT INTO messages (id,server_id,channel_id,user_id,content,created_at) VALUES (@id,@server_id,@channel_id,@user_id,@content,@created_at)').run(m);
-      broadcastToServer(serverId, {
-        t: 'message-new', serverId, channelId,
-        message: { id: m.id, serverId, channelId, content, created_at: m.created_at, user: publicUser({ id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color }) },
-      });
+      if (replyTo) {
+        const pr = db.prepare('SELECT channel_id FROM messages WHERE id = ? AND server_id = ?').get(replyTo, serverId);
+        if (!pr || pr.channel_id !== channelId) return;
+      }
+      if (threadRoot) {
+        const rr = db.prepare('SELECT channel_id FROM messages WHERE id = ? AND server_id = ?').get(threadRoot, serverId);
+        if (!rr || rr.channel_id !== channelId) return;
+      }
+      const cleanAtts = [];
+      for (const a of atts) {
+        const url = String(a?.url || '');
+        const isLocal = url.startsWith('/uploads/files/');
+        const isRemoteImg = a?.kind === 'image' && /^https:\/\//.test(url);
+        if (!isLocal && !isRemoteImg) continue;
+        const mime = String(a?.mime || 'application/octet-stream').slice(0, 80);
+        const kind = isLocal
+          ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file')
+          : 'image';
+        cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, 100 * 1024 * 1024)), kind });
+      }
+      if (!content && !cleanAtts.length) return;
+      const mid = uid();
+      db.prepare('INSERT INTO messages (id,server_id,channel_id,user_id,content,reply_to_id,thread_root_id,created_at) VALUES (?,?,?,?,?,?,?,?)')
+        .run(mid, serverId, channelId, me.userId, content, replyTo, threadRoot, now());
+      const insAtt = db.prepare('INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,created_at) VALUES (?,?,?,?,?,?,?,?)');
+      for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, now());
+      const full = fullMessage(mid, null);
+      broadcastToServer(serverId, { t: 'message-new', serverId, channelId, message: full });
       return;
     }
 
@@ -408,7 +828,7 @@ wss.on('connection', (ws, req) => {
       // tell others someone joined
       broadcastToServer(serverId, {
         t: 'voice-peer-joined', serverId, channelId,
-        peer: { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, muted: false },
+        peer: { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, avatar_url: me.avatar_url || null, muted: false },
       }, ws);
       // also broadcast updated occupancy to whole server (for channel user counts)
       broadcastToServer(serverId, { t: 'voice-peers', serverId, channelId, peers: voicePeersPayload(key) }, ws);
