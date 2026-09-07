@@ -627,6 +627,8 @@ function memberSort(a, b) {
   return ao - bo || a.display_name.localeCompare(b.display_name);
 }
 function renderMembers() {
+  // Server roster only — never paint it over the DM member list in home view.
+  if (S.view !== 'server') return;
   const d = S.serverDetail;
   if (!d) return;
   $('#members-head').classList.add('hidden');
@@ -1168,18 +1170,18 @@ function onWS(m) {
       break;
     case 'presence':
       Object.assign(S.presenceAll, m.online || {});
-      if (m.serverId === S.serverId) { S.online = m.online || {}; S.online[S.me.id] = S.me.status || 'online'; renderMembers(); }
-      if (S.view === 'home') renderDmMembers();
+      if (m.serverId === S.serverId) { S.online = m.online || {}; S.online[S.me.id] = S.me.status || 'online'; }
+      if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
       break;
     case 'user-online':
       S.presenceAll[m.userId] = m.status || 'online';
-      if (m.serverId === S.serverId) { S.online[m.userId] = m.status || 'online'; renderMembers(); }
-      else if (S.view === 'home') renderDmMembers();
+      if (m.serverId === S.serverId) S.online[m.userId] = m.status || 'online';
+      if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
       break;
     case 'user-offline':
       delete S.presenceAll[m.userId];
-      if (m.serverId === S.serverId) { delete S.online[m.userId]; renderMembers(); }
-      else if (S.view === 'home') renderDmMembers();
+      if (m.serverId === S.serverId) delete S.online[m.userId];
+      if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
       break;
     case 'user-status':
       if (m.status === 'invisible') delete S.presenceAll[m.userId];
@@ -1187,8 +1189,8 @@ function onWS(m) {
       if (m.serverId === S.serverId) {
         if (m.status === 'invisible') delete S.online[m.userId];
         else S.online[m.userId] = m.status;
-        renderMembers();
-      } else if (S.view === 'home') renderDmMembers();
+      }
+      if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
       break;
     case 'user-updated': {
       const u = m.user;
@@ -4830,6 +4832,7 @@ async function setStatus(s) {
     const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify({ status: s }) });
     S.me = { ...S.me, ...user };
     paintMe(); renderMembers();
+    if (S.view === 'home') renderDmMembers();
   } catch {}
 }
 let idleTimer = null;
