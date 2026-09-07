@@ -129,9 +129,9 @@ function folderOpenBox(f) {
   for (const id of (f.servers || [])) {
     const s = S.servers.find((x) => x.id === id);
     if (!s) continue;
-    const sb = serverBtn(s);
-    sb.addEventListener('click', () => closeFolderPopout());
-    box.appendChild(sb);
+    // Selecting a server inside a folder must NOT collapse the folder —
+    // it only collapses when the folder header (top part) is clicked.
+    box.appendChild(serverBtn(s));
   }
   wireFolderOpenDrop(box, f.id);
   return box;

@@ -82,6 +82,7 @@ function renderDmRail() {
       const a = document.createElement('span');
       a.className = 'avatar';
       paintAvatar(a, av);
+      a.style.boxShadow = 'none'; // no ring/glow here — it read as a venn-diagram double circle
       b.appendChild(a);
     } else {
       const g = document.createElement('span');
