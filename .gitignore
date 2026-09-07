@@ -1,3 +1,5 @@
-node_modules/
-data/*.db*
-.env
+```
+# Build artifacts
+public/app.js
+public/styles.css
+```
