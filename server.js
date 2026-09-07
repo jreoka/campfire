@@ -682,6 +682,9 @@ app.post('/api/servers/:id/channels/:chId/pins', authRequired, (req, res) => {
   if (!m) return res.status(404).json({ error: 'no_message' });
   if (db.prepare('SELECT 1 FROM message_pins WHERE message_id = ?').get(mid)) return res.status(409).json({ error: 'already_pinned' });
   db.prepare('INSERT INTO message_pins (server_id,channel_id,message_id,pinned_by,created_at) VALUES (?,?,?,?,?)').run(id, chId, mid, req.user.id, now());
+  const sysMid = uid();
+  db.prepare('INSERT INTO messages (id,server_id,channel_id,user_id,content,sys,created_at) VALUES (?,?,?,?,?,?,?)').run(sysMid, id, chId, null, `${displayOf(req.user)} pinned a message`.slice(0, 200), 'info', now());
+  broadcastToServer(id, { t: 'message-new', serverId: id, channelId: chId, message: fullMessage(sysMid, null) });
   broadcastToServer(id, { t: 'pins-changed', serverId: id, channelId: chId });
   res.json({ ok: true });
 });

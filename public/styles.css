@@ -66,6 +66,7 @@ h1,h2,h3{letter-spacing:-0.01em}
 .btn.big{width:100%;margin-top:.9rem;padding:.75rem}
 .btn.small{padding:.45rem .9rem;font-size:.85rem}
 .btn.danger{background:var(--red);border-color:transparent;color:var(--on-red)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
 .btn.danger:hover{background:var(--red-hover)}
 
 /* ---------- main layout ---------- */

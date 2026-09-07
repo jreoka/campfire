@@ -508,7 +508,7 @@ function memberRowEl(m) {
   div.className = 'member' + (st === 'offline' ? ' off' : '');
   div.dataset.uid = m.id;
   if (m.sidebar_banner_url && st !== 'offline') {
-    div.style.backgroundImage = `linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${m.sidebar_banner_url}")`;
+    div.style.backgroundImage = `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${m.sidebar_banner_url}")`;
     div.style.backgroundSize = 'cover';
     div.style.backgroundPosition = 'right center';
   }
@@ -3454,6 +3454,7 @@ function openUserCard(uid, x, y) {
   const u = memberById(uid);
   if (!u) return;
   const card = $('#usercard');
+  const canMod = S.view === 'server' && S.serverDetail && canManage() && uid !== S.me.id && uid !== S.serverDetail.owner_id;
   const st = statusOf(uid);
   const stLabel = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline' }[st];
   card.innerHTML = `
@@ -3466,7 +3467,7 @@ function openUserCard(uid, x, y) {
       ${u.status_text ? `<div class="uc-statustext">${esc(u.status_text)}</div>` : ''}
       ${u.created_at ? `<div class="uc-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
       ${cardRolesHTML(uid)}
-      <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}${uid !== S.me.id ? `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="uc-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>` : ''}<button class="btn small" id="uc-close">Close</button></div>
+      <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}${canMod ? '<button class="btn small danger" id="uc-kick">Kick</button><button class="btn small danger" id="uc-ban">Ban</button>' : ''}${uid !== S.me.id ? `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="uc-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>` : ''}<button class="btn small" id="uc-close">Close</button></div>
     </div>`;
   paintAvatar(card.querySelector('.avatar'), u);
   card.classList.remove('hidden');
@@ -3478,6 +3479,10 @@ function openUserCard(uid, x, y) {
   if (men) men.onclick = () => { insertAtCursor($('#in-message'), '@' + u.username + ' '); closeUserCard(); $('#in-message').focus(); };
   const blk = $('#uc-block');
   if (blk) blk.onclick = () => { const was = isBlocked(uid), nm = u.username; closeUserCard(); if (was) unblockUser(uid); else blockUser(uid, nm); };
+  const kik = $('#uc-kick');
+  if (kik) kik.onclick = () => { closeUserCard(); modServerMember('kick', u); };
+  const bnn = $('#uc-ban');
+  if (bnn) bnn.onclick = () => { closeUserCard(); modServerMember('ban', u); };
   card.querySelectorAll('[data-role-toggle]').forEach((b) => (b.onclick = async () => {
     const rid = b.dataset.roleToggle, has = b.dataset.has === '1';
     try {
@@ -4111,17 +4116,26 @@ function renderServerTab() {
   lb.className = 'btn danger small';
   lb.textContent = owner ? 'Delete server' : 'Leave server';
   lb.onclick = async () => {
-    if (owner) {
-      const ok = await openConfirmModal({ title: `Delete "${d.name}"?`, message: 'This server and all its messages are deleted forever.', okLabel: 'Delete' });
-      if (!ok) return;
+    if (!owner) {
+      try {
+        await api(`/api/servers/${d.id}/leave`, { method: 'POST' });
+        closeServerSettings();
+        S.ws?.send(JSON.stringify({ t: 'subscribe' }));
+        refreshServers();
+      } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+      return;
     }
-    try {
-      if (owner) await api(`/api/servers/${d.id}`, { method: 'DELETE' });
-      else await api(`/api/servers/${d.id}/leave`, { method: 'POST' });
-      closeServerSettings();
-      S.ws?.send(JSON.stringify({ t: 'subscribe' }));
-      refreshServers();
-    } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+    openModal(`Delete "${d.name}"?`, `<p class="muted">This server and all its messages are deleted forever. Type <b>${esc(d.name)}</b> below to confirm.</p><label>Server name<input id="m-del-name" autocomplete="off" maxlength="48" placeholder="${esc(d.name)}" /></label>`, 'Delete', async () => {
+      try {
+        await api(`/api/servers/${d.id}`, { method: 'DELETE' });
+        closeServerSettings();
+        S.ws?.send(JSON.stringify({ t: 'subscribe' }));
+        refreshServers();
+      } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+    }, { danger: true });
+    const okBtn = $('#modal-ok'), nameInp = $('#m-del-name');
+    okBtn.disabled = true;
+    nameInp.addEventListener('input', () => { okBtn.disabled = nameInp.value.trim() !== d.name; });
   };
   dz.appendChild(lb); cur.appendChild(dz);
   if (scroller) scroller.scrollTop = keepScroll;
