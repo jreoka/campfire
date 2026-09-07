@@ -607,10 +607,61 @@ $('#in-attach').addEventListener('change', (e) => {
   e.preventDefault();
   if (ev === 'drop' && e.dataTransfer?.files?.length) uploadAndAttach(e.dataTransfer.files[0]);
 }));
+function composerTargetReady() {
+  return S.view === 'home' ? !!S.dmThreadId : !!(S.serverId && S.channelId);
+}
 document.addEventListener('paste', (e) => {
-  if (document.activeElement !== $('#in-message') && document.activeElement !== $('#in-thread')) return;
-  const f = [...(e.clipboardData?.files || [])][0];
-  if (f) uploadAndAttach(f);
+  const cd = e.clipboardData;
+  if (!cd) return;
+  const files = [...(cd.files || [])];
+  if (files.length) {
+    // screenshots / images / video pasted anywhere go straight to the composer
+    e.preventDefault();
+    if (!composerTargetReady()) { toast('Pick a chat first, then paste'); return; }
+    files.slice(0, 5).forEach((f) => uploadAndAttach(f));
+    $('#in-message').focus();
+    return;
+  }
+  const t = e.target;
+  if (t && t.closest && t.closest('input, textarea, select, [contenteditable="true"]')) return;
+  // plain text pasted while the window (not a field) is focused → drop it in the composer
+  let text = '';
+  try { text = cd.getData('text/plain'); } catch {}
+  if (text) {
+    if (!composerTargetReady()) return;
+    e.preventDefault();
+    $('#in-message').focus();
+    insertAtCursor($('#in-message'), text);
+  }
+});
+// drag-and-drop files anywhere over the chat → composer attachments
+let dropDepth = 0;
+const dragHasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+$('#chat').addEventListener('dragenter', (e) => {
+  if (!dragHasFiles(e)) return;
+  e.preventDefault();
+  dropDepth++;
+  $('#chat').classList.add('dropping');
+});
+$('#chat').addEventListener('dragover', (e) => {
+  if (!dragHasFiles(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+});
+$('#chat').addEventListener('dragleave', (e) => {
+  if (!dragHasFiles(e)) return;
+  if (--dropDepth <= 0) { dropDepth = 0; $('#chat').classList.remove('dropping'); }
+});
+$('#chat').addEventListener('drop', (e) => {
+  if (!dragHasFiles(e)) return;
+  e.preventDefault();
+  dropDepth = 0;
+  $('#chat').classList.remove('dropping');
+  const files = [...(e.dataTransfer.files || [])];
+  if (!files.length) return;
+  if (!composerTargetReady()) { toast('Pick a chat first, then drop'); return; }
+  files.slice(0, 5).forEach((f) => uploadAndAttach(f));
+  $('#in-message').focus();
 });
 $('#composer').addEventListener('submit', (e) => {
   e.preventDefault();
