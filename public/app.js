@@ -148,13 +148,29 @@ let mode = 'login';
 // is explicitly rendered once the key is known. Tokens are single-use, so
 // the widget resets after every submit attempt.
 S.turnstileKey = null; S.tsWidget = undefined;
+// Renders the widget as soon as BOTH the site key (from /api/config) and the
+// Turnstile API are ready, regardless of which arrives first. On cold first
+// loads the async API script routinely lands after our config fetch, so
+// rendering only from initTurnstile() left the widget permanently missing.
+function renderTurnstile() {
+  if (!S.turnstileKey || !window.turnstile || S.tsWidget !== undefined) return;
+  const slot = document.querySelector('#ts-widget');
+  if (!slot) return;
+  try {
+    slot.innerHTML = '';
+    S.tsWidget = turnstile.render(slot, { sitekey: S.turnstileKey, theme: 'dark' });
+  } catch { S.tsWidget = undefined; }
+}
+// Named in index.html (?onload=cfTurnstileReady): fires when the API script
+// finishes loading. Assigned here so it exists before the async script runs.
+window.cfTurnstileReady = () => renderTurnstile();
 async function initTurnstile() {
   try {
     const cfg = await api('/api/config');
     if (!cfg || !cfg.turnstileSiteKey) return;
     S.turnstileKey = cfg.turnstileSiteKey;
     $('#ts-wrap').classList.remove('hidden');
-    if (window.turnstile) S.tsWidget = turnstile.render('#ts-widget', { sitekey: S.turnstileKey, theme: 'dark' });
+    renderTurnstile();
   } catch {}
 }
 function turnstileToken() {
