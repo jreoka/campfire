@@ -398,19 +398,18 @@ function serverBtn(s) {
   return b;
 }
 function folderGrid(kids) {
-  // Small counts nestle centered (no full-width bands); 4 fills the 2x2.
+  // Top-anchored previews with breathing room below; light cells sit ON
+  // the folder color instead of reading as cut-outs.
   const shown = kids.slice(0, 4);
   if (!shown.length) return '';
-  const cell = (s) => {
+  let cells = shown.map((s) => {
     const label = (s.name || '?').trim().charAt(0).toUpperCase() || '?';
     return s.icon_url
       ? `<span class="fic"><img src="${esc(s.icon_url)}" alt="" loading="lazy" draggable="false" data-fb-letter="${esc(label)}" /></span>`
       : `<span class="fic">${esc(label)}</span>`;
-  };
-  if (shown.length === 1) return `<span class="fgrid n1"><span class="frow">${cell(shown[0])}</span></span>`;
-  const rows = [];
-  for (let i = 0; i < shown.length; i += 2) rows.push(`<span class="frow">${shown.slice(i, i + 2).map(cell).join('')}</span>`);
-  return `<span class="fgrid n${shown.length}">${rows.join('')}</span>`;
+  }).join('');
+  for (let i = shown.length; i < 4; i++) cells += '<span class="fic empty"></span>';
+  return `<span class="fgrid">${cells}</span>`;
 }
 function folderEl(f, kids) {
   const wrap = document.createElement('div');
