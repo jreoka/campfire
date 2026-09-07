@@ -54,15 +54,17 @@ campfire/
 
 ## Design language (owner directive)
 
-**Flat, polished, professional. Never "AI-coded" looking.** Rules:
-- Solid colors only (`#1e1f22` base, `#2b2d31` panels, `#17181c` rail, `#33363c`
-  hairlines, `#5865f2` accent). **No gradients, no box-shadows, no translucency**
-  on surfaces (modal scrim `rgba(0,0,0,.65)` is the only exception).
-- 6–8px radii, borderless solid buttons with darker hover states, inputs get
-  accent border on focus.
-- **No emoji in the UI.** Use inline SVG or plain text labels
-  (`Invite`, `···`, `Join voice`, `Mute`/`Unmute`, `muted` tag). Toast copy is
-  plain text, no emoji. (Server/channel names are user content — leave alone.)
+**Flat, polished, professional. Never "AI-coded" looking.** Black-and-white theme:
+- Pure black surfaces (`#000` base/panels/rail), **white 1px dividing lines**
+  between sections, white component borders, white text, grey secondary text.
+  Primary buttons invert (white bg, black text). **No gradients, no box-shadows.**
+- Semantic colors only where they carry meaning: green (online/speaking/live),
+  amber (away), red (danger/DND/muted). User-chosen colors (avatars, folders,
+  banners) and user content stay as-is.
+- 6–8px radii. Inputs get white border on focus.
+- **No emoji in UI chrome** (use SVG/text: `Invite`, `···`, `Mute`, `↩`, `⋯`).
+  Exceptions, both user-driven content: message text/reactions, and the hover
+  bar's most-used emoji. Toast copy is plain text, no emoji.
 
 ## Data-safety contract (owner directive)
 

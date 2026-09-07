@@ -254,6 +254,7 @@ function serverBtn(s) {
   b.title = s.name;
   b.draggable = true;
   b.dataset.drag = 'server:' + s.id;
+  b.dataset.sid = s.id;
   if (s.icon_url) {
     // Explicit <img> with every property inline: renders identically no matter
     // what state any stylesheet is in (opaque + fully covering, so no
@@ -280,6 +281,7 @@ function folderEl(f, kids) {
   b.title = f.name;
   b.draggable = true;
   b.dataset.drag = 'folder:' + f.id;
+  b.dataset.fid = f.id;
   b.innerHTML = `<span>${kids.length}</span>`;
   if (kids.some((k) => k.id === S.serverId)) b.style.outline = '2px solid #ffffff88';
   b.onclick = () => { f.open = !f.open; saveLayout(); renderServerList(); };
@@ -352,6 +354,7 @@ function renderChannels() {
     b.className = 'chan' + (c.id === S.channelId ? ' active' : '');
     b.innerHTML = `<span class="muted">#</span><span>${esc(c.name)}</span>`;
     b.onclick = () => selectChannel(c.id);
+    b.dataset.cid = c.id; b.dataset.ctype = 'text';
     b.ondblclick = () => confirmDeleteChannel(c);
     tc.appendChild(b);
   }
@@ -363,6 +366,7 @@ function renderChannels() {
     b.innerHTML = `<span class="vicon"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3z"/><path d="M16 8a5 5 0 0 1 0 8" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></span><span>${esc(c.name)}</span>${occ.length ? `<span class="count">${occ.length}</span>` : ''}`;
     b.title = occ.length ? occ.map((p) => p.display_name).join(', ') : 'Join voice';
     b.onclick = () => joinVoice(S.serverId, c.id);
+    b.dataset.cid = c.id; b.dataset.ctype = 'voice';
     const users = document.createElement('div');
     users.className = 'vusers';
     users.id = 'vusers-' + c.id;
@@ -487,11 +491,14 @@ function messageEl(m, opts = {}) {
     inner += `<button class="thread-link" data-act="thread">${m.threadCount} ${m.threadCount === 1 ? 'reply' : 'replies'} →</button>`;
   }
   inner += '</div>';
-  // hover actions
-  const acts = [['react', 'React'], ['reply', 'Reply'], ['thread', 'Thread']];
-  if (own) acts.push(['edit', 'Edit']);
-  if (canMod(m)) acts.push(['del', 'Delete']);
-  inner += '<div class="msg-actions">' + acts.map(([a, l]) => `<button data-act="${a}">${l}</button>`).join('') + '</div>';
+  // hover bar: most-used emoji + more + reply + overflow menu
+  let bar = topReactions().map((e) => {
+    const label = (e.startsWith(':') && e.endsWith(':') && S.emoji[e.slice(1, -1)])
+      ? `<img class="cemoi" src="${S.emoji[e.slice(1, -1)]}" alt="${esc(e)}">` : esc(e);
+    return `<button data-act="react" data-emoji="${esc(e)}" title="${esc(e)}">${label}</button>`;
+  }).join('');
+  bar += `<button data-act="more" title="More reactions">➕</button><button data-act="reply" title="Reply">↩</button><button data-act="menu" title="More actions">⋯</button>`;
+  inner += '<div class="msg-actions">' + bar + '</div>';
   div.innerHTML = inner;
   paintAvatar(div.querySelector('.avatar'), m.user);
   return div;
@@ -1093,6 +1100,130 @@ function stopSpeakingMonitor() {
 }
 window.addEventListener('beforeunload', () => { try { S.ws?.send(JSON.stringify({ t: 'voice-leave' })); } catch {} });
 
+/* ================= frequent reactions + context menus ================= */
+function topReactions() {
+  let f = {};
+  try { f = JSON.parse(localStorage.getItem('cf_freq') || '{}'); } catch {}
+  const def = ['👍', '❤️', '😂', '😮', '😢'];
+  const ranked = Object.entries(f).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  return [...new Set([...ranked, ...def])].slice(0, 5);
+}
+function bumpFreq(e) {
+  if (!e || typeof e !== 'string') return;
+  try {
+    const f = JSON.parse(localStorage.getItem('cf_freq') || '{}');
+    f[e] = (f[e] || 0) + 1;
+    const keys = Object.keys(f);
+    if (keys.length > 40) {
+      keys.sort((a, b) => f[a] - f[b]);
+      for (const k of keys.slice(0, keys.length - 40)) delete f[k];
+    }
+    localStorage.setItem('cf_freq', JSON.stringify(f));
+  } catch {}
+}
+let ctxEl = null;
+function closeCtx() { if (ctxEl) { ctxEl.remove(); ctxEl = null; } }
+function openCtx(x, y, items) {
+  closeCtx();
+  const m = document.createElement('div');
+  m.id = 'ctx-menu';
+  for (const it of items) {
+    if (it.sep) { const s = document.createElement('div'); s.className = 'ctx-sep'; m.appendChild(s); continue; }
+    const b = document.createElement('button');
+    b.className = 'ctx-item' + (it.danger ? ' danger' : '');
+    b.innerHTML = (it.icon ? `<span class="ctx-ic">${it.icon}</span>` : '') + `<span>${esc(it.label)}</span>`;
+    b.onclick = (ev) => { ev.stopPropagation(); closeCtx(); it.fn && it.fn(); };
+    m.appendChild(b);
+  }
+  m.style.visibility = 'hidden';
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + 'px';
+  m.style.top = Math.max(8, Math.min(y, innerHeight - r.height - 8)) + 'px';
+  m.style.visibility = '';
+  ctxEl = m;
+}
+function messageCtxMenu(mid, x, y) {
+  const m = msgById(mid);
+  if (!m) return;
+  const own = m.user && m.user.id === S.me.id;
+  const items = [
+    { label: 'Add reaction…', icon: '➕', fn: () => openPicker('react', mid) },
+    { label: 'Reply', icon: '↩', fn: () => { S.replyTo = m; renderComposerMeta(); $('#in-message').focus(); } },
+    { label: 'Open thread', icon: '💬', fn: () => openThread(mid) },
+    { sep: true },
+  ];
+  if (own) items.push({ label: 'Edit message', icon: '✎', fn: () => startEdit(mid) });
+  if (canMod(m)) items.push({ label: 'Delete message', icon: '🗑', danger: true, fn: () => api('/api/messages/' + mid, { method: 'DELETE' }).catch(() => toast('Delete failed')) });
+  items.push({ label: 'Copy text', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(m.content || ''); toast('Copied'); } catch {} } });
+  openCtx(x, y, items);
+}
+function memberCtxMenu(uid, x, y) {
+  const u = memberById(uid);
+  if (!u) return;
+  openCtx(x, y, [
+    { label: 'View profile', icon: '👤', fn: () => openUserCard(uid, x, y) },
+    { label: `Mention @${u.username}`, icon: '@', fn: () => { insertAtCursor($('#in-message'), '@' + u.username + ' '); $('#in-message').focus(); } },
+  ]);
+}
+function serverCtxMenu(sid, x, y) {
+  const s = S.servers.find((v) => v.id === sid);
+  if (!s) return;
+  const d = S.serverDetail && S.serverDetail.id === sid ? S.serverDetail : null;
+  const owner = d ? d.owner_id === S.me.id : false;
+  openCtx(x, y, [
+    { label: 'Open', icon: '→', fn: () => selectServer(sid) },
+    { label: 'Copy invite link', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(`${location.origin}${location.pathname}?invite=${s.invite_code}`); toast('Link copied'); } catch {} } },
+    { label: 'Server settings', icon: '⚙', fn: async () => { if (sid !== S.serverId) await selectServer(sid); openSettings('server'); } },
+  ]);
+}
+function channelCtxMenu(cid, ctype, x, y) {
+  const c = S.serverDetail?.channels.find((v) => v.id === cid);
+  if (!c) return;
+  const owner = S.serverDetail.owner_id === S.me.id;
+  const items = ctype === 'voice'
+    ? [{ label: 'Join voice', icon: '→', fn: () => joinVoice(S.serverId, cid) }]
+    : [{ label: 'Open channel', icon: '→', fn: () => selectChannel(cid) }];
+  items.push({ label: 'Copy name', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(c.name); toast('Copied'); } catch {} } });
+  if (owner) items.push({ label: 'Delete channel', icon: '🗑', danger: true, fn: () => confirmDeleteChannel(c) });
+  openCtx(x, y, items);
+}
+function ctxFor(el, x, y) {
+  if (!el || !el.closest) return false;
+  const msg = el.closest('.msg[data-mid]');
+  if (msg) { messageCtxMenu(msg.dataset.mid, x, y); return true; }
+  const vu = el.closest('.vuser[data-uid]');
+  if (vu && vu.dataset.uid) { openUserCard(vu.dataset.uid, x, y); return true; }
+  const mem = el.closest('.member[data-uid]');
+  if (mem && mem.dataset.uid) { memberCtxMenu(mem.dataset.uid, x, y); return true; }
+  const fb = el.closest('.folder-btn');
+  if (fb && fb.dataset.fid) { openFolderMenu(fb.dataset.fid, x, y); return true; }
+  const sb = el.closest('.server-btn');
+  if (sb && sb.dataset.sid) { serverCtxMenu(sb.dataset.sid, x, y); return true; }
+  const ch = el.closest('.chan');
+  if (ch && ch.dataset.cid) { channelCtxMenu(ch.dataset.cid, ch.dataset.ctype || 'text', x, y); return true; }
+  return false;
+}
+document.addEventListener('contextmenu', (e) => {
+  if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"], a')) return;
+  if (ctxFor(e.target, e.clientX, e.clientY)) e.preventDefault();
+});
+// touch-hold (long press) opens the same menus on phones/tablets
+let holdT = null;
+document.addEventListener('touchstart', (e) => {
+  if (!e.target.closest || e.target.closest('input, textarea, select, a')) return;
+  const t = e.target.closest('.msg,.chan,.member,.server-btn,.vuser');
+  if (!t) return;
+  const touch = e.touches[0];
+  const x = touch.clientX, y = touch.clientY;
+  holdT = setTimeout(() => {
+    holdT = null;
+    try { navigator.vibrate && navigator.vibrate(10); } catch {}
+    ctxFor(t, x, y);
+  }, 550);
+}, { passive: true });
+['touchend', 'touchcancel', 'touchmove'].forEach((ev) => document.addEventListener(ev, () => { clearTimeout(holdT); holdT = null; }, { passive: true }));
+
 /* ================= rail folders + drag reorder ================= */
 let dragPayload = null, dropTarget = null, dropMarker = null, folderMenuEl = null;
 function showMarker(rect, edge) {
@@ -1391,7 +1522,7 @@ function renderEmojiGrid(filter) {
 }
 function pickEmoji(e) {
   if (S.picker?.mode === 'react' && S.picker.mid) toggleReaction(S.picker.mid, e);
-  else insertAtCursor($('#in-message'), e);
+  else { bumpFreq(e); insertAtCursor($('#in-message'), e); }
   closePicker();
   $('#in-message').focus();
 }
@@ -1447,6 +1578,7 @@ function sendGif(g) {
 async function toggleReaction(mid, emoji) {
   try {
     const { reactions } = await api('/api/messages/' + mid + '/reactions', { method: 'POST', body: JSON.stringify({ emoji }) });
+    bumpFreq(emoji);
     updateMsgInCaches(mid, (m) => { m.reactions = reactions.map((r) => ({ emoji: r.emoji, count: r.count, me: r.me })); });
     if (S.channelId) renderMessages();
     if (S.thread) renderThread();
@@ -1497,7 +1629,12 @@ async function saveEdit(mid) {
     const msgEl = actEl.closest('[data-mid]');
     const mid = msgEl?.dataset.mid;
     const act = actEl.dataset.act;
-    if (act === 'react' && !actEl.dataset.emoji) openPicker('react', mid);
+    if (act === 'react' && mid) {
+      if (actEl.dataset.emoji) toggleReaction(mid, actEl.dataset.emoji);
+      else openPicker('react', mid);
+    }
+    else if (act === 'more' && mid) openPicker('react', mid);
+    else if (act === 'menu' && mid) messageCtxMenu(mid, e.clientX, e.clientY);
     else if (act === 'reply' && mid) { S.replyTo = msgById(mid); renderComposerMeta(); $('#in-message').focus(); }
     else if (act === 'thread' && mid) openThread(mid);
     else if (act === 'edit' && mid) startEdit(mid);
@@ -1887,9 +2024,10 @@ function poke() {
   if (!e.target.closest('#usercard') && !e.target.closest('[data-uid]') && !e.target.closest('.member')) closeUserCard();
   if (statusMenuEl && !e.target.closest('#status-pop') && !e.target.closest('#me-avatar')) closeStatusMenu();
   if (folderMenuEl && !e.target.closest('#folder-menu')) closeFolderMenu();
+  if (ctxEl && !e.target.closest('#ctx-menu')) closeCtx();
 });
  document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeStatusMenu(); closeFolderMenu(); closeSettings(); $('#lightbox').classList.add('hidden'); }
+  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeStatusMenu(); closeFolderMenu(); closeCtx(); closeSettings(); $('#lightbox').classList.add('hidden'); }
 });
 $('#btn-emoji').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'emoji') : closePicker(); };
 $('#btn-gif').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'gifs') : closePicker(); };
