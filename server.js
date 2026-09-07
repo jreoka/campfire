@@ -39,7 +39,7 @@ const APP_VERSION = (() => {
 // Uploads live next to the database (persistent volume), never next to the code
 // (container image layers are ephemeral and wiped on every rebuild).
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(path.dirname(db.DB_PATH), 'uploads');
-const MAX_FILE_BYTES = parseInt(process.env.MAX_FILE_MB || '25', 10) * 1024 * 1024;
+const MAX_FILE_BYTES = parseInt(process.env.MAX_FILE_MB || '100', 10) * 1024 * 1024;
 const MAX_IMG_BYTES = 8 * 1024 * 1024;
 const IMG_MIMES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 const FILE_MIMES = [...IMG_MIMES, 'video/mp4', 'video/webm', 'audio/mpeg', 'audio/ogg', 'audio/wav', 'application/pdf', 'text/plain', 'text/markdown', 'application/zip'];

@@ -84,7 +84,8 @@ function fmtSize(b) {
 function memberByUsername(un) {
   un = String(un || '').toLowerCase();
   if (S.me && S.me.username === un) return S.me;
-  return (S.serverDetail?.members || []).find((m) => m.username === un) || null;
+  return (S.serverDetail?.members || []).find((m) => m.username === un)
+    || (S.dmThreadId ? ((S.dms.find((t) => t.id === S.dmThreadId) || {}).members || []).find((m) => m.username === un) : null) || null;
 }
 function memberById(id) {
   if (S.me && S.me.id === id) return S.me;
@@ -103,7 +104,7 @@ function renderRich(text) {
        .replace(/~~([^~]+)~~/g, '<del>$1</del>');
   h = h.replace(/:([a-z0-9_+-]{2,32}):/g, (m, n) => S.emoji[n]
     ? '<img class="cemoi" src="' + S.emoji[n] + '" alt="' + m + '" title="' + m + '" data-fb-emoji="' + m + '">' : m);
-  h = h.replace(/(^|[\s(])@([a-z0-9_.]{2,24})/g, (m, pre, un) => {
+  h = h.replace(/(^|[\s(])@([A-Za-z0-9_.]{2,24})/g, (m, pre, un) => {
     const mem = memberByUsername(un);
     if (!mem) return m;
     return pre + '<span class="mention' + (mem.id === S.me.id ? ' me' : '') + '" data-uid="' + mem.id + '">@' + esc(mem.display_name) + '</span>';
@@ -733,7 +734,7 @@ function renderComposerMeta() {
 }
 async function uploadAndAttach(file) {
   if (!file) return;
-  if (file.size > 25 * 1024 * 1024) { toast('File too big (max 25MB)'); return; }
+  if (file.size > 100 * 1024 * 1024) { toast('File too big (max 100MB)'); return; }
   if (S.pendingAtts.length >= 5) { toast('Max 5 attachments per message'); return; }
   const fd = new FormData();
   fd.append('file', file);
@@ -3434,10 +3435,13 @@ function hideMentionPop() { $('#mention-pop').classList.add('hidden'); }
 $('#in-message').addEventListener('input', () => {
   const inp = $('#in-message');
   const upto = inp.value.slice(0, inp.selectionStart ?? inp.value.length);
-  const m = upto.match(/@([a-z0-9_.]{1,24})$/);
+  const m = upto.match(/@([A-Za-z0-9_.]{1,24})$/);
   if (!m) { hideMentionPop(); return; }
   const q = m[1].toLowerCase();
-  const cands = (S.serverDetail?.members || []).filter((x) => x.username.includes(q) || x.display_name.toLowerCase().includes(q)).slice(0, 6);
+  const pool = S.view === 'home'
+    ? (((S.dms.find((t) => t.id === S.dmThreadId) || {}).members) || [])
+    : (S.serverDetail?.members || []);
+  const cands = pool.filter((x) => x.username.includes(q) || x.display_name.toLowerCase().includes(q)).slice(0, 6);
   if (!cands.length) { hideMentionPop(); return; }
   mentionIdx = 0;
   const pop = $('#mention-pop');
@@ -3469,7 +3473,7 @@ $('#in-message').addEventListener('keydown', (e) => {
 function applyMention(username) {
   const inp = $('#in-message');
   const pos = inp.selectionStart ?? inp.value.length;
-  inp.value = inp.value.slice(0, pos).replace(/@[a-z0-9_.]{1,24}$/, '@' + username + ' ');
+  inp.value = inp.value.slice(0, pos).replace(/@[A-Za-z0-9_.]{1,24}$/, '@' + username + ' ');
   hideMentionPop();
   inp.focus();
 }
