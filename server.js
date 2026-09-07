@@ -153,6 +153,8 @@ app.get(['/', '/index.html'], (req, res, next) => {
   fs.readFile(path.join(__dirname, 'public', 'index.html'), 'utf8', (err, html) => {
     if (err) return next();
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    // The shell carries per-deploy asset pins: never let it go stale.
+    res.setHeader('Cache-Control', 'no-store');
     res.send(html.replace(/(src|href)="(\/(?:app\.js|styles\.css))"/g, `$1="$2?v=${APP_VERSION}"`));
   });
 });
@@ -2567,7 +2569,7 @@ wss.on('connection', (ws, req) => {
 // SPA fallback (after API + static)
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/') || req.path.startsWith('/ws')) return next();
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(__dirname, 'public', 'index.html'), { headers: { 'Cache-Control': 'no-store' } });
 });
 
 server.listen(PORT, '0.0.0.0', () => {
