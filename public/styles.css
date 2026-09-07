@@ -162,6 +162,13 @@ h1,h2,h3{letter-spacing:-0.01em}
 
 #modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100;padding:1rem}
 .modal{background:var(--panel-3);border:0;border-radius:28px;padding:1.5rem;width:100%;max-width:400px}
+.modal.wide{max-width:560px}
+.gif-grid{display:flex;flex-wrap:wrap;gap:6px;overflow-y:auto;max-height:52dvh;min-height:140px;margin-top:.6rem;align-content:flex-start}
+.gif-grid .pk-gif{width:calc(33.333% - 5px)}
+.gif-grid .pk-gif img{height:110px}
+@media (max-width:520px){
+  .gif-grid .pk-gif{width:calc(50% - 3px)}
+}
 .modal h3{margin:.1rem 0 .8rem;font-size:1.05rem}
 .modal input,.modal select{width:100%;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:var(--radius);padding:.6rem .75rem;font-size:.93rem;margin-top:.35rem;outline:none}
 .modal input:focus{border-color:var(--accent)}

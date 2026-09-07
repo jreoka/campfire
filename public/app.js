@@ -994,6 +994,7 @@ function openModal(title, bodyHTML, okLabel, onOk, opts = {}) {
   $('#modal-close').textContent = opts.cancelLabel || 'Cancel';
   modalOkFn = onOk || null;
   modalCancelFn = opts.onCancel || null;
+  document.querySelector('#modal-backdrop .modal').classList.toggle('wide', !!opts.wide);
   $('#modal-backdrop').classList.remove('hidden');
   const input = $('#modal-body input');
   if (input) setTimeout(() => { try { input.focus(); input.select?.(); } catch {} }, 0);
@@ -2477,10 +2478,49 @@ async function uploadImage(url, file) {
 }
 $('#set-avatar-btn').onclick = () => $('#set-avatar-file').click();
 $('#set-banner-btn').onclick = () => $('#set-banner-file').click();
-$('#set-avatar-gif').onclick = (e) => { e.stopPropagation(); S.gifPick = 'avatar'; openPicker('insert', null, 'gifs'); };
-$('#set-banner-gif').onclick = (e) => { e.stopPropagation(); S.gifPick = 'banner'; openPicker('insert', null, 'gifs'); };
+// dedicated centered GIF chooser for profile media (avatar / banner / sidebar)
+async function openProfileGifPicker(kind) {
+  const title = kind === 'avatar' ? 'Choose an avatar GIF' : kind === 'banner' ? 'Choose a banner GIF' : 'Choose a sidebar GIF';
+  openModal(title, `
+    <input id="m-gif-search" placeholder="Search GIFs" autocomplete="off" />
+    <div id="m-gif-grid" class="gif-grid"></div>
+    <div class="pk-attr">Powered by <a href="https://klipy.com" target="_blank" rel="noopener">KLIPY</a></div>
+  `, 'Close', null, { wide: true });
+  const grid = $('#m-gif-grid');
+  const draw = (gifs) => {
+    grid.innerHTML = '';
+    if (!gifs.length) { grid.innerHTML = '<div class="pk-empty">No GIFs found.</div>'; return; }
+    for (const g of gifs) {
+      const b = document.createElement('button');
+      b.className = 'pk-gif'; b.title = g.title || 'GIF';
+      b.innerHTML = `<img src="${esc(g.thumb || g.preview || g.gif)}" alt="${esc(g.title || 'GIF')}" loading="lazy" />`;
+      b.onclick = async () => {
+        $('#modal-backdrop').classList.add('hidden');
+        const url = g.gif || g.mp4;
+        if (url) await applyProfileUrl(kind, url);
+      };
+      grid.appendChild(b);
+    }
+  };
+  const load = async (q) => {
+    grid.innerHTML = '<div class="pk-empty">Loading…</div>';
+    try {
+      const { gifs } = await api(q ? '/api/gifs/search?q=' + encodeURIComponent(q) : '/api/gifs/trending');
+      if ($('#m-gif-grid')) draw(gifs || []);
+    } catch { grid.innerHTML = '<div class="pk-empty">GIFs unavailable.</div>'; }
+  };
+  let t = null;
+  $('#m-gif-search').addEventListener('input', (e) => {
+    clearTimeout(t);
+    const q = e.target.value.trim();
+    t = setTimeout(() => load(q), 350);
+  });
+  load('');
+}
+$('#set-avatar-gif').onclick = () => openProfileGifPicker('avatar');
+$('#set-banner-gif').onclick = () => openProfileGifPicker('banner');
 $('#set-sidebar-btn').onclick = () => $('#set-sidebar-file').click();
-$('#set-sidebar-gif').onclick = (e) => { e.stopPropagation(); S.gifPick = 'sidebar'; openPicker('insert', null, 'gifs'); };
+$('#set-sidebar-gif').onclick = () => openProfileGifPicker('sidebar');
 $('#set-sidebar-prev').onclick = () => $('#set-sidebar-file').click();
 $('#set-sidebar-file').addEventListener('change', async (e) => {
   const f = e.target.files[0]; e.target.value = '';
