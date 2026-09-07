@@ -151,6 +151,10 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
       Auto-update hardened: navigations are network-first (a plain refresh is always
       fresh), tabs poll the code fingerprint, and the SW pings tabs on activate —
       tabs predating the updater get one forced reload so nobody sticks on old code.
+- [x] Rail icon crush fix (2026-09-07): the 1024px source was fine — the `<img>` flex
+      item rendered narrower than the button. Rail icons (and settings preview) now
+      paint via `background-image: cover`, which fills by construction; broken URLs
+      fall back to the letter via a preload probe.
 - [x] Rail upgrades (2026-09-07): settings moved to a gear at the bottom of the
       server rail. Discord-style folders: drag servers to reorder, drop one onto
       another to auto-create a folder, drag into/out of folders, right-click (or
