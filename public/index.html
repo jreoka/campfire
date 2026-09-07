@@ -161,6 +161,12 @@
       <div id="attach-preview" class="hidden"></div>
       <div id="mention-pop" class="hidden"></div>
       <form id="composer">
+        <button type="button" id="btn-more" class="tool-btn" title="More options"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+        <div id="composer-more" class="hidden">
+          <button type="button" class="ctx-item" id="cm-attach">Attach a file</button>
+          <button type="button" class="ctx-item" id="cm-emoji">Add emoji</button>
+          <button type="button" class="ctx-item" id="cm-gif">Send a GIF</button>
+        </div>
         <button type="button" id="btn-attach" class="tool-btn" title="Attach a file"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
         <button type="button" id="btn-emoji" class="tool-btn" title="Emoji"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.2 1.8 3.5 1.8 3.5-1.8 3.5-1.8"/><line x1="9" y1="9.5" x2="9" y2="9.6"/><line x1="15" y1="9.5" x2="15" y2="9.6"/></svg></button>
         <input id="in-attach" type="file" class="hidden" />
