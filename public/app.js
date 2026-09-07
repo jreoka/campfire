@@ -767,6 +767,7 @@ function attachmentHTML(a) {
   if (a.kind === 'image') return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'video') return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><video class="att-vid" src="${esc(a.url)}" controls preload="metadata"></video>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'audio') return audioPlayerHTML(a);
+  if (textPreviewable(a)) return textFileHTML(a);
   return `<a class="file-card" href="${esc(a.url)}" target="_blank" rel="noopener"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span><span class="fname">${esc(a.name)}</span><br/><span class="fsize">${fmtSize(a.size)}</span></span></a>`;
 }
 function reactionsHTML(m) {
@@ -777,6 +778,64 @@ function reactionsHTML(m) {
       : esc(r.emoji);
     return `<button class="reaction${r.me ? ' me' : ''}" data-act="react" data-emoji="${esc(r.emoji)}" title="${r.count}">${label} ${r.count}</button>`;
   }).join('') + '</div>';
+}
+// ---------- text/code file previews (expandable + downloadable) ----------
+const TEXT_EXTS = new Set(['txt', 'md', 'markdown', 'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'json', 'py', 'pyw', 'rb', 'java', 'c', 'h', 'hpp', 'cpp', 'cc', 'cs', 'go', 'rs', 'php', 'swift', 'kt', 'kts', 'scala', 'sh', 'bash', 'zsh', 'sql', 'html', 'htm', 'css', 'scss', 'xml', 'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf', 'csv', 'tsv', 'log', 'diff', 'patch', 'vue', 'svelte', 'lua', 'dart']);
+const TEXT_MIMES = new Set(['application/json', 'application/javascript', 'application/xml', 'application/x-sh']);
+function textPreviewable(a) {
+  if (!a || (a.size || 0) > 256 * 1024) return false;
+  if (/^text\//.test(a.mime || '') || TEXT_MIMES.has(a.mime)) return true;
+  const parts = String(a.name || '').split('.');
+  return parts.length > 1 && TEXT_EXTS.has(parts.pop().toLowerCase());
+}
+const txtCache = new Map(); // url -> {status, text, preview, truncated}
+function textFileHTML(a) {
+  queueTextPreview(a.url);
+  const c = txtCache.get(a.url);
+  const prev = c && c.status === 'ready'
+    ? (c.preview || '(empty file)')
+    : (c && c.status === 'err' ? 'Preview unavailable — download to view.' : 'Loading preview…');
+  return `<div class="txtfile" data-turl="${esc(a.url)}" data-tname="${esc(a.name)}">`
+    + `<div class="txt-head"><span class="txt-ic">&lt;/&gt;</span><span class="txt-name">${esc(a.name)}</span><span class="txt-size">${fmtSize(a.size)}</span><span class="spacer"></span>${attDl(a)}</div>`
+    + `<pre class="txt-prev">${esc(prev)}</pre>`
+    + `<button type="button" class="mini" data-act="expand-file">Expand</button></div>`;
+}
+function queueTextPreview(url) {
+  if (!url || txtCache.has(url)) { paintTextPreviews(url); return; }
+  txtCache.set(url, { status: 'loading' });
+  fetch(url).then((r) => { if (!r.ok) throw 0; return r.text(); }).then((t) => {
+    const preview = t.split('\n').slice(0, 12).join('\n').slice(0, 1200);
+    txtCache.set(url, { status: 'ready', text: t, preview, truncated: t.length > preview.length });
+    paintTextPreviews(url);
+  }).catch(() => { txtCache.set(url, { status: 'err' }); paintTextPreviews(url); });
+}
+function paintTextPreviews(url) {
+  if (!url) return;
+  const c = txtCache.get(url);
+  document.querySelectorAll('.txtfile').forEach((card) => {
+    if (card.dataset.turl !== url) return;
+    const el = card.querySelector('.txt-prev');
+    if (!el) return;
+    el.textContent = !c || c.status === 'loading' ? 'Loading preview…' : c.status === 'ready' ? (c.preview || '(empty file)') : 'Preview unavailable — download to view.';
+  });
+}
+async function expandTextFile(el) {
+  const card = el.closest ? el.closest('.txtfile') : null;
+  const url = card && card.dataset.turl, name = (card && card.dataset.tname) || 'file';
+  if (!url) return;
+  let c = txtCache.get(url);
+  if (!c || c.status !== 'ready') {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw 0;
+      c = { status: 'ready', text: await r.text(), preview: '', truncated: false };
+      txtCache.set(url, c);
+      paintTextPreviews(url);
+    } catch { toast('Could not load file'); return; }
+  }
+  openModal(name, `<pre class="txt-full">${esc(c.text)}</pre><div class="row" style="margin-top:.6rem"><a class="btn small primary" href="${esc(url)}" download="${esc(name)}">Download</a><button type="button" class="btn small" id="m-copy-txt">Copy</button></div>`, 'Close', null, { wide: true });
+  const cp = $('#m-copy-txt');
+  if (cp) cp.onclick = () => { try { navigator.clipboard.writeText(c.text); toast('Copied'); } catch {} };
 }
 function fmtClock(s) {
   s = Math.max(0, Math.floor(s || 0));
@@ -3946,6 +4005,7 @@ async function saveEdit(mid) {
     else if (act === 'reply' && mid) { S.replyTo = msgById(mid); renderComposerMeta(); $('#in-message').focus(); }
     else if (act === 'thread' && mid) openThread(mid);
     else if (act === 'vote' && mid) votePoll(mid, actEl.dataset.opt);
+    else if (act === 'expand-file') expandTextFile(actEl);
     else if (act === 'edit' && mid) startEdit(mid);
     else if (act === 'edit-save' && mid) saveEdit(mid);
     else if (act === 'edit-cancel') { S.editing = null; if (S.channelId) renderMessages(); if (S.view === 'home' && S.dmThreadId) renderDmMessages(); if (S.thread) renderThread(); }

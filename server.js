@@ -69,10 +69,21 @@ const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(path.dirname(db.DB_PATH),
 const MAX_FILE_BYTES = parseInt(process.env.MAX_FILE_MB || '100', 10) * 1024 * 1024;
 const MAX_IMG_BYTES = 8 * 1024 * 1024;
 const IMG_MIMES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
-const FILE_MIMES = [...IMG_MIMES, 'video/mp4', 'video/webm', 'audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm', 'audio/mp4', 'application/pdf', 'text/plain', 'text/markdown', 'application/zip'];
+const FILE_MIMES = [...IMG_MIMES, 'video/mp4', 'video/webm', 'audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm', 'audio/mp4', 'application/pdf', 'text/plain', 'text/markdown', 'text/csv', 'text/css', 'text/html', 'text/xml', 'text/yaml', 'application/json', 'application/javascript', 'text/javascript', 'application/xml', 'application/x-yaml', 'application/x-sh', 'text/x-sh', 'text/x-python', 'application/x-python', 'application/zip'];
+// Code/text uploads are also accepted by file extension (browsers often send
+// these with an empty or generic MIME type). Only used by the general file
+// uploader — avatar/emoji/banner uploaders stay image-only.
+const CODE_TEXT_EXTS = new Set(['txt', 'md', 'markdown', 'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'json', 'py', 'pyw', 'rb', 'java', 'c', 'h', 'hpp', 'cpp', 'cc', 'cs', 'go', 'rs', 'php', 'swift', 'kt', 'kts', 'scala', 'sh', 'bash', 'zsh', 'sql', 'html', 'htm', 'css', 'scss', 'xml', 'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf', 'csv', 'tsv', 'log', 'diff', 'patch', 'vue', 'svelte', 'lua', 'dart']);
 const EXT_BY_MIME = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/wav': '.wav', 'audio/webm': '.webm', 'audio/mp4': '.m4a', 'application/pdf': '.pdf', 'text/plain': '.txt', 'text/markdown': '.md', 'application/zip': '.zip' };
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-function uploader(sub, mimes, maxBytes) {
+// Extension for a stored upload: known MIME map first, then the original
+// extension when it's an allowlisted code/text type, else .bin.
+function extForUpload(file) {
+  if (EXT_BY_MIME[file.mimetype]) return EXT_BY_MIME[file.mimetype];
+  const e = path.extname(String(file.originalname || '')).toLowerCase().slice(1);
+  return e && CODE_TEXT_EXTS.has(e) ? '.' + e : '.bin';
+}
+function uploader(sub, mimes, maxBytes, allowCodeExt = false) {
   // S3 mode buffers in memory and uploads to the bucket in persistUpload()
   // (same filename scheme, same URL shape); otherwise files land on disk.
   const store = storage.s3Enabled()
@@ -83,12 +94,16 @@ function uploader(sub, mimes, maxBytes) {
         fs.mkdirSync(dir, { recursive: true });
         cb(null, dir);
       },
-      filename: (req, file, cb) => cb(null, crypto.randomBytes(16).toString('hex') + (EXT_BY_MIME[file.mimetype] || '.bin')),
+      filename: (req, file, cb) => cb(null, crypto.randomBytes(16).toString('hex') + extForUpload(file)),
     });
   const mw = multer({
     storage: store,
     limits: { fileSize: maxBytes, files: 1 },
-    fileFilter: (req, file, cb) => cb(null, mimes.includes(file.mimetype)),
+    fileFilter: (req, file, cb) => {
+      if (mimes.includes(file.mimetype)) return cb(null, true);
+      if (allowCodeExt && CODE_TEXT_EXTS.has(path.extname(String(file.originalname || '')).toLowerCase().slice(1))) return cb(null, true);
+      cb(null, false);
+    },
   });
   mw._sub = sub;
   return mw;
@@ -97,11 +112,11 @@ function uploader(sub, mimes, maxBytes) {
 // filename multer would have used on disk. Local mode is already on disk.
 async function persistUpload(sub, file) {
   if (!file || !storage.s3Enabled()) return;
-  const filename = crypto.randomBytes(16).toString('hex') + (EXT_BY_MIME[file.mimetype] || '.bin');
+  const filename = crypto.randomBytes(16).toString('hex') + extForUpload(file);
   await storage.s3Put(`${sub}/${filename}`, file.buffer, file.mimetype);
   file.filename = filename;
 }
-const upFile = uploader('files', FILE_MIMES, MAX_FILE_BYTES);
+const upFile = uploader('files', FILE_MIMES, MAX_FILE_BYTES, true);
 const upImg = uploader('avatars', IMG_MIMES, MAX_IMG_BYTES);
 const upBanner = uploader('banners', IMG_MIMES, MAX_IMG_BYTES);
 const upSidebar = uploader('sidebar', IMG_MIMES, MAX_IMG_BYTES);
@@ -1126,10 +1141,12 @@ app.post('/api/upload', authRequired, (req, res, next) => {
     next();
   });
 }, async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'bad_file (images, mp4/webm, mp3, pdf, txt, zip)' });
+  if (!req.file) return res.status(400).json({ error: 'bad_file (images, mp4/webm, mp3, txt/md/code, pdf, zip)' });
   try { await persistUpload('files', req.file); }
   catch { return res.status(500).json({ error: 'storage_failed' }); }
-  const mt = req.file.mimetype;
+  let mt = req.file.mimetype;
+  // Extension-accepted code/text with an empty or generic MIME reads as text.
+  if ((!mt || mt === 'application/octet-stream') && CODE_TEXT_EXTS.has(path.extname(String(req.file.originalname || '')).toLowerCase().slice(1))) mt = 'text/plain';
   const kind = mt.startsWith('image/') ? 'image' : mt.startsWith('video/') ? 'video' : mt.startsWith('audio/') ? 'audio' : 'file';
   res.json({ url: uploadUrl('files', req.file), name: String(req.file.originalname || 'file').slice(0, 120), mime: mt, size: req.file.size, kind });
 });

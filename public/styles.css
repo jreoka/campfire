@@ -619,6 +619,16 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .poll-label{position:relative;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .poll-meta{position:relative;color:var(--muted);font-size:.75rem;flex-shrink:0}
 .poll-foot{font-size:.72rem;color:var(--muted)}
+/* text/code file cards */
+.txtfile{background:var(--panel-2);border-radius:16px;padding:.6rem;max-width:420px;display:flex;flex-direction:column;gap:.45rem}
+.txt-head{display:flex;align-items:center;gap:.5rem;font-size:.82rem;font-weight:600;min-width:0}
+.txt-ic{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;flex-shrink:0}
+.txt-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.txt-size{color:var(--muted);font-weight:400;font-size:.75rem;flex-shrink:0}
+.txt-head .att-dl{flex-shrink:0}
+.txt-prev{margin:0;background:var(--panel);border-radius:12px;padding:.55rem .7rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;line-height:1.5;max-height:180px;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
+.txtfile .mini{align-self:flex-start}
+.txt-full{margin:0;background:var(--panel);border-radius:12px;padding:.8rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;line-height:1.55;max-height:60vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 body.view-home:not(.dm-open) #members{display:none!important}
 body.view-home:not(.dm-open) #btn-members{display:none!important}
 .gpick{display:flex!important;gap:.5rem;align-items:center;padding:.3rem 0}
