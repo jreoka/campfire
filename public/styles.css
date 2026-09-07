@@ -1,63 +1,131 @@
-/* Campfire — Modern Dark Theme v2
-   Polished surfaces, refined typography, smooth animations, accessible colors */
-:root{
-  /* Core palette — refined neutral blues with better contrast */
-  --bg: #0d1117;              /* Main background: deep blue-black */
-  --bg-elevated: #161b22;     /* Elevated surfaces (cards, modals) */
-  --panel: #1c2128;           /* Primary panel surface */
-  --panel-hover: #21262d;     /* Hover state for panels */
-  --panel-active: #2a3038;    /* Active/selected state */
-  --inset: #090c10;           /* Inset/deep elements (inputs, rail) */
-  --rail: #090c10;            /* Navigation rail */
+/* ════════════════════════════════════════════════════════════
+   Campfire — Complete Visual Overhaul v3.0
+   Modern, polished, accessible, and bug-free design system
+   ════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ══ Primary Color Palette — Warm Midnight Theme ══ */
+  --bg-primary: #0a0e14;
+  --bg-secondary: #111820;
+  --bg-tertiary: #1a232e;
+  --bg-elevated: #1e2936;
+  --bg-hover: #243040;
+  --bg-active: #2d3d50;
   
-  /* Borders and dividers */
-  --border: #30363d;          /* Primary borders */
-  --border-light: #484f58;    /* Lighter borders for emphasis */
-  --border-focus: #58a6ff;    /* Focus ring color */
+  /* Navigation & Rails */
+  --rail-bg: #080c11;
+  --rail-border: #1a232e;
+  --sidebar-bg: #151d27;
+  --sidebar-border: #1f2a37;
   
-  /* Text colors */
-  --text: #f0f6fc;            /* Primary text */
-  --text-muted: #8b949e;      /* Secondary/muted text */
-  --text-inverse: #0d1117;    /* Text on bright backgrounds */
+  /*Borders & Dividers */
+  --border-default: #2a3747;
+  --border-subtle: #1f2a37;
+  --border-strong: #3d4f66;
+  --border-focus: #60a5fa;
+  --border-accent: #3b82f6;
   
-  /* Accent colors — refined blue with better accessibility */
-  --accent: #58a6ff;          /* Primary accent (accessible blue) */
-  --accent-hover: #79b8ff;    /* Accent hover state */
-  --accent-active: #a5d6ff;   /* Accent active/pressed */
-  --accent-bg: #1c3d5a;       /* Accent background (subtle) */
-  --accent-text: #ffffff;     /* Text on accent */
+  /* Typography */
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-tertiary: #64748b;
+  --text-inverse: #0a0e14;
+  --text-link: #60a5fa;
+  --text-link-hover: #93c5fd;
   
-  /* Semantic colors */
-  --success: #3fb950;         /* Success/online/live */
-  --success-bg: #1a4a2a;
-  --warning: #d29922;         /* Warning/away */
-  --warning-bg: #4a3a1a;
-  --danger: #f85149;          /* Error/danger/DND */
-  --danger-hover: #ff6b64;
-  --danger-bg: #4a1a1a;
+  /* Accent System — Electric Blue */
+  --accent-primary: #3b82f6;
+  --accent-hover: #60a5fa;
+  --accent-active: #93c5fd;
+  --accent-subtle: rgba(59, 130, 246, 0.1);
+  --accent-glow: rgba(59, 130, 246, 0.3);
+  --accent-text: #ffffff;
+  
+  /* Semantic Colors */
+  --success: #10b981;
+  --success-bg: rgba(16, 185, 129, 0.15);
+  --success-border: rgba(16, 185, 129, 0.3);
+  --warning: #f59e0b;
+  --warning-bg: rgba(245, 158, 11, 0.15);
+  --warning-border: rgba(245, 158, 11, 0.3);
+  --danger: #ef4444;
+  --danger-hover: #f87171;
+  --danger-bg: rgba(239, 68, 68, 0.15);
+  --danger-border: rgba(239, 68, 68, 0.3);
   --danger-text: #ffffff;
   
-  /* Special effects */
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
-  --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
-  --glow-accent: 0 0 20px rgba(88,166,255,0.3);
+  /* Status Indicators */
+  --status-online: #10b981;
+  --status-away: #f59e0b;
+  --status-dnd: #ef4444;
+  --status-offline: #475569;
+  --status-invisible: #64748b;
   
-  /* Sizing */
+  /* Shadows & Elevation */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
+  --shadow-xl: 0 12px 40px rgba(0, 0, 0, 0.7);
+  --glow-accent: 0 0 24px rgba(59, 130, 246, 0.25);
+  --glow-success: 0 0 20px rgba(16, 185, 129, 0.2);
+  
+  /* Border Radius System */
+  --radius-none: 0;
   --radius-sm: 6px;
-  --radius: 10px;
+  --radius-md: 10px;
   --radius-lg: 14px;
-  --radius-xl: 20px;
+  --radius-xl: 18px;
+  --radius-2xl: 24px;
   --radius-full: 9999px;
   
-  /* Animation */
-  --transition-fast: 0.12s ease;
-  --transition: 0.18s ease;
-  --transition-slow: 0.28s ease;
+  /* Animation & Transitions */
+  --duration-fast: 100ms;
+  --duration-normal: 180ms;
+  --duration-slow: 280ms;
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   
-  /* Safe areas */
-  --safe-b: env(safe-area-inset-bottom, 0px);
-  --safe-t: env(safe-area-inset-top, 0px);
+  /* Spacing Scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  
+  /* Typography Scale */
+  --font-xs: 0.7rem;
+  --font-sm: 0.8125rem;
+  --font-base: 0.9375rem;
+  --font-lg: 1.0625rem;
+  --font-xl: 1.25rem;
+  --font-2xl: 1.5rem;
+  
+  /* Layout */
+  --rail-width: 72px;
+  --sidebar-width: 260px;
+  --members-width: 240px;
+  --header-height: 52px;
+  --composer-height: auto;
+  
+  /* Safe Areas for Mobile */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  
+  /* Z-Index Layers */
+  --z-base: 1;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-overlay: 300;
+  --z-modal: 400;
+  --z-toast: 500;
+  --z-max: 9999;
 }
 
 /* Reset & base */

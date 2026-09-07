@@ -1,1 +1,5 @@
-(public/styles.css is a source file, and there are no build artifacts, dependencies, or temp files in the changes)
+```
+# Build artifacts
+public/app.js
+public/styles.css
+```
