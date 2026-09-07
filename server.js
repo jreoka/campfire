@@ -418,6 +418,48 @@ app.post('/api/servers/:id/invite/reset', authRequired, (req, res) => {
   res.json({ invite_code: code });
 });
 
+// Invite friends to a server by picking them: each gets a DM with the invite link.
+// Only existing friends can be picked (DMs require friendship).
+app.post('/api/servers/:id/invite-friends', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isMember(s.id, req.user.id)) return res.status(403).json({ error: 'not_member' });
+  const ids = [...new Set((req.body?.userIds || []).map(String))].filter((v) => v !== req.user.id).slice(0, 20);
+  if (!ids.length) return res.status(400).json({ error: 'no_users' });
+  const link = `${ORIGIN}/?invite=${s.invite_code}`;
+  let sent = 0;
+  for (const oid of ids) {
+    if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(oid)) continue;
+    if (!areFriends(req.user.id, oid)) continue;
+    if (isMember(s.id, oid)) continue;
+    // reuse the existing 1:1 thread or create one
+    let tid = null;
+    const mine = db.prepare('SELECT thread_id FROM dm_members WHERE user_id = ?').all(req.user.id).map((r) => r.thread_id);
+    for (const x of mine) {
+      const gt = db.prepare('SELECT * FROM dm_threads WHERE id = ? AND (is_group IS NULL OR is_group = 0)').get(x);
+      if (!gt) continue;
+      const mems = db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ?').all(x).map((r) => r.user_id);
+      if (mems.length === 2 && mems.includes(oid)) { tid = x; break; }
+    }
+    if (!tid) {
+      tid = uid();
+      db.transaction(() => {
+        db.prepare('INSERT INTO dm_threads (id,name,is_group,created_by,created_at) VALUES (?,?,?,?,?)').run(tid, '', 0, req.user.id, now());
+        db.prepare('INSERT INTO dm_members (thread_id,user_id,joined_at) VALUES (?,?,?)').run(tid, req.user.id, now());
+        db.prepare('INSERT INTO dm_members (thread_id,user_id,joined_at) VALUES (?,?,?)').run(tid, oid, now());
+      })();
+    }
+    db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ?').run(tid);
+    const mid = uid();
+    db.prepare('INSERT INTO dm_messages (id,thread_id,user_id,content,created_at) VALUES (?,?,?,?,?)')
+      .run(mid, tid, req.user.id, `Join my server "${s.name}"! ${link}`, now());
+    dmNotify(tid, { t: 'dm-new', message: fullDm(mid, null) });
+    notifyUser(oid, { t: 'dm-threads-changed' });
+    sent++;
+  }
+  res.json({ sent });
+});
+
 app.post('/api/servers/:id/members/:uid/kick', authRequired, (req, res) => {
   const s = getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });
@@ -1030,6 +1072,23 @@ function dmNotify(threadId, obj) {
   const mems = db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ?').all(threadId).map((r) => r.user_id);
   for (const uid of mems) notifyUser(uid, obj);
 }
+// Fully erase a DM thread and everything in it. Called whenever a thread is
+// left with zero members (last leave, remove, or ban) — explicit deletes so
+// no messages/attachments/reactions/pins dangle even if FK cascades lag.
+function deleteDmThread(threadId) {
+  db.transaction(() => {
+    db.prepare('DELETE FROM dm_attachments WHERE message_id IN (SELECT id FROM dm_messages WHERE thread_id = ?)').run(threadId);
+    db.prepare('DELETE FROM dm_reactions WHERE message_id IN (SELECT id FROM dm_messages WHERE thread_id = ?)').run(threadId);
+    db.prepare('DELETE FROM dm_pins WHERE thread_id = ?').run(threadId);
+    db.prepare('DELETE FROM dm_messages WHERE thread_id = ?').run(threadId);
+    db.prepare('DELETE FROM dm_bans WHERE thread_id = ?').run(threadId);
+    db.prepare('DELETE FROM dm_members WHERE thread_id = ?').run(threadId);
+    db.prepare('DELETE FROM dm_threads WHERE id = ?').run(threadId);
+  })();
+}
+function maybeDeleteEmptyDmThread(threadId) {
+  if (!db.prepare('SELECT COUNT(*) c FROM dm_members WHERE thread_id = ?').get(threadId).c) deleteDmThread(threadId);
+}
 function firstTextChannel(serverId) {
   return db.prepare("SELECT * FROM channels WHERE server_id = ? AND type = 'text' ORDER BY position ASC, created_at ASC LIMIT 1").get(serverId);
 }
@@ -1188,6 +1247,7 @@ function hydrateDm(rows, meId) {
   return rows.map((r) => ({
     id: r.id, threadId: r.thread_id, content: r.content, created_at: r.created_at,
     sys: r.sys || null,
+    fwdFrom: r.fwd_from || null,
     replyTo: r.reply_to_id ? { id: r.reply_to_id, author: r.p_name || '?', snippet: String(r.p_content || '').slice(0, 140) } : null,
     threadCount: 0, edited: !!r.edited_at, _dm: true,
     attachments: attBy[r.id] || [],
@@ -1392,9 +1452,7 @@ app.post('/api/dms/:tid/leave', authRequired, (req, res) => {
   db.prepare('DELETE FROM dm_members WHERE thread_id = ? AND user_id = ?').run(t.id, req.user.id);
   postDmSys(t.id, `${displayOf(req.user)} left ${t.is_group ? 'the group' : 'the chat'}`);
   dmNotify(t.id, { t: 'dm-threads-changed' });
-  if (!db.prepare('SELECT COUNT(*) c FROM dm_members WHERE thread_id = ?').get(t.id).c) {
-    db.prepare('DELETE FROM dm_threads WHERE id = ?').run(t.id);
-  }
+  maybeDeleteEmptyDmThread(t.id);
   res.json({ ok: true });
 });
 // Dismiss a DM from your list (per-user hide; membership kept, peer not notified).
@@ -1426,6 +1484,7 @@ app.post('/api/dms/:tid/members/:uid/remove', authRequired, (req, res) => {
   postDmSys(t.id, `${displayOf(u)} was removed`);
   dmNotify(t.id, { t: 'dm-threads-changed' });
   notifyUser(target, { t: 'removed-from-dm', threadId: t.id });
+  maybeDeleteEmptyDmThread(t.id);
   res.json({ ok: true });
 });
 
@@ -1445,6 +1504,7 @@ app.post('/api/dms/:tid/members/:uid/ban', authRequired, (req, res) => {
   postDmSys(t.id, `${displayOf(u)} was banned`);
   dmNotify(t.id, { t: 'dm-threads-changed' });
   notifyUser(target, { t: 'removed-from-dm', threadId: t.id });
+  maybeDeleteEmptyDmThread(t.id);
   res.json({ ok: true });
 });
 
@@ -1618,6 +1678,7 @@ function fmtMsg(r) {
     replyTo: r.reply_to_id ? { id: r.reply_to_id, author: r.p_name || 'deleted', snippet: String(r.p_content || '').slice(0, 140) } : null,
     threadRoot: r.thread_root_id || null,
     sys: r.sys || null,
+    fwdFrom: r.fwd_from || null,
     threadCount: 0, edited: !!r.edited_at,
     attachments: [], reactions: [],
     user: r.user_id ? publicUser({ id: r.user_id, username: r.username, display_name: r.display_name, avatar_color: r.avatar_color, avatar_url: r.avatar_url }) : null,
@@ -1809,8 +1870,9 @@ wss.on('connection', (ws, req) => {
       }
       if (!content && !cleanAtts.length) return;
       const mid = uid();
-      db.prepare('INSERT INTO messages (id,server_id,channel_id,user_id,content,reply_to_id,thread_root_id,created_at) VALUES (?,?,?,?,?,?,?,?)')
-        .run(mid, serverId, channelId, me.userId, content, replyTo, threadRoot, now());
+      const fwdFrom = String(msg.fwdFrom || '').trim().slice(0, 64) || null;
+      db.prepare('INSERT INTO messages (id,server_id,channel_id,user_id,content,reply_to_id,thread_root_id,fwd_from,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+        .run(mid, serverId, channelId, me.userId, content, replyTo, threadRoot, fwdFrom, now());
       const insAtt = db.prepare('INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,created_at) VALUES (?,?,?,?,?,?,?,?)');
       for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, now());
       const full = fullMessage(mid, null);
@@ -1838,8 +1900,9 @@ wss.on('connection', (ws, req) => {
       if (!rateOk(me.userId)) { safeSend(ws, { t: 'error', error: 'slow_down' }); return; }
       if (replyTo && !db.prepare('SELECT id FROM dm_messages WHERE id = ? AND thread_id = ?').get(replyTo, threadId)) return;
       const mid = uid();
-      db.prepare('INSERT INTO dm_messages (id,thread_id,user_id,content,reply_to_id,created_at) VALUES (?,?,?,?,?,?)')
-        .run(mid, threadId, me.userId, content, replyTo, now());
+      const fwdFrom = String(msg.fwdFrom || '').trim().slice(0, 64) || null;
+      db.prepare('INSERT INTO dm_messages (id,thread_id,user_id,content,reply_to_id,fwd_from,created_at) VALUES (?,?,?,?,?,?,?)')
+        .run(mid, threadId, me.userId, content, replyTo, fwdFrom, now());
       db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ?').run(threadId);
       const insAtt = db.prepare('INSERT INTO dm_attachments (id,message_id,url,filename,mime,size,kind,created_at) VALUES (?,?,?,?,?,?,?,?)');
       for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, now());

@@ -214,6 +214,8 @@ async function doLogout() {
   location.reload();
 }
 
+function stashInvite(code) { try { if (code) sessionStorage.setItem('cf_invite', code); } catch {} }
+function takeInvite() { try { const p = sessionStorage.getItem('cf_invite'); if (p) sessionStorage.removeItem('cf_invite'); return p || null; } catch { return null; } }
 // ---------- boot ----------
 async function boot() {
   try {
@@ -223,7 +225,7 @@ async function boot() {
     S.me = user;
   } catch {
     const inv0 = new URLSearchParams(location.search).get('invite');
-    if (inv0) { history.replaceState(null, '', location.pathname); sessionStorage.setItem('cf_invite', inv0); }
+    if (inv0) { try { history.replaceState(null, '', location.pathname); } catch {} stashInvite(inv0); }
     showAuth();
     if (inv0) showInviteLanding(inv0);
     return;
@@ -241,12 +243,12 @@ async function boot() {
   // invite landing (?invite=CODE)
   const inv = new URLSearchParams(location.search).get('invite');
   if (inv) {
-    history.replaceState(null, '', location.pathname);
-    sessionStorage.setItem('cf_invite', inv);
+    try { history.replaceState(null, '', location.pathname); } catch {}
+    stashInvite(inv);
     showInviteLanding(inv);
   } else {
-    const pending = sessionStorage.getItem('cf_invite');
-    if (pending) { sessionStorage.removeItem('cf_invite'); showInviteLanding(pending); }
+    const pending = takeInvite();
+    if (pending) showInviteLanding(pending);
   }
   // deep links from push notifications (?server=ID&channel=ID, ?dm=ID)
   try {
@@ -591,6 +593,22 @@ function nameStyleFor(u) {
   }
   return '';
 }
+// Live profile for a message author: chat embeds a snapshot at send time, so
+// resolve display name / avatar / name color from fresh state first so color
+// and gradient names show in chat, not just the member sidebar.
+function liveUserFor(u) {
+  if (!u) return u;
+  if (S.me && u.id === S.me.id) return S.me;
+  if (S.view === 'server' && S.serverDetail) {
+    const m = S.serverDetail.members.find((x) => x.id === u.id);
+    if (m) return m;
+  } else if (S.view === 'home' && S.dmThreadId) {
+    const t = S.dms.find((x) => x.id === S.dmThreadId);
+    const m = t && (t.members || []).find((x) => x.id === u.id);
+    if (m) return m;
+  }
+  return u;
+}
 // ---------- messages ----------
 function canMod(m) {
   if (!m.user) return false;
@@ -640,8 +658,12 @@ function messageEl(m, opts = {}) {
   div.className = 'msg';
   div.dataset.mid = m.id;
   const own = m.user && m.user.id === S.me.id;
+  const lu = liveUserFor(m.user);
   let inner = '<span class="avatar" data-uid="' + (m.user ? m.user.id : '') + '"></span><div class="body">';
-  inner += `<div class="head"><span class="who" data-uid="${m.user ? m.user.id : ''}" style="${nameStyleFor(m.user)}">${esc(m.user ? m.user.display_name : 'deleted')}</span><span class="when">${fmtTime(m.created_at)}</span>${m.edited ? '<span class="edited">(edited)</span>' : ''}</div>`;
+  inner += `<div class="head"><span class="who" data-uid="${m.user ? m.user.id : ''}" style="${nameStyleFor(lu)}">${esc(lu ? lu.display_name : 'deleted')}</span><span class="when">${fmtTime(m.created_at)}</span>${m.edited ? '<span class="edited">(edited)</span>' : ''}</div>`;
+  if (m.fwdFrom) {
+    inner += `<div class="fwd-tag">Forwarded from <b>${esc(m.fwdFrom)}</b></div>`;
+  }
   if (m.replyTo) {
     inner += `<div class="reply-quote" data-jump="${m.replyTo.id}"><span class="rq-author">${esc(m.replyTo.author)}</span><span class="rq-text">${esc(m.replyTo.snippet)}</span></div>`;
   }
@@ -668,7 +690,7 @@ function messageEl(m, opts = {}) {
   bar += `<button data-act="more" title="More reactions">➕</button><button data-act="reply" title="Reply">↩</button><button data-act="menu" title="More actions">⋯</button>`;
   inner += '<div class="msg-actions">' + bar + '</div>';
   div.innerHTML = inner;
-  paintAvatar(div.querySelector('.avatar'), m.user);
+  paintAvatar(div.querySelector('.avatar'), lu);
   return div;
 }
 function renderMessages(force = false) {
@@ -1266,8 +1288,8 @@ async function showInviteLanding(code) {
     });
     mkBtn('Cancel', false, () => $('#invite-view').classList.add('hidden'));
   } else {
-    mkBtn('Sign in', true, () => { sessionStorage.setItem('cf_invite', code); $('#invite-view').classList.add('hidden'); setMode('login'); });
-    mkBtn('Sign up', false, () => { sessionStorage.setItem('cf_invite', code); $('#invite-view').classList.add('hidden'); setMode('register'); });
+    mkBtn('Sign in', true, () => { stashInvite(code); $('#invite-view').classList.add('hidden'); setMode('login'); });
+    mkBtn('Sign up', false, () => { stashInvite(code); $('#invite-view').classList.add('hidden'); setMode('register'); });
   }
   $('#invite-view').classList.remove('hidden');
 }
@@ -1280,9 +1302,48 @@ function showInvite(srv) {
     <div class="codebox">${esc(srv.invite_code)}</div>
     <div class="row"><button class="btn" id="m-copy-code">Copy code</button>
     <button class="btn" id="m-copy-link">Copy link</button></div>
+    <div class="chan-group-label" style="padding-left:0">Invite friends directly</div>
+    <div id="m-inv-friends"><p class="muted small">Loading friends…</p></div>
+    <div class="row" style="margin-top:.5rem"><button class="btn small primary" id="m-inv-send">Send invites</button></div>
   `, 'Done', null);
   $('#m-copy-code').onclick = () => { navigator.clipboard?.writeText(srv.invite_code); toast('Code copied'); };
   $('#m-copy-link').onclick = () => { navigator.clipboard?.writeText(url); toast('Link copied'); };
+  (async () => {
+    const box = $('#m-inv-friends');
+    if (!box) return;
+    let friends = (S.friends && S.friends.friends) || [];
+    if (!friends.length) { try { ({ friends } = await api('/api/friends')); } catch { friends = []; } }
+    const memberIds = new Set((srv.members || []).map((m) => m.id));
+    const picks = friends.filter((f) => f.id !== S.me.id && !memberIds.has(f.id));
+    if (!box.isConnected) return;
+    if (!picks.length) { box.innerHTML = '<p class="muted small">No friends to invite — everyone is already here.</p>'; return; }
+    box.innerHTML = '';
+    const list = document.createElement('div');
+    list.style.cssText = 'max-height:180px;overflow-y:auto';
+    for (const f of picks) {
+      const lab = document.createElement('label');
+      lab.className = 'gpick';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.value = f.id;
+      lab.appendChild(cb);
+      const nm = document.createElement('span');
+      nm.textContent = `${f.display_name} `;
+      const un = document.createElement('span');
+      un.className = 'muted'; un.textContent = `@${f.username}`;
+      nm.appendChild(un); lab.appendChild(nm);
+      list.appendChild(lab);
+    }
+    box.appendChild(list);
+  })();
+  $('#m-inv-send').onclick = async () => {
+    const ids = [...document.querySelectorAll('#m-inv-friends input:checked')].map((i) => i.value);
+    if (!ids.length) { toast('Pick at least one friend'); return; }
+    try {
+      const { sent } = await api(`/api/servers/${srv.id}/invite-friends`, { method: 'POST', body: JSON.stringify({ userIds: ids }) });
+      toast(sent === 1 ? 'Invite sent' : `${sent} invites sent`);
+      document.querySelectorAll('#m-inv-friends input:checked').forEach((i) => { i.checked = false; });
+    } catch (err) { toast('Invite failed: ' + prettyError(err.message)); }
+  };
 }
 $('#btn-server-menu').onclick = () => {
   const d = S.serverDetail;
@@ -2008,6 +2069,7 @@ function messageCtxMenu(mid, x, y) {
   const items = [
     { label: 'Add reaction…', icon: '➕', fn: () => openPicker('react', mid, 'emoji', { x, y }) },
     { label: 'Reply', icon: '↩', fn: () => { S.replyTo = m; renderComposerMeta(); $('#in-message').focus(); } },
+    { label: 'Forward', icon: '↗', fn: () => openForward(mid) },
   ];
   if (!dm) items.push({ label: 'Open thread', icon: '💬', fn: () => openThread(mid) });
   if (!m.threadRoot) items.push({ label: S.pinIds.has(mid) ? 'Unpin message' : 'Pin message', icon: PIN_SVG, fn: () => togglePin(mid) });
@@ -2016,6 +2078,106 @@ function messageCtxMenu(mid, x, y) {
   if (canMod(m)) items.push({ label: 'Delete message', icon: '🗑', danger: true, fn: () => api((dm ? '/api/dms/messages/' : '/api/messages/') + mid, { method: 'DELETE' }).catch(() => toast('Delete failed')) });
   items.push({ label: 'Copy text', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(m.content || ''); toast('Copied'); } catch {} } });
   openCtx(x, y, items);
+}
+/* ================= forward messages ================= */
+S.fwdSrc = null; S.fwdPick = null;
+let fwdDestCache = null;
+async function loadFwdDests() {
+  if (fwdDestCache && Date.now() - fwdDestCache.at < 30000) return fwdDestCache;
+  const chans = [];
+  const details = await Promise.all((S.servers || []).map((s) => api(`/api/servers/${s.id}`).then((d) => d.server).catch(() => null)));
+  for (const d of details) {
+    if (!d) continue;
+    for (const c of (d.channels || []).filter((x) => x.type === 'text')) chans.push({ kind: 'server', serverId: d.id, serverName: d.name, id: c.id, name: c.name });
+  }
+  let dms = S.dms || [];
+  if (!dms.length) { try { ({ threads: dms } = await api('/api/dms')); S.dms = dms; } catch { dms = []; } }
+  fwdDestCache = { at: Date.now(), chans, dms };
+  return fwdDestCache;
+}
+function renderFwdDests(filter = '') {
+  const box = document.querySelector('#fwd-dests');
+  if (!box || !fwdDestCache) return;
+  const q = filter.trim().toLowerCase();
+  const hit = (s) => !q || String(s || '').toLowerCase().includes(q);
+  box.innerHTML = '';
+  const mkRow = (pick, avText, name, sub, peer) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'fwd-dest' + (S.fwdPick && S.fwdPick.kind === pick.kind && S.fwdPick.id === pick.id ? ' sel' : '');
+    b.innerHTML = '<span class="avatar"></span><span class="fwd-main"><span class="fwd-name"></span><br/><span class="fwd-sub"></span></span><span class="fwd-check">✓</span>';
+    const av = b.querySelector('.avatar');
+    if (peer) paintAvatar(av, peer);
+    else { av.textContent = avText; av.style.background = 'var(--panel-3)'; }
+    b.querySelector('.fwd-name').textContent = name;
+    b.querySelector('.fwd-sub').textContent = sub;
+    b.onclick = () => { S.fwdPick = pick; renderFwdDests(document.querySelector('#fwd-search')?.value || ''); };
+    return b;
+  };
+  const sec = (t) => { const e = document.createElement('div'); e.className = 'fwd-sec'; e.textContent = t; box.appendChild(e); };
+  const chanHits = fwdDestCache.chans.filter((c) => hit(c.name) || hit(c.serverName));
+  if (chanHits.length) {
+    sec('CHANNELS');
+    for (const c of chanHits) box.appendChild(mkRow(c, '#', '#' + c.name, c.serverName, null));
+  }
+  const dmHits = fwdDestCache.dms.filter((t) => hit(dmTitle(t)));
+  if (dmHits.length) {
+    sec('DIRECT MESSAGES');
+    for (const t of dmHits) {
+      const peer = t.isGroup ? null : dmPeer(t);
+      box.appendChild(mkRow({ kind: 'dm', id: t.id }, t.isGroup ? '#' : '', dmTitle(t), t.isGroup ? 'Group chat' : ('@' + (peer?.username || '')), peer));
+    }
+  }
+  if (!chanHits.length && !dmHits.length) box.innerHTML = '<p class="muted small" style="text-align:center;padding:.6rem">No chats match.</p>';
+}
+async function openForward(mid) {
+  const m = msgById(mid);
+  if (!m || m.sys) return;
+  S.fwdSrc = m;
+  const ctx = pinsCtx();
+  S.fwdPick = ctx ? (ctx.kind === 'dm' ? { kind: 'dm', id: ctx.id } : { kind: 'server', serverId: ctx.serverId, id: ctx.id }) : null;
+  const author = m.user ? m.user.display_name : 'Someone';
+  const snip = m.content ? (m.content.length > 140 ? m.content.slice(0, 140) + '…' : m.content)
+    : (m.attachments?.length ? `[${m.attachments.length} attachment${m.attachments.length === 1 ? '' : 's'}]` : '[no text]');
+  openModal('Forward message', `
+    <div class="fwd-preview"><span class="avatar"></span><div class="fwd-pmain"><div class="fwd-from"></div><div class="fwd-snip"></div></div></div>
+    <label class="fwd-label">Add a message <span class="muted">(optional)</span><textarea id="fwd-comment" maxlength="2000" rows="2" placeholder="Say something about this…"></textarea></label>
+    <input id="fwd-search" placeholder="Search chats…" autocomplete="off" />
+    <div id="fwd-dests"><p class="muted small" style="text-align:center;padding:.6rem">Loading chats…</p></div>
+  `, 'Forward', () => sendForward(), { wide: true });
+  const pv = document.querySelector('#modal-body .fwd-preview');
+  if (pv) {
+    paintAvatar(pv.querySelector('.avatar'), m.user);
+    pv.querySelector('.fwd-from').textContent = author;
+    pv.querySelector('.fwd-snip').textContent = snip;
+  }
+  document.querySelector('#fwd-search')?.addEventListener('input', (e) => renderFwdDests(e.target.value));
+  try {
+    await loadFwdDests();
+    if (!S.fwdPick) {
+      const first = fwdDestCache.chans[0] || fwdDestCache.dms.map((t) => ({ kind: 'dm', id: t.id }))[0] || null;
+      S.fwdPick = first;
+    }
+    renderFwdDests();
+  } catch { renderFwdDests(); }
+}
+function sendForward() {
+  const pick = S.fwdPick, src = S.fwdSrc;
+  if (!pick || !src) { toast('Pick a chat first'); return; }
+  const comment = (document.querySelector('#fwd-comment')?.value || '').trim().slice(0, 2000);
+  const orig = src.content || '';
+  let content = comment ? (orig ? comment + '\n\n' + orig : comment) : orig;
+  content = content.slice(0, 5000);
+  const atts = (src.attachments || []).slice(0, 5).map((a) => ({ url: a.url, name: a.name, mime: a.mime, size: a.size, kind: a.kind }));
+  if (!content && !atts.length) { toast('Nothing to forward'); return; }
+  if (!S.ws || S.ws.readyState !== 1) { toast('Reconnecting… try again in a second'); return; }
+  const fwdFrom = src.fwdFrom || (src.user ? src.user.display_name : 'Someone');
+  if (pick.kind === 'dm') {
+    S.ws.send(JSON.stringify({ t: 'dm', threadId: pick.id, content, attachments: atts, replyTo: null, fwdFrom }));
+  } else {
+    S.ws.send(JSON.stringify({ t: 'message', serverId: pick.serverId, channelId: pick.id, content, attachments: atts, replyTo: null, threadRoot: null, fwdFrom }));
+  }
+  toast('Forwarded');
 }
 function memberCtxMenu(uid, x, y) {
   const u = memberById(uid);
@@ -3366,12 +3528,20 @@ async function renderNotifsTab() {
   const h = (t) => { const e = document.createElement('h4'); e.textContent = t; e.style.margin = '1rem 0 .4rem'; box.appendChild(e); };
   h('Push notifications');
   const st = document.createElement('p'); st.className = 'muted small';
+  let subscribed = false;
+  if (pushOK && perm === 'granted') {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      subscribed = !!(await reg.pushManager.getSubscription());
+    } catch {}
+  }
   if (!pushOK) st.textContent = 'Push is not supported in this browser.';
-  else if (perm === 'granted') st.textContent = 'Push notifications are enabled on this device — you will get pings even with Campfire closed.';
+  else if (subscribed) st.textContent = 'Push notifications are enabled on this device — you will get pings even with Campfire closed.';
   else if (perm === 'denied') st.textContent = 'Notifications are blocked. Allow them in your browser or OS settings, then return here.';
+  else if (perm === 'granted') st.textContent = 'Push is off on this device. Turn it back on below.';
   else st.textContent = 'Get pings on desktop and mobile, even with Campfire closed.';
   box.appendChild(st);
-  if (pushOK && perm !== 'granted' && perm !== 'denied') {
+  if (pushOK && !subscribed && perm !== 'granted' && perm !== 'denied') {
     const en = document.createElement('button'); en.className = 'btn small primary'; en.textContent = 'Enable notifications';
     en.onclick = async () => {
       try {
@@ -3382,7 +3552,12 @@ async function renderNotifsTab() {
     };
     box.appendChild(en);
   }
-  if (pushOK && perm === 'granted') {
+  if (pushOK && perm === 'granted' && !subscribed) {
+    const en = document.createElement('button'); en.className = 'btn small primary'; en.textContent = 'Enable on this device';
+    en.onclick = async () => { await pushSetup(); renderNotifsTab(); toast('Notifications enabled'); };
+    box.appendChild(en);
+  }
+  if (pushOK && subscribed) {
     const off = document.createElement('button'); off.className = 'btn small'; off.textContent = 'Disable on this device';
     off.onclick = async () => { await pushTeardown(); renderNotifsTab(); };
     box.appendChild(off);

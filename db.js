@@ -238,6 +238,8 @@ CREATE TABLE IF NOT EXISTS notif_prefs (
 `);
 addColumn('dm_messages', 'sys', 'TEXT');
 addColumn('dm_members', 'hidden', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('messages', 'fwd_from', 'TEXT');
+addColumn('dm_messages', 'fwd_from', 'TEXT');
 addColumn('channels', 'slowmode', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('channels', 'description', "TEXT NOT NULL DEFAULT ''");
 addColumn('servers', 'banner_url', 'TEXT');
