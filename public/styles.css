@@ -316,6 +316,27 @@ h1,h2,h3{letter-spacing:-0.01em}
 #folder-menu .swatches{display:flex;gap:.35rem;padding:.45rem .6rem}
 #folder-menu .sw{width:22px;height:22px;border-radius:50%;cursor:pointer;border:2px solid transparent}
 #folder-menu .sw.sel{border-color:#fff}
+/* ---------- home (friends + DMs) ---------- */
+#server-ui{display:contents}
+.home-head{padding:.85rem .9rem;border-bottom:1px solid var(--line)}
+.home-head strong{font-size:.98rem}
+.pad-x{padding:0 .7rem}
+#in-friend{flex:1;min-width:0;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:.45rem .7rem;font-size:.85rem;outline:none}
+#in-friend:focus{border-color:var(--accent)}
+#friend-reqs:empty,#friend-list:empty,#dm-list:empty,#group-list:empty{display:none}
+.dmrow{display:flex;align-items:center;gap:.5rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:12px;padding:.4rem .55rem;cursor:pointer}
+.dmrow:hover{background:var(--panel-2)}
+.dmrow.active{background:var(--panel-3)}
+.dmrow .avatar{width:32px;height:32px;font-size:.75rem;flex-shrink:0}
+.dmrow .dmmain{flex:1;min-width:0;line-height:1.3}
+.dmrow .dmname{font-size:.88rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dmrow .dmlast{font-size:.74rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dmrow .mini{flex-shrink:0}
+.home-btn svg{display:block}
+.home-btn.active{background:var(--accent)}
+body.view-home #members{display:none!important}
+body.view-home #btn-members{display:none!important}
+.gpick{display:flex!important;gap:.5rem;align-items:center;padding:.3rem 0}
 /* ---------- mobile native app ---------- */
 body{touch-action:manipulation}
 .members-btn{display:none}

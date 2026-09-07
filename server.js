@@ -690,6 +690,241 @@ app.get('/api/servers/:id/channels/:chId/threads/:rootId', authRequired, (req, r
   res.json({ root: hydRoot, replies: hydrateMessages(rows, req.user.id) });
 });
 
+// ---------- friends + DMs ----------
+function friendRow(a, b) {
+  const [x, y] = a < b ? [a, b] : [b, a];
+  return db.prepare('SELECT * FROM friendships WHERE user_a = ? AND user_b = ?').get(x, y);
+}
+function areFriends(a, b) {
+  const f = friendRow(a, b);
+  return !!(f && f.status === 'accepted');
+}
+function notifyUser(userId, obj) {
+  for (const c of clients) if (c.meta && c.meta.userId === userId) safeSend(c, obj);
+}
+function dmThreadFor(userId, threadId) {
+  if (!threadId) return null;
+  const t = db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(threadId);
+  if (!t) return null;
+  return db.prepare('SELECT 1 FROM dm_members WHERE thread_id = ? AND user_id = ?').get(threadId, userId) ? t : null;
+}
+function dmThreadView(t) {
+  const members = db.prepare(`SELECT ${USER_COLS} FROM users WHERE id IN (SELECT user_id FROM dm_members WHERE thread_id = ?)`).all(t.id).map(publicUser);
+  const last = db.prepare('SELECT m.content, m.created_at, u.display_name AS dname FROM dm_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.thread_id = ? ORDER BY m.created_at DESC LIMIT 1').get(t.id);
+  return {
+    id: t.id, name: t.name, isGroup: !!t.is_group, created_at: t.created_at, members,
+    last: last ? { content: last.content, created_at: last.created_at, author: last.dname || '?' } : null,
+  };
+}
+function dmNotify(threadId, obj) {
+  const mems = db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ?').all(threadId).map((r) => r.user_id);
+  for (const uid of mems) notifyUser(uid, obj);
+}
+const DM_JOIN = `SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,
+  p.content AS p_content, pu.display_name AS p_name
+  FROM dm_messages m LEFT JOIN users u ON u.id = m.user_id
+  LEFT JOIN dm_messages p ON p.id = m.reply_to_id LEFT JOIN users pu ON pu.id = p.user_id`;
+function hydrateDm(rows, meId) {
+  const ids = rows.map((r) => r.id);
+  const attBy = {}, reactBy = {};
+  if (ids.length) {
+    const ph = ids.map(() => '?').join(',');
+    for (const a of db.prepare(`SELECT * FROM dm_attachments WHERE message_id IN (${ph}) ORDER BY created_at ASC`).all(...ids)) {
+      (attBy[a.message_id] = attBy[a.message_id] || []).push({ url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind });
+    }
+    for (const r of db.prepare(`SELECT message_id, emoji, user_id FROM dm_reactions WHERE message_id IN (${ph})`).all(...ids)) {
+      const t = (reactBy[r.message_id] = reactBy[r.message_id] || {});
+      const e = (t[r.emoji] = t[r.emoji] || { emoji: r.emoji, count: 0, users: [] });
+      e.count++; e.users.push(r.user_id);
+    }
+  }
+  return rows.map((r) => ({
+    id: r.id, threadId: r.thread_id, content: r.content, created_at: r.created_at,
+    replyTo: r.reply_to_id ? { id: r.reply_to_id, author: r.p_name || '?', snippet: String(r.p_content || '').slice(0, 140) } : null,
+    threadCount: 0, edited: !!r.edited_at, _dm: true,
+    attachments: attBy[r.id] || [],
+    reactions: Object.values(reactBy[r.id] || {}).map((t) => ({ emoji: t.emoji, count: t.count, me: t.users.includes(meId) })),
+    user: r.user_id ? publicUser({ id: r.user_id, username: r.username, display_name: r.display_name, avatar_color: r.avatar_color, avatar_url: r.avatar_url }) : null,
+  }));
+}
+function fullDm(mid, meId) {
+  const row = db.prepare(`${DM_JOIN} WHERE m.id = ?`).get(mid);
+  return row ? hydrateDm([row], meId)[0] : null;
+}
+function cleanAttachments(atts) {
+  const out = [];
+  for (const a of (Array.isArray(atts) ? atts.slice(0, 5) : [])) {
+    const url = String(a?.url || '');
+    const isLocal = url.startsWith('/uploads/files/');
+    const isRemoteImg = a?.kind === 'image' && /^https:\/\//.test(url);
+    if (!isLocal && !isRemoteImg) continue;
+    const mime = String(a?.mime || 'application/octet-stream').slice(0, 80);
+    out.push({
+      url, name: String(a?.name || 'file').slice(0, 120), mime,
+      size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, 100 * 1024 * 1024)),
+      kind: isLocal ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file') : 'image',
+    });
+  }
+  return out;
+}
+app.get('/api/users/search', authRequired, (req, res) => {
+  const q = String(req.query.q || '').trim().toLowerCase().replace(/[^a-z0-9_.]/g, '').slice(0, 24);
+  if (q.length < 2) return res.json({ users: [] });
+  const rows = db.prepare(`SELECT ${USER_COLS} FROM users WHERE (username LIKE ? OR display_name LIKE ?) AND id != ? LIMIT 8`).all(q + '%', q + '%', req.user.id);
+  res.json({ users: rows.map(publicUser) });
+});
+app.get('/api/friends', authRequired, (req, res) => {
+  const rows = db.prepare('SELECT * FROM friendships WHERE user_a = ? OR user_b = ?').all(req.user.id, req.user.id);
+  const ids = rows.map((f) => (f.user_a === req.user.id ? f.user_b : f.user_a));
+  const byId = new Map(ids.length
+    ? db.prepare(`SELECT ${USER_COLS} FROM users WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids).map((u) => [u.id, publicUser(u)])
+    : []);
+  const friends = [], pin = [], pout = [];
+  for (const f of rows) {
+    const u = byId.get(f.user_a === req.user.id ? f.user_b : f.user_a);
+    if (!u) continue;
+    if (f.status === 'accepted') friends.push(u);
+    else if (f.action_by === req.user.id) pout.push(u);
+    else pin.push(u);
+  }
+  res.json({ friends, pendingIn: pin, pendingOut: pout });
+});
+app.post('/api/friends', authRequired, (req, res) => {
+  const username = String(req.body?.username || '').trim().toLowerCase();
+  const target = db.prepare(`SELECT ${USER_COLS} FROM users WHERE username = ?`).get(username);
+  if (!target || target.id === req.user.id) return res.status(404).json({ error: 'user_not_found' });
+  if (friendRow(req.user.id, target.id)) return res.status(409).json({ error: 'already_added' });
+  const [x, y] = req.user.id < target.id ? [req.user.id, target.id] : [target.id, req.user.id];
+  db.prepare('INSERT INTO friendships (user_a,user_b,status,action_by,created_at) VALUES (?,?,?,?,?)').run(x, y, 'pending', req.user.id, now());
+  notifyUser(target.id, { t: 'friends-changed' });
+  res.json({ ok: true });
+});
+app.post('/api/friends/:oid/accept', authRequired, (req, res) => {
+  const f = friendRow(req.user.id, req.params.oid);
+  if (!f || f.status !== 'pending' || f.action_by === req.user.id) return res.status(404).json({ error: 'no_request' });
+  db.prepare('UPDATE friendships SET status = ? WHERE user_a = ? AND user_b = ?').run('accepted', f.user_a, f.user_b);
+  notifyUser(req.params.oid, { t: 'friends-changed' });
+  notifyUser(req.user.id, { t: 'friends-changed' });
+  res.json({ ok: true });
+});
+app.delete('/api/friends/:oid', authRequired, (req, res) => {
+  const f = friendRow(req.user.id, req.params.oid);
+  if (!f) return res.status(404).json({ error: 'not_found' });
+  db.prepare('DELETE FROM friendships WHERE user_a = ? AND user_b = ?').run(f.user_a, f.user_b);
+  notifyUser(req.params.oid, { t: 'friends-changed' });
+  res.json({ ok: true });
+});
+app.get('/api/dms', authRequired, (req, res) => {
+  const ids = db.prepare('SELECT thread_id FROM dm_members WHERE user_id = ?').all(req.user.id).map((r) => r.thread_id);
+  const out = [];
+  for (const id of ids) {
+    const t = db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(id);
+    if (t) out.push(dmThreadView(t));
+  }
+  res.json({ threads: out });
+});
+app.post('/api/dms', authRequired, (req, res) => {
+  const target = db.prepare('SELECT id FROM users WHERE id = ?').get(String(req.body?.userId || ''));
+  if (!target || target.id === req.user.id) return res.status(404).json({ error: 'user_not_found' });
+  if (!areFriends(req.user.id, target.id)) return res.status(403).json({ error: 'add_friend_first' });
+  const mine = db.prepare('SELECT thread_id FROM dm_members WHERE user_id = ?').all(req.user.id).map((r) => r.thread_id);
+  for (const tid of mine) {
+    const t = db.prepare('SELECT * FROM dm_threads WHERE id = ? AND (is_group IS NULL OR is_group = 0)').get(tid);
+    if (!t) continue;
+    const mems = db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ?').all(tid).map((r) => r.user_id);
+    if (mems.length === 2 && mems.includes(target.id)) return res.json({ thread: dmThreadView(t) });
+  }
+  const id = uid();
+  db.transaction(() => {
+    db.prepare('INSERT INTO dm_threads (id,name,is_group,created_by,created_at) VALUES (?,?,?,?,?)').run(id, '', 0, req.user.id, now());
+    db.prepare('INSERT INTO dm_members (thread_id,user_id,joined_at) VALUES (?,?,?)').run(id, req.user.id, now());
+    db.prepare('INSERT INTO dm_members (thread_id,user_id,joined_at) VALUES (?,?,?)').run(id, target.id, now());
+  })();
+  notifyUser(target.id, { t: 'dm-threads-changed' });
+  res.json({ thread: dmThreadView(db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(id)) });
+});
+app.post('/api/dms/group', authRequired, (req, res) => {
+  const name = String(req.body?.name || '').trim().slice(0, 40) || 'Group chat';
+  const ids = [...new Set((req.body?.userIds || []).map(String))].filter((v) => v !== req.user.id).slice(0, 9);
+  if (!ids.length) return res.status(400).json({ error: 'pick_friends' });
+  for (const oid of ids) {
+    if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(oid)) return res.status(404).json({ error: 'user_not_found' });
+    if (!areFriends(req.user.id, oid)) return res.status(403).json({ error: 'add_friend_first' });
+  }
+  const id = uid();
+  db.transaction(() => {
+    db.prepare('INSERT INTO dm_threads (id,name,is_group,created_by,created_at) VALUES (?,?,?,?,?)').run(id, name, 1, req.user.id, now());
+    db.prepare('INSERT INTO dm_members (thread_id,user_id,joined_at) VALUES (?,?,?)').run(id, req.user.id, now());
+    for (const oid of ids) db.prepare('INSERT INTO dm_members (thread_id,user_id,joined_at) VALUES (?,?,?)').run(id, oid, now());
+  })();
+  for (const oid of ids) notifyUser(oid, { t: 'dm-threads-changed' });
+  res.json({ thread: dmThreadView(db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(id)) });
+});
+app.post('/api/dms/:tid/members', authRequired, (req, res) => {
+  const t = dmThreadFor(req.user.id, req.params.tid);
+  if (!t) return res.status(404).json({ error: 'no_thread' });
+  const oid = String(req.body?.userId || '');
+  if (oid === req.user.id || !db.prepare('SELECT 1 FROM users WHERE id = ?').get(oid)) return res.status(404).json({ error: 'user_not_found' });
+  if (!areFriends(req.user.id, oid)) return res.status(403).json({ error: 'add_friend_first' });
+  db.prepare('INSERT OR IGNORE INTO dm_members (thread_id,user_id,joined_at) VALUES (?,?,?)').run(t.id, oid, now());
+  if (!t.is_group) db.prepare('UPDATE dm_threads SET is_group = 1 WHERE id = ?').run(t.id);
+  dmNotify(t.id, { t: 'dm-threads-changed' });
+  res.json({ ok: true });
+});
+app.post('/api/dms/:tid/leave', authRequired, (req, res) => {
+  const t = dmThreadFor(req.user.id, req.params.tid);
+  if (!t) return res.status(404).json({ error: 'no_thread' });
+  db.prepare('DELETE FROM dm_members WHERE thread_id = ? AND user_id = ?').run(t.id, req.user.id);
+  dmNotify(t.id, { t: 'dm-threads-changed' });
+  if (!db.prepare('SELECT COUNT(*) c FROM dm_members WHERE thread_id = ?').get(t.id).c) {
+    db.prepare('DELETE FROM dm_threads WHERE id = ?').run(t.id);
+  }
+  res.json({ ok: true });
+});
+app.get('/api/dms/:tid/messages', authRequired, (req, res) => {
+  const t = dmThreadFor(req.user.id, req.params.tid);
+  if (!t) return res.status(404).json({ error: 'no_thread' });
+  const limit = Math.min(parseInt(req.query.limit || '50', 10), 100);
+  const before = parseInt(req.query.before || String(Date.now() + 1), 10);
+  const rows = db.prepare(`${DM_JOIN} WHERE m.thread_id = ? AND m.created_at < ? ORDER BY m.created_at DESC LIMIT ?`).all(t.id, before, limit);
+  res.json({ messages: hydrateDm(rows.reverse(), req.user.id) });
+});
+function dmMsg(mid) { return db.prepare('SELECT * FROM dm_messages WHERE id = ?').get(mid); }
+app.patch('/api/dms/messages/:mid', authRequired, (req, res) => {
+  const m = dmMsg(req.params.mid);
+  if (!m || !dmThreadFor(req.user.id, m.thread_id)) return res.status(404).json({ error: 'no_message' });
+  if (m.user_id !== req.user.id) return res.status(403).json({ error: 'only_your_own' });
+  const content = String(req.body?.content || '').trim().slice(0, 2000);
+  if (!content) return res.status(400).json({ error: 'empty_message' });
+  db.prepare('UPDATE dm_messages SET content = ?, edited_at = ? WHERE id = ?').run(content, now(), m.id);
+  const full = fullDm(m.id, req.user.id);
+  dmNotify(m.thread_id, { t: 'dm-updated', message: full });
+  res.json({ message: full });
+});
+app.delete('/api/dms/messages/:mid', authRequired, (req, res) => {
+  const m = dmMsg(req.params.mid);
+  if (!m || !dmThreadFor(req.user.id, m.thread_id)) return res.status(404).json({ error: 'no_message' });
+  if (m.user_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
+  db.prepare('DELETE FROM dm_messages WHERE id = ?').run(m.id);
+  dmNotify(m.thread_id, { t: 'dm-deleted', threadId: m.thread_id, messageId: m.id });
+  res.json({ ok: true });
+});
+app.post('/api/dms/messages/:mid/reactions', authRequired, (req, res) => {
+  const m = dmMsg(req.params.mid);
+  if (!m || !dmThreadFor(req.user.id, m.thread_id)) return res.status(404).json({ error: 'no_message' });
+  const emoji = String(req.body?.emoji || '');
+  if (!emoji || /[:<>"'&]/.test(emoji) || [...emoji].length < 1 || emoji.length > 24) return res.status(400).json({ error: 'bad_emoji' });
+  const ex = db.prepare('SELECT 1 FROM dm_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').get(m.id, req.user.id, emoji);
+  if (ex) db.prepare('DELETE FROM dm_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').run(m.id, req.user.id, emoji);
+  else db.prepare('INSERT INTO dm_reactions (message_id, user_id, emoji, created_at) VALUES (?,?,?,?)').run(m.id, req.user.id, emoji, now());
+  const tally = db.prepare('SELECT emoji, user_id FROM dm_reactions WHERE message_id = ?').all(m.id);
+  const t = {};
+  for (const r of tally) { const e = (t[r.emoji] = t[r.emoji] || { emoji: r.emoji, count: 0, users: [] }); e.count++; e.users.push(r.user_id); }
+  const out = Object.values(t);
+  dmNotify(m.thread_id, { t: 'dm-reaction', threadId: m.thread_id, messageId: m.id, reactions: out });
+  res.json({ reactions: out.map((e) => ({ emoji: e.emoji, count: e.count, me: e.users.includes(req.user.id) })) });
+});
+
 // ---------- GIF search (Klipy, key stays server-side) ----------
 function normGif(it) {
   const f = it.file || {}, md = f.md || {}, sm = f.sm || {}, xs = f.xs || {};
@@ -942,6 +1177,33 @@ wss.on('connection', (ws, req) => {
       if (serverId && me.servers.has(serverId)) {
         broadcastToServer(serverId, { t: 'typing', serverId, channelId: msg.channelId, userId: me.userId, display_name: me.display_name }, ws);
       }
+      return;
+    }
+
+    if (msg.t === 'dm') {
+      const threadId = String(msg.threadId || '');
+      const t = dmThreadFor(me.userId, threadId);
+      if (!t) return;
+      const content = String(msg.content || '').trim().slice(0, 2000);
+      const replyTo = String(msg.replyTo || '') || null;
+      const cleanAtts = cleanAttachments(msg.attachments);
+      if (!content && !cleanAtts.length) return;
+      if (!rateOk(me.userId)) { safeSend(ws, { t: 'error', error: 'slow_down' }); return; }
+      if (replyTo && !db.prepare('SELECT id FROM dm_messages WHERE id = ? AND thread_id = ?').get(replyTo, threadId)) return;
+      const mid = uid();
+      db.prepare('INSERT INTO dm_messages (id,thread_id,user_id,content,reply_to_id,created_at) VALUES (?,?,?,?,?,?)')
+        .run(mid, threadId, me.userId, content, replyTo, now());
+      const insAtt = db.prepare('INSERT INTO dm_attachments (id,message_id,url,filename,mime,size,kind,created_at) VALUES (?,?,?,?,?,?,?,?)');
+      for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, now());
+      dmNotify(threadId, { t: 'dm-new', message: fullDm(mid, null) });
+      return;
+    }
+
+    if (msg.t === 'dm-typing') {
+      const t = dmThreadFor(me.userId, String(msg.threadId || ''));
+      if (!t) return;
+      const mems = db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ? AND user_id != ?').all(t.id, me.userId).map((r) => r.user_id);
+      for (const uid of mems) notifyUser(uid, { t: 'dm-typing', threadId: t.id, userId: me.userId, display_name: me.display_name });
       return;
     }
 

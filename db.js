@@ -108,6 +108,56 @@ CREATE TABLE IF NOT EXISTS media_history (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_media_history_user ON media_history(user_id, kind, created_at);
+CREATE TABLE IF NOT EXISTS friendships (
+  user_a TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_b TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('pending','accepted')),
+  action_by TEXT,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (user_a, user_b),
+  CHECK (user_a < user_b)
+);
+CREATE TABLE IF NOT EXISTS dm_threads (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
+  is_group INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS dm_members (
+  thread_id TEXT NOT NULL REFERENCES dm_threads(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  joined_at INTEGER NOT NULL,
+  PRIMARY KEY (thread_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS dm_messages (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL REFERENCES dm_threads(id) ON DELETE CASCADE,
+  user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  content TEXT NOT NULL,
+  reply_to_id TEXT,
+  edited_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS dm_attachments (
+  id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL REFERENCES dm_messages(id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  filename TEXT NOT NULL,
+  mime TEXT NOT NULL DEFAULT 'application/octet-stream',
+  size INTEGER NOT NULL DEFAULT 0,
+  kind TEXT NOT NULL DEFAULT 'file',
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS dm_reactions (
+  message_id TEXT NOT NULL REFERENCES dm_messages(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  emoji TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (message_id, user_id, emoji)
+);
+CREATE INDEX IF NOT EXISTS idx_dm_messages_thread ON dm_messages(thread_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_dm_members_user ON dm_members(user_id);
 CREATE TABLE IF NOT EXISTS server_folders (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

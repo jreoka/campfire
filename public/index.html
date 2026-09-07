@@ -22,7 +22,7 @@
   <!-- AUTH VIEW -->
   <section id="view-auth" class="view">
     <div class="auth-card">
-      <div class="logo"><svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><rect x="2" y="4" width="36" height="26" rx="8" fill="#fff"/><path d="M12 29l-4 7 11-7z" fill="#fff"/><circle cx="13" cy="17" r="2.4" fill="#000"/><circle cx="20" cy="17" r="2.4" fill="#000"/><circle cx="27" cy="17" r="2.4" fill="#000"/></svg></div>
+      <div class="logo"><svg width="44" height="44" viewBox="0 0 48 48" aria-hidden="true"><ellipse cx="10" cy="38" rx="5" ry="4" fill="#9AA0A6"/><ellipse cx="20" cy="41" rx="5" ry="4" fill="#80868B"/><ellipse cx="30" cy="41" rx="5" ry="4" fill="#9AA0A6"/><ellipse cx="39" cy="38" rx="5" ry="4" fill="#80868B"/><rect x="12" y="32" width="24" height="6" rx="3" fill="#6D4C41" transform="rotate(18 24 35)"/><path d="M24 6c2 5 8 8 8 16a8 8 0 0 1-16 0c0-3.5 1.5-5.5 2.6-8 .5 1.5 1.6 1.5 1.7-.2.1-2.6.5-5.3 3.7-7.8z" fill="#FF7043"/><rect x="12" y="32" width="24" height="6" rx="3" fill="#8D6E63" transform="rotate(-18 24 35)"/><path d="M24 17c1.2 2.8 4.6 4.4 4.6 8.6a4.6 4.6 0 0 1-9.2 0c0-2.3 1.1-3.5 1.8-5 .5 1.1 1.3 1.1 1.4-.2.1-1.4.4-2.4 1.4-3.4z" fill="#FFB300"/></svg></div>
       <h1>Campfire</h1>
       <p class="muted">Your own tiny chat + voice server.<br/>Host it. Invite friends. Hang out.</p>
       <div class="tabs">
@@ -50,6 +50,7 @@
   <section id="view-main" class="view hidden">
     <!-- server rail -->
     <nav id="rail" aria-label="Servers">
+      <button id="btn-home" class="server-btn home-btn" title="Home — friends and direct messages"><svg width="26" height="26" viewBox="0 0 48 48" aria-hidden="true"><ellipse cx="10" cy="38" rx="5" ry="4" fill="#9AA0A6"/><ellipse cx="20" cy="41" rx="5" ry="4" fill="#80868B"/><ellipse cx="30" cy="41" rx="5" ry="4" fill="#9AA0A6"/><ellipse cx="39" cy="38" rx="5" ry="4" fill="#80868B"/><rect x="12" y="32" width="24" height="6" rx="3" fill="#6D4C41" transform="rotate(18 24 35)"/><path d="M24 6c2 5 8 8 8 16a8 8 0 0 1-16 0c0-3.5 1.5-5.5 2.6-8 .5 1.5 1.6 1.5 1.7-.2.1-2.6.5-5.3 3.7-7.8z" fill="#FF7043"/><rect x="12" y="32" width="24" height="6" rx="3" fill="#8D6E63" transform="rotate(-18 24 35)"/><path d="M24 17c1.2 2.8 4.6 4.4 4.6 8.6a4.6 4.6 0 0 1-9.2 0c0-2.3 1.1-3.5 1.8-5 .5 1.1 1.3 1.1 1.4-.2.1-1.4.4-2.4 1.4-3.4z" fill="#FFB300"/></svg></button>
       <div id="server-list"></div>
       <button id="btn-add-server" title="Create or join a server">＋</button>
       <div class="spacer"></div>
@@ -58,6 +59,7 @@
 
     <!-- channel sidebar -->
     <aside id="sidebar">
+      <div id="server-ui">
       <div id="server-header">
         <strong id="server-name">—</strong>
         <div class="row">
@@ -69,6 +71,22 @@
       <div id="text-channels"></div>
       <div class="chan-group-label row-between">VOICE ROOMS <button id="btn-add-voice" class="mini" title="New voice room">＋</button></div>
       <div id="voice-channels"></div>
+      </div>
+      <div id="home-ui" class="hidden">
+        <div class="home-head"><strong>Home</strong></div>
+        <div class="chan-group-label">ADD FRIEND</div>
+        <div class="row pad-x">
+          <input id="in-friend" maxlength="24" placeholder="username" autocomplete="off" />
+          <button id="btn-friend-add" class="btn small primary">Add</button>
+        </div>
+        <div id="friend-reqs-wrap"><div class="chan-group-label">REQUESTS <span id="req-count"></span></div><div id="friend-reqs"></div></div>
+        <div class="chan-group-label">FRIENDS</div>
+        <div id="friend-list"></div>
+        <div class="chan-group-label">DIRECT MESSAGES</div>
+        <div id="dm-list"></div>
+        <div class="chan-group-label row-between">GROUP CHATS <button id="btn-group-new" class="mini" title="New group chat">＋</button></div>
+        <div id="group-list"></div>
+      </div>
       <div class="spacer"></div>
       <div id="me-card">
         <span id="me-avatar" class="avatar">?</span>

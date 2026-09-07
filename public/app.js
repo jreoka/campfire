@@ -24,6 +24,9 @@ const S = {
   layoutFolders: [], // [{id,name,color,open,position,servers:[serverIds]}]
   serverMeta: new Map(), // serverId -> {folderId, position}
   rootOrder: [], // [{kind:'server'|'folder', id}] rail order top-to-bottom
+  view: 'server', // 'server' | 'home'
+  dms: [], friends: { friends: [], pendingIn: [], pendingOut: [] },
+  dmThreadId: null, dmMessages: new Map(), // threadId -> [msgs]
   voiceOccupancy: new Map(), // channelId -> [peers]
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
   voice: null, // {serverId, channelId, stream, pcs:Map, muted, analysers}
@@ -316,6 +319,7 @@ function renderServerList() {
   }
 }
 async function selectServer(id) {
+  openServerView();
   S.serverId = id;
   S.channelId = null;
   renderServerList();
@@ -440,7 +444,9 @@ function renderMembers() {
 
 // ---------- messages ----------
 function canMod(m) {
-  return m.user && (m.user.id === S.me.id || (S.serverDetail && S.serverDetail.owner_id === S.me.id));
+  if (!m.user) return false;
+  if (S.view === 'home') return m.user.id === S.me.id;
+  return m.user.id === S.me.id || (S.serverDetail && S.serverDetail.owner_id === S.me.id);
 }
 function msgById(id) {
   for (const [, arr] of S.messages) { const f = arr.find((x) => x.id === id); if (f) return f; }
@@ -448,6 +454,7 @@ function msgById(id) {
     if (S.thread.root?.id === id) return S.thread.root;
     const f = S.thread.replies.find((x) => x.id === id); if (f) return f;
   }
+  for (const [, arr] of S.dmMessages) { const f = arr.find((x) => x.id === id); if (f) return f; }
   return null;
 }
 function updateMsgInCaches(mid, fn) {
@@ -456,6 +463,7 @@ function updateMsgInCaches(mid, fn) {
     if (S.thread.root?.id === mid) fn(S.thread.root);
     const r = S.thread.replies.find((x) => x.id === mid); if (r) fn(r);
   }
+  for (const [, arr] of S.dmMessages) { const i = arr.findIndex((x) => x.id === mid); if (i >= 0) fn(arr[i]); }
 }
 function attachmentHTML(a) {
   if (a.kind === 'image') return `<img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />`;
@@ -580,10 +588,15 @@ $('#composer').addEventListener('submit', (e) => {
   e.preventDefault();
   const inp = $('#in-message');
   const content = inp.value.trim();
-  if ((!content && !S.pendingAtts.length) || !S.serverId || !S.channelId) return;
   inp.value = '';
   hideMentionPop();
-  sendChat(content, { attachments: S.pendingAtts, replyTo: S.replyTo?.id || null });
+  if (S.view === 'home') {
+    if ((!content && !S.pendingAtts.length) || !S.dmThreadId) { inp.value = content; return; }
+    sendDm(content, { attachments: S.pendingAtts, replyTo: S.replyTo?.id || null });
+  } else {
+    if ((!content && !S.pendingAtts.length) || !S.serverId || !S.channelId) { inp.value = content; return; }
+    sendChat(content, { attachments: S.pendingAtts, replyTo: S.replyTo?.id || null });
+  }
   S.pendingAtts = []; S.replyTo = null;
   renderComposerMeta();
 });
@@ -602,7 +615,8 @@ $('#in-message').addEventListener('input', () => {
   const t = Date.now();
   if (t - S.lastTypingSent > 2500 && S.ws?.readyState === 1) {
     S.lastTypingSent = t;
-    S.ws.send(JSON.stringify({ t: 'typing', serverId: S.serverId, channelId: S.channelId }));
+    if (S.view === 'home' && S.dmThreadId) S.ws.send(JSON.stringify({ t: 'dm-typing', threadId: S.dmThreadId }));
+    else S.ws.send(JSON.stringify({ t: 'typing', serverId: S.serverId, channelId: S.channelId }));
   }
 });
 function showTyping(userId, name) {
@@ -690,6 +704,53 @@ function onWS(m) {
       if (m.channelId === S.channelId) renderMessages();
       break;
     }
+    case 'dm-new': {
+      const msg = m.message;
+      const arr = S.dmMessages.get(msg.threadId) || [];
+      arr.push(msg);
+      S.dmMessages.set(msg.threadId, arr);
+      const ddnd = S.me && S.me.status === 'dnd';
+      if (S.view === 'home' && S.dmThreadId === msg.threadId) {
+        renderDmMessages();
+        if (document.hidden && !ddnd) notifyMsg(msg);
+      } else {
+        refreshDms();
+        if (!ddnd) toast(`DM from ${msg.user.display_name}: ${(msg.content || '[attachment]').slice(0, 60)}`);
+      }
+      break;
+    }
+    case 'dm-updated': {
+      updateMsgInCaches(m.message.id, (old) => Object.assign(old, m.message));
+      if (S.view === 'home' && S.dmThreadId === m.message.threadId) renderDmMessages();
+      break;
+    }
+    case 'dm-deleted': {
+      const darr = (S.dmMessages.get(m.threadId) || []).filter((x) => x.id !== m.messageId);
+      S.dmMessages.set(m.threadId, darr);
+      if (S.view === 'home' && S.dmThreadId === m.threadId) renderDmMessages();
+      break;
+    }
+    case 'dm-reaction': {
+      updateMsgInCaches(m.messageId, (old) => {
+        old.reactions = (m.reactions || []).map((r) => ({ emoji: r.emoji, count: r.count, me: (r.users || []).includes(S.me.id) }));
+      });
+      if (S.view === 'home' && S.dmThreadId === m.threadId) renderDmMessages();
+      break;
+    }
+    case 'dm-threads-changed':
+      if (S.view === 'home') {
+        refreshDms().then(() => {
+          if (S.dmThreadId && !S.dms.some((t) => t.id === S.dmThreadId)) { S.dmThreadId = null; renderDmBlank(); }
+        });
+      }
+      break;
+    case 'friends-changed':
+      if (S.view === 'home') refreshFriends();
+      else toast('Friends list updated');
+      break;
+    case 'dm-typing':
+      if (S.view === 'home' && S.dmThreadId === m.threadId) showTyping(m.userId, m.display_name);
+      break;
     case 'channel-new':
       if (m.channel.server_id === S.serverId) { S.serverDetail.channels.push(m.channel); renderChannels(); }
       break;
@@ -805,7 +866,7 @@ function chanName(id) {
 }
 function notifyMsg(m) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  try { new Notification(`${m.user.display_name} (#${chanName(m.channelId)})`, { body: m.content.slice(0, 120) }); } catch {}
+  try { new Notification(m.threadId ? `${m.user.display_name} (DM)` : `${m.user.display_name} (#${chanName(m.channelId)})`, { body: (m.content || '[attachment]').slice(0, 120) }); } catch {}
 }
 if ('Notification' in window && Notification.permission === 'default') {
   document.addEventListener('click', function once() {
@@ -1213,6 +1274,8 @@ function ctxFor(el, x, y) {
   if (fb && fb.dataset.fid) { openFolderMenu(fb.dataset.fid, x, y); return true; }
   const sb = el.closest('.server-btn');
   if (sb && sb.dataset.sid) { serverCtxMenu(sb.dataset.sid, x, y); return true; }
+  const dmr = el.closest('[data-dmthread]');
+  if (dmr && dmr.dataset.dmthread) { dmCtxMenu(dmr.dataset.dmthread, x, y); return true; }
   const ch = el.closest('.chan');
   if (ch && ch.dataset.cid) { channelCtxMenu(ch.dataset.cid, ch.dataset.ctype || 'text', x, y); return true; }
   return false;
@@ -1438,6 +1501,189 @@ function openFolderMenu(fid, x, y) {
   folderMenuEl = m;
 }
 
+/* ================= home: friends + DMs ================= */
+function dmPeer(t) { return (t.members || []).find((m) => m.id !== S.me.id) || null; }
+function dmTitle(t) { return t.isGroup ? (t.name || 'Group chat') : ((dmPeer(t) || {}).display_name || 'Direct message'); }
+function openServerView() {
+  S.view = 'server';
+  document.body.classList.remove('view-home');
+  $('#server-ui').classList.remove('hidden');
+  $('#home-ui').classList.add('hidden');
+  $('#btn-home').classList.remove('active');
+}
+async function openHome() {
+  S.view = 'home';
+  document.body.classList.add('view-home');
+  document.body.classList.remove('nav-open');
+  $('#server-ui').classList.add('hidden');
+  $('#home-ui').classList.remove('hidden');
+  $('#btn-home').classList.add('active');
+  document.querySelectorAll('#server-list .server-btn').forEach((b) => b.classList.remove('active'));
+  closeThread(true);
+  await Promise.all([refreshFriends(), refreshDms()]);
+  if (!S.dmThreadId || !S.dms.some((t) => t.id === S.dmThreadId)) S.dmThreadId = (S.dms[0] || {}).id || null;
+  if (S.dmThreadId) selectDmThread(S.dmThreadId);
+  else renderDmBlank();
+}
+async function refreshFriends() {
+  try { S.friends = await api('/api/friends'); renderFriendLists(); } catch {}
+}
+async function refreshDms() {
+  try { const { threads } = await api('/api/dms'); S.dms = threads; renderDmLists(); } catch {}
+}
+function friendRowEl(u, extra) {
+  const div = document.createElement('div');
+  div.className = 'dmrow';
+  div.innerHTML = `<span class="avatar"></span><span class="dmmain"><span class="dmname">${esc(u.display_name)}</span><br/><span class="dmlast">@${esc(u.username)}${u.status_text ? ' · ' + esc(u.status_text) : ''}</span></span>`;
+  paintAvatar(div.querySelector('.avatar'), u);
+  const dot = document.createElement('span');
+  dot.className = 'status-dot ' + (S.online[u.id] || (u.id === S.me.id ? (S.me.status || 'online') : 'offline'));
+  div.appendChild(dot);
+  if (extra) div.appendChild(extra);
+  div.onclick = (e) => { if (e.target.closest('button')) return; openUserCard(u.id, e.clientX, e.clientY); };
+  return div;
+}
+function smallBtn(label, fn, danger) {
+  const b = document.createElement('button');
+  b.className = 'mini' + (danger ? ' danger' : '');
+  b.textContent = label;
+  b.onclick = (e) => { e.stopPropagation(); fn(); };
+  return b;
+}
+function renderFriendLists() {
+  const f = S.friends;
+  const rq = $('#friend-reqs');
+  rq.innerHTML = '';
+  $('#req-count').textContent = f.pendingIn.length ? `(${f.pendingIn.length})` : '';
+  $('#friend-reqs-wrap').style.display = (f.pendingIn.length || f.pendingOut.length) ? '' : 'none';
+  for (const u of f.pendingIn) {
+    const row = friendRowEl(u);
+    const wrap = document.createElement('div');
+    wrap.className = 'row'; wrap.style.cssText = 'padding:0 .55rem';
+    wrap.appendChild(row);
+    const go = document.createElement('div'); go.className = 'row';
+    const ok = smallBtn('Accept', async () => { await api(`/api/friends/${u.id}/accept`, { method: 'POST' }); refreshFriends(); });
+    const no = smallBtn('Decline', async () => { await api(`/api/friends/${u.id}`, { method: 'DELETE' }); refreshFriends(); }, true);
+    go.append(ok, no); wrap.appendChild(go);
+    rq.appendChild(wrap);
+  }
+  for (const u of f.pendingOut) {
+    const row = friendRowEl(u);
+    const wrap = document.createElement('div');
+    wrap.className = 'row'; wrap.style.cssText = 'padding:0 .55rem';
+    wrap.appendChild(row);
+    wrap.appendChild(smallBtn('Cancel', async () => { await api(`/api/friends/${u.id}`, { method: 'DELETE' }); refreshFriends(); }, true));
+    rq.appendChild(wrap);
+  }
+  const fl = $('#friend-list');
+  fl.innerHTML = '';
+  if (!f.friends.length) fl.innerHTML = '<p class="muted small" style="padding:0 .7rem">No friends yet — add someone above.</p>';
+  for (const u of f.friends) {
+    const row = friendRowEl(u);
+    row.appendChild(smallBtn('Message', () => openDmWith(u.id)));
+    fl.appendChild(row);
+  }
+}
+function dmRowEl(t) {
+  const b = document.createElement('button');
+  b.className = 'dmrow' + (t.id === S.dmThreadId ? ' active' : '');
+  b.dataset.dmthread = t.id;
+  const av = t.isGroup ? null : dmPeer(t);
+  b.innerHTML = `<span class="avatar">${t.isGroup ? '#' : ''}</span><span class="dmmain"><span class="dmname">${esc(dmTitle(t))}</span><br/><span class="dmlast">${esc(t.last ? `${t.last.author}: ${t.last.content}`.slice(0, 60) : 'No messages yet')}</span></span>`;
+  if (av) paintAvatar(b.querySelector('.avatar'), av);
+  else { const a = b.querySelector('.avatar'); a.style.background = 'var(--panel-3)'; }
+  b.onclick = () => selectDmThread(t.id);
+  return b;
+}
+function renderDmLists() {
+  const dl = $('#dm-list'), gl = $('#group-list');
+  dl.innerHTML = ''; gl.innerHTML = '';
+  for (const t of S.dms.filter((x) => !x.isGroup)) dl.appendChild(dmRowEl(t));
+  for (const t of S.dms.filter((x) => x.isGroup)) gl.appendChild(dmRowEl(t));
+}
+async function openDmWith(userId) {
+  try {
+    const { thread } = await api('/api/dms', { method: 'POST', body: JSON.stringify({ userId }) });
+    await refreshDms();
+    selectDmThread(thread.id);
+  } catch (err) { toast(prettyError(err.message)); }
+}
+function openGroupModal() {
+  const friends = S.friends.friends;
+  if (!friends.length) { toast('Add some friends first'); return; }
+  openModal('New group chat', `
+    <label>Group name<input id="m-group-name" maxlength="40" placeholder="e.g. Game night" /></label>
+    <div style="margin-top:.6rem;max-height:220px;overflow-y:auto" id="m-group-picks">
+      ${friends.map((f) => `<label class="gpick"><input type="checkbox" value="${f.id}" /> ${esc(f.display_name)} <span class="muted">@${esc(f.username)}</span></label>`).join('')}
+    </div>`, 'Create', async () => {
+    const name = (document.querySelector('#m-group-name') || {}).value || '';
+    const ids = [...document.querySelectorAll('#m-group-picks input:checked')].map((i) => i.value);
+    if (!ids.length) { toast('Pick at least one friend'); return; }
+    try {
+      const { thread } = await api('/api/dms/group', { method: 'POST', body: JSON.stringify({ name, userIds: ids }) });
+      await refreshDms();
+      selectDmThread(thread.id);
+    } catch (err) { toast(prettyError(err.message)); }
+  });
+}
+function dmCtxMenu(tid, x, y) {
+  openCtx(x, y, [
+    { label: 'Open', icon: '→', fn: () => selectDmThread(tid) },
+    { label: 'Leave chat', icon: '🗑', danger: true, fn: async () => {
+      try { await api(`/api/dms/${tid}/leave`, { method: 'POST' }); } catch {}
+      if (S.dmThreadId === tid) { S.dmThreadId = null; renderDmBlank(); }
+      refreshDms();
+    } },
+  ]);
+}
+async function selectDmThread(id) {
+  S.dmThreadId = id;
+  document.querySelectorAll('.dmrow').forEach((b) => b.classList.toggle('active', b.dataset.dmthread === id));
+  const t = S.dms.find((x) => x.id === id);
+  if (!t) { renderDmBlank(); return; }
+  $('#chan-hash').textContent = t.isGroup ? '' : '@';
+  const peer = dmPeer(t);
+  $('#chan-name').textContent = t.isGroup ? (t.name || 'Group chat') : ((peer || {}).display_name || 'DM');
+  $('#typing').textContent = '';
+  $('#in-message').placeholder = t.isGroup ? `Message ${t.name || 'group'}` : `Message @${(peer || {}).username || ''}`;
+  S.replyTo = null; S.pendingAtts = []; S.editing = null;
+  renderComposerMeta();
+  $('#messages').innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    const { messages } = await api(`/api/dms/${id}/messages?limit=80`);
+    if (S.dmThreadId !== id) return;
+    S.dmMessages.set(id, messages);
+    renderDmMessages(true);
+  } catch { $('#messages').innerHTML = '<p class="error">Could not load messages.</p>'; }
+}
+function renderDmBlank() {
+  $('#chan-hash').textContent = '';
+  $('#chan-name').textContent = 'Home';
+  $('#typing').textContent = '';
+  $('#messages').innerHTML = '<p class="muted" style="text-align:center;margin-top:2rem">Pick a conversation — or add a friend to start one.</p>';
+}
+function renderDmMessages(force = false) {
+  const box = $('#messages');
+  const msgs = S.dmMessages.get(S.dmThreadId) || [];
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+  box.innerHTML = '';
+  let lastDay = '';
+  for (const m of msgs) {
+    const day = fmtDay(m.created_at);
+    if (day !== lastDay) { lastDay = day; const d = document.createElement('div'); d.className = 'day'; d.textContent = day; box.appendChild(d); }
+    box.appendChild(messageEl(m));
+  }
+  if (!msgs.length) box.innerHTML += '<p class="muted" style="text-align:center">No messages yet — say hello.</p>';
+  if (force || nearBottom) box.scrollTop = box.scrollHeight;
+}
+function sendDm(content, opts = {}) {
+  if (!S.dmThreadId) return;
+  if (S.ws && S.ws.readyState === 1) {
+    S.ws.send(JSON.stringify({ t: 'dm', threadId: S.dmThreadId, content, attachments: opts.attachments || [], replyTo: opts.replyTo || null }));
+    renderDmMessages(true);
+  } else toast('Reconnecting… try again in a second');
+}
+
 /* ================= v2 features: emoji, GIFs, replies, threads, reactions, cards, settings ================= */
 const EMOJI = [
  ['sec','Smileys & people'],
@@ -1587,17 +1833,25 @@ function sendGif(g) {
   const pick = S.gifPick;
   closePicker();
   if (pick === 'avatar' || pick === 'banner' || pick === 'sidebar') { if (url) applyProfileUrl(pick, url); return; }
+  if (S.view === 'home') {
+    if (!S.dmThreadId || !url) return;
+    sendDm('', { attachments: [{ url, name: (g.title || 'gif').slice(0, 80) + '.gif', mime: 'image/gif', size: 0, kind: 'image' }] });
+    return;
+  }
   if (!S.serverId || !S.channelId || !url) return;
   sendChat('', { attachments: [{ url, name: (g.title || 'gif').slice(0, 80) + '.gif', mime: 'image/gif', size: 0, kind: 'image' }] });
 }
 
 // ---------- reactions / reply / edit / thread actions ----------
 async function toggleReaction(mid, emoji) {
+  const dm = msgById(mid)?._dm;
+  const base = dm ? '/api/dms/messages/' : '/api/messages/';
   try {
-    const { reactions } = await api('/api/messages/' + mid + '/reactions', { method: 'POST', body: JSON.stringify({ emoji }) });
+    const { reactions } = await api(base + mid + '/reactions', { method: 'POST', body: JSON.stringify({ emoji }) });
     bumpFreq(emoji);
     updateMsgInCaches(mid, (m) => { m.reactions = reactions.map((r) => ({ emoji: r.emoji, count: r.count, me: r.me })); });
-    if (S.channelId) renderMessages();
+    if (S.view === 'home') { if (S.dmThreadId) renderDmMessages(); }
+    else if (S.channelId) renderMessages();
     if (S.thread) renderThread();
   } catch (err) { toast('Reaction failed: ' + prettyError(err.message)); }
 }
@@ -1624,7 +1878,8 @@ async function saveEdit(mid) {
   const content = (t?.value || '').trim();
   if (!content) return;
   S.editing = null;
-  try { await api('/api/messages/' + mid, { method: 'PATCH', body: JSON.stringify({ content }) }); }
+  const base = msgById(mid)?._dm ? '/api/dms/messages/' : '/api/messages/';
+  try { await api(base + mid, { method: 'PATCH', body: JSON.stringify({ content }) }); }
   catch (err) { toast('Edit failed: ' + prettyError(err.message)); if (S.channelId) renderMessages(); }
 }
 // global delegation for message interactions
@@ -1657,7 +1912,10 @@ async function saveEdit(mid) {
     else if (act === 'edit' && mid) startEdit(mid);
     else if (act === 'edit-save' && mid) saveEdit(mid);
     else if (act === 'edit-cancel') { S.editing = null; if (S.channelId) renderMessages(); if (S.thread) renderThread(); }
-    else if (act === 'del' && mid) api('/api/messages/' + mid, { method: 'DELETE' }).catch(() => toast('Delete failed'));
+    else if (act === 'del' && mid) {
+      const base = msgById(mid)?._dm ? '/api/dms/messages/' : '/api/messages/';
+      api(base + mid, { method: 'DELETE' }).catch(() => toast('Delete failed'));
+    }
     return;
   }
   if (memberEl?.dataset.uid) { const r = memberEl.getBoundingClientRect(); openUserCard(memberEl.dataset.uid, r.right + 8, r.top); return; }
@@ -1850,6 +2108,18 @@ function setSettingsTab(t) {
 }
 document.querySelectorAll('.set-tab').forEach((b) => (b.onclick = () => setSettingsTab(b.dataset.tab)));
 $('#btn-settings-rail').onclick = () => openSettings('profile');
+$('#btn-home').onclick = openHome;
+$('#btn-friend-add').onclick = async () => {
+  const v = $('#in-friend').value.trim();
+  if (!v) return;
+  try {
+    await api('/api/friends', { method: 'POST', body: JSON.stringify({ username: v }) });
+    $('#in-friend').value = '';
+    toast('Request sent');
+    refreshFriends();
+  } catch (err) { toast(prettyError(err.message)); }
+};
+$('#btn-group-new').onclick = openGroupModal;
 $('#btn-server-menu').onclick = () => openSettings('server');
 $('#settings-close').onclick = closeSettings;
 $('#settings-backdrop').addEventListener('click', (e) => { if (e.target.id === 'settings-backdrop') closeSettings(); });
