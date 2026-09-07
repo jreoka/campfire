@@ -506,7 +506,7 @@ body{touch-action:manipulation}
 .members-btn{display:none}
 #voice-fab{display:none}
 @media (max-width: 900px){
-  #members{display:flex;position:fixed;top:0;bottom:0;right:0;width:min(300px,84vw);z-index:45;transform:translateX(105%);transition:transform .22s;border-left:1px solid var(--line)}
+  #members{display:flex;flex-direction:column;position:fixed;top:0;bottom:0;right:0;width:min(300px,84vw);z-index:45;transform:translateX(105%);transition:transform .22s;border-left:1px solid var(--line)}
   body.members-open #members{transform:none}
   .members-btn{display:inline-flex;align-items:center}
 }
