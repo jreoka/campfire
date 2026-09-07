@@ -2796,7 +2796,18 @@ async function openHome() {
   renderDmBlank();
 }
 async function refreshFriends() {
-  try { S.friends = await api('/api/friends'); renderFriendLists(); } catch {}
+  try { S.friends = await api('/api/friends'); S.friendsAt = Date.now(); renderFriendLists(); } catch {}
+}
+// Cards/menus need friend state even if Home was never opened this session.
+async function ensureFriends() {
+  if (S.friendsAt && Date.now() - S.friendsAt < 30000) return;
+  await refreshFriends();
+}
+function friendState(id) {
+  if ((S.friends.friends || []).some((u) => u.id === id)) return 'friend';
+  if ((S.friends.pendingOut || []).some((u) => u.id === id)) return 'pending-out';
+  if ((S.friends.pendingIn || []).some((u) => u.id === id)) return 'pending-in';
+  return 'none';
 }
 async function refreshDms() {
   try { const { threads } = await api('/api/dms'); S.dms = threads; renderDmLists(); } catch {}
@@ -2821,6 +2832,41 @@ function smallBtn(label, fn, danger) {
   return b;
 }
 function isBlocked(id) { return (S.friends.blocked || []).some((u) => u.id === id); }
+function friendBtnHTML(uid) {
+  const st = friendState(uid);
+  if (st === 'friend') return '<button class="btn small danger" id="uc-friend">Unfriend</button>';
+  if (st === 'pending-out') return '<button class="btn small" id="uc-friend">Cancel request</button>';
+  if (st === 'pending-in') return '<button class="btn small primary" id="uc-friend">Accept request</button>';
+  return '<button class="btn small" id="uc-friend">Add friend</button>';
+}
+async function friendCardAction(uid, x, y) {
+  const u = memberById(uid);
+  const st = friendState(uid);
+  try {
+    if (st === 'friend') {
+      const ok = await openConfirmModal({
+        title: `Unfriend @${u?.username || 'user'}?`,
+        message: 'They will be removed from your friends list.',
+        okLabel: 'Unfriend',
+      });
+      if (!ok) return;
+      await api(`/api/friends/${uid}`, { method: 'DELETE' });
+      toast('Unfriended');
+    } else if (st === 'pending-out') {
+      await api(`/api/friends/${uid}`, { method: 'DELETE' });
+      toast('Request cancelled');
+    } else if (st === 'pending-in') {
+      await api(`/api/friends/${uid}/accept`, { method: 'POST' });
+      toast('Friend added');
+    } else {
+      if (!u) return;
+      await api('/api/friends', { method: 'POST', body: JSON.stringify({ username: u.username }) });
+      toast('Friend request sent');
+    }
+    await refreshFriends();
+    openUserCard(uid, x, y);
+  } catch (err) { toast(prettyError(err.message)); }
+}
 async function blockUser(id, username) {
   const ok = await openConfirmModal({
     title: `Block @${username || 'user'}?`,
@@ -3675,7 +3721,8 @@ function openLightbox(src) {
 $('#lightbox').onclick = () => { $('#lightbox').classList.add('hidden'); $('#lightbox-img').src = ''; };
 
 // ---------- user card ----------
-function openUserCard(uid, x, y) {
+async function openUserCard(uid, x, y) {
+  if (S.me && uid !== S.me.id) await ensureFriends();
   const u = memberById(uid);
   if (!u) return;
   const card = $('#usercard');
@@ -3693,7 +3740,7 @@ function openUserCard(uid, x, y) {
       ${u.bio ? `<div class="uc-bio">${renderRich(u.bio)}</div>` : ''}
       ${u.created_at ? `<div class="uc-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
       ${cardRolesHTML(uid)}
-      <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}${canMod ? '<button class="btn small danger" id="uc-kick">Kick</button><button class="btn small danger" id="uc-ban">Ban</button>' : ''}${uid !== S.me.id ? `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="uc-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>` : ''}<button class="btn small" id="uc-close">Close</button></div>
+      <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid) : ''}${canMod ? '<button class="btn small danger" id="uc-kick">Kick</button><button class="btn small danger" id="uc-ban">Ban</button>' : ''}${uid !== S.me.id ? `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="uc-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>` : ''}<button class="btn small" id="uc-close">Close</button></div>
     </div>`;
   paintAvatar(card.querySelector('.avatar'), u);
   card.classList.remove('hidden');
@@ -3705,6 +3752,8 @@ function openUserCard(uid, x, y) {
   if (men) men.onclick = () => { insertAtCursor($('#in-message'), '@' + u.username + ' '); closeUserCard(); $('#in-message').focus(); };
   const blk = $('#uc-block');
   if (blk) blk.onclick = () => { const was = isBlocked(uid), nm = u.username; closeUserCard(); if (was) unblockUser(uid); else blockUser(uid, nm); };
+  const fr = $('#uc-friend');
+  if (fr) fr.onclick = () => friendCardAction(uid, x, y);
   const kik = $('#uc-kick');
   if (kik) kik.onclick = () => { closeUserCard(); modServerMember('kick', u); };
   const bnn = $('#uc-ban');
