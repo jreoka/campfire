@@ -212,7 +212,7 @@ h1,h2,h3{letter-spacing:-0.01em}
 @keyframes flash{0%,40%{background:#AAC7FF44}100%{background:transparent}}
 
 /* ---------- picker (emoji + GIFs) ---------- */
-#picker{position:absolute;left:.9rem;bottom:calc(64px + var(--safe-b));width:min(360px,calc(100vw - 2rem));background:var(--panel-2);border:0;border-radius:16px;z-index:70;display:flex;flex-direction:column;max-height:380px}
+#picker{position:absolute;left:.9rem;bottom:calc(64px + var(--safe-b));width:min(360px,calc(100vw - 2rem));background:var(--panel-2);border:0;border-radius:16px;z-index:150;display:flex;flex-direction:column;max-height:380px}
 #picker.anchored{position:fixed;bottom:auto}
 .pk-tabs{display:flex;gap:.25rem;padding:.5rem .5rem 0}
 .pk-tab{flex:1;border:0;background:transparent;color:var(--muted);font-weight:700;font-size:.85rem;padding:.5rem;border-radius:999px;cursor:pointer}

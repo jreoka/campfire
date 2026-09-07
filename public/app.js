@@ -2362,7 +2362,7 @@ function openSettings(tab = 'profile') {
   renderServerTab();
   $('#settings-backdrop').classList.remove('hidden');
 }
-function closeSettings() { $('#settings-backdrop').classList.add('hidden'); }
+function closeSettings() { closePicker(); $('#settings-backdrop').classList.add('hidden'); }
 function setSettingsTab(t) {
   document.querySelectorAll('.set-tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
   $('#set-profile').classList.toggle('hidden', t !== 'profile');
@@ -2396,10 +2396,10 @@ async function uploadImage(url, file) {
 }
 $('#set-avatar-btn').onclick = () => $('#set-avatar-file').click();
 $('#set-banner-btn').onclick = () => $('#set-banner-file').click();
-$('#set-avatar-gif').onclick = () => { S.gifPick = 'avatar'; openPicker('insert', null, 'gifs'); };
-$('#set-banner-gif').onclick = () => { S.gifPick = 'banner'; openPicker('insert', null, 'gifs'); };
+$('#set-avatar-gif').onclick = (e) => { e.stopPropagation(); S.gifPick = 'avatar'; openPicker('insert', null, 'gifs'); };
+$('#set-banner-gif').onclick = (e) => { e.stopPropagation(); S.gifPick = 'banner'; openPicker('insert', null, 'gifs'); };
 $('#set-sidebar-btn').onclick = () => $('#set-sidebar-file').click();
-$('#set-sidebar-gif').onclick = () => { S.gifPick = 'sidebar'; openPicker('insert', null, 'gifs'); };
+$('#set-sidebar-gif').onclick = (e) => { e.stopPropagation(); S.gifPick = 'sidebar'; openPicker('insert', null, 'gifs'); };
 $('#set-sidebar-prev').onclick = () => $('#set-sidebar-file').click();
 $('#set-sidebar-file').addEventListener('change', async (e) => {
   const f = e.target.files[0]; e.target.value = '';
