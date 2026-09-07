@@ -2953,7 +2953,7 @@ function wireDrag(el, kind, id) {
   el.addEventListener('dragover', (e) => {
     if (!dragPayload) return;
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
     const r = el.getBoundingClientRect();
     const y = (e.clientY - r.top) / r.height;
     clearDropMarks(); hideMarker();
@@ -2973,7 +2973,14 @@ function wireDrag(el, kind, id) {
       dropTarget = { zone: edge, id };
     }
   });
-  el.addEventListener('dragleave', () => { el.classList.remove('drop-combine'); hideMarker(); });
+  el.addEventListener('dragleave', (e) => {
+    // Moving between buttons/gaps inside the rail just hands the marker to
+    // the next target — only clear when actually leaving the rail.
+    try {
+      if (e.relatedTarget && document.querySelector('#server-list')?.contains(e.relatedTarget)) return;
+    } catch {}
+    el.classList.remove('drop-combine'); hideMarker();
+  });
   el.addEventListener('drop', (e) => {
     e.preventDefault();
     const dd = dragPayload;
@@ -2984,22 +2991,35 @@ function wireDrag(el, kind, id) {
   });
   el.addEventListener('dragend', () => { dragPayload = null; dropTarget = null; clearDropMarks(); hideMarker(); });
 }
-// Drop anywhere on rail gaps/background: snap to the nearest item edge so
-// moving servers (especially out of an open folder) never needs pixel-perfect
-// aim at the marker line. Gaps between top-level items mean root; gaps inside
-// an open folder's box mean that folder.
-$('#server-list').addEventListener('dragover', (e) => {
+// The whole rail is a drop surface (not just the list): rail gaps above the
+// first item, below the last, and around the spacer would otherwise swallow
+// drops silently. Gaps between top-level items mean root; gaps inside an
+// open folder's box mean that folder.
+$('#rail').addEventListener('dragover', (e) => {
   if (!dragPayload) return;
-  if (e.target.closest('[data-drag]')) return; // button handlers own direct hovers
+  if (e.target.closest && e.target.closest('[data-drag]')) return; // button handlers own direct hovers
   e.preventDefault();
-  e.dataTransfer.dropEffect = 'move';
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
   clearDropMarks();
-  // Inside an open folder's box? Nearest child decides (stays in folder).
-  // Anywhere else? Nearest top-level unit decides (root level).
+  // Inside an open folder's box? Nearest child decides (stays in folder) —
+  // except the tinted padding strips above the first / below the last child:
+  // when dragging one of that folder's own servers those strips eject to
+  // root, so leaving never needs pixel-perfect aim. Anywhere else outside
+  // boxes? Nearest top-level unit decides (root level).
   const box = e.target.closest ? e.target.closest('.folder-children') : null;
   let cands = [];
+  let boxExit = null; // {fid} when the strips mean "leave this folder"
   if (box) {
-    cands = [...box.querySelectorAll('[data-drag]')].map((el) => ({ el, fid: null }));
+    const kids = [...box.querySelectorAll('[data-drag]')];
+    const wrap = box.closest('.folder-wrap');
+    const fid = wrap ? (wrap.querySelector('[data-fid]') || {}).dataset?.fid : null;
+    const ownKid = fid && dragPayload.kind === 'server' && (() => { const c = containerOf(dragPayload.id); return c.type === 'folder' && c.f.id === fid; })();
+    if (ownKid && kids.length) {
+      const first = kids[0].getBoundingClientRect(), last = kids[kids.length - 1].getBoundingClientRect();
+      if (e.clientY < first.top) boxExit = { fid, edge: 'before' };
+      else if (e.clientY > last.bottom) boxExit = { fid, edge: 'after' };
+    }
+    if (!boxExit) cands = kids.map((el) => ({ el, fid: null }));
   } else {
     for (const child of document.querySelectorAll('#server-list > *')) {
       if (child.dataset && child.dataset.drag) {
@@ -3018,6 +3038,12 @@ $('#server-list').addEventListener('dragover', (e) => {
     const d = Math.abs(e.clientY - mid);
     if (d < bestDist) { bestDist = d; best = c; bestEdge = e.clientY < mid ? 'before' : 'after'; }
   }
+  if (boxExit) {
+    const wrap = box.closest('.folder-wrap');
+    dropTarget = { zone: boxExit.edge + '-folder', id: boxExit.fid };
+    if (wrap) showMarker(wrap.getBoundingClientRect(), boxExit.edge);
+    return;
+  }
   if (!best) { hideMarker(); dropTarget = null; return; }
   if (best.fid) {
     dropTarget = { zone: bestEdge + '-folder', id: best.fid };
@@ -3026,8 +3052,8 @@ $('#server-list').addEventListener('dragover', (e) => {
   }
   showMarker(best.el.getBoundingClientRect(), bestEdge);
 });
-$('#server-list').addEventListener('drop', (e) => {
-  if (!dragPayload || e.target.closest('[data-drag]')) return;
+$('#rail').addEventListener('drop', (e) => {
+  if (!dragPayload || (e.target.closest && e.target.closest('[data-drag]'))) return;
   e.preventDefault();
   const dd = dragPayload, t = dropTarget;
   dragPayload = null; dropTarget = null; hideMarker(); clearDropMarks();
