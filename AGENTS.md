@@ -57,12 +57,13 @@ campfire/
 
 ## Design language (owner directive)
 
-**Flat, polished, professional. Never "AI-coded" looking.** Google Material 3 dark theme:
-- Tonal green surfaces (no gradients, no shadows — elevation is tonal steps).
-  Hairline `outline-variant` dividers between sections; borderless tonal cards,
-  pill buttons/chips/inputs, 28px dialogs, expressive radii.
-- Primary buttons invert per M3 (light green bg, dark text). Toast is an inverse
-  snackbar (light bg, dark text). FAB-style add-server button.
+**Flat, polished, professional. Never "AI-coded" looking.** Refined dark-navy theme:
+- Deep-navy surfaces (no gradients, no shadows — elevation is tonal steps).
+  Hairline `--line` dividers; borderless tonal cards; pill buttons/chips/inputs;
+  generous rounded corners; soft color-matched avatar glow.
+- Indigo-blue primary (`--accent:#5b6cff`) with white text on filled buttons.
+  Toast is an inverse snackbar. Indigo accent drives active states, mentions,
+  links, and the FAB-style add-server button.
 - Semantic colors only where they carry meaning: green (online/speaking/live),
   amber (away), red (danger/DND/muted). User-chosen colors (avatars, folders,
   banners) and user content stay as-is.
