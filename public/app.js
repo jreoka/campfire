@@ -255,16 +255,15 @@ function serverBtn(s) {
   b.draggable = true;
   b.dataset.drag = 'server:' + s.id;
   if (s.icon_url) {
-    // background-image (not <img>): immune to flex-item sizing quirks, always fills
-    b.style.backgroundImage = `url("${s.icon_url}")`;
-    const probe = new Image();
-    probe.onerror = () => {
-      if (!document.contains(b)) return;
-      b.classList.remove('has-icon');
-      b.style.backgroundImage = '';
-      b.textContent = label;
-    };
-    probe.src = s.icon_url;
+    // Explicit <img> with every property inline: renders identically no matter
+    // what state any stylesheet is in (opaque + fully covering, so no
+    // background rule can affect it). Broken URLs fall back to the letter.
+    const img = document.createElement('img');
+    img.src = s.icon_url; img.alt = ''; img.draggable = false;
+    img.width = 48; img.height = 48;
+    img.style.cssText = 'width:48px!important;height:48px!important;object-fit:cover!important;border-radius:14px!important;display:block!important;pointer-events:none!important';
+    img.onerror = () => { b.classList.remove('has-icon'); b.innerHTML = ''; b.textContent = label; };
+    b.appendChild(img);
   } else {
     b.textContent = label;
   }
@@ -1726,8 +1725,16 @@ function renderServerTab() {
   iconRow.innerHTML = `<span class="server-btn" style="width:40px;height:40px;font-size:1rem"></span>`;
   const prev = iconRow.querySelector('.server-btn');
   const paintPrev = () => {
-    if (d.icon_url) { prev.textContent = ''; prev.classList.add('has-icon'); prev.style.backgroundImage = `url("${d.icon_url}")`; }
-    else { prev.classList.remove('has-icon'); prev.style.backgroundImage = ''; prev.textContent = d.name.trim().charAt(0).toUpperCase(); }
+    prev.innerHTML = '';
+    if (d.icon_url) {
+      prev.classList.add('has-icon');
+      const im = document.createElement('img');
+      im.src = d.icon_url; im.alt = ''; im.width = 40; im.height = 40;
+      im.style.cssText = 'width:40px!important;height:40px!important;object-fit:cover!important;border-radius:10px!important;display:block!important';
+      im.onerror = () => { prev.classList.remove('has-icon'); prev.innerHTML = ''; prev.textContent = d.name.trim().charAt(0).toUpperCase(); };
+      prev.appendChild(im);
+    }
+    else { prev.classList.remove('has-icon'); prev.textContent = d.name.trim().charAt(0).toUpperCase(); }
   };
   paintPrev();
   if (owner) {

@@ -76,6 +76,15 @@ app.use((req, res, next) => {
   res.setHeader('Service-Worker-Allowed', '/');
   next();
 });
+// Pin shell asset URLs to the code fingerprint: a freshly loaded page can never
+// mix with stale cached JS/CSS from a previous deploy (different query = different key).
+app.get(['/', '/index.html'], (req, res, next) => {
+  fs.readFile(path.join(__dirname, 'public', 'index.html'), 'utf8', (err, html) => {
+    if (err) return next();
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html.replace(/(src|href)="(\/(?:app\.js|styles\.css))"/g, `$1="$2?v=${APP_VERSION}"`));
+  });
+});
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 app.use('/uploads', express.static(UPLOAD_DIR, {
   dotfiles: 'deny', index: false, maxAge: '7d',
