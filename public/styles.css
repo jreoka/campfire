@@ -574,10 +574,13 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .dmrow:hover .dm-close,.dmrow:focus-within .dm-close{opacity:1}
 .dm-close:hover{background:var(--panel-3);color:var(--text)}
 @media (hover:none){.dm-close{opacity:1}}
-.home-btn{padding:0;background:transparent}
+.home-btn{padding:0;background:transparent;position:relative}
 .home-btn img{width:100%;height:100%;object-fit:cover;display:block;border-radius:inherit}
 .home-btn:hover{background:transparent}
 .home-btn.active{background:transparent;border-radius:12px}
+#home-badge{position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;font-size:.62rem;font-weight:800;border-radius:999px;padding:.05rem .35rem;min-width:18px;text-align:center;line-height:1.3;pointer-events:none}
+#home-badge.hidden{display:none}
+.dm-badge{flex-shrink:0;background:var(--red);color:#fff;font-size:.66rem;font-weight:800;border-radius:999px;padding:.08rem .42rem;min-width:20px;text-align:center;line-height:1.35}
 body.view-home:not(.dm-open) #members{display:none!important}
 body.view-home:not(.dm-open) #btn-members{display:none!important}
 .gpick{display:flex!important;gap:.5rem;align-items:center;padding:.3rem 0}

@@ -3,20 +3,17 @@
  *   shell when online, cache only when offline. (The chat needs network
  *   anyway, so there's no benefit to serving a stale shell.)
  * - Other assets are cache-first with background refresh.
- * - On activate, tabs running code predating the auto-updater are reloaded
- *   once so nobody gets stuck on an ancient version. Tabs with the updater
- *   reply to the ping and handle it themselves (voice-aware, draft-safe).
+ * - On activate, old caches are dropped and the new worker takes over
+ *   immediately. Live tabs are pinged so the in-app auto-updater (which is
+ *   voice-aware and draft-safe) checks the version right away — the worker
+ *   never force-reloads pages itself, so a fresh SW install can't yank a
+ *   tab out from under its first load.
  */
-const CACHE = 'campfire-v85';
+const CACHE = 'campfire-v86';
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/embeds.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/campfire-logo.png', '/favicon.ico', '/favicon-32.png', '/emoji.json'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
-});
-
-const pongIds = new Set();
-self.addEventListener('message', (e) => {
-  if (e.data && e.data.t === 'SW_PONG' && e.source) pongIds.add(e.source.id);
 });
 
 self.addEventListener('activate', (e) => {
@@ -27,11 +24,6 @@ self.addEventListener('activate', (e) => {
       .then(async () => {
         const wins = await self.clients.matchAll({ type: 'window' });
         wins.forEach((w) => { try { w.postMessage({ t: 'SW_PING', v: CACHE }); } catch {} });
-        await new Promise((res) => setTimeout(res, 4000));
-        const fresh = await self.clients.matchAll({ type: 'window' });
-        for (const w of fresh) {
-          if (!pongIds.has(w.id)) { try { await w.navigate(w.url); } catch {} }
-        }
       })
   );
 });

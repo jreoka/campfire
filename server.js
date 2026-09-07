@@ -1655,7 +1655,8 @@ function notifyDmMessage(thread, author, content, messageId) {
     if (notifMode(uid, [`dm:${thread.id}`, 'global']) === 'muted') continue;
     const title = thread.is_group ? (thread.name || 'Group chat') : `${displayOf(author)} (DM)`;
     const body = thread.is_group ? `${displayOf(author)}: ${text}`.slice(0, 160) : text.slice(0, 160);
-    pushInbox(uid, { kind: 'dm', title, body, thread_id: thread.id, message_id: messageId || null });
+    // DMs stay out of the notification inbox (mentions + major events only) —
+    // live tabs badge via dm-new, offline devices still get a push below.
     if (live.has(uid)) continue;
     pushToUser(uid, {
       title,

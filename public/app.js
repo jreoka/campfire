@@ -37,6 +37,7 @@ const S = {
   dms: [], friends: { friends: [], pendingIn: [], pendingOut: [], blocked: [] },
   friendTab: 'all', // friends sidebar tab: 'online' | 'all' | 'pending' | 'blocked'
   dmThreadId: null, dmMessages: new Map(), // threadId -> [msgs]
+  dmUnread: new Map(), // threadId -> unread DM count (drives DM row + home button badges)
   voiceOccupancy: new Map(), // channelId -> [peers]
   voiceSince: new Map(), // channelId -> epoch ms first seen occupied (drives room timers)
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
@@ -280,6 +281,10 @@ async function boot() {
   pollVersion();
   pushSetup();
   refreshNotifBadge();
+  // Prefetch DMs + friends so the home button badge (unread DMs, incoming
+  // requests) is live even before Home is opened this session.
+  refreshDms().catch(() => {});
+  ensureFriends().catch(() => {});
   // Warm the per-user notification prefs so channel/server right-click menus
   // and muted indicators are correct from the start.
   refreshNotifPrefs().then(() => { renderServerList(); renderChannels(); }).catch(() => {});
@@ -1034,7 +1039,7 @@ function onWS(m) {
           if (!msg.sys) {
             S.histNew++;
             updatePill();
-            if (!dnd) { sfx.msg(); toast(`#${chanName(m.channelId)}: ${msg.user.display_name}: ${(msg.content || '[attachment]').slice(0, 60)}`); }
+            if (!dnd) sfx.msg();
             if (document.hidden && !dnd) notifyMsg(msg);
           }
           break;
@@ -1045,10 +1050,9 @@ function onWS(m) {
         if (m.channelId === S.channelId) {
           renderMessages();
           if (!msg.sys && document.hidden && !dnd) notifyMsg(msg);
-          else if (!msg.sys && !document.hidden && !dnd && mentionsMe(msg)) { sfx.msg(); toast(`${msg.user.display_name} mentioned you`); }
+          else if (!msg.sys && !document.hidden && !dnd && mentionsMe(msg)) sfx.msg();
         } else if (!msg.sys && !dnd) {
           sfx.msg();
-          toast(`#${chanName(m.channelId)}: ${msg.user.display_name}: ${(msg.content || '[attachment]').slice(0, 60)}`);
         }
       }
       break;
@@ -1091,22 +1095,28 @@ function onWS(m) {
         S.dmMessages.set(msg.threadId, arr);
       }
       const ddnd = S.me && S.me.status === 'dnd';
+      const own = !!(msg.user && S.me && msg.user.id === S.me.id);
       if (S.view === 'home' && S.dmThreadId === msg.threadId) {
         if (inHistDm) {
           // viewing older messages: hold the window, count up the jump pill
           if (!msg.sys) {
             S.histNew++;
             updatePill();
-            if (!ddnd) { sfx.msg(); toast(`DM from ${msg.user.display_name}: ${(msg.content || '[attachment]').slice(0, 60)}`); }
+            if (!ddnd && !own) sfx.msg();
             if (document.hidden && !ddnd) notifyMsg(msg);
           }
         } else {
           renderDmMessages();
           if (!msg.sys && document.hidden && !ddnd) notifyMsg(msg);
         }
+      } else if (!msg.sys && !own) {
+        // background thread: count up the DM row + home button badges (no popup)
+        S.dmUnread.set(msg.threadId, (S.dmUnread.get(msg.threadId) || 0) + 1);
+        refreshDms();
+        paintHomeBadge();
+        if (!ddnd) sfx.msg();
       } else {
         refreshDms();
-        if (!msg.sys && !ddnd) { sfx.msg(); toast(`DM from ${msg.user.display_name}: ${(msg.content || '[attachment]').slice(0, 60)}`); }
       }
       break;
     }
@@ -1152,8 +1162,9 @@ function onWS(m) {
       }
       break;
     case 'friends-changed':
-      if (S.view === 'home') refreshFriends();
-      else toast('Friends list updated');
+      // Always refresh so the home button badge (pending requests) stays
+      // correct even when looking at a server; no popup.
+      refreshFriends();
       break;
     case 'dm-typing':
       if (S.view === 'home' && S.dmThreadId === m.threadId) showTyping(m.userId, m.display_name);
@@ -1272,7 +1283,6 @@ function onWS(m) {
         sfx.join();
       } else {
         // update occupancy cache so channel counts refresh on next voice-peers
-        toast(`${m.peer.display_name} joined voice`);
         S.ws.send(JSON.stringify({ t: 'subscribe' }));
       }
       renderVoiceUsers();
@@ -1610,7 +1620,6 @@ async function joinVoice(serverId, channelId) {
   S.ws?.send(JSON.stringify({ t: 'voice-join', serverId, channelId }));
   renderChannels();
   startSpeakingMonitor();
-  toast('Connected to voice');
   sfx.join();
 }
 function leaveVoice(silent) {
@@ -1694,7 +1703,6 @@ function toggleDeafen() {
   paintVoiceControls();
   renderVoiceUsers();
   renderStage();
-  toast(S.voice.deafened ? 'Deafened' : 'Undeafened');
 }
 const V_QUALITY = {
   high: { label: '720p', w: 1280, h: 720, br: 2500000 },
@@ -2844,7 +2852,7 @@ async function openHome() {
   renderDmBlank();
 }
 async function refreshFriends() {
-  try { S.friends = await api('/api/friends'); S.friendsAt = Date.now(); renderFriendLists(); } catch {}
+  try { S.friends = await api('/api/friends'); S.friendsAt = Date.now(); renderFriendLists(); paintHomeBadge(); } catch {}
 }
 // Cards/menus need friend state even if Home was never opened this session.
 async function ensureFriends() {
@@ -2858,7 +2866,27 @@ function friendState(id) {
   return 'none';
 }
 async function refreshDms() {
-  try { const { threads } = await api('/api/dms'); S.dms = threads; renderDmLists(); } catch {}
+  try {
+    const { threads } = await api('/api/dms');
+    S.dms = threads;
+    // Drop unread counts for threads that no longer exist (left/deleted).
+    const alive = new Set(threads.map((t) => t.id));
+    for (const tid of [...S.dmUnread.keys()]) if (!alive.has(tid)) S.dmUnread.delete(tid);
+    renderDmLists();
+  } catch {}
+}
+function dmUnreadTotal() {
+  let n = 0;
+  for (const c of S.dmUnread.values()) n += c;
+  return n;
+}
+// Red count on the campfire home button: unread DMs + incoming friend requests.
+function paintHomeBadge() {
+  const b = $('#home-badge');
+  if (!b) return;
+  const n = dmUnreadTotal() + ((S.friends && S.friends.pendingIn) || []).length;
+  b.textContent = n > 99 ? '99+' : String(n);
+  b.classList.toggle('hidden', !n);
 }
 function friendRowEl(u, extra) {
   const div = document.createElement('div');
@@ -3011,6 +3039,13 @@ function dmRowEl(t) {
     b.style.backgroundPosition = 'right center';
   }
   b.onclick = () => selectDmThread(t.id);
+  const unread = S.dmUnread.get(t.id) || 0;
+  if (unread > 0) {
+    const badge = document.createElement('span');
+    badge.className = 'dm-badge';
+    badge.textContent = unread > 99 ? '99+' : String(unread);
+    b.appendChild(badge);
+  }
   if (!t.isGroup) {
     const x = document.createElement('span');
     x.className = 'dm-close';
@@ -3030,6 +3065,7 @@ function renderDmLists() {
   dl.innerHTML = ''; gl.innerHTML = '';
   for (const t of S.dms.filter((x) => !x.isGroup)) dl.appendChild(dmRowEl(t));
   for (const t of S.dms.filter((x) => x.isGroup)) gl.appendChild(dmRowEl(t));
+  paintHomeBadge();
 }
 async function openDmWith(userId) {
   try {
@@ -3305,6 +3341,9 @@ $('#chan-topic').onclick = () => {
 };
 async function selectDmThread(id) {
   S.dmThreadId = id;
+  // Opening a thread clears its unread badge (row + home button).
+  if (S.dmUnread.delete(id)) paintHomeBadge();
+  renderDmLists();
   S.callOpen = false;
   document.body.classList.remove('nav-open');
   $('#chat').classList.remove('call-open');
@@ -4474,7 +4513,7 @@ async function openInbox() {
   try { ({ items } = await api('/api/notifs/inbox')); } catch { toast('Could not load notifications'); return; }
   openModal('Notifications', `<div class="row end" style="margin:0 0 .4rem"><button class="btn small" id="m-notif-readall">Mark all read</button></div><div id="m-inbox-list"></div>`, 'Close', null, { wide: true });
   const list = $('#m-inbox-list');
-  if (!items.length) list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">All caught up — mentions, DMs and friend requests land here.</p>';
+  if (!items.length) list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">All caught up — mentions and friend requests land here.</p>';
   for (const n of items) {
     const b = document.createElement('button');
     b.type = 'button';
