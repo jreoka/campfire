@@ -1284,7 +1284,7 @@ function messageCtxMenu(mid, x, y) {
   if (!m) return;
   const own = m.user && m.user.id === S.me.id;
   const items = [
-    { label: 'Add reaction…', icon: '➕', fn: () => openPicker('react', mid) },
+    { label: 'Add reaction…', icon: '➕', fn: () => openPicker('react', mid, 'emoji', { x, y }) },
     { label: 'Reply', icon: '↩', fn: () => { S.replyTo = m; renderComposerMeta(); $('#in-message').focus(); } },
     { label: 'Open thread', icon: '💬', fn: () => openThread(mid) },
     { sep: true },
@@ -1757,9 +1757,25 @@ const EMOJI = [
 S.picker = null; // {mode:'insert'|'react', mid?}
 
 // ---------- emoji / GIF picker ----------
-function openPicker(mode = 'insert', mid = null, tab = 'emoji') {
+function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null) {
   S.picker = { mode, mid };
-  $('#picker').classList.remove('hidden');
+  const pk = $('#picker');
+  pk.classList.remove('hidden');
+  if (anchor && !matchMedia('(max-width: 700px)').matches) {
+    // reaction picker: float near the button that opened it (desktop only;
+    // mobile keeps the bottom-sheet). Prefer above, fall back below, clamped.
+    pk.classList.add('anchored');
+    const w = Math.min(360, innerWidth - 16), h = 380;
+    const left = Math.min(Math.max(8, anchor.x - w / 2), Math.max(8, innerWidth - w - 8));
+    let top = anchor.y - h - 10;
+    if (top < 8) top = anchor.y + 12;
+    if (top + h > innerHeight - 8) top = Math.max(8, innerHeight - h - 8);
+    pk.style.left = left + 'px';
+    pk.style.top = top + 'px';
+  } else {
+    pk.classList.remove('anchored');
+    pk.style.left = ''; pk.style.top = '';
+  }
   setPickerTab(tab);
   $('#pk-search').value = '';
   renderEmojiGrid('');
@@ -1966,9 +1982,9 @@ async function saveEdit(mid) {
     const act = actEl.dataset.act;
     if (act === 'react' && mid) {
       if (actEl.dataset.emoji) toggleReaction(mid, actEl.dataset.emoji);
-      else openPicker('react', mid);
+      else openPicker('react', mid, 'emoji', { x: e.clientX, y: e.clientY });
     }
-    else if (act === 'more' && mid) openPicker('react', mid);
+    else if (act === 'more' && mid) openPicker('react', mid, 'emoji', { x: e.clientX, y: e.clientY });
     else if (act === 'menu' && mid) messageCtxMenu(mid, e.clientX, e.clientY);
     else if (act === 'reply' && mid) { S.replyTo = msgById(mid); renderComposerMeta(); $('#in-message').focus(); }
     else if (act === 'thread' && mid) openThread(mid);
