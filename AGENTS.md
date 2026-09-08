@@ -31,6 +31,9 @@ Mobile-friendly PWA. Repo: `https://github.com/jreoka/campfire`.
 - **PWA:** `manifest.webmanifest` + `service-worker.js` (app-shell cache).
   In-app install buttons were **deliberately removed** per owner request —
   install happens via the browser menu. Do not re-add them.
+- **Windows app:** dedicated Tauri v2 wrapper in `app/` (WebView2, loads the
+  live site). Tray icon, start-on-login, game detection. Not part of the
+  Docker deploy — built and released via GitHub Actions.
 
 ## Project structure
 
@@ -42,7 +45,10 @@ campfire/
   Dockerfile         # node:22-alpine, no build tools needed
   docker-compose.yml # one service, ./data volume, requires JWT_SECRET in .env
   .env.example       # template (copy to .env)
+  app/               # Windows Tauri app (Tauri v2, WebView2) — release-built on
+                     # GitHub Actions, not in the Docker deploy
   scripts/gen-icons.js  # zero-dep PNG icon generator (runs in Docker build)
+  scripts/gen-ico.js    # syncs app icon with the web favicon
   public/
     index.html       # SPA shell (auth view + main view + modals)
     styles.css       # flat professional dark UI (see design rules below)
@@ -55,6 +61,31 @@ campfire/
     icons/           # generated PNGs (committed so static serving works w/o build)
   data/              # SQLite db lives here — NEVER delete, gitignored
 ```
+
+## Windows app (`./app`)
+
+Native Windows wrapper around the web app: Tauri v2 (WebView2 — no bundled
+Chromium) loading `https://campfire.dill.moe`, so updates flow through the
+normal PWA auto-update. Rust side (`app/src-tauri/src/main.rs`):
+tray icon (open app / current game / start-on-login toggle / quit), autostart
+via `tauri-plugin-autostart` (Task Scheduler; `--autostart` launch stays
+tray-only), and game detection (sysinfo process polling matched against
+Discord's detectable-games DB, beaconed to `POST /api/watcher/status` every
+~10–30 s while a game runs).
+
+- **Icon:** `app/src-tauri/icons/icon.ico` must stay identical to the web
+  favicon (`public/favicon.ico`) — one source of truth. Regenerate with
+  `node scripts/gen-ico.js`.
+- **No console window:** `main.rs` carries
+  `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`
+  so release builds are GUI-subsystem. Without it a terminal opens beside
+  the app every launch.
+- **Local build:** `cd app && npm install && npm run build` → NSIS installer,
+  MSI, and portable `campfire.exe` under `src-tauri/target/release/`.
+- **Releases:** `.github/workflows/app-windows.yml` (GitHub Actions Windows
+  runner) publishes bundles to a GitHub Release — trigger via
+  `workflow_dispatch` or push a tag like `app-v0.1.0`. Not code-signed
+  (SmartScreen warning on first run). `app/README.md` has details.
 
 ## Design language (owner directive)
 

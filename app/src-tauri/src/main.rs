@@ -1,3 +1,4 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 // Campfire desktop app (Windows).
 // - WebView loads https://campfire.dill.moe (the web app itself).
 // - Tray icon: open app / current game / start-on-login toggle / quit.
