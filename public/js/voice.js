@@ -24,6 +24,7 @@ const sfx = {
   undeaf() { sfxTone(520, 0.12, 'sine', 0.09); },
   join() { sfxTone(523, 0.1, 'sine', 0.09); sfxTone(784, 0.14, 'sine', 0.09, 0.09); },
   leave() { sfxTone(784, 0.1, 'sine', 0.08); sfxTone(523, 0.16, 'sine', 0.08, 0.09); },
+  ring() { sfxTone(660, 0.18, 'sine', 0.09); sfxTone(520, 0.24, 'sine', 0.09, 0.22); },
 };
 const VB_SVG = {
   mic: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/></svg>',
@@ -56,16 +57,85 @@ $('#cv-share').onclick = () => toggleScreen();
 paintVoiceControls();
 
 async function openVoiceChannel(serverId, channelId) {
-  if (S.voice && S.voice.serverId === serverId && S.voice.channelId === channelId) { openCallView(); return; }
+  if (S.voice && S.voice.kind !== 'dm' && S.voice.serverId === serverId && S.voice.channelId === channelId) { openCallView(); return; }
   await joinVoice(serverId, channelId);
-  if (S.voice && S.voice.serverId === serverId && S.voice.channelId === channelId) openCallView();
+  if (S.voice && S.voice.kind !== 'dm' && S.voice.serverId === serverId && S.voice.channelId === channelId) openCallView();
 }
+// ---------- DM calls (1:1 + group): the thread itself is the voice room ----------
+function dmOccKey(tid) { return 'dm:' + tid; }
+function myVoiceKey() {
+  if (!S.voice) return null;
+  return S.voice.kind === 'dm' ? dmOccKey(S.voice.threadId) : S.voice.channelId;
+}
+function dmCallPeers(tid) { return S.voiceOccupancy.get(dmOccKey(tid)) || []; }
+function inThisDmCall(tid) { return !!(S.voice && S.voice.kind === 'dm' && S.voice.threadId === tid); }
+function voiceLabel() {
+  if (!S.voice) return 'voice';
+  if (S.voice.kind === 'dm') {
+    const t = (S.dms || []).find((x) => x.id === S.voice.threadId);
+    return t ? dmTitle(t) : 'DM call';
+  }
+  return (S.serverDetail?.channels.find((c) => c.id === S.voice.channelId) || {}).name || 'voice';
+}
+function paintDmCallButtons() {
+  const show = S.view === 'home' && !!S.dmThreadId;
+  for (const id of ['#btn-call-voice', '#btn-call-video']) {
+    const b = $(id);
+    if (b) b.classList.toggle('hidden', !show);
+  }
+  const inThis = show && inThisDmCall(S.dmThreadId);
+  $('#btn-call-voice')?.classList.toggle('in-call', !!inThis);
+  $('#btn-call-video')?.classList.toggle('in-call', !!inThis);
+}
+function dmCallClick(video) {
+  if (!S.dmThreadId) return;
+  if (inThisDmCall(S.dmThreadId)) {
+    if (stageVisible()) openCallView();
+    else toast('Already in this call');
+    return;
+  }
+  joinDmCall(S.dmThreadId, video);
+}
+$('#btn-call-voice').onclick = () => dmCallClick(false);
+$('#btn-call-video').onclick = () => dmCallClick(true);
+// Incoming-call banner + ringing (first peer in rings the rest).
+let ringTimer = null;
+function stopRinging() {
+  clearInterval(ringTimer); ringTimer = null;
+  S.ringing = null;
+  $('#incoming-call')?.classList.add('hidden');
+}
+function onDmCallIncoming(m) {
+  refreshDms();
+  if (inThisDmCall(m.threadId)) return; // already here — no banner
+  if (m.caller && S.me && m.caller.id === S.me.id) return;
+  S.ringing = { threadId: m.threadId };
+  const c = m.caller || {};
+  paintAvatar($('#ic-avatar'), { display_name: c.display_name || '?', avatar_color: c.avatar_color, avatar_url: c.avatar_url });
+  $('#ic-title').textContent = `${c.display_name || 'Someone'} is calling`;
+  const t = (S.dms || []).find((x) => x.id === m.threadId);
+  $('#ic-sub').textContent = (m.video ? 'Video call' : 'Voice call') + (t && t.isGroup ? ` · ${t.name || 'Group chat'}` : '');
+  $('#incoming-call').classList.remove('hidden');
+  clearInterval(ringTimer);
+  sfx.ring();
+  ringTimer = setInterval(() => sfx.ring(), 2200);
+}
+function onDmCallEnded(threadId) {
+  if (S.ringing && S.ringing.threadId === threadId) stopRinging();
+  // The empty-peers broadcast just before this already cleared occupancy;
+  // belt-and-suspenders in case it was missed.
+  S.voiceOccupancy.delete(dmOccKey(threadId));
+  S.voiceSince.delete(dmOccKey(threadId));
+  try { renderDmLists(); } catch {}
+  if (S.view === 'home' && S.dmThreadId === threadId) { try { renderDmMembers(); } catch {} }
+}
+$('#ic-accept').onclick = () => { const tid = S.ringing?.threadId; stopRinging(); if (tid) joinDmCall(tid, false); };
+$('#ic-decline').onclick = () => stopRinging();
 function openCallView() {
   if (!S.voice) return;
   S.callOpen = true;
   $('#chat').classList.add('call-open');
-  const ch = S.serverDetail?.channels.find((c) => c.id === S.voice.channelId);
-  $('#stage-name').textContent = ch ? ch.name : 'voice';
+  $('#stage-name').textContent = voiceLabel();
   $('#messages').classList.add('hidden');
   $('#friends-page').classList.add('hidden');
   $('#composer').classList.add('hidden');
@@ -89,22 +159,26 @@ function closeCallView() {
 }
 function updateCallHead() {
   if (!S.voice || !S.callOpen) return;
-  const occ = S.voiceOccupancy.get(S.voice.channelId) || [];
+  const occ = S.voiceOccupancy.get(myVoiceKey()) || [];
+  if (S.voice.kind === 'dm') {
+    $('#stage-name').textContent = voiceLabel();
+    const t0 = S.voiceSince.get(myVoiceKey());
+    $('#stage-sub').innerHTML = `${occ.length} in call${t0 ? ` · <span class="vtime" data-vtimer="${myVoiceKey()}">${fmtVoiceTime(Date.now() - t0)}</span>` : ''}`;
+    return;
+  }
   const srv = (S.servers || []).find((s) => s.id === S.voice.serverId);
   $('#stage-name').textContent = (S.serverDetail?.channels.find((c) => c.id === S.voice.channelId) || {}).name || 'voice';
   const t0 = S.voice.channelId && S.voiceSince.get(S.voice.channelId);
   $('#stage-sub').innerHTML = `${esc(srv ? srv.name + ' · ' : '')}${occ.length} in call${t0 ? ` · <span class="vtime" data-vtimer="${S.voice.channelId}">${fmtVoiceTime(Date.now() - t0)}</span>` : ''}`;
 }
-async function joinVoice(serverId, channelId) {
-  if (S.voice && S.voice.serverId === serverId && S.voice.channelId === channelId) return; // already here
-  leaveVoice(true);
+async function acquireMic() {
   const mp = mediaPrefs();
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: mp.ec, noiseSuppression: true, autoGainControl: mp.agc, ...(mp.micId ? { deviceId: { ideal: mp.micId } } : {}) }, video: false });
   } catch {
     toast('Microphone blocked — allow mic access to join voice');
-    return;
+    return null;
   }
   let sendStream = stream; // stream actually sent to peers (denoised when RNNoise on)
   let noise = null;
@@ -112,18 +186,44 @@ async function joinVoice(serverId, channelId) {
     try { const r = await applyNoiseSuppression(stream); sendStream = r.stream; noise = r; }
     catch { sendStream = stream; } // fall back to raw mic if RNNoise can't start
   }
-  const ch = S.serverDetail?.channels.find((c) => c.id === channelId);
-  S.voice = { serverId, channelId, stream: sendStream, micStream: stream, noise, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, cameraOn: false, sharing: false, quality: mp.quality, speaking: false, audioEls: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
+  return { stream, sendStream, noise };
+}
+async function joinVoice(serverId, channelId) {
+  if (S.voice && S.voice.kind !== 'dm' && S.voice.serverId === serverId && S.voice.channelId === channelId) return; // already here
+  leaveVoice(true);
+  const mic = await acquireMic();
+  if (!mic) return;
+  S.voice = { kind: 'server', serverId, channelId, stream: mic.sendStream, micStream: mic.stream, noise: mic.noise, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, cameraOn: false, sharing: false, quality: mediaPrefs().quality, speaking: false, audioEls: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
   $('#voice-bar').classList.remove('hidden');
   $('#voice-fab').classList.remove('hidden');
-  $('#voice-chan-name').textContent = ch ? ch.name : 'voice';
-  $('#vf-name').textContent = ch ? ch.name : 'voice';
+  $('#voice-chan-name').textContent = voiceLabel();
+  $('#vf-name').textContent = voiceLabel();
   paintVoiceControls();
   renderStage();
   S.ws?.send(JSON.stringify({ t: 'voice-join', serverId, channelId }));
   renderChannels();
   startSpeakingMonitor();
   sfx.join();
+}
+async function joinDmCall(threadId, withVideo = false) {
+  if (inThisDmCall(threadId)) { openCallView(); return; }
+  leaveVoice(true);
+  stopRinging();
+  const mic = await acquireMic();
+  if (!mic) return;
+  S.voice = { kind: 'dm', threadId, stream: mic.sendStream, micStream: mic.stream, noise: mic.noise, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, cameraOn: false, sharing: false, quality: mediaPrefs().quality, speaking: false, audioEls: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
+  $('#voice-bar').classList.remove('hidden');
+  $('#voice-fab').classList.remove('hidden');
+  $('#voice-chan-name').textContent = voiceLabel();
+  $('#vf-name').textContent = voiceLabel();
+  paintVoiceControls();
+  renderStage();
+  S.ws?.send(JSON.stringify({ t: 'voice-join', threadId, video: !!withVideo }));
+  startSpeakingMonitor();
+  sfx.join();
+  paintDmCallButtons();
+  try { renderDmLists(); } catch {}
+  if (withVideo) { try { await toggleCamera(); } catch {} }
 }
 function leaveVoice(silent) {
   if (!S.voice) return;
@@ -140,18 +240,23 @@ function leaveVoice(silent) {
   else { $('#friends-page').classList.add('hidden'); $('#messages').classList.remove('hidden'); $('#composer').classList.remove('hidden'); renderComposerMeta(); }
   $('#stage').classList.add('hidden');
   $('#stage-grid').innerHTML = '';
-  const { serverId, channelId } = S.voice;
+  const vkey = myVoiceKey();
   S.voice = null;
   stopSpeakingMonitor();
   $('#voice-bar').classList.add('hidden');
   $('#voice-fab').classList.add('hidden');
   paintVoiceControls();
-  // optimistically drop self so the sidebar clears instantly (server echo confirms)
-  const occ = S.voiceOccupancy.get(channelId) || [];
-  S.voiceOccupancy.set(channelId, occ.filter((p) => p.id !== S.me.id));
-  if (!(S.voiceOccupancy.get(channelId) || []).length) S.voiceSince.delete(channelId);
+  paintDmCallButtons();
+  // optimistically drop self so sidebars clear instantly (server echo confirms)
+  if (vkey) {
+    const occ = S.voiceOccupancy.get(vkey) || [];
+    S.voiceOccupancy.set(vkey, occ.filter((p) => p.id !== S.me.id));
+    if (!(S.voiceOccupancy.get(vkey) || []).length) S.voiceSince.delete(vkey);
+  }
   if (!silent) { sfx.leave(); S.ws?.send(JSON.stringify({ t: 'voice-leave' })); }
   renderChannels();
+  try { renderDmLists(); } catch {}
+  if (S.view === 'home' && S.dmThreadId) { try { renderDmMembers(); } catch {} }
   if (S.updateReady && !silent) location.reload();
 }
 function sendVoiceState() {
@@ -192,7 +297,7 @@ function toggleMute() {
   S.voice.muted = !S.voice.muted;
   sfx[S.voice.muted ? 'mute' : 'unmute']();
   applyMicState();
-  $('#vf-name').textContent = (S.serverDetail?.channels.find((c) => c.id === S.voice.channelId) || {}).name || 'voice';
+  $('#vf-name').textContent = voiceLabel();
   sendVoiceState();
   paintVoiceControls();
   renderVoiceUsers();
@@ -495,7 +600,7 @@ function voicePeerInfo(id) {
       speaking: !!S.voice?.speaking, me: true,
     };
   }
-  const p = (S.voiceOccupancy.get(S.voice?.channelId) || []).find((x) => x.id === id);
+  const p = (S.voiceOccupancy.get(myVoiceKey()) || []).find((x) => x.id === id);
   return p || { id, display_name: '?', username: '?', avatar_color: '#555', avatar_url: null };
 }
 function tileStream(key) {
@@ -548,7 +653,7 @@ function renderStage() {
   const full = !!S.callOpen;
   $('#stage-head').classList.toggle('hidden', !full);
   $('#stage-controls').classList.toggle('hidden', !full);
-  const occ = S.voiceOccupancy.get(S.voice.channelId) || [];
+  const occ = S.voiceOccupancy.get(myVoiceKey()) || [];
   const order = ['me:cam'];
   if (S.voice.sharing) order.push('me:screen');
   for (const p of occ) {
@@ -682,7 +787,7 @@ function startSpeakingMonitor() {
         speakOn = talking;
         S.voice.speaking = talking;
         setSpeakingUI(S.me.id, talking);
-        const occ = S.voiceOccupancy.get(S.voice.channelId) || [];
+        const occ = S.voiceOccupancy.get(myVoiceKey()) || [];
         const me = occ.find((p) => p.id === S.me.id);
         if (me) me.speaking = talking;
         sendVoiceState();

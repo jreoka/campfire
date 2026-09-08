@@ -207,6 +207,7 @@ async function selectDmThread(id) {
   $('#chan-hash').textContent = t.isGroup ? '' : '@';
   const peer = dmPeer(t);
   $('#chan-name').textContent = t.isGroup ? (t.name || 'Group chat') : ((peer || {}).display_name || 'DM');
+  paintDmCallButtons();
   $('#typing').textContent = '';
   $('#in-message').placeholder = t.isGroup ? `Message ${t.name || 'group'}` : `Message @${(peer || {}).username || ''}`;
   S.replyTo = null; S.pendingAtts = []; S.editing = null;
@@ -238,6 +239,7 @@ function renderDmBlank() {
   $('#chan-hash').textContent = '';
   $('#chan-name').textContent = 'Friends';
   $('#typing').textContent = '';
+  paintDmCallButtons();
   renderTopic();
   renderActiveNow();
 }

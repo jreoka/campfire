@@ -2575,7 +2575,10 @@ app.get('/api/dms', authRequired, (req, res) => {
   const out = [];
   for (const id of ids) {
     const t = db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(id);
-    if (t) out.push(dmThreadView(t));
+    if (!t) continue;
+    const v = dmThreadView(t);
+    try { v.callCount = (voiceRooms.get(dmVoiceKey(id)) || new Set()).size; } catch { v.callCount = 0; }
+    out.push(v);
   }
   res.json({ threads: out });
 });
@@ -2638,6 +2641,7 @@ app.post('/api/dms/:tid/leave', authRequired, (req, res) => {
   // Direct (1:1) DMs can't be left — leaving is groups-only.
   if (!t.is_group) return res.status(400).json({ error: 'not_group' });
   db.prepare('DELETE FROM dm_members WHERE thread_id = ? AND user_id = ?').run(t.id, req.user.id);
+  evictFromDmCall(t.id, req.user.id);
   postDmSys(t.id, `${displayOf(req.user)} left ${t.is_group ? 'the group' : 'the chat'}`);
   dmNotify(t.id, { t: 'dm-threads-changed' });
   maybeDeleteEmptyDmThread(t.id);
@@ -2669,6 +2673,7 @@ app.post('/api/dms/:tid/members/:uid/remove', authRequired, (req, res) => {
   if (!db.prepare('SELECT 1 FROM dm_members WHERE thread_id = ? AND user_id = ?').get(t.id, target)) return res.status(404).json({ error: 'not_member' });
   const u = publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(target));
   db.prepare('DELETE FROM dm_members WHERE thread_id = ? AND user_id = ?').run(t.id, target);
+  evictFromDmCall(t.id, target);
   postDmSys(t.id, `${displayOf(u)} was removed`);
   dmNotify(t.id, { t: 'dm-threads-changed' });
   notifyUser(target, { t: 'removed-from-dm', threadId: t.id });
@@ -2689,6 +2694,7 @@ app.post('/api/dms/:tid/members/:uid/ban', authRequired, (req, res) => {
     db.prepare('DELETE FROM dm_members WHERE thread_id = ? AND user_id = ?').run(t.id, target);
     db.prepare('INSERT OR IGNORE INTO dm_bans (thread_id,user_id,created_at) VALUES (?,?,?)').run(t.id, target, now());
   })();
+  evictFromDmCall(t.id, target);
   postDmSys(t.id, `${displayOf(u)} was banned`);
   dmNotify(t.id, { t: 'dm-threads-changed' });
   notifyUser(target, { t: 'removed-from-dm', threadId: t.id });
@@ -2973,9 +2979,9 @@ function broadcastUserUpdate(user) {
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
-/** ws.meta = { userId, username, display_name, avatar_color, servers:Set, voice:{serverId,channelId,muted}|null } */
+/** ws.meta = { userId, username, display_name, avatar_color, servers:Set, voice:{kind:'server'|'dm',serverId,channelId,threadId,muted,...}|null } */
 const clients = new Set();
-const voiceRooms = new Map(); // key `${serverId}:${channelId}` -> Set<ws>
+const voiceRooms = new Map(); // key `${serverId}:${channelId}` (servers) or `dm:${threadId}` (DM calls) -> Set<ws>
 
 function safeSend(ws, obj) {
   if (ws.readyState === 1) { try { ws.send(JSON.stringify(obj)); } catch {} }
@@ -2986,6 +2992,8 @@ function broadcastToServer(serverId, obj, except) {
   }
 }
 function voiceKey(s, c) { return s + ':' + c; }
+function dmVoiceKey(tid) { return 'dm:' + tid; }
+function voiceKeyOf(v) { return v.kind === 'dm' ? dmVoiceKey(v.threadId) : voiceKey(v.serverId, v.channelId); }
 function voicePeersPayload(key) {
   const set = voiceRooms.get(key) || new Set();
   return [...set].map((ws) => ({
@@ -3010,21 +3018,56 @@ function findWsInVoice(key, userId) {
 function leaveVoice(ws, notify = true) {
   const v = ws.meta && ws.meta.voice;
   if (!v) return;
-  const key = voiceKey(v.serverId, v.channelId);
+  const key = voiceKeyOf(v);
   const set = voiceRooms.get(key);
   if (set) {
     set.delete(ws);
     if (set.size === 0) voiceRooms.delete(key);
   }
   ws.meta.voice = null;
-  if (notify) {
-    broadcastToServer(v.serverId, { t: 'voice-peer-left', serverId: v.serverId, channelId: v.channelId, userId: ws.meta.userId });
-    // send updated list to remaining occupants… and to the leaver too,
-    // otherwise their own sidebar keeps showing them until a refresh
-    const peers = voicePeersPayload(key);
-    for (const other of voiceRooms.get(key) || []) safeSend(other, { t: 'voice-peers', serverId: v.serverId, channelId: v.channelId, peers });
-    safeSend(ws, { t: 'voice-peers', serverId: v.serverId, channelId: v.channelId, peers });
+  if (!notify) return;
+  if (v.kind === 'dm') {
+    dmNotify(v.threadId, { t: 'voice-peer-left', threadId: v.threadId, userId: ws.meta.userId });
+    afterDmVoiceChange(v.threadId);
+    return;
   }
+  broadcastToServer(v.serverId, { t: 'voice-peer-left', serverId: v.serverId, channelId: v.channelId, userId: ws.meta.userId });
+  // send updated list to remaining occupants… and to the leaver too,
+  // otherwise their own sidebar keeps showing them until a refresh
+  const peers = voicePeersPayload(key);
+  for (const other of voiceRooms.get(key) || []) safeSend(other, { t: 'voice-peers', serverId: v.serverId, channelId: v.channelId, peers });
+  safeSend(ws, { t: 'voice-peers', serverId: v.serverId, channelId: v.channelId, peers });
+}
+// Push fresh DM-call occupancy to every thread member (drives in-call
+// badges + join buttons). When the room drains, the call is over.
+function afterDmVoiceChange(threadId) {
+  const key = dmVoiceKey(threadId);
+  const peers = voicePeersPayload(key);
+  const mems = new Set(db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ?').all(threadId).map((r) => r.user_id));
+  for (const c of clients) {
+    if (c.meta && mems.has(c.meta.userId)) safeSend(c, { t: 'voice-peers', threadId, peers });
+  }
+  if (!peers.length) {
+    voiceRooms.delete(key);
+    for (const c of clients) {
+      if (c.meta && mems.has(c.meta.userId)) safeSend(c, { t: 'dm-call-ended', threadId });
+    }
+  }
+}
+// Pull one user out of a DM call (group remove/ban/leave). Their client
+// drops its peer connections via voice-kicked, like server voice eviction.
+function evictFromDmCall(threadId, userId) {
+  const key = dmVoiceKey(threadId);
+  const set = voiceRooms.get(key);
+  if (!set) return;
+  for (const c of [...set]) {
+    if (c.meta && c.meta.userId === userId) {
+      set.delete(c);
+      c.meta.voice = null;
+      safeSend(c, { t: 'voice-kicked', threadId });
+    }
+  }
+  afterDmVoiceChange(threadId);
 }
 
 wss.on('connection', (ws, req) => {
@@ -3073,11 +3116,18 @@ wss.on('connection', (ws, req) => {
       }
       // send current voice occupancy for my servers
       for (const [key, set] of voiceRooms) {
+        if (key.startsWith('dm:')) continue;
         const [srv] = key.split(':');
         if (me.servers.has(srv)) {
           const [, ch] = key.split(':');
           safeSend(ws, { t: 'voice-peers', serverId: srv, channelId: ch, peers: voicePeersPayload(key) });
         }
+      }
+      // …and for my DM calls (drives in-call badges after reloads)
+      for (const [key, set] of voiceRooms) {
+        if (!key.startsWith('dm:')) continue;
+        const tid = key.slice(3);
+        if (dmThreadFor(me.userId, tid)) safeSend(ws, { t: 'voice-peers', threadId: tid, peers: voicePeersPayload(key) });
       }
       return;
     }
@@ -3184,6 +3234,35 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
+    if (msg.t === 'voice-join' && msg.threadId) {
+      // DM call (1:1 or group): the thread itself is the room.
+      const threadId = String(msg.threadId || '');
+      const t = dmThreadFor(me.userId, threadId);
+      if (!t) return;
+      if (me.voice) leaveVoice(ws);
+      me.voice = { kind: 'dm', threadId, muted: false, deafened: false, camera: false, sharing: false };
+      const key = dmVoiceKey(threadId);
+      const wasEmpty = !(voiceRooms.get(key) && voiceRooms.get(key).size);
+      if (!voiceRooms.has(key)) voiceRooms.set(key, new Set());
+      voiceRooms.get(key).add(ws);
+      const peers = voicePeersPayload(key);
+      safeSend(ws, { t: 'voice-peers', threadId, peers });
+      const others = db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ? AND user_id != ?').all(threadId, me.userId).map((r) => r.user_id);
+      const mePeer = { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, avatar_url: me.avatar_url || null, muted: false, speaking: false, deafened: false, camera: false, sharing: false };
+      for (const uid of others) {
+        notifyUser(uid, { t: 'voice-peer-joined', threadId, peer: mePeer });
+        notifyUser(uid, { t: 'voice-peers', threadId, peers });
+      }
+      // First one in rings everyone else (caller info drives the incoming banner).
+      if (wasEmpty) {
+        for (const uid of others) {
+          notifyUser(uid, { t: 'dm-call-incoming', threadId, video: !!msg.video,
+            caller: { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, avatar_url: me.avatar_url || null } });
+        }
+      }
+      return;
+    }
+
     if (msg.t === 'voice-join') {
       const serverId = String(msg.serverId || '');
       const channelId = String(msg.channelId || '');
@@ -3191,7 +3270,7 @@ wss.on('connection', (ws, req) => {
       const ch = db.prepare('SELECT * FROM channels WHERE id = ? AND server_id = ?').get(channelId, serverId);
       if (!ch || ch.type !== 'voice') return;
       if (me.voice) leaveVoice(ws);
-      me.voice = { serverId, channelId, muted: false, deafened: false, camera: false, sharing: false };
+      me.voice = { kind: 'server', serverId, channelId, muted: false, deafened: false, camera: false, sharing: false };
       const key = voiceKey(serverId, channelId);
       if (!voiceRooms.has(key)) voiceRooms.set(key, new Set());
       voiceRooms.get(key).add(ws);
@@ -3220,6 +3299,14 @@ wss.on('connection', (ws, req) => {
       me.voice.sharing = !!msg.sharing;
       if (typeof msg.speaking === 'boolean') me.voice.speaking = msg.speaking;
       if (me.voice.muted || me.voice.deafened) me.voice.speaking = false;
+      if (me.voice.kind === 'dm') {
+        dmNotify(me.voice.threadId, {
+          t: 'voice-state', threadId: me.voice.threadId,
+          userId: me.userId, muted: me.voice.muted, speaking: !!me.voice.speaking,
+          deafened: me.voice.deafened, camera: me.voice.camera, sharing: me.voice.sharing,
+        });
+        return;
+      }
       broadcastToServer(me.voice.serverId, {
         t: 'voice-state', serverId: me.voice.serverId, channelId: me.voice.channelId,
         userId: me.userId, muted: me.voice.muted, speaking: !!me.voice.speaking,
@@ -3230,10 +3317,13 @@ wss.on('connection', (ws, req) => {
 
     if (msg.t === 'voice-signal') {
       if (!me.voice) return;
-      const key = voiceKey(me.voice.serverId, me.voice.channelId);
+      const key = voiceKeyOf(me.voice);
       const target = findWsInVoice(key, String(msg.to || ''));
       if (!target) return;
-      safeSend(target, { t: 'voice-signal', serverId: me.voice.serverId, channelId: me.voice.channelId, from: me.userId, data: msg.data });
+      const out = { t: 'voice-signal', from: me.userId, data: msg.data };
+      if (me.voice.kind === 'dm') out.threadId = me.voice.threadId;
+      else { out.serverId = me.voice.serverId; out.channelId = me.voice.channelId; }
+      safeSend(target, out);
       return;
     }
   });

@@ -5,6 +5,7 @@ function dmTitle(t) { return t.isGroup ? (t.name || 'Group chat') : ((dmPeer(t) 
 function openServerView() {
   S.view = 'server';
   S.callOpen = false;
+  stopRinging();
   $('#chat').classList.remove('call-open');
   document.body.classList.remove('view-home', 'dm-open');
   $('#friends-page').classList.add('hidden');
@@ -12,6 +13,7 @@ function openServerView() {
   $('#server-ui').classList.remove('hidden');
   $('#home-ui').classList.add('hidden');
   $('#btn-home').classList.remove('active');
+  paintDmCallButtons();
 }
 async function openHome() {
   closeServerSettings();
@@ -342,7 +344,13 @@ function dmRowEl(t) {
   b.className = 'dmrow' + (t.id === S.dmThreadId ? ' active' : '');
   b.dataset.dmthread = t.id;
   const av = t.isGroup ? null : dmPeer(t);
-  b.innerHTML = `<span class="avatar">${t.isGroup ? '#' : ''}</span><span class="dmmain"><span class="dmname" style="${!t.isGroup && av ? nameStyleFor(av) : ''}">${esc(dmTitle(t))}</span><span class="dmlast">${esc(t.last ? `${t.last.author}: ${t.last.content}`.slice(0, 60) : 'No messages yet')}</span></span>`;
+  const callN = dmCallPeers(t.id).length || t.callCount || 0;
+  const inThis = S.voice && S.voice.kind === 'dm' && S.voice.threadId === t.id;
+  if (callN > 0 || inThis) b.classList.add('in-call');
+  const sub = inThis ? '<span class="dm-incall">In call — you</span>'
+    : callN > 0 ? `<span class="dm-incall">${callN} in call — tap to join</span>`
+    : esc(t.last ? `${t.last.author}: ${t.last.content}`.slice(0, 60) : 'No messages yet');
+  b.innerHTML = `<span class="avatar">${t.isGroup ? '#' : ''}</span><span class="dmmain"><span class="dmname" style="${!t.isGroup && av ? nameStyleFor(av) : ''}">${esc(dmTitle(t))}</span><span class="dmlast">${sub}</span></span>`;
   const avSpan = b.querySelector('.avatar');
   if (av) paintAvatar(avSpan, av);
   else avSpan.style.background = 'var(--panel-3)';

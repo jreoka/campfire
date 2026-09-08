@@ -414,6 +414,24 @@ function renderDmMembers() {
   $('#members-title').textContent = 'MEMBERS';
   const box = $('#member-list');
   box.innerHTML = '';
+  // Active call strip: join the ongoing DM call (or jump into the call view).
+  const callPeers = dmCallPeers(t.id);
+  const inCall = S.voice && S.voice.kind === 'dm' && S.voice.threadId === t.id;
+  if (inCall || callPeers.length) {
+    const strip = document.createElement('div');
+    strip.className = 'call-strip';
+    const label = document.createElement('span');
+    label.innerHTML = `<span class="live-dot"></span>${inCall ? 'You are in this call' : `<b>${callPeers.length}</b>&nbsp;in call`}`;
+    const btn = document.createElement('button');
+    btn.className = 'mini';
+    btn.textContent = inCall ? 'Open' : 'Join';
+    btn.onclick = () => {
+      if (inCall) { if (stageVisible()) openCallView(); else toast('Already in this call'); }
+      else joinDmCall(t.id, false);
+    };
+    strip.append(label, btn);
+    box.appendChild(strip);
+  }
   const members = t.members || [];
   const on = members.filter((m) => !isOff(statusOf(m.id))).sort((a, b) => a.display_name.localeCompare(b.display_name));
   const off = members.filter((m) => isOff(statusOf(m.id))).sort((a, b) => a.display_name.localeCompare(b.display_name));

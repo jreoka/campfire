@@ -307,8 +307,28 @@ function onWS(m) {
     case 'notif-new':
       paintNotifBadge(m.unread || 0);
       break;
+    case 'dm-call-incoming':
+      onDmCallIncoming(m);
+      break;
+    case 'dm-call-ended':
+      onDmCallEnded(m.threadId);
+      break;
     // ---- voice ----
     case 'voice-peers': {
+      if (m.threadId) {
+        // DM call occupancy (also arrives when we're not in the call — drives badges)
+        const key = 'dm:' + m.threadId;
+        S.voiceOccupancy.set(key, m.peers);
+        if ((m.peers || []).length) { if (!S.voiceSince.has(key)) S.voiceSince.set(key, Date.now()); }
+        else S.voiceSince.delete(key);
+        if (S.voice && S.voice.kind === 'dm' && S.voice.threadId === m.threadId) {
+          onVoicePeers(m.peers);
+          renderStage();
+        }
+        try { renderDmLists(); } catch {}
+        if (S.view === 'home' && S.dmThreadId === m.threadId) { try { renderDmMembers(); } catch {} }
+        break;
+      }
       S.voiceOccupancy.set(m.channelId, m.peers);
       if ((m.peers || []).length) { if (!S.voiceSince.has(m.channelId)) S.voiceSince.set(m.channelId, Date.now()); }
       else S.voiceSince.delete(m.channelId);
@@ -321,6 +341,15 @@ function onWS(m) {
       break;
     }
     case 'voice-peer-joined': {
+      if (m.threadId) {
+        if (S.voice && S.voice.kind === 'dm' && S.voice.threadId === m.threadId) {
+          ensurePeer(m.peer.id, false); // existing member: wait for offer
+          sfx.join();
+          renderStage();
+        }
+        try { renderDmLists(); } catch {}
+        break;
+      }
       if (S.voice && S.voice.serverId === m.serverId && S.voice.channelId === m.channelId) {
         ensurePeer(m.peer.id, false); // existing member: wait for offer
         sfx.join();
@@ -333,6 +362,15 @@ function onWS(m) {
       break;
     }
     case 'voice-peer-left': {
+      if (m.threadId) {
+        if (S.voice && S.voice.kind === 'dm' && S.voice.threadId === m.threadId) {
+          closePeer(m.userId);
+          sfx.leave();
+          renderStage();
+        }
+        try { renderDmLists(); } catch {}
+        break;
+      }
       closePeer(m.userId);
       if (S.voice && S.voice.serverId === m.serverId && S.voice.channelId === m.channelId) sfx.leave();
       renderVoiceUsers();
@@ -340,6 +378,13 @@ function onWS(m) {
       break;
     }
     case 'voice-state': {
+      if (m.threadId) {
+        const occ = S.voiceOccupancy.get('dm:' + m.threadId) || [];
+        const p = occ.find((x) => x.id === m.userId);
+        if (p) { p.muted = m.muted; p.speaking = !!m.speaking; p.deafened = !!m.deafened; p.camera = !!m.camera; p.sharing = !!m.sharing; }
+        if (S.voice && S.voice.kind === 'dm' && S.voice.threadId === m.threadId) renderStage();
+        break;
+      }
       const occ = S.voiceOccupancy.get(m.channelId) || [];
       const p = occ.find((x) => x.id === m.userId);
       if (p) { p.muted = m.muted; p.speaking = !!m.speaking; p.deafened = !!m.deafened; p.camera = !!m.camera; p.sharing = !!m.sharing; }
@@ -348,9 +393,16 @@ function onWS(m) {
       break;
     }
     case 'voice-signal':
+      if (m.threadId) {
+        if (!S.voice || S.voice.kind !== 'dm' || S.voice.threadId !== m.threadId) break;
+      } else if (S.voice && S.voice.kind === 'dm') break; // stale server signal while in a DM call
       onVoiceSignal(m.from, m.data);
       break;
     case 'voice-kicked':
+      if (m.threadId) {
+        if (S.voice && S.voice.kind === 'dm' && S.voice.threadId === m.threadId) { leaveVoice(); toast('You were removed from the call'); }
+        break;
+      }
       if (S.voice && S.voice.channelId === m.channelId) { leaveVoice(); toast('Voice room was deleted'); }
       break;
     case 'error':
