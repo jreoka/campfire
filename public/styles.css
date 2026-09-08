@@ -787,8 +787,9 @@ body{touch-action:manipulation}
   #composer{gap:.4rem;padding:.6rem;padding-bottom:calc(.6rem + var(--safe-b))}
   #composer .btn{padding:.7rem .9rem;min-height:44px}
   #composer .tool-btn,#composer .gif-btn{min-height:44px;min-width:44px;justify-content:center}
-  #composer-box #in-message{padding-right:3.4rem}
-  #in-render{padding-right:3.4rem}
+  #composer-tools{right:auto;left:.35rem}
+  #composer-box #in-message{padding-right:.35rem;padding-left:3.4rem}
+  #in-render{padding:.65rem .35rem .65rem 3.4rem}
   #btn-attach,#btn-emoji,#btn-gif{display:none}
   #btn-plus{display:none}
   #btn-more{display:inline-flex;align-items:center;justify-content:center}
