@@ -551,9 +551,6 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .pf-badge{font-size:.7rem;font-weight:600;padding:.2rem .45rem;border-radius:999px;background:var(--panel-2);color:var(--text)}
 .pf-badge.lv{background:#5b6cff22;color:#5b6cff}
 .pf-badge.streak{background:#2ed57322;color:#2ed573}
-.pf-game-del{position:absolute;top:.5rem;right:.5rem;opacity:0;transition:opacity .15s}
-.pf-game-card:hover .pf-game-del{opacity:1}
-@media (max-width:700px){.pf-game-del{opacity:1}}
 /* settings games list */
 .set-games-list{display:flex;flex-direction:column;gap:.4rem}
 .set-game-row{display:flex;align-items:center;gap:.65rem;background:var(--panel-3);border:1px solid var(--line);border-radius:14px;padding:.5rem .7rem}

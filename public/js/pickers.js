@@ -679,7 +679,6 @@ async function loadUserGaming(box, username, opts = {}) {
               <div class="pf-game-name">${esc(x.game)}</div>
               <div class="pf-game-meta">${fmtPlay(x.total_ms)} · Lv ${x.level}${x.streak ? ' · ' + x.streak + 'd streak' : ''}${x.best_streak > x.streak ? ' · best ' + x.best_streak + 'd' : ''}</div>
             </div>
-            ${canDelete ? `<button class="btn small danger pf-game-del" data-game="${esc(x.game)}">Remove</button>` : ''}
             <div class="pf-game-badges">
               <span class="pf-badge lv" style="background:${col}22;color:${col}">Lv ${x.level}</span>
               ${x.streak ? `<span class="pf-badge streak">${x.streak}d streak</span>` : ''}
@@ -696,23 +695,48 @@ async function loadUserGaming(box, username, opts = {}) {
         <div class="pf-gaming-grid">${cards}</div>
       `;
       if (canDelete) {
-        box.querySelectorAll('.pf-game-del').forEach((b) => {
-          b.onclick = async (e) => {
+        const doRemoveGame = async (game) => {
+          const ok = await openConfirmModal({
+            title: 'Remove ' + game + '?',
+            message: 'All playtime, levels and streaks for this game will be permanently deleted.',
+            okLabel: 'Remove',
+            danger: true,
+          });
+          if (!ok) return;
+          try {
+            await api('/api/me/games/' + encodeURIComponent(game), { method: 'DELETE' });
+            toast(game + ' removed from profile');
+            loadUserGaming(box, username, opts);
+          } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+        };
+        box.querySelectorAll('.pf-game-card').forEach((card) => {
+          const game = card.dataset.game;
+          const meta = card.querySelector('.pf-game-meta')?.textContent || '';
+          const menuItems = () => [{ label: 'Remove game', icon: '🗑', danger: true, fn: () => doRemoveGame(game) }];
+          // Desktop: right-click menu
+          card.oncontextmenu = (e) => {
+            e.preventDefault();
             e.stopPropagation();
-            const game = b.dataset.game;
-            const ok = await openConfirmModal({
-              title: 'Remove ' + game + '?',
-              message: 'All playtime, levels and streaks for this game will be permanently deleted.',
-              okLabel: 'Remove',
-              danger: true,
-            });
-            if (!ok) return;
-            try {
-              await api('/api/me/games/' + encodeURIComponent(game), { method: 'DELETE' });
-              toast(game + ' removed from profile');
-              loadUserGaming(box, username, opts);
-            } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+            openCtx(e.clientX, e.clientY, menuItems());
           };
+          // Touch: long-press opens the bottom sheet
+          let lt = null, sx = 0, sy = 0;
+          const cancelHold = () => { if (lt) { clearTimeout(lt); lt = null; } };
+          card.addEventListener('touchstart', (e) => {
+            if (e.touches.length !== 1) return;
+            sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+            cancelHold();
+            lt = setTimeout(() => {
+              lt = null;
+              try { navigator.vibrate && navigator.vibrate(10); } catch {}
+              openCtxSheet(menuItems(), { title: game, sub: meta });
+            }, 550);
+          }, { passive: true });
+          card.addEventListener('touchmove', (e) => {
+            const t = e.touches && e.touches[0];
+            if (t && Math.hypot(t.clientX - sx, t.clientY - sy) > 12) cancelHold();
+          }, { passive: true });
+          ['touchend', 'touchcancel'].forEach((ev) => card.addEventListener(ev, cancelHold, { passive: true }));
         });
       }
     }
