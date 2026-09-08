@@ -330,7 +330,7 @@ function memberRowEl(m) {
     div.style.backgroundSize = 'cover';
     div.style.backgroundPosition = 'right center';
   }
-  div.innerHTML = `<span class="avatar"></span><span class="mnames"><span style="${nameStyleFor(m)}">${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${m.status_text && st !== 'offline' ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ''}</span><span class="status-dot ${st}"></span>`;
+  div.innerHTML = `<span class="avwrap st-${st}"><span class="avatar"></span><span class="status-dot ${st}"></span></span><span class="mnames"><span style="${nameStyleFor(m)}">${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${m.status_text && st !== 'offline' ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ''}</span>`;
   paintAvatar(div.querySelector('.avatar'), m);
   return div;
 }
