@@ -11,6 +11,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-ico", "image-png"] }
 tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
 sysinfo = "0.33"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
 serde = { version = "1", features = ["derive"] }

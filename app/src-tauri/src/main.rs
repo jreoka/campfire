@@ -231,6 +231,11 @@ fn clear_game_on_exit<R: Runtime>(app: &AppHandle<R>) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
+        // Single instance: a second launch focuses the running window instead
+        // of opening a duplicate app (which would double-beacon playtime).
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .manage(State {
             token: Mutex::new(None),
             games: Mutex::new(Vec::new()),
