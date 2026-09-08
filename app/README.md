@@ -38,8 +38,10 @@ Outputs:
 ## Releases
 
 `.github/workflows/app-windows.yml` builds on a GitHub Actions Windows runner
-and publishes the bundles to a GitHub Release (`app-<tag>` or `app-<date>`).
-Trigger manually (workflow_dispatch) or push a tag like `app-v0.1.0`.
+and publishes the bundles to a GitHub Release.
+Trigger manually via workflow_dispatch — the version auto-increments from the
+latest `app-v*` tag (pick patch/minor/major, or pass an explicit version) —
+or push a tag like `app-v0.1.0` to release that exact version.
 
 ## Notes
 

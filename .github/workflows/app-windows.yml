@@ -3,10 +3,19 @@ name: Windows app build
 on:
   workflow_dispatch:
     inputs:
+      bump:
+        description: 'Version bump (ignored if version is set)'
+        required: false
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
       version:
-        description: 'App version (e.g. 0.1.1)'
-        required: true
-        default: '0.1.0'
+        description: 'Explicit version override, e.g. 0.2.0 (leave empty to auto-increment)'
+        required: false
+        default: ''
   push:
     tags:
       - 'app-v*'
@@ -19,6 +28,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags so the version can auto-increment
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -28,13 +39,51 @@ jobs:
         run: |
           $tag = $env:GITHUB_REF_NAME
           if ($tag -match '^app-v(.+)$') {
+            # Tag push: release exactly the tagged version.
             $ver = $matches[1]
-          } else {
+          } elseif ($env:INPUT_VERSION) {
+            # Explicit manual override.
+            if ($env:INPUT_VERSION -notmatch '^\d+\.\d+\.\d+$') {
+              throw "Invalid version input: $($env:INPUT_VERSION) (expected X.Y.Z)"
+            }
             $ver = $env:INPUT_VERSION
+          } else {
+            # Auto-increment: start from the higher of the repo files and the
+            # latest app-v* tag. If that version was never released, use it
+            # as-is; otherwise bump it (patch/minor/major) to the next free tag.
+            git fetch --tags --quiet
+            $base = '0.1.0'
+            try {
+              $fileVer = (Get-Content app/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+              if ($fileVer -match '^\d+\.\d+\.\d+$') { $base = $fileVer }
+            } catch { }
+            $latest = $null
+            foreach ($t in (git tag --list 'app-v*')) {
+              if ($t -match '^app-v(\d+\.\d+\.\d+)$') {
+                $v = New-Object System.Version($matches[1])
+                if ($null -eq $latest -or $v -gt $latest) { $latest = $v }
+              }
+            }
+            $start = New-Object System.Version($base)
+            if ($null -ne $latest -and $latest -gt $start) { $start = $latest }
+            if (git tag --list ("app-v" + $start.ToString())) {
+              switch ($env:INPUT_BUMP) {
+                'major' { $start = New-Object System.Version(($start.Major + 1), 0, 0) }
+                'minor' { $start = New-Object System.Version($start.Major, ($start.Minor + 1), 0) }
+                default { $start = New-Object System.Version($start.Major, $start.Minor, ($start.Build + 1)) }
+              }
+              while (git tag --list ("app-v" + $start.ToString())) {
+                $start = New-Object System.Version($start.Major, $start.Minor, ($start.Build + 1))
+              }
+            }
+            $ver = $start.ToString()
           }
+          if ($ver -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid version: $ver" }
           echo "APP_VERSION=$ver" >> $env:GITHUB_ENV
+          Write-Host "Resolved version: $ver"
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_BUMP: ${{ github.event.inputs.bump }}
       - name: Bump version in source files
         shell: pwsh
         run: |
@@ -82,3 +131,25 @@ jobs:
             app/src-tauri/target/release/campfire.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit version bump back to main
+        # Keeps Cargo.toml / tauri.conf.json / package.json in sync so local
+        # builds and the next auto-increment start from the released version.
+        # Tag-triggered runs are skipped (detached HEAD). Never fails the run:
+        # the release itself is already published by this point.
+        if: github.event_name == 'workflow_dispatch' && github.ref_type == 'branch'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add app/src-tauri/Cargo.toml app/src-tauri/tauri.conf.json app/package.json
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Version files already in sync, nothing to commit."
+          } else {
+            $branch = $env:GITHUB_REF_NAME
+            git commit -m "chore(windows-app): bump version to $env:APP_VERSION"
+            git fetch origin $branch
+            git rebase "origin/$branch"
+            git push origin "HEAD:refs/heads/$branch"
+          }
