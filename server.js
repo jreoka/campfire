@@ -1638,6 +1638,11 @@ app.put('/api/notifs/read', authRequired, (req, res) => {
   }
   res.json({ unread: unreadNotifs(req.user.id) });
 });
+app.delete('/api/notifs/:id', authRequired, (req, res) => {
+  const id = String(req.params.id || '');
+  try { db.prepare('DELETE FROM notifications WHERE user_id = ? AND id = ?').run(req.user.id, id); } catch {}
+  res.json({ unread: unreadNotifs(req.user.id) });
+});
 function notifyServerMessage(serverId, channelId, author, content, messageId) {
   const text = String(content || '').trim();
   if (!text) return;

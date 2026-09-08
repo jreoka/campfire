@@ -257,12 +257,14 @@ async function openInbox() {
   const list = $('#m-inbox-list');
   if (!items.length) list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">All caught up — mentions and friend requests land here.</p>';
   for (const n of items) {
-    const b = document.createElement('button');
-    b.type = 'button';
+    const b = document.createElement('div');
     b.className = 'inbox-item' + (n.read_at ? ' read' : '');
+    b.tabIndex = 0;
     const kind = n.kind === 'dm' ? 'DM' : n.kind === 'friend' ? 'Friend' : 'Mention';
-    b.innerHTML = `<span class="dot"></span><span class="imain"><span class="ititle">${esc(n.title || kind)}</span><br/><span class="ibody">${esc(n.body || '')}</span></span><span class="iwhen">${esc(inboxWhen(n.created_at))}</span>`;
+    b.innerHTML = `<span class="dot"></span><span class="imain"><span class="ititle">${esc(n.title || kind)}</span><br/><span class="ibody">${esc(n.body || '')}</span></span><span class="iwhen">${esc(inboxWhen(n.created_at))}</span><button type="button" class="inbox-x" title="Dismiss">×</button>`;
     b.onclick = () => openNotifItem(n);
+    b.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openNotifItem(n); } };
+    b.querySelector('.inbox-x').onclick = (e) => { e.stopPropagation(); dismissNotif(n, b); };
     list.appendChild(b);
   }
   $('#m-notif-readall').onclick = async () => {
@@ -284,6 +286,12 @@ async function openNotifItem(n) {
       if (n.message_id) jumpToMessage(n.message_id);
     }
   } catch {}
+}
+async function dismissNotif(n, el) {
+  try { const { unread } = await api('/api/notifs/' + n.id, { method: 'DELETE' }); paintNotifBadge(unread || 0); } catch {}
+  el.remove();
+  const list = $('#m-inbox-list');
+  if (list && !list.children.length) list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">All caught up — mentions and friend requests land here.</p>';
 }
 $('#btn-notifs').onclick = openInbox;
 $('#me-card').style.cursor = 'pointer';
