@@ -122,6 +122,7 @@ function prettyError(e) {
     too_many_invites: 'Too many invite links — revoke one first.', no_invite: 'Invite link not found.',
     no_main_invite: 'That invite no longer exists — ask for a new link.',
     slow_down: 'Slow down — you\'re sending too fast.', owner_only: 'Only the server owner can do that.', banned: 'You are banned from this server.', slow_mode: 'Slow mode is on — wait a moment.',
+    not_logged_in: 'Sign in first to join.', bad_token: 'Session expired — sign in again.', user_gone: 'That account no longer exists.',
     captcha_required: 'Complete the captcha to continue.', captcha_failed: 'Captcha check failed — please try again.',
     bad_color: 'Pick a valid color.', cannot_kick_admin: 'Only the owner can remove admins.',
     admin_only: 'Only site admins can do that.', account_disabled: 'This account has been disabled.',

@@ -94,15 +94,30 @@ async function showInviteLanding(code) {
   const acts = $('#inv-actions');
   acts.innerHTML = '';
   const mkBtn = (label, primary, fn) => { const b = document.createElement('button'); b.className = 'btn' + (primary ? ' primary' : ''); b.textContent = label; b.onclick = fn; acts.appendChild(b); };
-  if (store.token) {
+  // Only offer a one-click join when we actually hold a live session (S.me).
+  // A stale/expired token alone must fall through to sign in/up — otherwise
+  // the join just 401s behind this overlay with no way forward.
+  if (store.token && S.me) {
     mkBtn('Join server', true, async () => {
       try {
         const { server } = await api('/api/servers/join', { method: 'POST', body: JSON.stringify({ inviteCode: code }) });
+        takeInvite();
         $('#invite-view').classList.add('hidden');
         await refreshServers(server.id);
         S.ws?.send(JSON.stringify({ t: 'subscribe' }));
         toast(`Joined "${server.name}"`);
-      } catch (err) { toast('Join failed: ' + prettyError(err.message)); }
+      } catch (err) {
+        if (err.message === 'not_logged_in' || err.message === 'bad_token' || err.message === 'user_gone') {
+          store.token = '';
+          store.sid = '';
+          S.me = null;
+          stashInvite(code);
+          $('#invite-view').classList.add('hidden');
+          showAuth();
+          setMode('login');
+          toast('Sign in to join this server');
+        } else toast('Join failed: ' + prettyError(err.message));
+      }
     });
     mkBtn('Cancel', false, () => $('#invite-view').classList.add('hidden'));
   } else {

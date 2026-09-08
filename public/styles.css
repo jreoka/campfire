@@ -344,7 +344,7 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .modal label{font-size:.8rem;font-weight:700;color:var(--muted);letter-spacing:.02em}
 .modal hr{border:0;border-top:1px solid var(--line-soft)}
 .codebox{background:var(--inset);border:1px dashed var(--line);border-radius:12px;padding:.75rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:1.2rem;text-align:center;letter-spacing:.12em;margin:.75rem 0;user-select:all}
-#toast{position:fixed;left:50%;bottom:calc(1.2rem + var(--safe-b));transform:translateX(-50%);background:#e8eaf0;color:#141414;padding:.7rem 1.15rem;border-radius:10px;z-index:200;font-size:.86rem;font-weight:650;max-width:90vw;display:flex;align-items:center;gap:.6rem}
+#toast{position:fixed;left:50%;bottom:calc(1.2rem + var(--safe-b));transform:translateX(-50%);background:#e8eaf0;color:#141414;padding:.7rem 1.15rem;border-radius:10px;z-index:500;font-size:.86rem;font-weight:650;max-width:90vw;display:flex;align-items:center;gap:.6rem}
 #toast .btn.small.primary{background:#141414;border-color:transparent;color:#e8eaf0}
 
 /* ---------- attachments, replies, reactions ---------- */
