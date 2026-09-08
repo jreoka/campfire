@@ -699,19 +699,22 @@ async function loadUserGaming(box, username, opts = {}) {
       const cards = (g.games || []).map((x) => {
         const col = levelColor(x.level);
         const isLive = live && x.game === live;
-        const played = isLive
-          ? ' · <span class="pf-game-now">Playing now</span>'
-          : (x.last_seen_ms ? ` · Last played ${fmtLastPlayed(x.last_seen_ms)}` : '');
+        const streakLine = x.streak
+          ? `<span class="pf-badge streak">${x.streak}-day streak</span>${x.best_streak > x.streak ? `<span class="pf-game-best">Best ${x.best_streak} day${x.best_streak === 1 ? '' : 's'}</span>` : ''}`
+          : (x.best_streak ? `<span class="pf-game-best">Best streak ${x.best_streak} day${x.best_streak === 1 ? '' : 's'}</span>` : '');
         return `
           <div class="pf-game-card" data-game="${esc(x.game)}">
             <div class="pf-game-icon" style="background:${col}">${x.icon_url ? `<img src="${esc(x.icon_url)}" alt="" loading="lazy" onerror="this.remove()" />` : esc(x.game.charAt(0).toUpperCase())}</div>
             <div class="pf-game-info">
-              <div class="pf-game-name">${esc(x.game)}</div>
-              <div class="pf-game-meta">${fmtPlay(x.total_ms)} · Lv ${x.level}${x.streak ? ' · ' + x.streak + 'd streak' : ''}${x.best_streak > x.streak ? ' · best ' + x.best_streak + 'd' : ''}${played}</div>
-            </div>
-            <div class="pf-game-badges">
-              <span class="pf-badge lv" style="background:${col}22;color:${col}">Lv ${x.level}</span>
-              ${x.streak ? `<span class="pf-badge streak">${x.streak}d streak</span>` : ''}
+              <div class="pf-game-top">
+                <div class="pf-game-name">${esc(x.game)}</div>
+                <span class="pf-badge lv" style="background:${col}22;color:${col}">Lv ${x.level}</span>
+              </div>
+              <div class="pf-game-time">${fmtPlay(x.total_ms)} <span>total</span></div>
+              ${isLive
+                ? '<div class="pf-game-sub"><span class="live-dot"></span><span class="pf-game-live">Playing now</span></div>'
+                : (x.last_seen_ms ? `<div class="pf-game-sub">Last played ${fmtLastPlayed(x.last_seen_ms)}</div>` : '')}
+              ${streakLine ? `<div class="pf-game-streak">${streakLine}</div>` : ''}
             </div>
           </div>
         `;
@@ -741,7 +744,6 @@ async function loadUserGaming(box, username, opts = {}) {
         };
         box.querySelectorAll('.pf-game-card').forEach((card) => {
           const game = card.dataset.game;
-          const meta = card.querySelector('.pf-game-meta')?.textContent || '';
           const menuItems = () => [{ label: 'Remove game', icon: '🗑', danger: true, fn: () => doRemoveGame(game) }];
           // Desktop: right-click menu (on touch devices the long-press sheet below owns this;
           // the browser's synthetic contextmenu must not also pop the floating menu)
