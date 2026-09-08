@@ -50,12 +50,12 @@
         <button class="btn primary big" type="submit" id="btn-auth">Log in</button>
       </form>
       <form id="form-2fa" class="hidden">
-        <label>Two-factor code
-          <input id="in-2fa" autocomplete="one-time-code" inputmode="numeric" maxlength="16" placeholder="123456 or backup code" />
-        </label>
+        <h2 class="step-title">Two-step verification</h2>
+        <p class="step-sub muted">Enter the code from your authenticator, or a backup code.</p>
+        <input id="in-2fa" autocomplete="one-time-code" inputmode="numeric" maxlength="16" placeholder="123456" aria-label="Two-factor code" />
         <p id="auth-2fa-error" class="error hidden"></p>
         <button class="btn primary big" type="submit" id="btn-2fa">Verify</button>
-        <div class="row" style="margin-top:.6rem"><button class="btn small" type="button" id="btn-2fa-back">Back</button></div>
+        <button class="btn small" type="button" id="btn-2fa-back">Back</button>
       </form>
       <button class="btn big" type="button" id="btn-passkey">Sign in with passkey</button>
     </div>

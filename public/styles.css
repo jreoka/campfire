@@ -59,6 +59,12 @@ h1,h2,h3{letter-spacing:-0.01em}
 #form-auth label{display:block;margin:.7rem 0;font-size:.82rem;font-weight:600;color:var(--muted)}
 #form-auth input{width:100%;margin-top:.35rem;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:var(--radius);padding:.65rem .75rem;font-size:.95rem;outline:none}
 #form-auth input:focus{border-color:var(--accent)}
+#form-2fa{background:var(--panel-2);border-radius:16px;padding:1.15rem 1.2rem 1rem;text-align:center}
+#form-2fa .step-title{margin:0 0 .4rem;font-size:.98rem;font-weight:700}
+#form-2fa .step-sub{margin:0 0 1rem;font-size:.82rem}
+#form-2fa input{width:100%;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:.8rem 1rem;font-size:1.15rem;text-align:center;letter-spacing:.3em;font-variant-numeric:tabular-nums;outline:none}
+#form-2fa input:focus{border-color:var(--accent)}
+#form-2fa #btn-2fa-back{margin-top:.7rem}
 #ts-wrap{display:flex;justify-content:center;margin:.7rem 0 .2rem}
 .btn{border:1px solid var(--line);background:transparent;color:var(--text);border-radius:999px;padding:.6rem 1.2rem;font-size:.92rem;font-weight:600;cursor:pointer}
 .btn:hover{background:var(--panel-2)}
