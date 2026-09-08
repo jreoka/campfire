@@ -648,6 +648,22 @@ function fmtPlay(ms) {
   if (h < 48) { const m = Math.round((h % 1) * 60); return Math.floor(h) + 'h' + (m ? ' ' + m + 'm' : ''); }
   return Math.floor(h / 24) + 'd ' + Math.round(h % 24) + 'h';
 }
+// Relative "last played" with full units: minutes → hours → days → weeks → months → years.
+function fmtLastPlayed(ts) {
+  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + (m === 1 ? ' minute ago' : ' minutes ago');
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + (h === 1 ? ' hour ago' : ' hours ago');
+  const d = Math.floor(h / 24);
+  if (d < 7) return d + (d === 1 ? ' day ago' : ' days ago');
+  if (d < 30) { const w = Math.floor(d / 7); return w + (w === 1 ? ' week ago' : ' weeks ago'); }
+  const mo = Math.floor(d / 30.44);
+  if (mo < 12) return mo + (mo === 1 ? ' month ago' : ' months ago');
+  const y = Math.floor(mo / 12);
+  return y + (y === 1 ? ' year ago' : ' years ago');
+}
 function levelColor(lv) {
   if (lv >= 10) return '#ff4757';
   if (lv >= 7) return '#ff6348';
@@ -682,12 +698,16 @@ async function loadUserGaming(box, username, opts = {}) {
     } else {
       const cards = (g.games || []).map((x) => {
         const col = levelColor(x.level);
+        const isLive = live && x.game === live;
+        const played = isLive
+          ? ' · <span class="pf-game-now">Playing now</span>'
+          : (x.last_seen_ms ? ` · Last played ${fmtLastPlayed(x.last_seen_ms)}` : '');
         return `
           <div class="pf-game-card" data-game="${esc(x.game)}">
             <div class="pf-game-icon" style="background:${col}">${x.icon_url ? `<img src="${esc(x.icon_url)}" alt="" loading="lazy" onerror="this.remove()" />` : esc(x.game.charAt(0).toUpperCase())}</div>
             <div class="pf-game-info">
               <div class="pf-game-name">${esc(x.game)}</div>
-              <div class="pf-game-meta">${fmtPlay(x.total_ms)} · Lv ${x.level}${x.streak ? ' · ' + x.streak + 'd streak' : ''}${x.best_streak > x.streak ? ' · best ' + x.best_streak + 'd' : ''}</div>
+              <div class="pf-game-meta">${fmtPlay(x.total_ms)} · Lv ${x.level}${x.streak ? ' · ' + x.streak + 'd streak' : ''}${x.best_streak > x.streak ? ' · best ' + x.best_streak + 'd' : ''}${played}</div>
             </div>
             <div class="pf-game-badges">
               <span class="pf-badge lv" style="background:${col}22;color:${col}">Lv ${x.level}</span>

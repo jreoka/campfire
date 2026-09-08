@@ -571,6 +571,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .pf-game-info{min-width:0;flex:1}
 .pf-game-name{font-weight:650;font-size:.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pf-game-meta{font-size:.78rem;color:var(--muted);margin-top:.15rem}
+.pf-game-now{color:var(--green);font-weight:700}
 .pf-game-badges{display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.4rem}
 .pf-badge{font-size:.7rem;font-weight:700;padding:.22rem .5rem;border-radius:999px;background:var(--panel-2);color:var(--text)}
 .pf-badge.lv{background:var(--accent-dim);color:var(--accent-hover)}
