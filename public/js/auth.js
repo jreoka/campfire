@@ -1,14 +1,12 @@
 'use strict';
 // ---------- auth ----------
 let mode = 'login';
-// Cloudflare Turnstile: site key comes from /api/config (public); the widget
-// is explicitly rendered once the key is known. Tokens are single-use, so
-// the widget resets after every submit attempt.
+// Cloudflare Turnstile: site key comes from /api/config (public). The widget
+// stays hidden until the user presses Log in / Create account — the form
+// stays clean until the captcha is actually needed. Tokens are single-use,
+// so the widget resets after every submit attempt.
 S.turnstileKey = null; S.tsWidget = undefined;
-// Renders the widget as soon as BOTH the site key (from /api/config) and the
-// Turnstile API are ready, regardless of which arrives first. On cold first
-// loads the async API script routinely lands after our config fetch, so
-// rendering only from initTurnstile() left the widget permanently missing.
+let tsNeeded = false; // submit was pressed: the captcha area may now appear
 function renderTurnstile() {
   if (!S.turnstileKey || !window.turnstile || S.tsWidget !== undefined) return;
   const slot = document.querySelector('#ts-widget');
@@ -18,16 +16,29 @@ function renderTurnstile() {
     S.tsWidget = turnstile.render(slot, { sitekey: S.turnstileKey, theme: 'dark' });
   } catch { S.tsWidget = undefined; }
 }
+// Shows + renders the captcha area if it's ready; true when it's visible
+// (or when captcha is unconfigured), false while the API script loads.
+function showTurnstile() {
+  if (!S.turnstileKey) return true;
+  if (!window.turnstile) return false;
+  if (S.tsWidget === undefined) renderTurnstile();
+  if (S.tsWidget === undefined) return false;
+  $('#ts-wrap').classList.remove('hidden');
+  return true;
+}
 // Named in index.html (?onload=cfTurnstileReady): fires when the API script
 // finishes loading. Assigned here so it exists before the async script runs.
-window.cfTurnstileReady = () => renderTurnstile();
+// Only surfaces the widget if the user has already pressed submit.
+window.cfTurnstileReady = () => {
+  if (!tsNeeded || !S.turnstileKey || S.tsWidget !== undefined) return;
+  renderTurnstile();
+  if (S.tsWidget !== undefined) $('#ts-wrap').classList.remove('hidden');
+};
 async function initTurnstile() {
   try {
     const cfg = await api('/api/config');
     if (!cfg || !cfg.turnstileSiteKey) return;
     S.turnstileKey = cfg.turnstileSiteKey;
-    $('#ts-wrap').classList.remove('hidden');
-    renderTurnstile();
   } catch {}
 }
 function turnstileToken() {
@@ -47,6 +58,7 @@ function setMode(m) {
   $('#tab-login').classList.toggle('active', m === 'login');
   $('#tab-register').classList.toggle('active', m === 'register');
   $('#wrap-display').classList.toggle('hidden', m === 'login');
+  $('#wrap-confirm').classList.toggle('hidden', m === 'login');
   $('#btn-auth').textContent = m === 'login' ? 'Log in' : 'Create account';
   $('#auth-error').classList.add('hidden');
 }
@@ -58,8 +70,13 @@ $('#form-auth').addEventListener('submit', async (e) => {
   const password = $('#in-password').value;
   const displayName = $('#in-display').value.trim();
   $('#auth-error').classList.add('hidden');
+  if (mode === 'register' && password !== $('#in-confirm').value) {
+    authError('Passwords do not match.');
+    return;
+  }
   if (S.turnstileKey) {
-    if (!window.turnstile || S.tsWidget === undefined) { authError('Captcha still loading — wait a moment and try again.'); return; }
+    tsNeeded = true;
+    if (!showTurnstile()) { authError('Captcha still loading — wait a moment and try again.'); return; }
     if (!turnstileToken()) { authError('Complete the captcha to continue.'); return; }
   }
   try {
