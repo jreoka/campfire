@@ -1385,6 +1385,32 @@ app.get('/api/servers/:id/emoji', authRequired, (req, res) => {
   if (!isMember(req.params.id, req.user.id)) return res.status(403).json({ error: 'not_member' });
   res.json({ emoji: db.prepare('SELECT name, url FROM custom_emoji WHERE server_id = ? ORDER BY name ASC').all(req.params.id) });
 });
+// Cross-server custom emoji: every custom emoji from every server the user
+// has joined, grouped by server. This is what lets a joined server's
+// emojis be used/rendered anywhere (any channel, any DM).
+function userCustomEmojiNames(userId) {
+  return new Set(db.prepare(`
+    SELECT se.name FROM custom_emoji se
+    JOIN server_members m ON m.server_id = se.server_id
+    WHERE m.user_id = ?
+  `).all(userId).map((r) => r.name));
+}
+app.get('/api/emojis', authRequired, (req, res) => {
+  const rows = db.prepare(`
+    SELECT s.id, s.name AS server_name, se.name AS emoji_name, se.url
+    FROM server_members m
+    JOIN servers s ON s.id = m.server_id
+    JOIN custom_emoji se ON se.server_id = m.server_id
+    WHERE m.user_id = ?
+    ORDER BY s.name COLLATE NOCASE ASC, se.name COLLATE NOCASE ASC
+  `).all(req.user.id);
+  const servers = [], byId = new Map();
+  for (const r of rows) {
+    if (!byId.has(r.id)) { const s = { id: r.id, name: r.server_name, emoji: [] }; byId.set(r.id, s); servers.push(s); }
+    byId.get(r.id).emoji.push({ name: r.emoji_name, url: r.url });
+  }
+  res.json({ servers });
+});
 app.post('/api/servers/:id/emoji', authRequired, imgSingle(upEmoji), (req, res) => {
   const s = getServer(req.params.id);
   const name = String(req.body?.name || '').trim().toLowerCase();
@@ -1428,7 +1454,10 @@ app.post('/api/messages/:mid/reactions', authRequired, (req, res) => {
   if (!m) return res.status(404).json({ error: 'no_message' });
   if (!isMember(m.server_id, req.user.id)) return res.status(403).json({ error: 'not_member' });
   const emoji = String(req.body?.emoji || '');
-  if (!validReaction(emoji, serverEmojiNames(m.server_id))) return res.status(400).json({ error: 'bad_emoji' });
+  const names = serverEmojiNames(m.server_id);
+  // custom emojis from any server the user has joined are valid reactions
+  for (const n of userCustomEmojiNames(req.user.id)) names.add(n);
+  if (!validReaction(emoji, names)) return res.status(400).json({ error: 'bad_emoji' });
   const ex = db.prepare('SELECT 1 FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').get(m.id, req.user.id, emoji);
   if (ex) db.prepare('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').run(m.id, req.user.id, emoji);
   else db.prepare('INSERT INTO message_reactions (message_id, user_id, emoji, created_at) VALUES (?,?,?,?)').run(m.id, req.user.id, emoji, now());

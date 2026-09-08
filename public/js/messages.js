@@ -34,8 +34,9 @@ function attachmentHTML(a) {
 function reactionsHTML(m) {
   if (!m.reactions?.length) return '';
   return '<div class="reactions">' + m.reactions.map((r) => {
-    const label = r.emoji.startsWith(':') && r.emoji.endsWith(':') && S.emoji[r.emoji.slice(1, -1)]
-      ? `<img class="cemoi" src="${S.emoji[r.emoji.slice(1, -1)]}" alt="${esc(r.emoji)}" data-fb-emoji="${esc(r.emoji)}">`
+    const em = S.emojiAll[r.emoji.slice(1, -1)];
+    const label = r.emoji.startsWith(':') && r.emoji.endsWith(':') && em
+      ? `<img class="cemoi" src="${em.url}" alt="${esc(r.emoji)}" data-fb-emoji="${esc(r.emoji)}">`
       : esc(r.emoji);
     return `<button class="reaction${r.me ? ' me' : ''}" data-act="react" data-emoji="${esc(r.emoji)}" title="${r.count}">${label} ${r.count}</button>`;
   }).join('') + '</div>';
@@ -259,8 +260,9 @@ function messageEl(m, opts = {}) {
   inner += '</div>';
   // hover bar: most-used emoji + more + reply + overflow menu
   let bar = topReactions().map((e) => {
-    const label = (e.startsWith(':') && e.endsWith(':') && S.emoji[e.slice(1, -1)])
-      ? `<img class="cemoi" src="${S.emoji[e.slice(1, -1)]}" alt="${esc(e)}">` : esc(e);
+    const em = S.emojiAll[e.slice(1, -1)];
+    const label = (e.startsWith(':') && e.endsWith(':') && em)
+      ? `<img class="cemoi" src="${em.url}" alt="${esc(e)}">` : esc(e);
     return `<button data-act="react" data-emoji="${esc(e)}" title="${esc(e)}">${label}</button>`;
   }).join('');
   bar += `<button data-act="more" title="More reactions">➕</button><button data-act="reply" title="Reply">↩</button><button data-act="menu" title="More actions">⋯</button>`;

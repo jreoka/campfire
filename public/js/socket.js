@@ -245,6 +245,9 @@ function onWS(m) {
       break;
     }
     case 'emoji-updated':
+      // refresh the cross-server union (any joined server's emoji is now
+      // renderable/reactable everywhere) and keep the current server's list
+      refreshAllEmojis().catch(() => {});
       if (m.serverId === S.serverId) {
         S.emoji = {};
         for (const e of m.emoji || []) S.emoji[e.name] = e.url;

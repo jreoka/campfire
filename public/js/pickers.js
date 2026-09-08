@@ -31,6 +31,7 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null) {
   setPickerTab(tab);
   document.querySelector('#picker .pk-tabs').style.display = mode === 'react' ? 'none' : '';
   $('#pk-search').value = '';
+  renderEmojiRail();
   renderEmojiGrid('');
   ensureEmojiData().then(() => { if (S.picker) renderEmojiGrid($('#pk-search').value); });
   if (mode !== 'react') loadGifTrending();
@@ -42,9 +43,11 @@ S.gifPick = null; // 'avatar'|'banner' when the GIF picker is choosing profile m
 function setPickerTab(t) {
   document.querySelectorAll('.pk-tab').forEach((b) => b.classList.toggle('active', b.dataset.ptab === t));
   $('#pk-emoji').classList.toggle('hidden', t !== 'emoji');
+  $('#picker .pk-body').classList.toggle('hidden', t !== 'emoji');
   $('#pk-gifs').classList.toggle('hidden', t !== 'gifs');
   $('#pk-klipy').classList.toggle('hidden', t !== 'gifs');
   $('#pk-search').placeholder = t === 'gifs' ? 'Search KLIPY' : 'Search emoji';
+  if (t === 'emoji') renderEmojiRail();
   if (t === 'gifs') { gifSubView = 'all'; renderGifTab(); }
 }
 document.querySelectorAll('.pk-tab').forEach((b) => (b.onclick = () => { setPickerTab(b.dataset.ptab); applyPickerSearch($('#pk-search').value || ''); }));
@@ -76,39 +79,19 @@ function emojiButton(box, ch, label, onclick) {
   b.onclick = onclick;
   box.appendChild(b);
 }
-function renderEmojiGrid(filter) {
-  const box = $('#pk-emoji');
-  box.innerHTML = '';
-  const f = filter.trim().toLowerCase();
-  const custom = Object.entries(S.emoji).filter(([n]) => !f || n.includes(f));
-  if (custom.length) {
-    box.insertAdjacentHTML('beforeend', '<div class="pk-sec">Custom</div>');
-    for (const [n, url] of custom) {
-      const b = document.createElement('button');
-      b.className = 'pk-emoji-btn'; b.title = ':' + n + ':';
-      b.innerHTML = `<img class="pk-custom" src="${esc(url)}" alt=":${esc(n)}:" />`;
-      b.onclick = () => pickEmoji(':' + n + ':');
-      box.appendChild(b);
-    }
-  }
-  for (const [ch, kw] of EMOJI) {
-    if (ch === 'sec') { box.insertAdjacentHTML('beforeend', `<div class="pk-sec">${esc(kw)}</div>`); continue; }
-    if (f && !(kw || '').includes(f)) continue;
-    emojiButton(box, ch, null, () => pickEmoji(ch));
-  }
+// Emoji tab navigation: 'Emoji' (standard) or a joined server's custom
+// emoji (Discord-style server rail). Search spans all servers + standard.
+let emojiPickServer = null; // server id in the rail (null = standard view)
+function emojiCustomBtn(box, n, url) {
+  const b = document.createElement('button');
+  b.className = 'pk-emoji-btn'; b.title = ':' + n + ':';
+  b.innerHTML = `<img class="pk-custom" src="${esc(url)}" alt=":${esc(n)}:" />`;
+  b.onclick = () => pickEmoji(':' + n + ':');
+  box.appendChild(b);
+}
+function renderStdGroups(box, f) {
+  let shown = 0;
   if (emojiData) {
-    box.innerHTML = '';
-    if (custom.length) {
-      box.insertAdjacentHTML('beforeend', '<div class="pk-sec">Custom</div>');
-      for (const [n, url] of custom) {
-        const b = document.createElement('button');
-        b.className = 'pk-emoji-btn'; b.title = ':' + n + ':';
-        b.innerHTML = `<img class="pk-custom" src="${esc(url)}" alt=":${esc(n)}:" />`;
-        b.onclick = () => pickEmoji(':' + n + ':');
-        box.appendChild(b);
-      }
-    }
-    let shown = 0;
     for (const g of emojiData.groups) {
       const items = f ? g.items.filter((it) => it[1].includes(f)) : g.items;
       if (!items.length) continue;
@@ -120,6 +103,57 @@ function renderEmojiGrid(filter) {
       }
       if (f && shown >= 400) break;
     }
+  } else {
+    for (const [ch, kw] of EMOJI) {
+      if (ch === 'sec') { box.insertAdjacentHTML('beforeend', `<div class="pk-sec">${esc(kw)}</div>`); continue; }
+      if (f && !(kw || '').includes(f)) continue;
+      emojiButton(box, ch, null, () => pickEmoji(ch));
+    }
+  }
+}
+function renderEmojiRail() {
+  const rail = $('#pk-server-rail');
+  if (!rail) return;
+  rail.innerHTML = '';
+  const mk = (ico, name, active, fn) => {
+    const b = document.createElement('button');
+    b.className = 'pk-rail-btn' + (active ? ' active' : '');
+    b.innerHTML = `<span class="pk-rail-ico">${ico}</span><span class="pk-rail-name">${esc(name)}</span>`;
+    b.onclick = (e) => { e.stopPropagation(); fn(); };
+    rail.appendChild(b);
+  };
+  mk('<span class="pk-rail-std">😀</span>', 'Emoji', emojiPickServer === null, () => { emojiPickServer = null; renderEmojiRail(); renderEmojiGrid($('#pk-search').value); });
+  for (const s of S.serverEmojis || []) {
+    const sv = (S.servers || []).find((x) => x.id === s.id);
+    const letter = (s.name || 'S').trim().charAt(0).toUpperCase();
+    const ico = sv && sv.icon_url
+      ? `<img src="${esc(sv.icon_url)}" alt="" loading="lazy" draggable="false" onerror="this.replaceWith(document.createTextNode('${letter}'))" />`
+      : letter;
+    mk(ico, s.name, emojiPickServer === s.id, () => { emojiPickServer = s.id; renderEmojiRail(); renderEmojiGrid($('#pk-search').value); });
+  }
+}
+function renderEmojiGrid(filter) {
+  const box = $('#pk-emoji');
+  box.innerHTML = '';
+  const f = filter.trim().toLowerCase();
+  if (f) {
+    // search spans every joined server's custom emoji + standard
+    for (const s of S.serverEmojis || []) {
+      const hits = s.emoji.filter((e) => e.name.toLowerCase().includes(f));
+      if (!hits.length) continue;
+      box.insertAdjacentHTML('beforeend', `<div class="pk-sec">${esc(s.name)}</div>`);
+      for (const e of hits) emojiCustomBtn(box, e.name, e.url);
+    }
+    renderStdGroups(box, f);
+  } else if (emojiPickServer) {
+    const s = (S.serverEmojis || []).find((x) => x.id === emojiPickServer);
+    if (!s || !s.emoji.length) box.innerHTML = '<div class="pk-empty">No custom emoji in this server yet.</div>';
+    else {
+      box.insertAdjacentHTML('beforeend', `<div class="pk-sec">${esc(s.name)}</div>`);
+      for (const e of s.emoji) emojiCustomBtn(box, e.name, e.url);
+    }
+  } else {
+    renderStdGroups(box, '');
   }
   if (!box.children.length) box.innerHTML = '<div class="pk-empty">No emoji match.</div>';
 }
@@ -650,8 +684,11 @@ let emojiIdx = 0;
 function hideEmojiPop() { $('#emoji-pop').classList.add('hidden'); }
 function emojiCandidates(q) {
   const out = [];
-  for (const [n, url] of Object.entries(S.emoji)) {
-    if (!q || n.toLowerCase().includes(q)) out.push({ kind: 'custom', name: n, url });
+  // custom emoji from every joined server (label shows which server)
+  for (const [n, em] of Object.entries(S.emojiAll)) {
+    if (!q || n.toLowerCase().includes(q)) {
+      out.push({ kind: 'custom', name: n, url: em.url, srv: (S.serverEmojis.find((s) => s.id === em.serverId) || {}).name || '' });
+    }
   }
   if (emojiData && emojiData.shortcodes) {
     for (const [n, ch] of Object.entries(emojiData.shortcodes)) {
@@ -677,7 +714,7 @@ $('#in-message').addEventListener('input', () => {
     b.className = 'emoji-item' + (i === 0 ? ' sel' : '');
     b.dataset.name = c.name;
     b.innerHTML = c.kind === 'custom'
-      ? `<img class="ep-img" src="${esc(c.url)}" alt="" data-fb-emoji=":${esc(c.name)}:" /><span class="ep-name">:${esc(c.name)}:</span>`
+      ? `<img class="ep-img" src="${esc(c.url)}" alt="" data-fb-emoji=":${esc(c.name)}:" /><span class="ep-name">:${esc(c.name)}:</span>${c.srv ? `<span class="ep-srv">${esc(c.srv)}</span>` : ''}`
       : `<span class="ep-char">${esc(c.ch)}</span><span class="ep-name">:${esc(c.name)}:</span>`;
     b.onmousedown = (e) => { e.preventDefault(); applyEmoji(c.name); };
     pop.appendChild(b);

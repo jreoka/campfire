@@ -466,7 +466,7 @@ function renderServerTab() {
       row.innerHTML = `<img class="set-emoji-img" src="${esc(S.emoji[n])}" alt="" /><span class="grow">:${esc(n)}:</span>`;
       if (mgr) {
         const del = document.createElement('button'); del.className = 'mini danger'; del.textContent = 'Delete';
-        del.onclick = async () => { try { await api(`/api/servers/${d.id}/emoji/${encodeURIComponent(n)}`, { method: 'DELETE' }); const r = await api(`/api/servers/${d.id}/emoji`); S.emoji = {}; for (const e of r.emoji) S.emoji[e.name] = e.url; drawEmoji(); } catch {} };
+        del.onclick = async () => { try { await api(`/api/servers/${d.id}/emoji/${encodeURIComponent(n)}`, { method: 'DELETE' }); const r = await api(`/api/servers/${d.id}/emoji`); S.emoji = {}; for (const e of r.emoji) S.emoji[e.name] = e.url; refreshAllEmojis().catch(() => {}); drawEmoji(); } catch {} };
         row.appendChild(del);
       }
       elist.appendChild(row);
@@ -487,6 +487,7 @@ function renderServerTab() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'failed');
       S.emoji = {}; for (const e of data.emoji) S.emoji[e.name] = e.url;
+      refreshAllEmojis().catch(() => {});
       drawEmoji();
     } catch (err) { toast('Emoji failed: ' + prettyError(err.message)); }
   };

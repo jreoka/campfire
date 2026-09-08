@@ -69,8 +69,9 @@ function messageCtxMenu(mid, x, y) {
   openCtx(x, y, messageMenuItems(m, mid, x, y));
 }
 function reactLabel(e) {
-  return (e.startsWith(':') && e.endsWith(':') && S.emoji[e.slice(1, -1)])
-    ? `<img class="cemoi" src="${S.emoji[e.slice(1, -1)]}" alt="${esc(e)}">` : esc(e);
+  const em = S.emojiAll[e.slice(1, -1)];
+  return (e.startsWith(':') && e.endsWith(':') && em)
+    ? `<img class="cemoi" src="${em.url}" alt="${esc(e)}">` : esc(e);
 }
 function closeMsgSheet(instant) {
   const bd = document.querySelector('#sheet-backdrop'), sh = document.querySelector('#sheet');

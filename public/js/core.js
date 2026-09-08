@@ -20,7 +20,9 @@ const S = {
   messages: new Map(), // channelId -> [msgs]
   online: {}, // userId -> status ('online'|'away'|'dnd'); absent = offline/invisible
   presenceAll: {}, // userId -> last-seen live status across ALL shared servers (feeds DM member list)
-  emoji: {}, // custom server emoji name -> url
+  emoji: {}, // current server's custom emoji name -> url (server settings UI)
+  emojiAll: {}, // custom emoji of EVERY joined server: name -> {url, serverId}
+  serverEmojis: [], // per-server custom emoji lists (picker server rail)
   stdEmoji: {}, // standard :shortcode: -> char, warmed from emoji.json at boot
   gifFavs: null, // my Klipy GIF favorites (server-synced); null = not loaded yet
   replyTo: null, // message being replied to (main composer)
@@ -131,8 +133,12 @@ function renderRich(text, opts = {}) {
        .replace(/(^|[\s(])\*([^\*\n]+)\*/g, '$1<em>$2</em>')
        .replace(/~~([^~]+)~~/g, '<del>$1</del>');
   if (!opts.plain) {
-  h = h.replace(/:([a-z0-9_+-]{2,32}):/g, (m, n) => S.emoji[n]
-    ? '<img class="cemoi" src="' + S.emoji[n] + '" alt="' + m + '" title="' + m + '" data-fb-emoji="' + m + '">' : (S.stdEmoji[n] || m));
+  h = h.replace(/:([a-z0-9_+-]{2,32}):/g, (m, n) => {
+    const em = S.emojiAll[n]; // cross-server: any emoji from a joined server
+    return em
+      ? '<img class="cemoi" src="' + em.url + '" alt="' + m + '" title="' + m + '" data-fb-emoji="' + m + '">'
+      : (S.stdEmoji[n] || m);
+  });
   h = h.replace(/(^|[\s(])@([A-Za-z0-9_.]{2,24})/g, (m, pre, un) => {
     const mem = memberByUsername(un);
     if (!mem) return m;
@@ -170,6 +176,21 @@ async function api(path, opts = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || ('http_' + res.status));
   return data;
+}
+// Union of custom emoji across every server the user has joined: a
+// joined server's emoji can be sent and rendered anywhere, and the
+// per-server lists feed the picker's server rail. The current server's
+// emoji wins name collisions.
+async function refreshAllEmojis() {
+  try {
+    const { servers } = await api('/api/emojis');
+    const cur = S.serverId;
+    const ordered = [...servers].sort((a, b) => (b.id === cur ? 1 : 0) - (a.id === cur ? 1 : 0));
+    const all = {};
+    for (const s of ordered) for (const e of s.emoji) if (!all[e.name]) all[e.name] = { url: e.url, serverId: s.id };
+    S.emojiAll = all;
+    S.serverEmojis = servers;
+  } catch {}
 }
 // Local per-user memory of the last-open view (DM / group chat / server /
 // channel). Kept in localStorage keyed by user id, so after a browser

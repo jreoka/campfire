@@ -170,6 +170,7 @@ async function boot() {
   if (mem && mem.s) S.serverId = mem.s;
   else if (draft && draft.s) S.serverId = draft.s;
   await warmStdEmoji().catch(() => {});
+  await refreshAllEmojis().catch(() => {});
   await refreshServers();
   // Reopen exactly where the user left off: a DM/group thread under Home,
   // or a server + channel. Missing ids fall back gracefully.

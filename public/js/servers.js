@@ -14,12 +14,15 @@ async function refreshServers(selectId) {
     S.serverId = null;
     renderServerList();
     await openHome();
+    refreshAllEmojis().catch(() => {});
     return;
   }
   if (selectId) S.serverId = selectId;
   if (!S.serverId || !servers.find((s) => s.id === S.serverId)) S.serverId = servers[0].id;
   renderServerList();
   await selectServer(S.serverId);
+  // membership changed (join/leave/kick) — refresh the cross-server emoji union
+  refreshAllEmojis().catch(() => {});
 }
 function folderById(id) { return S.layoutFolders.find((f) => f.id === id); }
 function buildRootOrder() {
