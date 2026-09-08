@@ -1,6 +1,6 @@
 'use strict';
 // ---------- servers / channels ----------
-async function refreshServers(selectId) {
+async function refreshServers(selectId, autoSelect = true) {
   const { servers } = await api('/api/servers');
   S.servers = servers;
   try {
@@ -18,9 +18,13 @@ async function refreshServers(selectId) {
     return;
   }
   if (selectId) S.serverId = selectId;
-  if (!S.serverId || !servers.find((s) => s.id === S.serverId)) S.serverId = servers[0].id;
+  // autoSelect: land on a server when none is chosen (join/leave/first visit).
+  // Not at boot with a remembered Home view — that would jump into the first
+  // server and leave its rail button highlighted on top of Home's.
+  if (autoSelect && (!S.serverId || !servers.find((s) => s.id === S.serverId))) S.serverId = servers[0].id;
   renderServerList();
-  await selectServer(S.serverId);
+  // Never yank the user out of Home (e.g. kicked from a server while on Home).
+  if (S.view !== 'home' && S.serverId && servers.find((s) => s.id === S.serverId)) await selectServer(S.serverId);
   // membership changed (join/leave/kick) — refresh the cross-server emoji union
   refreshAllEmojis().catch(() => {});
 }
@@ -44,7 +48,7 @@ function buildRootOrder() {
     ...S.servers.filter((s) => !(S.serverMeta.get(s.id)?.folderId && folderById(S.serverMeta.get(s.id).folderId))).map((s) => ({ kind: 'server', id: s.id, pos: pos(s.id) })),
   ].sort((x, y) => x.pos - y.pos);
 }
-function isFolderActive(f) { return (f.servers || []).includes(S.serverId); }
+function isFolderActive(f) { return S.view === 'server' && (f.servers || []).includes(S.serverId); }
 function iconCell(s) {
   const label = (s.name || '?').trim().charAt(0).toUpperCase() || '?';
   if (s.icon_url) {
@@ -63,7 +67,7 @@ function folderGridHtml(f) {
 function serverBtn(s) {
   const b = document.createElement('button');
   const label = s.name.trim().charAt(0).toUpperCase() || '?';
-  b.className = 'server-btn' + (s.id === S.serverId ? ' active' : '') + (s.icon_url ? ' has-icon' : '') + (serverMuted(s.id) ? ' muted' : '');
+  b.className = 'server-btn' + (S.view === 'server' && s.id === S.serverId ? ' active' : '') + (s.icon_url ? ' has-icon' : '') + (serverMuted(s.id) ? ' muted' : '');
   b.title = s.name;
   b.draggable = !isCoarse(); // touch devices: drop native drag so long-press opens the slide-up sheet
   b.dataset.drag = 'server:' + s.id;

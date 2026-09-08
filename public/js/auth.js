@@ -171,7 +171,9 @@ async function boot() {
   else if (draft && draft.s) S.serverId = draft.s;
   await warmStdEmoji().catch(() => {});
   await refreshAllEmojis().catch(() => {});
-  await refreshServers();
+  // Only auto-open a server when restoring a server view; a remembered Home
+  // view must stay on Home (no implicit jump to the first server).
+  await refreshServers(mem && mem.view === 'server' ? mem.s : null, !(mem && mem.view === 'home'));
   // Reopen exactly where the user left off: a DM/group thread under Home,
   // or a server + channel. Missing ids fall back gracefully.
   if (mem && mem.view === 'home') {

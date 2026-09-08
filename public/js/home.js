@@ -16,6 +16,8 @@ function openServerView() {
 async function openHome() {
   closeServerSettings();
   S.view = 'home';
+  S.serverId = null;
+  S.channelId = null;
   S.callOpen = false;
   $('#chat').classList.remove('call-open');
   document.body.classList.add('view-home');
@@ -24,6 +26,7 @@ async function openHome() {
   $('#home-ui').classList.remove('hidden');
   $('#btn-home').classList.add('active');
   document.querySelectorAll('#server-list .server-btn').forEach((b) => b.classList.remove('active'));
+  rememberView();
   closeThread(true);
   await Promise.all([refreshFriends(), refreshDms()]);
   S.dmThreadId = null;
