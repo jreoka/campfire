@@ -43,10 +43,9 @@ function setPickerTab(t) {
   document.querySelectorAll('.pk-tab').forEach((b) => b.classList.toggle('active', b.dataset.ptab === t));
   $('#pk-emoji').classList.toggle('hidden', t !== 'emoji');
   $('#pk-gifs').classList.toggle('hidden', t !== 'gifs');
-  $('#pk-favs').classList.toggle('hidden', t !== 'favs');
-  $('#pk-klipy').classList.toggle('hidden', t === 'favs');
-  $('#pk-search').placeholder = t === 'gifs' ? 'Search KLIPY' : t === 'favs' ? 'Search favorites' : 'Search emoji';
-  if (t === 'favs') { if (S.gifFavs !== null) renderFavGrid($('#pk-search').value); else loadGifFavs(); }
+  $('#pk-klipy').classList.toggle('hidden', t !== 'gifs');
+  $('#pk-search').placeholder = t === 'gifs' ? 'Search KLIPY' : 'Search emoji';
+  if (t === 'gifs') renderGifTab();
 }
 document.querySelectorAll('.pk-tab').forEach((b) => (b.onclick = () => { setPickerTab(b.dataset.ptab); applyPickerSearch($('#pk-search').value || ''); }));
 let emojiData = null, emojiLoadP = null;
@@ -138,9 +137,8 @@ function insertAtCursor(input, text) {
 }
 let gifSearchT = null;
 function applyPickerSearch(q) {
-  const active = document.querySelector('.pk-tab.active')?.dataset.ptab;
-  if (active === 'favs') { renderFavGrid(q); return; }
-  if (active === 'gifs' && S.picker?.mode !== 'react') {
+  const gifsActive = document.querySelector('.pk-tab.active')?.dataset.ptab === 'gifs';
+  if (gifsActive && S.picker?.mode !== 'react') {
     clearTimeout(gifSearchT);
     if (!q.trim()) { loadGifTrending(); return; }
     gifSearchT = setTimeout(() => loadGifSearch(q.trim()), 350);
@@ -149,7 +147,9 @@ function applyPickerSearch(q) {
   }
 }
 $('#pk-search').addEventListener('input', (e) => applyPickerSearch(e.target.value));
-let gifResults = [];
+let gifResults = null; // null = loading
+let gifQuery = '';
+let gifFailed = false;
 const STAR_PATH = 'M12 2l2.9 6.9 7.1.6-5.4 4.7 1.6 7-6.2-3.8-6.2 3.8 1.6-7-5.4-4.7 7.1-.6z';
 function gifButton(g, fav, onclick) {
   const b = document.createElement('button');
@@ -161,13 +161,28 @@ function gifButton(g, fav, onclick) {
   b.querySelector('.pk-star').onclick = (e) => { e.stopPropagation(); toggleGifFav(g); };
   return b;
 }
-function renderGifGrid(gifs) {
-  gifResults = gifs || [];
+// GIFs tab = Favorites section on top (filtered by the search box when there's
+// a query), then KLIPY trending/search results below it.
+function renderGifTab() {
   const box = $('#pk-gifs');
   box.innerHTML = '';
-  if (!gifs.length) { box.innerHTML = '<div class="pk-empty">No GIFs found.</div>'; return; }
+  const q = gifQuery.toLowerCase();
   const favSlugs = new Set((S.gifFavs || []).map((f) => f.slug));
-  for (const g of gifs) box.appendChild(gifButton(g, favSlugs.has(g.slug), () => sendGif(g)));
+  if (S.gifFavs === null) {
+    box.insertAdjacentHTML('beforeend', '<div class="pk-sec">Favorites</div>');
+    box.insertAdjacentHTML('beforeend', '<div class="pk-empty small">Loading…</div>');
+  } else if (S.gifFavs.length) {
+    const favs = q
+      ? S.gifFavs.filter((g) => (g.title || '').toLowerCase().includes(q) || (g.slug || '').includes(q))
+      : S.gifFavs;
+    box.insertAdjacentHTML('beforeend', `<div class="pk-sec">Favorites (${favs.length})</div>`);
+    if (!favs.length) box.insertAdjacentHTML('beforeend', '<div class="pk-empty small">No favorites match.</div>');
+    else for (const g of favs) box.appendChild(gifButton(g, true, () => sendGif(g)));
+  }
+  box.insertAdjacentHTML('beforeend', `<div class="pk-sec">${q ? 'KLIPY results' : 'Trending'}</div>`);
+  if (gifResults === null) box.insertAdjacentHTML('beforeend', '<div class="pk-empty small">Loading…</div>');
+  else if (!gifResults.length) box.insertAdjacentHTML('beforeend', `<div class="pk-empty small">${gifFailed ? 'GIFs unavailable.' : 'No GIFs found.'}</div>`);
+  else for (const g of gifResults) box.appendChild(gifButton(g, favSlugs.has(g.slug), () => sendGif(g)));
 }
 // ---------- GIF favorites (per-user, synced across devices) ----------
 async function loadGifFavs() {
@@ -178,18 +193,6 @@ async function loadGifFavs() {
     S.gifFavs = favorites;
   } catch { /* leave null; the tab shows Loading and retries on next open */ }
   refreshFavViews();
-}
-function renderFavGrid(filter) {
-  const box = $('#pk-favs');
-  box.innerHTML = '';
-  if (S.gifFavs === null) { box.innerHTML = '<div class="pk-empty">Loading…</div>'; return; }
-  const f = String(filter || '').trim().toLowerCase();
-  const favs = (S.gifFavs || []).filter((g) => !f || (g.title || '').toLowerCase().includes(f) || (g.slug || '').includes(f));
-  if (!favs.length) {
-    box.innerHTML = `<div class="pk-empty">${f ? 'No favorites match.' : 'No favorites yet — star a GIF in the GIFs tab.'}</div>`;
-    return;
-  }
-  for (const g of favs) box.appendChild(gifButton(g, true, () => sendGif(g)));
 }
 async function toggleGifFav(g) {
   if (!g || !g.slug) return;
@@ -210,25 +213,25 @@ async function toggleGifFav(g) {
 }
 function refreshFavViews() {
   if (!S.picker) return;
-  const active = document.querySelector('.pk-tab.active')?.dataset.ptab;
-  if (active === 'favs') renderFavGrid($('#pk-search').value);
-  else if (active === 'gifs' && gifResults.length) renderGifGrid(gifResults);
+  if (document.querySelector('.pk-tab.active')?.dataset.ptab === 'gifs') renderGifTab();
 }
 async function loadGifTrending() {
-  const box = $('#pk-gifs');
-  box.innerHTML = '<div class="pk-empty">Loading…</div>';
+  gifQuery = ''; gifResults = null; gifFailed = false;
+  renderGifTab();
   try {
     const { gifs } = await api('/api/gifs/trending');
-    renderGifGrid(gifs);
-  } catch { box.innerHTML = '<div class="pk-empty">GIFs unavailable.</div>'; }
+    gifResults = gifs;
+  } catch { gifResults = []; gifFailed = true; }
+  if (S.picker) renderGifTab();
 }
 async function loadGifSearch(q) {
-  const box = $('#pk-gifs');
-  box.innerHTML = '<div class="pk-empty">Searching…</div>';
+  gifQuery = q; gifResults = null; gifFailed = false;
+  renderGifTab();
   try {
     const { gifs } = await api('/api/gifs/search?q=' + encodeURIComponent(q));
-    renderGifGrid(gifs);
-  } catch { box.innerHTML = '<div class="pk-empty">Search failed.</div>'; }
+    gifResults = gifs;
+  } catch { gifResults = []; gifFailed = true; }
+  if (S.picker) renderGifTab();
 }
 function sendGif(g) {
   const url = g.gif || g.mp4;

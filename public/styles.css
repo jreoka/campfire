@@ -417,6 +417,7 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .pk-star:hover,.pk-gif:hover .pk-star{opacity:1}
 @media (hover:none){.pk-star{opacity:.85}}
 .pk-empty{color:var(--muted);font-size:.85rem;padding:1rem;text-align:center;width:100%}
+.pk-empty.small{padding:.5rem;font-size:.78rem}
 .pk-attr{font-size:.72rem;color:var(--muted);text-align:center;padding:.45rem;border-top:1px solid var(--line)}
 .pk-attr a{color:var(--accent);font-weight:700;text-decoration:none}
 
