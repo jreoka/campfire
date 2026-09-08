@@ -644,8 +644,9 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .dmrow.active{background:var(--panel-3)}
 .dmrow .avatar{width:32px;height:32px;font-size:.75rem;flex-shrink:0}
 .dmrow .dmmain{flex:1;min-width:0;line-height:1.3}
-.dmrow .dmname{font-size:.88rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dmrow .dmlast{font-size:.74rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* display:block is required: text-overflow:ellipsis only works on block-level boxes, and inline spans would let long links run past the sidebar */
+.dmrow .dmname{display:block;font-size:.88rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dmrow .dmlast{display:block;font-size:.74rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dmrow .mini{flex-shrink:0}
 /* ---------- pins + jump-to-present ---------- */
 .pins-btn{display:inline-flex;align-items:center;position:relative}

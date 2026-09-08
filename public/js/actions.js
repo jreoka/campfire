@@ -84,6 +84,7 @@ function openMsgSheet(mid) {
   const m = msgById(mid);
   if (!m) return;
   closeCtx();
+  closePicker();
   closeMsgSheet(true);
   const bd = document.createElement('div');
   bd.id = 'sheet-backdrop';
@@ -170,6 +171,7 @@ function openFolderSheet(fid) {
 function openCtxSheet(items, head) {
   if (!items || !items.length) return;
   closeCtx();
+  closePicker();
   closeMsgSheet(true);
   closeCtxSheet();
   const bd = document.createElement('div');
