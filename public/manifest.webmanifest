@@ -4,6 +4,15 @@
   "description": "Create servers, chat in channels, and hop into voice rooms. Self-hosted.",
   "start_url": "/",
   "scope": "/",
+  "share_target": {
+    "action": "/share",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  },
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#1a1d29",

@@ -579,6 +579,19 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .pf-game-live{color:var(--green);font-weight:700}
 .pf-game-streak{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;margin-top:.45rem}
 .pf-game-best{font-size:.74rem;color:var(--faint)}
+/* ---------- share target (system share sheet → recipient picker) ---------- */
+.share-preview{background:var(--inset);border:1px solid var(--line-soft);border-radius:10px;padding:.6rem .7rem;font-size:.85rem;margin-bottom:.4rem;overflow-wrap:anywhere;display:flex;flex-direction:column;gap:.2rem}
+.share-filter{width:100%;margin:.3rem 0 .2rem}
+.share-targets{max-height:300px;overflow-y:auto;margin:0 -.25rem;padding:0 .25rem}
+.share-sec{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin:.65rem 0 .25rem}
+.share-row{display:flex;align-items:center;gap:.55rem;width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:10px;padding:.45rem .55rem;cursor:pointer;color:var(--text);font-size:.88rem}
+.share-row:hover{background:var(--panel-3)}
+.share-row.sel{background:var(--accent-dim);border-color:var(--accent)}
+.share-row .avatar{width:28px;height:28px;font-size:.7rem;flex-shrink:0}
+.share-row .hash{color:var(--faint);font-weight:800;width:28px;text-align:center;flex-shrink:0}
+.share-main{display:flex;flex-direction:column;min-width:0}
+.share-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.share-sub{font-size:.74rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pf-badge{font-size:.7rem;font-weight:700;padding:.22rem .5rem;border-radius:999px;background:var(--panel-2);color:var(--text)}
 .pf-badge.lv{background:var(--accent-dim);color:var(--accent-hover)}
 .pf-badge.streak{background:rgba(52,211,153,.13);color:var(--green)}

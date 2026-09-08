@@ -164,6 +164,8 @@ async function boot() {
   } catch {
     const inv0 = consumeInvite();
     if (inv0) stashInvite(inv0);
+    const sh0 = consumeShare();
+    if (sh0) stashShare(sh0);
     showAuth();
     if (inv0) showInviteLanding(inv0);
     return;
@@ -242,6 +244,11 @@ async function boot() {
       await selectServer(qserv);
       if (S.serverDetail?.channels.some((c) => c.id === qchan && c.type === 'text')) await selectChannel(qchan);
     }
+  } catch {}
+  // shared from the Android system share sheet (/share?title=&text=&url=)
+  try {
+    const sh = consumeShare() || takeShare();
+    if (sh && shareBlock(sh)) openShareDialog(sh);
   } catch {}
 }
 function showAuth() {
