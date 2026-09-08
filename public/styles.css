@@ -146,10 +146,10 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .mini:hover{background:var(--panel-4)}
 .mini.danger{background:var(--danger-bg);border:1px solid var(--danger-line);color:var(--danger-tx)}
 .mini.danger:hover{background:rgba(248,113,113,.17)}
-#me-card{display:flex;align-items:center;gap:.55rem;padding:.65rem .75rem;margin:.4rem .6rem .6rem;border:0;border-radius:12px;background-color:var(--panel-2);font-size:.88rem;font-weight:600;cursor:pointer;overflow:hidden;transition:background-color .15s}
+#me-card{display:flex;align-items:center;gap:.55rem;padding:.5rem .7rem;margin:.4rem .6rem .6rem;border:0;border-radius:12px;background-color:var(--panel-2);font-size:.88rem;font-weight:600;cursor:pointer;overflow:hidden;transition:background-color .15s}
 #me-card:hover{background-color:var(--panel-3)}
 #me-card.off{opacity:.55}
-#me-card .avwrap{position:relative;width:32px;height:32px;flex-shrink:0}
+#me-card .avwrap{position:relative;width:28px;height:28px;flex-shrink:0}
 #me-card .avwrap .avatar{width:100%;height:100%;font-size:.75rem}
 #me-card .avwrap .avatar::after{content:"";position:absolute;inset:-2px;border-radius:50%;border:2px solid rgba(255,255,255,.16);pointer-events:none;z-index:1}
 #me-card .avwrap.st-online .avatar::after{border-color:var(--green)}
@@ -267,13 +267,14 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 
 #members{width:244px;background:var(--panel);border-left:1px solid var(--line-soft);overscroll-behavior:contain;flex-shrink:0;order:5;display:flex;flex-direction:column;min-height:0}
 #member-list{flex:1;overflow-y:auto;min-height:0;padding:.4rem .55rem .9rem}
-.member{display:flex;align-items:center;gap:.55rem;padding:.45rem .6rem;margin:2px 0;border-radius:10px;font-size:.88rem;font-weight:550;cursor:pointer;transition:background var(--t-fast)}
+.member{display:flex;align-items:center;gap:.5rem;padding:.32rem .6rem;margin:2px 0;border-radius:10px;font-size:.85rem;font-weight:550;cursor:pointer;transition:background var(--t-fast)}
 .member:hover{background:var(--panel-2)}
-.member .avatar{width:32px;height:32px;font-size:.75rem}
-.member .mnames{display:flex;flex-direction:column;min-width:0;line-height:1.3}
+.member .avatar{width:28px;height:28px;font-size:.7rem}
+.member .mnames{display:flex;flex-direction:column;min-width:0;line-height:1.25}
 .member .mstatus{font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Discord-style presence light: ring on the avatar + corner dot (member list + DM rows) */
-.member .avwrap,.dmrow .avwrap{position:relative;width:32px;height:32px;flex-shrink:0}
+.member .avwrap{position:relative;width:28px;height:28px;flex-shrink:0}
+.dmrow .avwrap{position:relative;width:32px;height:32px;flex-shrink:0}
 .member .avwrap .avatar,.dmrow .avwrap .avatar{width:100%;height:100%;font-size:.75rem}
 .member .avwrap .avatar::after,.dmrow .avwrap .avatar::after{content:"";position:absolute;inset:-2px;border-radius:50%;border:2px solid rgba(255,255,255,.16);pointer-events:none;z-index:1}
 .member .avwrap.st-online .avatar::after,.dmrow .avwrap.st-online .avatar::after{border-color:var(--green)}
