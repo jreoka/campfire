@@ -1,5 +1,5 @@
 {
-  "name": "Campfire — self-hosted chat + voice",
+  "name": "Campfire",
   "short_name": "Campfire",
   "description": "Create servers, chat in channels, and hop into voice rooms. Self-hosted.",
   "start_url": "/",
