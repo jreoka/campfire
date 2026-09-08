@@ -81,9 +81,13 @@ $('#in-message').addEventListener('input', syncComposerRender);
 $('#in-message').addEventListener('input', (e) => composerAutoGrow(e.target));
 $('#in-thread').addEventListener('input', (e) => composerAutoGrow(e.target));
 // Composer auto-grows with content (Discord-style); caps at 40% of the viewport.
+// scrollHeight excludes the border but the height we set is border-box,
+// so add the border back or an empty box gets a tiny (2px) scroll range.
 function composerAutoGrow(inp) {
+  const cs = getComputedStyle(inp);
+  const border = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
   inp.style.height = 'auto';
-  inp.style.height = Math.min(inp.scrollHeight, Math.round(window.innerHeight * 0.4)) + 'px';
+  inp.style.height = Math.min(inp.scrollHeight + border, Math.round(window.innerHeight * 0.4)) + 'px';
 }
 // Enter sends, Shift+Enter inserts a line break. Skipped while the @mention
 // popup is open — its own keydown handler owns Enter in that case.
