@@ -1520,26 +1520,6 @@ function adminUserView(u) {
   } catch {}
   return { ...base, is_admin: !!u.is_admin, disabled: !!u.disabled, serverCount, messageCount, dmCount };
 }
-function adminDeleteMessage(mid) {
-  const m = db.prepare('SELECT * FROM messages WHERE id = ?').get(String(mid));
-  if (!m) return null;
-  let kidIds = [];
-  if (!m.thread_root_id) {
-    kidIds = db.prepare('SELECT id FROM messages WHERE thread_root_id = ?').all(m.id).map((r) => r.id);
-    if (kidIds.length) {
-      const ph = kidIds.map(() => '?').join(',');
-      try { db.prepare(`DELETE FROM message_pins WHERE message_id IN (${ph})`).run(...kidIds); } catch {}
-      db.prepare('DELETE FROM messages WHERE thread_root_id = ?').run(m.id);
-    }
-  }
-  db.prepare('DELETE FROM messages WHERE id = ?').run(m.id);
-  deletePollsFor('server', kidIds.length ? [m.id, ...kidIds] : [m.id]);
-  let pinsChanged = false;
-  try { pinsChanged = db.prepare('DELETE FROM message_pins WHERE message_id = ?').run(m.id).changes > 0; } catch {}
-  if (pinsChanged) broadcastToServer(m.server_id, { t: 'pins-changed', serverId: m.server_id, channelId: m.channel_id });
-  broadcastToServer(m.server_id, { t: 'message-deleted', serverId: m.server_id, channelId: m.channel_id, messageId: m.id, threadRoot: m.thread_root_id || null });
-  return m;
-}
 app.get('/api/admin/stats', authRequired, requireSiteAdmin, (req, res) => {
   const count = (sql, ...a) => { try { return db.prepare(sql).get(...a).c; } catch { return 0; } };
   const weekAgo = now() - 7 * 864e5;
@@ -1719,29 +1699,6 @@ app.delete('/api/admin/servers/:id/members/:uid', authRequired, requireSiteAdmin
   evictFromServer(s.id, target);
   notifyUser(target, { t: 'removed-from-server', serverId: s.id, reason: 'kicked' });
   res.json({ ok: true });
-});
-app.get('/api/admin/messages/recent', authRequired, requireSiteAdmin, (req, res) => {
-  const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10) || 50, 1), 100);
-  const rows = db.prepare(`
-    SELECT m.id, m.content, m.created_at, m.server_id, m.channel_id,
-           s.name AS server_name, c.name AS channel_name,
-           u.id AS uid, u.username, u.display_name
-    FROM messages m LEFT JOIN servers s ON s.id = m.server_id
-    LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN users u ON u.id = m.user_id
-    ORDER BY m.created_at DESC LIMIT ?
-  `).all(limit);
-  res.json({ messages: rows });
-});
-app.delete('/api/admin/messages/:mid', authRequired, requireSiteAdmin, (req, res) => {
-  const m = adminDeleteMessage(req.params.mid);
-  if (!m) return res.status(404).json({ error: 'no_message' });
-  res.json({ ok: true });
-});
-app.post('/api/admin/announce', authRequired, requireSiteAdmin, (req, res) => {
-  const text = String(req.body?.text || '').trim().slice(0, 500);
-  if (!text) return res.status(400).json({ error: 'text_required' });
-  for (const c of clients) safeSend(c, { t: 'admin-notice', text });
-  res.json({ ok: true, delivered: clients.size });
 });
 
 // ---------- server profile ----------

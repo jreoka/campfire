@@ -15,11 +15,6 @@ function fmtDate(ts) {
   try { return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }); }
   catch { return ''; }
 }
-function fmtDT(ts) {
-  try {
-    return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  } catch { return ''; }
-}
 
 // Wrap openSettings so the Admin tab only appears for admins (and a stale
 // admin deep-link can never land on a dead pane).
@@ -42,11 +37,6 @@ async function renderAdminTab() {
     box.dataset.built = '1';
     box.innerHTML = `
       <div id="adm-stats" class="adm-stats"><p class="muted small">Loading…</p></div>
-      <div class="pf-sec-label">Broadcast to everyone online</div>
-      <div class="row" style="gap:.4rem">
-        <input id="adm-announce" maxlength="500" placeholder="Message all online users…" style="flex:1" autocomplete="off" />
-        <button id="adm-send" class="btn small primary">Send</button>
-      </div>
       <div class="pf-sec-label">Users</div>
       <div class="row" style="gap:.4rem">
         <input id="adm-uq" placeholder="Search username or display name…" style="flex:1" autocomplete="off" />
@@ -73,19 +63,7 @@ async function renderAdminTab() {
         <button id="adm-sprev" class="btn small">Prev</button>
         <span id="adm-scount" class="muted small"></span>
         <button id="adm-snext" class="btn small">Next</button>
-      </div>
-      <div class="pf-sec-label">Recent messages</div>
-      <div id="adm-msgs"><p class="muted small">Loading…</p></div>`;
-    $('#adm-send').onclick = async () => {
-      const inp = $('#adm-announce');
-      const text = inp.value.trim();
-      if (!text) return;
-      try {
-        const { delivered } = await api('/api/admin/announce', { method: 'POST', body: JSON.stringify({ text }) });
-        inp.value = '';
-        toast(`Sent to ${delivered} session${delivered === 1 ? '' : 's'}`);
-      } catch (err) { toast('Broadcast failed: ' + prettyError(err.message)); }
-    };
+      </div>`;
     const uSearch = () => { Admin.uq = $('#adm-uq').value.trim(); Admin.uf = $('#adm-uf').value; Admin.uoff = 0; loadAdminUsers(); };
     $('#adm-usearch').onclick = uSearch;
     $('#adm-uq').addEventListener('keydown', (e) => { if (e.key === 'Enter') uSearch(); });
@@ -101,7 +79,6 @@ async function renderAdminTab() {
   loadAdminStats();
   loadAdminUsers();
   loadAdminServers();
-  loadAdminRecent();
 }
 
 async function loadAdminStats() {
@@ -214,24 +191,6 @@ async function loadAdminMembers(sid, slot) {
   } catch { slot.innerHTML = '<p class="muted small">Could not load members.</p>'; }
 }
 
-async function loadAdminRecent() {
-  const box = $('#adm-msgs');
-  if (!box) return;
-  box.innerHTML = '<p class="muted small">Loading…</p>';
-  try {
-    const { messages } = await api('/api/admin/messages/recent?limit=30');
-    box.innerHTML = messages.length ? messages.map((m) =>
-      `<div class="adm-subrow" data-mid="${esc(m.id)}">
-        <div class="adm-main">
-          <div><strong>${esc(m.display_name || m.username || 'deleted')}</strong>
-          <span class="muted small">@${esc(m.username || '?')} · #${esc(m.channel_name || '?')} · ${esc(m.server_name || '?')} · ${fmtDT(m.created_at)}</span></div>
-          <div class="adm-snippet">${esc(String(m.content || '').slice(0, 200))}</div>
-        </div>
-        <button class="mini danger" data-act="m-del">Delete</button>
-      </div>`).join('') : '<p class="muted small">No messages yet.</p>';
-  } catch { box.innerHTML = '<p class="muted small">Could not load messages.</p>'; }
-}
-
 // One delegated handler for every admin row button.
 async function adminClick(e) {
   const b = e.target.closest('[data-act]');
@@ -240,7 +199,6 @@ async function adminClick(e) {
   const urow = b.closest('.adm-row[data-uid]');
   const srow = b.closest('.adm-row[data-sid]');
   const sub = b.closest('.adm-subrow[data-uid]');
-  const msg = b.closest('.adm-subrow[data-mid]');
   try {
     if (act === 'u-edit' && urow) {
       const { user: u } = await api(`/api/admin/users/${urow.dataset.uid}`);
@@ -353,13 +311,6 @@ async function adminClick(e) {
       loadAdminStats(); loadAdminServers();
       await refreshServers();
       S.ws?.send(JSON.stringify({ t: 'subscribe' }));
-    }
-    else if (act === 'm-del' && msg) {
-      const ok = await openConfirmModal({ title: 'Delete this message?', message: 'It is removed for everyone.', okLabel: 'Delete' });
-      if (!ok) return;
-      await api(`/api/admin/messages/${msg.dataset.mid}`, { method: 'DELETE' });
-      toast('Message deleted');
-      loadAdminRecent();
     }
   } catch (err) { toast('Failed: ' + prettyError(err.message)); }
 }
