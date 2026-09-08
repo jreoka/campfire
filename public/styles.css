@@ -89,10 +89,12 @@ h1,h2,h3{letter-spacing:-0.01em}
 #rail{width:80px;background:var(--rail);border-right:1px solid var(--line);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
 .rail-head{display:flex;flex-direction:column;align-items:center;gap:.45rem;padding:.8rem 0 .6rem;flex-shrink:0}
 .rail-divider{width:40px;height:1px;background:var(--line);margin:.2rem auto}
-#server-list{flex:1;display:flex;flex-direction:column;align-items:center;gap:.5rem;overflow-y:auto;padding:.45rem 0;min-height:0;scrollbar-width:none}
+#server-list{flex:1;display:flex;flex-direction:column;align-items:center;gap:.5rem;overflow-y:auto;padding:.45rem .75rem;min-height:0;scrollbar-width:none}
 #server-list::-webkit-scrollbar,#dm-rail::-webkit-scrollbar{display:none}
 /* unread DM senders live under Home until opened */
-#dm-rail{display:flex;flex-direction:column;align-items:center;gap:.45rem;flex-shrink:1;min-height:0;overflow-y:auto;max-height:40vh;scrollbar-width:none}
+/* Horizontal + bottom padding keeps the badge's overhang inside the scroll
+   box (scroll containers clip on both axes; the clip edge is the padding box). */
+#dm-rail{display:flex;flex-direction:column;align-items:center;gap:.45rem;flex-shrink:1;min-height:0;overflow-y:auto;max-height:40vh;scrollbar-width:none;padding:.15rem .5rem .5rem}
 #dm-rail:empty{display:none}
 .rail-foot{display:flex;flex-direction:column;align-items:center;gap:.45rem;padding:.55rem 0 .7rem;flex-shrink:0}
 /* Fill the 48px rail button exactly so no --panel-2 grey peeks around the
