@@ -713,10 +713,12 @@ async function loadUserGaming(box, username, opts = {}) {
           const game = card.dataset.game;
           const meta = card.querySelector('.pf-game-meta')?.textContent || '';
           const menuItems = () => [{ label: 'Remove game', icon: '🗑', danger: true, fn: () => doRemoveGame(game) }];
-          // Desktop: right-click menu
+          // Desktop: right-click menu (on touch devices the long-press sheet below owns this;
+          // the browser's synthetic contextmenu must not also pop the floating menu)
           card.oncontextmenu = (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (isCoarse()) return;
             openCtx(e.clientX, e.clientY, menuItems());
           };
           // Touch: long-press opens the bottom sheet
@@ -729,7 +731,8 @@ async function loadUserGaming(box, username, opts = {}) {
             lt = setTimeout(() => {
               lt = null;
               try { navigator.vibrate && navigator.vibrate(10); } catch {}
-              openCtxSheet(menuItems(), { title: game, sub: meta });
+              if (isCoarse()) openCtxSheet(menuItems(), { title: game, sub: meta });
+              else openCtx(sx, sy, menuItems());
             }, 550);
           }, { passive: true });
           card.addEventListener('touchmove', (e) => {
