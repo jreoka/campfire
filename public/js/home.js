@@ -151,7 +151,7 @@ function activeCard(c) {
   const stLine = (!c.off && c.f.status_text) ? `<span class="anow-sub">${esc(c.f.status_text)}</span>` : '';
   el.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="anow-main"><span class="anow-name" style="${nameStyleFor(c.f)}">${esc(c.f.display_name)}</span><span class="anow-sub">@${esc(c.f.username)}</span>${stLine}${act}</span>`;
   paintAvatar(el.querySelector('.avatar'), c.f);
-  el.onclick = (e) => openUserCard(c.f.id, e.clientX, e.clientY);
+  el.onclick = (e) => openMemberCard(c.f.id, el);
   return el;
 }
 async function renderActiveNow() {

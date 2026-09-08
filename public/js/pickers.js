@@ -410,7 +410,7 @@ async function saveEdit(mid) {
     }
     return;
   }
-  if (memberEl?.dataset.uid) { const r = memberEl.getBoundingClientRect(); openUserCard(memberEl.dataset.uid, r.right + 8, r.top); return; }
+  if (memberEl?.dataset.uid) { openMemberCard(memberEl.dataset.uid, memberEl); return; }
   if (uidEl?.dataset.uid) { openUserCard(uidEl.dataset.uid, e.clientX, e.clientY); return; }
 });
 
@@ -559,6 +559,13 @@ function openLightbox(src) {
 $('#lightbox').onclick = () => { $('#lightbox').classList.add('hidden'); $('#lightbox-img').src = ''; };
 
 // ---------- user card ----------
+// Member-rail cards open to the LEFT of the sidebar, never over it.
+function openMemberCard(uid, rowEl, y) {
+  const p = $('#members')?.getBoundingClientRect();
+  const r = rowEl?.getBoundingClientRect?.();
+  const w = Math.min(300, innerWidth - 16);
+  openUserCard(uid, (p && p.width ? p.left : (r ? r.left : innerWidth)) - w - 8, r ? r.top : y);
+}
 async function openUserCard(uid, x, y) {
   if (S.me && uid !== S.me.id) await ensureFriends();
   const u = memberById(uid);

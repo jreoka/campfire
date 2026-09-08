@@ -333,7 +333,7 @@ function memberCtxMenu(uid, x, y) {
   const u = memberById(uid);
   if (!u) return;
   const items = [
-    { label: 'View profile', icon: '👤', fn: () => openUserCard(uid, x, y) },
+    { label: 'View profile', icon: '👤', fn: () => openMemberCard(uid, null, y) },
     { label: `Mention @${u.username}`, icon: '@', fn: () => { insertAtCursor($('#in-message'), '@' + u.username + ' '); $('#in-message').focus(); } },
   ];
   if (S.me && uid !== S.me.id) {
