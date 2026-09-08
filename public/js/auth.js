@@ -7,13 +7,20 @@ let mode = 'login';
 // so the widget resets after every submit attempt.
 S.turnstileKey = null; S.tsWidget = undefined;
 let tsNeeded = false; // submit was pressed: the captcha area may now appear
+let submitting = false; // a submit is in flight (guards against double-fire)
 function renderTurnstile() {
   if (!S.turnstileKey || !window.turnstile || S.tsWidget !== undefined) return;
   const slot = document.querySelector('#ts-widget');
   if (!slot) return;
   try {
     slot.innerHTML = '';
-    S.tsWidget = turnstile.render(slot, { sitekey: S.turnstileKey, theme: 'dark' });
+    // callback fires when the challenge is solved (or auto-passes). If the
+    // user already pressed submit, re-submit automatically — no second click.
+    S.tsWidget = turnstile.render(slot, {
+      sitekey: S.turnstileKey,
+      theme: 'dark',
+      callback: () => { if (tsNeeded && !submitting) doAuthSubmit(); },
+    });
   } catch { S.tsWidget = undefined; }
 }
 // Shows + renders the captcha area if it's ready; true when it's visible
@@ -30,9 +37,10 @@ function showTurnstile() {
 // finishes loading. Assigned here so it exists before the async script runs.
 // Only surfaces the widget if the user has already pressed submit.
 window.cfTurnstileReady = () => {
-  if (!tsNeeded || !S.turnstileKey || S.tsWidget !== undefined) return;
+  if (!S.turnstileKey || S.tsWidget !== undefined) return;
   renderTurnstile();
   if (S.tsWidget !== undefined) $('#ts-wrap').classList.remove('hidden');
+  if (tsNeeded) doAuthSubmit(); // submit was pressed while the script loaded
 };
 async function initTurnstile() {
   try {
@@ -64,25 +72,34 @@ function setMode(m) {
 }
 $('#tab-login').onclick = () => setMode('login');
 $('#tab-register').onclick = () => setMode('register');
-$('#form-auth').addEventListener('submit', async (e) => {
+$('#form-auth').addEventListener('submit', (e) => {
   e.preventDefault();
-  const username = $('#in-username').value.trim();
-  const password = $('#in-password').value;
-  const displayName = $('#in-display').value.trim();
-  $('#auth-error').classList.add('hidden');
-  if (mode === 'register' && password !== $('#in-confirm').value) {
-    authError('Passwords do not match.');
-    return;
-  }
-  if (S.turnstileKey) {
-    tsNeeded = true;
-    if (!showTurnstile()) { authError('Captcha still loading — wait a moment and try again.'); return; }
-    if (!turnstileToken()) { authError('Complete the captcha to continue.'); return; }
-  }
+  doAuthSubmit();
+});
+// Shared submit path: the button and the Turnstile completion callback both
+// funnel here, so solving the captcha after the first click submits on its own.
+async function doAuthSubmit() {
+  if (submitting) return;
+  submitting = true;
   try {
+    const username = $('#in-username').value.trim();
+    const password = $('#in-password').value;
+    const displayName = $('#in-display').value.trim();
+    $('#auth-error').classList.add('hidden');
+    if (mode === 'register' && password !== $('#in-confirm').value) {
+      authError('Passwords do not match.');
+      return;
+    }
+    let token = '';
+    if (S.turnstileKey) {
+      tsNeeded = true;
+      if (!showTurnstile()) { authError('Captcha still loading — wait a moment and try again.'); return; }
+      token = turnstileToken();
+      if (!token) { authError('Complete the captcha to continue.'); return; }
+    }
     const data = mode === 'login'
-      ? await api('/api/login', { method: 'POST', body: JSON.stringify({ username, password, turnstile: turnstileToken(), device: deviceName() }) })
-      : await api('/api/register', { method: 'POST', body: JSON.stringify({ username, password, displayName, turnstile: turnstileToken(), device: deviceName() }) });
+      ? await api('/api/login', { method: 'POST', body: JSON.stringify({ username, password, turnstile: token, device: deviceName() }) })
+      : await api('/api/register', { method: 'POST', body: JSON.stringify({ username, password, displayName, turnstile: token, device: deviceName() }) });
     if (data.need2fa) { pending2faTmp = data.tmp; show2faStep(); return; }
     store.token = data.token;
     if (data.sid) store.sid = data.sid;
@@ -92,9 +109,10 @@ $('#form-auth').addEventListener('submit', async (e) => {
     el.textContent = '⚠️ ' + prettyError(err.message);
     el.classList.remove('hidden');
   } finally {
+    submitting = false;
     turnstileReset();
   }
-});
+}
 function prettyError(e) {
   const map = {
     invalid_login: 'Wrong username or password.', username_taken: 'That username is taken.',
