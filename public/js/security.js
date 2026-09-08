@@ -301,9 +301,13 @@ $('#me-card').onclick = () => {
   if (!card.classList.contains('hidden') && card.dataset.uid === S.me.id) { closeUserCard(); return; }
   const r = $('#me-card').getBoundingClientRect();
   openUserCard(S.me.id, r.left, r.top);
-  const h = card.getBoundingClientRect().height || 300;
+  // Bottom-anchored so the card grows upward as content (gaming, bio) loads
+  // and can never slide down over the name/avatar area.
   card.style.left = Math.max(8, Math.min(r.left, innerWidth - Math.min(296, innerWidth - 16))) + 'px';
-  card.style.top = Math.max(8, Math.min(r.top - h - 8, innerHeight - h - 8)) + 'px';
+  card.style.top = 'auto';
+  card.style.bottom = (innerHeight - r.top + 8) + 'px';
+  card.style.maxHeight = Math.max(200, r.top - 16) + 'px';
+  card.style.overflowY = 'auto';
 };
 function renderServerHeader() {
   const d = S.serverDetail;

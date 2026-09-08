@@ -319,7 +319,29 @@ function dotOf(st) { return st === 'invisible' ? 'offline' : st; }
 function paintMe() {
   if (!S.me) return;
   paintAvatar($('#me-avatar'), S.me);
-  $('#me-name').textContent = S.me.display_name;
+  const st = S.me.status || 'online';
+  const off = isOff(st);
+  const dot = dotOf(st);
+  $('#me-avwrap').className = 'avwrap st-' + dot;
+  $('#me-dot').className = 'status-dot ' + dot;
+  const name = $('#me-name');
+  name.textContent = S.me.display_name;
+  name.style.cssText = nameStyleFor(S.me);
+  const card = $('#me-card');
+  if (S.me.sidebar_banner_url && !off) {
+    card.style.backgroundImage = `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${S.me.sidebar_banner_url}")`;
+    card.style.backgroundSize = 'cover';
+    card.style.backgroundPosition = 'right center';
+  } else {
+    card.style.backgroundImage = '';
+  }
+  card.classList.toggle('off', off);
+  const sub = $('#me-sub');
+  if (S.me.status_text && !off) { sub.textContent = S.me.status_text; sub.title = S.me.status_text; sub.style.display = ''; }
+  else { sub.textContent = ''; sub.style.display = 'none'; }
+  const gm = $('#me-game');
+  if (S.me.playing_game && !off) { gm.textContent = 'Playing ' + S.me.playing_game; gm.title = 'Playing ' + S.me.playing_game; gm.style.display = ''; }
+  else { gm.textContent = ''; gm.style.display = 'none'; }
 }
 function mentionsMe(msg) {
   if (!msg || !msg.content || !S.me) return false;

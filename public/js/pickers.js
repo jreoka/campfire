@@ -586,6 +586,7 @@ async function openUserCard(uid, x, y) {
     </div>`;
   paintAvatar(card.querySelector('.avatar'), u);
   loadUserGaming($('#uc-gaming'), u.username, { compact: true });
+  card.style.bottom = ''; card.style.maxHeight = ''; card.style.overflowY = '';
   card.classList.remove('hidden');
   const r = card.getBoundingClientRect();
   card.style.left = Math.max(8, Math.min(x || 8, innerWidth - Math.min(296, innerWidth - 16))) + 'px';

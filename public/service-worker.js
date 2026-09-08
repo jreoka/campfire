@@ -9,7 +9,7 @@
  *   never force-reloads pages itself, so a fresh SW install can't yank a
  *   tab out from under its first load.
  */
-const CACHE = 'campfire-v190';
+const CACHE = 'campfire-v191';
 const SHELL = ['/', '/index.html', '/styles.css', '/embeds.js', '/js/core.js', '/js/auth.js', '/js/noise.js', '/js/servers.js', '/js/messages.js', '/js/socket.js', '/js/ui.js', '/js/voice.js', '/js/actions.js', '/js/rail.js', '/js/home.js', '/js/pins.js', '/js/compose.js', '/js/pickers.js', '/js/settings.js', '/js/admin.js', '/js/security.js', '/js/final.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/campfire-logo.png', '/favicon.ico', '/favicon-32.png', '/emoji.json'];
 
 self.addEventListener('install', (e) => {
