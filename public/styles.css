@@ -518,6 +518,37 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .pf-since{font-size:.8rem;color:var(--muted)}
 .pf-gaming{display:block}
 .pf-actions{display:flex;flex-wrap:wrap;gap:.4rem}
+/* redesigned gaming profile */
+.uc-gaming-head{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:.35rem}
+.uc-gaming-now{font-size:.8rem;color:var(--accent);font-weight:500;margin-bottom:.25rem}
+.uc-gaming-row{display:flex;justify-content:space-between;gap:.5rem;font-size:.8rem;padding:.14rem 0;border-bottom:1px solid var(--line)}
+.uc-gaming-row:last-child{border-bottom:0}
+.uc-gaming-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.uc-gaming-meta{color:var(--muted);flex-shrink:0}
+.pf-gaming-head{display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin-bottom:.55rem}
+.pf-gaming-title{font-size:.85rem;font-weight:600}
+.pf-gaming-total{font-size:.8rem;color:var(--muted)}
+.pf-gaming-now{font-size:.9rem;color:var(--accent);font-weight:500;margin:-.2rem 0 .5rem}
+.pf-gaming-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.55rem}
+.pf-game-card{background:var(--panel-3);border:1px solid var(--line);border-radius:16px;padding:.7rem;display:flex;align-items:center;gap:.7rem;position:relative;transition:background .15s}
+.pf-game-card:hover{background:var(--line)}
+.pf-game-icon{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;font-weight:700;color:#fff;flex-shrink:0}
+.pf-game-info{min-width:0;flex:1}
+.pf-game-name{font-weight:600;font-size:.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pf-game-meta{font-size:.78rem;color:var(--muted);margin-top:.15rem}
+.pf-game-badges{display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.35rem}
+.pf-badge{font-size:.7rem;font-weight:600;padding:.2rem .45rem;border-radius:999px;background:var(--panel-2);color:var(--text)}
+.pf-badge.lv{background:#5b6cff22;color:#5b6cff}
+.pf-badge.streak{background:#2ed57322;color:#2ed573}
+.pf-game-del{position:absolute;top:.5rem;right:.5rem;opacity:0;transition:opacity .15s}
+.pf-game-card:hover .pf-game-del{opacity:1}
+@media (max-width:700px){.pf-game-del{opacity:1}}
+/* settings games list */
+.set-games-list{display:flex;flex-direction:column;gap:.4rem}
+.set-game-row{display:flex;align-items:center;gap:.65rem;background:var(--panel-3);border:1px solid var(--line);border-radius:14px;padding:.5rem .7rem}
+.set-game-icon{width:36px;height:36px;border-radius:10px;background:var(--panel-2);display:flex;align-items:center;justify-content:center;font-size:.95rem;font-weight:700;color:var(--accent);flex-shrink:0}
+.set-game-info{min-width:0;flex:1}
+.set-game-name{font-weight:500;font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (max-width:820px){ #profile-backdrop{padding:0} .profile{max-width:none;max-height:none;height:100%;border-radius:0} }
 .avatar.big{width:56px;height:56px;font-size:1.3rem}
 .avatar img,.avatar-img{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block}

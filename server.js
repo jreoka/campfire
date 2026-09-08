@@ -356,9 +356,11 @@ function publicUser(u) {
     status: u.status || 'online', status_text: u.status_text || '', playing_game: u.playing_game || null, bio: u.bio || '',
     name_color: u.name_color || '', name_gradient: u.name_gradient || '',
     created_at: u.created_at || null,
+    game_enabled: u.game_enabled === undefined ? 1 : u.game_enabled,
+    game_exclusions: u.game_exclusions || '[]',
   };
 }
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, playing_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, playing_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -1241,6 +1243,14 @@ app.patch('/api/me', authRequired, (req, res) => {
     if (c && !/^#[0-9a-fA-F]{6}$/.test(c)) return res.status(400).json({ error: 'bad_color' });
     sets.push('name_gradient = ?'); vals.push(c || '');
   }
+  if (req.body?.gameEnabled !== undefined) {
+    sets.push('game_enabled = ?'); vals.push(req.body.gameEnabled ? 1 : 0);
+  }
+  if (req.body?.gameExclusions !== undefined) {
+    const arr = Array.isArray(req.body.gameExclusions) ? req.body.gameExclusions : [];
+    const clean = [...new Set(arr.map((x) => String(x).trim()).filter((x) => GAME_RE.test(x)))].slice(0, 200);
+    sets.push('game_exclusions = ?'); vals.push(JSON.stringify(clean));
+  }
   if (!sets.length) return res.status(400).json({ error: 'nothing_to_update' });
   vals.push(req.user.id);
   db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
@@ -1302,29 +1312,39 @@ function dayStreak(userId, where, params) {
   return { streak, best };
 }
 function gamingFor(userId) {
+  const u = db.prepare('SELECT game_enabled, game_exclusions FROM users WHERE id = ?').get(userId);
+  const exclusions = new Set(JSON.parse(u?.game_exclusions || '[]'));
   const games = db.prepare('SELECT game, total_ms, first_seen_ms, last_seen_ms FROM user_games WHERE user_id = ? ORDER BY total_ms DESC').all(userId);
-  const out = games.map((g) => {
-    const s = dayStreak(userId, 'AND game = ?', [userId, g.game]);
-    return { game: g.game, total_ms: g.total_ms, level: levelForMs(g.total_ms), streak: s.streak, best_streak: s.best, last_seen_ms: g.last_seen_ms };
-  });
-  const total_ms = games.reduce((a, g) => a + g.total_ms, 0);
+  const out = games
+    .filter((g) => !exclusions.has(g.game))
+    .map((g) => {
+      const s = dayStreak(userId, 'AND game = ?', [userId, g.game]);
+      return { game: g.game, total_ms: g.total_ms, level: levelForMs(g.total_ms), streak: s.streak, best_streak: s.best, last_seen_ms: g.last_seen_ms };
+    });
+  const total_ms = out.reduce((a, g) => a + g.total_ms, 0);
   const s = dayStreak(userId, '', [userId]);
   return { total_ms, level: levelForMs(total_ms), streak: s.streak, best_streak: s.best, games: out.slice(0, 10) };
 }
 app.post('/api/watcher/status', authRequired, (req, res) => {
   const raw = req.body || {};
-  const game = raw.game == null ? null : String(raw.game).trim();
-  if (game && !GAME_RE.test(game)) return res.status(400).json({ error: 'bad_game' });
+  const rawGame = raw.game == null ? null : String(raw.game).trim();
+  if (rawGame && !GAME_RE.test(rawGame)) return res.status(400).json({ error: 'bad_game' });
   const now = Date.now();
   const ts = Math.max(now - 60 * 60 * 1000, Math.min(now + 5 * 60 * 1000, Number(raw.ts) || now));
   const u = req.user;
+  const exclusions = new Set(JSON.parse(u.game_exclusions || '[]'));
+  const enabled = u.game_enabled !== 0;
+  const game = (enabled && rawGame && !exclusions.has(rawGame)) ? rawGame : null;
   const prev = freshUser(u.id).playing_game;
   const last = lastBeacon.get(u.id);
-  if (game) {
-    if (last && last.game === game) creditPlay(u.id, game, Math.min(ts - last.ts, BEACON_CAP_MS), ts);
-    else if (last && last.game) creditPlay(u.id, last.game, Math.min(now - last.ts, BEACON_CAP_MS), last.ts);
-    if (prev !== game) db.prepare('UPDATE users SET playing_game = ? WHERE id = ?').run(game, u.id);
-  } else if (prev) {
+  if (last && last.game === game) {
+    if (game) creditPlay(u.id, game, Math.min(ts - last.ts, BEACON_CAP_MS), ts);
+  } else if (last && last.game) {
+    creditPlay(u.id, last.game, Math.min(now - last.ts, BEACON_CAP_MS), last.ts);
+  }
+  if (game && prev !== game) {
+    db.prepare('UPDATE users SET playing_game = ? WHERE id = ?').run(game, u.id);
+  } else if (!game && prev) {
     db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(u.id);
   }
   lastBeacon.set(u.id, { ts, game });
@@ -1345,6 +1365,27 @@ app.get('/api/users/:username/gaming', authRequired, (req, res) => {
   res.json(gamingFor(t.id));
 });
 app.get('/api/me/gaming', authRequired, (req, res) => res.json(gamingFor(req.user.id)));
+app.get('/api/me/games', authRequired, (req, res) => {
+  const games = db.prepare('SELECT game, total_ms, first_seen_ms, last_seen_ms FROM user_games WHERE user_id = ? ORDER BY total_ms DESC').all(req.user.id);
+  const exclusions = new Set(JSON.parse(req.user.game_exclusions || '[]'));
+  res.json({
+    enabled: req.user.game_enabled !== 0,
+    exclusions: [...exclusions],
+    games: games.map((g) => ({ ...g, excluded: exclusions.has(g.game) })),
+  });
+});
+app.delete('/api/me/games/:game', authRequired, (req, res) => {
+  const game = String(req.params.game).trim();
+  if (!game || !GAME_RE.test(game)) return res.status(400).json({ error: 'bad_game' });
+  db.prepare('DELETE FROM user_games WHERE user_id = ? AND game = ?').run(req.user.id, game);
+  db.prepare('DELETE FROM game_days WHERE user_id = ? AND game = ?').run(req.user.id, game);
+  if (freshUser(req.user.id).playing_game === game) {
+    db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(req.user.id);
+    const u2 = freshUser(req.user.id);
+    broadcastUserUpdate(u2);
+  }
+  res.json({ ok: true });
+});
 
 // set avatar/banner from a URL (e.g. a Klipy GIF) instead of an upload
 function setProfileUrl(req, res, col, kind, record = true) {

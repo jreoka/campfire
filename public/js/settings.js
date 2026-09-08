@@ -158,8 +158,10 @@ function setSettingsTab(t) {
   document.querySelectorAll('.set-tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
   $('#set-profile').classList.toggle('hidden', t !== 'profile');
   $('#set-account').classList.toggle('hidden', t !== 'account');
+  $('#set-games').classList.toggle('hidden', t !== 'games');
   $('#set-notifs').classList.toggle('hidden', t !== 'notifs');
   if (t === 'notifs') renderNotifsTab();
+  if (t === 'games') renderGamesTab();
 }
 document.querySelectorAll('.set-tab').forEach((b) => (b.onclick = () => { setSettingsTab(b.dataset.tab); if (b.dataset.tab === 'account') { renderSecurityTab(); renderDesktopApp(); } }));
 $('#btn-settings-rail').onclick = () => openSettings('profile');
@@ -337,4 +339,91 @@ async function renderDesktopApp() {
     box.appendChild(note);
   }
   if (inApp) box.appendChild(row);
+}
+async function renderGamesTab() {
+  const box = $('#set-games');
+  if (!box) return;
+  box.innerHTML = '<p class="muted small">Loading…</p>';
+  try {
+    const { enabled, exclusions, games } = await api('/api/me/games');
+    const excludedSet = new Set(exclusions || []);
+    box.innerHTML = '';
+    const h = (t) => { const e = document.createElement('h4'); e.textContent = t; e.style.margin = '1rem 0 .4rem'; box.appendChild(e); };
+    h('Game activity');
+    const glob = document.createElement('label'); glob.className = 'set-check';
+    const globInp = document.createElement('input'); globInp.type = 'checkbox';
+    globInp.checked = !!enabled;
+    glob.appendChild(globInp); glob.appendChild(document.createTextNode(' Show what game I am playing on my profile'));
+    box.appendChild(glob);
+    globInp.onchange = async () => {
+      try {
+        await api('/api/me', { method: 'PATCH', body: JSON.stringify({ gameEnabled: globInp.checked }) });
+        S.me.game_enabled = globInp.checked ? 1 : 0;
+        toast(globInp.checked ? 'Game activity enabled' : 'Game activity hidden');
+      } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+    };
+    const note = document.createElement('p'); note.className = 'muted small';
+    note.textContent = 'When off, no game status is shown and no playtime is tracked.';
+    box.appendChild(note);
+    h('Detected games');
+    if (!games.length) {
+      box.insertAdjacentHTML('beforeend', '<p class="muted small">No games detected yet. Play something with the desktop app running to see it here.</p>');
+      return;
+    }
+    const list = document.createElement('div'); list.className = 'set-games-list';
+    for (const g of games) {
+      const row = document.createElement('div'); row.className = 'set-game-row';
+      const icon = document.createElement('span'); icon.className = 'set-game-icon';
+      icon.textContent = g.game.charAt(0).toUpperCase();
+      const info = document.createElement('div'); info.className = 'set-game-info';
+      const name = document.createElement('div'); name.className = 'set-game-name'; name.textContent = g.game;
+      const meta = document.createElement('div'); meta.className = 'muted small';
+      meta.textContent = fmtPlay(g.total_ms) + ' · Lv ' + levelForMs(g.total_ms);
+      info.appendChild(name); info.appendChild(meta);
+      const actions = document.createElement('div'); actions.className = 'row'; actions.style.gap = '.35rem';
+      const toggle = document.createElement('button');
+      toggle.className = 'btn small' + (excludedSet.has(g.game) ? '' : ' primary');
+      toggle.textContent = excludedSet.has(g.game) ? 'Ignored' : 'Tracking';
+      toggle.onclick = async () => {
+        const nowExcluded = !excludedSet.has(g.game);
+        if (nowExcluded) excludedSet.add(g.game); else excludedSet.delete(g.game);
+        try {
+          await api('/api/me', { method: 'PATCH', body: JSON.stringify({ gameExclusions: [...excludedSet] }) });
+          S.me.game_exclusions = JSON.stringify([...excludedSet]);
+          toggle.className = 'btn small' + (nowExcluded ? '' : ' primary');
+          toggle.textContent = nowExcluded ? 'Ignored' : 'Tracking';
+          toast(nowExcluded ? g.game + ' ignored' : g.game + ' tracked');
+        } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+      };
+      const del = document.createElement('button'); del.className = 'btn small danger';
+      del.textContent = 'Delete';
+      del.onclick = async () => {
+        const ok = await openConfirmModal({
+          title: 'Remove ' + g.game + '?',
+          message: 'All playtime, levels and streaks for this game will be permanently deleted.',
+          okLabel: 'Remove',
+          danger: true,
+        });
+        if (!ok) return;
+        try {
+          await api('/api/me/games/' + encodeURIComponent(g.game), { method: 'DELETE' });
+          toast(g.game + ' removed from profile');
+          renderGamesTab();
+        } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+      };
+      actions.appendChild(toggle); actions.appendChild(del);
+      row.appendChild(icon); row.appendChild(info); row.appendChild(actions);
+      list.appendChild(row);
+    }
+    box.appendChild(list);
+  } catch {
+    box.innerHTML = '<p class="muted small">Could not load game activity.</p>';
+  }
+}
+function levelForMs(ms) {
+  const min = ms / 60000;
+  const LEVEL_MIN = [0, 60, 180, 480, 1200, 2400, 4800, 9600, 19200, 38400, 76800, 153600];
+  let l = 1;
+  for (let i = 1; i < LEVEL_MIN.length; i++) if (min >= LEVEL_MIN[i]) l = i + 1;
+  return l;
 }

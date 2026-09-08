@@ -582,7 +582,7 @@ async function openUserCard(uid, x, y) {
       <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? '<button class="btn small primary" id="uc-message">Message</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid) : ''}${canMod ? '<button class="btn small danger" id="uc-kick">Kick</button><button class="btn small danger" id="uc-ban">Ban</button>' : ''}${uid !== S.me.id ? `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="uc-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>` : ''}<button class="btn small" id="uc-profile">Profile</button><button class="btn small" id="uc-close">Close</button></div>
     </div>`;
   paintAvatar(card.querySelector('.avatar'), u);
-  loadUserGaming($('#uc-gaming'), u.username);
+  loadUserGaming($('#uc-gaming'), u.username, { compact: true });
   card.classList.remove('hidden');
   const r = card.getBoundingClientRect();
   card.style.left = Math.max(8, Math.min(x || 8, innerWidth - Math.min(296, innerWidth - 16))) + 'px';
@@ -637,14 +637,79 @@ function fmtPlay(ms) {
   if (h < 48) { const m = Math.round((h % 1) * 60); return Math.floor(h) + 'h' + (m ? ' ' + m + 'm' : ''); }
   return Math.floor(h / 24) + 'd ' + Math.round(h % 24) + 'h';
 }
-async function loadUserGaming(box, username) {
+function levelColor(lv) {
+  if (lv >= 10) return '#ff4757';
+  if (lv >= 7) return '#ff6348';
+  if (lv >= 5) return '#ffa502';
+  if (lv >= 3) return '#2ed573';
+  return '#5b6cff';
+}
+async function loadUserGaming(box, username, opts = {}) {
   if (!box) return;
   box.classList.add('hidden');
   try {
     const g = await api('/api/users/' + encodeURIComponent(username) + '/gaming');
     if (!g || !g.total_ms) return;
-    const rows = (g.games || []).map((x) => `<div class="ugame-row"><span class="ugame-name">${esc(x.game)}</span><span class="ugame-meta">${fmtPlay(x.total_ms)} · Lv ${x.level}${x.streak ? ' · ' + x.streak + 'd streak' : ''}${x.best_streak > x.streak ? ' · best ' + x.best_streak + 'd' : ''}</span></div>`).join('');
-    box.innerHTML = `<div class="ugame-title">Gaming</div><div class="ugame-total">All games · ${fmtPlay(g.total_ms)} · Lv ${g.level}${g.streak ? ' · ' + g.streak + 'd streak' : ''}${g.best_streak ? ' · best ' + g.best_streak + 'd' : ''}</div>${rows}`;
+    const { compact, canDelete } = opts;
+    const nowPlaying = g.games.find((x) => x.last_seen_ms && Date.now() - x.last_seen_ms < 300000);
+    if (compact) {
+      const rows = (g.games || []).slice(0, 4).map((x) => `
+        <div class="uc-gaming-row">
+          <span class="uc-gaming-name">${esc(x.game)}</span>
+          <span class="uc-gaming-meta">Lv ${x.level} · ${fmtPlay(x.total_ms)}</span>
+        </div>
+      `).join('');
+      box.innerHTML = `
+        <div class="uc-gaming-head">Gaming · Lv ${g.level} · ${fmtPlay(g.total_ms)}</div>
+        ${nowPlaying ? `<div class="uc-gaming-now">Playing <b>${esc(nowPlaying.game)}</b></div>` : ''}
+        ${rows}`;
+    } else {
+      const cards = (g.games || []).map((x) => {
+        const col = levelColor(x.level);
+        return `
+          <div class="pf-game-card" data-game="${esc(x.game)}">
+            <div class="pf-game-icon" style="background:${col}">${esc(x.game.charAt(0).toUpperCase())}</div>
+            <div class="pf-game-info">
+              <div class="pf-game-name">${esc(x.game)}</div>
+              <div class="pf-game-meta">${fmtPlay(x.total_ms)} · Lv ${x.level}${x.streak ? ' · ' + x.streak + 'd streak' : ''}${x.best_streak > x.streak ? ' · best ' + x.best_streak + 'd' : ''}</div>
+            </div>
+            ${canDelete ? `<button class="btn small danger pf-game-del" data-game="${esc(x.game)}">Remove</button>` : ''}
+            <div class="pf-game-badges">
+              <span class="pf-badge lv" style="background:${col}22;color:${col}">Lv ${x.level}</span>
+              ${x.streak ? `<span class="pf-badge streak">${x.streak}d streak</span>` : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+      box.innerHTML = `
+        <div class="pf-gaming-head">
+          <span class="pf-gaming-title">Gaming</span>
+          <span class="pf-gaming-total">Lv ${g.level} · ${fmtPlay(g.total_ms)}${g.streak ? ' · ' + g.streak + 'd streak' : ''}${g.best_streak ? ' · best ' + g.best_streak + 'd' : ''}</span>
+        </div>
+        ${nowPlaying ? `<div class="pf-gaming-now">Currently playing <b>${esc(nowPlaying.game)}</b></div>` : ''}
+        <div class="pf-gaming-grid">${cards}</div>
+      `;
+      if (canDelete) {
+        box.querySelectorAll('.pf-game-del').forEach((b) => {
+          b.onclick = async (e) => {
+            e.stopPropagation();
+            const game = b.dataset.game;
+            const ok = await openConfirmModal({
+              title: 'Remove ' + game + '?',
+              message: 'All playtime, levels and streaks for this game will be permanently deleted.',
+              okLabel: 'Remove',
+              danger: true,
+            });
+            if (!ok) return;
+            try {
+              await api('/api/me/games/' + encodeURIComponent(game), { method: 'DELETE' });
+              toast(game + ' removed from profile');
+              loadUserGaming(box, username, opts);
+            } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+          };
+        });
+      }
+    }
     box.classList.remove('hidden');
   } catch {}
 }
@@ -674,7 +739,7 @@ function openProfileScreen(uid) {
     ${u.created_at ? `<div class="pf-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
     <div id="pf-gaming" class="pf-gaming hidden"></div>
     <div class="pf-actions">${actions}<button class="btn small" id="pf-close">Close</button></div>`;
-  loadUserGaming($('#pf-gaming'), u.username);
+  loadUserGaming($('#pf-gaming'), u.username, { canDelete: isMe });
   $('#pf-close').onclick = closeProfileScreen;
   const msg = $('#pf-message');
   if (msg) msg.onclick = () => { closeProfileScreen(); messageUser(uid); };

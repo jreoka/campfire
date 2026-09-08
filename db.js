@@ -349,6 +349,8 @@ CREATE TABLE IF NOT EXISTS game_days (
 CREATE INDEX IF NOT EXISTS idx_game_days_user ON game_days(user_id, day);
 `);
 addColumn('users', 'playing_game', 'TEXT');
+addColumn('users', 'game_enabled', 'INTEGER NOT NULL DEFAULT 1');
+addColumn('users', 'game_exclusions', "TEXT NOT NULL DEFAULT '[]'");
 addColumn('attachments', 'spoiler', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('dm_attachments', 'spoiler', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('server_members', 'position', 'INTEGER NOT NULL DEFAULT 0');
