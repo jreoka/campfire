@@ -36,7 +36,7 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
       - name: Publish release
-        uses: soft-matter/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: app-${{ env.RELEASE_TAG }}
           body: "Campfire Windows app (code is unsigned — expect a SmartScreen warning on first run)."
