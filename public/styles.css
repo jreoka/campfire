@@ -576,14 +576,18 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 @media (max-width:820px){
   .settings{max-width:600px}
 }
-.set-tabs{display:flex;flex-direction:column;gap:.25rem;align-items:stretch;padding:.8rem .6rem;min-width:140px}
+.set-tabs{display:flex;flex-direction:column;gap:.25rem;align-items:stretch;padding:.8rem .6rem;min-width:140px;flex-shrink:0;min-height:0;overflow-y:auto}
 .set-tab{text-align:left}
 .set-tab{border:0;background:transparent;color:var(--muted);font-weight:600;font-size:.88rem;padding:.55rem .9rem;border-radius:999px;cursor:pointer}
 .set-tab.active{background:var(--accent-container);color:var(--on-container)}
 .set-body{flex:1;min-width:0;overflow-y:auto;overflow-anchor:none;padding:1.1rem 1.2rem}
 @media (max-width:520px){
   .settings{flex-direction:column}
-  .set-tabs{flex-direction:row;align-items:center;min-width:0}
+  .set-tabs{flex-direction:row;align-items:center;min-width:0;max-width:100%;flex-shrink:0;overflow-x:auto;overflow-y:hidden;padding:.6rem;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
+  .set-tab{flex-shrink:0;white-space:nowrap}
+  .set-tabs .spacer{display:none}
+  #settings-close{flex-shrink:0;margin-left:auto;position:sticky;right:0}
+  .set-body{min-height:0}
 }
 .set-pane label{display:block;font-size:.82rem;font-weight:600;color:var(--muted);margin:.65rem 0}
 .set-check{display:flex;align-items:center;gap:.55rem;font-size:.85rem;font-weight:500;color:var(--text);cursor:pointer}
