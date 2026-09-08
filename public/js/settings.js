@@ -27,7 +27,7 @@ function openSettings(tab = 'profile') {
   loadMediaHist();
   $('#settings-backdrop').classList.remove('hidden');
 }
-function closeSettings() { closePicker(); $('#settings-backdrop').classList.add('hidden'); }
+function closeSettings() { closePicker(); try { stopMediaPreview(); } catch {} $('#settings-backdrop').classList.add('hidden'); }
 // ---------- notifications (Web Push + per-scope prefs) ----------
 const NOTIF_OPTS = [['all', 'All messages'], ['mentions', 'Mentions only'], ['muted', 'Muted']];
 const NOTIF_LABEL = { all: 'All messages', mentions: 'Mentions only', muted: 'Muted' };
@@ -159,16 +159,17 @@ function setSettingsTab(t) {
   $('#set-profile').classList.toggle('hidden', t !== 'profile');
   $('#set-account').classList.toggle('hidden', t !== 'account');
   $('#set-games').classList.toggle('hidden', t !== 'games');
+  $('#set-media').classList.toggle('hidden', t !== 'media');
   $('#set-notifs').classList.toggle('hidden', t !== 'notifs');
   $('#set-admin').classList.toggle('hidden', t !== 'admin');
   if (t === 'notifs') renderNotifsTab();
   if (t === 'games') renderGamesTab();
+  if (t === 'media') renderMediaTab();
+  else if (typeof stopMediaPreview === 'function') stopMediaPreview();
   if (t === 'admin' && typeof renderAdminTab === 'function') renderAdminTab();
 }
 document.querySelectorAll('.set-tab').forEach((b) => (b.onclick = () => { setSettingsTab(b.dataset.tab); if (b.dataset.tab === 'account') { renderSecurityTab(); renderDesktopApp(); } }));
 $('#btn-settings-rail').onclick = () => openSettings('profile');
-$('#set-noise').checked = noiseSuppressionEnabled();
-$('#set-noise').addEventListener('change', (e) => setNoiseSuppression(e.target.checked));
 $('#btn-home').onclick = openHome;
 $('#btn-pins').onclick = openPins;
 $('#jump-present').onclick = jumpToPresent;
@@ -428,4 +429,204 @@ function levelForMs(ms) {
   let l = 1;
   for (let i = 1; i < LEVEL_MIN.length; i++) if (min >= LEVEL_MIN[i]) l = i + 1;
   return l;
+}
+// ---------- media tab (call devices + voice processing) ----------
+let mediaPrev = null; // { micStream, micCtx, micRaf, camStream }
+function stopMicTest() {
+  if (!mediaPrev) return;
+  try { mediaPrev.micStream?.getTracks().forEach((t) => t.stop()); } catch {}
+  try { mediaPrev.micCtx?.close(); } catch {}
+  if (mediaPrev.micRaf) cancelAnimationFrame(mediaPrev.micRaf);
+  mediaPrev.micStream = null; mediaPrev.micCtx = null; mediaPrev.micRaf = null;
+  const b = $('#media-mictest'); if (b) b.textContent = 'Test microphone';
+  const bar = $('#media-micbar'); if (bar) bar.style.width = '0';
+}
+function stopCamPreview() {
+  if (!mediaPrev) return;
+  try { mediaPrev.camStream?.getTracks().forEach((t) => t.stop()); } catch {}
+  mediaPrev.camStream = null;
+  const v = $('#media-camprev'); if (v) v.srcObject = null;
+  const b = $('#media-camtest'); if (b) b.textContent = 'Preview camera';
+}
+function stopMediaPreview() { stopMicTest(); stopCamPreview(); mediaPrev = null; }
+async function startMicTest(micId) {
+  stopMicTest();
+  const b = $('#media-mictest');
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: micId ? { deviceId: { ideal: micId } } : true });
+  } catch { toast('Microphone blocked — allow mic access to test'); return; }
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    const src = ctx.createMediaStreamSource(stream);
+    const an = ctx.createAnalyser(); an.fftSize = 512;
+    src.connect(an);
+    mediaPrev = { ...(mediaPrev || {}), micStream: stream, micCtx: ctx, micRaf: null };
+    const bar = $('#media-micbar');
+    const data = new Uint8Array(an.frequencyBinCount);
+    const tick = () => {
+      if (!mediaPrev || mediaPrev.micStream !== stream) return;
+      an.getByteTimeDomainData(data);
+      let peak = 0;
+      for (let i = 0; i < data.length; i++) peak = Math.max(peak, Math.abs(data[i] - 128) / 128);
+      if (bar) bar.style.width = Math.min(100, Math.round(peak * 140)) + '%';
+      mediaPrev.micRaf = requestAnimationFrame(tick);
+    };
+    mediaPrev.micRaf = requestAnimationFrame(tick);
+    if (b) b.textContent = 'Stop test';
+  } catch { try { stream.getTracks().forEach((t) => t.stop()); } catch {} toast('Could not start mic test'); }
+}
+async function startCamPreview(camId) {
+  stopCamPreview();
+  const b = $('#media-camtest');
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: camId ? { deviceId: { ideal: camId }, width: { ideal: 1280 } } : { width: { ideal: 1280 } } });
+  } catch { toast('Camera blocked — allow camera access to preview'); return; }
+  mediaPrev = { ...(mediaPrev || {}), camStream: stream };
+  const v = $('#media-camprev');
+  if (v) { v.srcObject = stream; v.play().catch(() => {}); }
+  if (b) b.textContent = 'Stop preview';
+}
+async function testSpeakerOutput(speakerId) {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    const dest = ctx.createMediaStreamDestination();
+    o.type = 'sine'; o.frequency.value = 660;
+    const t = ctx.currentTime;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+    o.connect(g); g.connect(dest);
+    const a = new Audio();
+    if (speakerId && typeof a.setSinkId === 'function') { try { await a.setSinkId(speakerId); } catch {} }
+    a.srcObject = dest.stream;
+    o.start(t); o.stop(t + 0.6);
+    await a.play().catch(() => {});
+    setTimeout(() => { try { o.disconnect(); g.disconnect(); ctx.close(); } catch {} }, 900);
+  } catch { try { sfx.join(); } catch {} }
+}
+function onMediaDeviceChange() {
+  if (!$('#set-media') || $('#set-media').classList.contains('hidden')) return;
+  renderMediaTab();
+}
+if (navigator.mediaDevices?.addEventListener) {
+  try { navigator.mediaDevices.removeEventListener('devicechange', onMediaDeviceChange); } catch {}
+  navigator.mediaDevices.addEventListener('devicechange', onMediaDeviceChange);
+}
+async function renderMediaTab() {
+  const box = $('#set-media');
+  if (!box) return;
+  stopMediaPreview();
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    box.innerHTML = '<p class="muted small">Device selection is not supported in this browser.</p>';
+    return;
+  }
+  const mp = mediaPrefs();
+  const sinkOK = 'setSinkId' in HTMLMediaElement.prototype;
+  box.innerHTML = '';
+  const h = (t) => { const e = document.createElement('h4'); e.textContent = t; e.style.margin = '1rem 0 .4rem'; box.appendChild(e); };
+  const mkLabel = (text) => { const l = document.createElement('label'); l.textContent = text; box.appendChild(l); return l; };
+  const mkSelect = (opts, val) => {
+    const sel = document.createElement('select');
+    for (const [v, l] of opts) { const o = document.createElement('option'); o.value = v; o.textContent = l; if (v === val) o.selected = true; sel.appendChild(o); }
+    return sel;
+  };
+  h('Devices');
+  let devs = [];
+  try { devs = await navigator.mediaDevices.enumerateDevices(); } catch {}
+  if (!box.isConnected) return;
+  const mics = devs.filter((d) => d.kind === 'audioinput');
+  const cams = devs.filter((d) => d.kind === 'videoinput');
+  const spks = devs.filter((d) => d.kind === 'audiooutput');
+  const needsPerm = devs.length > 0 && devs.every((d) => !d.label);
+  const micSel = mkSelect([['', 'System default'], ...mics.map((d, i) => [d.deviceId, d.label || ('Microphone ' + (i + 1))])], mp.micId);
+  mkLabel('Microphone').appendChild(micSel);
+  micSel.onchange = () => {
+    saveMediaPref('micId', micSel.value);
+    toast(micSel.value ? 'Microphone saved' : 'Using system default mic');
+    if (mediaPrev?.micStream) startMicTest(micSel.value);
+  };
+  const camSel = mkSelect([['', 'System default'], ...cams.map((d, i) => [d.deviceId, d.label || ('Camera ' + (i + 1))])], mp.camId);
+  mkLabel('Camera').appendChild(camSel);
+  camSel.onchange = () => {
+    saveMediaPref('camId', camSel.value);
+    toast(camSel.value ? 'Camera saved' : 'Using system default camera');
+    if (mediaPrev?.camStream) startCamPreview(camSel.value);
+  };
+  const spkSel = mkSelect([['', 'System default'], ...spks.map((d, i) => [d.deviceId, d.label || ('Speaker ' + (i + 1))])], mp.speakerId);
+  mkLabel('Speakers').appendChild(spkSel);
+  spkSel.onchange = () => {
+    saveMediaPref('speakerId', spkSel.value);
+    applySpeakerOutput();
+    toast(spkSel.value ? 'Speaker output saved' : 'Using system default output');
+  };
+  if (!sinkOK) {
+    const n = document.createElement('p'); n.className = 'muted small';
+    n.textContent = 'This browser always uses the system output — per-device speakers need Chrome or Edge.';
+    box.appendChild(n);
+  }
+  const trow = document.createElement('div'); trow.className = 'row'; trow.style.marginTop = '.5rem';
+  const tbtn = document.createElement('button'); tbtn.className = 'btn small'; tbtn.textContent = 'Play test sound';
+  tbtn.onclick = () => testSpeakerOutput(spkSel.value);
+  trow.appendChild(tbtn);
+  if (needsPerm) {
+    const en = document.createElement('button'); en.className = 'btn small primary'; en.textContent = 'Detect devices';
+    en.onclick = async () => {
+      try { const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: true }); s.getTracks().forEach((t) => t.stop()); } catch {}
+      renderMediaTab();
+    };
+    trow.appendChild(en);
+  }
+  box.appendChild(trow);
+  h('Microphone test');
+  const meter = document.createElement('div'); meter.className = 'mic-meter';
+  meter.innerHTML = '<i id="media-micbar"></i>';
+  box.appendChild(meter);
+  const mrow = document.createElement('div'); mrow.className = 'row'; mrow.style.marginTop = '.5rem';
+  const mbtn = document.createElement('button'); mbtn.className = 'btn small'; mbtn.id = 'media-mictest'; mbtn.textContent = 'Test microphone';
+  mbtn.onclick = () => { if (mediaPrev?.micStream) stopMicTest(); else startMicTest(micSel.value); };
+  mrow.appendChild(mbtn);
+  box.appendChild(mrow);
+  h('Camera preview');
+  const pv = document.createElement('div'); pv.className = 'media-preview';
+  pv.innerHTML = '<video id="media-camprev" muted playsinline></video>';
+  box.appendChild(pv);
+  const crow = document.createElement('div'); crow.className = 'row'; crow.style.marginTop = '.5rem';
+  const cbtn = document.createElement('button'); cbtn.className = 'btn small'; cbtn.id = 'media-camtest'; cbtn.textContent = 'Preview camera';
+  cbtn.onclick = () => { if (mediaPrev?.camStream) stopCamPreview(); else startCamPreview(camSel.value); };
+  crow.appendChild(cbtn);
+  box.appendChild(crow);
+  h('Voice processing');
+  const nz = document.createElement('label'); nz.className = 'set-check';
+  const nzInp = document.createElement('input'); nzInp.type = 'checkbox'; nzInp.id = 'set-noise'; nzInp.checked = noiseSuppressionEnabled();
+  nzInp.onchange = () => { setNoiseSuppression(nzInp.checked); toast(nzInp.checked ? 'Noise suppression on' : 'Noise suppression off'); };
+  nz.appendChild(nzInp); nz.appendChild(document.createTextNode(' RNNoise noise suppression — removes fans and background hum'));
+  box.appendChild(nz);
+  const ec = document.createElement('label'); ec.className = 'set-check';
+  const ecInp = document.createElement('input'); ecInp.type = 'checkbox'; ecInp.checked = mp.ec;
+  ecInp.onchange = () => { saveMediaPref('ec', ecInp.checked); toast(ecInp.checked ? 'Echo cancellation on' : 'Echo cancellation off'); };
+  ec.appendChild(ecInp); ec.appendChild(document.createTextNode(' Echo cancellation'));
+  box.appendChild(ec);
+  const ag = document.createElement('label'); ag.className = 'set-check';
+  const agInp = document.createElement('input'); agInp.type = 'checkbox'; agInp.checked = mp.agc;
+  agInp.onchange = () => { saveMediaPref('agc', agInp.checked); toast(agInp.checked ? 'Auto gain control on' : 'Auto gain control off'); };
+  ag.appendChild(agInp); ag.appendChild(document.createTextNode(' Automatic gain control — keeps your volume steady'));
+  box.appendChild(ag);
+  h('Video quality');
+  const qSel = mkSelect(Object.entries(V_QUALITY).map(([v, q]) => [v, q.label + (v === 'high' ? ' (best)' : '')]), mp.quality);
+  mkLabel('Camera resolution').appendChild(qSel);
+  qSel.onchange = () => {
+    saveMediaPref('quality', qSel.value);
+    if (S.voice) for (const [, pc] of S.voice.pcs) for (const s of pc.getSenders()) applySenderQuality(s);
+    toast('Video quality saved');
+  };
+  const note = document.createElement('p'); note.className = 'muted small media-note';
+  note.textContent = S.voice
+    ? 'Microphone, camera and quality apply to your next call — rejoin to pick them up. Speaker output switches immediately.'
+    : 'Microphone, camera and quality apply when you join a call. Speaker output switches immediately.';
+  box.appendChild(note);
 }

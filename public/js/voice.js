@@ -98,9 +98,10 @@ function updateCallHead() {
 async function joinVoice(serverId, channelId) {
   if (S.voice && S.voice.serverId === serverId && S.voice.channelId === channelId) return; // already here
   leaveVoice(true);
+  const mp = mediaPrefs();
   let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: mp.ec, noiseSuppression: true, autoGainControl: mp.agc, ...(mp.micId ? { deviceId: { ideal: mp.micId } } : {}) }, video: false });
   } catch {
     toast('Microphone blocked — allow mic access to join voice');
     return;
@@ -112,7 +113,7 @@ async function joinVoice(serverId, channelId) {
     catch { sendStream = stream; } // fall back to raw mic if RNNoise can't start
   }
   const ch = S.serverDetail?.channels.find((c) => c.id === channelId);
-  S.voice = { serverId, channelId, stream: sendStream, micStream: stream, noise, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, cameraOn: false, sharing: false, quality: 'high', speaking: false, audioEls: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
+  S.voice = { serverId, channelId, stream: sendStream, micStream: stream, noise, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, cameraOn: false, sharing: false, quality: mp.quality, speaking: false, audioEls: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
   $('#voice-bar').classList.remove('hidden');
   $('#voice-fab').classList.remove('hidden');
   $('#voice-chan-name').textContent = ch ? ch.name : 'voice';
@@ -213,6 +214,32 @@ const V_QUALITY = {
   medium: { label: '480p', w: 854, h: 480, br: 1000000 },
   low: { label: '360p', w: 640, h: 360, br: 500000 },
 };
+// Call device + processing prefs (Settings → Media). Mic/cam/quality apply on
+// the next join; the speaker output applies immediately, even mid-call.
+function mediaPrefs() {
+  let p = {};
+  try { p = JSON.parse(localStorage.getItem('cf_media') || '{}'); } catch {}
+  return {
+    micId: p.micId || '',
+    camId: p.camId || '',
+    speakerId: p.speakerId || '',
+    quality: V_QUALITY[p.quality] ? p.quality : 'high',
+    ec: p.ec !== false,
+    agc: p.agc !== false,
+  };
+}
+function saveMediaPref(k, v) {
+  let p = {};
+  try { p = JSON.parse(localStorage.getItem('cf_media') || '{}'); } catch {}
+  p[k] = v;
+  try { localStorage.setItem('cf_media', JSON.stringify(p)); } catch {}
+}
+function applySpeakerOutput() {
+  if (!S.voice || !('setSinkId' in HTMLMediaElement.prototype)) return;
+  const sp = mediaPrefs().speakerId;
+  if (!sp) return;
+  for (const [, el] of S.voice.audioEls) { try { el.setSinkId(sp).catch(() => {}); } catch {} }
+}
 function applySenderQuality(sender) {
   if (!sender || !S.voice) return;
   const q = V_QUALITY[S.voice.quality] || V_QUALITY.high;
@@ -227,9 +254,10 @@ async function toggleCamera() {
   if (!S.voice) return;
   if (S.voice.cameraOn) { stopCamera(); return; }
   const q = V_QUALITY[S.voice.quality] || V_QUALITY.high;
+  const mpc = mediaPrefs();
   let cam;
   try {
-    cam = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: 30 } }, audio: false });
+    cam = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: 30 }, ...(mpc.camId ? { deviceId: { ideal: mpc.camId } } : {}) }, audio: false });
   } catch { toast('Camera blocked — allow camera access'); return; }
   S.voice.camStream = cam;
   S.voice.cameraOn = true;
@@ -426,6 +454,10 @@ function attachRemoteAudio(peerId, stream) {
   }
   el.muted = !!S.voice.deafened;
   el.srcObject = stream;
+  try {
+    const sp = mediaPrefs().speakerId;
+    if (sp && typeof el.setSinkId === 'function') el.setSinkId(sp).catch(() => {});
+  } catch {}
 }
 function guessRemoteMedia(peerId) {
   const rv = S.voice.remoteVideo.get(peerId);
