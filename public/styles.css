@@ -654,7 +654,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .home-btn.active::before{display:none}
 #home-wrap{position:relative;width:48px;height:48px;flex-shrink:0}
 #home-wrap:has(> .active)::before{content:'';position:absolute;left:-10px;top:50%;transform:translateY(-50%);width:8px;height:28px;border-radius:0 999px 999px 0;background:#fff;z-index:2}
-.home-btn img{width:100%;height:100%;object-fit:cover;display:block;border-radius:inherit}
+.home-btn img{width:88%;height:88%;object-fit:cover;display:block;border-radius:inherit}
 .home-btn:hover img,.home-btn:active img{animation:campfire-flicker .9s ease-in-out infinite}
 @keyframes campfire-flicker{
   0%,100%{transform:scale(1) rotate(0deg)}
