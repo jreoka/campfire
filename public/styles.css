@@ -408,9 +408,14 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .pk-emoji-btn:hover{background:var(--panel-3)}
 .pk-custom{width:34px;height:34px;object-fit:contain;padding:2px}
 .pk-sec{width:100%;font-size:.72rem;font-weight:700;letter-spacing:.06em;color:var(--muted);padding:.5rem .25rem .2rem}
-.pk-gif{border:0;background:transparent;padding:2px;cursor:pointer;border-radius:12px;width:calc(50% - 3px)}
+.pk-gif{position:relative;border:0;background:transparent;padding:2px;cursor:pointer;border-radius:12px;width:calc(50% - 3px)}
 .pk-gif img{width:100%;height:90px;object-fit:cover;border-radius:12px;display:block}
 .pk-gif:hover{outline:2px solid var(--accent)}
+.pk-star{position:absolute;top:5px;right:5px;width:24px;height:24px;border:0;padding:0;background:rgba(9,12,24,.45);cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:8px;opacity:.55;transition:opacity .12s}
+.pk-star svg{width:14px;height:14px;fill:none;stroke:#fff;stroke-width:2}
+.pk-star.on svg{fill:var(--accent);stroke:var(--accent)}
+.pk-star:hover,.pk-gif:hover .pk-star{opacity:1}
+@media (hover:none){.pk-star{opacity:.85}}
 .pk-empty{color:var(--muted);font-size:.85rem;padding:1rem;text-align:center;width:100%}
 .pk-attr{font-size:.72rem;color:var(--muted);text-align:center;padding:.45rem;border-top:1px solid var(--line)}
 .pk-attr a{color:var(--accent);font-weight:700;text-decoration:none}

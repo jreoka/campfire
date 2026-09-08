@@ -317,6 +317,17 @@ CREATE TABLE IF NOT EXISTS notifications (
   read_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_notifs_user ON notifications(user_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS gif_favorites (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  slug TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  thumb TEXT NOT NULL DEFAULT '',
+  gif TEXT NOT NULL,
+  mp4 TEXT,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_gif_favorites_user ON gif_favorites(user_id, created_at DESC);
 `);
 addColumn('attachments', 'spoiler', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('dm_attachments', 'spoiler', 'INTEGER NOT NULL DEFAULT 0');

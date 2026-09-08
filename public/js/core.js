@@ -22,6 +22,7 @@ const S = {
   presenceAll: {}, // userId -> last-seen live status across ALL shared servers (feeds DM member list)
   emoji: {}, // custom server emoji name -> url
   stdEmoji: {}, // standard :shortcode: -> char, warmed from emoji.json at boot
+  gifFavs: null, // my Klipy GIF favorites (server-synced); null = not loaded yet
   replyTo: null, // message being replied to (main composer)
   threadReplyTo: null, // message being replied to (thread composer)
   pendingAtts: [], // uploaded attachments awaiting send

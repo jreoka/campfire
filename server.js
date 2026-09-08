@@ -2230,6 +2230,36 @@ app.get('/api/gifs/trending', authRequired, async (req, res) => {
   catch { res.status(502).json({ error: 'gif_upstream' }); }
 });
 
+// ---------- GIF favorites (per-user, synced across devices) ----------
+const GIF_FAV_SLUG_RE = /^[a-z0-9_-]{1,80}$/;
+const isHttpUrl = (u) => /^https?:\/\//i.test(String(u || ''));
+app.get('/api/me/gif-favorites', authRequired, (req, res) => {
+  res.json({ favorites: db.prepare(
+    `SELECT slug, title, thumb, gif, mp4, created_at
+     FROM gif_favorites WHERE user_id = ? ORDER BY created_at DESC LIMIT 200`
+  ).all(req.user.id) });
+});
+app.post('/api/me/gif-favorites', authRequired, (req, res) => {
+  const b = req.body || {};
+  const slug = String(b.slug || '').trim();
+  const gif = String(b.gif || '').trim();
+  if (!GIF_FAV_SLUG_RE.test(slug) || !isHttpUrl(gif)) return res.status(400).json({ error: 'bad_favorite' });
+  const title = String(b.title || '').trim().slice(0, 120);
+  const thumb = isHttpUrl(b.thumb) ? String(b.thumb) : gif;
+  const mp4 = isHttpUrl(b.mp4) ? String(b.mp4) : null;
+  db.prepare(
+    `INSERT OR REPLACE INTO gif_favorites (user_id, slug, title, thumb, gif, mp4, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(req.user.id, slug, title, thumb, gif, mp4, now());
+  res.json({ slug, title, thumb, gif, mp4, created_at: now() });
+});
+app.delete('/api/me/gif-favorites/:slug', authRequired, (req, res) => {
+  const slug = String(req.params.slug || '').trim();
+  if (!GIF_FAV_SLUG_RE.test(slug)) return res.status(400).json({ error: 'bad_favorite' });
+  db.prepare(`DELETE FROM gif_favorites WHERE user_id = ? AND slug = ?`).run(req.user.id, slug);
+  res.json({ ok: true });
+});
+
 function fullMessage(id, meId) {
   const row = db.prepare(`
     SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,

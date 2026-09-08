@@ -34,6 +34,7 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null) {
   renderEmojiGrid('');
   ensureEmojiData().then(() => { if (S.picker) renderEmojiGrid($('#pk-search').value); });
   if (mode !== 'react') loadGifTrending();
+  loadGifFavs();
   setTimeout(() => $('#pk-search').focus(), 0);
 }
 function closePicker() { $('#picker').classList.add('hidden'); S.picker = null; S.gifPick = null; }
@@ -42,8 +43,10 @@ function setPickerTab(t) {
   document.querySelectorAll('.pk-tab').forEach((b) => b.classList.toggle('active', b.dataset.ptab === t));
   $('#pk-emoji').classList.toggle('hidden', t !== 'emoji');
   $('#pk-gifs').classList.toggle('hidden', t !== 'gifs');
-  $('#pk-klipy').classList.toggle('hidden', t !== 'gifs');
-  $('#pk-search').placeholder = t === 'gifs' ? 'Search KLIPY' : 'Search emoji';
+  $('#pk-favs').classList.toggle('hidden', t !== 'favs');
+  $('#pk-klipy').classList.toggle('hidden', t === 'favs');
+  $('#pk-search').placeholder = t === 'gifs' ? 'Search KLIPY' : t === 'favs' ? 'Search favorites' : 'Search emoji';
+  if (t === 'favs') { if (S.gifFavs !== null) renderFavGrid($('#pk-search').value); else loadGifFavs(); }
 }
 document.querySelectorAll('.pk-tab').forEach((b) => (b.onclick = () => { setPickerTab(b.dataset.ptab); applyPickerSearch($('#pk-search').value || ''); }));
 let emojiData = null, emojiLoadP = null;
@@ -135,8 +138,9 @@ function insertAtCursor(input, text) {
 }
 let gifSearchT = null;
 function applyPickerSearch(q) {
-  const gifsActive = document.querySelector('.pk-tab.active')?.dataset.ptab === 'gifs';
-  if (gifsActive && S.picker?.mode !== 'react') {
+  const active = document.querySelector('.pk-tab.active')?.dataset.ptab;
+  if (active === 'favs') { renderFavGrid(q); return; }
+  if (active === 'gifs' && S.picker?.mode !== 'react') {
     clearTimeout(gifSearchT);
     if (!q.trim()) { loadGifTrending(); return; }
     gifSearchT = setTimeout(() => loadGifSearch(q.trim()), 350);
@@ -145,17 +149,70 @@ function applyPickerSearch(q) {
   }
 }
 $('#pk-search').addEventListener('input', (e) => applyPickerSearch(e.target.value));
+let gifResults = [];
+const STAR_PATH = 'M12 2l2.9 6.9 7.1.6-5.4 4.7 1.6 7-6.2-3.8-6.2 3.8 1.6-7-5.4-4.7 7.1-.6z';
+function gifButton(g, fav, onclick) {
+  const b = document.createElement('button');
+  b.className = 'pk-gif'; b.title = g.title || 'GIF';
+  b.innerHTML = `<img src="${esc(g.thumb || g.preview || g.gif)}" alt="${esc(g.title || 'GIF')}" loading="lazy" />` +
+    `<button class="pk-star${fav ? ' on' : ''}" title="${fav ? 'Remove favorite' : 'Add to favorites'}">` +
+    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${STAR_PATH}"/></svg></button>`;
+  b.onclick = onclick;
+  b.querySelector('.pk-star').onclick = (e) => { e.stopPropagation(); toggleGifFav(g); };
+  return b;
+}
 function renderGifGrid(gifs) {
+  gifResults = gifs || [];
   const box = $('#pk-gifs');
   box.innerHTML = '';
   if (!gifs.length) { box.innerHTML = '<div class="pk-empty">No GIFs found.</div>'; return; }
-  for (const g of gifs) {
-    const b = document.createElement('button');
-    b.className = 'pk-gif'; b.title = g.title || 'GIF';
-    b.innerHTML = `<img src="${esc(g.thumb || g.preview || g.gif)}" alt="${esc(g.title || 'GIF')}" loading="lazy" />`;
-    b.onclick = () => sendGif(g);
-    box.appendChild(b);
+  const favSlugs = new Set((S.gifFavs || []).map((f) => f.slug));
+  for (const g of gifs) box.appendChild(gifButton(g, favSlugs.has(g.slug), () => sendGif(g)));
+}
+// ---------- GIF favorites (per-user, synced across devices) ----------
+async function loadGifFavs() {
+  if (S.gifFavs !== null) return;
+  try {
+    const { favorites } = await api('/api/me/gif-favorites');
+    if (S.gifFavs !== null) return; // superseded by a later load
+    S.gifFavs = favorites;
+  } catch { /* leave null; the tab shows Loading and retries on next open */ }
+  refreshFavViews();
+}
+function renderFavGrid(filter) {
+  const box = $('#pk-favs');
+  box.innerHTML = '';
+  if (S.gifFavs === null) { box.innerHTML = '<div class="pk-empty">Loading…</div>'; return; }
+  const f = String(filter || '').trim().toLowerCase();
+  const favs = (S.gifFavs || []).filter((g) => !f || (g.title || '').toLowerCase().includes(f) || (g.slug || '').includes(f));
+  if (!favs.length) {
+    box.innerHTML = `<div class="pk-empty">${f ? 'No favorites match.' : 'No favorites yet — star a GIF in the GIFs tab.'}</div>`;
+    return;
   }
+  for (const g of favs) box.appendChild(gifButton(g, true, () => sendGif(g)));
+}
+async function toggleGifFav(g) {
+  if (!g || !g.slug) return;
+  const fav = (S.gifFavs || []).some((f) => f.slug === g.slug);
+  try {
+    if (fav) {
+      await api('/api/me/gif-favorites/' + encodeURIComponent(g.slug), { method: 'DELETE' });
+      S.gifFavs = S.gifFavs.filter((f) => f.slug !== g.slug);
+    } else {
+      const saved = await api('/api/me/gif-favorites', {
+        method: 'POST',
+        body: JSON.stringify({ slug: g.slug, title: g.title, thumb: g.thumb, gif: g.gif, mp4: g.mp4 }),
+      });
+      S.gifFavs = [saved, ...((S.gifFavs || []).filter((f) => f.slug !== g.slug))];
+    }
+    refreshFavViews();
+  } catch (err) { toast('Favorites update failed: ' + prettyError(err.message)); }
+}
+function refreshFavViews() {
+  if (!S.picker) return;
+  const active = document.querySelector('.pk-tab.active')?.dataset.ptab;
+  if (active === 'favs') renderFavGrid($('#pk-search').value);
+  else if (active === 'gifs' && gifResults.length) renderGifGrid(gifResults);
 }
 async function loadGifTrending() {
   const box = $('#pk-gifs');
