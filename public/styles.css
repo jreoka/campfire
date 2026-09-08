@@ -539,6 +539,12 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .gbadge svg{width:12px;height:12px;display:block}
 .gbadge img{width:100%;height:100%;object-fit:cover;display:block}
 .uc-statustext.ugame{display:flex;align-items:center;gap:.35rem}
+.uc-sec-label{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin:.55rem 0 .3rem}
+.uc-statusbox{background:var(--panel-3);border:0;border-radius:10px;padding:.55rem .65rem;margin-top:.35rem}
+.uc-status-cur{font-size:.85rem;overflow-wrap:anywhere}
+.uc-status-exp{font-size:.74rem;color:var(--faint);margin-top:.15rem}
+.uc-statusbox .row{display:flex;gap:.4rem;margin-top:.45rem}
+.exp-row{display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.25rem}
 .uc-gaming{margin-top:.6rem}
 .ugame-title{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin-bottom:.35rem}
 .ugame-total{font-size:.8rem;background:var(--panel-3);border-radius:10px;padding:.4rem .6rem;margin-bottom:.4rem;overflow-wrap:anywhere}

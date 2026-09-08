@@ -583,7 +583,8 @@ async function openUserCard(uid, x, y) {
       <div class="uc-name" style="${nameStyleFor(u)}">${esc(u.display_name)}</div>
       <div class="uc-sub">@${esc(u.username)}${u.role === 'owner' ? ' · server owner' : ''}</div>
       <div class="uc-status"><span class="status-dot ${dotOf(st)}"></span><span>${stLabel}</span></div>
-      ${u.status_text ? `<div class="uc-statustext">${esc(u.status_text)}</div>` : ''}
+      ${uid !== S.me.id && u.status_text ? `<div class="uc-statustext">${esc(u.status_text)}</div>` : ''}
+      ${uid === S.me.id ? statusEditHTML() : ''}
       ${u.playing_game ? `<div class="uc-statustext ugame">${gameBadgeHTML(u.playing_game)}<span>Playing ${esc(u.playing_game)}</span></div>` : ''}
       ${u.bio ? `<div class="uc-bio">${renderRich(u.bio)}</div>` : ''}
       ${u.created_at ? `<div class="uc-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
@@ -593,6 +594,10 @@ async function openUserCard(uid, x, y) {
     </div>`;
   paintAvatar(card.querySelector('.avatar'), u);
   paintGameBadge(card.querySelector('.gbadge'));
+  const se = $('#uc-status-edit');
+  if (se) se.onclick = () => openStatusEditor();
+  const sc = $('#uc-status-clear');
+  if (sc) sc.onclick = () => clearMyStatus();
   loadUserGaming($('#uc-gaming'), u.username, { compact: true });
   card.style.bottom = ''; card.style.maxHeight = ''; card.style.overflowY = '';
   card.classList.remove('hidden');
@@ -778,6 +783,76 @@ async function loadUserGaming(box, username, opts = {}) {
     }
     box.classList.remove('hidden');
   } catch {}
+}
+// ---------- custom status quick-edit (own user card) ----------
+function fmtCountdown(ts) {
+  const d = ts - Date.now();
+  if (d <= 0) return 'soon';
+  const m = Math.floor(d / 60000);
+  if (m < 1) return 'in under a minute';
+  if (m < 60) return `in ${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `in ${h}h`;
+  return `in ${Math.floor(h / 24)}d`;
+}
+function statusEditHTML() {
+  const cur = S.me.status_text || '';
+  const exp = +S.me.status_expires_at || 0;
+  const expNote = cur && exp ? `<div class="uc-status-exp">Expires ${fmtCountdown(exp)}</div>` : '';
+  return `<div class="uc-statusbox"><div class="uc-sec-label">Custom status</div>
+    <div class="uc-status-cur">${cur ? esc(cur) : '<span class="muted">Not set</span>'}</div>${expNote}
+    <div class="row"><button class="btn small" id="uc-status-edit">${cur ? 'Edit' : 'Set status'}</button>${cur ? '<button class="btn small danger" id="uc-status-clear">Clear</button>' : ''}</div></div>`;
+}
+function reopenOwnCard() {
+  const card = $('#usercard');
+  openUserCard(S.me.id, parseInt((card && card.style.left) || '8', 10) || 8, parseInt((card && card.style.top) || '8', 10) || 8);
+}
+async function clearMyStatus() {
+  try {
+    const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify({ statusText: '' }) });
+    if (user) { S.me = { ...S.me, ...user }; paintMe(); }
+    toast('Status cleared');
+    reopenOwnCard();
+  } catch (err) { toast(prettyError(err.message)); }
+}
+function openStatusEditor() {
+  const cur = S.me.status_text || '';
+  const curExp = +S.me.status_expires_at || 0;
+  const t0 = Date.now();
+  const midnight = new Date();
+  midnight.setHours(24, 0, 0, 0);
+  const presets = [
+    { label: 'Never', ts: null },
+    { label: '30 min', ts: t0 + 30 * 60e3 },
+    { label: '1 hour', ts: t0 + 3600e3 },
+    { label: '4 hours', ts: t0 + 4 * 3600e3 },
+    { label: 'Tomorrow', ts: midnight.getTime() },
+    { label: '1 week', ts: t0 + 7 * 864e5 },
+  ];
+  let sel = 0;
+  if (curExp) {
+    let best = -1, bd = Infinity;
+    presets.forEach((p, i) => { if (p.ts) { const d = Math.abs(p.ts - curExp); if (d < bd) { bd = d; best = i; } } });
+    if (best > 0 && bd < 5 * 60e3) sel = best;
+  }
+  openModal('Custom status', `
+    <label>Status<input id="m-status-text" maxlength="64" placeholder="What's up?" value="${esc(cur)}" /></label>
+    <div class="uc-sec-label">Clear after</div>
+    <div class="exp-row" id="m-status-exp">${presets.map((p, i) => `<button type="button" class="mini${i === sel ? ' on' : ''}" data-exp="${i}">${p.label}</button>`).join('')}</div>
+  `, 'Save', async () => {
+    const text = ((($('#m-status-text') || {}).value) || '').trim().slice(0, 64);
+    const ts = presets[sel].ts;
+    try {
+      const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify({ statusText: text, statusExpiresAt: text ? ts : null }) });
+      if (user) { S.me = { ...S.me, ...user }; paintMe(); }
+      toast(text ? 'Status updated' : 'Status cleared');
+      reopenOwnCard();
+    } catch (err) { toast(prettyError(err.message)); }
+  });
+  document.querySelectorAll('#m-status-exp [data-exp]').forEach((b) => (b.onclick = () => {
+    sel = +b.dataset.exp;
+    document.querySelectorAll('#m-status-exp [data-exp]').forEach((x) => x.classList.toggle('on', +x.dataset.exp === sel));
+  }));
 }
 // ---------- profile screen (full overlay) ----------
 function openProfileScreen(uid) {

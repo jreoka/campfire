@@ -337,7 +337,7 @@ function serverView(serverId) {
   const channels = db.prepare("SELECT * FROM channels WHERE server_id = ? ORDER BY type DESC, position ASC, created_at ASC").all(serverId);
   const members = db.prepare(`
     SELECT u.id, u.username, u.display_name, u.avatar_color, u.avatar_url, u.banner_url, u.sidebar_banner_url,
-           u.status, u.status_text, u.playing_game, u.bio, u.name_color, u.name_gradient,
+           u.status, u.status_text, u.status_expires_at, u.playing_game, u.bio, u.name_color, u.name_gradient,
            CASE WHEN u.id = s.owner_id THEN 'owner' ELSE 'member' END as role
     FROM server_members m JOIN users u ON u.id = m.user_id JOIN servers s ON s.id = m.server_id
     WHERE m.server_id = ? ORDER BY u.display_name COLLATE NOCASE ASC
@@ -351,13 +351,37 @@ function serverView(serverId) {
   const roles = serverRoles(serverId);
   return { ...s, channels, members, roles };
 }
+// Custom-status expiry: timestamps are ms epochs (null/0 = never). Reads mask
+// already-expired text instantly; the periodic sweep below scrubs the DB
+// and broadcasts the change so every client re-renders.
+function statusExpiryRaw(u) {
+  const ts = Math.floor(Number(u && u.status_expires_at));
+  return Number.isFinite(ts) && ts > 0 ? ts : null;
+}
+function statusExpiryVisible(u) {
+  const ts = statusExpiryRaw(u);
+  return ts && ts > Date.now() ? ts : null;
+}
+function statusTextVisible(u) {
+  if (!u || !u.status_text) return '';
+  const ts = statusExpiryRaw(u);
+  return ts && ts <= Date.now() ? '' : u.status_text;
+}
+function sweepExpiredStatuses() {
+  const t = now();
+  let ids = [];
+  try { ids = db.prepare('SELECT id FROM users WHERE status_expires_at IS NOT NULL AND status_expires_at <= ?').all(t).map((r) => r.id); } catch {}
+  if (!ids.length) return;
+  try { db.prepare('UPDATE users SET status_text = ?, status_expires_at = NULL WHERE status_expires_at IS NOT NULL AND status_expires_at <= ?').run('', t); } catch {}
+  for (const id of ids) { try { broadcastUserUpdate(freshUser(id)); } catch {} }
+}
 function publicUser(u) {
   if (!u) return { id: null, username: 'deleted', display_name: 'deleted user', avatar_color: '#555' };
   return {
     id: u.id, username: u.username, display_name: u.display_name, avatar_color: u.avatar_color || '#5865f2',
     avatar_url: u.avatar_url || null, banner_url: u.banner_url || null,
     sidebar_banner_url: u.sidebar_banner_url || null,
-    status: u.status || 'online', status_text: u.status_text || '', playing_game: u.playing_game || null, bio: u.bio || '',
+    status: u.status || 'online', status_text: statusTextVisible(u), status_expires_at: statusExpiryVisible(u), playing_game: u.playing_game || null, bio: u.bio || '',
     name_color: u.name_color || '', name_gradient: u.name_gradient || '',
     created_at: u.created_at || null,
     game_enabled: u.game_enabled === undefined ? 1 : u.game_enabled,
@@ -370,7 +394,7 @@ function requireSiteAdmin(req, res, next) {
   if (!req.user.is_admin) return res.status(403).json({ error: 'admin_only' });
   next();
 }
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, playing_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, playing_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -1351,6 +1375,23 @@ app.patch('/api/me', authRequired, (req, res) => {
   if (statusText !== undefined) {
     sets.push('status_text = ?'); vals.push(String(statusText).slice(0, 64));
   }
+  // Custom-status expiry (ms epoch; null/0/'' = never, max 30 days out).
+  // Changing the text resets any timer unless a new expiry rides along;
+  // empty text never carries an expiry.
+  let finalExp = undefined; // undefined = leave the column alone
+  if (statusText !== undefined && String(statusText).slice(0, 64) !== (req.user.status_text || '')) finalExp = null;
+  if (req.body?.statusExpiresAt !== undefined) {
+    const v = req.body.statusExpiresAt;
+    if (v === null || v === 0 || v === '') finalExp = null;
+    else {
+      const ts = Math.floor(Number(v));
+      if (!Number.isFinite(ts) || ts <= now() || ts > now() + 30 * 864e5) return res.status(400).json({ error: 'bad_expiry' });
+      finalExp = ts;
+    }
+  }
+  const finalText = statusText !== undefined ? String(statusText).slice(0, 64) : (req.user.status_text || '');
+  if (!finalText) finalExp = null;
+  if (finalExp !== undefined) { sets.push('status_expires_at = ?'); vals.push(finalExp); }
   if (req.body?.bio !== undefined) {
     sets.push('bio = ?'); vals.push(squashBreaks(req.body.bio).trim().slice(0, 300));
   }
@@ -3358,6 +3399,9 @@ app.get('*', (req, res, next) => {
 
 // Clear stale playing_game on startup (watchers will re-beacon within 30s)
 db.prepare('UPDATE users SET playing_game = NULL WHERE playing_game IS NOT NULL').run();
+// Expired custom statuses clear within a minute (reads mask them instantly).
+sweepExpiredStatuses();
+setInterval(sweepExpiredStatuses, 60 * 1000);
 
 // Watcher stale-beacon cleanup: no heartbeat for 90s (3 missed 30s beats)
 // means the watcher died without a goodbye — assume stopped playing.
