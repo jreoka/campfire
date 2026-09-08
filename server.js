@@ -1260,6 +1260,7 @@ app.patch('/api/me', authRequired, (req, res) => {
 const GAME_RE = /^[\p{L}\p{N} .(),&+'\-:]{2,48}$/u;
 const BEACON_CAP_MS = 15 * 60 * 1000;
 const lastBeacon = new Map(); // userId -> { ts, game|null }
+const BEACON_STALE_MS = 5 * 60 * 1000;
 function utcDay(ts) { return new Date(ts).toISOString().slice(0, 10); }
 // Level = 1 + number of playtime thresholds passed (minutes): 1h, 3h, 8h, 20h, 40h, 80h, 160h, 320h, 640h, 1280h, 2560h
 const LEVEL_MIN = [0, 60, 180, 480, 1200, 2400, 4800, 9600, 19200, 38400, 76800, 153600];
@@ -2746,6 +2747,22 @@ app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/') || req.path.startsWith('/ws')) return next();
   res.sendFile(path.join(__dirname, 'public', 'index.html'), { headers: { 'Cache-Control': 'no-store' } });
 });
+
+// Clear stale playing_game on startup (watchers will re-beacon within 30s)
+db.prepare('UPDATE users SET playing_game = NULL WHERE playing_game IS NOT NULL').run();
+
+// Watcher stale-beacon cleanup: if no heartbeat for 5 minutes, assume stopped playing
+setInterval(() => {
+  const stale = Date.now() - BEACON_STALE_MS;
+  for (const [userId, beacon] of lastBeacon.entries()) {
+    if (beacon.ts < stale && beacon.game) {
+      db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(userId);
+      lastBeacon.set(userId, { ts: Date.now(), game: null });
+      const u2 = freshUser(userId);
+      if (u2 && u2.id) broadcastUserUpdate(u2);
+    }
+  }
+}, 60 * 1000);
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[campfire] listening on :${PORT}  db=${process.env.DB_PATH || 'data/campfire.db'}`);

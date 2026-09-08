@@ -182,6 +182,28 @@ fn get_watch_state(app: AppHandle) -> serde_json::Value {
     })
 }
 
+fn clear_game_on_exit<R: Runtime>(app: &AppHandle<R>) {
+    let state = app.state::<State>();
+    let tok = state.token.lock().unwrap().clone();
+    if let Some(tok) = tok {
+        if let Ok(client) = reqwest::blocking::Client::builder()
+            .user_agent("CampfireDesktop/0.1 (Windows)")
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let _ = client
+                .post(format!("{}/api/watcher/status", server_url()))
+                .bearer_auth(&tok)
+                .json(&serde_json::json!({ "game": null, "ts": ts }))
+                .send();
+        }
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
@@ -192,6 +214,12 @@ fn main() {
             signed_in: AtomicBool::new(false),
         })
         .invoke_handler(tauri::generate_handler![get_autostart, set_autostart, get_watch_state])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
             let app = app.handle().clone();
             let icon = tauri::image::Image::from_bytes(ICON_BYTES)?;
@@ -217,7 +245,10 @@ fn main() {
                             };
                             update_tray(app, None);
                         }
-                        "quit" => app.exit(0),
+                        "quit" => {
+                            clear_game_on_exit(app);
+                            app.exit(0);
+                        }
                         _ => {}
                     }
                 })
@@ -298,10 +329,8 @@ fn main() {
                     let tok = state.token.lock().unwrap().clone();
                     if let Some(tok) = tok {
                         let changed = {
-                            let mut last = last_game.lock().unwrap();
-                            let changed = last.as_deref() != game.as_deref();
-                            *last = game.clone();
-                            changed
+                            let last = last_game.lock().unwrap();
+                            last.as_deref() != game.as_deref()
                         };
                         let due_heartbeat =
                             *last_heartbeat.lock().unwrap() + std::time::Duration::from_secs(HEARTBEAT_SECS)
@@ -327,6 +356,7 @@ fn main() {
                                 if due_heartbeat {
                                     *last_heartbeat.lock().unwrap() = std::time::Instant::now();
                                 }
+                                *last_game.lock().unwrap() = game.clone();
                                 update_tray(&app, game.as_deref());
                             }
                         }

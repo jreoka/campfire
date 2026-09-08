@@ -2,9 +2,14 @@ name: Windows app build
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'App version (e.g. 0.1.1)'
+        required: true
+        default: '0.1.0'
   push:
     tags:
-      - 'app-*'
+      - 'app-v*'
 
 permissions:
   contents: write
@@ -18,6 +23,35 @@ jobs:
         with:
           node-version: 22
       - uses: dtolnay/rust-toolchain@stable
+      - name: Resolve version
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -match '^app-v(.+)$') {
+            $ver = $matches[1]
+          } else {
+            $ver = $env:INPUT_VERSION
+          }
+          echo "APP_VERSION=$ver" >> $env:GITHUB_ENV
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+      - name: Bump version in source files
+        shell: pwsh
+        run: |
+          $ver = $env:APP_VERSION
+          # Cargo.toml
+          $ct = Get-Content app/src-tauri/Cargo.toml -Raw
+          $ct = $ct -replace '(?m)^version\s*=\s*"[^"]+"', "version = `"$ver`""
+          Set-Content app/src-tauri/Cargo.toml $ct -NoNewline
+          # tauri.conf.json
+          $tc = Get-Content app/src-tauri/tauri.conf.json -Raw
+          $tc = $tc -replace '"version":\s*"[^"]+"', "`"version`": `"$ver`""
+          Set-Content app/src-tauri/tauri.conf.json $tc -NoNewline
+          # package.json
+          $pj = Get-Content app/package.json -Raw
+          $pj = $pj -replace '"version":\s*"[^"]+"', "`"version`": `"$ver`""
+          Set-Content app/package.json $pj -NoNewline
+          Write-Host "Version bumped to $ver"
       - name: Install npm deps
         working-directory: app
         run: npm install
@@ -31,15 +65,17 @@ jobs:
       - name: Compute release tag
         shell: pwsh
         run: |
-          $tag = if ($env:TAG -and $env:TAG -like 'app-*') { $env:TAG } else { "app-" + (Get-Date -Format "yyyy.MM.dd") }
-          echo "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
-        env:
-          TAG: ${{ github.ref_name }}
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -match '^app-v.+$') {
+            echo "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
+          } else {
+            echo "RELEASE_TAG=app-v$env:APP_VERSION" >> $env:GITHUB_ENV
+          }
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          body: "Campfire Windows app (code is unsigned — expect a SmartScreen warning on first run)."
+          body: "Campfire Windows app v${{ env.APP_VERSION }} (code is unsigned — expect a SmartScreen warning on first run)."
           files: |
             app/src-tauri/target/release/bundle/nsis/*.exe
             app/src-tauri/target/release/bundle/msi/*.msi

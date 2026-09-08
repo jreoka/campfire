@@ -2,7 +2,7 @@
   "$schema": "../schemas/schema.json",
   "identifier": "default",
   "windows": ["main"],
-  "permissions": ["core:default"],
+  "permissions": ["core:default", "core:window:allow-hide"],
   "remote": {
     "urls": ["https://campfire.dill.moe"]
   }
