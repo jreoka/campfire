@@ -153,7 +153,6 @@ async function selectServer(id) {
   S.channelId = null;
   rememberView();
   renderServerList();
-  document.body.classList.remove('nav-open');
   try {
     const { server } = await api('/api/servers/' + id);
     S.serverDetail = server;
@@ -173,7 +172,7 @@ async function selectServer(id) {
     renderChannels();
     renderMembers();
     if (S.srvSetId) { if (server.id === S.srvSetId) renderServerTab(); else closeServerSettings(); }
-    if (S.channelId) selectChannel(S.channelId);
+    if (S.channelId) selectChannel(S.channelId, { keepNav: true });
     else { $('#chan-name').textContent = '—'; $('#messages').innerHTML = ''; }
   } catch (err) {
     toast('Could not load server');
@@ -281,11 +280,13 @@ function confirmDeleteChannel(c) {
     if (S.channelId) selectChannel(S.channelId);
   }, { danger: true });
 }
-async function selectChannel(id) {
+async function selectChannel(id, opts = {}) {
   S.channelId = id;
   rememberView();
   S.callOpen = false;
-  document.body.classList.remove('nav-open');
+  // Mobile: tapping a channel slides the drawer away to reveal the chat.
+  // Server switches pre-select a channel behind the open drawer (keepNav).
+  if (!opts.keepNav) document.body.classList.remove('nav-open');
   $('#chat').classList.remove('call-open');
   renderChannels();
   renderStage();

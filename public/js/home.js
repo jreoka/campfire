@@ -23,7 +23,6 @@ async function openHome() {
   S.callOpen = false;
   $('#chat').classList.remove('call-open');
   document.body.classList.add('view-home');
-  document.body.classList.remove('nav-open');
   $('#server-ui').classList.add('hidden');
   $('#home-ui').classList.remove('hidden');
   $('#btn-home').classList.add('active');
