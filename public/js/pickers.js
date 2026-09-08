@@ -584,7 +584,7 @@ async function openUserCard(uid, x, y) {
       <div class="uc-sub">@${esc(u.username)}${u.role === 'owner' ? ' · server owner' : ''}</div>
       <div class="uc-status"><span class="status-dot ${dotOf(st)}"></span><span>${stLabel}</span></div>
       ${u.status_text ? `<div class="uc-statustext">${esc(u.status_text)}</div>` : ''}
-      ${u.playing_game ? `<div class="uc-statustext ugame">Playing ${esc(u.playing_game)}</div>` : ''}
+      ${u.playing_game ? `<div class="uc-statustext ugame">${gameBadgeHTML(u.playing_game)}<span>Playing ${esc(u.playing_game)}</span></div>` : ''}
       ${u.bio ? `<div class="uc-bio">${renderRich(u.bio)}</div>` : ''}
       ${u.created_at ? `<div class="uc-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
       <div id="uc-gaming" class="uc-gaming hidden"></div>
@@ -592,6 +592,7 @@ async function openUserCard(uid, x, y) {
       <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? '<button class="btn small primary" id="uc-message">Message</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid) : ''}${canMod ? '<button class="btn small danger" id="uc-kick">Kick</button><button class="btn small danger" id="uc-ban">Ban</button>' : ''}${uid !== S.me.id ? `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="uc-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>` : ''}<button class="btn small" id="uc-profile">Profile</button><button class="btn small" id="uc-close">Close</button></div>
     </div>`;
   paintAvatar(card.querySelector('.avatar'), u);
+  paintGameBadge(card.querySelector('.gbadge'));
   loadUserGaming($('#uc-gaming'), u.username, { compact: true });
   card.style.bottom = ''; card.style.maxHeight = ''; card.style.overflowY = '';
   card.classList.remove('hidden');

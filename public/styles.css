@@ -274,7 +274,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .member .mstatus{font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Discord-style presence light: ring on the avatar + corner dot (member list + DM rows) */
 .member .avwrap{position:relative;width:28px;height:28px;flex-shrink:0}
-.dmrow .avwrap{position:relative;width:32px;height:32px;flex-shrink:0}
+.dmrow .avwrap{position:relative;width:28px;height:28px;flex-shrink:0}
 .member .avwrap .avatar,.dmrow .avwrap .avatar{width:100%;height:100%;font-size:.75rem}
 .member .avwrap .avatar::after,.dmrow .avwrap .avatar::after{content:"";position:absolute;inset:-2px;border-radius:50%;border:2px solid rgba(255,255,255,.16);pointer-events:none;z-index:1}
 .member .avwrap.st-online .avatar::after,.dmrow .avwrap.st-online .avatar::after{border-color:var(--green)}
@@ -530,6 +530,15 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .uc-since{font-size:.74rem;color:var(--faint);margin-top:.55rem}
 .uc-statustext.ugame{color:var(--accent-hover);background:var(--accent-dim)}
 .member .mstatus.ugame,.dmrow .dmlast.ugame{color:var(--accent-hover)}
+/* name + game badge row (badge never wraps, name ellipsizes) */
+.mname-row{display:flex;align-items:center;gap:.35rem;min-width:0}
+.mname-row .mname,.mname-row .dmname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#me-card .mname-row{min-width:0}
+#me-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gbadge{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:6px;background:var(--panel-3);color:var(--muted);flex-shrink:0;overflow:hidden}
+.gbadge svg{width:12px;height:12px;display:block}
+.gbadge img{width:100%;height:100%;object-fit:cover;display:block}
+.uc-statustext.ugame{display:flex;align-items:center;gap:.35rem}
 .uc-gaming{margin-top:.6rem}
 .ugame-title{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin-bottom:.35rem}
 .ugame-total{font-size:.8rem;background:var(--panel-3);border-radius:10px;padding:.4rem .6rem;margin-bottom:.4rem;overflow-wrap:anywhere}
@@ -760,12 +769,12 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 #friends-page .dmrow{background:var(--panel);border-radius:var(--r-md);padding:.6rem .85rem;margin-top:.4rem}
 #friends-page .dmrow:hover{background:var(--panel-2)}
 #friends-page .dmrow.active{background:var(--panel-3)}
-.dmrow{display:flex;align-items:center;gap:.55rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:10px;padding:.45rem .6rem;cursor:pointer;transition:background var(--t-fast)}
+.dmrow{display:flex;align-items:center;gap:.5rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:10px;padding:.32rem .6rem;cursor:pointer;transition:background var(--t-fast)}
 .dmrow:hover{background:var(--panel-2)}
 .dmrow.active{background:var(--panel-3)}
-.dmrow .avatar{width:32px;height:32px;font-size:.75rem;flex-shrink:0}
-.dmrow .dmmain{flex:1;min-width:0;line-height:1.3}
-.dmrow .dmname{display:block;font-size:.88rem;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dmrow .avatar{width:28px;height:28px;font-size:.7rem;flex-shrink:0}
+.dmrow .dmmain{flex:1;min-width:0;line-height:1.25}
+.dmrow .dmname{display:block;font-size:.85rem;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dmrow .dmlast{display:block;font-size:.74rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dmrow .mini{flex-shrink:0}
 /* ---------- pins + jump-to-present ---------- */

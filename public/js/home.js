@@ -107,8 +107,10 @@ function friendRowEl(u, extra) {
   const dot = dotOf(st);
   const div = document.createElement('div');
   div.className = 'dmrow';
-  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="dmmain"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span><span class="dmlast">@${esc(u.username)}${u.status_text ? ' · ' + esc(u.status_text) : ''}</span>${u.playing_game && !isOff(st) ? `<span class="dmlast ugame">Playing ${esc(u.playing_game)}</span>` : ''}</span>`;
+  const fPlaying = !isOff(st) && u.playing_game;
+  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="dmmain"><span class="mname-row"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${fPlaying ? gameBadgeHTML(u.playing_game) : ''}</span><span class="dmlast">@${esc(u.username)}${u.status_text ? ' · ' + esc(u.status_text) : (fPlaying ? ` · Playing ${esc(u.playing_game)}` : '')}</span></span>`;
   paintAvatar(div.querySelector('.avatar'), u);
+  paintGameBadge(div.querySelector('.gbadge'));
   if (extra) div.appendChild(extra);
   div.onclick = (e) => { if (e.target.closest('button')) return; openUserCard(u.id, e.clientX, e.clientY); };
   return div;

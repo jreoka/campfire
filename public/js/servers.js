@@ -317,6 +317,50 @@ function statusOf(id) {
 // from everyone else, who just see you as offline.)
 function isOff(st) { return st === 'offline' || st === 'invisible'; }
 function dotOf(st) { return st === 'invisible' ? 'offline' : st; }
+// ---------- game activity badge (Discord-style) ----------
+// Rows stay exactly one sub-line tall: custom status wins the line, the
+// game gets a controller icon that upgrades to its artwork thumbnail once
+// resolved (one cached lookup per game per session).
+const CONTROLLER_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="11" x2="10" y2="11"/><line x1="8" y1="9" x2="8" y2="13"/><line x1="15" y1="12" x2="15.01" y2="12"/><line x1="18" y1="10" x2="18.01" y2="10"/><path d="M17.32 5H6.68a4 4 0 0 0-3.98 3.59C2.6 9.42 2 14.46 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.41-1.41A2 2 0 0 1 9.83 16h4.34a2 2 0 0 1 1.41.59L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.54-.6-6.58-.68-7.26A4 4 0 0 0 17.32 5z"/></svg>';
+const gameArtCache = new Map(); // norm name -> url|null (null = no art)
+const gameArtPending = new Set();
+function normGameName(s) { return String(s || '').toLowerCase().replace(/[®™©]/g, '').replace(/\s+/g, ' ').trim(); }
+function gameArt(name) {
+  const k = normGameName(name);
+  if (!k) return null;
+  if (gameArtCache.has(k)) return gameArtCache.get(k);
+  if (!gameArtPending.has(k)) {
+    gameArtPending.add(k);
+    api('/api/games/icon?game=' + encodeURIComponent(String(name).slice(0, 80))).then(
+      (r) => gameArtCache.set(k, (r && r.url) || null),
+      () => gameArtCache.set(k, null)
+    ).finally(() => {
+      gameArtPending.delete(k);
+      document.querySelectorAll('.gbadge[data-game]').forEach((el) => {
+        if (normGameName(el.dataset.game) === k) paintGameBadge(el);
+      });
+    });
+  }
+  return null;
+}
+function gameBadgeHTML(game) {
+  return `<span class="gbadge" data-game="${esc(game)}">${CONTROLLER_SVG}</span>`;
+}
+function paintGameBadge(el) {
+  if (!el) return;
+  const name = el.dataset.game || '';
+  el.title = 'Playing ' + name;
+  const art = gameArt(name);
+  if (art) {
+    el.innerHTML = '';
+    const img = document.createElement('img');
+    img.src = art; img.alt = ''; img.loading = 'lazy';
+    img.onerror = () => { el.innerHTML = CONTROLLER_SVG; };
+    el.appendChild(img);
+  } else if (!el.querySelector('svg')) {
+    el.innerHTML = CONTROLLER_SVG;
+  }
+}
 function paintMe() {
   if (!S.me) return;
   paintAvatar($('#me-avatar'), S.me);
@@ -337,12 +381,19 @@ function paintMe() {
     card.style.backgroundImage = '';
   }
   card.classList.toggle('off', off);
+  // One sub-line max: custom status wins, otherwise the game. The game
+  // itself always gets the controller/art badge so rows never grow.
   const sub = $('#me-sub');
-  if (S.me.status_text && !off) { sub.textContent = S.me.status_text; sub.title = S.me.status_text; sub.style.display = ''; }
+  const showGameText = !off && S.me.playing_game && !S.me.status_text;
+  const stxt = (!off && S.me.status_text) ? S.me.status_text : (showGameText ? 'Playing ' + S.me.playing_game : '');
+  if (stxt) { sub.textContent = stxt; sub.title = stxt; sub.style.display = ''; }
   else { sub.textContent = ''; sub.style.display = 'none'; }
-  const gm = $('#me-game');
-  if (S.me.playing_game && !off) { gm.textContent = 'Playing ' + S.me.playing_game; gm.title = 'Playing ' + S.me.playing_game; gm.style.display = ''; }
-  else { gm.textContent = ''; gm.style.display = 'none'; }
+  sub.classList.toggle('ugame', !!showGameText);
+  const gb = $('#me-game-badge');
+  if (gb) {
+    if (!off && S.me.playing_game) { gb.style.display = ''; gb.dataset.game = S.me.playing_game; paintGameBadge(gb); }
+    else { gb.style.display = 'none'; gb.innerHTML = ''; gb.dataset.game = ''; }
+  }
 }
 function mentionsMe(msg) {
   if (!msg || !msg.content || !S.me) return false;
@@ -360,8 +411,9 @@ function memberRowEl(m) {
     div.style.backgroundSize = 'cover';
     div.style.backgroundPosition = 'right center';
   }
-  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="mnames"><span style="${nameStyleFor(m)}">${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${m.status_text && !off ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ''}${m.playing_game && !off ? `<span class="mstatus ugame" title="Playing ${esc(m.playing_game)}">Playing ${esc(m.playing_game)}</span>` : ''}</span>`;
+  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="mnames"><span class="mname-row"><span class="mname" style="${nameStyleFor(m)}">${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${!off && m.playing_game ? gameBadgeHTML(m.playing_game) : ''}</span>${(!off && m.status_text) ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ((!off && m.playing_game) ? `<span class="mstatus ugame" title="Playing ${esc(m.playing_game)}">Playing ${esc(m.playing_game)}</span>` : '')}</span>`;
   paintAvatar(div.querySelector('.avatar'), m);
+  paintGameBadge(div.querySelector('.gbadge'));
   return div;
 }
 function memberSort(a, b) {

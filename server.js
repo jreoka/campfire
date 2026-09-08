@@ -1566,6 +1566,15 @@ app.get('/api/me/games', authRequired, async (req, res) => {
     games: rows,
   });
 });
+// Resolved artwork for one game (memory + DB cached, strict Steam match).
+// Feeds the Discord-style game badges in member rows (controller icon
+// until art resolves). Same upstream exposure as profile game cards.
+app.get('/api/games/icon', authRequired, async (req, res) => {
+  const game = String(req.query.game || '').trim().slice(0, 80);
+  if (!game) return res.status(400).json({ error: 'game_required' });
+  try { res.json({ game, url: await resolveGameIcon(game) }); }
+  catch { res.json({ game, url: null }); }
+});
 app.delete('/api/me/games/:game', authRequired, (req, res) => {
   const game = String(req.params.game).trim();
   if (!game || !GAME_RE.test(game)) return res.status(400).json({ error: 'bad_game' });
