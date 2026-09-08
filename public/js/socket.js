@@ -121,6 +121,10 @@ function onWS(m) {
           renderDmMessages();
           if (!msg.sys && document.hidden && !ddnd) notifyMsg(msg);
         }
+        // Keep the DM/group list preview fresh — e.g. the first message sent
+        // while viewing a freshly created chat would otherwise show
+        // "No messages yet" until a manual refresh.
+        refreshDms();
       } else if (!msg.sys && !own) {
         // background thread: count up the DM row + home button badges (no popup)
         S.dmUnread.set(msg.threadId, (S.dmUnread.get(msg.threadId) || 0) + 1);

@@ -104,7 +104,7 @@ function renderDmRail() {
 function friendRowEl(u, extra) {
   const div = document.createElement('div');
   div.className = 'dmrow';
-  div.innerHTML = `<span class="avatar"></span><span class="dmmain"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span><br/><span class="dmlast">@${esc(u.username)}${u.status_text ? ' · ' + esc(u.status_text) : ''}</span></span>`;
+  div.innerHTML = `<span class="avatar"></span><span class="dmmain"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span><span class="dmlast">@${esc(u.username)}${u.status_text ? ' · ' + esc(u.status_text) : ''}</span></span>`;
   paintAvatar(div.querySelector('.avatar'), u);
   const dot = document.createElement('span');
   dot.className = 'status-dot ' + statusOf(u.id);
@@ -257,7 +257,7 @@ function dmRowEl(t) {
   b.className = 'dmrow' + (t.id === S.dmThreadId ? ' active' : '');
   b.dataset.dmthread = t.id;
   const av = t.isGroup ? null : dmPeer(t);
-  b.innerHTML = `<span class="avatar">${t.isGroup ? '#' : ''}</span><span class="dmmain"><span class="dmname" style="${!t.isGroup && av ? nameStyleFor(av) : ''}">${esc(dmTitle(t))}</span><br/><span class="dmlast">${esc(t.last ? `${t.last.author}: ${t.last.content}`.slice(0, 60) : 'No messages yet')}</span></span>`;
+  b.innerHTML = `<span class="avatar">${t.isGroup ? '#' : ''}</span><span class="dmmain"><span class="dmname" style="${!t.isGroup && av ? nameStyleFor(av) : ''}">${esc(dmTitle(t))}</span><span class="dmlast">${esc(t.last ? `${t.last.author}: ${t.last.content}`.slice(0, 60) : 'No messages yet')}</span></span>`;
   const avSpan = b.querySelector('.avatar');
   if (av) paintAvatar(avSpan, av);
   else avSpan.style.background = 'var(--panel-3)';
