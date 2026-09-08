@@ -61,14 +61,19 @@
   <!-- MAIN VIEW -->
   <section id="view-main" class="view hidden">
     <div id="left">
-    <!-- server rail -->
+    <!-- server rail: home zone / server list / footer -->
     <nav id="rail" aria-label="Servers">
-      <span id="home-wrap"><button id="btn-home" class="server-btn home-btn" title="Home — friends and direct messages"><img src="/icons/campfire-logo.png" alt="Home" /></button><span id="home-badge" class="hidden"></span></span>
-      <div id="dm-rail"></div>
+      <div class="rail-head">
+        <span id="home-wrap"><button id="btn-home" class="server-btn home-btn" title="Home — friends and direct messages"><img src="/icons/campfire-logo.png" alt="Home" /></button><span id="home-badge" class="hidden"></span></span>
+        <div id="dm-rail"></div>
+      </div>
+      <div class="rail-divider" aria-hidden="true"></div>
       <div id="server-list"></div>
-      <button id="btn-add-server" title="Create or join a server"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
-      <div class="spacer"></div>
-      <button id="btn-settings-rail" class="tool-btn rail-gear" title="Settings"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2.4"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2.4"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="7" cy="18" r="2.4"/></svg></button>
+      <div class="rail-foot">
+        <button id="btn-add-server" title="Create or join a server"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+        <div class="spacer"></div>
+        <button id="btn-settings-rail" class="tool-btn rail-gear" title="Settings"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2.4"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2.4"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="7" cy="18" r="2.4"/></svg></button>
+      </div>
     </nav>
 
     <!-- channel sidebar -->

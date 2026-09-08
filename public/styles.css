@@ -76,12 +76,19 @@ h1,h2,h3{letter-spacing:-0.01em}
 #view-main{display:flex;height:100vh;height:100dvh;overflow:hidden}
 #view-main{height:100%}
 #left{display:contents}
-#rail{width:76px;background:var(--rail);display:flex;flex-direction:column;align-items:center;padding:.7rem 0;gap:1rem;flex-shrink:0;overflow:hidden}
-#server-list{display:flex;flex-direction:column;gap:.7rem;width:100%;align-items:flex-start;overflow-y:auto;padding:0 4px 0 14px;min-height:0;scrollbar-width:none}
+/* Server rail: three clear zones — home (logo + DM senders), the scrollable
+   server list, and the footer. Buttons sit on one centered column with tight
+   8px spacing; a hairline divider separates the home zone from the list so
+   the first server always starts fully visible below the logo. */
+#rail{width:80px;background:var(--rail);border-right:1px solid var(--line);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
+.rail-head{display:flex;flex-direction:column;align-items:center;gap:.45rem;padding:.8rem 0 .6rem;flex-shrink:0}
+.rail-divider{width:40px;height:1px;background:var(--line);margin:.2rem auto}
+#server-list{flex:1;display:flex;flex-direction:column;align-items:center;gap:.5rem;overflow-y:auto;padding:.45rem 0;min-height:0;scrollbar-width:none}
 #server-list::-webkit-scrollbar,#dm-rail::-webkit-scrollbar{display:none}
 /* unread DM senders live under Home until opened */
-#dm-rail{display:flex;flex-direction:column;gap:.5rem;align-items:flex-start;width:100%;flex-shrink:0;min-height:0;overflow-y:auto;max-height:38%;scrollbar-width:none;padding:0 4px 6px 14px}
+#dm-rail{display:flex;flex-direction:column;align-items:center;gap:.45rem;flex-shrink:1;min-height:0;overflow-y:auto;max-height:40vh;scrollbar-width:none}
 #dm-rail:empty{display:none}
+.rail-foot{display:flex;flex-direction:column;align-items:center;gap:.45rem;padding:.55rem 0 .7rem;flex-shrink:0}
 /* Fill the 48px rail button exactly so no --panel-2 grey peeks around the
    circular pfp (read as a venn-diagram ring). width/height:100% alone doesn't
    resolve in the button's flex layout, so pin the avatar to the button box. */
@@ -97,7 +104,7 @@ h1,h2,h3{letter-spacing:-0.01em}
 .server-btn.has-icon:hover{background-color:transparent}
 .server-btn.has-icon.active{border-radius:12px}
 .server-btn.muted{opacity:.45}
-#btn-add-server{width:52px;height:52px;border-radius:16px;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:flex;align-items:center;justify-content:center}
+#btn-add-server{width:48px;height:48px;border-radius:16px;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:flex;align-items:center;justify-content:center}
 #btn-add-server:hover{background:var(--accent-hover)}
 #btn-add-server svg{display:block}
 
@@ -650,11 +657,14 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .dmrow:hover .dm-close,.dmrow:focus-within .dm-close{opacity:1}
 .dm-close:hover{background:var(--panel-3);color:var(--text)}
 @media (hover:none){.dm-close{opacity:1}}
-.home-btn{padding:0;background:transparent;position:relative;overflow:hidden}
+/* display:grid (not flex): flex mismeasures a replaced img with object-fit, clipping the mark */
+.home-btn{background:var(--panel-2);border-radius:16px;position:relative;overflow:hidden;display:grid;place-items:center}
+.home-btn:hover{background:var(--panel-3)}
+.home-btn.active{background:var(--accent)}
 .home-btn.active::before{display:none}
 #home-wrap{position:relative;width:48px;height:48px;flex-shrink:0}
 #home-wrap:has(> .active)::before{content:'';position:absolute;left:-10px;top:50%;transform:translateY(-50%);width:8px;height:28px;border-radius:0 999px 999px 0;background:#fff;z-index:2}
-.home-btn img{width:88%;height:88%;object-fit:cover;display:block;border-radius:inherit}
+.home-btn img{width:42px;height:42px;object-fit:cover;display:block}
 .home-btn:hover img,.home-btn:active img{animation:campfire-flicker .9s ease-in-out infinite}
 @keyframes campfire-flicker{
   0%,100%{transform:scale(1) rotate(0deg)}
@@ -663,8 +673,6 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
   75%{transform:scale(1.06) rotate(-2deg)}
 }
 @media (prefers-reduced-motion:reduce){.home-btn:hover img,.home-btn:active img{animation:none}}
-.home-btn:hover{background:transparent}
-.home-btn.active{background:transparent;border-radius:12px}
 .server-btn,.chan,.dmrow,.member{-webkit-touch-callout:none}
 #home-badge{position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;font-size:.62rem;font-weight:800;border-radius:999px;padding:.05rem .35rem;min-width:18px;text-align:center;line-height:1.3;pointer-events:none}
 #home-badge.hidden{display:none}
@@ -751,7 +759,9 @@ body{touch-action:manipulation}
 @media (max-width: 700px){
   #left{position:fixed;top:0;bottom:0;left:0;z-index:30;display:flex;transform:translateX(-105%);transition:transform .2s;width:min(348px,94vw);background:var(--rail)}
   body.nav-open #left{transform:none}
-  #left #rail{width:60px;flex-shrink:0;padding:.6rem 0;gap:1.5rem}
+  #left #rail{width:62px;flex-shrink:0}
+  #left .rail-head{padding:.7rem 0 .5rem}
+  #left .rail-foot{padding:.5rem 0 .6rem}
   #left .server-btn,#left #btn-add-server{width:44px;height:44px}
   #left .fwrap,#left .folder-btn{width:44px;height:44px}
   #left .folder-open{width:48px;padding:5px 2px;gap:8px}
@@ -760,9 +770,10 @@ body{touch-action:manipulation}
   #left .fg2,#left .fg3,#left .fg4{grid-template-columns:repeat(2,15px)}
   #left .fc,#left .fg1 .fc{width:15px;height:15px}
   #home-wrap{width:44px;height:44px}
+  #home-wrap .home-btn img{width:38px;height:38px}
   #home-wrap:has(> .active)::before{left:-6px;width:6px;height:22px}
-  #server-list{overflow-x:hidden;align-items:flex-start;padding:0 4px 0 8px;gap:.9rem}
-  #dm-rail{padding:0 4px 6px 8px}
+  #server-list{align-items:center;padding:.4rem 0;gap:.5rem}
+  #dm-rail{gap:.45rem}
   .server-btn.active::before{left:-6px;width:6px;height:22px}
   #left #sidebar{position:static;transform:none;width:auto;flex:1;min-width:0;border-left:1px solid var(--line)}
   #sidebar-scrim{display:block;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:20;opacity:0;pointer-events:none;transition:opacity .2s}
