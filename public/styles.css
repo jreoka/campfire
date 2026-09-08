@@ -566,7 +566,8 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .pf-gaming-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.6rem}
 .pf-game-card{background:var(--panel-3);border:1px solid var(--line-soft);border-radius:12px;padding:.75rem;display:flex;align-items:center;gap:.75rem;position:relative;transition:background var(--t-fast)}
 .pf-game-card:hover{background:var(--panel-4)}
-.pf-game-icon{width:46px;height:46px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;font-weight:800;color:#fff;flex-shrink:0}
+.pf-game-icon{width:46px;height:46px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden}
+.pf-game-icon img{width:100%;height:100%;object-fit:cover;display:block}
 .pf-game-info{min-width:0;flex:1}
 .pf-game-name{font-weight:650;font-size:.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pf-game-meta{font-size:.78rem;color:var(--muted);margin-top:.15rem}
@@ -576,7 +577,8 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .pf-badge.streak{background:rgba(52,211,153,.13);color:var(--green)}
 .set-games-list{display:flex;flex-direction:column;gap:.45rem}
 .set-game-row{display:flex;align-items:center;gap:.7rem;background:var(--panel);border:0;border-radius:var(--r-md);padding:.6rem .75rem}
-.set-game-icon{width:38px;height:38px;border-radius:10px;background:var(--panel-3);display:flex;align-items:center;justify-content:center;font-size:.95rem;font-weight:800;color:var(--accent-hover);flex-shrink:0}
+.set-game-icon{width:38px;height:38px;border-radius:10px;background:var(--panel-3);display:flex;align-items:center;justify-content:center;font-size:.95rem;font-weight:800;color:var(--accent-hover);flex-shrink:0;overflow:hidden}
+.set-game-icon img{width:100%;height:100%;object-fit:cover;display:block}
 .set-game-info{min-width:0;flex:1}
 .set-game-name{font-weight:650;font-size:.87rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (max-width:820px){#profile-backdrop{padding:0} .profile{max-width:none;max-height:none;height:100%;border-radius:0}}
@@ -884,6 +886,7 @@ body.view-home #members{width:300px}
 .anow-game b{color:var(--text)}
 .anow-recent{margin-top:.35rem;font-size:.75rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .anow-recent b{color:var(--text);font-weight:600}
+.anow-gicon{width:20px;height:20px;border-radius:6px;object-fit:cover;vertical-align:-5px;margin-right:.3rem}
 .anow-off{opacity:.62}
 .anow-empty{padding:.4rem .6rem}
 .gpick{display:flex!important;gap:.55rem;align-items:center;padding:.35rem 0;font-size:.9rem;cursor:pointer}

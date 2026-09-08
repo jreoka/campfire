@@ -377,7 +377,8 @@ async function renderGamesTab() {
     for (const g of games) {
       const row = document.createElement('div'); row.className = 'set-game-row';
       const icon = document.createElement('span'); icon.className = 'set-game-icon';
-      icon.textContent = g.game.charAt(0).toUpperCase();
+      if (g.icon_url) { const im = document.createElement('img'); im.src = g.icon_url; im.alt = ''; im.loading = 'lazy'; im.onerror = () => { im.remove(); icon.textContent = g.game.charAt(0).toUpperCase(); }; icon.appendChild(im); }
+      else icon.textContent = g.game.charAt(0).toUpperCase();
       const info = document.createElement('div'); info.className = 'set-game-info';
       const name = document.createElement('div'); name.className = 'set-game-name'; name.textContent = g.game;
       const meta = document.createElement('div'); meta.className = 'muted small';

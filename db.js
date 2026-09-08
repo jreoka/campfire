@@ -229,6 +229,13 @@ CREATE TABLE IF NOT EXISTS server_invites (
   uses INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_invites_server ON server_invites(server_id);
+-- Resolved game artwork (Steam capsule URLs + curated overrides), keyed by
+-- normalized lowercase game name. url NULL = looked up, nothing confident found.
+CREATE TABLE IF NOT EXISTS game_icons (
+  game TEXT PRIMARY KEY,
+  url TEXT,
+  updated_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS blocks (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   blocked_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

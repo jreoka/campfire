@@ -378,7 +378,9 @@ function renderMembers() {
   const hoisted = (d.roles || []).filter((r) => r.hoist);
   const shown = new Set();
   for (const r of hoisted) {
-    const mems = d.members.filter((m) => (m.roleIds || []).includes(r.id)).sort(memberSort);
+    // Online members only: offline/invisible members drop out of the hoisted
+    // group into the OFFLINE section below, like Discord.
+    const mems = d.members.filter((m) => (m.roleIds || []).includes(r.id) && !isOff(statusOf(m.id))).sort(memberSort);
     if (!mems.length) continue;
     const head = document.createElement('div');
     head.className = 'role-head';

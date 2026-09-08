@@ -1442,7 +1442,59 @@ function dayStreak(userId, where, params) {
   }
   return { streak, best };
 }
-function gamingFor(userId) {
+// ---------- game artwork (Steam capsule art, cached in game_icons) ----------
+// Non-Steam titles can't be found by search, so a small curated override map
+// covers the biggest ones. Add more as `normalized name: image URL`.
+const GAME_ICON_OVERRIDES = {
+  minecraft: 'https://minecraft.wiki/images/Grass_Block_JE7_BE6.png',
+};
+const gameIconMem = new Map(); // normalized name -> url|null (process cache)
+function normGame(s) {
+  return String(s || '').toLowerCase().replace(/[®™©]/g, '').replace(/\s+/g, ' ').trim();
+}
+async function resolveGameIcon(game) {
+  const key = normGame(game);
+  if (!key) return null;
+  if (gameIconMem.has(key)) return gameIconMem.get(key);
+  if (GAME_ICON_OVERRIDES[key]) {
+    gameIconMem.set(key, GAME_ICON_OVERRIDES[key]);
+    return GAME_ICON_OVERRIDES[key];
+  }
+  try {
+    const row = db.prepare('SELECT url, updated_at FROM game_icons WHERE game = ?').get(key);
+    if (row && (row.url || Date.now() - row.updated_at < 7 * 864e5)) {
+      gameIconMem.set(key, row.url || null);
+      return row.url || null;
+    }
+  } catch {}
+  let url = null;
+  try {
+    const ctl = new AbortController();
+    const to = setTimeout(() => ctl.abort(), 4000);
+    const r = await fetch('https://store.steampowered.com/api/storesearch/?term=' + encodeURIComponent(game) + '&l=en&cc=US', { signal: ctl.signal });
+    clearTimeout(to);
+    const j = await r.json();
+    const items = j?.items || [];
+    // Strict match only — a near-miss logo is worse than the letter tile.
+    // Single-result prefix match covers "Game" vs "Game: Subtitle" listings.
+    const hit = items.find((it) => normGame(it.name) === key)
+      || (items.length === 1 && (normGame(items[0].name).startsWith(key) || key.startsWith(normGame(items[0].name))) ? items[0] : null);
+    if (hit && hit.id) url = `https://cdn.cloudflare.steamstatic.com/steam/apps/${hit.id}/capsule_184x69.jpg`;
+  } catch {}
+  try {
+    db.prepare(`INSERT INTO game_icons (game, url, updated_at) VALUES (?,?,?)
+      ON CONFLICT(game) DO UPDATE SET url = excluded.url, updated_at = excluded.updated_at`).run(key, url, Date.now());
+  } catch {}
+  gameIconMem.set(key, url);
+  return url;
+}
+async function withGameIcons(games) {
+  await Promise.all((games || []).map(async (g) => {
+    try { g.icon_url = await resolveGameIcon(g.game); } catch { g.icon_url = null; }
+  }));
+  return games;
+}
+async function gamingFor(userId) {
   const u = db.prepare('SELECT game_enabled, game_exclusions, playing_game FROM users WHERE id = ?').get(userId);
   const exclusions = new Set(JSON.parse(u?.game_exclusions || '[]'));
   const games = db.prepare('SELECT game, total_ms, first_seen_ms, last_seen_ms FROM user_games WHERE user_id = ? ORDER BY total_ms DESC').all(userId);
@@ -1459,7 +1511,9 @@ function gamingFor(userId) {
   // "Playing X" after the game closed). Null when disabled/excluded.
   let now_playing = (u?.game_enabled !== 0 && u?.playing_game) ? u.playing_game : null;
   if (now_playing && exclusions.has(now_playing)) now_playing = null;
-  return { total_ms, level: levelForMs(total_ms), streak: s.streak, best_streak: s.best, now_playing, games: out.slice(0, 10) };
+  const top = out.slice(0, 10);
+  await withGameIcons(top);
+  return { total_ms, level: levelForMs(total_ms), streak: s.streak, best_streak: s.best, now_playing, games: top };
 }
 app.post('/api/watcher/status', authRequired, (req, res) => {
   const raw = req.body || {};
@@ -1495,19 +1549,21 @@ app.delete('/api/watcher/status', authRequired, (req, res) => {
   broadcastUserUpdate(u2);
   res.json({ ok: true, playing_game: null });
 });
-app.get('/api/users/:username/gaming', authRequired, (req, res) => {
+app.get('/api/users/:username/gaming', authRequired, async (req, res) => {
   const t = db.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE').get(req.params.username);
   if (!t) return res.status(404).json({ error: 'no_user' });
-  res.json(gamingFor(t.id));
+  res.json(await gamingFor(t.id));
 });
-app.get('/api/me/gaming', authRequired, (req, res) => res.json(gamingFor(req.user.id)));
-app.get('/api/me/games', authRequired, (req, res) => {
+app.get('/api/me/gaming', authRequired, async (req, res) => res.json(await gamingFor(req.user.id)));
+app.get('/api/me/games', authRequired, async (req, res) => {
   const games = db.prepare('SELECT game, total_ms, first_seen_ms, last_seen_ms FROM user_games WHERE user_id = ? ORDER BY total_ms DESC').all(req.user.id);
   const exclusions = new Set(JSON.parse(req.user.game_exclusions || '[]'));
+  const rows = games.map((g) => ({ ...g, excluded: exclusions.has(g.game) }));
+  await withGameIcons(rows);
   res.json({
     enabled: req.user.game_enabled !== 0,
     exclusions: [...exclusions],
-    games: games.map((g) => ({ ...g, excluded: exclusions.has(g.game) })),
+    games: rows,
   });
 });
 app.delete('/api/me/games/:game', authRequired, (req, res) => {

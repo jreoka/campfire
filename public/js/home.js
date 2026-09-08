@@ -144,7 +144,7 @@ function activeCard(c) {
   el.className = 'anow-card' + (c.off ? ' anow-off' : '');
   let act = '';
   if (c.live) {
-    act = `<div class="anow-game">Playing <b>${esc(c.live)}</b>${c.hit ? `<span> · Lv ${c.hit.level} · ${fmtPlay(c.hit.total_ms)}</span>` : ''}</div>`;
+    act = `<div class="anow-game">Playing ${c.hit?.icon_url ? `<img class="anow-gicon" src="${esc(c.hit.icon_url)}" alt="" loading="lazy" onerror="this.remove()" />` : ''}<b>${esc(c.live)}</b>${c.hit ? `<span> · Lv ${c.hit.level} · ${fmtPlay(c.hit.total_ms)}</span>` : ''}</div>`;
   } else if (c.recent && c.recent.last_seen_ms) {
     act = `<div class="anow-recent">Last played <b>${esc(c.recent.game)}</b> · ${agoStr(c.recent.last_seen_ms)}</div>`;
   }

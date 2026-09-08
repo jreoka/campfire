@@ -677,7 +677,7 @@ async function loadUserGaming(box, username, opts = {}) {
         const col = levelColor(x.level);
         return `
           <div class="pf-game-card" data-game="${esc(x.game)}">
-            <div class="pf-game-icon" style="background:${col}">${esc(x.game.charAt(0).toUpperCase())}</div>
+            <div class="pf-game-icon" style="background:${col}">${x.icon_url ? `<img src="${esc(x.icon_url)}" alt="" loading="lazy" onerror="this.remove()" />` : esc(x.game.charAt(0).toUpperCase())}</div>
             <div class="pf-game-info">
               <div class="pf-game-name">${esc(x.game)}</div>
               <div class="pf-game-meta">${fmtPlay(x.total_ms)} · Lv ${x.level}${x.streak ? ' · ' + x.streak + 'd streak' : ''}${x.best_streak > x.streak ? ' · best ' + x.best_streak + 'd' : ''}</div>
