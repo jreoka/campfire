@@ -176,7 +176,9 @@ function renderGifTab() {
     box.insertAdjacentHTML('beforeend',
       `<div class="pk-subrow"><button class="pk-subbtn" data-pkback="1">← All GIFs</button>` +
       `<span class="pk-subtitle">Favorites${n === null ? '' : ` (${n})`}</span></div>`);
-    box.querySelector('[data-pkback]').onclick = () => {
+    box.querySelector('[data-pkback]').onclick = (e) => {
+      e.stopPropagation(); // re-render detaches this button; without this the
+      // global "outside click closes picker" handler would see a detached target
       gifSubView = 'all';
       $('#pk-search').value = '';
       loadGifTrending();
@@ -196,7 +198,12 @@ function renderGifTab() {
   } else {
     box.insertAdjacentHTML('beforeend',
       `<div class="pk-subrow"><button class="pk-subbtn on" data-pkfavs="1">Favorites${n === null ? '' : ` (${n})`}</button></div>`);
-    box.querySelector('[data-pkfavs]').onclick = () => { gifSubView = 'favs'; renderGifTab(); };
+    box.querySelector('[data-pkfavs]').onclick = (e) => {
+      e.stopPropagation(); // re-render detaches this button; without this the
+      // global "outside click closes picker" handler would see a detached target
+      gifSubView = 'favs';
+      renderGifTab();
+    };
     box.insertAdjacentHTML('beforeend', `<div class="pk-sec">${q ? 'KLIPY results' : 'Trending'}</div>`);
     if (gifResults === null) box.insertAdjacentHTML('beforeend', '<div class="pk-empty small">Loading…</div>');
     else if (!gifResults.length) box.insertAdjacentHTML('beforeend', `<div class="pk-empty small">${gifFailed ? 'GIFs unavailable.' : 'No GIFs found.'}</div>`);
