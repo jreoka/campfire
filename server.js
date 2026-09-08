@@ -1518,7 +1518,7 @@ function adminUserView(u) {
     messageCount = db.prepare('SELECT COUNT(*) c FROM messages WHERE user_id = ?').get(u.id).c;
     dmCount = db.prepare('SELECT COUNT(*) c FROM dm_messages WHERE user_id = ?').get(u.id).c;
   } catch {}
-  return { ...base, is_admin: !!u.is_admin, disabled: !!u.disabled, serverCount, messageCount, dmCount };
+  return { ...base, is_admin: !!u.is_admin, disabled: !!u.disabled, has2fa: !!u.totp_enabled, serverCount, messageCount, dmCount };
 }
 app.get('/api/admin/stats', authRequired, requireSiteAdmin, (req, res) => {
   const count = (sql, ...a) => { try { return db.prepare(sql).get(...a).c; } catch { return 0; } };
@@ -1625,6 +1625,99 @@ app.post('/api/admin/users/:id/sessions/revoke', authRequired, requireSiteAdmin,
   closeSessionSockets(target.id, null);
   res.json({ ok: true });
 });
+// Site admin: strip 2FA (TOTP + backup codes) so a locked-out user can log
+// in with just their password again. Never usable on yourself — use your
+// own Settings -> 2FA flow for that.
+app.post('/api/admin/users/:id/2fa/disable', authRequired, requireSiteAdmin, (req, res) => {
+  const target = db.prepare('SELECT id, totp_enabled FROM users WHERE id = ?').get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'no_user' });
+  if (target.id === req.user.id) return res.status(400).json({ error: 'cannot_reset_own_2fa' });
+  if (!target.totp_enabled) return res.status(400).json({ error: '2fa_not_enabled' });
+  db.prepare('UPDATE users SET totp_secret = NULL, totp_enabled = 0 WHERE id = ?').run(target.id);
+  db.prepare('DELETE FROM totp_backups WHERE user_id = ?').run(target.id);
+  res.json({ ok: true });
+});
+// Site admin: set/remove any user's avatar, banner and member-list
+// (sidebar) banner. Mirrors the /api/me/* handlers, minus membership.
+function adminTargetUser(req, res) {
+  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!u) { res.status(404).json({ error: 'no_user' }); return null; }
+  return u;
+}
+function adminSetUserMedia(req, res, col, sub, kind) {
+  const u = adminTargetUser(req, res);
+  if (!u) { deleteUploaded(uploadUrl(sub, req.file)); return; }
+  const url = uploadUrl(sub, req.file);
+  deleteUploaded(u[col]);
+  db.prepare(`UPDATE users SET ${col} = ? WHERE id = ?`).run(url, u.id);
+  if (kind) recordMedia(u.id, kind, url);
+  broadcastUserUpdate(freshUser(u.id));
+  res.json({ user: adminUserView(db.prepare('SELECT * FROM users WHERE id = ?').get(u.id)) });
+}
+function adminClearUserMedia(req, res, col) {
+  const u = adminTargetUser(req, res);
+  if (!u) return;
+  deleteUploaded(u[col]);
+  db.prepare(`UPDATE users SET ${col} = NULL WHERE id = ?`).run(u.id);
+  broadcastUserUpdate(freshUser(u.id));
+  res.json({ user: adminUserView(db.prepare('SELECT * FROM users WHERE id = ?').get(u.id)) });
+}
+app.post('/api/admin/users/:id/avatar', authRequired, requireSiteAdmin, imgSingle(upImg), (req, res) => adminSetUserMedia(req, res, 'avatar_url', 'avatars', 'avatar'));
+app.delete('/api/admin/users/:id/avatar', authRequired, requireSiteAdmin, (req, res) => adminClearUserMedia(req, res, 'avatar_url'));
+app.post('/api/admin/users/:id/banner', authRequired, requireSiteAdmin, imgSingle(upBanner), (req, res) => adminSetUserMedia(req, res, 'banner_url', 'banners', 'banner'));
+app.delete('/api/admin/users/:id/banner', authRequired, requireSiteAdmin, (req, res) => adminClearUserMedia(req, res, 'banner_url'));
+app.post('/api/admin/users/:id/sidebar-banner', authRequired, requireSiteAdmin, imgSingle(upSidebar), (req, res) => adminSetUserMedia(req, res, 'sidebar_banner_url', 'sidebar', null));
+app.delete('/api/admin/users/:id/sidebar-banner', authRequired, requireSiteAdmin, (req, res) => adminClearUserMedia(req, res, 'sidebar_banner_url'));
+// Site admin: set/remove any server's icon and banner. Mirrors the
+// per-server handlers, minus membership.
+app.post('/api/admin/servers/:id/icon', authRequired, requireSiteAdmin, imgSingle(upIcon), (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) { deleteUploaded(uploadUrl('icons', req.file)); return res.status(404).json({ error: 'no_server' }); }
+  const url = uploadUrl('icons', req.file);
+  deleteUploaded(s.icon_url);
+  db.prepare('UPDATE servers SET icon_url = ? WHERE id = ?').run(url, s.id);
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ server: adminServerById(s.id) });
+});
+app.delete('/api/admin/servers/:id/icon', authRequired, requireSiteAdmin, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  deleteUploaded(s.icon_url);
+  db.prepare('UPDATE servers SET icon_url = NULL WHERE id = ?').run(s.id);
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ server: adminServerById(s.id) });
+});
+app.post('/api/admin/servers/:id/banner', authRequired, requireSiteAdmin, imgSingle(upBanner), (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) { deleteUploaded(uploadUrl('banners', req.file)); return res.status(404).json({ error: 'no_server' }); }
+  const url = uploadUrl('banners', req.file);
+  deleteUploaded(s.banner_url);
+  db.prepare('UPDATE servers SET banner_url = ? WHERE id = ?').run(url, s.id);
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ server: adminServerById(s.id) });
+});
+app.delete('/api/admin/servers/:id/banner', authRequired, requireSiteAdmin, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  deleteUploaded(s.banner_url);
+  db.prepare('UPDATE servers SET banner_url = NULL WHERE id = ?').run(s.id);
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ server: adminServerById(s.id) });
+});
+function adminServerById(id) {
+  const row = db.prepare('SELECT s.*, u.username AS owner_username FROM servers s LEFT JOIN users u ON u.id = s.owner_id WHERE s.id = ?').get(id);
+  return row ? adminServerSummary(row) : null;
+}
+function adminServerSummary(s) {
+  return {
+    id: s.id, name: s.name, description: s.description || '', icon_url: s.icon_url || null,
+    banner_url: s.banner_url || null, invite_code: s.invite_code, owner_id: s.owner_id,
+    owner_username: s.owner_username || '?', created_at: s.created_at,
+    memberCount: db.prepare('SELECT COUNT(*) c FROM server_members WHERE server_id = ?').get(s.id).c,
+    channelCount: db.prepare('SELECT COUNT(*) c FROM channels WHERE server_id = ?').get(s.id).c,
+    messageCount: db.prepare('SELECT COUNT(*) c FROM messages WHERE server_id = ?').get(s.id).c,
+  };
+}
 app.get('/api/admin/servers', authRequired, requireSiteAdmin, (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase();
   const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10) || 50, 1), 200);
@@ -1633,15 +1726,7 @@ app.get('/api/admin/servers', authRequired, requireSiteAdmin, (req, res) => {
   const params = q ? [`%${q}%`] : [];
   const total = db.prepare(`SELECT COUNT(*) c FROM servers s ${where}`).get(...params).c;
   const rows = db.prepare(`SELECT s.*, u.username AS owner_username FROM servers s LEFT JOIN users u ON u.id = s.owner_id ${where} ORDER BY s.created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
-  const servers = rows.map((s) => ({
-    id: s.id, name: s.name, description: s.description || '', icon_url: s.icon_url || null,
-    banner_url: s.banner_url || null, invite_code: s.invite_code, owner_id: s.owner_id,
-    owner_username: s.owner_username || '?', created_at: s.created_at,
-    memberCount: db.prepare('SELECT COUNT(*) c FROM server_members WHERE server_id = ?').get(s.id).c,
-    channelCount: db.prepare('SELECT COUNT(*) c FROM channels WHERE server_id = ?').get(s.id).c,
-    messageCount: db.prepare('SELECT COUNT(*) c FROM messages WHERE server_id = ?').get(s.id).c,
-  }));
-  res.json({ servers, total });
+  res.json({ servers: rows.map(adminServerSummary), total });
 });
 app.patch('/api/admin/servers/:id', authRequired, requireSiteAdmin, (req, res) => {
   const s = getServer(req.params.id);

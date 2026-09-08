@@ -98,6 +98,7 @@ function admUserRow(u) {
   const badges =
     (u.is_admin ? '<span class="adm-badge admin">ADMIN</span>' : '') +
     (u.disabled ? '<span class="adm-badge off">DISABLED</span>' : '') +
+    (u.has2fa ? '<span class="adm-badge me">2FA</span>' : '') +
     (u.id === S.me.id ? '<span class="adm-badge me">YOU</span>' : '');
   return `<div class="adm-row" data-uid="${esc(u.id)}">
     <span class="avatar adm-av"></span>
@@ -111,6 +112,7 @@ function admUserRow(u) {
         <button class="mini${u.disabled ? '' : ' danger'}" data-act="u-disable">${u.disabled ? 'Enable' : 'Disable'}</button>
         <button class="mini" data-act="u-admin">${u.is_admin ? 'Remove admin' : 'Make admin'}</button>
         <button class="mini" data-act="u-logout">Log out</button>
+        <button class="mini" data-act="u-2fa">Reset 2FA</button>
         <button class="mini danger" data-act="u-del">Delete</button>
       </div>
     </div>
@@ -145,7 +147,7 @@ function admServerRow(s) {
       <div class="muted small">owner @${esc(s.owner_username)} · ${s.memberCount} member${s.memberCount === 1 ? '' : 's'} · ${s.channelCount} channels · ${s.messageCount} msgs · created ${fmtDate(s.created_at)}</div>
       <div class="muted small">invite <span class="codebox-inline">${esc(s.invite_code)}</span></div>
       <div class="adm-actions">
-        <button class="mini" data-act="s-rename">Rename</button>
+        <button class="mini" data-act="s-edit">Edit</button>
         <button class="mini" data-act="s-invite">Reset invite</button>
         <button class="mini" data-act="s-members">${open ? 'Hide members' : 'Members'}</button>
         <button class="mini danger" data-act="s-del">Delete</button>
@@ -155,6 +157,13 @@ function admServerRow(s) {
   </div>`;
 }
 
+function pickFile(cb) {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/png,image/jpeg,image/gif,image/webp';
+  inp.onchange = () => { if (inp.files[0]) cb(inp.files[0]); };
+  inp.click();
+}
 function paintServerIcon(el, s) {
   const label = (s.name || '?').trim().charAt(0).toUpperCase() || '?';
   el.innerHTML = '';
@@ -176,6 +185,7 @@ async function loadAdminServers() {
     const { servers, total } = await api(
       `/api/admin/servers?q=${encodeURIComponent(Admin.sq)}&limit=${ADMIN_PAGE}&offset=${Admin.soff}`);
     Admin.stotal = total;
+    Admin.sCache = servers;
     box.innerHTML = servers.length ? servers.map(admServerRow).join('') : '<p class="muted small">No servers found.</p>';
     box.querySelectorAll('.adm-sav').forEach((el) => {
       const row = el.closest('.adm-row');
@@ -219,7 +229,7 @@ async function adminClick(e) {
   const sub = b.closest('.adm-subrow[data-uid]');
   try {
     if (act === 'u-edit' && urow) {
-      const { user: u } = await api(`/api/admin/users/${urow.dataset.uid}`);
+      let { user: u } = await api(`/api/admin/users/${urow.dataset.uid}`);
       if (!u) return toast('User not found');
       openModal(`Edit @${u.username}`, `
         <label>Display name<input id="m-adm-display" maxlength="32" value="${esc(u.display_name)}" /></label>
@@ -227,6 +237,16 @@ async function adminClick(e) {
           <label style="flex:1">Avatar color<input id="m-adm-color" type="color" value="${/^#[0-9a-fA-F]{6}$/.test(u.avatar_color) ? u.avatar_color : '#5865f2'}" /></label>
         </div>
         <label style="margin-top:.6rem">Bio<textarea id="m-adm-bio" maxlength="300" rows="3">${esc(u.bio || '')}</textarea></label>
+        <div class="pf-sec-label">Avatar</div>
+        <div class="row" style="gap:.6rem"><span class="avatar adm-av" id="m-adm-avatar"></span>
+          <button class="btn small primary" id="m-adm-avatar-up">Upload</button>
+          <button class="btn small" id="m-adm-avatar-rm">Remove</button></div>
+        <div class="pf-sec-label">Banner</div>
+        <div id="m-adm-banner" class="set-banner"></div>
+        <div class="row" style="margin-top:.5rem;gap:.4rem"><button class="btn small primary" id="m-adm-banner-up">Upload</button><button class="btn small" id="m-adm-banner-rm">Remove</button></div>
+        <div class="pf-sec-label">Member list banner</div>
+        <div id="m-adm-side" class="set-banner"></div>
+        <div class="row" style="margin-top:.5rem;gap:.4rem"><button class="btn small primary" id="m-adm-side-up">Upload</button><button class="btn small" id="m-adm-side-rm">Remove</button></div>
       `, 'Save', async () => {
         await api(`/api/admin/users/${u.id}`, { method: 'PATCH', body: JSON.stringify({
           displayName: $('#m-adm-display').value.trim(),
@@ -235,7 +255,35 @@ async function adminClick(e) {
         }) });
         toast('User updated');
         loadAdminUsers();
+      }, { wide: true });
+      const paintUMedia = (usr) => {
+        paintAvatar($('#m-adm-avatar'), usr);
+        $('#m-adm-banner').style.backgroundImage = usr.banner_url ? `url('${usr.banner_url}')` : '';
+        $('#m-adm-side').style.backgroundImage = usr.sidebar_banner_url ? `url('${usr.sidebar_banner_url}')` : '';
+      };
+      paintUMedia(u);
+      const upUMedia = (kind, label) => pickFile(async (f) => {
+        try {
+          const data = await uploadImage(`/api/admin/users/${u.id}/${kind}`, f);
+          u = data.user; paintUMedia(u);
+          toast(label + ' updated');
+          loadAdminUsers();
+        } catch (err) { toast('Upload failed: ' + prettyError(err.message)); }
       });
+      const rmUMedia = (kind, label) => (async () => {
+        try {
+          const data = await api(`/api/admin/users/${u.id}/${kind}`, { method: 'DELETE' });
+          u = data.user; paintUMedia(u);
+          toast(label + ' removed');
+          loadAdminUsers();
+        } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+      })();
+      $('#m-adm-avatar-up').onclick = () => upUMedia('avatar', 'Avatar');
+      $('#m-adm-avatar-rm').onclick = () => rmUMedia('avatar', 'Avatar');
+      $('#m-adm-banner-up').onclick = () => upUMedia('banner', 'Banner');
+      $('#m-adm-banner-rm').onclick = () => rmUMedia('banner', 'Banner');
+      $('#m-adm-side-up').onclick = () => upUMedia('sidebar-banner', 'Member list banner');
+      $('#m-adm-side-rm').onclick = () => rmUMedia('sidebar-banner', 'Member list banner');
     }
     else if (act === 'u-pw' && urow) {
       const pw = await openPromptModal({ title: 'Set new password', label: 'New password (min 4 chars)', placeholder: '••••••', okLabel: 'Set password', maxlength: 64 });
@@ -277,6 +325,14 @@ async function adminClick(e) {
       await api(`/api/admin/users/${urow.dataset.uid}/sessions/revoke`, { method: 'POST' });
       toast('User logged out');
     }
+    else if (act === 'u-2fa' && urow) {
+      if (urow.dataset.uid === S.me.id) return toast('Use your own Settings to manage your 2FA');
+      const ok = await openConfirmModal({ title: 'Reset 2FA for this user?', message: 'Their authenticator and backup codes are removed. They can log in with just their password again and re-enable 2FA later.', okLabel: 'Reset 2FA' });
+      if (!ok) return;
+      await api(`/api/admin/users/${urow.dataset.uid}/2fa/disable`, { method: 'POST' });
+      toast('2FA reset — they can log in with password again');
+      loadAdminUsers();
+    }
     else if (act === 'u-del' && urow) {
       if (urow.dataset.uid === S.me.id) return toast('You cannot delete yourself');
       const ok = await openConfirmModal({ title: 'Delete this user?', message: 'Their account, messages authorship aside, is removed permanently. This cannot be undone.', okLabel: 'Delete' });
@@ -285,14 +341,69 @@ async function adminClick(e) {
       toast('User deleted');
       loadAdminStats(); loadAdminUsers();
     }
-    else if (act === 's-rename' && srow) {
-      const name = await openPromptModal({ title: 'Rename server', label: 'Server name', initial: srow.querySelector('.adm-name').textContent, okLabel: 'Rename', maxlength: 48 });
-      if (!name || !name.trim()) return;
-      await api(`/api/admin/servers/${srow.dataset.sid}`, { method: 'PATCH', body: JSON.stringify({ name: name.trim() }) });
-      toast('Server renamed');
-      loadAdminServers();
-      refreshServers();
-      S.ws?.send(JSON.stringify({ t: 'subscribe' }));
+    else if (act === 's-edit' && srow) {
+      const sid = srow.dataset.sid;
+      let s = (Admin.sCache || []).find((x) => x.id === sid);
+      if (!s) return toast('Server not found');
+      openModal(`Edit ${s.name}`, `
+        <label>Server name<input id="m-adm-sname" maxlength="48" value="${esc(s.name)}" /></label>
+        <label style="margin-top:.6rem">Description<textarea id="m-adm-sdesc" maxlength="200" rows="2" placeholder="What is this server about?">${esc(s.description || '')}</textarea></label>
+        <div class="pf-sec-label">Server icon</div>
+        <div class="row" style="gap:.6rem"><span class="avatar adm-sav" id="m-adm-sicon"></span>
+          <button class="btn small primary" id="m-adm-sicon-up">Upload</button>
+          <button class="btn small" id="m-adm-sicon-rm">Remove</button></div>
+        <div class="pf-sec-label">Banner</div>
+        <div id="m-adm-sbanner" class="set-banner"></div>
+        <div class="row" style="margin-top:.5rem;gap:.4rem"><button class="btn small primary" id="m-adm-sbanner-up">Upload</button><button class="btn small" id="m-adm-sbanner-rm">Remove</button></div>
+      `, 'Save', async () => {
+        await api(`/api/admin/servers/${sid}`, { method: 'PATCH', body: JSON.stringify({
+          name: $('#m-adm-sname').value.trim(),
+          description: $('#m-adm-sdesc').value.trim(),
+        }) });
+        toast('Server updated');
+        loadAdminServers();
+        refreshServers();
+        S.ws?.send(JSON.stringify({ t: 'subscribe' }));
+      }, { wide: true });
+      const paintSMedia = (srv) => {
+        paintServerIcon($('#m-adm-sicon'), srv);
+        $('#m-adm-sbanner').style.backgroundImage = srv.banner_url ? `url('${srv.banner_url}')` : '';
+      };
+      paintSMedia(s);
+      const afterSMedia = (srv, label) => {
+        s = srv;
+        const i = (Admin.sCache || []).findIndex((x) => x.id === sid);
+        if (i >= 0) Admin.sCache[i] = srv;
+        paintSMedia(srv);
+        toast(label);
+        loadAdminServers();
+        refreshServers();
+        S.ws?.send(JSON.stringify({ t: 'subscribe' }));
+      };
+      $('#m-adm-sicon-up').onclick = () => pickFile(async (f) => {
+        try {
+          const data = await uploadImage(`/api/admin/servers/${sid}/icon`, f);
+          afterSMedia(data.server, 'Server icon updated');
+        } catch (err) { toast('Upload failed: ' + prettyError(err.message)); }
+      });
+      $('#m-adm-sicon-rm').onclick = async () => {
+        try {
+          const data = await api(`/api/admin/servers/${sid}/icon`, { method: 'DELETE' });
+          afterSMedia(data.server, 'Server icon removed');
+        } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+      };
+      $('#m-adm-sbanner-up').onclick = () => pickFile(async (f) => {
+        try {
+          const data = await uploadImage(`/api/admin/servers/${sid}/banner`, f);
+          afterSMedia(data.server, 'Banner updated');
+        } catch (err) { toast('Upload failed: ' + prettyError(err.message)); }
+      });
+      $('#m-adm-sbanner-rm').onclick = async () => {
+        try {
+          const data = await api(`/api/admin/servers/${sid}/banner`, { method: 'DELETE' });
+          afterSMedia(data.server, 'Banner removed');
+        } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+      };
     }
     else if (act === 's-invite' && srow) {
       const { invite_code } = await api(`/api/admin/servers/${srow.dataset.sid}/invite/reset`, { method: 'POST' });
