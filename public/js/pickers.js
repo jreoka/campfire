@@ -567,8 +567,10 @@ async function openUserCard(uid, x, y) {
   const canMod = S.view === 'server' && S.serverDetail && canManage() && uid !== S.me.id && uid !== S.serverDetail.owner_id;
   const st = statusOf(uid);
   const stLabel = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' }[st] || 'Offline';
+  const ban = u.banner_url || u.sidebar_banner_url;
+  card.dataset.uid = uid;
   card.innerHTML = `
-    <div class="uc-banner"${u.banner_url ? ` style="background-image:url('${esc(u.banner_url)}')"` : ''}></div>
+    <div class="uc-banner"${ban ? ` style="background-image:url('${esc(ban)}')"` : ''}></div>
     <div class="uc-body">
       <span class="avatar big"></span>
       <div class="uc-name" style="${nameStyleFor(u)}">${esc(u.display_name)}</div>
