@@ -103,9 +103,10 @@ function renderDmRail() {
 }
 function friendRowEl(u, extra) {
   const st = statusOf(u.id);
+  const dot = dotOf(st);
   const div = document.createElement('div');
   div.className = 'dmrow';
-  div.innerHTML = `<span class="avwrap st-${st}"><span class="avatar"></span><span class="status-dot ${st}"></span></span><span class="dmmain"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span><span class="dmlast">@${esc(u.username)}${u.status_text ? ' · ' + esc(u.status_text) : ''}</span>${u.playing_game && st !== 'offline' ? `<span class="dmlast ugame">Playing ${esc(u.playing_game)}</span>` : ''}</span>`;
+  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="dmmain"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span><span class="dmlast">@${esc(u.username)}${u.status_text ? ' · ' + esc(u.status_text) : ''}</span>${u.playing_game && !isOff(st) ? `<span class="dmlast ugame">Playing ${esc(u.playing_game)}</span>` : ''}</span>`;
   paintAvatar(div.querySelector('.avatar'), u);
   if (extra) div.appendChild(extra);
   div.onclick = (e) => { if (e.target.closest('button')) return; openUserCard(u.id, e.clientX, e.clientY); };
@@ -224,7 +225,7 @@ function renderFriendLists() {
   const showFriends = S.friendTab === 'online' || S.friendTab === 'all';
   fl.style.display = showFriends ? '' : 'none';
   if (showFriends) {
-    const list = S.friendTab === 'online' ? f.friends.filter((u) => statusOf(u.id) !== 'offline') : f.friends;
+    const list = S.friendTab === 'online' ? f.friends.filter((u) => !isOff(statusOf(u.id))) : f.friends;
     if (!list.length) fl.innerHTML = S.friendTab === 'online'
       ? '<p class="muted small" style="padding:0 .7rem">No friends online right now.</p>'
       : '<p class="muted small" style="padding:0 .7rem">No friends yet — add someone above.</p>';
@@ -260,7 +261,7 @@ function dmRowEl(t) {
   if (av) paintAvatar(avSpan, av);
   else avSpan.style.background = 'var(--panel-3)';
   avSpan.style.boxShadow = 'none'; // no grey ring on sidebar DM pfps (matches the DM rail)
-  if (av && av.sidebar_banner_url && statusOf(av.id) !== 'offline') {
+  if (av && av.sidebar_banner_url && !isOff(statusOf(av.id))) {
     b.style.backgroundImage = `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${av.sidebar_banner_url}")`;
     b.style.backgroundSize = 'cover';
     b.style.backgroundPosition = 'right center';

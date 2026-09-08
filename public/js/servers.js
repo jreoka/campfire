@@ -311,6 +311,11 @@ function statusOf(id) {
   if (S.me && id === S.me.id) return S.me.status || 'online';
   return S.online[id] || S.presenceAll[id] || 'offline';
 }
+// Invisible is offline for display purposes: greyed out, sunk to the OFFLINE
+// section. (Only your own client ever sees 'invisible' — the server hides it
+// from everyone else, who just see you as offline.)
+function isOff(st) { return st === 'offline' || st === 'invisible'; }
+function dotOf(st) { return st === 'invisible' ? 'offline' : st; }
 function paintMe() {
   if (!S.me) return;
   paintAvatar($('#me-avatar'), S.me);
@@ -322,20 +327,22 @@ function mentionsMe(msg) {
 }
 function memberRowEl(m) {
   const st = statusOf(m.id);
+  const off = isOff(st);
+  const dot = dotOf(st);
   const div = document.createElement('div');
-  div.className = 'member' + (st === 'offline' ? ' off' : '');
+  div.className = 'member' + (off ? ' off' : '');
   div.dataset.uid = m.id;
-  if (m.sidebar_banner_url && st !== 'offline') {
+  if (m.sidebar_banner_url && !off) {
     div.style.backgroundImage = `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${m.sidebar_banner_url}")`;
     div.style.backgroundSize = 'cover';
     div.style.backgroundPosition = 'right center';
   }
-  div.innerHTML = `<span class="avwrap st-${st}"><span class="avatar"></span><span class="status-dot ${st}"></span></span><span class="mnames"><span style="${nameStyleFor(m)}">${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${m.status_text && st !== 'offline' ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ''}${m.playing_game && st !== 'offline' ? `<span class="mstatus ugame" title="Playing ${esc(m.playing_game)}">Playing ${esc(m.playing_game)}</span>` : ''}</span>`;
+  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="mnames"><span style="${nameStyleFor(m)}">${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${m.status_text && !off ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ''}${m.playing_game && !off ? `<span class="mstatus ugame" title="Playing ${esc(m.playing_game)}">Playing ${esc(m.playing_game)}</span>` : ''}</span>`;
   paintAvatar(div.querySelector('.avatar'), m);
   return div;
 }
 function memberSort(a, b) {
-  const ao = statusOf(a.id) === 'offline' ? 1 : 0, bo = statusOf(b.id) === 'offline' ? 1 : 0;
+  const ao = isOff(statusOf(a.id)) ? 1 : 0, bo = isOff(statusOf(b.id)) ? 1 : 0;
   return ao - bo || a.display_name.localeCompare(b.display_name);
 }
 function renderMembers() {
@@ -358,8 +365,8 @@ function renderMembers() {
     for (const m of mems) { box.appendChild(memberRowEl(m)); shown.add(m.id); }
   }
   const rest = d.members.filter((m) => !shown.has(m.id));
-  const on = rest.filter((m) => statusOf(m.id) !== 'offline').sort(memberSort);
-  const off = rest.filter((m) => statusOf(m.id) === 'offline').sort(memberSort);
+  const on = rest.filter((m) => !isOff(statusOf(m.id))).sort(memberSort);
+  const off = rest.filter((m) => isOff(statusOf(m.id))).sort(memberSort);
   if (on.length) {
     const head = document.createElement('div');
     head.className = 'role-head';
@@ -384,8 +391,8 @@ function renderDmMembers() {
   const box = $('#member-list');
   box.innerHTML = '';
   const members = t.members || [];
-  const on = members.filter((m) => statusOf(m.id) !== 'offline').sort((a, b) => a.display_name.localeCompare(b.display_name));
-  const off = members.filter((m) => statusOf(m.id) === 'offline').sort((a, b) => a.display_name.localeCompare(b.display_name));
+  const on = members.filter((m) => !isOff(statusOf(m.id))).sort((a, b) => a.display_name.localeCompare(b.display_name));
+  const off = members.filter((m) => isOff(statusOf(m.id))).sort((a, b) => a.display_name.localeCompare(b.display_name));
   $('#online-count').textContent = on.length;
   if (on.length) {
     const head = document.createElement('div');

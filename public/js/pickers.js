@@ -565,14 +565,14 @@ async function openUserCard(uid, x, y) {
   const card = $('#usercard');
   const canMod = S.view === 'server' && S.serverDetail && canManage() && uid !== S.me.id && uid !== S.serverDetail.owner_id;
   const st = statusOf(uid);
-  const stLabel = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline' }[st];
+  const stLabel = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' }[st] || 'Offline';
   card.innerHTML = `
     <div class="uc-banner"${u.banner_url ? ` style="background-image:url('${esc(u.banner_url)}')"` : ''}></div>
     <div class="uc-body">
       <span class="avatar big"></span>
       <div class="uc-name" style="${nameStyleFor(u)}">${esc(u.display_name)}</div>
       <div class="uc-sub">@${esc(u.username)}${u.role === 'owner' ? ' · server owner' : ''}</div>
-      <div class="uc-status"><span class="status-dot ${st}"></span><span>${stLabel}</span></div>
+      <div class="uc-status"><span class="status-dot ${dotOf(st)}"></span><span>${stLabel}</span></div>
       ${u.status_text ? `<div class="uc-statustext">${esc(u.status_text)}</div>` : ''}
       ${u.playing_game ? `<div class="uc-statustext ugame">Playing ${esc(u.playing_game)}</div>` : ''}
       ${u.bio ? `<div class="uc-bio">${renderRich(u.bio)}</div>` : ''}
@@ -725,7 +725,7 @@ function openProfileScreen(uid) {
   const bd = $('#profile-backdrop');
   const isMe = uid === S.me.id;
   const st = statusOf(uid);
-  const stLabel = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline' }[st];
+  const stLabel = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' }[st] || 'Offline';
   $('#pf-banner').style.backgroundImage = u.banner_url ? `url('${esc(u.banner_url)}')` : '';
   paintAvatar($('#pf-avatar'), u);
   $('#pf-name').style.cssText = nameStyleFor(u);
@@ -738,7 +738,7 @@ function openProfileScreen(uid) {
     actions += `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="pf-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>`;
   }
   body.innerHTML = `
-    <div class="pf-status"><span class="status-dot ${st}"></span><span>${stLabel}</span>${u.status_text ? `<span class="pf-statustext">${esc(u.status_text)}</span>` : ''}</div>
+    <div class="pf-status"><span class="status-dot ${dotOf(st)}"></span><span>${stLabel}</span>${u.status_text ? `<span class="pf-statustext">${esc(u.status_text)}</span>` : ''}</div>
     ${u.playing_game ? `<div class="pf-playing">Playing ${esc(u.playing_game)}</div>` : ''}
     ${u.bio ? `<div class="pf-bio">${renderRich(u.bio)}</div>` : ''}
     ${u.created_at ? `<div class="pf-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
