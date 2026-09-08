@@ -195,6 +195,9 @@ function onWS(m) {
         if (S.channelId === m.channelId) selectChannel((S.serverDetail.channels.find((c) => c.type === 'text') || {}).id);
       }
       break;
+    case 'admin-notice':
+      toast(m.text || 'Notice from admin');
+      break;
     case 'presence':
       Object.assign(S.presenceAll, m.online || {});
       if (m.serverId === S.serverId) { S.online = m.online || {}; S.online[S.me.id] = S.me.status || 'online'; }

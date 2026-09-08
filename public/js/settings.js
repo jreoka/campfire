@@ -160,8 +160,10 @@ function setSettingsTab(t) {
   $('#set-account').classList.toggle('hidden', t !== 'account');
   $('#set-games').classList.toggle('hidden', t !== 'games');
   $('#set-notifs').classList.toggle('hidden', t !== 'notifs');
+  $('#set-admin').classList.toggle('hidden', t !== 'admin');
   if (t === 'notifs') renderNotifsTab();
   if (t === 'games') renderGamesTab();
+  if (t === 'admin' && typeof renderAdminTab === 'function') renderAdminTab();
 }
 document.querySelectorAll('.set-tab').forEach((b) => (b.onclick = () => { setSettingsTab(b.dataset.tab); if (b.dataset.tab === 'account') { renderSecurityTab(); renderDesktopApp(); } }));
 $('#btn-settings-rail').onclick = () => openSettings('profile');

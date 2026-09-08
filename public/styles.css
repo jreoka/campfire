@@ -891,3 +891,25 @@ body{touch-action:manipulation}
   body.nav-open #sidebar-scrim{opacity:1;pointer-events:auto}
   .icon-btn{display:inline-block}
 }
+
+/* ---------- site admin panel (Settings → Admin) ---------- */
+.adm-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem}
+.adm-stat{background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius);padding:.6rem .4rem;text-align:center}
+.adm-stat b{display:block;font-size:1.25rem}
+.adm-stat span{font-size:.72rem;color:var(--muted)}
+.adm-row{display:flex;gap:.7rem;align-items:flex-start;background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius);padding:.65rem .7rem;margin-top:.5rem}
+.adm-av,.adm-sav{width:38px;height:38px;font-size:1rem;flex-shrink:0}
+.adm-main{flex:1;min-width:0}
+.adm-name{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.adm-badges{display:flex;gap:.3rem;margin-top:.25rem}
+.adm-badge{font-size:.68rem;font-weight:800;letter-spacing:.06em;border-radius:999px;padding:.12rem .55rem;background:var(--panel-3);color:var(--muted)}
+.adm-badge.admin{background:var(--accent-container);color:var(--on-container)}
+.adm-badge.off{background:var(--red);color:var(--on-red)}
+.adm-badge.me{background:var(--panel-3);color:var(--text)}
+.adm-actions{display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.45rem}
+.adm-members{margin-top:.5rem;border-top:1px solid var(--line);padding-top:.3rem}
+.adm-subrow{display:flex;gap:.5rem;align-items:center;padding:.4rem 0;border-top:1px solid var(--line);font-size:.88rem}
+.adm-subrow:first-child{border-top:0}
+.adm-subname{font-weight:600}
+.adm-snippet{color:var(--muted);font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.codebox-inline{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--inset);border:1px solid var(--line);border-radius:8px;padding:.05rem .45rem;user-select:all}

@@ -384,9 +384,23 @@ function renderDmMembers() {
   const box = $('#member-list');
   box.innerHTML = '';
   const members = t.members || [];
-  const sorted = [...members].sort(memberSort);
-  $('#online-count').textContent = members.filter((m) => statusOf(m.id) !== 'offline').length;
-  for (const m of sorted) box.appendChild(memberRowEl(m));
+  const on = members.filter((m) => statusOf(m.id) !== 'offline').sort((a, b) => a.display_name.localeCompare(b.display_name));
+  const off = members.filter((m) => statusOf(m.id) === 'offline').sort((a, b) => a.display_name.localeCompare(b.display_name));
+  $('#online-count').textContent = on.length;
+  if (on.length) {
+    const head = document.createElement('div');
+    head.className = 'role-head';
+    head.innerHTML = `<span>ONLINE</span><span class="muted"> — ${on.length}</span>`;
+    box.appendChild(head);
+    for (const m of on) box.appendChild(memberRowEl(m));
+  }
+  if (off.length) {
+    const head = document.createElement('div');
+    head.className = 'role-head';
+    head.innerHTML = `<span>OFFLINE</span><span class="muted"> — ${off.length}</span>`;
+    box.appendChild(head);
+    for (const m of off) box.appendChild(memberRowEl(m));
+  }
   renderDmLists();
 }
 

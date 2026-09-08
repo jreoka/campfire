@@ -299,7 +299,11 @@ function authRequired(req, res, next) {
     const p = jwt.verify(token, JWT_SECRET);
     const user = db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(p.sub);
     if (!user) return res.status(401).json({ error: 'user_gone' });
-    if ((p.iat || 0) * 1000 < (user.token_valid_after || 0)) return res.status(401).json({ error: 'bad_token' });
+    if (user.disabled) return res.status(403).json({ error: 'account_disabled' });
+    // 2s grace: JWT iat is second-precision while token_valid_after is ms —
+    // without it a token minted in the same second as a reset looks older.
+    // Precise kills come from the sessions-table revocation below.
+    if ((p.iat || 0) * 1000 < (user.token_valid_after || 0) - 2000) return res.status(401).json({ error: 'bad_token' });
     if (p.sid) {
       const s = db.prepare('SELECT id,user_id,revoked FROM sessions WHERE id = ?').get(p.sid);
       if (!s || s.user_id !== user.id || s.revoked) return res.status(401).json({ error: 'bad_token' });
@@ -358,9 +362,15 @@ function publicUser(u) {
     created_at: u.created_at || null,
     game_enabled: u.game_enabled === undefined ? 1 : u.game_enabled,
     game_exclusions: u.game_exclusions || '[]',
+    is_admin: !!u.is_admin,
+    disabled: !!u.disabled,
   };
 }
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, playing_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions';
+function requireSiteAdmin(req, res, next) {
+  if (!req.user.is_admin) return res.status(403).json({ error: 'admin_only' });
+  next();
+}
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, playing_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -434,6 +444,9 @@ app.post('/api/register', async (req, res) => {
   const hash = await bcrypt.hash(password, 10);
   const user = { id: uid(), username, display_name: displayName || username, password_hash: hash, avatar_color: pickColor(), created_at: now() };
   db.prepare('INSERT INTO users (id, username, display_name, password_hash, avatar_color, created_at) VALUES (@id,@username,@display_name,@password_hash,@avatar_color,@created_at)').run(user);
+  // Site owner is always an admin (also enforced by a boot-time UPDATE in db.js
+  // for pre-existing databases).
+  if (username === 'jreoka') db.prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(user.id);
   const sid = newSession(user.id, req);
   const token = signSession(user, sid);
   res.cookie('cf_token', token, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 864e5 });
@@ -446,6 +459,7 @@ app.post('/api/login', async (req, res) => {
   const { username, password } = req.body || {};
   const u = db.prepare('SELECT * FROM users WHERE username = ?').get(String(username || '').trim().toLowerCase());
   if (!u) return res.status(401).json({ error: 'invalid_login' });
+  if (u.disabled) return res.status(403).json({ error: 'account_disabled' });
   const ok = await bcrypt.compare(String(password || ''), u.password_hash);
   if (!ok) return res.status(401).json({ error: 'invalid_login' });
   if (u.totp_enabled) {
@@ -564,6 +578,7 @@ app.post('/api/login/2fa', async (req, res) => {
   if (!p || p.purpose !== '2fa-pre') return res.status(401).json({ error: 'bad_token' });
   const u = db.prepare('SELECT * FROM users WHERE id = ?').get(p.sub);
   if (!u) return res.status(401).json({ error: 'invalid_login' });
+  if (u.disabled) return res.status(403).json({ error: 'account_disabled' });
   if (!u.totp_enabled) return res.status(400).json({ error: 'not_enabled' });
   if (!check2faCode(u.id, u.totp_secret, req.body?.code)) {
     const f = twofaFails.get(u.id);
@@ -672,6 +687,7 @@ app.post('/api/passkeys/login/verify', async (req, res) => {
     db.prepare('UPDATE passkeys SET counter = ?, last_used = ? WHERE id = ?').run(v.authenticationInfo.newCounter, now(), row.id);
     const u = db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id);
     if (!u) return res.status(401).json({ error: 'invalid_login' });
+    if (u.disabled) return res.status(403).json({ error: 'account_disabled' });
     const sid = newSession(u.id, req);
     const token = signSession(u, sid);
     res.cookie('cf_token', token, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 864e5 });
@@ -1489,6 +1505,243 @@ app.put('/api/me/layout', authRequired, (req, res) => {
   });
   try { tx(); } catch { return res.status(400).json({ error: 'bad_layout' }); }
   res.json({ ok: true });
+});
+
+// ---------- site admin (is_admin users only) ----------
+// Full control over users and servers (guilds): stats, search/rename/disable,
+// password resets, forced logouts, deletes, moderation and broadcasts.
+function adminUserView(u) {
+  const base = publicUser(u);
+  let serverCount = 0, messageCount = 0, dmCount = 0;
+  try {
+    serverCount = db.prepare('SELECT COUNT(*) c FROM server_members WHERE user_id = ?').get(u.id).c;
+    messageCount = db.prepare('SELECT COUNT(*) c FROM messages WHERE user_id = ?').get(u.id).c;
+    dmCount = db.prepare('SELECT COUNT(*) c FROM dm_messages WHERE user_id = ?').get(u.id).c;
+  } catch {}
+  return { ...base, is_admin: !!u.is_admin, disabled: !!u.disabled, serverCount, messageCount, dmCount };
+}
+function adminDeleteMessage(mid) {
+  const m = db.prepare('SELECT * FROM messages WHERE id = ?').get(String(mid));
+  if (!m) return null;
+  let kidIds = [];
+  if (!m.thread_root_id) {
+    kidIds = db.prepare('SELECT id FROM messages WHERE thread_root_id = ?').all(m.id).map((r) => r.id);
+    if (kidIds.length) {
+      const ph = kidIds.map(() => '?').join(',');
+      try { db.prepare(`DELETE FROM message_pins WHERE message_id IN (${ph})`).run(...kidIds); } catch {}
+      db.prepare('DELETE FROM messages WHERE thread_root_id = ?').run(m.id);
+    }
+  }
+  db.prepare('DELETE FROM messages WHERE id = ?').run(m.id);
+  deletePollsFor('server', kidIds.length ? [m.id, ...kidIds] : [m.id]);
+  let pinsChanged = false;
+  try { pinsChanged = db.prepare('DELETE FROM message_pins WHERE message_id = ?').run(m.id).changes > 0; } catch {}
+  if (pinsChanged) broadcastToServer(m.server_id, { t: 'pins-changed', serverId: m.server_id, channelId: m.channel_id });
+  broadcastToServer(m.server_id, { t: 'message-deleted', serverId: m.server_id, channelId: m.channel_id, messageId: m.id, threadRoot: m.thread_root_id || null });
+  return m;
+}
+app.get('/api/admin/stats', authRequired, requireSiteAdmin, (req, res) => {
+  const count = (sql, ...a) => { try { return db.prepare(sql).get(...a).c; } catch { return 0; } };
+  const weekAgo = now() - 7 * 864e5;
+  res.json({
+    users: count('SELECT COUNT(*) c FROM users'),
+    admins: count('SELECT COUNT(*) c FROM users WHERE is_admin = 1'),
+    disabled: count('SELECT COUNT(*) c FROM users WHERE disabled = 1'),
+    newWeek: count('SELECT COUNT(*) c FROM users WHERE created_at > ?', weekAgo),
+    servers: count('SELECT COUNT(*) c FROM servers'),
+    channels: count('SELECT COUNT(*) c FROM channels'),
+    messages: count('SELECT COUNT(*) c FROM messages'),
+    dmMessages: count('SELECT COUNT(*) c FROM dm_messages'),
+    online: clients.size,
+  });
+});
+app.get('/api/admin/users', authRequired, requireSiteAdmin, (req, res) => {
+  const q = String(req.query.q || '').trim().toLowerCase();
+  const filter = String(req.query.filter || 'all');
+  const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10) || 50, 1), 200);
+  const offset = Math.max(parseInt(req.query.offset || '0', 10) || 0, 0);
+  const conds = [], params = [];
+  if (q) { conds.push('(username LIKE ? OR display_name LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
+  if (filter === 'admins') conds.push('is_admin = 1');
+  if (filter === 'disabled') conds.push('disabled = 1');
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  const total = db.prepare(`SELECT COUNT(*) c FROM users ${where}`).get(...params).c;
+  const rows = db.prepare(`SELECT * FROM users ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
+  res.json({ users: rows.map(adminUserView), total });
+});
+app.get('/api/admin/users/:id', authRequired, requireSiteAdmin, (req, res) => {
+  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!u) return res.status(404).json({ error: 'no_user' });
+  res.json({ user: adminUserView(u) });
+});
+app.patch('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, res) => {
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'no_user' });
+  const self = target.id === req.user.id;
+  const sets = [], params = [];
+  if (req.body?.displayName !== undefined) {
+    const d = String(req.body.displayName).trim().slice(0, 32);
+    if (!d) return res.status(400).json({ error: 'name_required' });
+    sets.push('display_name = ?'); params.push(d);
+  }
+  if (req.body?.avatarColor !== undefined) {
+    const c = String(req.body.avatarColor);
+    if (c && !/^#[0-9a-fA-F]{6}$/.test(c)) return res.status(400).json({ error: 'bad_color' });
+    sets.push('avatar_color = ?'); params.push(c || '#5865f2');
+  }
+  if (req.body?.bio !== undefined) { sets.push('bio = ?'); params.push(squashBreaks(String(req.body.bio)).slice(0, 300)); }
+  if (req.body?.disabled !== undefined) {
+    if (self && req.body.disabled) return res.status(400).json({ error: 'cannot_disable_self' });
+    sets.push('disabled = ?'); params.push(req.body.disabled ? 1 : 0);
+  }
+  if (req.body?.is_admin !== undefined) {
+    if (self && !req.body.is_admin) return res.status(400).json({ error: 'cannot_demote_self' });
+    sets.push('is_admin = ?'); params.push(req.body.is_admin ? 1 : 0);
+  }
+  if (req.body?.password !== undefined && String(req.body.password).length) {
+    if (String(req.body.password).length < 4) return res.status(400).json({ error: 'password too short (min 4)' });
+    sets.push('password_hash = ?'); params.push(await bcrypt.hash(String(req.body.password), 10));
+    sets.push('token_valid_after = ?'); params.push(now());
+    db.prepare('UPDATE sessions SET revoked = 1 WHERE user_id = ?').run(target.id);
+    closeSessionSockets(target.id, null);
+  }
+  if (sets.length) { params.push(target.id); db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).run(...params); }
+  const fresh = db.prepare('SELECT * FROM users WHERE id = ?').get(target.id);
+  if (fresh.disabled) {
+    db.prepare('UPDATE sessions SET revoked = 1 WHERE user_id = ?').run(target.id);
+    closeSessionSockets(target.id, null);
+  }
+  broadcastUserUpdate(fresh);
+  res.json({ user: adminUserView(fresh) });
+});
+app.delete('/api/admin/users/:id', authRequired, requireSiteAdmin, (req, res) => {
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'no_user' });
+  if (target.id === req.user.id) return res.status(400).json({ error: 'cannot_delete_self' });
+  const serverIds = db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(target.id).map((r) => r.server_id);
+  db.prepare('UPDATE sessions SET revoked = 1 WHERE user_id = ?').run(target.id);
+  closeSessionSockets(target.id, null);
+  evictFromServerAll(target.id);
+  db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
+  for (const sid of serverIds) {
+    broadcastToServer(sid, { t: 'member-left', serverId: sid, userId: target.id });
+    const v = serverView(sid);
+    if (v) broadcastToServer(sid, { t: 'server-updated', server: v });
+  }
+  res.json({ ok: true });
+});
+function evictFromServerAll(userId) {
+  for (const c of clients) {
+    if (!c.meta || c.meta.userId !== userId) continue;
+    c.meta.servers = new Set();
+    if (c.meta.voice) leaveVoice(c, true);
+  }
+}
+app.post('/api/admin/users/:id/sessions/revoke', authRequired, requireSiteAdmin, (req, res) => {
+  const target = db.prepare('SELECT id FROM users WHERE id = ?').get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'no_user' });
+  db.prepare('UPDATE sessions SET revoked = 1 WHERE user_id = ?').run(target.id);
+  db.prepare('UPDATE users SET token_valid_after = ? WHERE id = ?').run(now(), target.id);
+  closeSessionSockets(target.id, null);
+  res.json({ ok: true });
+});
+app.get('/api/admin/servers', authRequired, requireSiteAdmin, (req, res) => {
+  const q = String(req.query.q || '').trim().toLowerCase();
+  const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10) || 50, 1), 200);
+  const offset = Math.max(parseInt(req.query.offset || '0', 10) || 0, 0);
+  const where = q ? 'WHERE LOWER(s.name) LIKE ?' : '';
+  const params = q ? [`%${q}%`] : [];
+  const total = db.prepare(`SELECT COUNT(*) c FROM servers s ${where}`).get(...params).c;
+  const rows = db.prepare(`SELECT s.*, u.username AS owner_username FROM servers s LEFT JOIN users u ON u.id = s.owner_id ${where} ORDER BY s.created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
+  const servers = rows.map((s) => ({
+    id: s.id, name: s.name, description: s.description || '', icon_url: s.icon_url || null,
+    banner_url: s.banner_url || null, invite_code: s.invite_code, owner_id: s.owner_id,
+    owner_username: s.owner_username || '?', created_at: s.created_at,
+    memberCount: db.prepare('SELECT COUNT(*) c FROM server_members WHERE server_id = ?').get(s.id).c,
+    channelCount: db.prepare('SELECT COUNT(*) c FROM channels WHERE server_id = ?').get(s.id).c,
+    messageCount: db.prepare('SELECT COUNT(*) c FROM messages WHERE server_id = ?').get(s.id).c,
+  }));
+  res.json({ servers, total });
+});
+app.patch('/api/admin/servers/:id', authRequired, requireSiteAdmin, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  const sets = [], params = [];
+  if (req.body?.name !== undefined) {
+    const name = String(req.body.name).trim().slice(0, 48);
+    if (!name) return res.status(400).json({ error: 'name_required' });
+    sets.push('name = ?'); params.push(name);
+  }
+  if (req.body?.description !== undefined) { sets.push('description = ?'); params.push(String(req.body.description).slice(0, 200)); }
+  if (req.body?.owner_id !== undefined) {
+    const oid = String(req.body.owner_id);
+    const nu = db.prepare('SELECT id FROM users WHERE id = ?').get(oid);
+    if (!nu) return res.status(404).json({ error: 'no_user' });
+    if (!isMember(s.id, oid)) db.prepare('INSERT OR IGNORE INTO server_members (server_id,user_id,joined_at,position) VALUES (?,?,?,?)').run(s.id, oid, now(), 0);
+    sets.push('owner_id = ?'); params.push(oid);
+  }
+  if (sets.length) { params.push(s.id); db.prepare(`UPDATE servers SET ${sets.join(', ')} WHERE id = ?`).run(...params); }
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ server: serverView(s.id) });
+});
+app.delete('/api/admin/servers/:id', authRequired, requireSiteAdmin, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  db.prepare('DELETE FROM servers WHERE id = ?').run(s.id);
+  broadcastToServer(s.id, { t: 'server-deleted', serverId: s.id });
+  res.json({ ok: true });
+});
+app.post('/api/admin/servers/:id/invite/reset', authRequired, requireSiteAdmin, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  const code = makeInvite();
+  db.prepare('UPDATE servers SET invite_code = ? WHERE id = ?').run(code, s.id);
+  broadcastToServer(s.id, { t: 'invite-updated', serverId: s.id, invite_code: code });
+  res.json({ invite_code: code });
+});
+app.get('/api/admin/servers/:id/members', authRequired, requireSiteAdmin, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  const members = db.prepare(`
+    SELECT u.*, CASE WHEN u.id = s.owner_id THEN 'owner' ELSE 'member' END as role
+    FROM server_members m JOIN users u ON u.id = m.user_id JOIN servers s ON s.id = m.server_id
+    WHERE m.server_id = ? ORDER BY u.display_name COLLATE NOCASE ASC
+  `).all(s.id).map(adminUserView);
+  res.json({ members });
+});
+app.delete('/api/admin/servers/:id/members/:uid', authRequired, requireSiteAdmin, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  const target = String(req.params.uid);
+  if (target === s.owner_id) return res.status(400).json({ error: 'cannot_kick_owner' });
+  db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(s.id, target);
+  broadcastToServer(s.id, { t: 'member-left', serverId: s.id, userId: target });
+  evictFromServer(s.id, target);
+  notifyUser(target, { t: 'removed-from-server', serverId: s.id, reason: 'kicked' });
+  res.json({ ok: true });
+});
+app.get('/api/admin/messages/recent', authRequired, requireSiteAdmin, (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10) || 50, 1), 100);
+  const rows = db.prepare(`
+    SELECT m.id, m.content, m.created_at, m.server_id, m.channel_id,
+           s.name AS server_name, c.name AS channel_name,
+           u.id AS uid, u.username, u.display_name
+    FROM messages m LEFT JOIN servers s ON s.id = m.server_id
+    LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN users u ON u.id = m.user_id
+    ORDER BY m.created_at DESC LIMIT ?
+  `).all(limit);
+  res.json({ messages: rows });
+});
+app.delete('/api/admin/messages/:mid', authRequired, requireSiteAdmin, (req, res) => {
+  const m = adminDeleteMessage(req.params.mid);
+  if (!m) return res.status(404).json({ error: 'no_message' });
+  res.json({ ok: true });
+});
+app.post('/api/admin/announce', authRequired, requireSiteAdmin, (req, res) => {
+  const text = String(req.body?.text || '').trim().slice(0, 500);
+  if (!text) return res.status(400).json({ error: 'text_required' });
+  for (const c of clients) safeSend(c, { t: 'admin-notice', text });
+  res.json({ ok: true, delivered: clients.size });
 });
 
 // ---------- server profile ----------
@@ -2582,7 +2835,8 @@ wss.on('connection', (ws, req) => {
   try { p = jwt.verify(token, JWT_SECRET); } catch { ws.close(4401, 'bad token'); return; }
   const u = db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(p.sub);
   if (!u) { ws.close(4401, 'no user'); return; }
-  if ((p.iat || 0) * 1000 < (u.token_valid_after || 0)) { ws.close(4401, 'bad token'); return; }
+  if (u.disabled) { ws.close(4401, 'disabled'); return; }
+  if ((p.iat || 0) * 1000 < (u.token_valid_after || 0) - 2000) { ws.close(4401, 'bad token'); return; }
   if (p.sid) {
     const s = db.prepare('SELECT id,user_id,revoked FROM sessions WHERE id = ?').get(p.sid);
     if (!s || s.user_id !== u.id || s.revoked) { ws.close(4401, 'bad token'); return; }

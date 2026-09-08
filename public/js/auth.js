@@ -120,6 +120,7 @@ function prettyError(e) {
     slow_down: 'Slow down — you\'re sending too fast.', owner_only: 'Only the server owner can do that.', banned: 'You are banned from this server.', slow_mode: 'Slow mode is on — wait a moment.',
     captcha_required: 'Complete the captcha to continue.', captcha_failed: 'Captcha check failed — please try again.',
     bad_color: 'Pick a valid color.', cannot_kick_admin: 'Only the owner can remove admins.',
+    admin_only: 'Only site admins can do that.', account_disabled: 'This account has been disabled.',
   };
   return map[e] || e.replace(/_/g, ' ');
 }
