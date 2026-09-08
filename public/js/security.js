@@ -465,22 +465,13 @@ function renderServerTab() {
     brm.onclick = async () => { try { await api(`/api/servers/${d.id}/banner`, { method: 'DELETE' }); refreshServerTab(); if (d.id === S.serverId) selectServer(d.id); } catch {} };
     brow.append(bch, brm); cur.appendChild(brow);
   }
-  // invite
+  // invites (every link is a named, revocable row — there is no permanent code)
   h('Invite');
-  const inv = document.createElement('div');
-  inv.innerHTML = `<div class="codebox">${esc(d.invite_code)}</div><p class="muted small">Main invite — never expires. Anyone with it can join.</p>`;
-  const invRow = document.createElement('div'); invRow.className = 'row';
-  const cp = document.createElement('button'); cp.className = 'btn small'; cp.textContent = 'Copy link';
-  cp.onclick = () => { navigator.clipboard?.writeText(`${location.origin}/invite/${d.invite_code}`); toast('Link copied'); };
-  invRow.appendChild(cp);
-  if (mgr) {
-    const rs = document.createElement('button'); rs.className = 'btn small'; rs.textContent = 'Reset code';
-    rs.onclick = async () => { try { const r = await api(`/api/servers/${d.id}/invite/reset`, { method: 'POST' }); S.serverDetail.invite_code = r.invite_code; renderServerTab(); } catch {} };
-    invRow.appendChild(rs);
-  }
-  inv.appendChild(invRow); cur.appendChild(inv);
-  if (mgr) {
-    const xh = document.createElement('h4'); xh.textContent = 'Invite links'; xh.style.margin = '1rem 0 .4rem'; cur.appendChild(xh);
+  if (!mgr) {
+    const note = document.createElement('p'); note.className = 'muted small';
+    note.textContent = 'Only admins can create invite links — ask one for a link.';
+    cur.appendChild(note);
+  } else {
     const xsub = document.createElement('p'); xsub.className = 'muted small';
     xsub.textContent = 'Named links with optional use limits or expiry. Revoked links stop working immediately.';
     cur.appendChild(xsub);

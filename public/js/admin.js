@@ -145,10 +145,9 @@ function admServerRow(s) {
     <div class="adm-main">
       <div class="adm-name">${esc(s.name)}</div>
       <div class="muted small">owner @${esc(s.owner_username)} · ${s.memberCount} member${s.memberCount === 1 ? '' : 's'} · ${s.channelCount} channels · ${s.messageCount} msgs · created ${fmtDate(s.created_at)}</div>
-      <div class="muted small">invite <span class="codebox-inline">${esc(s.invite_code)}</span></div>
+      <div class="muted small">invite links: ${s.inviteCount}</div>
       <div class="adm-actions">
         <button class="mini" data-act="s-edit">Edit</button>
-        <button class="mini" data-act="s-invite">Reset invite</button>
         <button class="mini" data-act="s-members">${open ? 'Hide members' : 'Members'}</button>
         <button class="mini danger" data-act="s-del">Delete</button>
       </div>
@@ -404,11 +403,6 @@ async function adminClick(e) {
           afterSMedia(data.server, 'Banner removed');
         } catch (err) { toast('Failed: ' + prettyError(err.message)); }
       };
-    }
-    else if (act === 's-invite' && srow) {
-      const { invite_code } = await api(`/api/admin/servers/${srow.dataset.sid}/invite/reset`, { method: 'POST' });
-      toast(`New invite code: ${invite_code}`);
-      loadAdminServers();
     }
     else if (act === 's-members' && srow) {
       const sid = srow.dataset.sid;

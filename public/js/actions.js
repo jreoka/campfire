@@ -476,7 +476,7 @@ function serverMenuItems(sid) {
   const own = notifPrefsCache['s:' + sid] || '';
   return [
     { label: 'Open', icon: '→', fn: () => selectServer(sid) },
-    { label: 'Copy invite link', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(`${location.origin}/invite/${s.invite_code}`); toast('Link copied'); } catch {} } },
+    { label: 'Invite links', icon: '⧉', fn: async () => { if (sid !== S.serverId) await selectServer(sid); S.serverSubTab = 'general'; openServerSettings(); } },
     { label: 'Server settings', icon: '⚙', fn: async () => { if (sid !== S.serverId) await selectServer(sid); openServerSettings(); } },
     { sep: true },
     ...folderMoveItems(sid),

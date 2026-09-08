@@ -56,10 +56,10 @@ function openAddServer() {
     const name = $('#m-server-name').value.trim();
     if (!name) return toast('Give your server a name');
     $('#modal-backdrop').classList.add('hidden');
-    const { server } = await api('/api/servers', { method: 'POST', body: JSON.stringify({ name }) });
+    const { server, invite } = await api('/api/servers', { method: 'POST', body: JSON.stringify({ name }) });
     await refreshServers(server.id);
     S.ws?.send(JSON.stringify({ t: 'subscribe' }));
-    showInvite(server);
+    showInvite(server, invite);
   };
   $('#m-join').onclick = async () => {
     const code = $('#m-invite').value.trim();
@@ -111,20 +111,23 @@ async function showInviteLanding(code) {
   }
   $('#invite-view').classList.remove('hidden');
 }
-$('#btn-invite').onclick = () => showInvite(S.serverDetail);
-function showInvite(srv) {
-  if (!srv) return;
-  const url = `${location.origin}/invite/${srv.invite_code}`;
+$('#btn-invite').onclick = () => {
+  if (canManage()) { S.serverSubTab = 'general'; openServerSettings(); }
+  else toast('Only admins can create invite links');
+};
+function showInvite(srv, invite) {
+  if (!srv || !invite) return;
+  const url = `${location.origin}/invite/${invite.code}`;
   openModal(`Invite to ${srv.name}`, `
-    <p class="muted">Share this code or link — anyone with it can join.</p>
-    <div class="codebox">${esc(srv.invite_code)}</div>
+    <p class="muted">Share this code or link — anyone with it can join.${invite.label ? ` (${esc(invite.label)})` : ''}</p>
+    <div class="codebox">${esc(invite.code)}</div>
     <div class="row"><button class="btn" id="m-copy-code">Copy code</button>
     <button class="btn" id="m-copy-link">Copy link</button></div>
     <div class="chan-group-label" style="padding-left:0">Invite friends directly</div>
     <div id="m-inv-friends"><p class="muted small">Loading friends…</p></div>
     <div class="row" style="margin-top:.5rem"><button class="btn small primary" id="m-inv-send">Send invites</button></div>
   `, 'Done', null);
-  $('#m-copy-code').onclick = () => { navigator.clipboard?.writeText(srv.invite_code); toast('Code copied'); };
+  $('#m-copy-code').onclick = () => { navigator.clipboard?.writeText(invite.code); toast('Code copied'); };
   $('#m-copy-link').onclick = () => { navigator.clipboard?.writeText(url); toast('Link copied'); };
   (async () => {
     const box = $('#m-inv-friends');

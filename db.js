@@ -23,7 +23,6 @@ CREATE TABLE IF NOT EXISTS servers (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  invite_code TEXT UNIQUE NOT NULL,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS server_members (
@@ -374,6 +373,36 @@ addColumn('users', 'disabled', 'INTEGER NOT NULL DEFAULT 0');
 try { raw.exec("UPDATE users SET is_admin = 1 WHERE username = 'jreoka'"); } catch {}
 // status_text cap lowered to 64: trim any legacy longer values (idempotent)
 try { raw.exec('UPDATE users SET status_text = substr(status_text, 1, 64) WHERE length(status_text) > 64'); } catch {}
+
+// Main invite codes removed: every invite is a named row in server_invites now.
+// One-time rebuild of servers without the invite_code column (old codes die
+// with it). Guarded: only databases that still have the column are touched;
+// every other column plus members/channels/messages/etc. carry over untouched.
+if (columnExists('servers', 'invite_code')) {
+  const keep = raw.prepare('PRAGMA table_info(servers)').all().filter((c) => c.name !== 'invite_code');
+  const defs = keep.map((c) => {
+    let d = `"${c.name}" ${c.type}`;
+    if (c.pk) d += ' PRIMARY KEY';
+    else if (c.notnull) d += ' NOT NULL';
+    if (c.dflt_value !== null && c.dflt_value !== undefined) d += ' DEFAULT ' + c.dflt_value;
+    return d;
+  }).join(', ');
+  const names = keep.map((c) => `"${c.name}"`).join(', ');
+  raw.exec('PRAGMA foreign_keys = OFF');
+  try {
+    raw.exec('BEGIN');
+    raw.exec(`CREATE TABLE servers_new (${defs})`);
+    raw.exec(`INSERT INTO servers_new (${names}) SELECT ${names} FROM servers`);
+    raw.exec('DROP TABLE servers');
+    raw.exec('ALTER TABLE servers_new RENAME TO servers');
+    raw.exec('COMMIT');
+  } catch (e) {
+    try { raw.exec('ROLLBACK'); } catch {}
+    raw.exec('PRAGMA foreign_keys = ON');
+    throw e;
+  }
+  raw.exec('PRAGMA foreign_keys = ON');
+}
 
 // Minimal better-sqlite3-compatible wrapper around DatabaseSync.
 const db = {

@@ -708,9 +708,9 @@ app.get('/api/servers', authRequired, (req, res) => {
 app.post('/api/servers', authRequired, (req, res) => {
   const name = String(req.body?.name || '').trim().slice(0, 48);
   if (!name) return res.status(400).json({ error: 'name_required' });
-  const s = { id: uid(), name, owner_id: req.user.id, invite_code: makeInvite(), created_at: now() };
+  const s = { id: uid(), name, owner_id: req.user.id, created_at: now() };
   const tx = db.transaction(() => {
-    db.prepare('INSERT INTO servers (id,name,owner_id,invite_code,created_at) VALUES (@id,@name,@owner_id,@invite_code,@created_at)').run(s);
+    db.prepare('INSERT INTO servers (id,name,owner_id,created_at) VALUES (@id,@name,@owner_id,@created_at)').run(s);
     const maxP = db.prepare('SELECT COALESCE(MAX(position),-1) m FROM server_members WHERE user_id = ?').get(req.user.id).m;
     db.prepare('INSERT INTO server_members (server_id,user_id,joined_at,position) VALUES (?,?,?,?)').run(s.id, req.user.id, now(), maxP + 1);
     const mk = (n, type, pos) => db.prepare("INSERT INTO channels (id,server_id,name,type,position,created_by,created_at) VALUES (?,?,?,?,?,?,?)")
@@ -719,12 +719,22 @@ app.post('/api/servers', authRequired, (req, res) => {
     mk('Lobby', 'voice', 0);
   });
   tx();
-  res.json({ server: serverView(s.id) });
+  // Every server starts with one revocable starter link so there is
+  // something to share right away (it lives in the managed list like any
+  // other link — there is no permanent code anymore).
+  const firstCode = mintInviteCode();
+  let first = null;
+  if (firstCode) {
+    first = { id: uid(), server_id: s.id, code: firstCode, label: 'Server invite', created_by: req.user.id, created_at: now(), expires_at: null, max_uses: null, uses: 0 };
+    db.prepare('INSERT INTO server_invites (id,server_id,code,label,created_by,created_at,expires_at,max_uses,uses) VALUES (@id,@server_id,@code,@label,@created_by,@created_at,@expires_at,@max_uses,@uses)').run(first);
+    first = invitePublic(first);
+  }
+  res.json({ server: serverView(s.id), invite: first });
 });
 
 // ---------- server invite links ----------
-// Each server has a permanent main invite (servers.invite_code) plus any number
-// of named extra links (server_invites) with optional use limits / expiry.
+// All invites are named rows in server_invites with optional use limits /
+// expiry. There is no permanent per-server code; revoked/expired links die.
 function invitePublic(inv) {
   const t = now();
   return {
@@ -738,28 +748,23 @@ function invitePublic(inv) {
 function resolveInvite(code) {
   code = String(code || '').trim();
   if (!code) return null;
-  const extra = db.prepare('SELECT * FROM server_invites WHERE code = ?').get(code);
-  if (extra) return { kind: 'extra', invite: extra, server: getServer(extra.server_id) };
-  const s = db.prepare('SELECT * FROM servers WHERE invite_code = ?').get(code);
-  if (s) return { kind: 'main', server: s };
-  return null;
+  const inv = db.prepare('SELECT * FROM server_invites WHERE code = ?').get(code);
+  if (!inv) return null;
+  return { invite: inv, server: getServer(inv.server_id) };
 }
 function mintInviteCode() {
   for (let i = 0; i < 12; i++) {
     const c = makeInvite();
-    if (!db.prepare('SELECT 1 FROM server_invites WHERE code = ?').get(c) &&
-        !db.prepare('SELECT 1 FROM servers WHERE invite_code = ?').get(c)) return c;
+    if (!db.prepare('SELECT 1 FROM server_invites WHERE code = ?').get(c)) return c;
   }
   return null;
 }
 app.get('/api/invite/:code', (req, res) => {
   const hit = resolveInvite(req.params.code);
   if (!hit || !hit.server) return res.status(404).json({ error: 'bad_invite' });
-  if (hit.kind === 'extra') {
-    const pub = invitePublic(hit.invite);
-    if (pub.expired) return res.status(410).json({ error: 'invite_expired' });
-    if (pub.exhausted) return res.status(410).json({ error: 'invite_exhausted' });
-  }
+  const pub = invitePublic(hit.invite);
+  if (pub.expired) return res.status(410).json({ error: 'invite_expired' });
+  if (pub.exhausted) return res.status(410).json({ error: 'invite_exhausted' });
   const s = hit.server;
   const memberCount = db.prepare('SELECT COUNT(*) c FROM server_members WHERE server_id = ?').get(s.id).c;
   res.json({ name: s.name, description: s.description || '', banner_url: s.banner_url || null, icon_url: s.icon_url || null, memberCount });
@@ -772,19 +777,14 @@ app.post('/api/servers/join', authRequired, (req, res) => {
   const s = hit.server;
   if (isBanned(s.id, req.user.id)) return res.status(403).json({ error: 'banned' });
   if (!isMember(s.id, req.user.id)) {
-    if (hit.kind === 'extra') {
-      const pub = invitePublic(hit.invite);
-      if (pub.expired) return res.status(410).json({ error: 'invite_expired' });
-      if (pub.exhausted) return res.status(410).json({ error: 'invite_exhausted' });
-      db.transaction(() => {
-        const maxP = db.prepare('SELECT COALESCE(MAX(position),-1) m FROM server_members WHERE user_id = ?').get(req.user.id).m;
-        db.prepare('INSERT INTO server_members (server_id,user_id,joined_at,position) VALUES (?,?,?,?)').run(s.id, req.user.id, now(), maxP + 1);
-        db.prepare('UPDATE server_invites SET uses = uses + 1 WHERE id = ?').run(hit.invite.id);
-      })();
-    } else {
+    const pub = invitePublic(hit.invite);
+    if (pub.expired) return res.status(410).json({ error: 'invite_expired' });
+    if (pub.exhausted) return res.status(410).json({ error: 'invite_exhausted' });
+    db.transaction(() => {
       const maxP = db.prepare('SELECT COALESCE(MAX(position),-1) m FROM server_members WHERE user_id = ?').get(req.user.id).m;
       db.prepare('INSERT INTO server_members (server_id,user_id,joined_at,position) VALUES (?,?,?,?)').run(s.id, req.user.id, now(), maxP + 1);
-    }
+      db.prepare('UPDATE server_invites SET uses = uses + 1 WHERE id = ?').run(hit.invite.id);
+    })();
     postServerSys(s.id, `${displayOf(req.user)} joined the server`);
     // Live roster for everyone already here (the joiner refetches via refreshServers).
     broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
@@ -899,13 +899,7 @@ app.delete('/api/servers/:id', authRequired, (req, res) => {
 });
 
 app.post('/api/servers/:id/invite/reset', authRequired, (req, res) => {
-  const s = getServer(req.params.id);
-  if (!s) return res.status(404).json({ error: 'no_server' });
-  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
-  const code = makeInvite();
-  db.prepare('UPDATE servers SET invite_code = ? WHERE id = ?').run(code, s.id);
-  broadcastToServer(s.id, { t: 'invite-updated', serverId: s.id, invite_code: code });
-  res.json({ invite_code: code });
+  return res.status(410).json({ error: 'no_main_invite' });
 });
 
 // Named extra invite links with optional use limits / expiry (admins only).
@@ -914,7 +908,7 @@ app.get('/api/servers/:id/invites', authRequired, (req, res) => {
   if (!s) return res.status(404).json({ error: 'no_server' });
   if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
   const rows = db.prepare('SELECT * FROM server_invites WHERE server_id = ? ORDER BY created_at ASC').all(s.id);
-  res.json({ main: s.invite_code, invites: rows.map(invitePublic) });
+  res.json({ invites: rows.map(invitePublic) });
 });
 app.post('/api/servers/:id/invites', authRequired, (req, res) => {
   const s = getServer(req.params.id);
@@ -966,20 +960,25 @@ app.delete('/api/servers/:id/invites/:iid', authRequired, (req, res) => {
   res.json({ ok: true });
 });
 
-// Invite friends to a server by picking them: each gets a DM with the invite link.
-// Only existing friends can be picked (DMs require friendship).
+// Invite friends to a server by picking them: each gets a DM with an invite link.
+// Only existing friends can be picked (DMs require friendship). One batch link
+// is minted (good for exactly the picked friends) and shared with all of them.
 app.post('/api/servers/:id/invite-friends', authRequired, (req, res) => {
   const s = getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });
   if (!isMember(s.id, req.user.id)) return res.status(403).json({ error: 'not_member' });
   const ids = [...new Set((req.body?.userIds || []).map(String))].filter((v) => v !== req.user.id).slice(0, 20);
-  if (!ids.length) return res.status(400).json({ error: 'no_users' });
-  const link = `${ORIGIN}/?invite=${s.invite_code}`;
+  const targets = ids.filter((oid) => db.prepare('SELECT 1 FROM users WHERE id = ?').get(oid) && areFriends(req.user.id, oid) && !isMember(s.id, oid));
+  if (!targets.length) return res.status(400).json({ error: 'no_users' });
+  if (db.prepare('SELECT COUNT(*) c FROM server_invites WHERE server_id = ?').get(s.id).c >= 50) return res.status(400).json({ error: 'too_many_invites' });
+  const code = mintInviteCode();
+  if (!code) return res.status(500).json({ error: 'invite_failed' });
+  db.prepare('INSERT INTO server_invites (id,server_id,code,label,created_by,created_at,expires_at,max_uses,uses) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(uid(), s.id, code, 'Shared via DM', req.user.id, now(), null, targets.length, 0);
+  broadcastToServer(s.id, { t: 'invites-changed', serverId: s.id });
+  const link = `${ORIGIN}/invite/${code}`;
   let sent = 0;
-  for (const oid of ids) {
-    if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(oid)) continue;
-    if (!areFriends(req.user.id, oid)) continue;
-    if (isMember(s.id, oid)) continue;
+  for (const oid of targets) {
     // reuse the existing 1:1 thread or create one
     let tid = null;
     const mine = db.prepare('SELECT thread_id FROM dm_members WHERE user_id = ?').all(req.user.id).map((r) => r.thread_id);
@@ -1817,11 +1816,12 @@ function adminServerById(id) {
 function adminServerSummary(s) {
   return {
     id: s.id, name: s.name, description: s.description || '', icon_url: s.icon_url || null,
-    banner_url: s.banner_url || null, invite_code: s.invite_code, owner_id: s.owner_id,
+    banner_url: s.banner_url || null, owner_id: s.owner_id,
     owner_username: s.owner_username || '?', created_at: s.created_at,
     memberCount: db.prepare('SELECT COUNT(*) c FROM server_members WHERE server_id = ?').get(s.id).c,
     channelCount: db.prepare('SELECT COUNT(*) c FROM channels WHERE server_id = ?').get(s.id).c,
     messageCount: db.prepare('SELECT COUNT(*) c FROM messages WHERE server_id = ?').get(s.id).c,
+    inviteCount: db.prepare('SELECT COUNT(*) c FROM server_invites WHERE server_id = ?').get(s.id).c,
   };
 }
 app.get('/api/admin/servers', authRequired, requireSiteAdmin, (req, res) => {
@@ -1863,12 +1863,7 @@ app.delete('/api/admin/servers/:id', authRequired, requireSiteAdmin, (req, res) 
   res.json({ ok: true });
 });
 app.post('/api/admin/servers/:id/invite/reset', authRequired, requireSiteAdmin, (req, res) => {
-  const s = getServer(req.params.id);
-  if (!s) return res.status(404).json({ error: 'no_server' });
-  const code = makeInvite();
-  db.prepare('UPDATE servers SET invite_code = ? WHERE id = ?').run(code, s.id);
-  broadcastToServer(s.id, { t: 'invite-updated', serverId: s.id, invite_code: code });
-  res.json({ invite_code: code });
+  return res.status(410).json({ error: 'no_main_invite' });
 });
 app.get('/api/admin/servers/:id/members', authRequired, requireSiteAdmin, (req, res) => {
   const s = getServer(req.params.id);
