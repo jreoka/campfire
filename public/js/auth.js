@@ -164,11 +164,34 @@ async function boot() {
   showMain();
   let draft = null;
   try { draft = JSON.parse(sessionStorage.getItem('cf_draft') || 'null'); sessionStorage.removeItem('cf_draft'); } catch {}
-  if (draft && draft.s) S.serverId = draft.s;
+  // Persistent per-user last-view (localStorage, survives browser restarts);
+  // the sessionStorage draft only covers same-tab reloads and composer text.
+  const mem = readMemView();
+  if (mem && mem.s) S.serverId = mem.s;
+  else if (draft && draft.s) S.serverId = draft.s;
   await warmStdEmoji().catch(() => {});
   await refreshServers();
-  if (draft && draft.c && S.serverId === draft.s) { try { await selectChannel(draft.c); } catch {} }
-  if (draft && draft.t) $('#in-message').value = draft.t;
+  // Reopen exactly where the user left off: a DM/group thread under Home,
+  // or a server + channel. Missing ids fall back gracefully.
+  if (mem && mem.view === 'home') {
+    await openHome();
+    if (mem.dm) {
+      if (S.dms.some((t) => t.id === mem.dm)) await selectDmThread(mem.dm);
+      else {
+        // dismissed (hidden) thread from last time — try to reopen it
+        try {
+          const { thread } = await api(`/api/dms/${mem.dm}/open`, { method: 'POST' });
+          await refreshDms();
+          if (S.dms.some((t) => t.id === thread.id)) await selectDmThread(thread.id);
+        } catch {}
+      }
+    }
+  } else if (mem && mem.view === 'server' && mem.s && S.servers.some((x) => x.id === mem.s)) {
+    if (S.serverId !== mem.s) await selectServer(mem.s);
+    const wantC = mem.c || (draft && draft.s === mem.s ? draft.c : null);
+    if (wantC && S.serverDetail?.channels.some((c) => c.id === wantC && c.type === 'text')) await selectChannel(wantC);
+  }
+  if (draft && draft.t && S.view === 'server') $('#in-message').value = draft.t;
   connectWS();
   pollVersion();
   pushSetup();

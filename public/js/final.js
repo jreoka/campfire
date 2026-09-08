@@ -184,6 +184,7 @@ function pollVersion() {
 }
 window.addEventListener('beforeunload', () => {
   try { sessionStorage.setItem('cf_draft', JSON.stringify({ s: S.serverId, c: S.channelId, t: document.querySelector('#in-message') ? document.querySelector('#in-message').value : '' })); } catch {}
+  rememberView();
 });
 
 // ---------- go ----------

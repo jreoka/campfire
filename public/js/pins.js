@@ -187,6 +187,7 @@ $('#chan-topic').onclick = () => {
 };
 async function selectDmThread(id) {
   S.dmThreadId = id;
+  rememberView();
   // Opening a thread clears its unread badge (row + home button).
   if (S.dmUnread.delete(id)) paintHomeBadge();
   renderDmLists();

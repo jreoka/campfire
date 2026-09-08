@@ -144,6 +144,7 @@ async function selectServer(id) {
   openServerView();
   S.serverId = id;
   S.channelId = null;
+  rememberView();
   renderServerList();
   document.body.classList.remove('nav-open');
   try {
@@ -275,6 +276,7 @@ function confirmDeleteChannel(c) {
 }
 async function selectChannel(id) {
   S.channelId = id;
+  rememberView();
   S.callOpen = false;
   document.body.classList.remove('nav-open');
   $('#chat').classList.remove('call-open');

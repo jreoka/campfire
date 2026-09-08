@@ -168,7 +168,7 @@ function onWS(m) {
     case 'dm-threads-changed':
       if (S.view === 'home') {
         refreshDms().then(() => {
-          if (S.dmThreadId && !S.dms.some((t) => t.id === S.dmThreadId)) { S.dmThreadId = null; renderDmBlank(); }
+          if (S.dmThreadId && !S.dms.some((t) => t.id === S.dmThreadId)) { S.dmThreadId = null; renderDmBlank(); rememberView(); }
           else renderDmMembers();
         });
       }
@@ -264,7 +264,7 @@ function onWS(m) {
       refreshServers();
       break;
     case 'removed-from-dm':
-      if (S.dmThreadId === m.threadId) { S.dmThreadId = null; renderDmBlank(); }
+      if (S.dmThreadId === m.threadId) { S.dmThreadId = null; renderDmBlank(); rememberView(); }
       refreshDms();
       toast('You were removed from a group chat');
       break;

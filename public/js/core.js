@@ -170,4 +170,25 @@ async function api(path, opts = {}) {
   if (!res.ok) throw new Error(data.error || ('http_' + res.status));
   return data;
 }
+// Local per-user memory of the last-open view (DM / group chat / server /
+// channel). Kept in localStorage keyed by user id, so after a browser
+// restart the app reopens exactly where you left off. Local-only —
+// nothing is ever sent to the server.
+function readMemView() {
+  if (!S.me) return null;
+  try {
+    const v = JSON.parse(localStorage.getItem('cf_view_' + S.me.id) || 'null');
+    return v && typeof v === 'object' ? v : null;
+  } catch { return null; }
+}
+function rememberView() {
+  if (!S.me) return;
+  const v = {
+    view: S.view,
+    s: S.view === 'server' ? S.serverId : null,
+    c: S.view === 'server' ? S.channelId : null,
+    dm: S.view === 'home' ? S.dmThreadId : null,
+  };
+  try { localStorage.setItem('cf_view_' + S.me.id, JSON.stringify(v)); } catch {}
+}
 

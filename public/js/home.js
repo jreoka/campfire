@@ -346,7 +346,7 @@ function dmCtxMenu(tid, x, y) {
   if (t && t.isGroup) {
     items.push({ label: 'Leave chat', icon: '🗑', danger: true, fn: async () => {
       try { await api(`/api/dms/${tid}/leave`, { method: 'POST' }); } catch {}
-      if (S.dmThreadId === tid) { S.dmThreadId = null; renderDmBlank(); }
+      if (S.dmThreadId === tid) { S.dmThreadId = null; renderDmBlank(); rememberView(); }
       refreshDms();
     } });
   }
