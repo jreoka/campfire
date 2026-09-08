@@ -651,7 +651,12 @@ async function loadUserGaming(box, username, opts = {}) {
     const g = await api('/api/users/' + encodeURIComponent(username) + '/gaming');
     if (!g || !g.total_ms) return;
     const { compact, canDelete } = opts;
-    const nowPlaying = g.games.find((x) => x.last_seen_ms && Date.now() - x.last_seen_ms < 300000);
+    // Authoritative "now playing": the live playing_game, not recency of
+    // last_seen_ms (which stays fresh for minutes after quitting and made
+    // the card keep saying "Playing X" after the game closed).
+    const live = g.now_playing || (typeof memberByUsername === 'function' ? (memberByUsername(username) || {}).playing_game : null) || null;
+    const hit = live ? (g.games || []).find((x) => x.game === live) : null;
+    const nowPlaying = hit || (live ? { game: live } : null);
     if (compact) {
       const rows = (g.games || []).slice(0, 4).map((x) => `
         <div class="uc-gaming-row">

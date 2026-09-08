@@ -1254,6 +1254,16 @@ app.patch('/api/me', authRequired, (req, res) => {
   if (!sets.length) return res.status(400).json({ error: 'nothing_to_update' });
   vals.push(req.user.id);
   db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+  // Disabling game activity or ignoring the currently-played game takes
+  // effect immediately instead of lingering until the next watcher beacon.
+  try {
+    const cur = db.prepare('SELECT playing_game, game_enabled, game_exclusions FROM users WHERE id = ?').get(req.user.id);
+    if (cur?.playing_game) {
+      let excluded = false;
+      try { excluded = new Set(JSON.parse(cur.game_exclusions || '[]')).has(cur.playing_game); } catch {}
+      if (cur.game_enabled === 0 || excluded) db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(req.user.id);
+    }
+  } catch {}
   const u = freshUser(req.user.id);
   broadcastUserUpdate(u);
   for (const sid of [...clients].filter((c) => c.meta && c.meta.userId === u.id).flatMap((c) => [...c.meta.servers])) {
@@ -1312,7 +1322,7 @@ function dayStreak(userId, where, params) {
   return { streak, best };
 }
 function gamingFor(userId) {
-  const u = db.prepare('SELECT game_enabled, game_exclusions FROM users WHERE id = ?').get(userId);
+  const u = db.prepare('SELECT game_enabled, game_exclusions, playing_game FROM users WHERE id = ?').get(userId);
   const exclusions = new Set(JSON.parse(u?.game_exclusions || '[]'));
   const games = db.prepare('SELECT game, total_ms, first_seen_ms, last_seen_ms FROM user_games WHERE user_id = ? ORDER BY total_ms DESC').all(userId);
   const out = games
@@ -1323,7 +1333,12 @@ function gamingFor(userId) {
     });
   const total_ms = out.reduce((a, g) => a + g.total_ms, 0);
   const s = dayStreak(userId, '', [userId]);
-  return { total_ms, level: levelForMs(total_ms), streak: s.streak, best_streak: s.best, games: out.slice(0, 10) };
+  // Authoritative live status: playing_game, not recency of last_seen_ms
+  // (which stays fresh for minutes after quitting and made cards claim
+  // "Playing X" after the game closed). Null when disabled/excluded.
+  let now_playing = (u?.game_enabled !== 0 && u?.playing_game) ? u.playing_game : null;
+  if (now_playing && exclusions.has(now_playing)) now_playing = null;
+  return { total_ms, level: levelForMs(total_ms), streak: s.streak, best_streak: s.best, now_playing, games: out.slice(0, 10) };
 }
 app.post('/api/watcher/status', authRequired, (req, res) => {
   const raw = req.body || {};
