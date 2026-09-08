@@ -2196,7 +2196,9 @@ app.post('/api/dms/messages/:mid/reactions', authRequired, (req, res) => {
   const m = dmMsg(req.params.mid);
   if (!m || !dmThreadFor(req.user.id, m.thread_id)) return res.status(404).json({ error: 'no_message' });
   const emoji = String(req.body?.emoji || '');
-  if (!emoji || /[:<>"'&]/.test(emoji) || [...emoji].length < 1 || emoji.length > 24) return res.status(400).json({ error: 'bad_emoji' });
+  // same rules as channel reactions; DMs have no server, so any custom
+  // emoji from a server the user has joined is valid
+  if (!validReaction(emoji, userCustomEmojiNames(req.user.id))) return res.status(400).json({ error: 'bad_emoji' });
   const ex = db.prepare('SELECT 1 FROM dm_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').get(m.id, req.user.id, emoji);
   if (ex) db.prepare('DELETE FROM dm_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').run(m.id, req.user.id, emoji);
   else db.prepare('INSERT INTO dm_reactions (message_id, user_id, emoji, created_at) VALUES (?,?,?,?)').run(m.id, req.user.id, emoji, now());
