@@ -119,12 +119,12 @@ function smallBtn(label, fn, danger) {
   return b;
 }
 function isBlocked(id) { return (S.friends.blocked || []).some((u) => u.id === id); }
-function friendBtnHTML(uid) {
+function friendBtnHTML(uid, id = 'uc-friend') {
   const st = friendState(uid);
-  if (st === 'friend') return '<button class="btn small danger" id="uc-friend">Unfriend</button>';
-  if (st === 'pending-out') return '<button class="btn small" id="uc-friend">Cancel request</button>';
-  if (st === 'pending-in') return '<button class="btn small primary" id="uc-friend">Accept request</button>';
-  return '<button class="btn small" id="uc-friend">Add friend</button>';
+  if (st === 'friend') return `<button class="btn small danger" id="${id}">Unfriend</button>`;
+  if (st === 'pending-out') return `<button class="btn small" id="${id}">Cancel request</button>`;
+  if (st === 'pending-in') return `<button class="btn small primary" id="${id}">Accept request</button>`;
+  return `<button class="btn small" id="${id}">Add friend</button>`;
 }
 async function friendCardAction(uid, x, y) {
   const u = memberById(uid);

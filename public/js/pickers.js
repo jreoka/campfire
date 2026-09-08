@@ -579,7 +579,7 @@ async function openUserCard(uid, x, y) {
       ${u.created_at ? `<div class="uc-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
       <div id="uc-gaming" class="uc-gaming hidden"></div>
       ${cardRolesHTML(uid)}
-      <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? '<button class="btn small primary" id="uc-message">Message</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid) : ''}${canMod ? '<button class="btn small danger" id="uc-kick">Kick</button><button class="btn small danger" id="uc-ban">Ban</button>' : ''}${uid !== S.me.id ? `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="uc-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>` : ''}<button class="btn small" id="uc-close">Close</button></div>
+      <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? '<button class="btn small primary" id="uc-message">Message</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid) : ''}${canMod ? '<button class="btn small danger" id="uc-kick">Kick</button><button class="btn small danger" id="uc-ban">Ban</button>' : ''}${uid !== S.me.id ? `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="uc-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>` : ''}<button class="btn small" id="uc-profile">Profile</button><button class="btn small" id="uc-close">Close</button></div>
     </div>`;
   paintAvatar(card.querySelector('.avatar'), u);
   loadUserGaming($('#uc-gaming'), u.username);
@@ -588,6 +588,8 @@ async function openUserCard(uid, x, y) {
   card.style.left = Math.max(8, Math.min(x || 8, innerWidth - Math.min(296, innerWidth - 16))) + 'px';
   card.style.top = Math.max(8, Math.min(y || 8, innerHeight - (r.height || 300) - 8)) + 'px';
   $('#uc-close').onclick = closeUserCard;
+  const pr = $('#uc-profile');
+  if (pr) pr.onclick = () => { closeUserCard(); openProfileScreen(uid); };
   const men = $('#uc-mention');
   if (men) men.onclick = () => { insertAtCursor($('#in-message'), '@' + u.username + ' '); closeUserCard(); $('#in-message').focus(); };
   const msg = $('#uc-message');
@@ -645,7 +647,47 @@ async function loadUserGaming(box, username) {
     box.classList.remove('hidden');
   } catch {}
 }
-function closeUserCard() { $('#usercard').classList.add('hidden'); }
+// ---------- profile screen (full overlay) ----------
+function openProfileScreen(uid) {
+  const u = memberById(uid);
+  if (!u) return;
+  const bd = $('#profile-backdrop');
+  const isMe = uid === S.me.id;
+  const st = statusOf(uid);
+  const stLabel = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline' }[st];
+  $('#pf-banner').style.backgroundImage = u.banner_url ? `url('${esc(u.banner_url)}')` : '';
+  paintAvatar($('#pf-avatar'), u);
+  $('#pf-name').style.cssText = nameStyleFor(u);
+  $('#pf-name').textContent = u.display_name;
+  $('#pf-sub').textContent = '@' + u.username + (u.role === 'owner' ? ' · server owner' : '');
+  const body = $('#pf-body');
+  let actions = '';
+  if (!isMe) {
+    if (!isBlocked(uid)) actions += '<button class="btn small primary" id="pf-message">Message</button>' + friendBtnHTML(uid, 'pf-friend');
+    actions += `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="pf-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>`;
+  }
+  body.innerHTML = `
+    <div class="pf-status"><span class="status-dot ${st}"></span><span>${stLabel}</span>${u.status_text ? `<span class="pf-statustext">${esc(u.status_text)}</span>` : ''}</div>
+    ${u.playing_game ? `<div class="pf-playing">Playing ${esc(u.playing_game)}</div>` : ''}
+    ${u.bio ? `<div class="pf-bio">${renderRich(u.bio)}</div>` : ''}
+    ${u.created_at ? `<div class="pf-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
+    <div id="pf-gaming" class="pf-gaming hidden"></div>
+    <div class="pf-actions">${actions}<button class="btn small" id="pf-close">Close</button></div>`;
+  loadUserGaming($('#pf-gaming'), u.username);
+  $('#pf-close').onclick = closeProfileScreen;
+  const msg = $('#pf-message');
+  if (msg) msg.onclick = () => { closeProfileScreen(); messageUser(uid); };
+  const fr = $('#pf-friend');
+  if (fr) fr.onclick = () => { closeProfileScreen(); friendCardAction(uid); };
+  const blk = $('#pf-block');
+  if (blk) blk.onclick = () => {
+    const was = isBlocked(uid), nm = u.username;
+    closeProfileScreen();
+    if (was) unblockUser(uid); else blockUser(uid, nm);
+  };
+  bd.classList.remove('hidden');
+}
+function closeProfileScreen() { $('#profile-backdrop').classList.add('hidden'); }
 
 // ---------- @mention autocomplete ----------
 let mentionIdx = 0;
