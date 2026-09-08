@@ -38,6 +38,7 @@ let pending2faTmp = null;
 function show2faStep() {
   $('#form-auth').classList.add('hidden');
   $('#btn-passkey').classList.add('hidden');
+  $('#auth-tabs').classList.add('hidden');
   $('#form-2fa').classList.remove('hidden');
   $('#in-2fa').value = '';
   $('#auth-2fa-error').classList.add('hidden');
@@ -47,6 +48,7 @@ function hide2faStep() {
   $('#form-2fa').classList.add('hidden');
   $('#form-auth').classList.remove('hidden');
   $('#btn-passkey').classList.remove('hidden');
+  $('#auth-tabs').classList.remove('hidden');
   pending2faTmp = null;
 }
 $('#btn-2fa-back').onclick = hide2faStep;
