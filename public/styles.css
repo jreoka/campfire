@@ -398,6 +398,11 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 /* ---------- picker (emoji + GIFs) ---------- */
 #picker{position:absolute;left:.9rem;bottom:calc(64px + var(--safe-b));width:min(360px,calc(100vw - 2rem));background:var(--panel-2);border:0;border-radius:16px;z-index:150;display:flex;flex-direction:column;max-height:380px}
 #picker.anchored{position:fixed;bottom:auto}
+.pk-subrow{display:flex;align-items:center;gap:.5rem;width:100%;padding:.15rem 0 .3rem}
+.pk-subbtn{border:0;background:transparent;color:var(--muted);font-weight:700;font-size:.82rem;padding:.4rem .85rem;border-radius:999px;cursor:pointer}
+.pk-subbtn:hover{color:var(--text);background:var(--panel-3)}
+.pk-subbtn.on{background:var(--accent-container);color:var(--on-container)}
+.pk-subtitle{font-size:.8rem;color:var(--muted)}
 .pk-tabs{display:flex;gap:.25rem;padding:.5rem .5rem 0}
 .pk-tab{flex:1;border:0;background:transparent;color:var(--muted);font-weight:700;font-size:.85rem;padding:.5rem;border-radius:999px;cursor:pointer}
 .pk-tab.active{background:var(--accent-container);color:var(--on-container)}

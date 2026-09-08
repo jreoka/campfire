@@ -45,7 +45,7 @@ function setPickerTab(t) {
   $('#pk-gifs').classList.toggle('hidden', t !== 'gifs');
   $('#pk-klipy').classList.toggle('hidden', t !== 'gifs');
   $('#pk-search').placeholder = t === 'gifs' ? 'Search KLIPY' : 'Search emoji';
-  if (t === 'gifs') renderGifTab();
+  if (t === 'gifs') { gifSubView = 'all'; renderGifTab(); }
 }
 document.querySelectorAll('.pk-tab').forEach((b) => (b.onclick = () => { setPickerTab(b.dataset.ptab); applyPickerSearch($('#pk-search').value || ''); }));
 let emojiData = null, emojiLoadP = null;
@@ -139,6 +139,7 @@ let gifSearchT = null;
 function applyPickerSearch(q) {
   const gifsActive = document.querySelector('.pk-tab.active')?.dataset.ptab === 'gifs';
   if (gifsActive && S.picker?.mode !== 'react') {
+    if (gifSubView === 'favs') { gifQuery = q; renderGifTab(); return; }
     clearTimeout(gifSearchT);
     if (!q.trim()) { loadGifTrending(); return; }
     gifSearchT = setTimeout(() => loadGifSearch(q.trim()), 350);
@@ -150,6 +151,7 @@ $('#pk-search').addEventListener('input', (e) => applyPickerSearch(e.target.valu
 let gifResults = null; // null = loading
 let gifQuery = '';
 let gifFailed = false;
+let gifSubView = 'all'; // 'all' (trending/results) | 'favs' (Favorites menu)
 const STAR_PATH = 'M12 2l2.9 6.9 7.1.6-5.4 4.7 1.6 7-6.2-3.8-6.2 3.8 1.6-7-5.4-4.7 7.1-.6z';
 function gifButton(g, fav, onclick) {
   const b = document.createElement('button');
@@ -161,28 +163,45 @@ function gifButton(g, fav, onclick) {
   b.querySelector('.pk-star').onclick = (e) => { e.stopPropagation(); toggleGifFav(g); };
   return b;
 }
-// GIFs tab = Favorites section on top (filtered by the search box when there's
-// a query), then KLIPY trending/search results below it.
+// GIFs tab has two sub-views: "All GIFs" (KLIPY trending/search results) and
+// "Favorites" (its own menu). The search box filters whichever sub-view is open.
 function renderGifTab() {
   const box = $('#pk-gifs');
   box.innerHTML = '';
   const q = gifQuery.toLowerCase();
+  const n = S.gifFavs ? S.gifFavs.length : null;
   const favSlugs = new Set((S.gifFavs || []).map((f) => f.slug));
-  if (S.gifFavs === null) {
-    box.insertAdjacentHTML('beforeend', '<div class="pk-sec">Favorites</div>');
-    box.insertAdjacentHTML('beforeend', '<div class="pk-empty small">Loading…</div>');
-  } else if (S.gifFavs.length) {
-    const favs = q
-      ? S.gifFavs.filter((g) => (g.title || '').toLowerCase().includes(q) || (g.slug || '').includes(q))
-      : S.gifFavs;
-    box.insertAdjacentHTML('beforeend', `<div class="pk-sec">Favorites (${favs.length})</div>`);
-    if (!favs.length) box.insertAdjacentHTML('beforeend', '<div class="pk-empty small">No favorites match.</div>');
-    else for (const g of favs) box.appendChild(gifButton(g, true, () => sendGif(g)));
+  $('#pk-search').placeholder = gifSubView === 'favs' ? 'Search favorites' : 'Search KLIPY';
+  if (gifSubView === 'favs') {
+    box.insertAdjacentHTML('beforeend',
+      `<div class="pk-subrow"><button class="pk-subbtn" data-pkback="1">← All GIFs</button>` +
+      `<span class="pk-subtitle">Favorites${n === null ? '' : ` (${n})`}</span></div>`);
+    box.querySelector('[data-pkback]').onclick = () => {
+      gifSubView = 'all';
+      $('#pk-search').value = '';
+      loadGifTrending();
+    };
+    if (S.gifFavs === null) {
+      box.insertAdjacentHTML('beforeend', '<div class="pk-empty small">Loading…</div>');
+    } else {
+      const favs = q
+        ? S.gifFavs.filter((g) => (g.title || '').toLowerCase().includes(q) || (g.slug || '').includes(q))
+        : S.gifFavs;
+      if (!favs.length) {
+        box.insertAdjacentHTML('beforeend', `<div class="pk-empty small">${q ? 'No favorites match.' : 'No favorites yet — star a GIF in All GIFs to add them here.'}</div>`);
+      } else {
+        for (const g of favs) box.appendChild(gifButton(g, true, () => sendGif(g)));
+      }
+    }
+  } else {
+    box.insertAdjacentHTML('beforeend',
+      `<div class="pk-subrow"><button class="pk-subbtn on" data-pkfavs="1">Favorites${n === null ? '' : ` (${n})`}</button></div>`);
+    box.querySelector('[data-pkfavs]').onclick = () => { gifSubView = 'favs'; renderGifTab(); };
+    box.insertAdjacentHTML('beforeend', `<div class="pk-sec">${q ? 'KLIPY results' : 'Trending'}</div>`);
+    if (gifResults === null) box.insertAdjacentHTML('beforeend', '<div class="pk-empty small">Loading…</div>');
+    else if (!gifResults.length) box.insertAdjacentHTML('beforeend', `<div class="pk-empty small">${gifFailed ? 'GIFs unavailable.' : 'No GIFs found.'}</div>`);
+    else for (const g of gifResults) box.appendChild(gifButton(g, favSlugs.has(g.slug), () => sendGif(g)));
   }
-  box.insertAdjacentHTML('beforeend', `<div class="pk-sec">${q ? 'KLIPY results' : 'Trending'}</div>`);
-  if (gifResults === null) box.insertAdjacentHTML('beforeend', '<div class="pk-empty small">Loading…</div>');
-  else if (!gifResults.length) box.insertAdjacentHTML('beforeend', `<div class="pk-empty small">${gifFailed ? 'GIFs unavailable.' : 'No GIFs found.'}</div>`);
-  else for (const g of gifResults) box.appendChild(gifButton(g, favSlugs.has(g.slug), () => sendGif(g)));
 }
 // ---------- GIF favorites (per-user, synced across devices) ----------
 async function loadGifFavs() {
