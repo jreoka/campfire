@@ -22,6 +22,23 @@ function connectWS() {
     setTimeout(() => { if (store.token) connectWS(); }, 2500);
   };
 }
+function scrubReplyPreview(deletedId) {
+  // A deleted message's text must not linger in the reply-quote previews of
+  // messages that quoted it. Fresh history loads already come back scrubbed
+  // (server emits deleted:true with an empty snippet); this clears live
+  // caches so open clients see the placeholder immediately.
+  const scrub = (m) => {
+    if (m && m.replyTo && m.replyTo.id === deletedId) {
+      m.replyTo = { id: deletedId, author: 'deleted', snippet: '', deleted: true };
+    }
+  };
+  for (const [, arr] of S.messages) arr.forEach(scrub);
+  for (const [, arr] of S.dmMessages) arr.forEach(scrub);
+  if (S.thread) {
+    if (S.thread.root) scrub(S.thread.root);
+    (S.thread.replies || []).forEach(scrub);
+  }
+}
 function onWS(m) {
   switch (m.t) {
     case 'hello': {
@@ -87,6 +104,7 @@ function onWS(m) {
     case 'message-deleted': {
       const arr = (S.messages.get(m.channelId) || []).filter((x) => x.id !== m.messageId);
       S.messages.set(m.channelId, arr);
+      scrubReplyPreview(m.messageId);
       // A deleted reply drops the root's live reply count (drives the N-replies link).
       if (m.threadRoot) updateMsgInCaches(m.threadRoot, (r) => { r.threadCount = Math.max(0, (r.threadCount || 1) - 1); });
       if (S.thread) {
@@ -145,6 +163,7 @@ function onWS(m) {
     case 'dm-deleted': {
       const darr = (S.dmMessages.get(m.threadId) || []).filter((x) => x.id !== m.messageId);
       S.dmMessages.set(m.threadId, darr);
+      scrubReplyPreview(m.messageId);
       const inHistDd = S.histMode && S.histMode.kind === 'dm' && S.histMode.id === m.threadId;
       if (S.view === 'home' && S.dmThreadId === m.threadId && !inHistDd) renderDmMessages();
       break;

@@ -240,7 +240,11 @@ function messageEl(m, opts = {}) {
     inner += `<div class="fwd-tag">Forwarded from <b>${esc(m.fwdFrom)}</b></div>`;
   }
   if (m.replyTo) {
-    inner += `<div class="reply-quote" data-jump="${m.replyTo.id}"><span class="rq-author">${esc(m.replyTo.author)}</span><span class="rq-text">${esc(m.replyTo.snippet)}</span></div>`;
+    if (m.replyTo.deleted || (m.replyTo.author === 'deleted' && !m.replyTo.snippet)) {
+      inner += `<div class="reply-quote deleted"><span class="rq-text">Original message was deleted</span></div>`;
+    } else {
+      inner += `<div class="reply-quote" data-jump="${m.replyTo.id}"><span class="rq-author">${esc(m.replyTo.author)}</span><span class="rq-text">${esc(m.replyTo.snippet)}</span></div>`;
+    }
   }
   if (S.editing === m.id) {
     inner += `<div class="edit-box"><textarea id="edit-area" maxlength="5000">${esc(m.content)}</textarea><div class="row"><button class="btn small primary" data-act="edit-save">Save</button><button class="btn small" data-act="edit-cancel">Cancel</button></div></div>`;

@@ -2219,7 +2219,7 @@ function hydrateDm(rows, meId) {
     id: r.id, threadId: r.thread_id, content: r.content, created_at: r.created_at,
     sys: r.sys || null,
     fwdFrom: r.fwd_from || null,
-    replyTo: r.reply_to_id ? { id: r.reply_to_id, author: r.p_name || '?', snippet: String(r.p_content || '').slice(0, 140) } : null,
+    replyTo: r.reply_to_id ? (r.p_content != null ? { id: r.reply_to_id, author: r.p_name || 'deleted', snippet: String(r.p_content).slice(0, 140) } : { id: r.reply_to_id, author: 'deleted', snippet: '', deleted: true }) : null,
     threadCount: 0, edited: !!r.edited_at, _dm: true,
     attachments: attBy[r.id] || [],
     poll: pollBy[r.id] || null,
@@ -2760,7 +2760,7 @@ function fmtMsg(r) {
   return {
     id: r.id, serverId: r.server_id, channelId: r.channel_id,
     content: r.content, created_at: r.created_at,
-    replyTo: r.reply_to_id ? { id: r.reply_to_id, author: r.p_name || 'deleted', snippet: String(r.p_content || '').slice(0, 140) } : null,
+    replyTo: r.reply_to_id ? (r.p_content != null ? { id: r.reply_to_id, author: r.p_name || 'deleted', snippet: String(r.p_content).slice(0, 140) } : { id: r.reply_to_id, author: 'deleted', snippet: '', deleted: true }) : null,
     threadRoot: r.thread_root_id || null,
     sys: r.sys || null,
     fwdFrom: r.fwd_from || null,
