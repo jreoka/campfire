@@ -104,7 +104,7 @@ h1,h2,h3{letter-spacing:-0.01em}
 .server-btn.has-icon:hover{background-color:transparent}
 .server-btn.has-icon.active{border-radius:12px}
 .server-btn.muted{opacity:.45}
-#btn-add-server{width:48px;height:48px;border-radius:16px;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:flex;align-items:center;justify-content:center}
+#btn-add-server{width:48px;height:48px;border-radius:12px;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:flex;align-items:center;justify-content:center}
 #btn-add-server:hover{background:var(--accent-hover)}
 #btn-add-server svg{display:block}
 
