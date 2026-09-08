@@ -78,8 +78,8 @@ function syncComposerRender() {
   r.style.marginLeft = (-inp.scrollLeft) + 'px';
 }
 $('#in-message').addEventListener('input', syncComposerRender);
-$('#in-message').addEventListener('input', composerAutoGrow);
-$('#in-thread').addEventListener('input', composerAutoGrow);
+$('#in-message').addEventListener('input', (e) => composerAutoGrow(e.target));
+$('#in-thread').addEventListener('input', (e) => composerAutoGrow(e.target));
 // Composer auto-grows with content (Discord-style); caps at 40% of the viewport.
 function composerAutoGrow(inp) {
   inp.style.height = 'auto';
