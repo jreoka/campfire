@@ -84,7 +84,7 @@ Discord's detectable-games DB, beaconed to `POST /api/watcher/status` every
   MSI, and portable `campfire.exe` under `src-tauri/target/release/`.
 - **Releases:** `.github/workflows/app-windows.yml` (GitHub Actions Windows
   runner) publishes bundles to a GitHub Release — trigger via
-  `workflow_dispatch` (version auto-increments) or push a tag like `app-v0.1.0`. Not code-signed
+  `workflow_dispatch` (version auto-increments, release tagged `app-v<ver>-<short-hash>`) or push a tag like `app-v0.1.0`. Not code-signed
   (SmartScreen warning on first run). `app/README.md` has details.
 
 ## Design language (owner directive)

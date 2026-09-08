@@ -49,38 +49,53 @@ jobs:
             $ver = $env:INPUT_VERSION
           } else {
             # Auto-increment: start from the higher of the repo files and the
-            # latest app-v* tag. If that version was never released, use it
-            # as-is; otherwise bump it (patch/minor/major) to the next free tag.
+            # latest app-v* tag (tags look like app-v0.1.3 or app-v0.1.3-a3f9c2).
+            # If that version was never released, use it as-is; otherwise bump
+            # it (patch/minor/major) to the next free version.
             git fetch --tags --quiet
+            $allTags = @(git tag --list 'app-v*')
             $base = '0.1.0'
             try {
               $fileVer = (Get-Content app/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
               if ($fileVer -match '^\d+\.\d+\.\d+$') { $base = $fileVer }
             } catch { }
             $latest = $null
-            foreach ($t in (git tag --list 'app-v*')) {
-              if ($t -match '^app-v(\d+\.\d+\.\d+)$') {
+            foreach ($t in $allTags) {
+              if ($t -match '^app-v(\d+\.\d+\.\d+)(-[0-9a-f]+)?$') {
                 $v = New-Object System.Version($matches[1])
                 if ($null -eq $latest -or $v -gt $latest) { $latest = $v }
               }
             }
             $start = New-Object System.Version($base)
             if ($null -ne $latest -and $latest -gt $start) { $start = $latest }
-            if (git tag --list ("app-v" + $start.ToString())) {
-              switch ($env:INPUT_BUMP) {
-                'major' { $start = New-Object System.Version(($start.Major + 1), 0, 0) }
-                'minor' { $start = New-Object System.Version($start.Major, ($start.Minor + 1), 0) }
-                default { $start = New-Object System.Version($start.Major, $start.Minor, ($start.Build + 1)) }
+            $bumped = $false
+            while ($true) {
+              $rx = '^app-v' + [regex]::Escape($start.ToString()) + '(-[0-9a-f]+)?$'
+              $taken = $false
+              foreach ($t in $allTags) {
+                if ($t -match $rx) { $taken = $true; break }
               }
-              while (git tag --list ("app-v" + $start.ToString())) {
+              if (-not $taken) { break }
+              if (-not $bumped) {
+                switch ($env:INPUT_BUMP) {
+                  'major' { $start = New-Object System.Version(($start.Major + 1), 0, 0) }
+                  'minor' { $start = New-Object System.Version($start.Major, ($start.Minor + 1), 0) }
+                  default { $start = New-Object System.Version($start.Major, $start.Minor, ($start.Build + 1)) }
+                }
+                $bumped = $true
+              } else {
                 $start = New-Object System.Version($start.Major, $start.Minor, ($start.Build + 1))
               }
             }
             $ver = $start.ToString()
           }
           if ($ver -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid version: $ver" }
+          # Short commit hash identifies the exact build in tags and releases.
+          $short = 'unknown'
+          if ($env:GITHUB_SHA -and $env:GITHUB_SHA.Length -ge 6) { $short = $env:GITHUB_SHA.Substring(0, 6) }
           echo "APP_VERSION=$ver" >> $env:GITHUB_ENV
-          Write-Host "Resolved version: $ver"
+          echo "SHORT_SHA=$short" >> $env:GITHUB_ENV
+          Write-Host "Resolved version: $ver ($short)"
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
           INPUT_BUMP: ${{ github.event.inputs.bump }}
@@ -118,13 +133,14 @@ jobs:
           if ($tag -match '^app-v.+$') {
             echo "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
           } else {
-            echo "RELEASE_TAG=app-v$env:APP_VERSION" >> $env:GITHUB_ENV
+            echo "RELEASE_TAG=app-v$env:APP_VERSION-$env:SHORT_SHA" >> $env:GITHUB_ENV
           }
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          body: "Campfire Windows app v${{ env.APP_VERSION }} (code is unsigned — expect a SmartScreen warning on first run)."
+          name: Campfire Windows app v${{ env.APP_VERSION }} (${{ env.SHORT_SHA }})
+          body: "Campfire Windows app v${{ env.APP_VERSION }} (commit ${{ env.SHORT_SHA }}, code is unsigned — expect a SmartScreen warning on first run)."
           files: |
             app/src-tauri/target/release/bundle/nsis/*.exe
             app/src-tauri/target/release/bundle/msi/*.msi
@@ -148,7 +164,7 @@ jobs:
             Write-Host "Version files already in sync, nothing to commit."
           } else {
             $branch = $env:GITHUB_REF_NAME
-            git commit -m "chore(windows-app): bump version to $env:APP_VERSION"
+            git commit -m "chore(windows-app): bump version to $env:APP_VERSION ($env:SHORT_SHA)"
             git fetch origin $branch
             git rebase "origin/$branch"
             git push origin "HEAD:refs/heads/$branch"
