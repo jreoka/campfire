@@ -53,7 +53,7 @@ function poke() {
   if (!e.target.closest('#composer-more') && !e.target.closest('#btn-more') && !e.target.closest('#btn-plus')) $('#composer-more')?.classList.add('hidden');
 });
  document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeStatusMenu(); closeCtx(); closeFolderFlyout(); closeFolderPopout(); closeSettings(); closeServerSettings(); $('#composer-more')?.classList.add('hidden'); cancelModal(); $('#lightbox').classList.add('hidden'); hideEmojiPop(); }
+  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeStatusMenu(); closeCtx(); closeFolderFlyout(); closeFolderPopout(); closeSettings(); closeServerSettings(); closeProfileScreen(); $('#composer-more')?.classList.add('hidden'); cancelModal(); $('#lightbox').classList.add('hidden'); hideEmojiPop(); }
 });
 function composerAnchor() {
   const t = $('#composer-tools')?.getBoundingClientRect();

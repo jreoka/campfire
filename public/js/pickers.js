@@ -614,6 +614,7 @@ async function openUserCard(uid, x, y) {
     } catch (err) { toast('Failed: ' + prettyError(err.message)); }
   }));
 }
+function closeUserCard() { $('#usercard').classList.add('hidden'); }
 function cardRolesHTML(uid) {
   if (S.view !== 'server' || !S.serverDetail) return '';
   const d = S.serverDetail;
@@ -688,6 +689,8 @@ function openProfileScreen(uid) {
   bd.classList.remove('hidden');
 }
 function closeProfileScreen() { $('#profile-backdrop').classList.add('hidden'); }
+$('#profile-close').onclick = closeProfileScreen;
+$('#profile-backdrop').addEventListener('click', (e) => { if (e.target.id === 'profile-backdrop') closeProfileScreen(); });
 
 // ---------- @mention autocomplete ----------
 let mentionIdx = 0;
