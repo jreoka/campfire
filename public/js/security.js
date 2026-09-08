@@ -323,6 +323,63 @@ function openServerSettings() {
   $('#srv-settings-backdrop').classList.remove('hidden');
 }
 function closeServerSettings() { S.srvSetId = null; $('#srv-settings-backdrop')?.classList.add('hidden'); }
+function fmtInviteDur(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 3600) return Math.max(1, Math.floor(s / 60)) + 'm';
+  if (s < 86400) return Math.floor(s / 3600) + 'h';
+  return Math.floor(s / 86400) + 'd';
+}
+function inviteMetaText(inv) {
+  const bits = [inv.max_uses ? `${inv.uses}/${inv.max_uses} uses` : `${inv.uses} ${inv.uses === 1 ? 'use' : 'uses'}`];
+  if (inv.expires_at) {
+    const ms = inv.expires_at - Date.now();
+    bits.push(ms <= 0 ? 'expired' : 'expires in ' + fmtInviteDur(ms));
+  } else bits.push('never expires');
+  if (inv.exhausted && !inv.expired) bits.push('used up');
+  return bits.join(' · ');
+}
+async function renderInviteLinks(box, d) {
+  box.innerHTML = '<p class="muted small">Loading…</p>';
+  let invites = [];
+  try { ({ invites } = await api(`/api/servers/${d.id}/invites`)); }
+  catch { box.innerHTML = '<p class="muted small">Could not load invite links.</p>'; return; }
+  if (!box.isConnected) return;
+  box.innerHTML = '';
+  if (!invites.length) box.innerHTML = '<p class="muted small">No extra links yet — create one below.</p>';
+  for (const inv of invites) {
+    const row = document.createElement('div'); row.className = 'set-row';
+    const main = document.createElement('div'); main.style.cssText = 'flex:1;min-width:0';
+    const top = document.createElement('div');
+    top.style.cssText = 'font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    top.textContent = inv.label || 'Untitled link';
+    const code = document.createElement('div'); code.className = 'muted small';
+    code.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    code.textContent = `${location.origin}/invite/${inv.code}`;
+    const meta = document.createElement('div'); meta.className = 'muted small';
+    meta.textContent = inviteMetaText(inv);
+    if (inv.expired || inv.exhausted) meta.style.color = 'var(--red)';
+    main.append(top, code, meta);
+    row.appendChild(main);
+    const cp = document.createElement('button'); cp.className = 'mini'; cp.textContent = 'Copy';
+    cp.onclick = () => { navigator.clipboard?.writeText(`${location.origin}/invite/${inv.code}`); toast('Link copied'); };
+    const rn = document.createElement('button'); rn.className = 'mini'; rn.textContent = 'Rename';
+    rn.onclick = async () => {
+      const name = await openPromptModal({ title: 'Rename invite link', label: 'Nickname', initial: inv.label || '', placeholder: 'e.g. Friday game night', okLabel: 'Save', maxlength: 32 });
+      if (name === null) return;
+      try { await api(`/api/servers/${d.id}/invites/${inv.id}`, { method: 'PATCH', body: JSON.stringify({ label: name.trim() }) }); renderInviteLinks(box, d); }
+      catch (err) { toast('Failed: ' + prettyError(err.message)); }
+    };
+    const rv = document.createElement('button'); rv.className = 'mini danger'; rv.textContent = 'Revoke';
+    rv.onclick = async () => {
+      const ok = await openConfirmModal({ title: 'Revoke this link?', message: `"${inv.label || 'Untitled link'}" will stop working immediately. People who already joined stay.`, okLabel: 'Revoke', danger: true });
+      if (!ok) return;
+      try { await api(`/api/servers/${d.id}/invites/${inv.id}`, { method: 'DELETE' }); toast('Link revoked'); renderInviteLinks(box, d); }
+      catch (err) { toast('Failed: ' + prettyError(err.message)); }
+    };
+    row.append(cp, rn, rv);
+    box.appendChild(row);
+  }
+}
 function renderServerTab() {
   const box = $('#srvset-body');
   if (!box) return;
@@ -411,7 +468,7 @@ function renderServerTab() {
   // invite
   h('Invite');
   const inv = document.createElement('div');
-  inv.innerHTML = `<div class="codebox">${esc(d.invite_code)}</div>`;
+  inv.innerHTML = `<div class="codebox">${esc(d.invite_code)}</div><p class="muted small">Main invite — never expires. Anyone with it can join.</p>`;
   const invRow = document.createElement('div'); invRow.className = 'row';
   const cp = document.createElement('button'); cp.className = 'btn small'; cp.textContent = 'Copy link';
   cp.onclick = () => { navigator.clipboard?.writeText(`${location.origin}/invite/${d.invite_code}`); toast('Link copied'); };
@@ -422,6 +479,32 @@ function renderServerTab() {
     invRow.appendChild(rs);
   }
   inv.appendChild(invRow); cur.appendChild(inv);
+  if (mgr) {
+    const xh = document.createElement('h4'); xh.textContent = 'Invite links'; xh.style.margin = '1rem 0 .4rem'; cur.appendChild(xh);
+    const xsub = document.createElement('p'); xsub.className = 'muted small';
+    xsub.textContent = 'Named links with optional use limits or expiry. Revoked links stop working immediately.';
+    cur.appendChild(xsub);
+    const xlist = document.createElement('div'); cur.appendChild(xlist);
+    renderInviteLinks(xlist, d);
+    const form = document.createElement('div');
+    form.innerHTML = `<div class="row" style="margin-top:.55rem;flex-wrap:wrap">`
+      + `<input id="srv-inv-label" maxlength="32" placeholder="Nickname (e.g. Friday game night)" style="flex:2;min-width:140px" />`
+      + `<input id="srv-inv-max" type="number" min="1" max="100000" placeholder="Max uses" style="flex:1;min-width:90px" />`
+      + `<select id="srv-inv-exp" style="flex:1;min-width:110px"><option value="">Never expires</option><option value="3600">1 hour</option><option value="86400">24 hours</option><option value="604800">7 days</option><option value="2592000">30 days</option></select>`
+      + `<button class="btn small primary" id="srv-inv-create">Create link</button></div>`;
+    cur.appendChild(form);
+    form.querySelector('#srv-inv-create').onclick = async () => {
+      const label = form.querySelector('#srv-inv-label').value.trim();
+      const maxUses = form.querySelector('#srv-inv-max').value.trim();
+      const expiresIn = form.querySelector('#srv-inv-exp').value;
+      try {
+        const { invite } = await api(`/api/servers/${d.id}/invites`, { method: 'POST', body: JSON.stringify({ label, maxUses: maxUses || null, expiresIn: expiresIn || null }) });
+        try { await navigator.clipboard?.writeText(`${location.origin}/invite/${invite.code}`); toast('Link created and copied'); }
+        catch { toast('Link created'); }
+        renderInviteLinks(xlist, d);
+      } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+    };
+  }
   cur = sec('channels');
   // channels
   h('Channels');

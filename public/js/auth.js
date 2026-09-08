@@ -117,6 +117,9 @@ function prettyError(e) {
   const map = {
     invalid_login: 'Wrong username or password.', username_taken: 'That username is taken.',
     bad_username: 'Username needs 2–24 chars (a-z, 0-9, _ .).', bad_invite: 'Invite code not found.',
+    invite_expired: 'This invite has expired.', invite_exhausted: 'This invite has reached its use limit.',
+    bad_limit: 'Pick a use limit between 1 and 100000.', bad_expiry: 'Pick a valid expiry (1 minute to 1 year).',
+    too_many_invites: 'Too many invite links — revoke one first.', no_invite: 'Invite link not found.',
     slow_down: 'Slow down — you\'re sending too fast.', owner_only: 'Only the server owner can do that.', banned: 'You are banned from this server.', slow_mode: 'Slow mode is on — wait a moment.',
     captcha_required: 'Complete the captcha to continue.', captcha_failed: 'Captcha check failed — please try again.',
     bad_color: 'Pick a valid color.', cannot_kick_admin: 'Only the owner can remove admins.',

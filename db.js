@@ -218,6 +218,18 @@ CREATE TABLE IF NOT EXISTS poll_votes (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (poll_id, user_id) -- single choice: one vote per user per poll
 );
+CREATE TABLE IF NOT EXISTS server_invites (
+  id TEXT PRIMARY KEY,
+  server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  code TEXT UNIQUE NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER,
+  max_uses INTEGER,
+  uses INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_invites_server ON server_invites(server_id);
 CREATE TABLE IF NOT EXISTS blocks (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   blocked_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

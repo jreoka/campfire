@@ -722,21 +722,69 @@ app.post('/api/servers', authRequired, (req, res) => {
   res.json({ server: serverView(s.id) });
 });
 
+// ---------- server invite links ----------
+// Each server has a permanent main invite (servers.invite_code) plus any number
+// of named extra links (server_invites) with optional use limits / expiry.
+function invitePublic(inv) {
+  const t = now();
+  return {
+    id: inv.id, code: inv.code, label: inv.label || '',
+    created_by: inv.created_by || null, created_at: inv.created_at,
+    expires_at: inv.expires_at ?? null, max_uses: inv.max_uses ?? null, uses: inv.uses || 0,
+    expired: !!(inv.expires_at && inv.expires_at <= t),
+    exhausted: !!(inv.max_uses && (inv.uses || 0) >= inv.max_uses),
+  };
+}
+function resolveInvite(code) {
+  code = String(code || '').trim();
+  if (!code) return null;
+  const extra = db.prepare('SELECT * FROM server_invites WHERE code = ?').get(code);
+  if (extra) return { kind: 'extra', invite: extra, server: getServer(extra.server_id) };
+  const s = db.prepare('SELECT * FROM servers WHERE invite_code = ?').get(code);
+  if (s) return { kind: 'main', server: s };
+  return null;
+}
+function mintInviteCode() {
+  for (let i = 0; i < 12; i++) {
+    const c = makeInvite();
+    if (!db.prepare('SELECT 1 FROM server_invites WHERE code = ?').get(c) &&
+        !db.prepare('SELECT 1 FROM servers WHERE invite_code = ?').get(c)) return c;
+  }
+  return null;
+}
 app.get('/api/invite/:code', (req, res) => {
-  const s = db.prepare('SELECT * FROM servers WHERE invite_code = ?').get(String(req.params.code || '').trim());
-  if (!s) return res.status(404).json({ error: 'bad_invite' });
+  const hit = resolveInvite(req.params.code);
+  if (!hit || !hit.server) return res.status(404).json({ error: 'bad_invite' });
+  if (hit.kind === 'extra') {
+    const pub = invitePublic(hit.invite);
+    if (pub.expired) return res.status(410).json({ error: 'invite_expired' });
+    if (pub.exhausted) return res.status(410).json({ error: 'invite_exhausted' });
+  }
+  const s = hit.server;
   const memberCount = db.prepare('SELECT COUNT(*) c FROM server_members WHERE server_id = ?').get(s.id).c;
   res.json({ name: s.name, description: s.description || '', banner_url: s.banner_url || null, icon_url: s.icon_url || null, memberCount });
 });
 app.post('/api/servers/join', authRequired, (req, res) => {
   const code = String(req.body?.inviteCode || req.body?.code || '').trim();
   if (!code) return res.status(400).json({ error: 'code_required' });
-  const s = db.prepare('SELECT * FROM servers WHERE invite_code = ?').get(code);
-  if (!s) return res.status(404).json({ error: 'bad_invite' });
+  const hit = resolveInvite(code);
+  if (!hit || !hit.server) return res.status(404).json({ error: 'bad_invite' });
+  const s = hit.server;
   if (isBanned(s.id, req.user.id)) return res.status(403).json({ error: 'banned' });
   if (!isMember(s.id, req.user.id)) {
-    const maxP = db.prepare('SELECT COALESCE(MAX(position),-1) m FROM server_members WHERE user_id = ?').get(req.user.id).m;
-    db.prepare('INSERT INTO server_members (server_id,user_id,joined_at,position) VALUES (?,?,?,?)').run(s.id, req.user.id, now(), maxP + 1);
+    if (hit.kind === 'extra') {
+      const pub = invitePublic(hit.invite);
+      if (pub.expired) return res.status(410).json({ error: 'invite_expired' });
+      if (pub.exhausted) return res.status(410).json({ error: 'invite_exhausted' });
+      db.transaction(() => {
+        const maxP = db.prepare('SELECT COALESCE(MAX(position),-1) m FROM server_members WHERE user_id = ?').get(req.user.id).m;
+        db.prepare('INSERT INTO server_members (server_id,user_id,joined_at,position) VALUES (?,?,?,?)').run(s.id, req.user.id, now(), maxP + 1);
+        db.prepare('UPDATE server_invites SET uses = uses + 1 WHERE id = ?').run(hit.invite.id);
+      })();
+    } else {
+      const maxP = db.prepare('SELECT COALESCE(MAX(position),-1) m FROM server_members WHERE user_id = ?').get(req.user.id).m;
+      db.prepare('INSERT INTO server_members (server_id,user_id,joined_at,position) VALUES (?,?,?,?)').run(s.id, req.user.id, now(), maxP + 1);
+    }
     postServerSys(s.id, `${displayOf(req.user)} joined the server`);
     // Live roster for everyone already here (the joiner refetches via refreshServers).
     broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
@@ -858,6 +906,64 @@ app.post('/api/servers/:id/invite/reset', authRequired, (req, res) => {
   db.prepare('UPDATE servers SET invite_code = ? WHERE id = ?').run(code, s.id);
   broadcastToServer(s.id, { t: 'invite-updated', serverId: s.id, invite_code: code });
   res.json({ invite_code: code });
+});
+
+// Named extra invite links with optional use limits / expiry (admins only).
+app.get('/api/servers/:id/invites', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  const rows = db.prepare('SELECT * FROM server_invites WHERE server_id = ? ORDER BY created_at ASC').all(s.id);
+  res.json({ main: s.invite_code, invites: rows.map(invitePublic) });
+});
+app.post('/api/servers/:id/invites', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  const label = String(req.body?.label || '').trim().slice(0, 32);
+  let maxUses = null;
+  if (req.body?.maxUses !== undefined && req.body.maxUses !== null && String(req.body.maxUses).trim() !== '') {
+    maxUses = parseInt(req.body.maxUses, 10);
+    if (!Number.isFinite(maxUses) || maxUses < 1 || maxUses > 100000) return res.status(400).json({ error: 'bad_limit' });
+  }
+  let expiresAt = null;
+  if (req.body?.expiresIn !== undefined && req.body.expiresIn !== null && String(req.body.expiresIn).trim() !== '') {
+    const secs = parseInt(req.body.expiresIn, 10);
+    if (!Number.isFinite(secs) || secs < 60 || secs > 366 * 86400) return res.status(400).json({ error: 'bad_expiry' });
+    expiresAt = now() + secs * 1000;
+  } else if (req.body?.expiresAt !== undefined && req.body.expiresAt !== null && String(req.body.expiresAt).trim() !== '') {
+    expiresAt = parseInt(req.body.expiresAt, 10);
+    if (!Number.isFinite(expiresAt) || expiresAt <= now() || expiresAt > now() + 366 * 86400 * 1000) return res.status(400).json({ error: 'bad_expiry' });
+  }
+  const n = db.prepare('SELECT COUNT(*) c FROM server_invites WHERE server_id = ?').get(s.id).c;
+  if (n >= 50) return res.status(400).json({ error: 'too_many_invites' });
+  const code = mintInviteCode();
+  if (!code) return res.status(500).json({ error: 'invite_failed' });
+  const inv = { id: uid(), server_id: s.id, code, label, created_by: req.user.id, created_at: now(), expires_at: expiresAt, max_uses: maxUses, uses: 0 };
+  db.prepare('INSERT INTO server_invites (id,server_id,code,label,created_by,created_at,expires_at,max_uses,uses) VALUES (@id,@server_id,@code,@label,@created_by,@created_at,@expires_at,@max_uses,@uses)').run(inv);
+  broadcastToServer(s.id, { t: 'invites-changed', serverId: s.id });
+  res.json({ invite: invitePublic(inv) });
+});
+app.patch('/api/servers/:id/invites/:iid', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  const inv = db.prepare('SELECT * FROM server_invites WHERE id = ? AND server_id = ?').get(req.params.iid, s.id);
+  if (!inv) return res.status(404).json({ error: 'no_invite' });
+  const label = String(req.body?.label ?? '').trim().slice(0, 32);
+  db.prepare('UPDATE server_invites SET label = ? WHERE id = ?').run(label, inv.id);
+  broadcastToServer(s.id, { t: 'invites-changed', serverId: s.id });
+  res.json({ invite: invitePublic({ ...inv, label }) });
+});
+app.delete('/api/servers/:id/invites/:iid', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  const inv = db.prepare('SELECT * FROM server_invites WHERE id = ? AND server_id = ?').get(req.params.iid, s.id);
+  if (!inv) return res.status(404).json({ error: 'no_invite' });
+  db.prepare('DELETE FROM server_invites WHERE id = ?').run(inv.id);
+  broadcastToServer(s.id, { t: 'invites-changed', serverId: s.id });
+  res.json({ ok: true });
 });
 
 // Invite friends to a server by picking them: each gets a DM with the invite link.

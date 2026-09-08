@@ -298,6 +298,10 @@ function onWS(m) {
       toast('Server was deleted'); refreshServers(); break;
     case 'invite-updated':
       if (m.serverId === S.serverId) S.serverDetail.invite_code = m.invite_code;
+      if (S.srvSetId === m.serverId && !$('#srv-settings-backdrop')?.classList.contains('hidden')) renderServerTab();
+      break;
+    case 'invites-changed':
+      if (S.srvSetId === m.serverId && !$('#srv-settings-backdrop')?.classList.contains('hidden')) renderServerTab();
       break;
     case 'notif-new':
       paintNotifBadge(m.unread || 0);
