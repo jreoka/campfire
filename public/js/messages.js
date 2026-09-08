@@ -230,12 +230,17 @@ function messageEl(m, opts = {}) {
     div.textContent = m.content;
     return div;
   }
-  div.className = 'msg';
+  const grouped = !!opts.grouped;
+  div.className = 'msg' + (grouped ? ' grouped' : '');
   div.dataset.mid = m.id;
   const own = m.user && m.user.id === S.me.id;
   const lu = liveUserFor(m.user);
-  let inner = '<span class="avatar" data-uid="' + (m.user ? m.user.id : '') + '"></span><div class="body">';
-  inner += `<div class="head"><span class="who" data-uid="${m.user ? m.user.id : ''}" style="${nameStyleFor(lu)}">${esc(lu ? lu.display_name : 'deleted')}</span><span class="when">${fmtTime(m.created_at)}</span>${m.edited ? '<span class="edited">(edited)</span>' : ''}</div>`;
+  let inner = grouped
+    ? `<span class="avatar ghost" title="${esc(fmtTime(m.created_at))}"><span class="gts">${esc(fmtTime(m.created_at))}</span></span><div class="body">`
+    : '<span class="avatar" data-uid="' + (m.user ? m.user.id : '') + '"></span><div class="body">';
+  if (!grouped) {
+    inner += `<div class="head"><span class="who" data-uid="${m.user ? m.user.id : ''}" style="${nameStyleFor(lu)}">${esc(lu ? lu.display_name : 'deleted')}</span><span class="when">${fmtTime(m.created_at)}</span>${m.edited ? '<span class="edited">(edited)</span>' : ''}</div>`;
+  }
   if (m.fwdFrom) {
     inner += `<div class="fwd-tag">Forwarded from <b>${esc(m.fwdFrom)}</b></div>`;
   }
@@ -250,7 +255,7 @@ function messageEl(m, opts = {}) {
     inner += `<div class="edit-box"><textarea id="edit-area" maxlength="5000">${esc(m.content)}</textarea><div class="row"><button class="btn small primary" data-act="edit-save">Save</button><button class="btn small" data-act="edit-cancel">Cancel</button></div></div>`;
   } else if (m.content) {
     const big = isBigEmoji(m.content) && !m.attachments?.length;
-    inner += `<div class="text${big ? ' bigemoji' : ''}">${renderRich(m.content)}</div>`;
+    inner += `<div class="text${big ? ' bigemoji' : ''}">${renderRich(m.content)}${grouped && m.edited ? ' <span class="edited">(edited)</span>' : ''}</div>`;
     if (!big && typeof linkEmbedsHTML === 'function') inner += linkEmbedsHTML(m.content);
   }
   if (m.attachments?.length) {
@@ -272,8 +277,19 @@ function messageEl(m, opts = {}) {
   bar += `<button data-act="more" title="More reactions">➕</button><button data-act="reply" title="Reply">↩</button><button data-act="menu" title="More actions">⋯</button>`;
   inner += '<div class="msg-actions">' + bar + '</div>';
   div.innerHTML = inner;
-  paintAvatar(div.querySelector('.avatar'), lu);
+  if (!grouped) paintAvatar(div.querySelector('.avatar'), lu);
   return div;
+}
+// Discord-style grouping: consecutive messages from the same author collapse
+// onto one header (5-minute window; day dividers, replies and forwards
+// always start a new group).
+const GROUP_MS = 5 * 60 * 1000;
+function shouldGroup(prev, m) {
+  if (!prev || !m || prev.sys || m.sys) return false;
+  if ((prev.user?.id || null) !== (m.user?.id || null)) return false;
+  if ((m.created_at - prev.created_at) > GROUP_MS) return false;
+  if (m.replyTo || m.fwdFrom) return false;
+  return true;
 }
 function anchorBottom(box) {
   // Lazy `loading` images have 0 height until they load, so the first scroll
@@ -296,11 +312,12 @@ function renderMessages(force = false) {
   const msgs = S.messages.get(S.channelId) || [];
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
   box.innerHTML = '';
-  let lastDay = '';
+  let lastDay = '', prev = null;
   for (const m of msgs) {
     const day = fmtDay(m.created_at);
-    if (day !== lastDay) { lastDay = day; const d = document.createElement('div'); d.className = 'day'; d.textContent = day; box.appendChild(d); }
-    box.appendChild(messageEl(m));
+    if (day !== lastDay) { lastDay = day; prev = null; const d = document.createElement('div'); d.className = 'day'; d.textContent = day; box.appendChild(d); }
+    box.appendChild(messageEl(m, { grouped: shouldGroup(prev, m) }));
+    prev = m;
   }
   if (!msgs.length) box.innerHTML += '<p class="muted" style="text-align:center">No messages yet — say hello.</p>';
   if (force || nearBottom) anchorBottom(box);

@@ -206,6 +206,10 @@ h1,h2,h3{letter-spacing:-0.01em}
 .msg{display:flex;gap:.7rem;padding:.5rem .6rem;border-radius:16px;-webkit-touch-callout:none}
 .msg:hover{background:#ffffff08}
 .msg .avatar{width:38px;height:38px}
+.msg.grouped{padding-top:.12rem;padding-bottom:.12rem}
+.msg.grouped .avatar.ghost{background:none;box-shadow:none;cursor:default;font-weight:400}
+.msg.grouped .avatar .gts{display:none;font-size:.62rem;color:var(--muted);white-space:nowrap}
+.msg.grouped:hover .avatar .gts{display:block}
 .msg .body{min-width:0;flex:1}
 .msg .head{display:flex;gap:.5rem;align-items:center}
 .msg .who{font-weight:600;font-size:.92rem}

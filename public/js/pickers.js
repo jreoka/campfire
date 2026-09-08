@@ -473,7 +473,8 @@ function renderThread(scroll = false) {
   rootBox.appendChild(messageEl(S.thread.root, { inThread: true }));
   const nearBottom = repBox.scrollHeight - repBox.scrollTop - repBox.clientHeight < 200;
   repBox.innerHTML = '';
-  for (const r of S.thread.replies) repBox.appendChild(messageEl(r, { inThread: true }));
+  let tprev = null;
+  for (const r of S.thread.replies) { repBox.appendChild(messageEl(r, { inThread: true, grouped: shouldGroup(tprev, r) })); tprev = r; }
   if (!S.thread.replies.length) repBox.innerHTML = '<p class="muted small" style="text-align:center">No replies yet.</p>';
   if (scroll || nearBottom) anchorBottom(repBox);
 }

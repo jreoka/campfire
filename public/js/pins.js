@@ -245,11 +245,12 @@ function renderDmMessages(force = false) {
   const msgs = S.dmMessages.get(S.dmThreadId) || [];
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
   box.innerHTML = '';
-  let lastDay = '';
+  let lastDay = '', prev = null;
   for (const m of msgs) {
     const day = fmtDay(m.created_at);
-    if (day !== lastDay) { lastDay = day; const d = document.createElement('div'); d.className = 'day'; d.textContent = day; box.appendChild(d); }
-    box.appendChild(messageEl(m));
+    if (day !== lastDay) { lastDay = day; prev = null; const d = document.createElement('div'); d.className = 'day'; d.textContent = day; box.appendChild(d); }
+    box.appendChild(messageEl(m, { grouped: shouldGroup(prev, m) }));
+    prev = m;
   }
   if (!msgs.length) box.innerHTML += '<p class="muted" style="text-align:center">No messages yet — say hello.</p>';
   if (force || nearBottom) anchorBottom(box);
