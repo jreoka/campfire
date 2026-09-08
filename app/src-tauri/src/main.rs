@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{
     menu::{IsMenuItem, Menu, MenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle,
     Manager,
     Runtime,
@@ -21,6 +21,7 @@ const SERVER: &str = "https://campfire.dill.moe";
 const DISCORD_DB: &str = "https://discord.com/api/v10/applications/detectable";
 const ICON_BYTES: &[u8] = include_bytes!("../icons/icon.ico");
 const HEARTBEAT_SECS: u64 = 30;
+const POLL_SECS: u64 = 5;
 
 #[derive(serde::Deserialize)]
 struct DbGame {
@@ -41,6 +42,8 @@ struct State {
     games: Mutex<Vec<(String, Vec<String>)>>,
     db_at: Mutex<u64>,
     signed_in: AtomicBool,
+    // last game successfully beaconed (for tray menu rebuilds)
+    current_game: Mutex<Option<String>>,
 }
 
 fn server_url() -> String {
@@ -157,6 +160,27 @@ fn update_tray<R: Runtime>(app: &AppHandle<R>, game: Option<&str>) {
     }
 }
 
+fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(w) = app.get_webview_window("main") {
+        if w.is_minimized().unwrap_or(false) {
+            let _ = w.unminimize();
+        }
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+// Single left-click toggles the window (open/close), like Discord/Steam.
+fn toggle_main_window<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(w) = app.get_webview_window("main") {
+        if w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false) {
+            let _ = w.hide();
+        } else {
+            show_main_window(app);
+        }
+    }
+}
+
 #[tauri::command]
 fn get_autostart(app: AppHandle) -> Result<bool, String> {
     app.autolaunch().is_enabled().map_err(|e| e.to_string())
@@ -212,6 +236,7 @@ fn main() {
             games: Mutex::new(Vec::new()),
             db_at: Mutex::new(0),
             signed_in: AtomicBool::new(false),
+            current_game: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![get_autostart, set_autostart, get_watch_state])
         .on_window_event(|window, event| {
@@ -228,14 +253,25 @@ fn main() {
                 .tooltip("Campfire")
                 .menu(&tray_menu(&app, None)?)
                 .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    let app = tray.app_handle();
+                    match event {
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } => toggle_main_window(app),
+                        // Double-click also fires Click events first; end open.
+                        TrayIconEvent::DoubleClick {
+                            button: MouseButton::Left,
+                            ..
+                        } => show_main_window(app),
+                        _ => {}
+                    }
+                })
                 .on_menu_event(|app, event| {
                     match event.id.0.as_str() {
-                        "open" => {
-                            if let Some(w) = app.get_webview_window("main") {
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                            }
-                        }
+                        "open" => show_main_window(app),
                         "autostart" => {
                             let a = app.autolaunch();
                             let _ = if a.is_enabled().unwrap_or(false) {
@@ -243,7 +279,9 @@ fn main() {
                             } else {
                                 a.enable()
                             };
-                            update_tray(app, None);
+                            let cur =
+                                app.state::<State>().current_game.lock().unwrap().clone();
+                            update_tray(app, cur.as_deref());
                         }
                         "quit" => {
                             clear_game_on_exit(app);
@@ -283,7 +321,7 @@ fn main() {
                 }
             });
 
-            // Game watcher: detect every 10s; beacon immediately on change and
+            // Game watcher: poll every POLL_SECS; beacon immediately on change and
             // every HEARTBEAT_SECS while playing (server credits capped time).
             let watch_app = app.clone();
             std::thread::spawn(move || {
@@ -301,7 +339,9 @@ fn main() {
                 let last_game: Mutex<Option<String>> = Mutex::new(None);
                 let last_heartbeat: Mutex<std::time::Instant> = Mutex::new(std::time::Instant::now());
                 loop {
-                    let _ = system.refresh_processes(sysinfo::ProcessesToUpdate::All, false);
+                    // remove_dead MUST be true: with false, exited processes linger
+                    // in the map forever and closed games look "still playing".
+                    let _ = system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
                     let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
                     for p in system.processes().values() {
                         *counts.entry(p.name().to_string_lossy().to_lowercase()).or_insert(0) += 1;
@@ -353,15 +393,14 @@ fn main() {
                                 .unwrap_or(false);
                             if ok {
                                 state.signed_in.store(true, Ordering::Relaxed);
-                                if due_heartbeat {
-                                    *last_heartbeat.lock().unwrap() = std::time::Instant::now();
-                                }
+                                *last_heartbeat.lock().unwrap() = std::time::Instant::now();
                                 *last_game.lock().unwrap() = game.clone();
+                                *state.current_game.lock().unwrap() = game.clone();
                                 update_tray(&app, game.as_deref());
                             }
                         }
                     }
-                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    std::thread::sleep(std::time::Duration::from_secs(POLL_SECS));
                 }
             });
 

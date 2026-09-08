@@ -5,7 +5,8 @@ Native Windows wrapper around the Campfire web app. Built with **Tauri v2**
 
 - **WebView** loads `https://campfire.dill.moe` (the real app; updates flow
   through the normal PWA auto-update).
-- **Tray icon** — open app, current game, start-on-login toggle, quit.
+- **Tray icon** — left-click toggles the window open/closed (right-click menu:
+  open app, current game, start-on-login toggle, quit).
 - **Start on login** — Task Scheduler entry via `tauri-plugin-autostart`;
   when launched from autostart the window stays hidden (tray only).
 - **Game detection** — polls running process names (sysinfo) and matches them

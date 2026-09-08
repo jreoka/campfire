@@ -1265,12 +1265,12 @@ app.patch('/api/me', authRequired, (req, res) => {
 });
 // ---------- game activity watcher (Windows desktop app beacon) ----------
 // playing_game is kept separate from status_text: the watcher sets it and logs
-// playtime; custom status is untouched. Heartbeats {game|null, ts} every ~10-30s;
+// playtime; custom status is untouched. Heartbeats {game|null, ts} every ~5-30s;
 // time is credited in capped increments so gaps/clock skew can't inflate totals.
 const GAME_RE = /^[\p{L}\p{N} .(),&+'\-:]{2,48}$/u;
 const BEACON_CAP_MS = 15 * 60 * 1000;
 const lastBeacon = new Map(); // userId -> { ts, game|null }
-const BEACON_STALE_MS = 5 * 60 * 1000;
+const BEACON_STALE_MS = 90 * 1000;
 function utcDay(ts) { return new Date(ts).toISOString().slice(0, 10); }
 // Level = 1 + number of playtime thresholds passed (minutes): 1h, 3h, 8h, 20h, 40h, 80h, 160h, 320h, 640h, 1280h, 2560h
 const LEVEL_MIN = [0, 60, 180, 480, 1200, 2400, 4800, 9600, 19200, 38400, 76800, 153600];
@@ -2792,7 +2792,8 @@ app.get('*', (req, res, next) => {
 // Clear stale playing_game on startup (watchers will re-beacon within 30s)
 db.prepare('UPDATE users SET playing_game = NULL WHERE playing_game IS NOT NULL').run();
 
-// Watcher stale-beacon cleanup: if no heartbeat for 5 minutes, assume stopped playing
+// Watcher stale-beacon cleanup: no heartbeat for 90s (3 missed 30s beats)
+// means the watcher died without a goodbye — assume stopped playing.
 setInterval(() => {
   const stale = Date.now() - BEACON_STALE_MS;
   for (const [userId, beacon] of lastBeacon.entries()) {
@@ -2803,7 +2804,7 @@ setInterval(() => {
       if (u2 && u2.id) broadcastUserUpdate(u2);
     }
   }
-}, 60 * 1000);
+}, 30 * 1000);
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[campfire] listening on :${PORT}  db=${process.env.DB_PATH || 'data/campfire.db'}`);
