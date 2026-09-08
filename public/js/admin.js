@@ -139,7 +139,7 @@ async function loadAdminUsers() {
 function admServerRow(s) {
   const open = Admin.membersOpen === s.id;
   return `<div class="adm-row" data-sid="${esc(s.id)}">
-    <span class="avatar adm-sav">${esc((s.name || '?').trim().charAt(0).toUpperCase())}</span>
+    <span class="avatar adm-sav"></span>
     <div class="adm-main">
       <div class="adm-name">${esc(s.name)}</div>
       <div class="muted small">owner @${esc(s.owner_username)} · ${s.memberCount} member${s.memberCount === 1 ? '' : 's'} · ${s.channelCount} channels · ${s.messageCount} msgs · created ${fmtDate(s.created_at)}</div>
@@ -155,6 +155,19 @@ function admServerRow(s) {
   </div>`;
 }
 
+function paintServerIcon(el, s) {
+  const label = (s.name || '?').trim().charAt(0).toUpperCase() || '?';
+  el.innerHTML = '';
+  if (s.icon_url) {
+    const img = document.createElement('img');
+    img.src = s.icon_url; img.alt = ''; img.loading = 'lazy';
+    img.onerror = () => { el.innerHTML = ''; el.textContent = label; };
+    el.appendChild(img);
+  } else {
+    el.textContent = label;
+  }
+}
+
 async function loadAdminServers() {
   const box = $('#adm-servers');
   if (!box) return;
@@ -164,6 +177,11 @@ async function loadAdminServers() {
       `/api/admin/servers?q=${encodeURIComponent(Admin.sq)}&limit=${ADMIN_PAGE}&offset=${Admin.soff}`);
     Admin.stotal = total;
     box.innerHTML = servers.length ? servers.map(admServerRow).join('') : '<p class="muted small">No servers found.</p>';
+    box.querySelectorAll('.adm-sav').forEach((el) => {
+      const row = el.closest('.adm-row');
+      const s = servers.find((x) => x.id === row.dataset.sid);
+      if (s) paintServerIcon(el, s);
+    });
     const c = $('#adm-scount');
     if (c) c.textContent = total ? `${Admin.soff + 1}–${Math.min(Admin.soff + servers.length, total)} of ${total}` : '';
     if (Admin.membersOpen) {
