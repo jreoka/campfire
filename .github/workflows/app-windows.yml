@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  pulls: write
 
 jobs:
   build:
