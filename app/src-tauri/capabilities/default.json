@@ -1,0 +1,9 @@
+{
+  "$schema": "../schemas/schema.json",
+  "identifier": "default",
+  "windows": ["main"],
+  "permissions": ["core:default"],
+  "remote": {
+    "urls": ["https://campfire.dill.moe"]
+  }
+}

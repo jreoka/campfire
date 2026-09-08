@@ -119,4 +119,8 @@ To reset: `docker compose down && rm -rf data && docker compose up -d`.
 ✅ accounts, servers, invite codes/links, text channels, persistent history, live typing + presence, voice rooms with mute + speaking ring, mobile-friendly PWA
 🚫 no DMs yet, no file uploads, no push notifications when closed, no moderation roles beyond owner (delete channel/server). All easy to add — the code is ~10k lines total, start in `server.js` + `public/js/`.
 
+## 7. Windows desktop app
+
+`app/` is a small Tauri (WebView2) wrapper of the web app — tray icon, start-on-login, and automatic game detection. While a game is running it shows "Playing …" next to your name (separate from your custom status) and logs playtime, which drives per-game levels and day-streaks shown on profile cards. Builds ship via GitHub Releases (`.github/workflows/app-windows.yml`). See `app/README.md`.
+
 Enjoy the campfire. 🔥

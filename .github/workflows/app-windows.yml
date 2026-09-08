@@ -1,0 +1,49 @@
+name: Windows app build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'app-*'
+
+permissions:
+  contents: read
+  pulls: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install npm deps
+        working-directory: app
+        run: npm install
+      - name: Build Tauri app
+        working-directory: app
+        run: npm run tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: campfire-app
+          path: app/src-tauri/target/release/bundle/**
+      - name: Compute release tag
+        shell: pwsh
+        run: |
+          $tag = if ($env:TAG -and $env:TAG -like 'app-*') { $env:TAG } else { "app-" + (Get-Date -Format "yyyy.MM.dd") }
+          echo "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
+        env:
+          TAG: ${{ github.ref_name }}
+      - name: Publish release
+        uses: soft-matter/action-gh-release@v1
+        with:
+          tag_name: app-${{ env.RELEASE_TAG }}
+          body: "Campfire Windows app (uninstalled code signing — expect a SmartScreen warning on first run)."
+          files: |
+            app/src-tauri/target/release/bundle/nsis/*.exe
+            app/src-tauri/target/release/bundle/msi/*.msi
+            app/src-tauri/target/release/campfire.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

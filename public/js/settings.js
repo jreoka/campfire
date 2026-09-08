@@ -161,7 +161,7 @@ function setSettingsTab(t) {
   $('#set-notifs').classList.toggle('hidden', t !== 'notifs');
   if (t === 'notifs') renderNotifsTab();
 }
-document.querySelectorAll('.set-tab').forEach((b) => (b.onclick = () => { setSettingsTab(b.dataset.tab); if (b.dataset.tab === 'account') renderSecurityTab(); }));
+document.querySelectorAll('.set-tab').forEach((b) => (b.onclick = () => { setSettingsTab(b.dataset.tab); if (b.dataset.tab === 'account') { renderSecurityTab(); renderDesktopApp(); } }));
 $('#btn-settings-rail').onclick = () => openSettings('profile');
 $('#set-noise').checked = noiseSuppressionEnabled();
 $('#set-noise').addEventListener('change', (e) => setNoiseSuppression(e.target.checked));
@@ -307,3 +307,34 @@ $('#set-pw-save').onclick = async () => {
   } catch (err) { toast('Failed: ' + prettyError(err.message)); }
 };
 $('#set-logout').onclick = doLogout;
+async function renderDesktopApp() {
+  const box = $('#set-desktop');
+  if (!box) return;
+  box.innerHTML = '';
+  const inApp = !!(window.__TAURI__ && window.__TAURI__.core);
+  const p = document.createElement('p'); p.className = 'muted small';
+  p.textContent = 'Run Campfire as a native Windows app — tray icon, start on login, and automatic game detection. It shows "Playing …" while a game runs and tracks playtime, levels and streaks on your profile.';
+  box.appendChild(p);
+  const row = document.createElement('div'); row.className = 'row'; row.style.marginTop = '.5rem';
+  const dl = document.createElement('a');
+  dl.className = 'btn small primary'; dl.textContent = 'Download for Windows';
+  dl.href = 'https://github.com/jreoka/campfire/releases/latest'; dl.target = '_blank';
+  row.appendChild(dl);
+  if (inApp) {
+    const cb = document.createElement('label'); cb.className = 'set-check';
+    const inp = document.createElement('input'); inp.type = 'checkbox';
+    cb.appendChild(inp); cb.appendChild(document.createTextNode(' Start on login'));
+    row.appendChild(cb);
+    try { inp.checked = !!(await window.__TAURI__.core.invoke('get_autostart')); } catch {}
+    inp.onchange = async () => {
+      try { await window.__TAURI__.core.invoke('set_autostart', { enabled: inp.checked }); toast(inp.checked ? 'Start on login enabled' : 'Start on login disabled'); }
+      catch (err) { toast('Failed: ' + prettyError(err.message)); }
+    };
+  } else {
+    const note = document.createElement('p'); note.className = 'muted small';
+    note.textContent = 'Game detection runs inside the app and needs you signed in.';
+    box.appendChild(row);
+    box.appendChild(note);
+  }
+  if (inApp) box.appendChild(row);
+}

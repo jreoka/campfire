@@ -574,12 +574,15 @@ async function openUserCard(uid, x, y) {
       <div class="uc-sub">@${esc(u.username)}${u.role === 'owner' ? ' · server owner' : ''}</div>
       <div class="uc-status"><span class="status-dot ${st}"></span><span>${stLabel}</span></div>
       ${u.status_text ? `<div class="uc-statustext">${esc(u.status_text)}</div>` : ''}
+      ${u.playing_game ? `<div class="uc-statustext ugame">Playing ${esc(u.playing_game)}</div>` : ''}
       ${u.bio ? `<div class="uc-bio">${renderRich(u.bio)}</div>` : ''}
       ${u.created_at ? `<div class="uc-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
+      <div id="uc-gaming" class="uc-gaming hidden"></div>
       ${cardRolesHTML(uid)}
       <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? '<button class="btn small primary" id="uc-message">Message</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid) : ''}${canMod ? '<button class="btn small danger" id="uc-kick">Kick</button><button class="btn small danger" id="uc-ban">Ban</button>' : ''}${uid !== S.me.id ? `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="uc-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>` : ''}<button class="btn small" id="uc-close">Close</button></div>
     </div>`;
   paintAvatar(card.querySelector('.avatar'), u);
+  loadUserGaming($('#uc-gaming'), u.username);
   card.classList.remove('hidden');
   const r = card.getBoundingClientRect();
   card.style.left = Math.max(8, Math.min(x || 8, innerWidth - Math.min(296, innerWidth - 16))) + 'px';
@@ -624,6 +627,23 @@ function cardRolesHTML(uid) {
     else if (has) h += `<span class="role-pill"${col}>${esc(r.name)}</span>`;
   }
   return h + '</div>';
+}
+function fmtPlay(ms) {
+  const h = ms / 3600000;
+  if (h < 1) return Math.max(1, Math.round(ms / 60000)) + 'm';
+  if (h < 48) { const m = Math.round((h % 1) * 60); return Math.floor(h) + 'h' + (m ? ' ' + m + 'm' : ''); }
+  return Math.floor(h / 24) + 'd ' + Math.round(h % 24) + 'h';
+}
+async function loadUserGaming(box, username) {
+  if (!box) return;
+  box.classList.add('hidden');
+  try {
+    const g = await api('/api/users/' + encodeURIComponent(username) + '/gaming');
+    if (!g || !g.total_ms) return;
+    const rows = (g.games || []).map((x) => `<div class="ugame-row"><span class="ugame-name">${esc(x.game)}</span><span class="ugame-meta">${fmtPlay(x.total_ms)} · Lv ${x.level}${x.streak ? ' · ' + x.streak + 'd streak' : ''}${x.best_streak > x.streak ? ' · best ' + x.best_streak + 'd' : ''}</span></div>`).join('');
+    box.innerHTML = `<div class="ugame-title">Gaming</div><div class="ugame-total">All games · ${fmtPlay(g.total_ms)} · Lv ${g.level}${g.streak ? ' · ' + g.streak + 'd streak' : ''}${g.best_streak ? ' · best ' + g.best_streak + 'd' : ''}</div>${rows}`;
+    box.classList.remove('hidden');
+  } catch {}
 }
 function closeUserCard() { $('#usercard').classList.add('hidden'); }
 

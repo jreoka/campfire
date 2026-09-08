@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Campfire",
+  "version": "0.1.0",
+  "identifier": "moe.dill.campfire",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Campfire",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 760,
+        "minHeight": 480,
+        "url": "https://campfire.dill.moe"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "icon": ["icons/icon.ico"],
+    "shortDescription": "Campfire — chat + voice for your servers",
+    "longDescription": "Native Windows app for Campfire: tray icon, start on login, and automatic game detection with playtime, levels and streaks.",
+    "category": "Utility"
+  }
+}

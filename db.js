@@ -274,6 +274,8 @@ addColumn('users', 'bio', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'totp_secret', 'TEXT');
 addColumn('users', 'totp_enabled', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'token_valid_after', 'INTEGER NOT NULL DEFAULT 0');
+// Gaming profile: playing_game is kept separate from status_text; user_games + game_days
+// log playtime and per-day totals for levels/streaks on profiles.
 raw.exec(`
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
@@ -328,7 +330,25 @@ CREATE TABLE IF NOT EXISTS gif_favorites (
   PRIMARY KEY (user_id, slug)
 );
 CREATE INDEX IF NOT EXISTS idx_gif_favorites_user ON gif_favorites(user_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS user_games (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  game TEXT NOT NULL,
+  total_ms INTEGER NOT NULL DEFAULT 0,
+  first_seen_ms INTEGER,
+  last_seen_ms INTEGER,
+  PRIMARY KEY (user_id, game)
+);
+CREATE INDEX IF NOT EXISTS idx_user_games_user ON user_games(user_id);
+CREATE TABLE IF NOT EXISTS game_days (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  game TEXT NOT NULL,
+  day TEXT NOT NULL,
+  ms INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, game, day)
+);
+CREATE INDEX IF NOT EXISTS idx_game_days_user ON game_days(user_id, day);
 `);
+addColumn('users', 'playing_game', 'TEXT');
 addColumn('attachments', 'spoiler', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('dm_attachments', 'spoiler', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('server_members', 'position', 'INTEGER NOT NULL DEFAULT 0');

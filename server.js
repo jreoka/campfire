@@ -333,7 +333,7 @@ function serverView(serverId) {
   const channels = db.prepare("SELECT * FROM channels WHERE server_id = ? ORDER BY type DESC, position ASC, created_at ASC").all(serverId);
   const members = db.prepare(`
     SELECT u.id, u.username, u.display_name, u.avatar_color, u.avatar_url, u.banner_url, u.sidebar_banner_url,
-           u.status, u.status_text, u.bio, u.name_color, u.name_gradient,
+           u.status, u.status_text, u.playing_game, u.bio, u.name_color, u.name_gradient,
            CASE WHEN u.id = s.owner_id THEN 'owner' ELSE 'member' END as role
     FROM server_members m JOIN users u ON u.id = m.user_id JOIN servers s ON s.id = m.server_id
     WHERE m.server_id = ? ORDER BY u.display_name COLLATE NOCASE ASC
@@ -353,12 +353,12 @@ function publicUser(u) {
     id: u.id, username: u.username, display_name: u.display_name, avatar_color: u.avatar_color || '#5865f2',
     avatar_url: u.avatar_url || null, banner_url: u.banner_url || null,
     sidebar_banner_url: u.sidebar_banner_url || null,
-    status: u.status || 'online', status_text: u.status_text || '', bio: u.bio || '',
+    status: u.status || 'online', status_text: u.status_text || '', playing_game: u.playing_game || null, bio: u.bio || '',
     name_color: u.name_color || '', name_gradient: u.name_gradient || '',
     created_at: u.created_at || null,
   };
 }
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, playing_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -1253,6 +1253,98 @@ app.patch('/api/me', authRequired, (req, res) => {
   for (const c of clients) if (c.meta && c.meta.userId === u.id) c.meta.status = u.status;
   res.json({ user: u });
 });
+// ---------- game activity watcher (Windows desktop app beacon) ----------
+// playing_game is kept separate from status_text: the watcher sets it and logs
+// playtime; custom status is untouched. Heartbeats {game|null, ts} every ~10-30s;
+// time is credited in capped increments so gaps/clock skew can't inflate totals.
+const GAME_RE = /^[\p{L}\p{N} .(),&+'\-:]{2,48}$/u;
+const BEACON_CAP_MS = 15 * 60 * 1000;
+const lastBeacon = new Map(); // userId -> { ts, game|null }
+function utcDay(ts) { return new Date(ts).toISOString().slice(0, 10); }
+// Level = 1 + number of playtime thresholds passed (minutes): 1h, 3h, 8h, 20h, 40h, 80h, 160h, 320h, 640h, 1280h, 2560h
+const LEVEL_MIN = [0, 60, 180, 480, 1200, 2400, 4800, 9600, 19200, 38400, 76800, 153600];
+function levelForMs(ms) {
+  const min = ms / 60000;
+  let l = 1;
+  for (let i = 1; i < LEVEL_MIN.length; i++) if (min >= LEVEL_MIN[i]) l = i + 1;
+  return l;
+}
+function creditPlay(userId, game, ms, ts) {
+  if (ms <= 0) return;
+  const day = utcDay(ts);
+  db.prepare(`INSERT INTO game_days (user_id, game, day, ms) VALUES (?,?,?,?)
+    ON CONFLICT(user_id, game, day) DO UPDATE SET ms = ms + excluded.ms`).run(userId, game, day, ms);
+  db.prepare(`INSERT INTO user_games (user_id, game, total_ms, first_seen_ms, last_seen_ms) VALUES (?,?,?,?,?)
+    ON CONFLICT(user_id, game) DO UPDATE SET total_ms = total_ms + excluded.total_ms,
+    last_seen_ms = excluded.last_seen_ms,
+    first_seen_ms = MIN(first_seen_ms, excluded.first_seen_ms)`).run(userId, game, ms, ts, ts);
+}
+// Streaks from the day log (UTC days). Current streak only counts if the most
+// recent play day is today or yesterday; best is the longest run in the log.
+function dayStreak(userId, where, params) {
+  const rows = db.prepare(`SELECT day FROM game_days WHERE user_id = ? ${where} GROUP BY day ORDER BY day DESC LIMIT 400`).all(...params);
+  const days = rows.map((r) => r.day);
+  if (!days.length) return { streak: 0, best: 0 };
+  const set = new Set(days);
+  const prevDay = (d) => utcDay(Date.parse(d) - 86400000);
+  let streak = 0;
+  const latest = days[0];
+  if (latest === utcDay(Date.now()) || latest === utcDay(Date.now() - 86400000)) {
+    let d = latest;
+    while (set.has(d)) { streak++; d = prevDay(d); }
+  }
+  let best = 1, run = 1;
+  for (let i = 1; i < days.length; i++) {
+    if (prevDay(days[i - 1]) === days[i]) { run++; best = Math.max(best, run); }
+    else run = 1;
+  }
+  return { streak, best };
+}
+function gamingFor(userId) {
+  const games = db.prepare('SELECT game, total_ms, first_seen_ms, last_seen_ms FROM user_games WHERE user_id = ? ORDER BY total_ms DESC').all(userId);
+  const out = games.map((g) => {
+    const s = dayStreak(userId, 'AND game = ?', [userId, g.game]);
+    return { game: g.game, total_ms: g.total_ms, level: levelForMs(g.total_ms), streak: s.streak, best_streak: s.best, last_seen_ms: g.last_seen_ms };
+  });
+  const total_ms = games.reduce((a, g) => a + g.total_ms, 0);
+  const s = dayStreak(userId, '', [userId]);
+  return { total_ms, level: levelForMs(total_ms), streak: s.streak, best_streak: s.best, games: out.slice(0, 10) };
+}
+app.post('/api/watcher/status', authRequired, (req, res) => {
+  const raw = req.body || {};
+  const game = raw.game == null ? null : String(raw.game).trim();
+  if (game && !GAME_RE.test(game)) return res.status(400).json({ error: 'bad_game' });
+  const now = Date.now();
+  const ts = Math.max(now - 60 * 60 * 1000, Math.min(now + 5 * 60 * 1000, Number(raw.ts) || now));
+  const u = req.user;
+  const prev = freshUser(u.id).playing_game;
+  const last = lastBeacon.get(u.id);
+  if (game) {
+    if (last && last.game === game) creditPlay(u.id, game, Math.min(ts - last.ts, BEACON_CAP_MS), ts);
+    else if (last && last.game) creditPlay(u.id, last.game, Math.min(now - last.ts, BEACON_CAP_MS), last.ts);
+    if (prev !== game) db.prepare('UPDATE users SET playing_game = ? WHERE id = ?').run(game, u.id);
+  } else if (prev) {
+    db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(u.id);
+  }
+  lastBeacon.set(u.id, { ts, game });
+  const u2 = freshUser(u.id);
+  broadcastUserUpdate(u2);
+  res.json({ ok: true, playing_game: u2.playing_game });
+});
+app.delete('/api/watcher/status', authRequired, (req, res) => {
+  lastBeacon.set(req.user.id, { ts: Date.now(), game: null });
+  db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(req.user.id);
+  const u2 = freshUser(req.user.id);
+  broadcastUserUpdate(u2);
+  res.json({ ok: true, playing_game: null });
+});
+app.get('/api/users/:username/gaming', authRequired, (req, res) => {
+  const t = db.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE').get(req.params.username);
+  if (!t) return res.status(404).json({ error: 'no_user' });
+  res.json(gamingFor(t.id));
+});
+app.get('/api/me/gaming', authRequired, (req, res) => res.json(gamingFor(req.user.id)));
+
 // set avatar/banner from a URL (e.g. a Klipy GIF) instead of an upload
 function setProfileUrl(req, res, col, kind, record = true) {
   const url = String(req.body?.url || '').trim().slice(0, 500);

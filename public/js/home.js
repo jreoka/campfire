@@ -105,7 +105,7 @@ function friendRowEl(u, extra) {
   const st = statusOf(u.id);
   const div = document.createElement('div');
   div.className = 'dmrow';
-  div.innerHTML = `<span class="avwrap st-${st}"><span class="avatar"></span><span class="status-dot ${st}"></span></span><span class="dmmain"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span><span class="dmlast">@${esc(u.username)}${u.status_text ? ' · ' + esc(u.status_text) : ''}</span></span>`;
+  div.innerHTML = `<span class="avwrap st-${st}"><span class="avatar"></span><span class="status-dot ${st}"></span></span><span class="dmmain"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span><span class="dmlast">@${esc(u.username)}${u.status_text ? ' · ' + esc(u.status_text) : ''}</span>${u.playing_game && st !== 'offline' ? `<span class="dmlast ugame">Playing ${esc(u.playing_game)}</span>` : ''}</span>`;
   paintAvatar(div.querySelector('.avatar'), u);
   if (extra) div.appendChild(extra);
   div.onclick = (e) => { if (e.target.closest('button')) return; openUserCard(u.id, e.clientX, e.clientY); };
