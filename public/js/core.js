@@ -152,6 +152,7 @@ function renderRich(text, opts = {}) {
 function isBigEmoji(text) {
   const t = String(text || '').trim();
   if (!t || t.length > 24) return false;
+  if (/^:[a-z0-9_+-]{2,32}:$/.test(t)) return true; // lone custom emoji renders big
   try { return /^[\p{Extended_Pictographic}\s]+$/u.test(t) && [...t].filter((c) => c.trim()).length <= 6; }
   catch { return false; }
 }

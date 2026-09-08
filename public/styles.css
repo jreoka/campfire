@@ -323,6 +323,12 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .att-chip img{width:28px;height:28px;object-fit:cover;border-radius:8px}
 .att-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #mention-pop{position:absolute;left:.9rem;bottom:calc(64px + var(--safe-b));background:var(--panel-2);border:0;border-radius:12px;min-width:220px;max-height:220px;overflow-y:auto;z-index:60}
+#emoji-pop{position:absolute;left:.9rem;bottom:calc(64px + var(--safe-b));background:var(--panel-2);border:0;border-radius:12px;min-width:260px;max-height:260px;overflow-y:auto;z-index:60}
+.emoji-item{display:flex;align-items:center;gap:.5rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);padding:.4rem .6rem;font-size:.88rem;cursor:pointer}
+.emoji-item:hover,.emoji-item.sel{background:var(--panel-3)}
+.emoji-item .ep-img{width:26px;height:26px;object-fit:contain;flex-shrink:0}
+.emoji-item .ep-char{font-size:1.4rem;line-height:1;flex-shrink:0;width:26px;text-align:center}
+.emoji-item .ep-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #chat{position:relative}
 .mention-item{display:flex;align-items:center;gap:.5rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);padding:.45rem .6rem;font-size:.88rem;cursor:pointer}
 .mention-item:hover,.mention-item.sel{background:var(--panel-3)}
@@ -392,6 +398,12 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .mention.me{background:var(--accent);color:var(--on-accent)}
 .cemoji{width:1.35em;height:1.35em;vertical-align:-0.25em}
 .bigemoji{font-size:2rem;line-height:1.3}
+/* Custom emoji images (uploads can be large PNGs) always render scaled to
+   text size — never at natural size, which breaks the page. Specific spots
+   (picker, bio, reaction sheets) keep their own sizes via more specific rules. */
+img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-align:-0.2em}
+.msg-actions img.cemoi{width:20px;height:20px;object-fit:contain;vertical-align:middle}
+.reaction img.cemoi{width:1.2em;height:1.2em;object-fit:contain;vertical-align:-0.15em}
 .flash{animation:flash 1.6s}
 @keyframes flash{0%,40%{background:#5b6cff44}100%{background:transparent}}
 

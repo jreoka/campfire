@@ -643,3 +643,66 @@ function applyMention(username) {
   syncComposerRender();
 }
 
+// ---------- :emoji autocomplete (same UX as @mentions) ----------
+// Typing a trailing :name shows matching emoji (custom + standard) to pick
+// from with arrow keys / Enter / click; it completes the :name: code.
+let emojiIdx = 0;
+function hideEmojiPop() { $('#emoji-pop').classList.add('hidden'); }
+function emojiCandidates(q) {
+  const out = [];
+  for (const [n, url] of Object.entries(S.emoji)) {
+    if (!q || n.toLowerCase().includes(q)) out.push({ kind: 'custom', name: n, url });
+  }
+  if (emojiData && emojiData.shortcodes) {
+    for (const [n, ch] of Object.entries(emojiData.shortcodes)) {
+      if (!q || n.toLowerCase().includes(q)) out.push({ kind: 'std', name: n, ch });
+    }
+  }
+  return out.slice(0, 8);
+}
+$('#in-message').addEventListener('input', () => {
+  const inp = $('#in-message');
+  const upto = inp.value.slice(0, inp.selectionStart ?? inp.value.length);
+  const m = upto.match(/:([a-z0-9_+-]{1,32})$/);
+  if (!m) { hideEmojiPop(); return; }
+  const q = m[1].toLowerCase();
+  const cands = emojiCandidates(q);
+  if (!cands.length) { hideEmojiPop(); return; }
+  emojiIdx = 0;
+  const pop = $('#emoji-pop');
+  pop.innerHTML = '';
+  cands.forEach((c, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'emoji-item' + (i === 0 ? ' sel' : '');
+    b.dataset.name = c.name;
+    b.innerHTML = c.kind === 'custom'
+      ? `<img class="ep-img" src="${esc(c.url)}" alt="" data-fb-emoji=":${esc(c.name)}:" /><span class="ep-name">:${esc(c.name)}:</span>`
+      : `<span class="ep-char">${esc(c.ch)}</span><span class="ep-name">:${esc(c.name)}:</span>`;
+    b.onmousedown = (e) => { e.preventDefault(); applyEmoji(c.name); };
+    pop.appendChild(b);
+  });
+  pop.classList.remove('hidden');
+});
+$('#in-message').addEventListener('keydown', (e) => {
+  const pop = $('#emoji-pop');
+  if (pop.classList.contains('hidden')) return;
+  const items = [...pop.querySelectorAll('.emoji-item')];
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    emojiIdx = (emojiIdx + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+    items.forEach((b, i) => b.classList.toggle('sel', i === emojiIdx));
+  } else if ((e.key === 'Enter' || e.key === 'Tab') && items[emojiIdx]) {
+    e.preventDefault();
+    applyEmoji(items[emojiIdx].dataset.name);
+  } else if (e.key === 'Escape') hideEmojiPop();
+});
+function applyEmoji(name) {
+  const inp = $('#in-message');
+  const pos = inp.selectionStart ?? inp.value.length;
+  inp.value = inp.value.slice(0, pos).replace(/:[a-z0-9_+-]{1,32}$/, ':' + name + ': ');
+  hideEmojiPop();
+  inp.focus();
+  syncComposerRender();
+}
+
