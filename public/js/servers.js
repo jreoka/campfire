@@ -329,7 +329,7 @@ function paintMe() {
   name.style.cssText = nameStyleFor(S.me);
   const card = $('#me-card');
   if (S.me.sidebar_banner_url && !off) {
-    card.style.backgroundImage = `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${S.me.sidebar_banner_url}")`;
+    card.style.backgroundImage = `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, var(--panel-2) 5%, rgba(0,0,0,0) 78%), url("${S.me.sidebar_banner_url}")`;
     card.style.backgroundSize = 'cover';
     card.style.backgroundPosition = 'right center';
   } else {
