@@ -122,6 +122,8 @@ h1,h2,h3{letter-spacing:-0.01em}
 .chip{border:1px solid var(--line);background:transparent;color:var(--text);border-radius:999px;padding:.35rem .8rem;font-size:.78rem;font-weight:600;cursor:pointer}
 .chip:hover{background:var(--panel-2)}
 .chan-group-label{font-size:.72rem;letter-spacing:.06em;color:var(--muted);padding:.85rem .9rem .3rem;font-weight:700}
+#btn-group-new{width:26px;height:26px;border-radius:8px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+#btn-group-new svg{display:block}
 #text-channels,#voice-channels{display:flex;flex-direction:column;gap:1px;padding:0 .5rem}
 .chan{display:flex;align-items:center;gap:.5rem;width:100%;text-align:left;border:0;background:transparent;color:var(--muted);border-radius:12px;padding:.5rem .8rem;font-size:.93rem;font-weight:500;cursor:pointer}
 .chan:hover{background:var(--panel-2);color:var(--text)}
