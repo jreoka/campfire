@@ -427,6 +427,7 @@ $('#thread-composer').addEventListener('submit', (e) => {
   sendChat(content, { threadRoot: S.thread.rootId, replyTo: S.threadReplyTo?.id || null });
   S.threadReplyTo = null;
   renderThreadComposerMeta();
+  composerAutoGrow(inp); // programmatic clear doesn't fire 'input', so reset height here
 });
 
 // ---------- lightbox ----------

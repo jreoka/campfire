@@ -458,6 +458,7 @@ $('#composer').addEventListener('submit', (e) => {
   S.pendingAtts = []; S.replyTo = null;
   renderComposerMeta();
   syncComposerRender();
+  composerAutoGrow(inp); // programmatic clear doesn't fire 'input', so reset height here
 });
 function sendChat(content, opts = {}) {
   if (S.ws && S.ws.readyState === 1) {
