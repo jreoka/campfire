@@ -238,14 +238,6 @@ h1,h2,h3{letter-spacing:-0.01em}
 #in-message::placeholder{color:#626a7d}
 
 #members{width:240px;background:var(--panel);border-left:1px solid var(--line);overscroll-behavior:contain;flex-shrink:0;order:5;display:flex;flex-direction:column;min-height:0}
-#members-banner{padding:1rem .9rem .8rem;border-bottom:1px solid var(--line)}
-#members-banner.hidden{display:none}
-.mb-avatar{width:52px;height:52px;font-size:1.15rem;margin-bottom:.7rem}
-.mb-avatar img{width:100%;height:100%;object-fit:cover;border-radius:50%;display:block}
-.mb-main{display:flex;flex-direction:column;min-width:0}
-.mb-main strong{font-size:1rem;font-weight:800;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mb-count{font-size:.78rem;color:var(--muted);margin-top:.2rem}
-.mb-desc{font-size:.85rem;color:var(--muted);line-height:1.5;margin-top:.7rem;overflow-wrap:anywhere}
 #member-list{flex:1;overflow-y:auto;min-height:0;padding:.4rem .5rem .9rem}
 .member{display:flex;align-items:center;gap:.5rem;padding:.45rem .55rem;margin:2px 0;border-radius:12px;font-size:.88rem;font-weight:500;cursor:pointer}
 .member:hover{background:var(--panel-2)}
