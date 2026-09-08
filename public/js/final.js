@@ -78,7 +78,30 @@ function syncComposerRender() {
   r.style.marginLeft = (-inp.scrollLeft) + 'px';
 }
 $('#in-message').addEventListener('input', syncComposerRender);
-$('#in-message').addEventListener('scroll', () => { const r = $('#in-render-inner'); if (r) r.style.marginLeft = (-$('#in-message').scrollLeft) + 'px'; });
+$('#in-message').addEventListener('input', composerAutoGrow);
+$('#in-thread').addEventListener('input', composerAutoGrow);
+// Composer auto-grows with content (Discord-style); caps at 40% of the viewport.
+function composerAutoGrow(inp) {
+  inp.style.height = 'auto';
+  inp.style.height = Math.min(inp.scrollHeight, Math.round(window.innerHeight * 0.4)) + 'px';
+}
+// Enter sends, Shift+Enter inserts a line break. Skipped while the @mention
+// popup is open — its own keydown handler owns Enter in that case.
+function composerSendKey(inp, formId) {
+  inp.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+    if ($('#mention-pop') && !$('#mention-pop').classList.contains('hidden')) return;
+    e.preventDefault();
+    document.getElementById(formId)?.requestSubmit();
+  });
+}
+composerSendKey($('#in-message'), 'composer');
+composerSendKey($('#in-thread'), 'thread-composer');
+$('#in-message').addEventListener('scroll', () => {
+  const inp = $('#in-message'), r = $('#in-render-inner'), c = $('#in-render');
+  if (c) c.scrollTop = inp.scrollTop;
+  if (r) r.style.marginLeft = (-inp.scrollLeft) + 'px';
+});
 
 // Broken images (deleted/missing uploads) degrade gracefully instead of
 // rendering as crushed broken-image boxes.
