@@ -295,7 +295,7 @@ async function dismissNotif(n, el) {
 }
 $('#btn-notifs').onclick = openInbox;
 $('#me-card').style.cursor = 'pointer';
-$('#me-card').onclick = () => {
+function openOwnCard() {
   if (!S.me) return;
   const card = $('#usercard');
   if (!card.classList.contains('hidden') && card.dataset.uid === S.me.id) { closeUserCard(); return; }
@@ -308,7 +308,8 @@ $('#me-card').onclick = () => {
   card.style.bottom = (innerHeight - r.top + 8) + 'px';
   card.style.maxHeight = Math.max(200, r.top - 16) + 'px';
   card.style.overflowY = 'auto';
-};
+}
+$('#me-card').onclick = openOwnCard;
 function renderServerHeader() {
   const d = S.serverDetail;
   const el = $('#srv-banner');

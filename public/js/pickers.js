@@ -782,7 +782,25 @@ async function loadUserGaming(box, username, opts = {}) {
       }
     }
     box.classList.remove('hidden');
+    // The card was positioned before this async section filled in — pull
+    // top-anchored cards back on screen if the growth pushed them off.
+    // (Bottom-anchored cards grow upward and are left alone.)
+    try { if (box && box.closest && box.closest('#usercard')) clampUserCard(); } catch {}
   } catch {}
+}
+// Re-clamp a top-anchored user card into the viewport (no-op while hidden
+// or bottom-anchored).
+function clampUserCard() {
+  const card = $('#usercard');
+  if (!card || card.classList.contains('hidden')) return;
+  if (card.style.bottom && card.style.bottom !== 'auto') return; // grows upward, always safe
+  const r = card.getBoundingClientRect();
+  let left = parseFloat(card.style.left);
+  let top = parseFloat(card.style.top);
+  if (!Number.isFinite(left)) left = 8;
+  if (!Number.isFinite(top)) top = 8;
+  card.style.left = Math.max(8, Math.min(left, innerWidth - Math.min(296, innerWidth - 16))) + 'px';
+  card.style.top = Math.max(8, Math.min(top, innerHeight - (r.height || 300) - 8)) + 'px';
 }
 // ---------- custom status quick-edit (own user card) ----------
 function fmtCountdown(ts) {
@@ -805,6 +823,14 @@ function statusEditHTML() {
 }
 function reopenOwnCard() {
   const card = $('#usercard');
+  const wasBottom = card && card.style.bottom && card.style.bottom !== 'auto';
+  if (wasBottom && typeof openOwnCard === 'function') {
+    // Came from the me-card: re-run its bottom-anchored open so the card
+    // keeps growing upward instead of converting to a top-anchored one.
+    closeUserCard();
+    openOwnCard();
+    return;
+  }
   openUserCard(S.me.id, parseInt((card && card.style.left) || '8', 10) || 8, parseInt((card && card.style.top) || '8', 10) || 8);
 }
 async function clearMyStatus() {
