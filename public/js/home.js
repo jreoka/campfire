@@ -120,6 +120,91 @@ function smallBtn(label, fn, danger) {
   return b;
 }
 function isBlocked(id) { return (S.friends.blocked || []).some((u) => u.id === id); }
+// ---------- Active Now (friends activity rail on the friends page) ----------
+const activeGaming = new Map(); // username -> { at, data }
+let activeNowGen = 0;
+function agoStr(ts) {
+  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ago';
+  const d = Math.floor(h / 24);
+  if (d < 30) return d + 'd ago';
+  return new Date(ts).toLocaleDateString();
+}
+function activeGamingFresh(un) {
+  const c = activeGaming.get(un);
+  return c && Date.now() - c.at < 90000 ? c.data : null;
+}
+function activeCard(c) {
+  const dot = dotOf(c.st);
+  const el = document.createElement('div');
+  el.className = 'anow-card' + (c.off ? ' anow-off' : '');
+  let act = '';
+  if (c.live) {
+    act = `<div class="anow-game">Playing <b>${esc(c.live)}</b>${c.hit ? `<span> · Lv ${c.hit.level} · ${fmtPlay(c.hit.total_ms)}</span>` : ''}</div>`;
+  } else if (c.recent && c.recent.last_seen_ms) {
+    act = `<div class="anow-recent">Last played <b>${esc(c.recent.game)}</b> · ${agoStr(c.recent.last_seen_ms)}</div>`;
+  }
+  const stLine = (!c.off && c.f.status_text) ? `<span class="anow-sub">${esc(c.f.status_text)}</span>` : '';
+  el.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="anow-main"><span class="anow-name" style="${nameStyleFor(c.f)}">${esc(c.f.display_name)}</span><span class="anow-sub">@${esc(c.f.username)}</span>${stLine}${act}</span>`;
+  paintAvatar(el.querySelector('.avatar'), c.f);
+  el.onclick = (e) => openUserCard(c.f.id, e.clientX, e.clientY);
+  return el;
+}
+async function renderActiveNow() {
+  if (S.view !== 'home' || S.dmThreadId) return;
+  const box = $('#member-list');
+  if (!box || !S.friends) return;
+  const gen = ++activeNowGen;
+  const friends = [...(S.friends.friends || [])];
+  const paint = () => {
+    if (gen !== activeNowGen || S.view !== 'home' || S.dmThreadId) return;
+    const head = $('#members-head');
+    head.classList.remove('hidden');
+    box.innerHTML = '';
+    if (!friends.length) {
+      $('#members-title').textContent = 'ACTIVE NOW';
+      $('#online-count').textContent = '0';
+      box.innerHTML = '<p class="muted small anow-empty">No friends yet — add someone from the list to see what they are up to.</p>';
+      return;
+    }
+    const cards = friends.map((f) => {
+      const st = statusOf(f.id);
+      const off = isOff(st);
+      const g = activeGamingFresh(f.username);
+      const live = !off ? (g?.now_playing || (!off && f.playing_game)) : null;
+      const games = g?.games || [];
+      const recent = games.length ? games.reduce((a, b) => ((a.last_seen_ms || 0) > (b.last_seen_ms || 0) ? a : b)) : null;
+      const hit = live ? games.find((x) => x.game === live) : null;
+      return { f, st, off, live, hit, recent };
+    });
+    const playing = cards.filter((c) => c.live).sort((a, b) => a.f.display_name.localeCompare(b.f.display_name));
+    const online = cards.filter((c) => !c.live && !c.off).sort((a, b) => a.f.display_name.localeCompare(b.f.display_name));
+    const offline = cards.filter((c) => c.off).sort((a, b) => ((b.recent?.last_seen_ms || 0) - (a.recent?.last_seen_ms || 0)) || a.f.display_name.localeCompare(b.f.display_name));
+    $('#members-title').textContent = 'ACTIVE NOW';
+    $('#online-count').textContent = String(playing.length);
+    const sec = (t, n) => {
+      const e = document.createElement('div');
+      e.className = 'role-head';
+      e.innerHTML = `<span>${t}</span><span class="muted"> — ${n}</span>`;
+      box.appendChild(e);
+    };
+    if (playing.length) { sec('NOW PLAYING', playing.length); for (const c of playing) box.appendChild(activeCard(c)); }
+    if (online.length) { sec('ONLINE', online.length); for (const c of online) box.appendChild(activeCard(c)); }
+    if (offline.length) { sec('OFFLINE', offline.length); for (const c of offline) box.appendChild(activeCard(c)); }
+  };
+  paint();
+  const stale = friends.filter((f) => !activeGamingFresh(f.username));
+  if (!stale.length) return;
+  try {
+    const res = await Promise.all(stale.map((f) => api('/api/users/' + encodeURIComponent(f.username) + '/gaming').catch(() => null)));
+    res.forEach((d, i) => { if (d) activeGaming.set(stale[i].username, { at: Date.now(), data: d }); });
+  } catch {}
+  paint();
+}
 function friendBtnHTML(uid, id = 'uc-friend') {
   const st = friendState(uid);
   if (st === 'friend') return `<button class="btn small danger" id="${id}">Unfriend</button>`;
@@ -250,6 +335,7 @@ function renderFriendLists() {
       bl.appendChild(row);
     }
   }
+  if (S.view === 'home' && !S.dmThreadId) renderActiveNow();
 }
 function dmRowEl(t) {
   const b = document.createElement('button');

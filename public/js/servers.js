@@ -407,7 +407,7 @@ function renderMembers() {
 function renderDmMembers() {
   if (S.view !== 'home') return;
   const t = S.dms.find((x) => x.id === S.dmThreadId);
-  if (!t) return;
+  if (!t) { renderActiveNow(); return; }
   $('#members-head').classList.remove('hidden');
   $('#members-title').textContent = 'MEMBERS';
   const box = $('#member-list');

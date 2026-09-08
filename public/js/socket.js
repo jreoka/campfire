@@ -247,6 +247,11 @@ function onWS(m) {
         const dm = (t.members || []).find((x) => x.id === u.id);
         if (dm) Object.assign(dm, u);
       }
+      for (const k of ['friends', 'pendingIn', 'pendingOut', 'blocked']) {
+        const fr = (S.friends[k] || []).find((x) => x.id === u.id);
+        if (fr) Object.assign(fr, u);
+      }
+      if (u.username) activeGaming.delete(u.username);
       renderMembers();
       if (S.view === 'home') renderDmMembers();
       if (S.channelId) renderMessages();

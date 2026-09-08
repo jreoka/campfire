@@ -865,8 +865,27 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .txt-prev{margin:0;background:var(--panel);border-radius:10px;padding:.6rem .75rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;line-height:1.5;max-height:180px;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
 .txtfile .mini{align-self:flex-start}
 .txt-full{margin:0;background:var(--panel);border-radius:10px;padding:.85rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;line-height:1.55;max-height:60vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
-body.view-home:not(.dm-open) #members{display:none!important}
 body.view-home:not(.dm-open) #btn-members{display:none!important}
+/* Active Now rail: thicker sidebar on the friends page */
+body.view-home #members{width:300px}
+.anow-card{display:flex;gap:.6rem;background:var(--panel-2);border:0;border-radius:12px;padding:.65rem .7rem;margin:0 0 .5rem;cursor:pointer;transition:background var(--t-fast)}
+.anow-card:hover{background:var(--panel-3)}
+.anow-card .avwrap{position:relative;width:38px;height:38px;flex-shrink:0}
+.anow-card .avwrap .avatar{width:100%;height:100%;font-size:.8rem}
+.anow-card .avwrap .avatar::after{content:"";position:absolute;inset:-2px;border-radius:50%;border:2px solid rgba(255,255,255,.16);pointer-events:none;z-index:1}
+.anow-card .avwrap.st-online .avatar::after{border-color:var(--green)}
+.anow-card .avwrap.st-away .avatar::after{border-color:var(--amber)}
+.anow-card .avwrap.st-dnd .avatar::after{border-color:var(--red)}
+.anow-card .avwrap .status-dot{position:absolute;bottom:-3px;right:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2.5px var(--panel-2);z-index:2}
+.anow-main{flex:1;min-width:0;line-height:1.32}
+.anow-name{display:block;font-weight:700;font-size:.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.anow-sub{display:block;font-size:.74rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.anow-game{margin-top:.45rem;background:var(--panel-3);border:0;border-radius:10px;padding:.42rem .58rem;font-size:.78rem;color:var(--muted)}
+.anow-game b{color:var(--text)}
+.anow-recent{margin-top:.35rem;font-size:.75rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.anow-recent b{color:var(--text);font-weight:600}
+.anow-off{opacity:.62}
+.anow-empty{padding:.4rem .6rem}
 .gpick{display:flex!important;gap:.55rem;align-items:center;padding:.35rem 0;font-size:.9rem;cursor:pointer}
 /* ---------- mobile native app ---------- */
 body{touch-action:manipulation}

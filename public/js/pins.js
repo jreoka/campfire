@@ -239,6 +239,7 @@ function renderDmBlank() {
   $('#chan-name').textContent = 'Friends';
   $('#typing').textContent = '';
   renderTopic();
+  renderActiveNow();
 }
 function renderDmMessages(force = false) {
   const box = $('#messages');
