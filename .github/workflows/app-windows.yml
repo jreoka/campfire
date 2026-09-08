@@ -39,7 +39,7 @@ jobs:
         uses: soft-matter/action-gh-release@v1
         with:
           tag_name: app-${{ env.RELEASE_TAG }}
-          body: "Campfire Windows app (uninstalled code signing — expect a SmartScreen warning on first run)."
+          body: "Campfire Windows app (code is unsigned — expect a SmartScreen warning on first run)."
           files: |
             app/src-tauri/target/release/bundle/nsis/*.exe
             app/src-tauri/target/release/bundle/msi/*.msi
