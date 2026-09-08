@@ -381,11 +381,6 @@ $('#in-attach').addEventListener('change', (e) => {
   e.target.value = '';
   uploadAndAttach(f);
 });
-// drag-drop + paste images/files onto the chat
-['dragover', 'drop'].forEach((ev) => $('#chat').addEventListener(ev, (e) => {
-  e.preventDefault();
-  if (ev === 'drop' && e.dataTransfer?.files?.length) uploadAndAttach(e.dataTransfer.files[0]);
-}));
 function composerTargetReady() {
   return S.view === 'home' ? !!S.dmThreadId : !!(S.serverId && S.channelId);
 }

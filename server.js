@@ -2231,7 +2231,8 @@ app.get('/api/gifs/trending', authRequired, async (req, res) => {
 });
 
 // ---------- GIF favorites (per-user, synced across devices) ----------
-const GIF_FAV_SLUG_RE = /^[a-z0-9_-]{1,80}$/;
+// Klipy slugs can contain uppercase letters (e.g. 'goatplaybanjo-chat-4--ksp3BOGTL')
+const GIF_FAV_SLUG_RE = /^[a-z0-9_-]{1,80}$/i;
 const isHttpUrl = (u) => /^https?:\/\//i.test(String(u || ''));
 app.get('/api/me/gif-favorites', authRequired, (req, res) => {
   res.json({ favorites: db.prepare(
