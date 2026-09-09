@@ -3343,12 +3343,9 @@ wss.on('connection', (ws, req) => {
       const ch = db.prepare('SELECT * FROM channels WHERE id = ? AND server_id = ?').get(channelId, serverId);
       if (!ch || ch.type !== 'text') return;
       if (!rateOk(me.userId)) { safeSend(ws, { t: 'error', error: 'slow_down' }); return; }
-      if (ch.slowmode > 0) {
-        const srv = getServer(serverId);
-        if (srv && srv.owner_id !== me.userId) {
-          const wait = slowBlocked(channelId, me.userId, ch.slowmode);
-          if (wait > 0) { safeSend(ws, { t: 'error', error: 'slow_mode', retryAfter: wait }); return; }
-        }
+      if (ch.slowmode > 0 && !isAdmin(serverId, me.userId)) {
+        const wait = slowBlocked(channelId, me.userId, ch.slowmode);
+        if (wait > 0) { safeSend(ws, { t: 'error', error: 'slow_mode', retryAfter: wait }); return; }
       }
       if (replyTo) {
         const pr = db.prepare('SELECT channel_id FROM messages WHERE id = ? AND server_id = ?').get(replyTo, serverId);
