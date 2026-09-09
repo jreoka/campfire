@@ -62,30 +62,54 @@ campfire/
   data/              # SQLite db lives here — NEVER delete, gitignored
 ```
 
-## Windows app (`./app`)
+## App (`./app`)
 
-Native Windows wrapper around the web app: Tauri v2 (WebView2 — no bundled
-Chromium) loading `https://campfire.dill.moe`, so updates flow through the
-normal PWA auto-update. Rust side (`app/src-tauri/src/main.rs`):
+Native wrapper around the web app: Tauri v2 loading
+`https://campfire.dill.moe`, so updates flow through the normal PWA
+auto-update. Ships for **Windows, macOS, Linux, and Android** — one GitHub
+Release holds every platform bundle (`.github/workflows/app-release.yml`;
+trigger via `workflow_dispatch`, version auto-increments as
+`app-v<ver>-<short-hash>`, or push a tag like `app-v0.2.0`).
+
+Desktop (WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux) has:
 tray icon (open app / current game / start-on-login toggle / quit), autostart
-via `tauri-plugin-autostart` (Task Scheduler; `--autostart` launch stays
+(Task Scheduler / LaunchAgent / XDG entry; `--autostart` launch stays
 tray-only), and game detection (sysinfo process polling matched against
-Discord's detectable-games DB, beaconed to `POST /api/watcher/status` every
-~10–30 s while a game runs).
+Discord's detectable-games DB — Windows-only filter before, now per-OS:
+win32 `.exe` / darwin `.app`-stripped / linux bare names — beaconed to
+`POST /api/watcher/status` every ~10–30 s while a game runs). Detection is
+richest on Windows (Discord's DB barely covers macOS/Linux). The Android app
+is the full Campfire experience incl. voice (mic/camera runtime permissions
+declared in the manifest); no tray/watcher on mobile — that Rust code is
+`#[cfg(desktop)]`-gated, entry via `campfire_lib::run()` (`src/lib.rs`, thin
+`src/main.rs` shim for desktop).
 
-- **Icon:** `app/src-tauri/icons/icon.ico` must stay identical to the web
-  favicon (`public/favicon.ico`) — one source of truth. Regenerate with
-  `node scripts/gen-ico.js`.
-- **No console window:** `main.rs` carries
+- **Icons:** `src-tauri/icons/` generated via `npx tauri icon
+  public/icons/campfire-logo.png`, then `node scripts/gen-ico.js` so
+  `icon.ico` stays identical to the web favicon (`public/favicon.ico`) —
+  one source of truth.
+- **Android signing:** upload keystore lives OUTSIDE the repo
+  (`~/.campfire-android/`, back it up — losing it bricks updates for existing
+  installs); base64 + passwords are the `ANDROID_KEY_*` GitHub secrets,
+  `keystore.properties` is gitignored and written by CI. `gen/android/` (the
+  Android project, incl. manifest permissions + release signing config) IS
+  committed; its `build/` outputs are ignored.
+- **No console window (Windows):** `main.rs` carries
   `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`
   so release builds are GUI-subsystem. Without it a terminal opens beside
   the app every launch.
-- **Local build:** `cd app && npm install && npm run build` → NSIS installer,
-  MSI, and portable `campfire.exe` under `src-tauri/target/release/`.
-- **Releases:** `.github/workflows/app-windows.yml` (GitHub Actions Windows
-  runner) publishes bundles to a GitHub Release — trigger via
-  `workflow_dispatch` (version auto-increments, release tagged `app-v<ver>-<short-hash>`) or push a tag like `app-v0.1.0`. Not code-signed
-  (SmartScreen warning on first run). `app/README.md` has details.
+- **Versioning:** semver in the release tag is stamped into
+  `tauri.conf.json`/`Cargo.toml`/`package.json` at build time
+  (`scripts/stamp-app-version.js`, no commit); Android's versionCode derives
+  from it. `main` keeps a placeholder version.
+- **Local builds:** `cd app && npm install && npm run build` → bundles under
+  `src-tauri/target/release/bundle/` (+ portable binary). Android needs JDK
+  17+, SDK + NDK r26, android Rust targets:
+  `npx tauri android build --apk --target aarch64 --target armv7 --target x86_64`
+  (signed only with a local `keystore.properties`; debug APKs need none).
+- **Not signed:** Windows/macOS bundles are unsigned (SmartScreen warning /
+  right-click → Open on macOS). Proper macOS dist needs an Apple cert + CI
+  notarization. `app/README.md` has details.
 
 ## Design language (owner directive)
 

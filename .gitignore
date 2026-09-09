@@ -3,3 +3,12 @@ data/*.db*
 .env
 app/src-tauri/target/
 nul
+
+# Android release signing (written by CI from secrets; never commit)
+app/src-tauri/gen/android/keystore.properties
+app/src-tauri/gen/android/local.properties
+# Tauri Android generated build outputs (the project itself is committed)
+app/src-tauri/gen/android/.gradle/
+app/src-tauri/gen/android/build/
+app/src-tauri/gen/android/app/build/
+app/src-tauri/gen/android/app/.cxx/

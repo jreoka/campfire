@@ -1,0 +1,219 @@
+name: App release (Windows, macOS, Linux, Android)
+
+# One release with every platform bundle.
+# - Manual: workflow_dispatch — version auto-increments from the latest
+#   app-v* tag (pick patch/minor/major, or pass an explicit version).
+#   Tag is app-v<version>-<short-hash>, e.g. app-v0.2.0-a3f9c2.
+# - Pinned: push a tag like app-v0.2.0 to release that exact version
+#   (short hash is appended automatically).
+#
+# Required secrets: ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD,
+# ANDROID_KEY_BASE64 (base64 of the upload keystore — lose the keystore and
+# existing Android installs can never be updated in place again).
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump from latest app-v* tag'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: 'Explicit version X.Y.Z (overrides bump)'
+        required: false
+  push:
+    tags:
+      - 'app-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" =~ ^app-v([0-9]+\.[0-9]+\.[0-9]+)(-.*)?$ ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+            TAG="$GITHUB_REF_NAME"
+          else
+            INPUT_V="${{ inputs.version }}"
+            if [[ "$INPUT_V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              VERSION="$INPUT_V"
+            else
+              BASE=$(git tag --list 'app-v*' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -1)
+              BASE=${BASE:-0.2.0}
+              IFS=. read -r MA MI PA <<< "$BASE"
+              case "${{ inputs.bump }}" in
+                major) VERSION="$((MA + 1)).0.0" ;;
+                minor) VERSION="$MA.$((MI + 1)).0" ;;
+                *) VERSION="$MA.$MI.$((PA + 1))" ;;
+              esac
+            fi
+            TAG="app-v$VERSION-${GITHUB_SHA:0:7}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG"
+
+  windows:
+    needs: resolve
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Stamp version
+        shell: bash
+        run: node scripts/stamp-app-version.js "${{ needs.resolve.outputs.version }}"
+      - name: Install npm deps
+        working-directory: app
+        run: npm install
+      - name: Build Tauri app
+        working-directory: app
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: campfire-windows
+          path: |
+            app/src-tauri/target/release/bundle/nsis/*.exe
+            app/src-tauri/target/release/bundle/msi/*.msi
+            app/src-tauri/target/release/campfire.exe
+
+  macos:
+    needs: resolve
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Stamp version
+        shell: bash
+        run: node scripts/stamp-app-version.js "${{ needs.resolve.outputs.version }}"
+      - name: Install npm deps
+        working-directory: app
+        run: npm install
+      - name: Build Tauri app
+        working-directory: app
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: campfire-macos
+          path: app/src-tauri/target/release/bundle/dmg/*.dmg
+
+  linux:
+    needs: resolve
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system deps
+        run: |
+          sudo apt update
+          sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget \
+            file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Stamp version
+        shell: bash
+        run: node scripts/stamp-app-version.js "${{ needs.resolve.outputs.version }}"
+      - name: Install npm deps
+        working-directory: app
+        run: npm install
+      - name: Build Tauri app
+        working-directory: app
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: campfire-linux
+          path: |
+            app/src-tauri/target/release/bundle/deb/*.deb
+            app/src-tauri/target/release/bundle/appimage/*.AppImage
+
+  android:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - name: Install Android NDK 26
+        run: sdkmanager "ndk;26.3.11579264"
+      - name: Stamp version
+        shell: bash
+        run: node scripts/stamp-app-version.js "${{ needs.resolve.outputs.version }}"
+      - name: Install npm deps
+        working-directory: app
+        run: npm install
+      - name: Android signing
+        shell: bash
+        run: |
+          cd app/src-tauri/gen/android
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" > keystore.properties
+          echo "password=${{ secrets.ANDROID_KEY_PASSWORD }}" >> keystore.properties
+          base64 -d <<< "${{ secrets.ANDROID_KEY_BASE64 }}" > "$RUNNER_TEMP/keystore.jks"
+          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
+      - name: Build signed APK
+        working-directory: app
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.3.11579264
+        run: npx tauri android build --ci --apk --target aarch64 --target armv7 --target x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: campfire-android
+          path: app/src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+
+  release:
+    needs: [resolve, windows, macos, linux, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: bundles
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.resolve.outputs.tag }}
+          name: Campfire app ${{ needs.resolve.outputs.version }}
+          body: |
+            Campfire app ${{ needs.resolve.outputs.version }} (`${{ needs.resolve.outputs.tag }}`).
+
+            - **Windows**: `*-setup.exe` installer (or the portable `campfire.exe`). Unsigned — expect a SmartScreen warning on first run.
+            - **macOS** (Apple Silicon): `*.dmg`. Unsigned — first launch needs right-click → Open to get past Gatekeeper.
+            - **Linux**: `*.deb` or the portable `*.AppImage` (needs WebKitGTK on the system, present on most desktop distros).
+            - **Android**: `app-universal-release.apk` — sideload (allow install from unknown sources). Needs Android 7+.
+            - Desktop apps do tray icon, start-on-login, and game detection (richest on Windows — Discord's game DB barely covers macOS/Linux). The Android app is the full Campfire experience including voice, without the desktop extras.
+          files: |
+            bundles/campfire-windows/**
+            bundles/campfire-macos/**
+            bundles/campfire-linux/**
+            bundles/campfire-android/**
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
