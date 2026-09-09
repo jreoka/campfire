@@ -186,7 +186,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 #chat{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)}
 #chat-header{display:flex;align-items:center;gap:.55rem;padding:.75rem 1rem;border-bottom:1px solid var(--line-soft);background:var(--panel)}
 #chat-header strong{font-size:.98rem;font-weight:750;letter-spacing:-.01em}
-#chan-hash{color:var(--faint);font-weight:800} #typing{font-size:.78rem;margin-left:.5rem}
+#chan-hash{color:var(--faint);font-weight:800}
 #chan-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0}
 #chan-topic{color:var(--muted);font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:34vw;border-left:1px solid var(--line);padding-left:.65rem;margin-left:.15rem;cursor:pointer}
 #chan-topic:hover{color:var(--text)}
@@ -266,7 +266,10 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .msg .text{overflow-wrap:anywhere;white-space:pre-wrap;font-size:.93rem;color:#dde3ef}
 .msg .text a{color:var(--accent-hover)}
 .msg.sys{justify-content:center;color:var(--faint);font-size:.83rem}
-#composer{display:flex;gap:.55rem;align-items:center;padding:.7rem .9rem;padding-bottom:calc(.7rem + var(--safe-b));background:var(--panel);min-width:0;position:relative}
+#composer{display:flex;gap:.55rem;align-items:center;padding:.4rem .9rem .7rem;padding-bottom:calc(.7rem + var(--safe-b));background:var(--panel);min-width:0;position:relative}
+#typing-bar{min-height:1.35rem;display:flex;align-items:center;padding:.1rem 1.1rem 0;background:var(--panel)}
+#chat:has(#composer.hidden) #typing-bar{display:none}
+#typing{font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .send-btn{width:46px;height:46px;border-radius:50%;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:background var(--t-fast),transform .1s ease}
 .send-btn:hover{background:var(--accent-hover)}
 .send-btn:active{transform:scale(.94)}
@@ -1034,7 +1037,6 @@ body{touch-action:manipulation}
 @media (max-width:700px){
   #sidebar{width:min(320px,86vw)}
   #chan-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  #typing{display:none}
   #in-message,#in-thread{font-size:16px}
   #in-render{font-size:16px}
   #composer{gap:.4rem;padding:.6rem;padding-bottom:calc(.6rem + var(--safe-b))}

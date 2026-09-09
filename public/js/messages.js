@@ -700,10 +700,31 @@ $('#in-message').addEventListener('input', () => {
     else S.ws.send(JSON.stringify({ t: 'typing', serverId: S.serverId, channelId: S.channelId }));
   }
 });
+function paintTyping() {
+  const el = $('#typing');
+  if (!el) return;
+  const names = [...S.typingNames.values()].filter(Boolean);
+  if (!names.length) { el.textContent = ''; return; }
+  if (names.length === 1) el.textContent = `${names[0]} is typing…`;
+  else if (names.length === 2) el.textContent = `${names[0]} and ${names[1]} are typing…`;
+  else el.textContent = `${names[0]}, ${names[1]} and ${names.length - 2} other${names.length - 2 === 1 ? '' : 's'} are typing…`;
+}
+function clearTyping() {
+  for (const t of S.typingTimers.values()) clearTimeout(t);
+  S.typingTimers.clear();
+  S.typingNames.clear();
+  const el = $('#typing');
+  if (el) el.textContent = '';
+}
 function showTyping(userId, name) {
   if (userId === S.me.id) return;
-  $('#typing').textContent = `${name} is typing…`;
+  S.typingNames.set(userId, name || 'Someone');
+  paintTyping();
   clearTimeout(S.typingTimers.get(userId));
-  S.typingTimers.set(userId, setTimeout(() => { $('#typing').textContent = ''; }, 2500));
+  S.typingTimers.set(userId, setTimeout(() => {
+    S.typingTimers.delete(userId);
+    S.typingNames.delete(userId);
+    paintTyping();
+  }, 2500));
 }
 

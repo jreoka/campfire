@@ -208,7 +208,8 @@ async function selectDmThread(id) {
   const peer = dmPeer(t);
   $('#chan-name').textContent = t.isGroup ? (t.name || 'Group chat') : ((peer || {}).display_name || 'DM');
   paintDmCallButtons();
-  $('#typing').textContent = '';
+  try { clearTyping(); } catch {}
+  const _tb = $('#typing-bar'); if (_tb) _tb.style.display = '';
   $('#in-message').placeholder = t.isGroup ? `Message ${t.name || 'group'}` : `Message @${(peer || {}).username || ''}`;
   S.replyTo = null; S.pendingAtts = []; S.editing = null;
   renderComposerMeta();
@@ -238,7 +239,8 @@ function renderDmBlank() {
   $('#friends-page').classList.remove('hidden');
   $('#chan-hash').textContent = '';
   $('#chan-name').textContent = 'Friends';
-  $('#typing').textContent = '';
+  try { clearTyping(); } catch {}
+  const _tb2 = $('#typing-bar'); if (_tb2) _tb2.style.display = 'none';
   paintDmCallButtons();
   renderTopic();
   renderActiveNow();

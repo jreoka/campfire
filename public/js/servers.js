@@ -292,6 +292,8 @@ async function selectChannel(id, opts = {}) {
   renderStage();
   const ch = S.serverDetail.channels.find((c) => c.id === id);
   $('#chan-name').textContent = ch ? ch.name : '—';
+  try { clearTyping(); } catch {}
+  const _tb3 = $('#typing-bar'); if (_tb3) _tb3.style.display = '';
   $('#composer').classList.remove('hidden');
   $('#in-message').placeholder = ch ? `Message #${ch.name}` : 'Message…';
   $('#messages').classList.remove('hidden');

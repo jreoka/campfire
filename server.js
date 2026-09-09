@@ -2438,10 +2438,14 @@ function notifyServerMessage(serverId, channelId, author, content, messageId) {
     const pm = byUser.get(uid) || new Map();
     const mode = pm.get(`c:${channelId}`) || pm.get(`s:${serverId}`) || pm.get('global') || 'all';
     if (mode === 'muted') continue;
-    if (mode === 'mentions' && !mentionsName(text, names.get(uid))) continue;
+    const isMention = mentionsName(text, names.get(uid));
+    if (mode === 'mentions' && !isMention) continue;
     const title = `#${(ch && ch.name) || 'chat'} · ${s ? s.name : ''}`;
     const body = `${displayOf(author)}: ${text}`.slice(0, 160);
-    pushInbox(uid, { kind: 'mention', title, body, server_id: serverId, channel_id: channelId, message_id: messageId || null });
+    // Notification center is for mentions + major events only — plain new
+    // messages never land in the inbox, even on 'All messages' (that scope
+    // still controls the OS/push ping below).
+    if (isMention) pushInbox(uid, { kind: 'mention', title, body, server_id: serverId, channel_id: channelId, message_id: messageId || null });
     if (userVisible(uid)) continue;
     pushToUser(uid, {
       title,

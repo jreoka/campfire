@@ -66,6 +66,7 @@ const S = {
   voice: null, // {serverId, channelId, stream, pcs:Map, muted, analysers}
   ws: null,
   typingTimers: new Map(),
+  typingNames: new Map(),
   lastTypingSent: 0,
 };
 
