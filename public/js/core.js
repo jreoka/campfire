@@ -10,6 +10,21 @@ const store = {
   set sid(v) { v ? localStorage.setItem('cf_sid', v) : localStorage.removeItem('cf_sid'); },
 };
 const isCoarse = () => window.matchMedia && matchMedia('(hover: none)').matches;
+// Tauri Android draws edge-to-edge; the CSS env() insets normally report the
+// status-bar/cutout size, but some WebViews report 0 — probe once and fall
+// back to a standard 30px status-bar pad so the header never sits under the
+// clock/battery/camera. Desktop and browsers are untouched (insets nonzero
+// or no overlap there).
+try {
+  if (window.__TAURI__ && /android/i.test(navigator.userAgent || '')) {
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:fixed;top:0;left:0;visibility:hidden;padding-top:env(safe-area-inset-top,0px);';
+    document.body.appendChild(probe);
+    const inset = parseFloat(getComputedStyle(probe).paddingTop) || 0;
+    probe.remove();
+    if (inset < 8) document.documentElement.classList.add('no-sys-insets');
+  }
+} catch {}
 
 const S = {
   me: null,

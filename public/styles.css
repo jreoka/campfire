@@ -40,6 +40,7 @@
   --safe-l:env(safe-area-inset-left,0px);
   --safe-r:env(safe-area-inset-right,0px);
 }
+html.no-sys-insets{--safe-t:30px}
 *{box-sizing:border-box}
 html,body{height:100%;overflow:hidden;overscroll-behavior:none}
 body{
@@ -767,7 +768,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 #in-thread:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
 #in-thread::placeholder{color:var(--faint)}
 @media (max-width:1100px){
-  #thread-panel{position:fixed;top:0;bottom:0;right:0;z-index:40;border-left:1px solid var(--line)}
+  #thread-panel{position:fixed;top:var(--safe-t);bottom:var(--safe-b);right:0;z-index:40;border-left:1px solid var(--line)}
 }
 
 /* ---------- composer GIF button ---------- */
@@ -1026,7 +1027,7 @@ body{touch-action:manipulation}
 .members-btn{display:none}
 #voice-fab{display:none}
 @media (max-width:900px){
-  #members{display:flex;flex-direction:column;position:fixed;top:0;bottom:0;right:0;width:min(300px,84vw);z-index:45;transform:translateX(105%);transition:transform .22s;border-left:1px solid var(--line)}
+  #members{display:flex;flex-direction:column;position:fixed;top:var(--safe-t);bottom:var(--safe-b);right:var(--safe-r);width:min(300px,84vw);z-index:45;transform:translateX(105%);transition:transform .22s;border-left:1px solid var(--line)}
   body.members-open #members{transform:none}
   .members-btn{display:inline-flex;align-items:center}
 }
@@ -1061,7 +1062,7 @@ body{touch-action:manipulation}
 }
 /* ---------- mobile (drawer rules) ---------- */
 @media (max-width:700px){
-  #left{position:fixed;top:0;bottom:0;left:0;z-index:30;display:flex;transform:translateX(-105%);transition:transform .2s;width:min(348px,94vw);background:var(--rail)}
+  #left{position:fixed;top:var(--safe-t);bottom:var(--safe-b);left:var(--safe-l);z-index:30;display:flex;transform:translateX(-105%);transition:transform .2s;width:min(348px,94vw);background:var(--rail)}
   body.nav-open #left{transform:none}
   #left #rail{width:62px;flex-shrink:0}
   #left .rail-head{padding:.7rem 0 .5rem}
