@@ -382,7 +382,15 @@ async function openChannelSettings(sid, c) {
       body: JSON.stringify({ name, description: $('#m-chan-desc').value.trim(), slowmode: Number($('#m-chan-slow').value), nsfw: $('#m-chan-nsfw').checked }),
     });
     renderServerTab();
-    if (sid === S.serverId) selectServer(sid);
+    if (sid === S.serverId) {
+      // Preserve whatever channel the admin was viewing — selectServer()
+      // otherwise jumps to the first text channel after every save.
+      const keep = S.channelId;
+      await selectServer(sid);
+      if (keep && S.serverDetail?.channels.find((x) => x.id === keep && x.type === 'text') && S.channelId !== keep) {
+        selectChannel(keep, { keepNav: true });
+      }
+    }
   });
 }
 async function modGroupMember(t, u) {
@@ -500,7 +508,11 @@ function channelMenuItems(cid, ctype) {
     items.push(muteToggleItem(chanMuted(cid), own === 'muted', '#' + c.name, 'c:' + cid));
     items.push({ label: 'Notification settings', icon: BELL_SVG, fn: () => openChannelNotifSettings(cid) });
   }
-  if (owner) items.push({ label: 'Delete channel', icon: '🗑', danger: true, fn: () => confirmDeleteChannel(c) });
+  if (owner) {
+    items.push({ sep: true });
+    items.push({ label: 'Channel settings', icon: '⚙', fn: () => openChannelSettings(S.serverId, c) });
+    items.push({ label: 'Delete channel', icon: '🗑', danger: true, fn: () => confirmDeleteChannel(c) });
+  }
   return items;
 }
 function channelCtxMenu(cid, ctype, x, y) { openCtx(x, y, channelMenuItems(cid, ctype)); }
