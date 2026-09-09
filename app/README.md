@@ -14,7 +14,10 @@ Native wrapper around the Campfire web app. Built with **Tauri v2**:
   - **Game detection** — polls running process names (sysinfo) and matches them
     against Discord's public detectable-games DB
     (`https://discord.com/api/v10/applications/detectable`, fetched once, cached
-    in the app data dir, refreshed every 7 days). While a game is detected it
+    in the app data dir, refreshed every 7 days). Foldered DB entries require a
+    full-path match and shared bare exe names are discounted, so generic
+    runtimes/tools (`gh.exe`, `java.exe`) never hallucinate games that aren't
+    installed. While a game is detected it
     beacons `{game, ts}` to `POST /api/watcher/status` every ~10–30 s; the server
     sets your "Playing …" state and logs playtime for levels/streaks shown on
     profiles. Richest on Windows — Discord's DB has ~11k Windows entries but

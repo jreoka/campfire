@@ -63,8 +63,9 @@ struct DbExe {
 #[cfg(desktop)]
 struct State {
     token: Mutex<Option<String>>,
-    // (game name, [exe names])
-    games: Mutex<Vec<(String, Vec<String>)>>,
+    games: Mutex<Vec<GameEntry>>,
+    // bare exe name -> number of games claiming it (discounts weak evidence)
+    bare_share: Mutex<std::collections::HashMap<String, usize>>,
     db_at: Mutex<u64>,
     signed_in: AtomicBool,
     // last game successfully beaconed (for tray menu rebuilds)
@@ -73,8 +74,18 @@ struct State {
 
 // Discord's DB tags each executable with an `os` ("win32" / "darwin" /
 // "linux"; the non-desktop entries are sparse but real). Match only this
-// platform's entries and normalize them to bare lowercase process names:
-// Windows keeps `foo.exe`, macOS strips `.app`, Linux entries are bare.
+// platform's entries.
+// --- game matching: two evidence tiers ------------------------------------
+// A bare process name is weak evidence: GitHub CLI's `gh.exe` IS Green
+// Hell's whole exe name, and any `java.exe` IS Illarion's — basename-only
+// matching hallucinates games that were never installed. So:
+// - foldered entries (`green hell/gh.exe`) only match when the process's
+//   FULL path ends with them → strong evidence (2000 points);
+// - bare entries (`rustclient.exe`, `>javaw.exe`) match on the basename but
+//   are discounted by how many games share the name (1000 / share).
+// A game is reported at >= 500: one tied weak exe, or anything stronger.
+// (Real Green Hell still matches via its path; real Illarion via its
+// `illario/jre/...` path; a random `gh`/`java` binary matches nothing.)
 #[cfg(windows)]
 const WANT_OS: &str = "win32";
 #[cfg(target_os = "macos")]
@@ -83,26 +94,27 @@ const WANT_OS: &str = "darwin";
 const WANT_OS: &str = "linux";
 
 #[cfg(desktop)]
-fn normalize_exe(raw: &str) -> Option<String> {
-    let base = raw.rsplit('/').next().unwrap_or("").trim().to_lowercase();
-    if base.is_empty() {
-        return None;
-    }
-    #[cfg(windows)]
-    {
-        if !base.ends_with(".exe") {
-            return None;
+const SCORE_FOLDERED: u32 = 2000;
+#[cfg(desktop)]
+const SCORE_THRESHOLD: u32 = 500;
+
+#[cfg(desktop)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct GameEntry {
+    name: String,
+    foldered: Vec<String>,
+    bare: Vec<String>,
+}
+
+#[cfg(desktop)]
+fn build_bare_share(games: &[GameEntry]) -> std::collections::HashMap<String, usize> {
+    let mut share = std::collections::HashMap::new();
+    for g in games {
+        for b in &g.bare {
+            *share.entry(b.clone()).or_insert(0) += 1;
         }
-        Some(base)
     }
-    #[cfg(target_os = "macos")]
-    {
-        Some(base.strip_suffix(".app").unwrap_or(&base).to_string())
-    }
-    #[cfg(target_os = "linux")]
-    {
-        Some(base)
-    }
+    share
 }
 
 // Local timezone offset in minutes east of UTC (matches JS
@@ -118,8 +130,9 @@ fn app_data_dir<R: Runtime>(app: &AppHandle<R>) -> std::path::PathBuf {
     app.path().app_data_dir().expect("app data dir")
 }
 
-// Build the (game, exes) list from Discord's detectable-games DB.
-// Launchers skipped, folder prefixes stripped, per-platform names.
+// Build the game list from Discord's detectable-games DB.
+// Launchers skipped; entries keep their folder prefix (or lack of one) so
+// matching can demand full-path evidence for foldered exes.
 #[cfg(desktop)]
 fn load_or_fetch_games<R: Runtime>(app: &AppHandle<R>, client: &reqwest::blocking::Client) {
     let state = app.state::<State>();
@@ -128,6 +141,20 @@ fn load_or_fetch_games<R: Runtime>(app: &AppHandle<R>, client: &reqwest::blockin
     let cache = dir.join("games.json");
     let fresh_for_secs: u64 = 7 * 24 * 3600;
     let need_fetch = now_secs() - *state.db_at.lock().unwrap() >= fresh_for_secs;
+    // On-disk cache (new format only — a legacy cache just misses here and
+    // triggers a refetch, or stays empty until the network works).
+    let read_cache = || -> Option<Vec<GameEntry>> {
+        let s = std::fs::read_to_string(&cache).ok()?;
+        serde_json::from_str(&s).ok()
+    };
+    let store = |games: &[GameEntry], share: &std::collections::HashMap<String, usize>| {
+        if let Ok(json) = serde_json::to_string(games) {
+            let _ = std::fs::write(&cache, json);
+        }
+        *state.db_at.lock().unwrap() = now_secs();
+        *state.bare_share.lock().unwrap() = share.clone();
+        *state.games.lock().unwrap() = games.to_vec();
+    };
     if need_fetch {
         let resp: Option<Vec<DbGame>> = client
             .get(DISCORD_DB)
@@ -136,9 +163,10 @@ fn load_or_fetch_games<R: Runtime>(app: &AppHandle<R>, client: &reqwest::blockin
             .ok()
             .and_then(|r| r.json().ok());
         if let Some(list) = resp {
-            let mut by_exe: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+            let mut games: Vec<GameEntry> = Vec::new();
             for g in &list {
-                let name = g.name.clone();
+                let mut foldered: Vec<String> = Vec::new();
+                let mut bare: Vec<String> = Vec::new();
                 for e in g.executables.as_deref().unwrap_or(&[]) {
                     if e.os.as_deref() != Some(WANT_OS) {
                         continue;
@@ -146,45 +174,51 @@ fn load_or_fetch_games<R: Runtime>(app: &AppHandle<R>, client: &reqwest::blockin
                     if e.is_launcher == Some(true) {
                         continue;
                     }
-                    let Some(base) = normalize_exe(&e.name) else {
+                    let norm = e.name.replace('\\', "/").trim().to_lowercase();
+                    let norm = norm.strip_prefix('>').unwrap_or(&norm).to_string();
+                    if norm.is_empty() {
                         continue;
-                    };
-                    by_exe.entry(base).or_default().push(name.clone());
-                }
-            }
-            let mut games: Vec<(String, Vec<String>)> = Vec::new();
-            for (exe, names) in by_exe.iter() {
-                for n in names {
-                    if let Some(found) = games.iter_mut().find(|(gn, _)| *gn == *n) {
-                        found.1.push(exe.clone());
+                    }
+                    if norm.contains('/') {
+                        foldered.push(norm);
                     } else {
-                        games.push((n.clone(), vec![exe.clone()]));
+                        // Windows: exes end in .exe; other platforms have
+                        // extensionless names, so only enforce it on Windows.
+                        #[cfg(windows)]
+                        if !norm.ends_with(".exe") {
+                            continue;
+                        }
+                        bare.push(norm);
                     }
                 }
-            }
-            games.sort_by(|a, b| a.0.cmp(&b.0));
-            if let Ok(json) = serde_json::to_string(&games) {
-                let _ = std::fs::write(&cache, json);
-                *state.db_at.lock().unwrap() = now_secs();
-            }
-            *state.games.lock().unwrap() = games;
-        } else if cache.exists() {
-            // Offline: fall back to the last cached DB.
-            if let Ok(s) = std::fs::read_to_string(&cache) {
-                if let Ok(v) = serde_json::from_str(&s) {
-                    *state.games.lock().unwrap() = v;
+                foldered.sort();
+                foldered.dedup();
+                bare.sort();
+                bare.dedup();
+                if foldered.is_empty() && bare.is_empty() {
+                    continue;
                 }
+                games.push(GameEntry { name: g.name.clone(), foldered, bare });
             }
+            games.sort_by(|a, b| a.name.cmp(&b.name));
+            let share = build_bare_share(&games);
+            store(&games, &share);
+        } else if let Some(v) = read_cache() {
+            // Offline: fall back to the last cached DB, then back off so a
+            // dead network doesn't mean a fetch attempt every poll.
+            let share = build_bare_share(&v);
+            store(&v, &share);
+        } else {
+            *state.db_at.lock().unwrap() = now_secs();
         }
-    } else if cache.exists() {
-        if let Ok(s) = std::fs::read_to_string(&cache) {
-            if let Ok(v) = serde_json::from_str(&s) {
-                *state.games.lock().unwrap() = v;
-            }
+    } else if state.games.lock().unwrap().is_empty() {
+        if let Some(v) = read_cache() {
+            let share = build_bare_share(&v);
+            *state.bare_share.lock().unwrap() = share;
+            *state.games.lock().unwrap() = v;
         }
     }
 }
-
 #[cfg(desktop)]
 fn now_secs() -> u64 {
     std::time::SystemTime::now()
@@ -312,9 +346,12 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
+        // Remember window size/position across restarts (desktop only).
+        .plugin(tauri_plugin_window_state::Builder::new().build())
         .manage(State {
             token: Mutex::new(None),
             games: Mutex::new(Vec::new()),
+            bare_share: Mutex::new(std::collections::HashMap::new()),
             db_at: Mutex::new(0),
             signed_in: AtomicBool::new(false),
             current_game: Mutex::new(None),
@@ -423,30 +460,78 @@ pub fn run() {
                     // remove_dead MUST be true: with false, exited processes linger
                     // in the map forever and closed games look "still playing".
                     let _ = system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-                    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+                    // Index running processes two ways: basename presence (for
+                    // bare entries) and full paths by basename (for foldered
+                    // suffix tests). Both the exe path and sysinfo's display
+                    // name feed the basename set (scripts/host processes).
+                    let mut name_counts: std::collections::HashMap<String, usize> =
+                        std::collections::HashMap::new();
+                    let mut by_base: std::collections::HashMap<String, Vec<String>> =
+                        std::collections::HashMap::new();
                     for p in system.processes().values() {
-                        *counts.entry(p.name().to_string_lossy().to_lowercase()).or_insert(0) += 1;
-                    }
-                    let games: Vec<(String, Vec<String>)> = state.games.lock().unwrap().clone();
-                    let mut best: Option<(usize, usize)> = None;
-                    for (gi, (gname, exes)) in games.iter().enumerate() {
-                        let total: usize = exes
-                            .iter()
-                            .map(|e| counts.get(e.as_str()).copied().unwrap_or(0))
-                            .sum();
-                        if total == 0 {
-                            continue;
+                        let full = p
+                            .exe()
+                            .map(|e| {
+                                e.to_string_lossy().replace('\\', "/").to_lowercase()
+                            })
+                            .unwrap_or_default();
+                        let base = full
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or("")
+                            .to_string();
+                        if !base.is_empty() {
+                            *name_counts.entry(base.clone()).or_insert(0) += 1;
+                            by_base.entry(base).or_default().push(full);
                         }
-                        match best {
-                            Some((b, bi)) => {
-                                if total > b || (total == b && gname < &games[bi].0) {
-                                    best = Some((total, gi));
+                        let disp = p.name().to_string_lossy().to_lowercase();
+                        if !disp.is_empty() {
+                            *name_counts.entry(disp).or_insert(0) += 1;
+                        }
+                    }
+                    let games: Vec<GameEntry> = state.games.lock().unwrap().clone();
+                    let share: std::collections::HashMap<String, usize> =
+                        state.bare_share.lock().unwrap().clone();
+                    // (score, distinct hits, name) — highest score wins, then
+                    // most evidence, then alphabetical for determinism.
+                    let mut best: Option<(u32, u32, String)> = None;
+                    for g in &games {
+                        let mut score: u32 = 0;
+                        let mut hits: u32 = 0;
+                        for f in &g.foldered {
+                            let fb = f.rsplit('/').next().unwrap_or("");
+                            if let Some(paths) = by_base.get(fb) {
+                                let suf = String::from("/") + f;
+                                if paths.iter().any(|ph| ph == f || ph.ends_with(&suf)) {
+                                    score += SCORE_FOLDERED;
+                                    hits += 1;
                                 }
                             }
-                            None => best = Some((total, gi)),
+                        }
+                        for b in &g.bare {
+                            if name_counts.contains_key(b) {
+                                let sh = share.get(b).copied().unwrap_or(1).max(1) as u32;
+                                score += 1000 / sh;
+                                hits += 1;
+                            }
+                        }
+                        if score < SCORE_THRESHOLD {
+                            continue;
+                        }
+                        let replace = match &best {
+                            None => true,
+                            Some((bs, bh, bn)) => {
+                                score > *bs
+                                    || (score == *bs
+                                        && (hits > *bh
+                                            || (hits == *bh && g.name < *bn)))
+                            }
+                        };
+                        if replace {
+                            best = Some((score, hits, g.name.clone()));
                         }
                     }
-                    let game: Option<String> = best.map(|(_, gi)| games[gi].0.clone());
+                    let game: Option<String> = best.map(|(_, _, n)| n);
                     let tok = state.token.lock().unwrap().clone();
                     if let Some(tok) = tok {
                         let changed = {
