@@ -455,6 +455,10 @@ function shouldGroup(prev, m) {
   return true;
 }
 function anchorBottom(box) {
+  // Late media must not yank a reader who scrolled up mid-load (e.g. right
+  // after a scroll position was restored): re-anchor only while still near
+  // the bottom.
+  const stillNearBottom = () => box.scrollHeight - box.scrollTop - box.clientHeight < 200;
   // Lazy `loading` images have 0 height until they load, so the first scroll
   // lands above the true bottom and the content grows under us. Re-anchor on
   // each image settling (they load roughly together, so re-check after every
@@ -464,7 +468,7 @@ function anchorBottom(box) {
     if (img.complete) continue;
     const once = () => {
       img.removeEventListener('load', once); img.removeEventListener('error', once);
-      box.scrollTop = box.scrollHeight;
+      if (stillNearBottom()) box.scrollTop = box.scrollHeight;
     };
     img.addEventListener('load', once);
     img.addEventListener('error', once);
@@ -478,7 +482,7 @@ function anchorBottom(box) {
       v.removeEventListener('loadedmetadata', once);
       v.removeEventListener('loadeddata', once);
       v.removeEventListener('error', once);
-      box.scrollTop = box.scrollHeight;
+      if (stillNearBottom()) box.scrollTop = box.scrollHeight;
     };
     v.addEventListener('loadedmetadata', once);
     v.addEventListener('loadeddata', once);

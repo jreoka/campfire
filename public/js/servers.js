@@ -281,6 +281,7 @@ function confirmDeleteChannel(c) {
   }, { danger: true });
 }
 async function selectChannel(id, opts = {}) {
+  saveScrollPos();
   S.channelId = id;
   rememberView();
   S.callOpen = false;
@@ -314,6 +315,7 @@ async function selectChannel(id, opts = {}) {
     S.histMode = null;
     S.histNew = 0;
     renderMessages(true);
+    restoreScrollPos({ kind: 'server', id });
     refreshPinsCount();
     updatePill();
   } catch { $('#messages').innerHTML = '<p class="error">Could not load messages.</p>'; }

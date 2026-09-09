@@ -47,6 +47,7 @@ const S = {
   thread: null, // {rootId, channelId, root, replies[]}
   histMode: null, // {kind:'server'|'dm', id, serverId?} — viewing older (jump-to-pin) context
   histNew: 0, // live arrivals while viewing history (drives the jump pill)
+  scrollMem: new Map(), // convo key -> distance-from-bottom px (restores reading pos on return)
   pinIds: new Set(), // pinned message ids in the current channel/thread
   pinCount: 0,
   pinsCtx: null, // context the pins popup is open for

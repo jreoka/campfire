@@ -3,6 +3,7 @@
 function dmPeer(t) { return (t.members || []).find((m) => m.id !== S.me.id) || null; }
 function dmTitle(t) { return t.isGroup ? (t.name || 'Group chat') : ((dmPeer(t) || {}).display_name || 'Direct message'); }
 function openServerView() {
+  saveScrollPos();
   S.view = 'server';
   S.callOpen = false;
   stopRinging();
@@ -16,6 +17,7 @@ function openServerView() {
   paintDmCallButtons();
 }
 async function openHome() {
+  saveScrollPos();
   closeServerSettings();
   S.view = 'home';
   S.serverId = null;
@@ -424,7 +426,7 @@ async function messageUser(uid) {
 }
 async function closeDm(tid) {
   try { await api(`/api/dms/${tid}/close`, { method: 'POST' }); } catch {}
-  if (S.dmThreadId === tid) { S.dmThreadId = null; renderDmBlank(); }
+  if (S.dmThreadId === tid) { saveScrollPos(); S.dmThreadId = null; renderDmBlank(); }
   refreshDms();
 }
 // Member-card style friend picker row: presence-ring avatar + name/sub-line
@@ -525,7 +527,7 @@ function dmCtxMenu(tid, x, y) {
   if (t && t.isGroup) {
     items.push({ label: 'Leave chat', icon: '🗑', danger: true, fn: async () => {
       try { await api(`/api/dms/${tid}/leave`, { method: 'POST' }); } catch {}
-      if (S.dmThreadId === tid) { S.dmThreadId = null; renderDmBlank(); rememberView(); }
+      if (S.dmThreadId === tid) { saveScrollPos(); S.dmThreadId = null; renderDmBlank(); rememberView(); }
       refreshDms();
     } });
   }

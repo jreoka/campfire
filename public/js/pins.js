@@ -8,6 +8,31 @@ function pinsUrl(ctx, suffix = '') {
   return ctx.kind === 'dm' ? `/api/dms/${ctx.id}/pins${suffix}` : `/api/servers/${ctx.serverId}/channels/${ctx.id}/pins${suffix}`;
 }
 function sameCtx(a, b) { return !!a && !!b && a.kind === b.kind && a.id === b.id; }
+// Per-conversation scroll memory: leaving a channel/DM mid-read and coming
+// back restores where you were instead of forcing the bottom. Saved as the
+// distance from the bottom so newly arrived messages don't shift the view.
+function scrollMemKey(ctx) { return ctx ? ctx.kind + ':' + ctx.id : null; }
+function saveScrollPos() {
+  try {
+    const key = scrollMemKey(pinsCtx());
+    const box = $('#messages');
+    // Only real message lists count — the Loading…/error placeholders and
+    // the NSFW gate have no .msg nodes and must never clobber the memory.
+    if (!key || !box || !box.querySelector('.msg')) return;
+    S.scrollMem.set(key, box.scrollHeight - box.scrollTop);
+  } catch {}
+}
+function restoreScrollPos(ctx) {
+  try {
+    if (!sameCtx(pinsCtx(), ctx)) return;
+    const dist = S.scrollMem.get(scrollMemKey(ctx));
+    if (dist == null || dist <= 200) return; // was at (or near) the bottom
+    const box = $('#messages');
+    if (!box || box.classList.contains('hidden')) return;
+    box.scrollTop = Math.max(0, box.scrollHeight - dist);
+    updatePill();
+  } catch {}
+}
 async function refreshPinsCount() {
   const ctx = pinsCtx();
   if (!ctx) { S.pinCount = 0; S.pinIds = new Set(); paintPinsBtn(); return; }
@@ -186,6 +211,7 @@ $('#chan-topic').onclick = () => {
   if (desc) openModal(`#${ch.name}`, `<p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(desc)}</p>`, 'Close', null);
 };
 async function selectDmThread(id) {
+  saveScrollPos();
   S.dmThreadId = id;
   rememberView();
   // Opening a thread clears its unread badge (row + home button).
@@ -221,6 +247,7 @@ async function selectDmThread(id) {
     S.histMode = null;
     S.histNew = 0;
     renderDmMessages(true);
+    restoreScrollPos({ kind: 'dm', id });
     refreshPinsCount();
     updatePill();
   } catch { $('#messages').innerHTML = '<p class="error">Could not load messages.</p>'; }
