@@ -112,16 +112,8 @@ async function renderNotifsTab() {
   }
   h('Default for everything');
   box.appendChild(notifSelect('global', notifPrefsCache.global || 'all'));
-  h('Per server');
-  if (!S.servers.length) box.appendChild(Object.assign(document.createElement('p'), { className: 'muted small' }));
-  for (const s of S.servers) {
-    const row = document.createElement('div'); row.className = 'set-row';
-    row.innerHTML = `<span class="grow">${esc(s.name)}</span>`;
-    row.appendChild(notifSelect('s:' + s.id, notifPrefsCache['s:' + s.id] || ''));
-    box.appendChild(row);
-  }
   const note = document.createElement('p'); note.className = 'muted small';
-  note.textContent = 'Right-click a channel or server for its own rules. DM threads follow the default rule.';
+  note.textContent = 'Right-click (or long-press) a server or channel for its own rules. DM threads follow the default rule.';
   box.appendChild(note);
 }
 function urlB64ToU8(s) {
