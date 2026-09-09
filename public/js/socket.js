@@ -189,12 +189,15 @@ function onWS(m) {
       }
       break;
     case 'dm-threads-changed':
-      if (S.view === 'home') {
-        refreshDms().then(() => {
-          if (S.dmThreadId && !S.dms.some((t) => t.id === S.dmThreadId)) { S.dmThreadId = null; renderDmBlank(); rememberView(); }
-          else renderDmMembers();
-        });
-      }
+      // Refresh everywhere (not just on Home): a thread left/closed/created
+      // on another device must vanish/appear here too, even mid-server-view.
+      // If the currently open thread is gone (left, removed, dismissed),
+      // drop back to a blank instead of showing a ghost room.
+      refreshDms().then(() => {
+        if (S.view !== 'home') { rememberView(); return; }
+        if (S.dmThreadId && !S.dms.some((t) => t.id === S.dmThreadId)) { S.dmThreadId = null; renderDmBlank(); rememberView(); }
+        else renderDmMembers();
+      });
       break;
     case 'friends-changed':
       // Always refresh so the home button badge (pending requests) stays

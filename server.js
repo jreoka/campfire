@@ -2738,6 +2738,7 @@ app.post('/api/dms', authRequired, (req, res) => {
     const mems = db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ?').all(tid).map((r) => r.user_id);
     if (mems.length === 2 && mems.includes(target.id)) {
       db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ? AND user_id = ?').run(tid, req.user.id);
+      notifyUser(req.user.id, { t: 'dm-threads-changed' });
       return res.json({ thread: dmThreadView(t) });
     }
   }
@@ -2748,6 +2749,7 @@ app.post('/api/dms', authRequired, (req, res) => {
     db.prepare('INSERT INTO dm_members (thread_id,user_id,joined_at) VALUES (?,?,?)').run(id, target.id, now());
   })();
   notifyUser(target.id, { t: 'dm-threads-changed' });
+  notifyUser(req.user.id, { t: 'dm-threads-changed' });
   res.json({ thread: dmThreadView(db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(id)) });
 });
 app.post('/api/dms/group', authRequired, (req, res) => {
@@ -2764,6 +2766,7 @@ app.post('/api/dms/group', authRequired, (req, res) => {
     for (const oid of ids) db.prepare('INSERT INTO dm_members (thread_id,user_id,joined_at) VALUES (?,?,?)').run(id, oid, now());
   })();
   for (const oid of ids) notifyUser(oid, { t: 'dm-threads-changed' });
+  notifyUser(req.user.id, { t: 'dm-threads-changed' });
   res.json({ thread: dmThreadView(db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(id)) });
 });
 app.post('/api/dms/:tid/members', authRequired, (req, res) => {
@@ -2786,6 +2789,9 @@ app.post('/api/dms/:tid/leave', authRequired, (req, res) => {
   evictFromDmCall(t.id, req.user.id);
   postDmSys(t.id, `${displayOf(req.user)} left ${t.is_group ? 'the group' : 'the chat'}`);
   dmNotify(t.id, { t: 'dm-threads-changed' });
+  // dmNotify no longer reaches the leaver (membership already deleted) —
+  // tell their other devices directly so no stale room lingers anywhere.
+  notifyUser(req.user.id, { t: 'dm-threads-changed' });
   maybeDeleteEmptyDmThread(t.id);
   res.json({ ok: true });
 });
@@ -2802,6 +2808,7 @@ app.post('/api/dms/:tid/open', authRequired, (req, res) => {
   const t = dmThreadFor(req.user.id, req.params.tid);
   if (!t) return res.status(404).json({ error: 'no_thread' });
   db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ? AND user_id = ?').run(t.id, req.user.id);
+  notifyUser(req.user.id, { t: 'dm-threads-changed' });
   res.json({ thread: dmThreadView(t) });
 });
 
