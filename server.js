@@ -478,6 +478,10 @@ async function verifyTurnstile(token, ip) {
       signal: AbortSignal.timeout(8000),
     });
     const j = await r.json().catch(() => ({}));
+    // Log the Cloudflare reason (timeout-or-duplicate, invalid-input-secret,
+    // hostname-mismatch, ...) — without it every failure is an undiagnosable
+    // "captcha_failed" and users just see an ever-resetting widget.
+    if (j.success !== true) console.warn('[auth] turnstile reject:', ((j['error-codes'] || []).join(',') || 'unknown'), 'ip=', ip || '?');
     return j.success === true;
   } catch { return false; }
 }

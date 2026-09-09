@@ -4,7 +4,8 @@ let mode = 'login';
 // Cloudflare Turnstile: site key comes from /api/config (public). The widget
 // stays hidden until the user presses Log in / Create account — the form
 // stays clean until the captcha is actually needed. Tokens are single-use,
-// so the widget resets after every submit attempt.
+// so the widget resets after every consumed submit (never while the user
+// is still solving, and never in a way that auto-resubmits).
 S.turnstileKey = null; S.tsWidget = undefined;
 let tsNeeded = false; // submit was pressed: the captcha area may now appear
 let submitting = false; // a submit is in flight (guards against double-fire)
@@ -20,6 +21,12 @@ function renderTurnstile() {
       sitekey: S.turnstileKey,
       theme: 'dark',
       callback: () => { if (tsNeeded && !submitting) doAuthSubmit(); },
+      // Token sat unsent past its lifetime: re-arm the widget so the user
+      // can solve again (the kept submit intent auto-submits on solve).
+      'expired-callback': () => { try { turnstile.reset(S.tsWidget); } catch {} },
+      // Widget-level failure (blocked CDN, VPN/proxy interference, ...):
+      // say so plainly instead of spinning/resetting forever.
+      'error-callback': () => { authError('Captcha failed to load — disable adblock/VPN for this site and reload the page.'); },
     });
   } catch { S.tsWidget = undefined; }
 }
@@ -28,19 +35,23 @@ function renderTurnstile() {
 function showTurnstile() {
   if (!S.turnstileKey) return true;
   if (!window.turnstile) return false;
-  if (S.tsWidget === undefined) renderTurnstile();
-  if (S.tsWidget === undefined) return false;
+  // Unhide BEFORE rendering: Turnstile misbehaves (sizing errors, reset
+  // loops) when rendered into a display:none container.
   $('#ts-wrap').classList.remove('hidden');
-  return true;
+  if (S.tsWidget === undefined) renderTurnstile();
+  return S.tsWidget !== undefined;
 }
 // Named in index.html (?onload=cfTurnstileReady): fires when the API script
 // finishes loading. Assigned here so it exists before the async script runs.
 // Only surfaces the widget if the user has already pressed submit.
 window.cfTurnstileReady = () => {
   if (!S.turnstileKey || S.tsWidget !== undefined) return;
+  // Only surface the widget if the user has already pressed submit —
+  // otherwise the login form stays clean until the captcha is needed.
+  if (!tsNeeded) return;
   renderTurnstile();
   if (S.tsWidget !== undefined) $('#ts-wrap').classList.remove('hidden');
-  if (tsNeeded) doAuthSubmit(); // submit was pressed while the script loaded
+  doAuthSubmit(); // submit was pressed while the script loaded
 };
 async function initTurnstile() {
   try {
@@ -81,6 +92,7 @@ $('#form-auth').addEventListener('submit', (e) => {
 async function doAuthSubmit() {
   if (submitting) return;
   submitting = true;
+  let didSubmit = false; // a captcha token was consumed: reset the widget after (tokens are single-use)
   try {
     const username = $('#in-username').value.trim();
     const password = $('#in-password').value;
@@ -96,14 +108,20 @@ async function doAuthSubmit() {
       if (!showTurnstile()) { authError('Captcha still loading — wait a moment and try again.'); return; }
       token = turnstileToken();
       if (!token) { authError('Complete the captcha to continue.'); return; }
+      // The submit intent is consumed HERE, before the API call — not after.
+      // A failed attempt (wrong password, taken name, rejected captcha...)
+      // must not leave tsNeeded set: the reset below re-runs the challenge,
+      // whose callback would auto-submit again — an infinite
+      // solve→fail→reset loop that looks like a broken, ever-resetting captcha.
+      tsNeeded = false;
+      didSubmit = true;
     }
     const data = mode === 'login'
       ? await api('/api/login', { method: 'POST', body: JSON.stringify({ username, password, turnstile: token, device: deviceName() }) })
       : await api('/api/register', { method: 'POST', body: JSON.stringify({ username, password, displayName, turnstile: token, device: deviceName() }) });
-    // The submit intent is consumed: later Turnstile callbacks (e.g. after
-    // turnstileReset() below re-runs the challenge) must not re-submit and
-    // wipe the 2FA step the user may already be typing into.
-    tsNeeded = false;
+    // (tsNeeded was already cleared above, before the API call, so the
+    // reset below can never trigger a re-submit — including when the user
+    // is already typing into the 2FA step.)
     if (data.need2fa) { pending2faTmp = data.tmp; show2faStep(); return; }
     store.token = data.token;
     if (data.sid) store.sid = data.sid;
@@ -114,7 +132,10 @@ async function doAuthSubmit() {
     el.classList.remove('hidden');
   } finally {
     submitting = false;
-    turnstileReset();
+    // Only reset when a token was actually consumed. Resetting on the
+    // "complete the captcha" path would yank the widget the user is
+    // about to solve; never resetting would reuse a single-use token.
+    if (didSubmit) turnstileReset();
   }
 }
 function prettyError(e) {
