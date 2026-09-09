@@ -78,6 +78,31 @@ function ensureVideoPoster(v) {
   tmp.addEventListener('error', () => finish(null), { once: true });
   setTimeout(() => finish(null), 8000);
 }
+// ---------- stick-to-bottom on media resize ----------
+// A video can change size more than once: no intrinsic size until metadata
+// loads, the poster-to-frame swap, and some WebViews relayout again when
+// playback starts. If the user is sitting at the bottom, stay pinned
+// through all of it instead of stranding the view mid-video.
+let stickRO = null;
+function observeStick(el) {
+  if (!el || el.dataset.stickOn) return;
+  el.dataset.stickOn = '1';
+  try {
+    if (!stickRO) {
+      stickRO = new ResizeObserver((entries) => {
+        for (const e of entries) {
+          if (!e.target.isConnected) { try { stickRO.unobserve(e.target); } catch {} continue; }
+          const box = e.target.closest ? e.target.closest('#messages,#thread-replies') : null;
+          if (!box) continue;
+          if (box.scrollHeight - box.scrollTop - box.clientHeight < 200) {
+            box.scrollTop = box.scrollHeight;
+          }
+        }
+      });
+    }
+    stickRO.observe(el);
+  } catch {}
+}
 function reactionsHTML(m) {
   if (!m.reactions?.length) return '';
   return '<div class="reactions">' + m.reactions.map((r) => {
@@ -399,7 +424,7 @@ function messageEl(m, opts = {}) {
   inner += '<div class="msg-actions">' + bar + '</div>';
   div.innerHTML = inner;
   if (!grouped) paintAvatar(div.querySelector('.avatar'), lu);
-  try { div.querySelectorAll('video.att-vid').forEach(ensureVideoPoster); } catch {}
+  try { div.querySelectorAll('video.att-vid').forEach((v) => { ensureVideoPoster(v); observeStick(v); }); } catch {}
   return div;
 }
 // Discord-style grouping: consecutive messages from the same author collapse
