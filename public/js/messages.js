@@ -106,13 +106,22 @@ function fmtClock(s) {
 // ---------- voice/audio player (one shared look for every audio embed) ----------
 let vpSeq = 0;
 const VP_BARS = 36;
+// Shared preview volume (persisted): hover/tap the speaker icon on any audio
+// preview to reveal its slider. New previews start at the last chosen level.
+let vpVol = 1;
+try { const _v = parseFloat(localStorage.getItem('cf_vol')); if (_v >= 0 && _v <= 1) vpVol = _v; } catch {}
+function vpVolIcon() {
+  return '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor" stroke="none"/><path class="vp-wv" d="M15.5 8.5a5 5 0 0 1 0 7"/><path class="vp-wv" d="M18.2 5.8a9 9 0 0 1 0 12.4"/><g class="vp-mx" style="display:none"><path d="M16 9.5l5 5"/><path d="M21 9.5l-5 5"/></g></svg>';
+}
 function audioPlayerHTML(a) {
   const tag = 'vp' + (++vpSeq).toString(36) + Date.now().toString(36).slice(-3);
   return `<div class="vplayer" data-vp="${tag}" data-url="${esc(a.url)}" data-size="${a.size || 0}">`
     + `<button type="button" class="vp-play" data-vp-toggle title="Play"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path class="vp-ic-play" d="M8 5v14l11-7z"/><path class="vp-ic-pause" d="M7 5h4v14H7zM13 5h4v14h-4z" style="display:none"/></svg></button>`
     + `<audio src="${esc(a.url)}" preload="metadata"></audio>`
-    + `<div class="vp-body"><div class="vp-bars" data-vp-seek>${'<i></i>'.repeat(VP_BARS)}</div>`
+    + `<div class="vp-body"><div class="vp-name" title="${esc(a.name)}">${esc(a.name)}</div><div class="vp-bars" data-vp-seek>${'<i></i>'.repeat(VP_BARS)}</div>`
     + `<div class="vp-meta"><span data-vp-cur>0:00</span><span class="vp-dur">…</span></div></div>`
+    + `<div class="vp-vol"><button type="button" class="vp-volbtn" data-vp-volbtn title="Volume">${vpVolIcon()}</button>`
+    + `<span class="vp-volpop"><input type="range" class="vp-volslider" data-vp-vol min="0" max="1" step="0.01" value="${vpVol}" style="--fill:${Math.round(vpVol * 100)}%" aria-label="Preview volume" /></span></div>`
     + attDl(a) + `</div>`;
 }
 function vpAudio(root) { return root ? root.querySelector('audio') : null; }
@@ -132,6 +141,29 @@ function vpPaint(root) {
   if (pause) pause.style.display = playing ? '' : 'none';
   const tg = root.querySelector('[data-vp-toggle]');
   if (tg) tg.title = playing ? 'Pause' : 'Play';
+}
+function vpVolPaint(root) {
+  const audio = vpAudio(root);
+  if (!audio) return;
+  const v = audio.muted ? 0 : (audio.volume ?? 1);
+  const muted = v <= 0.001;
+  root.querySelectorAll('.vp-wv').forEach((p) => { p.style.display = muted ? 'none' : ''; });
+  root.querySelectorAll('.vp-mx').forEach((p) => { p.style.display = muted ? '' : 'none'; });
+  const btn = root.querySelector('[data-vp-volbtn]');
+  if (btn) btn.title = muted ? 'Unmute' : 'Mute';
+  const sl = root.querySelector('[data-vp-vol]');
+  if (sl && document.activeElement !== sl) sl.value = String(v);
+  if (sl) sl.style.setProperty('--fill', Math.round(v * 100) + '%');
+}
+function vpSetVol(root, v) {
+  const audio = vpAudio(root);
+  if (!audio) return;
+  v = Math.min(1, Math.max(0, parseFloat(v) || 0));
+  audio.muted = false;
+  audio.volume = v;
+  vpVol = v;
+  try { localStorage.setItem('cf_vol', String(v)); } catch {}
+  vpVolPaint(root);
 }
 // Real waveform peaks, decoded lazily once the clip's metadata is in.
 // Big files skip decoding and keep the flat segmented track.
@@ -159,6 +191,40 @@ async function paintPeaks(root, audio) {
     root.querySelectorAll('.vp-bars i').forEach((b, i) => { b.style.height = Math.max(14, Math.round((out[i] / mx) * 100)) + '%'; });
   } catch { delete root.dataset.peaks; }
 }
+document.addEventListener('input', (e) => {
+  const sl = e.target.closest ? e.target.closest('[data-vp-vol]') : null;
+  if (!sl) return;
+  const root = sl.closest('.vplayer');
+  if (root) vpSetVol(root, sl.value);
+});
+document.addEventListener('click', (e) => {
+  const vb = e.target.closest ? e.target.closest('[data-vp-volbtn]') : null;
+  if (vb) {
+    const root = vb.closest('.vplayer');
+    if (!root) return;
+    // Touch (no hover): tap opens/closes the slider popup instead of muting,
+    // since there is no hover to reveal it with. Mute via slider-to-zero.
+    if (window.matchMedia && matchMedia('(hover: none)').matches) {
+      const box = vb.closest('.vp-vol');
+      const was = box ? box.classList.contains('open') : false;
+      document.querySelectorAll('.vp-vol.open').forEach((o) => o.classList.remove('open'));
+      if (box && !was) box.classList.add('open');
+      return;
+    }
+    const audio = vpAudio(root);
+    if (!audio) return;
+    if (audio.muted || audio.volume <= 0.001) {
+      const prev = parseFloat(root.dataset.prevvol);
+      vpSetVol(root, (prev > 0.001 && prev <= 1) ? prev : (vpVol > 0.001 ? vpVol : 1));
+    } else {
+      root.dataset.prevvol = String(audio.volume);
+      vpSetVol(root, 0);
+    }
+    return;
+  }
+  if (!e.target.closest || !e.target.closest('.vp-vol'))
+    document.querySelectorAll('.vp-vol.open').forEach((o) => o.classList.remove('open'));
+});
 document.addEventListener('click', (e) => {
   const tg = e.target.closest('[data-vp-toggle]');
   const sk = e.target.closest('[data-vp-seek]');
@@ -194,10 +260,18 @@ document.addEventListener('loadedmetadata', (e) => {
   if (!t || t.tagName !== 'AUDIO' || !t.closest) return;
   const root = t.closest('.vplayer');
   if (!root) return;
+  try { t.volume = vpVol; t.muted = false; } catch {}
   const de = root.querySelector('.vp-dur');
   if (de && isFinite(t.duration)) de.textContent = fmtClock(t.duration);
   vpPaint(root);
+  vpVolPaint(root);
   paintPeaks(root, t);
+}, true);
+document.addEventListener('volumechange', (e) => {
+  const t = e.target;
+  if (!t || t.tagName !== 'AUDIO' || !t.closest) return;
+  const root = t.closest('.vplayer');
+  if (root) vpVolPaint(root);
 }, true);
 // ---------- polls ----------
 function pollHTML(m) {
