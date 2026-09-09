@@ -733,7 +733,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .set-pane input::placeholder,.set-pane textarea::placeholder{color:var(--faint)}
 .set-pane textarea{resize:vertical;min-height:72px;line-height:1.5}
 .set-pane input:disabled{opacity:.55}
-.set-pane input[type=color]{padding:.25rem .35rem;height:2.6rem;cursor:pointer;background:var(--inset);border:1px solid var(--line);border-radius:10px}
+.set-pane input[type=color]{display:block;width:100%;margin-top:.35rem;padding:.25rem .35rem;height:2.6rem;cursor:pointer;background:var(--inset);border:1px solid var(--line);border-radius:10px}
 .set-pane input[type=color]::-webkit-color-swatch-wrapper{padding:0}
 .set-pane input[type=color]::-webkit-color-swatch{border:0;border-radius:8px}
 .set-pane input[type=color]::-moz-color-swatch{border:0;border-radius:8px}
