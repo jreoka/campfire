@@ -349,7 +349,7 @@ function dmRowEl(t) {
   const inThis = S.voice && S.voice.kind === 'dm' && S.voice.threadId === t.id;
   if (callN > 0 || inThis) b.classList.add('in-call');
   const sub = inThis ? '<span class="dm-incall">In call — you</span>'
-    : callN > 0 ? `<span class="dm-incall">${callN} in call — tap to join</span>`
+    : callN > 0 ? `<span class="dm-incall">${callN} in call — open to join</span>`
     : esc(t.last ? `${t.last.author}: ${t.last.content}`.slice(0, 60) : 'No messages yet');
   b.innerHTML = `<span class="avatar">${t.isGroup ? '#' : ''}</span><span class="dmmain"><span class="dmname" style="${!t.isGroup && av ? nameStyleFor(av) : ''}">${esc(dmTitle(t))}</span><span class="dmlast">${sub}</span></span>`;
   const avSpan = b.querySelector('.avatar');

@@ -342,12 +342,14 @@ function onWS(m) {
     }
     case 'voice-peer-joined': {
       if (m.threadId) {
+        dmPeerJoined(m.threadId, m.peer);
         if (S.voice && S.voice.kind === 'dm' && S.voice.threadId === m.threadId) {
           ensurePeer(m.peer.id, false); // existing member: wait for offer
           sfx.join();
           renderStage();
         }
         try { renderDmLists(); } catch {}
+        if (S.view === 'home' && S.dmThreadId === m.threadId) { try { renderDmMembers(); } catch {} }
         break;
       }
       if (S.voice && S.voice.serverId === m.serverId && S.voice.channelId === m.channelId) {
@@ -363,12 +365,14 @@ function onWS(m) {
     }
     case 'voice-peer-left': {
       if (m.threadId) {
+        dmPeerLeft(m.threadId, m.userId);
         if (S.voice && S.voice.kind === 'dm' && S.voice.threadId === m.threadId) {
           closePeer(m.userId);
           sfx.leave();
           renderStage();
         }
         try { renderDmLists(); } catch {}
+        if (S.view === 'home' && S.dmThreadId === m.threadId) { try { renderDmMembers(); } catch {} }
         break;
       }
       closePeer(m.userId);

@@ -68,6 +68,23 @@ function myVoiceKey() {
   return S.voice.kind === 'dm' ? dmOccKey(S.voice.threadId) : S.voice.channelId;
 }
 function dmCallPeers(tid) { return S.voiceOccupancy.get(dmOccKey(tid)) || []; }
+// Every voice event converges DM-call occupancy on its own (not just the
+// paired voice-peers snapshot), so the in-call border + join strip update
+// live even if one message is missed or arrives out of band.
+function dmPeerJoined(threadId, peer) {
+  if (!peer || !peer.id) return;
+  const key = dmOccKey(threadId);
+  const occ = S.voiceOccupancy.get(key) || [];
+  if (!occ.some((p) => p.id === peer.id)) occ.push({ ...peer });
+  S.voiceOccupancy.set(key, occ);
+  if (!S.voiceSince.has(key)) S.voiceSince.set(key, Date.now());
+}
+function dmPeerLeft(threadId, userId) {
+  const key = dmOccKey(threadId);
+  const occ = (S.voiceOccupancy.get(key) || []).filter((p) => p.id !== userId);
+  if (occ.length) S.voiceOccupancy.set(key, occ);
+  else { S.voiceOccupancy.delete(key); S.voiceSince.delete(key); }
+}
 function inThisDmCall(tid) { return !!(S.voice && S.voice.kind === 'dm' && S.voice.threadId === tid); }
 function voiceLabel() {
   if (!S.voice) return 'voice';
