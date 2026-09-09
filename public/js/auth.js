@@ -100,6 +100,10 @@ async function doAuthSubmit() {
     const data = mode === 'login'
       ? await api('/api/login', { method: 'POST', body: JSON.stringify({ username, password, turnstile: token, device: deviceName() }) })
       : await api('/api/register', { method: 'POST', body: JSON.stringify({ username, password, displayName, turnstile: token, device: deviceName() }) });
+    // The submit intent is consumed: later Turnstile callbacks (e.g. after
+    // turnstileReset() below re-runs the challenge) must not re-submit and
+    // wipe the 2FA step the user may already be typing into.
+    tsNeeded = false;
     if (data.need2fa) { pending2faTmp = data.tmp; show2faStep(); return; }
     store.token = data.token;
     if (data.sid) store.sid = data.sid;
