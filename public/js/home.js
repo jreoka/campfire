@@ -436,9 +436,6 @@ function dmCtxMenu(tid, x, y) {
   if (t && t.isGroup) {
     items.push({ label: 'Add members…', icon: '+', fn: () => openGroupAdd(tid) });
   }
-  if (t && t.isGroup && t.created_by === S.me?.id) {
-    items.push({ label: 'Banned members…', icon: '⊘', fn: () => openGroupBans(tid) });
-  }
   // Direct (1:1) DMs can be dismissed but never totally left — Leave only exists for groups.
   if (t && t.isGroup) {
     items.push({ label: 'Leave chat', icon: '🗑', danger: true, fn: async () => {
@@ -474,15 +471,4 @@ async function openGroupAdd(tid) {
     else toast(ids.length === 1 ? 'Member added' : 'Members added');
   });
 }
-async function openGroupBans(tid) {
-  let bans = [];
-  try { ({ bans } = await api(`/api/dms/${tid}/bans`)); } catch { toast('Could not load banned list'); return; }
-  openModal('Banned members', bans.length
-    ? `<div id="m-banlist">${bans.map((u) => `<div class="row" style="justify-content:space-between;padding:.3rem 0"><span>${esc(u.display_name)} <span class="muted small">@${esc(u.username)}</span></span><button class="mini" data-unban="${u.id}">Unban</button></div>`).join('')}</div>`
-    : '<p class="muted small">Nobody is banned from this group.</p>', 'Done', null);
-  document.querySelectorAll('#m-banlist [data-unban]').forEach((b) => (b.onclick = async () => {
-    try { await api(`/api/dms/${tid}/bans/${b.dataset.unban}`, { method: 'DELETE' }); } catch {}
-    $('#modal-backdrop').classList.add('hidden');
-    openGroupBans(tid);
-  }));
-}
+

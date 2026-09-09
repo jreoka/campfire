@@ -365,8 +365,7 @@ async function modServerMember(kind, u) {
 function modGroupItems(items, t, u) {
   if (!t.created_by || t.created_by !== S.me.id) return;
   if (u.id === t.created_by) return;
-  items.push({ label: `Remove @${u.username}`, icon: '→', danger: true, fn: () => modGroupMember('remove', t, u) });
-  items.push({ label: `Ban @${u.username}`, icon: '⊘', danger: true, fn: () => modGroupMember('ban', t, u) });
+  items.push({ label: `Remove @${u.username}`, icon: '→', danger: true, fn: () => modGroupMember(t, u) });
 }
 async function openChannelSettings(sid, c) {
   const slows = [[0, 'Off'], [5, '5 seconds'], [10, '10 seconds'], [30, '30 seconds'], [60, '1 minute'], [300, '5 minutes']];
@@ -385,15 +384,15 @@ async function openChannelSettings(sid, c) {
     if (sid === S.serverId) selectServer(sid);
   });
 }
-async function modGroupMember(kind, t, u) {
+async function modGroupMember(t, u) {
   const ok = await openConfirmModal({
-    title: `${kind === 'ban' ? 'Ban' : 'Remove'} @${u.username}?`,
-    message: kind === 'ban' ? 'They will be removed and blocked from being re-added.' : 'They will be removed from the group.',
-    okLabel: kind === 'ban' ? 'Ban' : 'Remove',
+    title: `Remove @${u.username}?`,
+    message: 'They will be removed from the group.',
+    okLabel: 'Remove',
   });
   if (!ok) return;
   try {
-    await api(`/api/dms/${t.id}/members/${u.id}/${kind}`, { method: 'POST' });
+    await api(`/api/dms/${t.id}/members/${u.id}/remove`, { method: 'POST' });
     refreshDms().then(() => renderDmMembers());
   } catch (err) { toast('Failed: ' + prettyError(err.message)); }
 }

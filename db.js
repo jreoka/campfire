@@ -176,6 +176,8 @@ CREATE TABLE IF NOT EXISTS server_bans (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (server_id, user_id)
 );
+-- Legacy, unused: group-chat bans were removed (groups use remove-only).
+-- Kept so existing databases upgrade in place; no code reads/writes it.
 CREATE TABLE IF NOT EXISTS dm_bans (
   thread_id TEXT NOT NULL REFERENCES dm_threads(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

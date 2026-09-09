@@ -2294,7 +2294,7 @@ function dmNotify(threadId, obj) {
   for (const uid of mems) notifyUser(uid, obj);
 }
 // Fully erase a DM thread and everything in it. Called whenever a thread is
-// left with zero members (last leave, remove, or ban) — explicit deletes so
+// left with zero members (last leave or remove) — explicit deletes so
 // no messages/attachments/reactions/pins dangle even if FK cascades lag.
 function deleteDmThread(threadId) {
   deletePollsFor('dm', db.prepare('SELECT id FROM dm_messages WHERE thread_id = ?').all(threadId).map((r) => r.id));
@@ -2330,9 +2330,6 @@ function postDmSys(threadId, text) {
 }
 function isBanned(serverId, userId) {
   return !!db.prepare('SELECT 1 FROM server_bans WHERE server_id = ? AND user_id = ?').get(serverId, userId);
-}
-function dmBanned(threadId, userId) {
-  return !!db.prepare('SELECT 1 FROM dm_bans WHERE thread_id = ? AND user_id = ?').get(threadId, userId);
 }
 function displayOf(u) { return (u && (u.display_name || u.username)) || 'Someone'; }
 // Collapse blank-line spam (3+ newlines -> 2) so walls of empty lines can't flood chat/bios.
@@ -2761,7 +2758,6 @@ app.post('/api/dms/:tid/members', authRequired, (req, res) => {
   const oid = String(req.body?.userId || '');
   if (oid === req.user.id || !db.prepare('SELECT 1 FROM users WHERE id = ?').get(oid)) return res.status(404).json({ error: 'user_not_found' });
   if (!areFriends(req.user.id, oid)) return res.status(403).json({ error: 'add_friend_first' });
-  if (dmBanned(t.id, oid)) return res.status(403).json({ error: 'banned_from_group' });
   db.prepare('INSERT OR IGNORE INTO dm_members (thread_id,user_id,joined_at) VALUES (?,?,?)').run(t.id, oid, now());
   if (!t.is_group) db.prepare('UPDATE dm_threads SET is_group = 1 WHERE id = ?').run(t.id);
   dmNotify(t.id, { t: 'dm-threads-changed' });
@@ -2813,46 +2809,6 @@ app.post('/api/dms/:tid/members/:uid/remove', authRequired, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/dms/:tid/members/:uid/ban', authRequired, (req, res) => {
-  const t = dmThreadFor(req.user.id, req.params.tid);
-  if (!t) return res.status(404).json({ error: 'no_thread' });
-  if (!t.is_group) return res.status(400).json({ error: 'not_group' });
-  if (t.created_by !== req.user.id) return res.status(403).json({ error: 'creator_only' });
-  const target = String(req.params.uid);
-  if (target === req.user.id || target === t.created_by) return res.status(400).json({ error: 'cannot_remove' });
-  if (!db.prepare('SELECT 1 FROM dm_members WHERE thread_id = ? AND user_id = ?').get(t.id, target)) return res.status(404).json({ error: 'not_member' });
-  const u = publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(target));
-  db.transaction(() => {
-    db.prepare('DELETE FROM dm_members WHERE thread_id = ? AND user_id = ?').run(t.id, target);
-    db.prepare('INSERT OR IGNORE INTO dm_bans (thread_id,user_id,created_at) VALUES (?,?,?)').run(t.id, target, now());
-  })();
-  evictFromDmCall(t.id, target);
-  postDmSys(t.id, `${displayOf(u)} was banned`);
-  dmNotify(t.id, { t: 'dm-threads-changed' });
-  notifyUser(target, { t: 'removed-from-dm', threadId: t.id });
-  maybeDeleteEmptyDmThread(t.id);
-  res.json({ ok: true });
-});
-
-app.get('/api/dms/:tid/bans', authRequired, (req, res) => {
-  const t = dmThreadFor(req.user.id, req.params.tid);
-  if (!t) return res.status(404).json({ error: 'no_thread' });
-  if (t.created_by !== req.user.id) return res.status(403).json({ error: 'creator_only' });
-  const rows = db.prepare('SELECT user_id, created_at FROM dm_bans WHERE thread_id = ? ORDER BY created_at DESC').all(t.id);
-  const bans = rows.map((r) => {
-    const u = publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(r.user_id));
-    return { ...u, banned_at: r.created_at };
-  });
-  res.json({ bans });
-});
-
-app.delete('/api/dms/:tid/bans/:uid', authRequired, (req, res) => {
-  const t = dmThreadFor(req.user.id, req.params.tid);
-  if (!t) return res.status(404).json({ error: 'no_thread' });
-  if (t.created_by !== req.user.id) return res.status(403).json({ error: 'creator_only' });
-  db.prepare('DELETE FROM dm_bans WHERE thread_id = ? AND user_id = ?').run(t.id, String(req.params.uid));
-  res.json({ ok: true });
-});
 app.get('/api/dms/:tid/messages', authRequired, (req, res) => {
   const t = dmThreadFor(req.user.id, req.params.tid);
   if (!t) return res.status(404).json({ error: 'no_thread' });
