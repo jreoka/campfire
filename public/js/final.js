@@ -176,6 +176,16 @@ function composerSendKey(inp, formId) {
 }
 composerSendKey($('#in-message'), 'composer');
 composerSendKey($('#in-thread'), 'thread-composer');
+// Mobile: tapping a Send/Reply button focuses the button first, which blurs
+// the textarea and collapses the keyboard (sometimes with a flicker even
+// though submit refocuses). Suppress the focus steal — click still fires.
+// NOTE: mousedown only — canceling pointerdown/touchstart would also cancel
+// the tap's click and break sending entirely.
+for (const sel of ['#composer .send-btn', '#thread-composer [type="submit"]']) {
+  const btn = document.querySelector(sel);
+  if (!btn) continue;
+  btn.addEventListener('mousedown', (e) => { e.preventDefault(); });
+}
 $('#in-message').addEventListener('scroll', () => {
   const inp = $('#in-message'), r = $('#in-render-inner'), c = $('#in-render');
   if (c) c.scrollTop = inp.scrollTop;

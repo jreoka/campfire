@@ -549,6 +549,8 @@ $('#thread-composer').addEventListener('submit', (e) => {
   S.threadReplyTo = null;
   renderThreadComposerMeta();
   composerAutoGrow(inp); // programmatic clear doesn't fire 'input', so reset height here
+  // Mobile: keep the keyboard open for rapid follow-up replies.
+  try { inp.focus({ preventScroll: true }); } catch { inp.focus(); }
 });
 
 // ---------- lightbox ----------

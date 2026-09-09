@@ -477,6 +477,9 @@ $('#composer').addEventListener('submit', (e) => {
   renderComposerMeta();
   syncComposerRender();
   composerAutoGrow(inp); // programmatic clear doesn't fire 'input', so reset height here
+  // Mobile: tapping Send blurs the textarea and collapses the keyboard —
+  // refocus synchronously (still in the tap gesture) so it stays open.
+  try { inp.focus({ preventScroll: true }); } catch { inp.focus(); }
 });
 function sendChat(content, opts = {}) {
   if (S.ws && S.ws.readyState === 1) {
