@@ -145,6 +145,14 @@ function renderRich(text, opts = {}) {
     if (!mem) return m;
     return pre + '<span class="mention' + (mem.id === S.me.id ? ' me' : '') + '" data-uid="' + mem.id + '">@' + esc(mem.display_name) + '</span>';
   });
+  // #channel links: only in server context, and only when the name matches a
+  // real channel (so #5, C#, hex colors etc. stay plain text).
+  h = h.replace(/(^|[\s(])#([A-Za-z0-9_-]{1,32})/g, (m, pre, name) => {
+    if (S.view !== 'server') return m;
+    const ch = (S.serverDetail?.channels || []).find((c) => c.name.toLowerCase() === name.toLowerCase());
+    if (!ch) return m;
+    return pre + '<span class="chan-link" data-clink="' + ch.id + '" data-ctype="' + ch.type + '">#' + esc(ch.name) + '</span>';
+  });
   }
   h = h.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
   h = h.replace(/\u0000(\d+)\u0000/g, (m, i) => '<code>' + codes[+i] + '</code>');

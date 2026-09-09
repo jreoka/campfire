@@ -392,7 +392,7 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .up-card.failed .up-sub{color:var(--red)}
 .up-x,.up-retry{flex-shrink:0}
 @media (prefers-reduced-motion:reduce){.up-card,.up-spin,.up-fill.indet{animation:none}}
-#mention-pop{position:absolute;left:.9rem;bottom:calc(64px + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:230px;max-height:230px;overflow-y:auto;z-index:60;padding:.3rem}
+#mention-pop,#chan-pop{position:absolute;left:.9rem;bottom:calc(64px + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:230px;max-height:230px;overflow-y:auto;z-index:60;padding:.3rem}
 #emoji-pop{position:absolute;left:.9rem;bottom:calc(64px + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:270px;max-height:270px;overflow-y:auto;z-index:60;padding:.3rem}
 .emoji-item{display:flex;align-items:center;gap:.55rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);padding:.42rem .6rem;font-size:.88rem;cursor:pointer;border-radius:8px}
 .emoji-item:hover,.emoji-item.sel{background:var(--panel-3)}
@@ -469,6 +469,9 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .edited{font-size:.7rem;color:var(--faint)}
 .mention{background:var(--accent-container);color:var(--on-container);border-radius:6px;padding:.05rem .3rem;font-weight:650}
 .mention.me{background:var(--accent);color:var(--on-accent)}
+.chan-link{background:var(--accent-container);color:var(--on-container);border-radius:6px;padding:.05rem .3rem;font-weight:650;cursor:pointer;white-space:nowrap}
+.chan-link:hover{text-decoration:underline}
+.chan-glyph{width:24px;text-align:center;color:var(--faint);font-weight:800;flex-shrink:0}
 .cemoji{width:1.35em;height:1.35em;vertical-align:-0.25em}
 .bigemoji{font-size:2rem;line-height:1.3}
 img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-align:-0.2em}
@@ -1013,7 +1016,7 @@ body{touch-action:manipulation}
   #btn-plus{display:none}
   #btn-more{display:inline-flex;align-items:center;justify-content:center}
   #picker{left:0;right:0;bottom:0;width:auto;max-height:62dvh;border-radius:16px 16px 0 0}
-  #mention-pop{left:.5rem;right:.5rem}
+  #mention-pop,#chan-pop{left:.5rem;right:.5rem}
   #thread-panel{width:min(360px,100vw)!important}
   #thread-resizer{display:none}
   #usercard{width:min(300px,calc(100vw - 16px))}

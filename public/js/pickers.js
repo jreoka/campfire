@@ -353,6 +353,7 @@ async function saveEdit(mid) {
   const uidEl = e.target.closest('[data-uid]');
   const actEl = e.target.closest('[data-act]');
   const jumpEl = e.target.closest('[data-jump]');
+  const clEl = e.target.closest('[data-clink]');
   const reactEl = e.target.closest('.reaction');
   const imgEl = e.target.closest('.att-img,.embed-img');
   const memberEl = e.target.closest('.member');
@@ -385,6 +386,14 @@ async function saveEdit(mid) {
     const spWrap = imgEl.closest('.att-wrap.spoiler:not(.shown)');
     if (spWrap) { spWrap.classList.add('shown'); return; }
     openLightbox(imgEl.src); return;
+  }
+  if (clEl) {
+    const ch = (S.serverDetail?.channels || []).find((c) => c.id === clEl.dataset.clink);
+    if (ch && S.view === 'server') {
+      if (clEl.dataset.ctype === 'voice') openVoiceChannel(S.serverId, ch.id);
+      else if (S.channelId !== ch.id) selectChannel(ch.id);
+    }
+    return;
   }
   if (jumpEl) { jumpToMessage(jumpEl.dataset.jump); return; }
   if (actEl) {
@@ -973,6 +982,56 @@ function applyMention(username) {
   const pos = inp.selectionStart ?? inp.value.length;
   inp.value = inp.value.slice(0, pos).replace(/@[A-Za-z0-9_.]{1,24}$/, '@' + username + ' ');
   hideMentionPop();
+  inp.focus();
+  syncComposerRender();
+}
+
+// ---------- #channel autocomplete (same UX as @mentions) ----------
+// Typing #gen in a server offers matching channels; picking inserts #name,
+// which renders as a clickable link (see renderRich in core.js).
+let chanIdx = 0;
+function hideChanPop() { $('#chan-pop').classList.add('hidden'); }
+$('#in-message').addEventListener('input', () => {
+  const inp = $('#in-message');
+  const upto = inp.value.slice(0, inp.selectionStart ?? inp.value.length);
+  const m = upto.match(/#([A-Za-z0-9_-]{0,32})$/);
+  const pool = S.view === 'server' ? (S.serverDetail?.channels || []) : [];
+  if (!m || !pool.length) { hideChanPop(); return; }
+  const q = m[1].toLowerCase();
+  const cands = pool.filter((c) => c.name.toLowerCase().includes(q)).slice(0, 6);
+  if (!cands.length) { hideChanPop(); return; }
+  chanIdx = 0;
+  const pop = $('#chan-pop');
+  pop.innerHTML = '';
+  cands.forEach((c, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'mention-item' + (i === 0 ? ' sel' : '');
+    b.dataset.name = c.name;
+    b.innerHTML = `<span class="chan-glyph">${c.type === 'voice' ? '♪' : '#'}</span><span>#${esc(c.name)}</span>`;
+    b.onmousedown = (e) => { e.preventDefault(); applyChannel(c.name); };
+    pop.appendChild(b);
+  });
+  pop.classList.remove('hidden');
+});
+$('#in-message').addEventListener('keydown', (e) => {
+  const pop = $('#chan-pop');
+  if (pop.classList.contains('hidden')) return;
+  const items = [...pop.querySelectorAll('.mention-item')];
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    chanIdx = (chanIdx + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+    items.forEach((b, i) => b.classList.toggle('sel', i === chanIdx));
+  } else if ((e.key === 'Enter' || e.key === 'Tab') && items[chanIdx]) {
+    e.preventDefault();
+    applyChannel(items[chanIdx].dataset.name);
+  } else if (e.key === 'Escape') hideChanPop();
+});
+function applyChannel(name) {
+  const inp = $('#in-message');
+  const pos = inp.selectionStart ?? inp.value.length;
+  inp.value = inp.value.slice(0, pos).replace(/#[A-Za-z0-9_-]{0,32}$/, '#' + name + ' ');
+  hideChanPop();
   inp.focus();
   syncComposerRender();
 }

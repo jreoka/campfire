@@ -158,6 +158,7 @@ function openCallView() {
   $('#composer').classList.add('hidden');
   $('#attach-preview').classList.add('hidden');
   $('#mention-pop').classList.add('hidden');
+  $('#chan-pop').classList.add('hidden');
   $('#voice-fab').classList.add('hidden');
   renderStage();
 }

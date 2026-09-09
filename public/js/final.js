@@ -170,6 +170,7 @@ function composerSendKey(inp, formId) {
     if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
     if ($('#mention-pop') && !$('#mention-pop').classList.contains('hidden')) return;
     if ($('#emoji-pop') && !$('#emoji-pop').classList.contains('hidden')) return;
+    if ($('#chan-pop') && !$('#chan-pop').classList.contains('hidden')) return;
     e.preventDefault();
     document.getElementById(formId)?.requestSubmit();
   });
