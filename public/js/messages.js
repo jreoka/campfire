@@ -26,10 +26,57 @@ const DL_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" str
 function attDl(a) { return `<a class="att-dl" href="${esc(a.url)}" download="${esc(a.name)}" target="_blank" rel="noopener" title="Download">${DL_ICON}</a>`; }
 function attachmentHTML(a) {
   if (a.kind === 'image') return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
-  if (a.kind === 'video') return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><video class="att-vid" src="${esc(a.url)}" controls preload="metadata"></video>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+  if (a.kind === 'video') return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><video class="att-vid" src="${esc(a.url)}" controls preload="metadata" playsinline></video>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'audio') return audioPlayerHTML(a);
   if (textPreviewable(a)) return textFileHTML(a);
   return `<a class="file-card" href="${esc(a.url)}" target="_blank" rel="noopener"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span><span class="fname">${esc(a.name)}</span><br/><span class="fsize">${fmtSize(a.size)}</span></span></a>`;
+}
+// ---------- video posters: desktop shows the first frame natively, but the
+// Android WebView shows a black box + giant play button until playback
+// starts. Capture a frame offscreen once per video URL and set it as the
+// poster thumbnail so every platform previews the same. Same-origin
+// uploads, so the canvas is never tainted.
+const videoPosterCache = new Map();
+const videoPosterWaiters = new Map();
+function ensureVideoPoster(v) {
+  if (!v || v.dataset.posterOk) return;
+  const url = v.currentSrc || v.src;
+  if (!url) return;
+  const hit = videoPosterCache.get(url);
+  if (hit) { try { v.poster = hit; } catch {} v.dataset.posterOk = '1'; return; }
+  if (videoPosterWaiters.has(url)) { videoPosterWaiters.get(url).push(v); return; }
+  videoPosterWaiters.set(url, [v]);
+  const tmp = document.createElement('video');
+  tmp.muted = true; tmp.playsInline = true; tmp.preload = 'auto'; tmp.src = url;
+  let done = false;
+  const finish = (dataURL) => {
+    if (done) return; done = true;
+    try { tmp.pause(); tmp.removeAttribute('src'); tmp.load(); } catch {}
+    const waiters = videoPosterWaiters.get(url) || [];
+    videoPosterWaiters.delete(url);
+    if (dataURL) {
+      if (videoPosterCache.size > 60) { try { videoPosterCache.delete(videoPosterCache.keys().next().value); } catch {} }
+      videoPosterCache.set(url, dataURL);
+      waiters.forEach((el) => { try { el.poster = dataURL; } catch {} el.dataset.posterOk = '1'; });
+    } else {
+      waiters.forEach((el) => { el.dataset.posterOk = '1'; });
+    }
+  };
+  tmp.addEventListener('loadeddata', () => {
+    try { tmp.currentTime = Math.min(0.5, (tmp.duration || 1) / 3) || 0.1; }
+    catch { finish(null); }
+  }, { once: true });
+  tmp.addEventListener('seeked', () => {
+    try {
+      if (!tmp.videoWidth) { finish(null); return; }
+      const w = 320, h = Math.max(1, Math.round((w * tmp.videoHeight) / tmp.videoWidth));
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').drawImage(tmp, 0, 0, w, h);
+      finish(c.toDataURL('image/jpeg', 0.6));
+    } catch { finish(null); }
+  }, { once: true });
+  tmp.addEventListener('error', () => finish(null), { once: true });
+  setTimeout(() => finish(null), 8000);
 }
 function reactionsHTML(m) {
   if (!m.reactions?.length) return '';
@@ -352,6 +399,7 @@ function messageEl(m, opts = {}) {
   inner += '<div class="msg-actions">' + bar + '</div>';
   div.innerHTML = inner;
   if (!grouped) paintAvatar(div.querySelector('.avatar'), lu);
+  try { div.querySelectorAll('video.att-vid').forEach(ensureVideoPoster); } catch {}
   return div;
 }
 // Discord-style grouping: consecutive messages from the same author collapse
