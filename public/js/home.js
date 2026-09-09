@@ -456,26 +456,33 @@ function mountGmemPicker(box, users) {
   const sorted = [...users].sort((a, b) => String(a.display_name || a.username || '').localeCompare(String(b.display_name || b.username || '')));
   for (const u of sorted) box.appendChild(gmemRowEl(u));
 }
-// Search filter + selected counter for a mounted picker.
-function wireGmemPicker(searchSel, boxSel, countSel) {
+// Group chats fit DM_GROUP_MAX people total, creator included.
+const DM_GROUP_MAX = 10;
+// Search filter + selected counter for a mounted picker. When max is set,
+// selection caps there (the rest disable) and the counter shows the cap.
+function wireGmemPicker(searchSel, boxSel, countSel, max) {
   const inp = document.querySelector(searchSel), box = document.querySelector(boxSel), count = countSel && document.querySelector(countSel);
   if (!box) return;
   const total = box.querySelectorAll('.gmem').length;
   const update = () => {
     const q = (inp && inp.value || '').trim().toLowerCase();
-    let visible = 0, picked = 0;
+    let visible = 0;
     for (const lab of box.querySelectorAll('.gmem')) {
       const hit = !q || (lab.dataset.search || '').includes(q);
       lab.style.display = hit ? '' : 'none';
       if (hit) visible++;
-      if (lab.querySelector('.gcheck').checked) picked++;
     }
+    const boxes = [...box.querySelectorAll('.gcheck')];
+    const picked = boxes.filter((c) => c.checked).length;
+    if (max) for (const c of boxes) c.disabled = !c.checked && picked >= max;
     let none = box.querySelector('.gmem-none');
     if (!visible) {
       if (!none) { none = document.createElement('p'); none.className = 'muted small gmem-none'; none.style.padding = '.4rem .2rem'; box.appendChild(none); }
       none.textContent = 'No friends match.';
     } else none?.remove();
-    if (count) count.textContent = picked ? `${picked} selected` : `${total} friend${total === 1 ? '' : 's'}`;
+    if (count) count.textContent = max
+      ? (picked ? `${picked}/${max} selected` : `${total} friend${total === 1 ? '' : 's'} · pick up to ${max}`)
+      : (picked ? `${picked} selected` : `${total} friend${total === 1 ? '' : 's'}`);
   };
   inp?.addEventListener('input', update);
   box.addEventListener('change', update);
@@ -483,13 +490,16 @@ function wireGmemPicker(searchSel, boxSel, countSel) {
 }
 function openGroupModal() {
   const friends = S.friends.friends || [];
+  const max = DM_GROUP_MAX - 1; // seats for friends — you take one
   openModal('New group chat', `
     <label>Group name<input id="m-group-name" maxlength="40" placeholder="e.g. Weekend squad" /></label>
-    ${friends.length ? `<input id="m-group-search" placeholder="Search friends…" autocomplete="off" />
+    ${friends.length ? `<p class="muted small" style="margin:.4rem 0 0">Up to ${DM_GROUP_MAX} people, including you.</p>
+    <input id="m-group-search" placeholder="Search friends…" autocomplete="off" />
     <div class="gmem-count muted small" id="m-group-count"></div>
     <div class="gmem-list" id="m-group-picks"></div>` : '<p class="muted small">Just you for now — invite friends later.</p><div id="m-group-picks"></div>'}`, 'Create', async () => {
     const name = (document.querySelector('#m-group-name') || {}).value || '';
     const ids = [...document.querySelectorAll('#m-group-picks input:checked')].map((i) => i.value);
+    if (ids.length > max) { toast(`Group chats fit ${DM_GROUP_MAX} people including you`); return; }
     try {
       const { thread } = await api('/api/dms/group', { method: 'POST', body: JSON.stringify({ name, userIds: ids }) });
       await refreshDms();
@@ -497,7 +507,7 @@ function openGroupModal() {
     } catch (err) { toast(prettyError(err.message)); }
   }, { wide: true });
   const gbox = document.querySelector('#m-group-picks');
-  if (gbox && friends.length) { mountGmemPicker(gbox, friends); wireGmemPicker('#m-group-search', '#m-group-picks', '#m-group-count'); }
+  if (gbox && friends.length) { mountGmemPicker(gbox, friends); wireGmemPicker('#m-group-search', '#m-group-picks', '#m-group-count', max); }
 }
 async function toggleDmPin(tid) {
   const t = S.dms.find((x) => x.id === tid);
@@ -540,24 +550,28 @@ async function openGroupAdd(tid) {
   const inGroup = new Set((t.members || []).map((m) => m.id));
   const cands = (S.friends.friends || []).filter((f) => !inGroup.has(f.id));
   if (!cands.length) { toast('No friends to add — everyone is already here'); return; }
+  const roomLeft = DM_GROUP_MAX - (t.members || []).length;
+  if (roomLeft <= 0) { toast(`Group is full — up to ${DM_GROUP_MAX} people`); return; }
   openModal(`Add to ${esc(t.name || 'group chat')}`, `
+    <p class="muted small" style="margin:.2rem 0 0">${roomLeft} spot${roomLeft === 1 ? '' : 's'} left · up to ${DM_GROUP_MAX} total.</p>
     <input id="m-add-search" placeholder="Search friends…" autocomplete="off" />
     <div class="gmem-count muted small" id="m-add-count"></div>
     <div class="gmem-list" id="m-add-picks"></div>`, 'Add', async () => {
     const ids = [...document.querySelectorAll('#m-add-picks input:checked')].map((i) => i.value);
     if (!ids.length) return;
-    let failed = 0;
+    let failed = 0, full = false;
     for (const id of ids) {
       try { await api(`/api/dms/${tid}/members`, { method: 'POST', body: JSON.stringify({ userId: id }) }); }
-      catch { failed++; }
+      catch (err) { failed++; if (err.message === 'group_full') full = true; }
     }
     await refreshDms();
     if (S.view === 'home' && S.dmThreadId === tid) selectDmThread(tid);
-    if (failed >= ids.length) toast('Could not add members');
+    if (full) toast(`Group is full — up to ${DM_GROUP_MAX} people`);
+    else if (failed >= ids.length) toast('Could not add members');
     else if (failed) toast('Some members could not be added');
     else toast(ids.length === 1 ? 'Member added' : 'Members added');
   }, { wide: true });
   const abox = document.querySelector('#m-add-picks');
-  if (abox) { mountGmemPicker(abox, cands); wireGmemPicker('#m-add-search', '#m-add-picks', '#m-add-count'); }
+  if (abox) { mountGmemPicker(abox, cands); wireGmemPicker('#m-add-search', '#m-add-picks', '#m-add-count', roomLeft); }
 }
 

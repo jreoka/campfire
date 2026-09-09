@@ -2892,9 +2892,12 @@ app.post('/api/dms', authRequired, (req, res) => {
   notifyUser(req.user.id, { t: 'dm-threads-changed' });
   res.json({ thread: dmThreadView(db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(id), req.user.id) });
 });
+// Group chats fit GROUP_MAX people total, creator included.
+const GROUP_MAX = 10;
 app.post('/api/dms/group', authRequired, (req, res) => {
   const name = String(req.body?.name || '').trim().slice(0, 40) || 'Group chat';
-  const ids = [...new Set((req.body?.userIds || []).map(String))].filter((v) => v !== req.user.id).slice(0, 9);
+  const ids = [...new Set((req.body?.userIds || []).map(String))].filter((v) => v !== req.user.id);
+  if (ids.length > GROUP_MAX - 1) return res.status(400).json({ error: 'group_full' });
   for (const oid of ids) {
     if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(oid)) return res.status(404).json({ error: 'user_not_found' });
     if (!areFriends(req.user.id, oid)) return res.status(403).json({ error: 'add_friend_first' });
@@ -2915,6 +2918,8 @@ app.post('/api/dms/:tid/members', authRequired, (req, res) => {
   const oid = String(req.body?.userId || '');
   if (oid === req.user.id || !db.prepare('SELECT 1 FROM users WHERE id = ?').get(oid)) return res.status(404).json({ error: 'user_not_found' });
   if (!areFriends(req.user.id, oid)) return res.status(403).json({ error: 'add_friend_first' });
+  if (db.prepare('SELECT 1 FROM dm_members WHERE thread_id = ? AND user_id = ?').get(t.id, oid)) return res.json({ ok: true });
+  if (db.prepare('SELECT COUNT(*) c FROM dm_members WHERE thread_id = ?').get(t.id).c >= GROUP_MAX) return res.status(400).json({ error: 'group_full' });
   db.prepare('INSERT OR IGNORE INTO dm_members (thread_id,user_id,joined_at) VALUES (?,?,?)').run(t.id, oid, now());
   if (!t.is_group) db.prepare('UPDATE dm_threads SET is_group = 1 WHERE id = ?').run(t.id);
   dmNotify(t.id, { t: 'dm-threads-changed' });

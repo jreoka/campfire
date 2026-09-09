@@ -1097,6 +1097,7 @@ body.view-home:not(.dm-open) #members{width:300px}
 .gmem .dmname{display:block;font-size:.85rem;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gmem .dmlast{display:block;font-size:.74rem;font-weight:400;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gmem.sel,.gmem.sel:hover{background:var(--accent-dim)}
+.gmem:has(.gcheck:disabled){opacity:.55}
 .gcheck{width:22px;height:22px;flex-shrink:0;margin:0;cursor:pointer;accent-color:var(--accent)}
 .modal .gcheck{width:22px;height:22px;margin:0;padding:0;background:transparent;border:0;box-shadow:none}
 .gmem-count{margin-top:.55rem}
