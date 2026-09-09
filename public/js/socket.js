@@ -385,15 +385,41 @@ function onWS(m) {
       if (m.threadId) {
         const occ = S.voiceOccupancy.get('dm:' + m.threadId) || [];
         const p = occ.find((x) => x.id === m.userId);
-        if (p) { p.muted = m.muted; p.speaking = !!m.speaking; p.deafened = !!m.deafened; p.camera = !!m.camera; p.sharing = !!m.sharing; }
+        if (p) { p.muted = m.muted; p.speaking = !!m.speaking; p.deafened = !!m.deafened; p.camera = !!m.camera; p.sharing = !!m.sharing; p.serverMuted = !!m.serverMuted; p.streamName = m.streamName || null; }
         if (S.voice && S.voice.kind === 'dm' && S.voice.threadId === m.threadId) renderStage();
         break;
       }
       const occ = S.voiceOccupancy.get(m.channelId) || [];
       const p = occ.find((x) => x.id === m.userId);
-      if (p) { p.muted = m.muted; p.speaking = !!m.speaking; p.deafened = !!m.deafened; p.camera = !!m.camera; p.sharing = !!m.sharing; }
+      if (p) { p.muted = m.muted; p.speaking = !!m.speaking; p.deafened = !!m.deafened; p.camera = !!m.camera; p.sharing = !!m.sharing; p.serverMuted = !!m.serverMuted; p.streamName = m.streamName || null; }
       if (m.serverId === S.serverId) renderVoiceUsers();
       if (S.voice && S.voice.channelId === m.channelId) renderStage();
+      break;
+    }
+    case 'voice-mod': {
+      // An admin muted/unmuted me: enforce it locally (a server mute can't
+      // be lifted with the mic button until an admin clears it).
+      if (!S.voice) break;
+      const mine = m.threadId
+        ? (S.voice.kind === 'dm' && S.voice.threadId === m.threadId)
+        : (S.voice.kind !== 'dm' && S.voice.channelId === m.channelId);
+      if (!mine) break;
+      if (m.action === 'muted') {
+        S.voice.muted = true;
+        S.voice.serverMuted = true;
+        applyMicState();
+        sendVoiceState();
+        paintVoiceControls();
+        renderVoiceUsers();
+        renderStage();
+        toast('An admin muted you');
+      } else if (m.action === 'unmuted') {
+        S.voice.serverMuted = false;
+        sendVoiceState();
+        paintVoiceControls();
+        renderStage();
+        toast('An admin unmuted you — unmute when ready');
+      }
       break;
     }
     case 'voice-signal':
@@ -404,10 +430,10 @@ function onWS(m) {
       break;
     case 'voice-kicked':
       if (m.threadId) {
-        if (S.voice && S.voice.kind === 'dm' && S.voice.threadId === m.threadId) { leaveVoice(); toast('You were removed from the call'); }
+        if (S.voice && S.voice.kind === 'dm' && S.voice.threadId === m.threadId) { leaveVoice(); toast(m.reason === 'mod' ? 'An admin disconnected you from the call' : 'You were removed from the call'); }
         break;
       }
-      if (S.voice && S.voice.channelId === m.channelId) { leaveVoice(); toast('Voice room was deleted'); }
+      if (S.voice && S.voice.channelId === m.channelId) { leaveVoice(); toast(m.reason === 'mod' ? 'An admin disconnected you from voice' : 'Voice room was deleted'); }
       break;
     case 'error':
       toast(m.error === 'slow_mode' && m.retryAfter ? `Slow mode — wait ${m.retryAfter}s` : prettyError(m.error));

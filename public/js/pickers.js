@@ -610,6 +610,26 @@ async function openUserCard(uid, x, y) {
   if (!u) return;
   const card = $('#usercard');
   const canMod = S.view === 'server' && S.serverDetail && canManage() && uid !== S.me.id && uid !== S.serverDetail.owner_id;
+  // Voice: local volume for anyone in my current call, plus mod controls +
+  // watch button when applicable.
+  const inMyCall = !!(S.voice && S.me && uid !== S.me.id && occupantInMyRoom(uid));
+  const myPeer = inMyCall ? (myRoomOccupants().find((p) => p.id === uid) || null) : null;
+  let canVoiceMod = false;
+  if (inMyCall) {
+    if (S.voice.kind === 'server') canVoiceMod = S.view === 'server' && !!S.serverDetail && canManage() && uid !== S.serverDetail.owner_id;
+    else {
+      const t = (S.dms || []).find((x) => x.id === S.voice.threadId);
+      canVoiceMod = !!(t && t.created_by && S.me && t.created_by === S.me.id);
+    }
+  }
+  const volVal = getUserVolume(uid);
+  const voiceVolHTML = inMyCall ? `
+      <div class="uc-sec-label">Voice volume</div>
+      <div class="uc-vol"><input type="range" id="uc-vol" min="0" max="100" step="1" value="${volVal}" aria-label="Voice volume" /><span id="uc-vol-pct">${volVal}%</span></div>` : '';
+  const peerMuted = !!(myPeer && (myPeer.muted || myPeer.serverMuted));
+  const voiceModHTML = (inMyCall && (canVoiceMod || (myPeer && myPeer.sharing))) ? `
+      <div class="uc-sec-label">Voice call</div>
+      <div class="uc-actions" style="margin-top:0">${myPeer && myPeer.sharing ? '<button class="btn small primary" id="uc-watch">Watch stream</button>' : ''}${canVoiceMod ? `<button class="btn small${peerMuted ? '' : ' danger'}" id="uc-vmute">${peerMuted ? 'Unmute' : 'Mute'}</button><button class="btn small danger" id="uc-vdrop">Disconnect</button>` : ''}</div>` : '';
   const st = statusOf(uid);
   const stLabel = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' }[st] || 'Offline';
   const ban = u.banner_url || u.sidebar_banner_url;
@@ -627,6 +647,8 @@ async function openUserCard(uid, x, y) {
       ${u.bio ? `<div class="uc-bio">${renderRich(u.bio)}</div>` : ''}
       ${u.created_at ? `<div class="uc-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
       <div id="uc-gaming" class="uc-gaming hidden"></div>
+      ${voiceVolHTML}
+      ${voiceModHTML}
       ${cardRolesHTML(uid)}
       <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? '<button class="btn small primary" id="uc-message">Message</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid) : ''}${canMod ? '<button class="btn small danger" id="uc-kick">Kick</button><button class="btn small danger" id="uc-ban">Ban</button>' : ''}${uid !== S.me.id ? `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="uc-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>` : ''}<button class="btn small" id="uc-profile">Profile</button><button class="btn small" id="uc-close">Close</button></div>
     </div>`;
@@ -655,6 +677,32 @@ async function openUserCard(uid, x, y) {
   if (fr) fr.onclick = () => friendCardAction(uid, x, y);
   const kik = $('#uc-kick');
   if (kik) kik.onclick = () => { closeUserCard(); modServerMember('kick', u); };
+  const vvol = $('#uc-vol');
+  if (vvol) vvol.oninput = () => {
+    setUserVolume(uid, vvol.value);
+    const pct = $('#uc-vol-pct');
+    if (pct) pct.textContent = getUserVolume(uid) + '%';
+  };
+  const wch = $('#uc-watch');
+  if (wch) wch.onclick = () => { closeUserCard(); watchStream(uid); };
+  const vmu = $('#uc-vmute');
+  if (vmu) vmu.onclick = async () => {
+    sendVoiceMod(peerMuted ? 'unmute' : 'mute', uid);
+    toast((peerMuted ? 'Unmuted @' : 'Muted @') + u.username);
+    setTimeout(() => { try { if (!$('#usercard').classList.contains('hidden')) openUserCard(uid, x, y); } catch {} }, 800);
+  };
+  const vdr = $('#uc-vdrop');
+  if (vdr) vdr.onclick = async () => {
+    const ok = await openConfirmModal({
+      title: `Disconnect @${u.username} from voice?`,
+      message: 'They will be removed from the voice room but stay on the server.',
+      okLabel: 'Disconnect',
+    });
+    if (!ok) return;
+    sendVoiceMod('disconnect', uid);
+    closeUserCard();
+    toast('Disconnected @' + u.username);
+  };
   const bnn = $('#uc-ban');
   if (bnn) bnn.onclick = () => { closeUserCard(); modServerMember('ban', u); };
   card.querySelectorAll('[data-role-toggle]').forEach((b) => (b.onclick = async () => {

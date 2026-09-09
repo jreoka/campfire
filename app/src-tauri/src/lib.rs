@@ -304,6 +304,12 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
 
 #[cfg(desktop)]
 #[tauri::command]
+fn get_current_game(app: AppHandle) -> Option<String> {
+    app.state::<State>().current_game.lock().unwrap().clone()
+}
+
+#[cfg(desktop)]
+#[tauri::command]
 fn get_watch_state(app: AppHandle) -> serde_json::Value {
     let st = app.state::<State>();
     serde_json::json!({
@@ -356,7 +362,7 @@ pub fn run() {
             signed_in: AtomicBool::new(false),
             current_game: Mutex::new(None),
         })
-        .invoke_handler(tauri::generate_handler![get_autostart, set_autostart, get_watch_state])
+        .invoke_handler(tauri::generate_handler![get_autostart, set_autostart, get_watch_state, get_current_game])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();

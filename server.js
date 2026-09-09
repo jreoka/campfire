@@ -3127,6 +3127,8 @@ function voicePeersPayload(key) {
     deafened: !!(ws.meta.voice && ws.meta.voice.deafened),
     camera: !!(ws.meta.voice && ws.meta.voice.camera),
     sharing: !!(ws.meta.voice && ws.meta.voice.sharing),
+    serverMuted: !!(ws.meta.voice && ws.meta.voice.serverMuted),
+    streamName: (ws.meta.voice && ws.meta.voice.streamName) || null,
   }));
 }
 function findWsInVoice(key, userId) {
@@ -3368,7 +3370,7 @@ wss.on('connection', (ws, req) => {
       const peers = voicePeersPayload(key);
       safeSend(ws, { t: 'voice-peers', threadId, peers });
       const others = db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ? AND user_id != ?').all(threadId, me.userId).map((r) => r.user_id);
-      const mePeer = { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, avatar_url: me.avatar_url || null, muted: false, speaking: false, deafened: false, camera: false, sharing: false };
+      const mePeer = { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, avatar_url: me.avatar_url || null, muted: false, speaking: false, deafened: false, camera: false, sharing: false, serverMuted: false, streamName: null };
       for (const uid of others) {
         notifyUser(uid, { t: 'voice-peer-joined', threadId, peer: mePeer });
         notifyUser(uid, { t: 'voice-peers', threadId, peers });
@@ -3399,7 +3401,7 @@ wss.on('connection', (ws, req) => {
       // tell others someone joined
       broadcastToServer(serverId, {
         t: 'voice-peer-joined', serverId, channelId,
-        peer: { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, avatar_url: me.avatar_url || null, muted: false, speaking: false, deafened: false, camera: false, sharing: false },
+        peer: { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, avatar_url: me.avatar_url || null, muted: false, speaking: false, deafened: false, camera: false, sharing: false, serverMuted: false, streamName: null },
       }, ws);
       // also broadcast updated occupancy to whole server (for channel user counts)
       broadcastToServer(serverId, { t: 'voice-peers', serverId, channelId, peers: voicePeersPayload(key) }, ws);
@@ -3417,6 +3419,8 @@ wss.on('connection', (ws, req) => {
       me.voice.deafened = !!msg.deafened;
       me.voice.camera = !!msg.camera;
       me.voice.sharing = !!msg.sharing;
+      me.voice.streamName = typeof msg.streamName === 'string' ? (msg.streamName.slice(0, 60) || null) : null;
+      if (!me.voice.sharing) me.voice.streamName = null;
       if (typeof msg.speaking === 'boolean') me.voice.speaking = msg.speaking;
       if (me.voice.muted || me.voice.deafened) me.voice.speaking = false;
       if (me.voice.kind === 'dm') {
@@ -3424,6 +3428,7 @@ wss.on('connection', (ws, req) => {
           t: 'voice-state', threadId: me.voice.threadId,
           userId: me.userId, muted: me.voice.muted, speaking: !!me.voice.speaking,
           deafened: me.voice.deafened, camera: me.voice.camera, sharing: me.voice.sharing,
+          serverMuted: !!me.voice.serverMuted, streamName: me.voice.streamName,
         });
         return;
       }
@@ -3431,7 +3436,71 @@ wss.on('connection', (ws, req) => {
         t: 'voice-state', serverId: me.voice.serverId, channelId: me.voice.channelId,
         userId: me.userId, muted: me.voice.muted, speaking: !!me.voice.speaking,
         deafened: me.voice.deafened, camera: me.voice.camera, sharing: me.voice.sharing,
+        serverMuted: !!me.voice.serverMuted, streamName: me.voice.streamName,
       });
+      return;
+    }
+
+    // Voice moderation: server/channel admins (or a group-call creator) can
+    // server-mute/unmute or disconnect someone from a voice room. The target's
+    // client enforces the mute (and can't self-unmute until cleared).
+    if (msg.t === 'voice-mod') {
+      const targetId = String(msg.targetId || '');
+      const action = msg.action; // 'mute' | 'unmute' | 'disconnect'
+      if (!targetId || !['mute', 'unmute', 'disconnect'].includes(action) || targetId === me.userId) return;
+      const modTargets = (key) => [...(voiceRooms.get(key) || [])].filter((c) => c.meta && c.meta.userId === targetId);
+      const modStateOf = (c) => ({
+        muted: !!c.meta.voice.muted, speaking: false,
+        deafened: !!c.meta.voice.deafened, camera: !!c.meta.voice.camera, sharing: !!c.meta.voice.sharing,
+        serverMuted: !!c.meta.voice.serverMuted, streamName: c.meta.voice.streamName || null,
+      });
+      if (msg.threadId) {
+        const threadId = String(msg.threadId || '');
+        const t = dmThreadFor(me.userId, threadId);
+        if (!t || t.created_by !== me.userId) return;
+        const key = dmVoiceKey(threadId);
+        const targets = modTargets(key);
+        if (!targets.length) return;
+        if (action === 'disconnect') {
+          for (const c of targets) {
+            voiceRooms.get(key).delete(c);
+            c.meta.voice = null;
+            safeSend(c, { t: 'voice-kicked', threadId, reason: 'mod' });
+          }
+          afterDmVoiceChange(threadId);
+          return;
+        }
+        for (const c of targets) {
+          if (action === 'mute') { c.meta.voice.muted = true; c.meta.voice.serverMuted = true; c.meta.voice.speaking = false; }
+          else { c.meta.voice.serverMuted = false; }
+          safeSend(c, { t: 'voice-mod', threadId, action: action === 'mute' ? 'muted' : 'unmuted' });
+        }
+        dmNotify(threadId, { t: 'voice-state', threadId, userId: targetId, ...modStateOf(targets[0]) });
+        return;
+      }
+      const serverId = String(msg.serverId || '');
+      const channelId = String(msg.channelId || '');
+      if (!serverId || !channelId || !isMember(serverId, me.userId) || !isAdmin(serverId, me.userId)) return;
+      const key = voiceKey(serverId, channelId);
+      const targets = modTargets(key);
+      if (!targets.length) return;
+      if (action === 'disconnect') {
+        for (const c of targets) {
+          voiceRooms.get(key).delete(c);
+          c.meta.voice = null;
+          safeSend(c, { t: 'voice-kicked', serverId, channelId, reason: 'mod' });
+        }
+        broadcastToServer(serverId, { t: 'voice-peer-left', serverId, channelId, userId: targetId });
+        const peers = voicePeersPayload(key);
+        broadcastToServer(serverId, { t: 'voice-peers', serverId, channelId, peers });
+        return;
+      }
+      for (const c of targets) {
+        if (action === 'mute') { c.meta.voice.muted = true; c.meta.voice.serverMuted = true; c.meta.voice.speaking = false; }
+        else { c.meta.voice.serverMuted = false; }
+        safeSend(c, { t: 'voice-mod', serverId, channelId, action: action === 'mute' ? 'muted' : 'unmuted' });
+      }
+      broadcastToServer(serverId, { t: 'voice-state', serverId, channelId, userId: targetId, ...modStateOf(targets[0]) });
       return;
     }
 

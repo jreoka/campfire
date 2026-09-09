@@ -211,7 +211,7 @@ async function joinVoice(serverId, channelId) {
   leaveVoice(true);
   const mic = await acquireMic();
   if (!mic) return;
-  S.voice = { kind: 'server', serverId, channelId, stream: mic.sendStream, micStream: mic.stream, noise: mic.noise, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, cameraOn: false, sharing: false, quality: mediaPrefs().quality, speaking: false, audioEls: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
+  S.voice = { kind: 'server', serverId, channelId, stream: mic.sendStream, micStream: mic.stream, noise: mic.noise, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, serverMuted: false, cameraOn: false, sharing: false, streamName: null, quality: mediaPrefs().quality, speaking: false, audioEls: new Map(), screenAudioEls: new Map(), remoteAudio: new Map(), remoteScreenAudio: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
   $('#voice-bar').classList.remove('hidden');
   $('#voice-fab').classList.remove('hidden');
   $('#voice-chan-name').textContent = voiceLabel();
@@ -229,7 +229,7 @@ async function joinDmCall(threadId, withVideo = false) {
   stopRinging();
   const mic = await acquireMic();
   if (!mic) return;
-  S.voice = { kind: 'dm', threadId, stream: mic.sendStream, micStream: mic.stream, noise: mic.noise, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, cameraOn: false, sharing: false, quality: mediaPrefs().quality, speaking: false, audioEls: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
+  S.voice = { kind: 'dm', threadId, stream: mic.sendStream, micStream: mic.stream, noise: mic.noise, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, serverMuted: false, cameraOn: false, sharing: false, streamName: null, quality: mediaPrefs().quality, speaking: false, audioEls: new Map(), screenAudioEls: new Map(), remoteAudio: new Map(), remoteScreenAudio: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
   $('#voice-bar').classList.remove('hidden');
   $('#voice-fab').classList.remove('hidden');
   $('#voice-chan-name').textContent = voiceLabel();
@@ -252,6 +252,7 @@ function leaveVoice(silent) {
   S.voice.camStream?.getTracks().forEach((t) => t.stop());
   S.voice.screenStream?.getTracks().forEach((t) => t.stop());
   for (const [, el] of S.voice.audioEls) { try { el.remove(); } catch {} }
+  for (const [, el] of S.voice.screenAudioEls) { try { el.remove(); } catch {} }
   S.callOpen = false;
   $('#chat').classList.remove('call-open');
   if (S.view === 'home' && !S.dmThreadId) renderDmBlank();
@@ -282,7 +283,58 @@ function sendVoiceState() {
   S.ws?.send(JSON.stringify({ t: 'voice-state',
     muted: S.voice.muted, deafened: S.voice.deafened,
     camera: S.voice.cameraOn, sharing: S.voice.sharing,
+    streamName: S.voice.sharing ? (S.voice.streamName || null) : null,
     speaking: (!S.voice.muted && !S.voice.deafened) && !!S.voice.speaking }));
+}
+// ---------- per-user local volume (your ears only, all platforms) ----------
+// Stored in localStorage keyed by user id, 0–100 (default 100). Applied to
+// every remote audio element for that peer (mic + stream audio).
+function getUserVolume(id) {
+  try {
+    const v = JSON.parse(localStorage.getItem('cf_volumes') || '{}');
+    const n = Number(v[id]);
+    return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 100;
+  } catch { return 100; }
+}
+function setUserVolume(id, val) {
+  let v = {};
+  try { v = JSON.parse(localStorage.getItem('cf_volumes') || '{}'); } catch {}
+  v[id] = Math.max(0, Math.min(100, Math.round(Number(val) || 0)));
+  try { localStorage.setItem('cf_volumes', JSON.stringify(v)); } catch {}
+  applyUserVolume(id);
+}
+function applyUserVolume(peerId) {
+  if (!S.voice) return;
+  const v = getUserVolume(peerId) / 100;
+  for (const el of [S.voice.audioEls.get(peerId), S.voice.screenAudioEls.get(peerId)]) {
+    if (el) { try { el.volume = v; } catch {} }
+  }
+}
+// Occupants of the room I'm currently in (server or DM call).
+function myRoomOccupants() {
+  const k = myVoiceKey();
+  return k ? (S.voiceOccupancy.get(k) || []) : [];
+}
+function occupantInMyRoom(uid) {
+  return !!S.voice && myRoomOccupants().some((p) => p.id === uid);
+}
+function sendVoiceMod(action, targetId) {
+  if (!S.voice || !targetId) return;
+  const base = S.voice.kind === 'dm'
+    ? { threadId: S.voice.threadId }
+    : { serverId: S.voice.serverId, channelId: S.voice.channelId };
+  S.ws?.send(JSON.stringify({ t: 'voice-mod', action, targetId, ...base }));
+}
+// Desktop app's currently detected game (Tauri command; null on web / when
+// nothing is running). Used to prefill the Go Live stream title.
+let _dgCache = { at: 0, game: null };
+async function desktopGame(force) {
+  try {
+    if (window.__TAURI__?.core && (force || Date.now() - _dgCache.at > 15000)) {
+      _dgCache = { at: Date.now(), game: await window.__TAURI__.core.invoke('get_current_game') };
+    }
+  } catch {}
+  return _dgCache.game || null;
 }
 function paintVoiceControls() {
   const v = S.voice;
@@ -299,9 +351,9 @@ function paintVoiceControls() {
   set('#btn-camera', !v?.cameraOn, v?.cameraOn ? 'Turn camera off' : 'Turn camera on');
   set('#vf-camera', !v?.cameraOn, v?.cameraOn ? 'Turn camera off' : 'Turn camera on');
   set('#cv-camera', !v?.cameraOn, v?.cameraOn ? 'Turn camera off' : 'Turn camera on');
-  set('#btn-share', v?.sharing, v?.sharing ? 'Stop sharing screen' : 'Share screen');
-  set('#vf-share', v?.sharing, v?.sharing ? 'Stop sharing screen' : 'Share screen');
-  set('#cv-share', v?.sharing, v?.sharing ? 'Stop sharing screen' : 'Share screen');
+  set('#btn-share', v?.sharing, v?.sharing ? 'Stop streaming' : 'Go Live — stream a game or screen');
+  set('#vf-share', v?.sharing, v?.sharing ? 'Stop streaming' : 'Go Live — stream a game or screen');
+  set('#cv-share', v?.sharing, v?.sharing ? 'Stop streaming' : 'Go Live — stream a game or screen');
 }
 function applyMicState() {
   if (!S.voice) return;
@@ -311,6 +363,7 @@ function applyMicState() {
 }
 function toggleMute() {
   if (!S.voice) return;
+  if (S.voice.serverMuted) { toast('An admin muted you — ask them to unmute'); return; }
   if (S.voice.deafened) { toast('Undeafen to change your mic'); return; }
   S.voice.muted = !S.voice.muted;
   sfx[S.voice.muted ? 'mute' : 'unmute']();
@@ -327,6 +380,7 @@ function toggleDeafen() {
   sfx[S.voice.deafened ? 'deaf' : 'undeaf']();
   applyMicState();
   for (const [, el] of S.voice.audioEls) el.muted = S.voice.deafened;
+  for (const [, el] of S.voice.screenAudioEls) el.muted = S.voice.deafened;
   sendVoiceState();
   paintVoiceControls();
   renderVoiceUsers();
@@ -362,6 +416,7 @@ function applySpeakerOutput() {
   const sp = mediaPrefs().speakerId;
   if (!sp) return;
   for (const [, el] of S.voice.audioEls) { try { el.setSinkId(sp).catch(() => {}); } catch {} }
+  for (const [, el] of S.voice.screenAudioEls) { try { el.setSinkId(sp).catch(() => {}); } catch {} }
 }
 function applySenderQuality(sender) {
   if (!sender || !S.voice) return;
@@ -410,39 +465,82 @@ function stopCamera() {
   paintVoiceControls();
   renderStage();
 }
+// Discord-style Go Live: the share button opens a small setup dialog — stream
+// title (prefilled with the detected game on desktop), quality, and system
+// audio — instead of jumping straight into a silent screenshare.
 async function toggleScreen() {
   if (!S.voice) return;
   if (S.voice.sharing) { stopScreen(); return; }
   if (!navigator.mediaDevices?.getDisplayMedia) { toast('Screen sharing is not supported here'); return; }
+  const game = await desktopGame(true);
+  const quals = Object.entries(V_QUALITY).map(([k, q]) =>
+    `<label class="gol-q"><input type="radio" name="gol-q" value="${k}"${(S.voice.quality === k) ? ' checked' : ''} /> ${q.label}</label>`).join('');
+  openModal('Go Live', `
+    ${game ? `<p class="muted small">Detected game: <b>${esc(game)}</b></p>` : '<p class="muted small">Pick a window or screen. On desktop, run the game first and it fills in the title.</p>'}
+    <label>Stream title (optional)<input id="gol-label" maxlength="60" placeholder="What are you playing?" value="${esc(game || '')}" /></label>
+    <div class="gol-row"><span class="muted small">Quality</span><div class="gol-qs">${quals}</div></div>
+    <label class="set-check" style="margin-top:.6rem"><input type="checkbox" id="gol-audio" checked /> Share system audio</label>
+  `, 'Go Live', () => {
+    const label = ($('#gol-label') || {}).value || '';
+    const q = (document.querySelector('input[name="gol-q"]:checked') || {}).value;
+    const audio = $('#gol-audio') ? $('#gol-audio').checked : true;
+    startStream({ audio, quality: q, label });
+  });
+}
+async function startStream({ audio = true, quality = null, label = '' } = {}) {
+  if (!S.voice || S.voice.sharing) return;
+  if (!navigator.mediaDevices?.getDisplayMedia) { toast('Screen sharing is not supported here'); return; }
+  if (quality && V_QUALITY[quality]) { S.voice.quality = quality; saveMediaPref('quality', quality); }
   let screen;
   try {
-    screen = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30 } }, audio: false });
+    screen = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30 } }, audio: !!audio });
   } catch { return; }
   S.voice.screenStream = screen;
   S.voice.sharing = true;
-  const track = screen.getVideoTracks()[0];
-  if (track) track.onended = () => { if (S.voice?.sharing) stopScreen(); };
+  S.voice.streamName = String(label || '').trim().slice(0, 60) || null;
+  const vtrack = screen.getVideoTracks()[0] || null;
+  const atrack = screen.getAudioTracks()[0] || null;
+  if (vtrack) vtrack.onended = () => { if (S.voice?.sharing) stopScreen(); };
+  if (atrack) atrack.onended = () => removeScreenAudioSender();
   for (const [pid, pc] of S.voice.pcs) {
+    const Snd = S.voice.senders.get(pid);
+    if (!Snd) continue;
     try {
-      const sender = pc.addTrack(track, screen);
-      S.voice.senders.get(pid).screen = sender;
-      applySenderQuality(sender);
-      S.ws?.send(JSON.stringify({ t: 'voice-signal', to: pid, data: { kind: 'track-meta', trackId: track.id, media: 'screen' } }));
+      if (vtrack) {
+        const sender = pc.addTrack(vtrack, screen);
+        Snd.screen = sender;
+        applySenderQuality(sender);
+        S.ws?.send(JSON.stringify({ t: 'voice-signal', to: pid, data: { kind: 'track-meta', trackId: vtrack.id, media: 'screen' } }));
+      }
+      if (atrack) {
+        const asender = pc.addTrack(atrack, screen);
+        Snd.screenAudio = asender;
+        S.ws?.send(JSON.stringify({ t: 'voice-signal', to: pid, data: { kind: 'track-meta', trackId: atrack.id, media: 'screen-audio' } }));
+      }
     } catch {}
   }
   sendVoiceState();
   paintVoiceControls();
   renderStage();
-  toast('You are sharing your screen');
+  toast(S.voice.streamName ? `Streaming ${S.voice.streamName}` : 'You are sharing your screen');
+}
+function removeScreenAudioSender() {
+  if (!S.voice) return;
+  for (const [pid, pc] of S.voice.pcs) {
+    const s = S.voice.senders.get(pid);
+    if (s?.screenAudio) { try { pc.removeTrack(s.screenAudio); } catch {} s.screenAudio = null; }
+  }
 }
 function stopScreen() {
   if (!S.voice || !S.voice.sharing) return;
   S.voice.screenStream?.getTracks().forEach((t) => { try { t.stop(); } catch {} });
   S.voice.screenStream = null;
   S.voice.sharing = false;
+  S.voice.streamName = null;
   for (const [pid, pc] of S.voice.pcs) {
     const s = S.voice.senders.get(pid);
     if (s?.screen) { try { pc.removeTrack(s.screen); } catch {} s.screen = null; }
+    if (s?.screenAudio) { try { pc.removeTrack(s.screenAudio); } catch {} s.screenAudio = null; }
   }
   sendVoiceState();
   paintVoiceControls();
@@ -462,7 +560,7 @@ function ensurePeer(peerId, initiator) {
   pc._initiator = !!initiator;
   pc._remoteOfferSeen = false;
   S.voice.pcs.set(peerId, pc);
-  S.voice.senders.set(peerId, { audio: null, camera: null, screen: null });
+  S.voice.senders.set(peerId, { audio: null, camera: null, screen: null, screenAudio: null });
   const senders = S.voice.senders.get(peerId);
   for (const track of S.voice.stream.getTracks()) senders.audio = pc.addTrack(track, S.voice.stream);
   if (S.voice.cameraOn && S.voice.camStream) {
@@ -480,6 +578,11 @@ function ensurePeer(peerId, initiator) {
       applySenderQuality(senders.screen);
       S.ws?.send(JSON.stringify({ t: 'voice-signal', to: peerId, data: { kind: 'track-meta', trackId: st.id, media: 'screen' } }));
     }
+    const sat = S.voice.screenStream.getAudioTracks()[0];
+    if (sat) {
+      senders.screenAudio = pc.addTrack(sat, S.voice.screenStream);
+      S.ws?.send(JSON.stringify({ t: 'voice-signal', to: peerId, data: { kind: 'track-meta', trackId: sat.id, media: 'screen-audio' } }));
+    }
   }
   pc.onnegotiationneeded = () => {
     if (pc._politeWait) return; // non-initiator: wait for the other side's offer first
@@ -491,7 +594,7 @@ function ensurePeer(peerId, initiator) {
   };
   pc.ontrack = (e) => {
     if (!e.track) return;
-    if (e.track.kind === 'audio') { attachRemoteAudio(peerId, (e.streams && e.streams[0]) || new MediaStream([e.track])); return; }
+    if (e.track.kind === 'audio') { attachRemoteAudioTrack(peerId, e.track); return; }
     const media = (S.voice.trackMeta.get(e.track.id)) || guessRemoteMedia(peerId);
     attachRemoteVideo(peerId, media, e.track);
   };
@@ -508,8 +611,16 @@ function ensurePeer(peerId, initiator) {
 async function onVoiceSignal(fromId, data) {
   if (!S.voice || !data) return;
   if (data.kind === 'track-meta' && data.trackId) {
-    const want = data.media === 'screen' ? 'screen' : 'camera';
+    const want = data.media === 'screen' ? 'screen' : (data.media === 'screen-audio' ? 'screen-audio' : 'camera');
     S.voice.trackMeta.set(data.trackId, want);
+    if (want === 'screen-audio') {
+      // The audio track may have arrived before its label did (defaulting to
+      // the mic mix) — move it over to the dedicated stream-audio element.
+      const mic = S.voice.remoteAudio.get(fromId);
+      const tr = mic && mic.getAudioTracks().find((t) => t.id === data.trackId);
+      if (tr) { try { mic.removeTrack(tr); } catch {} attachScreenAudioTrack(fromId, tr); }
+      return;
+    }
     // relocate the track if it arrived before its label did
     for (const [, rv] of S.voice.remoteVideo) {
       for (const key of ['camera', 'screen']) {
@@ -561,12 +672,26 @@ function closePeer(peerId) {
   if (pc) { try { pc.close(); } catch {} S.voice.pcs.delete(peerId); }
   S.voice.senders.delete(peerId);
   S.voice.remoteVideo.delete(peerId);
+  S.voice.remoteAudio.delete(peerId);
+  S.voice.remoteScreenAudio.delete(peerId);
   const el = S.voice.audioEls.get(peerId);
   if (el) { try { el.remove(); } catch {} S.voice.audioEls.delete(peerId); }
+  const sel = S.voice.screenAudioEls.get(peerId);
+  if (sel) { try { sel.remove(); } catch {} S.voice.screenAudioEls.delete(peerId); }
   renderStage();
 }
-function attachRemoteAudio(peerId, stream) {
+// Remote audio lives in owned per-peer streams (mic mix + stream audio kept
+// separate) so a late-arriving screen-audio track never clobbers the mic.
+function remoteMicStream(peerId) {
+  let ms = S.voice.remoteAudio.get(peerId);
+  if (!ms) { ms = new MediaStream(); S.voice.remoteAudio.set(peerId, ms); }
+  return ms;
+}
+function attachRemoteAudioTrack(peerId, track) {
   if (!S.voice) return;
+  if ((S.voice.trackMeta.get(track.id)) === 'screen-audio') { attachScreenAudioTrack(peerId, track); return; }
+  const ms = remoteMicStream(peerId);
+  try { if (!ms.getTracks().some((t) => t.id === track.id)) ms.addTrack(track); } catch {}
   let el = S.voice.audioEls.get(peerId);
   if (!el) {
     el = document.createElement('audio');
@@ -576,11 +701,40 @@ function attachRemoteAudio(peerId, stream) {
     S.voice.audioEls.set(peerId, el);
   }
   el.muted = !!S.voice.deafened;
-  el.srcObject = stream;
+  if (el.srcObject !== ms) el.srcObject = ms;
+  applyUserVolume(peerId);
   try {
     const sp = mediaPrefs().speakerId;
     if (sp && typeof el.setSinkId === 'function') el.setSinkId(sp).catch(() => {});
   } catch {}
+  track.onended = () => { try { ms.removeTrack(track); } catch {} };
+}
+function attachScreenAudioTrack(peerId, track) {
+  if (!S.voice) return;
+  let ms = S.voice.remoteScreenAudio.get(peerId);
+  if (!ms) { ms = new MediaStream(); S.voice.remoteScreenAudio.set(peerId, ms); }
+  try { if (!ms.getTracks().some((t) => t.id === track.id)) ms.addTrack(track); } catch {}
+  let el = S.voice.screenAudioEls.get(peerId);
+  if (!el) {
+    el = document.createElement('audio');
+    el.autoplay = true;
+    el.playsInline = true;
+    document.body.appendChild(el);
+    S.voice.screenAudioEls.set(peerId, el);
+  }
+  el.muted = !!S.voice.deafened;
+  if (el.srcObject !== ms) el.srcObject = ms;
+  applyUserVolume(peerId);
+  try {
+    const sp = mediaPrefs().speakerId;
+    if (sp && typeof el.setSinkId === 'function') el.setSinkId(sp).catch(() => {});
+  } catch {}
+  track.onended = () => { try { ms.removeTrack(track); } catch {} renderStage(); };
+  renderStage();
+}
+function attachRemoteAudio(peerId, stream) {
+  if (!S.voice || !stream) return;
+  for (const track of stream.getAudioTracks()) attachRemoteAudioTrack(peerId, track);
 }
 function guessRemoteMedia(peerId) {
   const rv = S.voice.remoteVideo.get(peerId);
@@ -615,11 +769,39 @@ function voicePeerInfo(id) {
       avatar_color: S.me.avatar_color, avatar_url: S.me.avatar_url || null,
       muted: !!S.voice?.muted, deafened: !!S.voice?.deafened,
       camera: !!S.voice?.cameraOn, sharing: !!S.voice?.sharing,
+      streamName: S.voice?.streamName || null,
       speaking: !!S.voice?.speaking, me: true,
     };
   }
   const p = (S.voiceOccupancy.get(myVoiceKey()) || []).find((x) => x.id === id);
   return p || { id, display_name: '?', username: '?', avatar_color: '#555', avatar_url: null };
+}
+// Jump to someone's stream: join their room if needed, open the call view,
+// and enlarge their screen tile.
+async function watchStream(uid) {
+  if (!S.voice) {
+    // Find which room they're streaming in and join it.
+    let found = null;
+    for (const [key, occ] of S.voiceOccupancy) {
+      const p = (occ || []).find((x) => x.id === uid && x.sharing);
+      if (p) { found = key; break; }
+    }
+    if (!found) { toast('That stream ended'); return; }
+    if (found.startsWith('dm:')) { await joinDmCall(found.slice(3), false); }
+    else {
+      const [srv, ch] = found.split(':');
+      await joinVoice(srv, ch);
+    }
+    if (!S.voice) return;
+  }
+  openCallView();
+  requestAnimationFrame(() => {
+    const tiles = S.voice ? [...S.voice.tiles.keys()].filter((k) => k.startsWith(uid + ':screen')) : [];
+    if (!tiles.length) { toast('That stream ended'); return; }
+    for (const [, el] of S.voice.tiles) el.classList.remove('focused');
+    const el = S.voice.tiles.get(tiles[0]);
+    if (el) { el.classList.add('focused'); try { el.scrollIntoView({ block: 'nearest' }); } catch {} }
+  });
 }
 function tileStream(key) {
   if (!S.voice) return null;
@@ -654,15 +836,32 @@ function paintTile(key, el) {
     }
     fb.style.display = '';
   }
-  el.querySelector('.vname').textContent = isScreen ? `${u.display_name}’s screen` : (u.me ? `${u.display_name} (you)` : u.display_name);
+  el.querySelector('.vname').textContent = isScreen
+    ? (u.streamName ? `${u.display_name} — ${u.streamName}` : `${u.display_name}’s screen`)
+    : (u.me ? `${u.display_name} (you)` : u.display_name);
   const icons = el.querySelector('.vicons');
   icons.innerHTML = '';
   const badge = (svg, cls, title) => { const s = document.createElement('span'); if (cls) s.className = cls; s.title = title; s.innerHTML = svg; icons.appendChild(s); };
+  if (isScreen) badge('<b>LIVE</b>', 'live', u.streamName || 'Live stream');
   if (u.deafened) badge(VB_SVG.deaf, '', 'Deafened');
   else if (u.muted) badge(VB_SVG.mic, '', 'Muted');
-  if (!isScreen && u.sharing) badge(VB_SVG.share, 'ok', 'Sharing screen');
+  if (!isScreen && u.sharing) badge(VB_SVG.share, 'ok', 'Streaming');
   el.classList.toggle('speaking', !!u.speaking && !u.muted && !u.deafened);
   el.dataset.vuser = pid === 'me' ? (S.me?.id || 'me') : pid;
+  // Streams are watchable: click enlarges, double-click goes fullscreen.
+  if (isScreen) {
+    el.style.cursor = 'zoom-in';
+    el.title = 'Click to enlarge · double-click for fullscreen';
+    el.onclick = () => {
+      const was = el.classList.contains('focused');
+      for (const [, o] of S.voice.tiles) o.classList.remove('focused');
+      if (!was) { el.classList.add('focused'); fitStage(); }
+    };
+    el.ondblclick = () => { try {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else if (el.requestFullscreen) el.requestFullscreen();
+    } catch {} };
+  } else { el.style.cursor = ''; el.title = ''; el.onclick = null; el.ondblclick = null; }
 }
 function renderStage() {
   const stage = $('#stage'), grid = $('#stage-grid');
@@ -761,16 +960,18 @@ function renderVoiceUsers() {
       u.className = 'vuser' + (p.speaking && !p.muted && !p.deafened ? ' speaking' : '');
       u.dataset.vuser = p.id;
       u.dataset.uid = p.id;
+      u.title = p.sharing && p.streamName ? `Streaming ${p.streamName} — click for options` : 'Click for options';
+      u.onclick = (e) => { try { openUserCard(p.id, e.clientX, e.clientY); } catch {} };
       let stat = '';
       if (p.deafened) stat = '<span class="vstat"><span class="bad" title="Deafened">' + VB_SVG.deaf + '</span></span>';
       else if (p.muted) stat = '<span class="vstat"><span class="bad" title="Muted">' + VB_SVG.mic + '</span></span>';
       else {
         const subs = [];
         if (p.camera) subs.push('<span class="on" title="Camera on">' + VB_SVG.cam + '</span>');
-        if (p.sharing) subs.push('<span class="on" title="Sharing screen">' + VB_SVG.share + '</span>');
+        if (p.sharing) subs.push('<span class="on" title="Streaming' + (p.streamName ? ' ' + esc(p.streamName) : '') + '">' + VB_SVG.share + '</span>');
         if (subs.length) stat = '<span class="vstat">' + subs.join('') + '</span>';
       }
-      u.innerHTML = `<span class="avatar"></span><span class="vname">${esc(p.display_name)}${p.id === S.me.id ? ' (you)' : ''}</span>${stat || (p.muted ? '<span class="vmic">' + MIC_OFF_SVG + '</span>' : '')}`;
+      u.innerHTML = `<span class="avatar"></span><span class="vname">${esc(p.display_name)}${p.id === S.me.id ? ' (you)' : ''}</span>${p.sharing ? `<span class="vlive" title="${esc(p.streamName || 'Live stream')}">LIVE</span>` : ''}${stat || (p.muted ? '<span class="vmic">' + MIC_OFF_SVG + '</span>' : '')}`;
       paintAvatar(u.querySelector('.avatar'), p);
       box.appendChild(u);
     }
