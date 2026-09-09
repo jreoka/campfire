@@ -367,13 +367,35 @@ function statusTextVisible(u) {
   const ts = statusExpiryRaw(u);
   return ts && ts <= Date.now() ? '' : u.status_text;
 }
+// Presence revert timer: ms epoch while a timed away/dnd/invisible is pending
+// (null once lapsed or never set). Clients show a countdown from this.
+function presenceExpiryVisible(u) {
+  const ts = Math.floor(Number(u && u.presence_expires_at));
+  return Number.isFinite(ts) && ts > Date.now() ? ts : null;
+}
 function sweepExpiredStatuses() {
   const t = now();
   let ids = [];
   try { ids = db.prepare('SELECT id FROM users WHERE status_expires_at IS NOT NULL AND status_expires_at <= ?').all(t).map((r) => r.id); } catch {}
-  if (!ids.length) return;
-  try { db.prepare('UPDATE users SET status_text = ?, status_expires_at = NULL WHERE status_expires_at IS NOT NULL AND status_expires_at <= ?').run('', t); } catch {}
-  for (const id of ids) { try { broadcastUserUpdate(freshUser(id)); } catch {} }
+  if (ids.length) {
+    try { db.prepare('UPDATE users SET status_text = ?, status_expires_at = NULL WHERE status_expires_at IS NOT NULL AND status_expires_at <= ?').run('', t); } catch {}
+    for (const id of ids) { try { broadcastUserUpdate(freshUser(id)); } catch {} }
+  }
+  // Timed away/dnd/invisible lapses back to online (drives dots everywhere).
+  let pids = [];
+  try { pids = db.prepare('SELECT id FROM users WHERE presence_expires_at IS NOT NULL AND presence_expires_at <= ?').all(t).map((r) => r.id); } catch {}
+  if (!pids.length) return;
+  try { db.prepare("UPDATE users SET status = 'online', presence_expires_at = NULL WHERE presence_expires_at IS NOT NULL AND presence_expires_at <= ?").run(t); } catch {}
+  for (const id of pids) {
+    try {
+      const u = freshUser(id);
+      broadcastUserUpdate(u);
+      for (const sid of [...clients].filter((c) => c.meta && c.meta.userId === id).flatMap((c) => [...c.meta.servers])) {
+        broadcastToServer(sid, { t: 'user-status', serverId: sid, userId: id, status: 'online' });
+      }
+      for (const c of clients) if (c.meta && c.meta.userId === id) c.meta.status = 'online';
+    } catch {}
+  }
 }
 function publicUser(u) {
   if (!u) return { id: null, username: 'deleted', display_name: 'deleted user', avatar_color: '#555' };
@@ -381,7 +403,7 @@ function publicUser(u) {
     id: u.id, username: u.username, display_name: u.display_name, avatar_color: u.avatar_color || '#5865f2',
     avatar_url: u.avatar_url || null, banner_url: u.banner_url || null,
     sidebar_banner_url: u.sidebar_banner_url || null,
-    status: u.status || 'online', status_text: statusTextVisible(u), status_expires_at: statusExpiryVisible(u), playing_game: u.playing_game || null, bio: u.bio || '',
+    status: u.status || 'online', status_text: statusTextVisible(u), status_expires_at: statusExpiryVisible(u), presence_expires_at: presenceExpiryVisible(u), playing_game: u.playing_game || null, bio: u.bio || '',
     name_color: u.name_color || '', name_gradient: u.name_gradient || '',
     created_at: u.created_at || null,
     game_enabled: u.game_enabled === undefined ? 1 : u.game_enabled,
@@ -394,7 +416,7 @@ function requireSiteAdmin(req, res, next) {
   if (!req.user.is_admin) return res.status(403).json({ error: 'admin_only' });
   next();
 }
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, playing_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, playing_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -1392,6 +1414,25 @@ app.patch('/api/me', authRequired, (req, res) => {
   const finalText = statusText !== undefined ? String(statusText).slice(0, 64) : (req.user.status_text || '');
   if (!finalText) finalExp = null;
   if (finalExp !== undefined) { sets.push('status_expires_at = ?'); vals.push(finalExp); }
+  // Presence revert timer (ms epoch; null/0/'' = stay until changed, max 30 days).
+  // Only away/dnd/invisible carry one — online never does. Explicitly picking
+  // a new presence clears any pending timer unless a fresh one rides along;
+  // resaving the same presence (e.g. profile edits) leaves it untouched.
+  let finalPresence = undefined; // undefined = leave the column alone
+  const finalStatus = status !== undefined ? status : (req.user.status || 'online');
+  if (finalStatus === 'online') finalPresence = null;
+  else if (status !== undefined && status !== req.user.status) finalPresence = null;
+  if (req.body?.presenceExpiresAt !== undefined) {
+    const v = req.body.presenceExpiresAt;
+    if (v === null || v === 0 || v === '') finalPresence = null;
+    else {
+      const ts = Math.floor(Number(v));
+      if (!Number.isFinite(ts) || ts <= now() || ts > now() + 30 * 864e5) return res.status(400).json({ error: 'bad_expiry' });
+      finalPresence = ts;
+    }
+  }
+  if (finalStatus === 'online') finalPresence = null;
+  if (finalPresence !== undefined) { sets.push('presence_expires_at = ?'); vals.push(finalPresence); }
   if (req.body?.bio !== undefined) {
     sets.push('bio = ?'); vals.push(squashBreaks(req.body.bio).trim().slice(0, 300));
   }

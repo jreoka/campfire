@@ -15,6 +15,7 @@ function openSettings(tab = 'profile') {
   };
   $('#set-status').value = S.me.status || 'online';
   $('#set-statustext').value = S.me.status_text || '';
+  updatePresenceNote();
   $('#set-bio').value = S.me.bio || '';
   updateBioCount();
   $('#set-username').value = S.me.username || '';
@@ -286,6 +287,16 @@ $('#set-banner-rm').onclick = async () => {
   catch { toast('Remove failed'); }
 };
 function rememberedNameColors() { try { return JSON.parse(localStorage.getItem('cf_namecolors') || 'null') || {}; } catch { return {}; } }
+// Pending timed-presence note under the Status select (the avatar flyout
+// owns the timer; saving here keeps it unless the presence itself changes).
+function updatePresenceNote() {
+  const el = $('#set-presence-note');
+  if (!el) return;
+  const ts = +((S.me || {}).presence_expires_at || 0);
+  el.textContent = (ts > Date.now() && (S.me || {}).status !== 'online')
+    ? `Returns to Online ${fmtCountdown(ts)} — changing the status above clears the timer.`
+    : '';
+}
 function updateBioCount() { const b = $('#set-bio'); if (b) $('#set-bio-count').textContent = `${b.value.length} / 300`; }
 $('#set-bio').addEventListener('input', updateBioCount);
 $('#set-profile-save').onclick = async () => {
@@ -301,6 +312,7 @@ $('#set-profile-save').onclick = async () => {
     }) });
     S.me = { ...S.me, ...user };
     paintMe(); renderMembers();
+    updatePresenceNote();
     toast('Profile saved');
   } catch (err) { toast('Save failed: ' + prettyError(err.message)); }
 };

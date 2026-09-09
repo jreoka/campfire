@@ -1,28 +1,98 @@
 'use strict';
-// ---------- presence: quick switch + idle auto-away ----------
-let statusMenuEl = null;
-function closeStatusMenu() { statusMenuEl?.remove(); statusMenuEl = null; }
+// ---------- presence: quick switch + timed revert ----------
+let statusMenuEl = null, statusSubEl = null;
+function closeStatusMenu() { statusMenuEl?.remove(); statusMenuEl = null; statusSubEl?.remove(); statusSubEl = null; }
+// How long a timed away/dnd/invisible lasts before lapsing back to Online.
+const PRESENCE_DURATIONS = [
+  { label: '15 minutes', ms: 15 * 60e3 },
+  { label: '1 hour', ms: 3600e3 },
+  { label: '4 hours', ms: 4 * 3600e3 },
+  { label: '8 hours', ms: 8 * 3600e3 },
+  { label: '24 hours', ms: 24 * 3600e3 },
+  { label: '3 days', ms: 3 * 864e5 },
+  { label: 'Never', ms: null },
+];
+const STATUS_LABEL = { online: 'Online', away: 'Away', dnd: 'Do not disturb', invisible: 'Invisible' };
+function presenceExpiry() { const ts = +((S.me || {}).presence_expires_at || 0); return ts > Date.now() ? ts : 0; }
+function openStatusMenu() {
+  closeStatusMenu();
+  const r = $('#me-avatar').getBoundingClientRect();
+  statusMenuEl = document.createElement('div');
+  statusMenuEl.id = 'status-pop';
+  statusMenuEl.style.cssText = `position:fixed;left:${r.left}px;bottom:${innerHeight - r.top + 8}px;top:auto;min-width:200px`;
+  const cur = (S.me || {}).status || 'online';
+  const exp = presenceExpiry();
+  for (const s of ['online', 'away', 'dnd', 'invisible']) {
+    const b = document.createElement('button');
+    b.className = 'mention-item';
+    const timer = s !== 'online' && cur === s && exp ? `<span class="cnt">${fmtCountdown(exp)}</span>` : '';
+    const tail = s === 'online'
+      ? (cur === 'online' ? '<span class="stat-check">\u2713</span>' : '')
+      : `${timer}<span class="chev">\u203a</span>`;
+    b.innerHTML = `<span class="status-dot ${s}"></span><span>${STATUS_LABEL[s]}</span>${tail}`;
+    if (s === 'online') {
+      b.onclick = async () => { closeStatusMenu(); await setStatus('online', null); };
+    } else {
+      b.onclick = (e) => { e.stopPropagation(); openStatusSub(s, b); };
+      if (!isCoarse()) b.onmouseenter = () => openStatusSub(s, b);
+    }
+    statusMenuEl.appendChild(b);
+  }
+  if (exp && cur !== 'online') {
+    const f = document.createElement('div');
+    f.className = 'stat-foot';
+    f.textContent = `Back to Online ${fmtCountdown(exp)}`;
+    statusMenuEl.appendChild(f);
+  }
+  document.body.appendChild(statusMenuEl);
+}
+function openStatusSub(s, anchorRow) {
+  if (!statusMenuEl) return;
+  statusSubEl?.remove(); statusSubEl = null;
+  const sub = document.createElement('div');
+  sub.id = 'status-sub';
+  const head = document.createElement('div');
+  head.className = 'stat-subhead';
+  head.textContent = `${STATUS_LABEL[s]} — online again after`;
+  sub.appendChild(head);
+  // Preselect the pending timer (nearest match) so the menu reflects state.
+  const exp = ((S.me || {}).status === s && presenceExpiry()) || 0;
+  let sel = PRESENCE_DURATIONS.length - 1;
+  if (exp) {
+    let best = -1, bd = Infinity;
+    PRESENCE_DURATIONS.forEach((p, i) => { if (p.ms) { const d = Math.abs((Date.now() + p.ms) - exp); if (d < bd) { bd = d; best = i; } } });
+    if (best >= 0 && bd < 5 * 60e3) sel = best;
+  }
+  PRESENCE_DURATIONS.forEach((p, i) => {
+    const b = document.createElement('button');
+    b.className = 'mention-item';
+    b.innerHTML = `<span>${p.label}</span>${i === sel ? '<span class="stat-check">\u2713</span>' : ''}`;
+    b.onclick = async () => { closeStatusMenu(); await setStatus(s, p.ms ? Date.now() + p.ms : null); };
+    sub.appendChild(b);
+  });
+  document.body.appendChild(sub);
+  statusSubEl = sub;
+  // Pin beside the parent row; flip to the left when space runs out.
+  const mr = statusMenuEl.getBoundingClientRect();
+  const ar = anchorRow.getBoundingClientRect();
+  const w = sub.offsetWidth || 220;
+  let left = mr.right + 6;
+  if (left + w > innerWidth - 8) left = mr.left - w - 6;
+  if (left < 8) left = Math.max(8, Math.min(mr.left, innerWidth - w - 8));
+  let top = Math.min(Math.max(8, ar.top - 34), Math.max(8, innerHeight - sub.offsetHeight - 8));
+  sub.style.cssText = `position:fixed;left:${left}px;top:${top}px;min-width:210px`;
+}
 $('#me-avatar').style.cursor = 'pointer';
 $('#me-avatar').onclick = (e) => {
   e.stopPropagation();
   if (statusMenuEl) { closeStatusMenu(); return; }
-  const r = $('#me-avatar').getBoundingClientRect();
-  statusMenuEl = document.createElement('div');
-  statusMenuEl.id = 'status-pop';
-  statusMenuEl.style.cssText = `position:fixed;left:${r.left}px;bottom:${innerHeight - r.top + 8}px;top:auto;min-width:180px`;
-  statusMenuEl.classList.remove('hidden');
-  for (const s of ['online', 'away', 'dnd', 'invisible']) {
-    const b = document.createElement('button');
-    b.className = 'mention-item';
-    b.innerHTML = `<span class="status-dot ${s}"></span><span style="text-transform:capitalize">${s === 'dnd' ? 'Do not disturb' : s}</span>`;
-    b.onclick = async () => { closeStatusMenu(); await setStatus(s); };
-    statusMenuEl.appendChild(b);
-  }
-  document.body.appendChild(statusMenuEl);
+  openStatusMenu();
 };
-async function setStatus(s) {
+async function setStatus(s, presenceExpiresAt) {
   try {
-    const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify({ status: s }) });
+    const body = { status: s };
+    if (s === 'online' || presenceExpiresAt !== undefined) body.presenceExpiresAt = s === 'online' ? null : (presenceExpiresAt ?? null);
+    const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify(body) });
     S.me = { ...S.me, ...user };
     paintMe(); renderMembers();
     if (S.view === 'home') renderDmMembers();
@@ -32,7 +102,8 @@ let idleTimer = null;
 function poke() {
   if (!S.me) return;
   clearTimeout(idleTimer);
-  if (S.me.status === 'away') setStatus('online');
+  // A timed Away owns its own revert — activity must not clear it early.
+  if (S.me.status === 'away' && !(+((S.me || {}).presence_expires_at || 0) > Date.now())) setStatus('online');
   idleTimer = setTimeout(() => { if (S.me && S.me.status === 'online') setStatus('away'); }, 5 * 60 * 1000);
 }
 ['mousemove', 'keydown', 'click'].forEach((ev) => document.addEventListener(ev, poke, { passive: true }));
@@ -43,7 +114,7 @@ function poke() {
   // open the picker), so they must not close it again in the same click.
   if (!e.target.closest('#picker') && !e.target.closest('#btn-emoji') && !e.target.closest('#btn-gif') && !e.target.closest('.msg-actions') && !e.target.closest('#sheet')) closePicker();
   if (!e.target.closest('#usercard') && !e.target.closest('#me-card') && !e.target.closest('[data-uid]') && !e.target.closest('.member')) closeUserCard();
-  if (statusMenuEl && !e.target.closest('#status-pop') && !e.target.closest('#me-avatar')) closeStatusMenu();
+  if (statusMenuEl && !e.target.closest('#status-pop') && !e.target.closest('#status-sub') && !e.target.closest('#me-avatar')) closeStatusMenu();
   if (ctxEl && !e.target.closest('#ctx-menu') && !e.target.closest('.msg-actions')) closeCtx();
   if ($('#emoji-pop') && !e.target.closest('#emoji-pop') && !e.target.closest('#in-message')) hideEmojiPop();
   if (folderFlyoutEl && !e.target.closest('#folder-menu')) closeFolderFlyout();

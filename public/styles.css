@@ -282,6 +282,12 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .member .avwrap.st-dnd .avatar::after,.dmrow .avwrap.st-dnd .avatar::after{border-color:var(--red)}
 .member .avwrap .status-dot,.dmrow .avwrap .status-dot{position:absolute;bottom:-3px;right:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2.5px var(--panel);z-index:2}
 #status-pop{position:fixed;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:190px;z-index:130;padding:.35rem}
+#status-sub{position:fixed;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:210px;z-index:131;padding:.35rem}
+.stat-subhead{font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);padding:.35rem .65rem .2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stat-foot{font-size:.74rem;color:var(--faint);padding:.35rem .65rem .2rem;border-top:1px solid var(--line-soft);margin-top:.25rem}
+.mention-item .chev{margin-left:auto;color:var(--faint);font-weight:800;font-size:1rem;line-height:1}
+.mention-item .cnt{color:var(--faint);font-size:.76rem;font-weight:600;white-space:nowrap}
+.mention-item .stat-check{margin-left:auto;color:var(--green);font-weight:800}
 .edit-box textarea{width:100%;min-height:64px;background:var(--inset);border:1px solid var(--accent);color:var(--text);border-radius:10px;padding:.55rem .65rem;font-size:.9rem;outline:none;resize:vertical}
 .edit-box .row{margin-top:.35rem}
 .msg .text code{background:var(--panel-3);border:0;border-radius:6px;padding:.08rem .38rem;font-size:.85em}
