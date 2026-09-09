@@ -70,6 +70,8 @@ struct State {
     signed_in: AtomicBool,
     // last game successfully beaconed (for tray menu rebuilds)
     current_game: Mutex<Option<String>>,
+    // every game scoring above threshold right now (for the Go Live picker)
+    running_games: Mutex<Vec<String>>,
 }
 
 // Discord's DB tags each executable with an `os` ("win32" / "darwin" /
@@ -304,6 +306,12 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
 
 #[cfg(desktop)]
 #[tauri::command]
+fn get_running_games(app: AppHandle) -> Vec<String> {
+    app.state::<State>().running_games.lock().unwrap().clone()
+}
+
+#[cfg(desktop)]
+#[tauri::command]
 fn get_current_game(app: AppHandle) -> Option<String> {
     app.state::<State>().current_game.lock().unwrap().clone()
 }
@@ -361,8 +369,9 @@ pub fn run() {
             db_at: Mutex::new(0),
             signed_in: AtomicBool::new(false),
             current_game: Mutex::new(None),
+            running_games: Mutex::new(Vec::new()),
         })
-        .invoke_handler(tauri::generate_handler![get_autostart, set_autostart, get_watch_state, get_current_game])
+        .invoke_handler(tauri::generate_handler![get_autostart, set_autostart, get_watch_state, get_current_game, get_running_games])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
@@ -500,7 +509,7 @@ pub fn run() {
                         state.bare_share.lock().unwrap().clone();
                     // (score, distinct hits, name) — highest score wins, then
                     // most evidence, then alphabetical for determinism.
-                    let mut best: Option<(u32, u32, String)> = None;
+                    let mut scored: Vec<(u32, u32, String)> = Vec::new();
                     for g in &games {
                         let mut score: u32 = 0;
                         let mut hits: u32 = 0;
@@ -524,20 +533,23 @@ pub fn run() {
                         if score < SCORE_THRESHOLD {
                             continue;
                         }
-                        let replace = match &best {
-                            None => true,
-                            Some((bs, bh, bn)) => {
-                                score > *bs
-                                    || (score == *bs
-                                        && (hits > *bh
-                                            || (hits == *bh && g.name < *bn)))
-                            }
-                        };
-                        if replace {
-                            best = Some((score, hits, g.name.clone()));
-                        }
+                        scored.push((score, hits, g.name.clone()));
                     }
-                    let game: Option<String> = best.map(|(_, _, n)| n);
+                    scored.sort_by(|a, b| {
+                        b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2))
+                    });
+                    // Everything above threshold counts as running (feeds the
+                    // Go Live picker); the top hit is the beaconed game.
+                    // Updated every poll regardless of sign-in so the picker
+                    // works even before the first beacon succeeds.
+                    let running: Vec<String> = scored
+                        .iter()
+                        .take(8)
+                        .map(|(_, _, n)| n.clone())
+                        .collect();
+                    *state.running_games.lock().unwrap() = running;
+                    let game: Option<String> =
+                        scored.into_iter().next().map(|(_, _, n)| n);
                     let tok = state.token.lock().unwrap().clone();
                     if let Some(tok) = tok {
                         let changed = {

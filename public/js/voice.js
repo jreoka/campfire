@@ -325,16 +325,24 @@ function sendVoiceMod(action, targetId) {
     : { serverId: S.voice.serverId, channelId: S.voice.channelId };
   S.ws?.send(JSON.stringify({ t: 'voice-mod', action, targetId, ...base }));
 }
-// Desktop app's currently detected game (Tauri command; null on web / when
-// nothing is running). Used to prefill the Go Live stream title.
-let _dgCache = { at: 0, game: null };
-async function desktopGame(force) {
+// Desktop app's currently running games (Tauri command; empty on web / when
+// nothing is running). Used for the Go Live picker. Falls back to your own
+// "Playing" status, which the desktop watcher beacons to the server — so
+// the picker can even offer it on web while the app runs alongside.
+let _dgCache = { at: 0, games: [] };
+async function desktopGames(force) {
   try {
     if (window.__TAURI__?.core && (force || Date.now() - _dgCache.at > 15000)) {
-      _dgCache = { at: Date.now(), game: await window.__TAURI__.core.invoke('get_current_game') };
+      const list = await window.__TAURI__.core.invoke('get_running_games');
+      _dgCache = { at: Date.now(), games: Array.isArray(list) ? list.filter(Boolean).slice(0, 8) : [] };
     }
   } catch {}
-  return _dgCache.game || null;
+  const out = [...(_dgCache.games || [])];
+  if (S.me?.playing_game && !out.includes(S.me.playing_game)) out.unshift(S.me.playing_game);
+  return out.slice(0, 8);
+}
+async function desktopGame(force) {
+  return (await desktopGames(force))[0] || null;
 }
 function paintVoiceControls() {
   const v = S.voice;
@@ -472,12 +480,16 @@ async function toggleScreen() {
   if (!S.voice) return;
   if (S.voice.sharing) { stopScreen(); return; }
   if (!navigator.mediaDevices?.getDisplayMedia) { toast('Screen sharing is not supported here'); return; }
-  const game = await desktopGame(true);
+  const games = await desktopGames(true);
+  const picked = games[0] || '';
+  const chips = games.length
+    ? `<p class="muted small" style="margin:.1rem 0 .4rem">Running now — pick one:</p><div class="gol-games">${games.map((g, i) => `<button type="button" class="gol-game${i === 0 ? ' sel' : ''}" data-game="${esc(g)}">${esc(g)}</button>`).join('')}</div>`
+    : '<p class="muted small">Pick a window or screen. On desktop with a game running, you can pick it here.</p>';
   const quals = Object.entries(V_QUALITY).map(([k, q]) =>
     `<label class="gol-q"><input type="radio" name="gol-q" value="${k}"${(S.voice.quality === k) ? ' checked' : ''} /> ${q.label}</label>`).join('');
   openModal('Go Live', `
-    ${game ? `<p class="muted small">Detected game: <b>${esc(game)}</b></p>` : '<p class="muted small">Pick a window or screen. On desktop, run the game first and it fills in the title.</p>'}
-    <label>Stream title (optional)<input id="gol-label" maxlength="60" placeholder="What are you playing?" value="${esc(game || '')}" /></label>
+    ${chips}
+    <label>Stream title (optional)<input id="gol-label" maxlength="60" placeholder="What are you playing?" value="${esc(picked)}" /></label>
     <div class="gol-row"><span class="muted small">Quality</span><div class="gol-qs">${quals}</div></div>
     <label class="set-check" style="margin-top:.6rem"><input type="checkbox" id="gol-audio" checked /> Share system audio</label>
   `, 'Go Live', () => {
@@ -486,6 +498,18 @@ async function toggleScreen() {
     const audio = $('#gol-audio') ? $('#gol-audio').checked : true;
     startStream({ audio, quality: q, label });
   });
+  // Picking a chip fills the title (still editable); typing a custom title
+  // deselects the chips.
+  document.querySelectorAll('.gol-game').forEach((b) => (b.onclick = () => {
+    document.querySelectorAll('.gol-game').forEach((o) => o.classList.remove('sel'));
+    b.classList.add('sel');
+    const inp = $('#gol-label');
+    if (inp) inp.value = b.dataset.game;
+  }));
+  $('#gol-label').oninput = () => {
+    const v = $('#gol-label').value;
+    document.querySelectorAll('.gol-game').forEach((o) => o.classList.toggle('sel', o.dataset.game === v));
+  };
 }
 async function startStream({ audio = true, quality = null, label = '' } = {}) {
   if (!S.voice || S.voice.sharing) return;
