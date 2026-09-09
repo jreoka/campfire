@@ -505,25 +505,28 @@ document.addEventListener('paste', (e) => {
     insertAtCursor($('#in-message'), text);
   }
 });
-// drag-and-drop files anywhere over the chat → composer attachments
+// drag-and-drop files anywhere in the app window → composer attachments.
+// Document-level (not just #chat) so drops on the sidebar / member list work
+// too — and so a stray drop can never navigate the tab away to the file,
+// which would wipe a half-typed message.
 let dropDepth = 0;
 const dragHasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
-$('#chat').addEventListener('dragenter', (e) => {
+document.addEventListener('dragenter', (e) => {
   if (!dragHasFiles(e)) return;
   e.preventDefault();
   dropDepth++;
   $('#chat').classList.add('dropping');
 });
-$('#chat').addEventListener('dragover', (e) => {
+document.addEventListener('dragover', (e) => {
   if (!dragHasFiles(e)) return;
   e.preventDefault();
   e.dataTransfer.dropEffect = 'copy';
 });
-$('#chat').addEventListener('dragleave', (e) => {
+document.addEventListener('dragleave', (e) => {
   if (!dragHasFiles(e)) return;
   if (--dropDepth <= 0) { dropDepth = 0; $('#chat').classList.remove('dropping'); }
 });
-$('#chat').addEventListener('drop', (e) => {
+document.addEventListener('drop', (e) => {
   if (!dragHasFiles(e)) return;
   e.preventDefault();
   dropDepth = 0;
