@@ -2300,6 +2300,41 @@ app.post('/api/messages/:mid/reactions', authRequired, (req, res) => {
   broadcastToServer(m.server_id, { t: 'reaction-update', serverId: m.server_id, channelId: m.channel_id, messageId: m.id, reactions: reactionTally(m.id, null) });
   res.json({ reactions: reactionTally(m.id, req.user.id) });
 });
+// Detailed per-emoji reactor list (powers hover tooltips + the View-reactions
+// modal). Stable order: earliest reaction first. Caps each emoji at 100
+// users so a viral message can't blow up the payload.
+function reactionUsersById(ids) {
+  const map = new Map();
+  const uniq = [...new Set(ids)];
+  if (!uniq.length) return map;
+  const ph = uniq.map(() => '?').join(',');
+  try {
+    for (const u of db.prepare(`SELECT ${USER_COLS} FROM users WHERE id IN (${ph})`).all(...uniq)) map.set(u.id, publicUser(u));
+  } catch {}
+  return map;
+}
+function detailedReactions(table, messageId, meId) {
+  const rows = db.prepare(`SELECT emoji, user_id, created_at FROM ${table} WHERE message_id = ? ORDER BY created_at ASC`).all(messageId);
+  const groups = new Map();
+  for (const r of rows) {
+    if (!groups.has(r.emoji)) groups.set(r.emoji, []);
+    const arr = groups.get(r.emoji);
+    if (arr.length < 100) arr.push(r.user_id);
+  }
+  const byId = reactionUsersById(rows.map((r) => r.user_id));
+  const out = [];
+  for (const [emoji, uids] of groups) {
+    const users = uids.map((id) => byId.get(id) || { id, username: 'deleted', display_name: 'deleted user', avatar_color: '#555', avatar_url: null });
+    out.push({ emoji, count: rows.filter((r) => r.emoji === emoji).length, me: uids.includes(meId) || rows.some((r) => r.emoji === emoji && r.user_id === meId), users });
+  }
+  return out;
+}
+app.get('/api/messages/:mid/reactions', authRequired, (req, res) => {
+  const m = getMsg(req.params.mid);
+  if (!m) return res.status(404).json({ error: 'no_message' });
+  if (!isMember(m.server_id, req.user.id)) return res.status(403).json({ error: 'not_member' });
+  res.json({ reactions: detailedReactions('message_reactions', m.id, req.user.id) });
+});
 
 // ---------- edit + fetch single message ----------
 app.patch('/api/messages/:mid', authRequired, (req, res) => {
@@ -2628,7 +2663,7 @@ function hydrateDm(rows, meId) {
     threadCount: 0, edited: !!r.edited_at, _dm: true,
     attachments: attBy[r.id] || [],
     poll: pollBy[r.id] || null,
-    reactions: Object.values(reactBy[r.id] || {}).map((t) => ({ emoji: t.emoji, count: t.count, me: t.users.includes(meId) })),
+    reactions: Object.values(reactBy[r.id] || {}).map((t) => ({ emoji: t.emoji, count: t.count, me: t.users.includes(meId), users: t.users })),
     user: r.user_id ? publicUser({ id: r.user_id, username: r.username, display_name: r.display_name, avatar_color: r.avatar_color, avatar_url: r.avatar_url }) : null,
   })), parentAttBy);
 }
@@ -3045,7 +3080,12 @@ app.post('/api/dms/messages/:mid/reactions', authRequired, (req, res) => {
   for (const r of tally) { const e = (t[r.emoji] = t[r.emoji] || { emoji: r.emoji, count: 0, users: [] }); e.count++; e.users.push(r.user_id); }
   const out = Object.values(t);
   dmNotify(m.thread_id, { t: 'dm-reaction', threadId: m.thread_id, messageId: m.id, reactions: out });
-  res.json({ reactions: out.map((e) => ({ emoji: e.emoji, count: e.count, me: e.users.includes(req.user.id) })) });
+  res.json({ reactions: out.map((e) => ({ emoji: e.emoji, count: e.count, me: e.users.includes(req.user.id), users: e.users })) });
+});
+app.get('/api/dms/messages/:mid/reactions', authRequired, (req, res) => {
+  const m = dmMsg(req.params.mid);
+  if (!m || !dmThreadFor(req.user.id, m.thread_id)) return res.status(404).json({ error: 'no_message' });
+  res.json({ reactions: detailedReactions('dm_reactions', m.id, req.user.id) });
 });
 // ---------- polls: vote (single choice per user; tap again to retract) ----------
 app.post('/api/polls/:id/vote', authRequired, (req, res) => {
@@ -3206,7 +3246,7 @@ function hydrateMessages(rows, meId) {
     m.attachments = attBy[r.id] || [];
     m.poll = pollBy[r.id] || null;
     const tally = Object.values(reactBy[r.id] || {});
-    m.reactions = tally.map((t) => ({ emoji: t.emoji, count: t.count, me: t.users.includes(meId) }));
+    m.reactions = tally.map((t) => ({ emoji: t.emoji, count: t.count, me: t.users.includes(meId), users: t.users }));
     m.threadCount = countBy[r.id] || 0;
     return m;
   }), parentAttBy);

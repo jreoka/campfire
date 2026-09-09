@@ -270,6 +270,30 @@ async function moveChannel(dragId, targetId, edge) {
     selectServer(d.id);
   }
 }
+// Menu-driven channel move (touch: native drag is off, so the channel menu
+// exposes the same reorder explicitly within its type group).
+async function moveChannelRail(cid, dir) {
+  const d = S.serverDetail;
+  const cur = d?.channels.find((v) => v.id === cid);
+  if (!d || !cur) return;
+  const group = d.channels.filter((x) => x.type === cur.type);
+  const i = group.findIndex((x) => x.id === cid), j = i + dir;
+  if (i < 0) return;
+  if (j < 0 || j >= group.length) { toast(dir < 0 ? 'Already at the top' : 'Already at the bottom'); return; }
+  const order = group.map((x) => x.id);
+  [order[i], order[j]] = [order[j], order[i]];
+  const byId = new Map(group.map((x) => [x.id, x]));
+  const ordered = order.map((id) => byId.get(id)).filter(Boolean);
+  let k = 0;
+  d.channels = d.channels.map((x) => (x.type === cur.type ? ordered[k++] : x));
+  renderChannels();
+  try {
+    await api(`/api/servers/${d.id}/channels/order`, { method: 'PUT', body: JSON.stringify({ order }) });
+  } catch (err) {
+    toast('Reorder failed: ' + prettyError(err.message));
+    selectServer(d.id);
+  }
+}
 function confirmDeleteChannel(c) {
   if (!canManage()) return;
   openModal(`Delete #${c.name}?`, `<p class="muted">Messages in this channel are deleted forever.</p>`, 'Delete', async () => {

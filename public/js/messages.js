@@ -119,6 +119,25 @@ function observeStick(el) {
     stickRO.observe(el);
   } catch {}
 }
+function reactionNameFor(uid) {
+  if (S.me && uid === S.me.id) return S.me.display_name || 'You';
+  try {
+    const u = typeof memberById === 'function' ? memberById(uid) : null;
+    if (u) return u.display_name || u.username || null;
+  } catch {}
+  return null;
+}
+// Native title doubles as the hover readout: up to 10 reactor names plus
+// the overflow count. Unknown IDs (left users / not-yet-fetched) fall back
+// to a plain count — the styled tooltip + View-reactions modal fill those
+// in via the details endpoint.
+function reactionTitle(r) {
+  const users = Array.isArray(r.users) ? r.users : [];
+  if (!users.length) return `${r.count} reaction${r.count === 1 ? '' : 's'} — click to react`;
+  const names = users.slice(0, 10).map((id) => reactionNameFor(id) || 'Unknown user');
+  const extra = users.length > 10 ? ` and ${users.length - 10} more` : '';
+  return `${names.join(', ')}${extra} reacted with ${r.emoji}`;
+}
 function reactionsHTML(m) {
   if (!m.reactions?.length) return '';
   return '<div class="reactions">' + m.reactions.map((r) => {
@@ -126,7 +145,7 @@ function reactionsHTML(m) {
     const label = r.emoji.startsWith(':') && r.emoji.endsWith(':') && em
       ? `<img class="cemoi" src="${em.url}" alt="${esc(r.emoji)}" data-fb-emoji="${esc(r.emoji)}">`
       : esc(r.emoji);
-    return `<button class="reaction${r.me ? ' me' : ''}" data-act="react" data-emoji="${esc(r.emoji)}" title="${r.count}">${label} ${r.count}</button>`;
+    return `<button class="reaction${r.me ? ' me' : ''}" data-act="react" data-emoji="${esc(r.emoji)}" title="${esc(reactionTitle(r))}" aria-label="${esc(reactionTitle(r))}">${label} ${r.count}</button>`;
   }).join('') + '</div>';
 }
 // ---------- text/code file previews (expandable + downloadable) ----------

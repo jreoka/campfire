@@ -97,8 +97,9 @@ function onWS(m) {
     }
     case 'reaction-update': {
       updateMsgInCaches(m.messageId, (old) => {
-        old.reactions = (m.reactions || []).map((r) => ({ emoji: r.emoji, count: r.count, me: (r.users || []).includes(S.me.id) }));
+        old.reactions = (m.reactions || []).map((r) => ({ emoji: r.emoji, count: r.count, me: (r.users || []).includes(S.me.id), users: r.users || [] }));
       });
+      try { if (typeof reactionDetailCache !== 'undefined') reactionDetailCache.delete(m.messageId); } catch {}
       const inHistRx = S.histMode && S.histMode.kind === 'server' && S.histMode.id === m.channelId;
       if (m.channelId === S.channelId && !inHistRx) renderMessages();
       break;
@@ -172,8 +173,9 @@ function onWS(m) {
     }
     case 'dm-reaction': {
       updateMsgInCaches(m.messageId, (old) => {
-        old.reactions = (m.reactions || []).map((r) => ({ emoji: r.emoji, count: r.count, me: (r.users || []).includes(S.me.id) }));
+        old.reactions = (m.reactions || []).map((r) => ({ emoji: r.emoji, count: r.count, me: (r.users || []).includes(S.me.id), users: r.users || [] }));
       });
+      try { if (typeof reactionDetailCache !== 'undefined') reactionDetailCache.delete(m.messageId); } catch {}
       const inHistDr = S.histMode && S.histMode.kind === 'dm' && S.histMode.id === m.threadId;
       if (S.view === 'home' && S.dmThreadId === m.threadId && !inHistDr) renderDmMessages();
       break;

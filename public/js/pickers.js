@@ -314,11 +314,155 @@ async function toggleReaction(mid, emoji) {
   try {
     const { reactions } = await api(base + mid + '/reactions', { method: 'POST', body: JSON.stringify({ emoji }) });
     bumpFreq(emoji);
-    updateMsgInCaches(mid, (m) => { m.reactions = reactions.map((r) => ({ emoji: r.emoji, count: r.count, me: r.me })); });
+    updateMsgInCaches(mid, (m) => { m.reactions = reactions.map((r) => ({ emoji: r.emoji, count: r.count, me: r.me, users: r.users || [] })); });
+    reactionDetailCache.delete(mid); // counts changed — refetch on next view
     if (S.view === 'home') { if (S.dmThreadId) renderDmMessages(); }
     else if (S.channelId) renderMessages();
     if (S.thread) renderThread();
   } catch (err) { toast('Reaction failed: ' + prettyError(err.message)); }
+}
+/* ---------- reaction details: hover tooltip + View-reactions modal ---------- */
+// Per-message cache of the detailed endpoint (emoji -> full user objects).
+// Invalidated on toggle + live socket updates so names never go stale.
+const reactionDetailCache = new Map(); // mid -> { at, reactions }
+async function fetchReactionDetails(mid) {
+  const hit = reactionDetailCache.get(mid);
+  if (hit && Date.now() - hit.at < 30000) return hit.reactions;
+  const m = msgById(mid);
+  if (!m) return null;
+  const base = m._dm ? '/api/dms/messages/' : '/api/messages/';
+  const { reactions } = await api(base + mid + '/reactions');
+  reactionDetailCache.set(mid, { at: Date.now(), reactions });
+  return reactions;
+}
+function reactionEmojiHTML(emoji) {
+  const em = S.emojiAll[String(emoji).slice(1, -1)];
+  if (String(emoji).startsWith(':') && String(emoji).endsWith(':') && em)
+    return `<img class="cemoi" src="${esc(em.url)}" alt="${esc(emoji)}">`;
+  return esc(emoji);
+}
+// Styled hover tooltip (desktop): emoji + up to 10 names + overflow count.
+// Native `title` (see reactionTitle) remains as the fallback / a11y label;
+// while the bubble is visible we clear it so both don't stack.
+let reactTipEl = null, reactTipFor = null, reactTipTimer = 0;
+function hideReactionTip(restore = true) {
+  if (reactTipTimer) { clearTimeout(reactTipTimer); reactTipTimer = 0; }
+  if (reactTipEl) { reactTipEl.remove(); reactTipEl = null; }
+  if (restore && reactTipFor && reactTipFor.isConnected) {
+    const r = reactTipFor._reactRef;
+    if (r) reactTipFor.title = reactionTitle(r);
+  }
+  reactTipFor = null;
+}
+function showReactionTip(btn, mid, emoji) {
+  if (isCoarse()) return; // touch: tap toggles, long-press menu has View reactions
+  hideReactionTip(false);
+  const m = msgById(mid);
+  const ref = m?.reactions?.find((x) => x.emoji === emoji);
+  if (!m || !ref) return;
+  btn._reactRef = ref;
+  const tip = document.createElement('div');
+  tip.id = 'reaction-tip';
+  const paint = (users, loading) => {
+    const shown = users.slice(0, 10);
+    const total = ref.count || users.length;
+    const extra = total > shown.length ? total - shown.length : 0;
+    tip.innerHTML = `<span class="rt-emoji">${reactionEmojiHTML(emoji)}</span><span class="rt-names">${shown.map((u) => `<b>${esc(u.display_name || u.username || '?')}</b>`).join(', ')}${extra ? ` <span class="muted">and ${extra} more</span>` : ''}${loading ? ' <span class="muted">…</span>' : ''}</span><span class="rt-count">${ref.count}</span>`;
+  };
+  // Instant: resolve cached IDs locally, then enrich via the endpoint.
+  const local = (ref.users || []).map((id) => {
+    if (S.me && id === S.me.id) return S.me;
+    try { return memberById(id) || { id, display_name: null, username: null }; }
+    catch { return { id, display_name: null, username: null }; }
+  });
+  const known = local.filter((u) => u && (u.display_name || u.username));
+  paint(known.length ? known : [{ display_name: `${ref.count} reaction${ref.count === 1 ? '' : 's'}` }], true);
+  document.body.appendChild(tip);
+  const r = btn.getBoundingClientRect();
+  tip.style.visibility = 'hidden';
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  tip.style.left = Math.max(8, Math.min(r.left + r.width / 2 - tw / 2, innerWidth - tw - 8)) + 'px';
+  let top = r.top - th - 8;
+  if (top < 8) top = r.bottom + 8;
+  tip.style.top = top + 'px';
+  tip.style.visibility = '';
+  reactTipEl = tip;
+  reactTipFor = btn;
+  btn.title = ''; // suppress native while the bubble shows
+  fetchReactionDetails(mid).then((full) => {
+    if (!reactTipEl || reactTipFor !== btn || !btn.isConnected) return;
+    const g = (full || []).find((x) => x.emoji === emoji);
+    if (g && g.users?.length) {
+      paint(g.users, false);
+      const r2 = btn.getBoundingClientRect();
+      const tw2 = tip.offsetWidth;
+      tip.style.left = Math.max(8, Math.min(r2.left + r2.width / 2 - tw2 / 2, innerWidth - tw2 - 8)) + 'px';
+    } else if (known.length) paint(known, false);
+  }).catch(() => { if (reactTipEl && reactTipFor === btn) paint(known.length ? known : [{ display_name: `${ref.count}` }], false); });
+  reactTipTimer = setTimeout(() => hideReactionTip(), 4000);
+}
+// Hover delegation: slight delay so sweeping the mouse across chat doesn't
+// flash bubbles on every reaction.
+let reactHoverT = 0;
+document.addEventListener('mouseover', (e) => {
+  const btn = e.target && e.target.closest ? e.target.closest('.reaction[data-emoji]') : null;
+  if (!btn) return;
+  if (reactTipFor === btn) return;
+  clearTimeout(reactHoverT);
+  const msgEl = btn.closest('[data-mid]');
+  const mid = msgEl && msgEl.dataset.mid;
+  if (!mid) return;
+  reactHoverT = setTimeout(() => showReactionTip(btn, mid, btn.dataset.emoji), 350);
+});
+document.addEventListener('mouseout', (e) => {
+  const btn = e.target && e.target.closest ? e.target.closest('.reaction[data-emoji]') : null;
+  if (btn && reactTipFor === btn) { clearTimeout(reactHoverT); hideReactionTip(); }
+  else clearTimeout(reactHoverT);
+});
+document.addEventListener('scroll', () => hideReactionTip(), true);
+// Full viewer: grouped by emoji, every reactor with avatar + name.
+async function openReactionsModal(mid) {
+  const m = msgById(mid);
+  if (!m) return;
+  if (!m.reactions?.length) { toast('No reactions yet'); return; }
+  const total = m.reactions.reduce((n, r) => n + (r.count || 0), 0);
+  openModal(`Reactions · ${total}`, '<div class="rx-list"><p class="muted small" style="text-align:center;padding:1rem">Loading…</p></div>', 'Close', null, { wide: true });
+  const box = document.querySelector('#modal-body .rx-list');
+  if (!box) return;
+  let full;
+  try { full = await fetchReactionDetails(mid); }
+  catch { box.innerHTML = '<p class="error">Could not load reactions.</p>'; return; }
+  if (!box.isConnected) return;
+  if (!full?.length) { box.innerHTML = '<p class="muted small" style="text-align:center;padding:1rem">No reactions yet.</p>'; return; }
+  // Keep the message's own emoji order.
+  const order = new Map((m.reactions || []).map((r, i) => [r.emoji, i]));
+  full = [...full].sort((a, b) => (order.get(a.emoji) ?? 99) - (order.get(b.emoji) ?? 99));
+  box.innerHTML = '';
+  for (const g of full) {
+    const sec = document.createElement('div');
+    sec.className = 'rx-group';
+    sec.innerHTML = `<div class="rx-head"><span class="rx-emoji">${reactionEmojiHTML(g.emoji)}</span><span class="rx-count">${g.count}</span></div><div class="rx-users"></div>`;
+    const list = sec.querySelector('.rx-users');
+    for (const u of g.users || []) {
+      const row = document.createElement('div');
+      row.className = 'rx-user';
+      const isMe = S.me && u.id === S.me.id;
+      row.innerHTML = '<span class="avatar"></span><span class="rx-main"><span class="rx-name"></span><span class="rx-sub"></span></span>';
+      paintAvatar(row.querySelector('.avatar'), u);
+      const nm = row.querySelector('.rx-name');
+      nm.textContent = (u.display_name || u.username || 'deleted user') + (isMe ? ' (you)' : '');
+      try { nm.style.cssText = nameStyleFor(u); } catch {}
+      row.querySelector('.rx-sub').textContent = u.username ? '@' + u.username : '';
+      list.appendChild(row);
+    }
+    if ((g.count || 0) > (g.users || []).length) {
+      const more = document.createElement('div');
+      more.className = 'rx-more muted small';
+      more.textContent = `and ${g.count - g.users.length} more…`;
+      list.appendChild(more);
+    }
+    box.appendChild(sec);
+  }
 }
 async function jumpToMessage(id) {
   const sel = `#messages [data-mid="${CSS.escape(id)}"]`;

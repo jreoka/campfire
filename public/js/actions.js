@@ -43,6 +43,7 @@ function openCtx(x, y, items) {
   ctxEl = m;
 }
 const PIN_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l1 7 3 3v2H5v-2l3-3z"/><path d="M12 16v5"/></svg>';
+const RX_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.2 1.8 3.5 1.8 3.5-1.8 3.5-1.8"/><line x1="9" y1="9.5" x2="9" y2="9.6"/><line x1="15" y1="9.5" x2="15" y2="9.6"/></svg>';
 function sysMenuItems(m) {
   return [{ label: 'Copy text', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(m.content || ''); toast('Copied'); } catch {} } }];
 }
@@ -55,6 +56,10 @@ function messageMenuItems(m, mid, x, y) {
     { label: 'Forward', icon: '↗', fn: () => openForward(mid) },
   ];
   if (!dm && !m.threadRoot) items.push({ label: 'Open thread', icon: '💬', fn: () => openThread(mid) });
+  if (m.reactions?.length) {
+    const n = m.reactions.reduce((a, r) => a + (r.count || 0), 0);
+    items.push({ label: `View reactions (${n})`, icon: RX_SVG, fn: () => openReactionsModal(mid) });
+  }
   if (!m.threadRoot) items.push({ label: S.pinIds.has(mid) ? 'Unpin message' : 'Pin message', icon: PIN_SVG, fn: () => togglePin(mid) });
   items.push({ sep: true });
   if (own) items.push({ label: 'Edit message', icon: '✎', fn: () => startEdit(mid) });
@@ -223,6 +228,7 @@ function folderSheetItems(fid) {
   return [
     { label: S.openFolderId === fid ? 'Collapse folder' : 'Expand folder', icon: S.openFolderId === fid ? '▴' : '▾', fn: () => toggleFolder(fid) },
     { label: 'Rename folder', icon: '✎', fn: () => renameFolder(fid) },
+    ...(typeof folderMoveOrderItems === 'function' ? folderMoveOrderItems(fid) : []),
     { label: 'Delete folder', icon: '🗑', danger: true, fn: () => deleteFolder(fid) },
   ];
 }
@@ -487,6 +493,7 @@ function serverMenuItems(sid) {
     { label: 'Invite links', icon: '⧉', fn: async () => { if (sid !== S.serverId) await selectServer(sid); S.serverSubTab = 'general'; openServerSettings(); } },
     { label: 'Server settings', icon: '⚙', fn: async () => { if (sid !== S.serverId) await selectServer(sid); openServerSettings(); } },
     { sep: true },
+    ...(typeof serverMoveItems === 'function' ? serverMoveItems(sid) : []),
     ...folderMoveItems(sid),
     { sep: true },
     muteToggleItem(serverMuted(sid), own === 'muted', 'server', 's:' + sid),
@@ -510,6 +517,8 @@ function channelMenuItems(cid, ctype) {
   }
   if (owner) {
     items.push({ sep: true });
+    items.push({ label: 'Move up', icon: '↑', fn: () => moveChannelRail(cid, -1) });
+    items.push({ label: 'Move down', icon: '↓', fn: () => moveChannelRail(cid, 1) });
     items.push({ label: 'Channel settings', icon: '⚙', fn: () => openChannelSettings(S.serverId, c) });
     items.push({ label: 'Delete channel', icon: '🗑', danger: true, fn: () => confirmDeleteChannel(c) });
   }

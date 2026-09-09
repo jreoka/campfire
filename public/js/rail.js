@@ -102,6 +102,43 @@ function applyDrop(dd, t) {
   if (t.zone === 'reorder') { if (kind === 'server') reorderRootServer(id, t.id, t.edge); else if (kind === 'folder') reorderFolder(id, t.id, t.edge); return; }
   if (t.zone === 'reorder-in-folder') { if (kind === 'server') reorderServerInFolder(id, t.folderId, t.id, t.edge); return; }
 }
+/* ---- menu-driven moves (touch: native drag is off, so the server/folder
+   menus expose the same reorder explicitly) ---- */
+function moveRootEntry(kind, id, dir) {
+  const i = S.rootOrder.findIndex((it) => it.kind === kind && it.id === id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= S.rootOrder.length) { toast(dir < 0 ? 'Already at the top' : 'Already at the bottom'); return; }
+  const [mv] = S.rootOrder.splice(i, 1);
+  S.rootOrder.splice(j, 0, mv);
+  normalizeAndSave();
+}
+function moveServerRail(sid, dir) {
+  const f = serverFolder(sid);
+  if (f) {
+    const arr = f.servers || [];
+    const i = arr.indexOf(sid), j = i + dir;
+    if (i < 0) return;
+    if (j < 0 || j >= arr.length) { toast(dir < 0 ? 'Already at the top of the folder' : 'Already at the bottom of the folder'); return; }
+    arr.splice(i, 1);
+    arr.splice(j, 0, sid);
+    normalizeAndSave();
+    return;
+  }
+  moveRootEntry('server', sid, dir);
+}
+function moveFolderRail(fid, dir) { moveRootEntry('folder', fid, dir); }
+function serverMoveItems(sid) {
+  return [
+    { label: 'Move up', icon: '↑', fn: () => moveServerRail(sid, -1) },
+    { label: 'Move down', icon: '↓', fn: () => moveServerRail(sid, 1) },
+  ];
+}
+function folderMoveOrderItems(fid) {
+  return [
+    { label: 'Move folder up', icon: '↑', fn: () => moveFolderRail(fid, -1) },
+    { label: 'Move folder down', icon: '↓', fn: () => moveFolderRail(fid, 1) },
+  ];
+}
 /* ---- draggable elements ---- */
 function wireDrag(el, kind, id) {
   el.addEventListener('dragstart', (e) => {
@@ -247,6 +284,13 @@ function openFolderMenu(fid, x, y) {
   expand.textContent = S.openFolderId === f.id ? 'Collapse folder' : 'Expand folder';
   expand.addEventListener('click', () => { toggleFolder(f.id); closeFolderFlyout(); });
   m.appendChild(expand);
+  for (const mv of folderMoveOrderItems(fid)) {
+    const b = document.createElement('button');
+    b.className = 'fm-item';
+    b.textContent = mv.label;
+    b.addEventListener('click', () => { closeFolderFlyout(); mv.fn && mv.fn(); });
+    m.appendChild(b);
+  }
   const del = document.createElement('button');
   del.className = 'fm-item danger';
   del.textContent = 'Delete folder';
