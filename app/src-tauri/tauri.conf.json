@@ -12,7 +12,8 @@
         "height": 800,
         "minWidth": 760,
         "minHeight": 480,
-        "url": "https://campfire.dill.moe"
+        "url": "https://campfire.dill.moe",
+        "dragDropEnabled": false
       }
     ],
     "security": {
