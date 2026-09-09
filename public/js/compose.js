@@ -1,7 +1,7 @@
 'use strict';
 // ---------- voice messages (record → attach → Send) ----------
 let recSt = null; // {rec, stream, chunks, t0, timer, cancelled}
-const REC_MAX_MS = 5 * 60 * 1000;
+const REC_MAX_MS = 10 * 60 * 1000;
 function recMime() {
   if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return '';
   try {
