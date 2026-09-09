@@ -19,18 +19,73 @@ function saveScrollPos() {
     // Only real message lists count — the Loading…/error placeholders and
     // the NSFW gate have no .msg nodes and must never clobber the memory.
     if (!key || !box || !box.querySelector('.msg')) return;
-    S.scrollMem.set(key, box.scrollHeight - box.scrollTop);
+    // Anchor on the topmost visible message (id + viewport offset, which is
+    // negative when the message straddles the top edge — keep it raw, exact).
+    // Distance-from-bottom stays as the fallback (anchor scrolled away).
+    let anchor = null;
+    const btop = box.getBoundingClientRect().top;
+    for (const el of box.querySelectorAll('.msg')) {
+      const r = el.getBoundingClientRect();
+      if (r.bottom > btop + 1) { anchor = { mid: el.dataset.mid || null, off: r.top - btop }; break; }
+    }
+    S.scrollMem.set(key, { dist: box.scrollHeight - box.scrollTop, anchor });
   } catch {}
 }
 function restoreScrollPos(ctx) {
   try {
     if (!sameCtx(pinsCtx(), ctx)) return;
-    const dist = S.scrollMem.get(scrollMemKey(ctx));
-    if (dist == null || dist <= 200) return; // was at (or near) the bottom
+    const mem = S.scrollMem.get(scrollMemKey(ctx));
+    if (!mem) return;
     const box = $('#messages');
     if (!box || box.classList.contains('hidden')) return;
-    box.scrollTop = Math.max(0, box.scrollHeight - dist);
+    const a = mem.anchor;
+    if (a && a.mid) {
+      const el = box.querySelector('[data-mid="' + CSS.escape(a.mid) + '"]');
+      if (el) {
+        box.scrollTop += (el.getBoundingClientRect().top - box.getBoundingClientRect().top) - a.off;
+        updatePill();
+        stickRestoredAnchor(box, scrollMemKey(ctx));
+        return;
+      }
+    }
+    if (mem.dist != null && mem.dist > 200) box.scrollTop = Math.max(0, box.scrollHeight - mem.dist);
     updatePill();
+  } catch {}
+}
+// Late media (cold-cache images, video metadata) changes heights after a
+// restore and would nudge the view. Briefly glue the anchor while things
+// settle — stops the moment the user scrolls themselves.
+function stickRestoredAnchor(box, key) {
+  try {
+    const mem = S.scrollMem.get(key);
+    const mid = mem && mem.anchor && mem.anchor.mid;
+    if (!mid || typeof mem.anchor.off !== 'number') return;
+    const sel = '[data-mid="' + CSS.escape(mid) + '"]';
+    const media = [...box.querySelectorAll('img, video')].filter((m) =>
+      m.tagName === 'VIDEO' ? m.readyState < 1 : !m.complete);
+    if (!media.length) return;
+    const t0 = Date.now();
+    let expected = box.scrollTop, done = 0;
+    const realign = () => {
+      if (done >= media.length || Date.now() - t0 > 2500) return;
+      if (Math.abs(box.scrollTop - expected) > 2) { done = media.length; return; } // user took over
+      const el = box.querySelector(sel);
+      if (!el || !el.isConnected) return;
+      const want = expected + ((el.getBoundingClientRect().top - box.getBoundingClientRect().top) - mem.anchor.off);
+      if (Math.abs(want - box.scrollTop) > 0.5) box.scrollTop = want;
+      expected = box.scrollTop;
+    };
+    setTimeout(() => { done = media.length; }, 2600);
+    for (const m of media) {
+      const once = () => {
+        m.removeEventListener('load', once); m.removeEventListener('error', once);
+        m.removeEventListener('loadedmetadata', once); m.removeEventListener('loadeddata', once);
+        done++;
+        realign();
+      };
+      m.addEventListener('load', once); m.addEventListener('error', once);
+      if (m.tagName === 'VIDEO') { m.addEventListener('loadedmetadata', once); m.addEventListener('loadeddata', once); }
+    }
   } catch {}
 }
 async function refreshPinsCount() {
@@ -239,18 +294,37 @@ async function selectDmThread(id) {
   $('#in-message').placeholder = t.isGroup ? `Message ${t.name || 'group'}` : `Message @${(peer || {}).username || ''}`;
   S.replyTo = null; S.pendingAtts = []; S.editing = null;
   renderComposerMeta();
-  $('#messages').innerHTML = '<p class="muted">Loading…</p>';
+  // Instant: paint the cached tail (if any) at the remembered anchor so
+  // switching back never flashes Loading… or jumps; the fetch below tops up.
+  S.histMode = null;
+  S.histNew = 0;
+  const cachedDm = S.dmMessages.get(id);
+  if (cachedDm && cachedDm.length) {
+    renderDmMessages();
+    restoreScrollPos({ kind: 'dm', id });
+  } else {
+    $('#messages').innerHTML = '<p class="muted">Loading…</p>';
+  }
   try {
     const { messages } = await api(`/api/dms/${id}/messages?limit=80`);
     if (S.dmThreadId !== id) return;
     S.dmMessages.set(id, messages);
+    S.editing = null;
     S.histMode = null;
     S.histNew = 0;
-    renderDmMessages(true);
-    restoreScrollPos({ kind: 'dm', id });
+    if (cachedDm && cachedDm.length) {
+      renderDmMessages(); // keepDist holds; anchor re-align nails it exactly
+      restoreScrollPos({ kind: 'dm', id });
+    } else {
+      renderDmMessages(true);
+      restoreScrollPos({ kind: 'dm', id });
+    }
     refreshPinsCount();
     updatePill();
-  } catch { $('#messages').innerHTML = '<p class="error">Could not load messages.</p>'; }
+  } catch {
+    if (S.dmThreadId !== id) return;
+    if (!cachedDm || !cachedDm.length) $('#messages').innerHTML = '<p class="error">Could not load messages.</p>';
+  }
 }
 function renderDmBlank() {
   document.body.classList.remove('dm-open');

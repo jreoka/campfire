@@ -307,18 +307,38 @@ async function selectChannel(id, opts = {}) {
   $('#messages').classList.remove('hidden');
   renderTopic();
   paintSlowmodeHint();
-  $('#messages').innerHTML = '<p class="muted">Loading…</p>';
+  // Instant: paint the cached tail (if any) at the remembered anchor so
+  // switching back never flashes Loading… or jumps; the fetch below tops up.
+  S.histMode = null;
+  S.histNew = 0;
+  const cached = S.messages.get(id);
+  if (cached && cached.length) {
+    S.editing = null;
+    renderMessages();
+    restoreScrollPos({ kind: 'server', id });
+  } else {
+    $('#messages').innerHTML = '<p class="muted">Loading…</p>';
+  }
   try {
     const { messages } = await api(`/api/servers/${S.serverId}/channels/${id}/messages?limit=80`);
+    if (S.channelId !== id) return; // moved on while loading — stale
     S.messages.set(id, messages);
     S.editing = null;
     S.histMode = null;
     S.histNew = 0;
-    renderMessages(true);
-    restoreScrollPos({ kind: 'server', id });
+    if (cached && cached.length) {
+      renderMessages(); // keepDist holds; anchor re-align nails it exactly
+      restoreScrollPos({ kind: 'server', id });
+    } else {
+      renderMessages(true);
+      restoreScrollPos({ kind: 'server', id });
+    }
     refreshPinsCount();
     updatePill();
-  } catch { $('#messages').innerHTML = '<p class="error">Could not load messages.</p>'; }
+  } catch {
+    if (S.channelId !== id) return;
+    if (!cached || !cached.length) $('#messages').innerHTML = '<p class="error">Could not load messages.</p>';
+  }
 }
 function nsfwGated(ch) { return !!(ch && ch.nsfw && !S.me?.nsfw_ok); }
 async function confirmNsfwAge() {
