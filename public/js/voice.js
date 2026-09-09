@@ -56,8 +56,17 @@ $('#cv-camera').onclick = () => toggleCamera();
 $('#cv-share').onclick = () => toggleScreen();
 paintVoiceControls();
 
+function openNsfwVoiceModal(ch) {
+  return new Promise((resolve) => {
+    openModal(`#${ch.name} is NSFW`, `<div class="nsfw-modal"><div class="nsfw-ring sm">18+</div><p class="muted">This voice channel is marked not safe for work. Please confirm you are 18 years or older to join. You only need to do this once — it is remembered on your account.</p></div>`, 'I confirm I am 18 or older', async () => {
+      resolve(await confirmNsfwAge());
+    }, { cancelLabel: 'Go back', onCancel: () => resolve(false) });
+  });
+}
 async function openVoiceChannel(serverId, channelId) {
   if (S.voice && S.voice.kind !== 'dm' && S.voice.serverId === serverId && S.voice.channelId === channelId) { openCallView(); return; }
+  const vch = serverId === S.serverId ? (S.serverDetail?.channels || []).find((c) => c.id === channelId) : null;
+  if (nsfwGated(vch) && !(await openNsfwVoiceModal(vch))) return;
   await joinVoice(serverId, channelId);
   if (S.voice && S.voice.kind !== 'dm' && S.voice.serverId === serverId && S.voice.channelId === channelId) openCallView();
 }

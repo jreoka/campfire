@@ -413,6 +413,7 @@ function publicUser(u) {
     name_color: u.name_color || '', name_gradient: u.name_gradient || '',
     created_at: u.created_at || null,
     game_enabled: u.game_enabled === undefined ? 1 : u.game_enabled,
+    nsfw_ok: !!u.nsfw_ok,
     game_exclusions: u.game_exclusions || '[]',
     is_admin: !!u.is_admin,
     disabled: !!u.disabled,
@@ -422,7 +423,7 @@ function requireSiteAdmin(req, res, next) {
   if (!req.user.is_admin) return res.status(403).json({ error: 'admin_only' });
   next();
 }
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, playing_game, streaming_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, playing_game, streaming_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset, nsfw_ok';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -928,6 +929,9 @@ app.patch('/api/servers/:id/channels/:chId', authRequired, (req, res) => {
     const sm = Number(req.body.slowmode);
     sets.push('slowmode = ?'); params.push([0, 5, 10, 30, 60, 300].includes(sm) ? sm : 0);
   }
+  if (req.body?.nsfw !== undefined) {
+    sets.push('nsfw = ?'); params.push(req.body.nsfw ? 1 : 0);
+  }
   if (sets.length) {
     params.push(ch.id);
     db.prepare(`UPDATE channels SET ${sets.join(', ')} WHERE id = ?`).run(...params);
@@ -1218,9 +1222,25 @@ app.delete('/api/servers/:id/banner', authRequired, (req, res) => {
   res.json({ server: serverView(s.id) });
 });
 
+// NSFW channels: members must confirm they are 18+ once per account before
+// reading. The flag lives on the user row so every device unlocks together.
+function nsfwBlocked(chId, serverId, user) {
+  if (user && user.nsfw_ok) return false;
+  try {
+    const ch = db.prepare('SELECT nsfw FROM channels WHERE id = ? AND server_id = ?').get(chId, serverId);
+    return !!(ch && ch.nsfw);
+  } catch { return false; }
+}
+app.post('/api/me/nsfw-confirm', authRequired, (req, res) => {
+  db.prepare('UPDATE users SET nsfw_ok = 1 WHERE id = ?').run(req.user.id);
+  const u = freshUser(req.user.id);
+  try { broadcastUserUpdate(u); } catch {}
+  res.json({ user: u });
+});
 app.get('/api/servers/:id/channels/:chId/messages', authRequired, (req, res) => {
   const { id, chId } = req.params;
   if (!isMember(id, req.user.id)) return res.status(403).json({ error: 'not_member' });
+  if (nsfwBlocked(chId, id, req.user)) return res.status(403).json({ error: 'nsfw_confirm_required' });
   const limit = Math.min(parseInt(req.query.limit || '50', 10), 100);
   const around = String(req.query.around || '');
   if (around) {
@@ -1283,6 +1303,7 @@ function pinInfo(pinRow) {
 app.get('/api/servers/:id/channels/:chId/pins', authRequired, (req, res) => {
   const { id, chId } = req.params;
   if (!isMember(id, req.user.id)) return res.status(403).json({ error: 'not_member' });
+  if (nsfwBlocked(chId, id, req.user)) return res.status(403).json({ error: 'nsfw_confirm_required' });
   const rows = db.prepare('SELECT * FROM message_pins WHERE server_id = ? AND channel_id = ? ORDER BY created_at DESC LIMIT 50').all(id, chId);
   const pins = [];
   for (const p of rows) {

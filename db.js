@@ -289,6 +289,7 @@ addColumn('dm_members', 'pinned', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('messages', 'fwd_from', 'TEXT');
 addColumn('dm_messages', 'fwd_from', 'TEXT');
 addColumn('channels', 'slowmode', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('channels', 'nsfw', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('channels', 'description', "TEXT NOT NULL DEFAULT ''");
 addColumn('servers', 'banner_url', 'TEXT');
 addColumn('servers', 'description', "TEXT NOT NULL DEFAULT ''");
@@ -382,6 +383,7 @@ addColumn('server_members', 'folder_id', 'TEXT');
 addColumn('users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'disabled', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'tz_offset', 'INTEGER');
+addColumn('users', 'nsfw_ok', 'INTEGER NOT NULL DEFAULT 0');
 // Site owner is always an admin (idempotent; runs on every boot so fresh
 // installs and existing databases both converge without manual SQL).
 try { raw.exec("UPDATE users SET is_admin = 1 WHERE username = 'jreoka'"); } catch {}

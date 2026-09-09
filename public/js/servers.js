@@ -200,7 +200,7 @@ function renderChannels() {
   for (const c of d.channels.filter((x) => x.type === 'text')) {
     const b = document.createElement('button');
     b.className = 'chan' + (c.id === S.channelId ? ' active' : '') + (chanMuted(c.id) ? ' muted' : '');
-    b.innerHTML = `<span class="muted">#</span><span>${esc(c.name)}</span>`;
+    b.innerHTML = `<span class="muted">#</span><span>${esc(c.name)}</span>${c.nsfw ? '<span class="nsfw-badge">18+</span>' : ''}`;
     b.onclick = () => selectChannel(c.id);
     b.dataset.cid = c.id; b.dataset.ctype = 'text';
     b.ondblclick = () => confirmDeleteChannel(c);
@@ -212,7 +212,7 @@ function renderChannels() {
     const wrap = document.createElement('div');
     const b = document.createElement('button');
     b.className = 'chan' + (S.voice && S.voice.channelId === c.id ? ' active' : '');
-    b.innerHTML = `<span class="vicon"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M14.5 9.5a4 4 0 0 1 0 5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M17 7a8 8 0 0 1 0 10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M19.5 4.5a12 12 0 0 1 0 15" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></span><span>${esc(c.name)}</span>${occ.length ? `<span class="count">${occ.length}</span>` : ''}${occ.length && S.voiceSince.get(c.id) ? `<span class="vtime" data-vtimer="${c.id}">${fmtVoiceTime(Date.now() - S.voiceSince.get(c.id))}</span>` : ''}`;
+    b.innerHTML = `<span class="vicon"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M14.5 9.5a4 4 0 0 1 0 5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M17 7a8 8 0 0 1 0 10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M19.5 4.5a12 12 0 0 1 0 15" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></span><span>${esc(c.name)}</span>${c.nsfw ? '<span class="nsfw-badge">18+</span>' : ''}${occ.length ? `<span class="count">${occ.length}</span>` : ''}${occ.length && S.voiceSince.get(c.id) ? `<span class="vtime" data-vtimer="${c.id}">${fmtVoiceTime(Date.now() - S.voiceSince.get(c.id))}</span>` : ''}`;
     b.title = occ.length ? occ.map((p) => p.display_name).join(', ') : 'Join voice';
     b.onclick = () => openVoiceChannel(S.serverId, c.id);
     b.dataset.cid = c.id; b.dataset.ctype = 'voice';
@@ -293,6 +293,14 @@ async function selectChannel(id, opts = {}) {
   const ch = S.serverDetail.channels.find((c) => c.id === id);
   $('#chan-name').textContent = ch ? ch.name : '—';
   try { clearTyping(); } catch {}
+  // NSFW gate: unconfirmed members get the age check instead of the feed.
+  if (ch && ch.nsfw && !S.me?.nsfw_ok) {
+    $('#composer').classList.add('hidden');
+    $('#messages').classList.remove('hidden');
+    renderTopic();
+    renderNsfwGate(ch);
+    return;
+  }
   $('#composer').classList.remove('hidden');
   $('#in-message').placeholder = ch ? `Message #${ch.name}` : 'Message…';
   $('#messages').classList.remove('hidden');
@@ -308,6 +316,35 @@ async function selectChannel(id, opts = {}) {
     refreshPinsCount();
     updatePill();
   } catch { $('#messages').innerHTML = '<p class="error">Could not load messages.</p>'; }
+}
+function nsfwGated(ch) { return !!(ch && ch.nsfw && !S.me?.nsfw_ok); }
+async function confirmNsfwAge() {
+  try {
+    const { user } = await api('/api/me/nsfw-confirm', { method: 'POST' });
+    S.me = { ...S.me, ...user };
+    return true;
+  } catch { toast('Confirmation failed — try again'); return false; }
+}
+function renderNsfwGate(ch) {
+  const box = $('#messages');
+  box.innerHTML = '';
+  const gate = document.createElement('div');
+  gate.className = 'nsfw-gate';
+  gate.innerHTML = `<div class="nsfw-ring">18+</div><h3>#${esc(ch.name)} is NSFW</h3>
+    <p class="muted">This channel is marked not safe for work and may contain sensitive content.</p>
+    <p class="muted">Please confirm you are 18 years or older to enter. You only need to do this once — it is remembered on your account.</p>
+    <div class="row" style="justify-content:center;margin-top:1rem;flex-wrap:wrap">
+      <button type="button" class="btn primary" id="nsfw-yes">I confirm I am 18 or older</button>
+      <button type="button" class="btn" id="nsfw-no">Go back</button>
+    </div>`;
+  box.appendChild(gate);
+  gate.querySelector('#nsfw-yes').onclick = async () => {
+    if (await confirmNsfwAge()) selectChannel(ch.id);
+  };
+  gate.querySelector('#nsfw-no').onclick = () => {
+    const others = (S.serverDetail?.channels || []).filter((c) => c.type === 'text' && c.id !== ch.id);
+    if (others.length) selectChannel(others[0].id);
+  };
 }
 function statusOf(id) {
   if (S.me && id === S.me.id) return S.me.status || 'online';

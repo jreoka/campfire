@@ -373,12 +373,13 @@ async function openChannelSettings(sid, c) {
     <label>Channel name<input id="m-chan-name" maxlength="32" value="${esc(c.name)}" /></label>
     <label style="margin-top:.6rem;display:block">Description<input id="m-chan-desc" maxlength="200" placeholder="What's this channel about?" value="${esc(c.description || '')}" /></label>
     <label style="margin-top:.6rem;display:block">Slow mode<select id="m-chan-slow">${slows.map(([v, l]) => `<option value="${v}"${(c.slowmode || 0) === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+    <label class="nsfw-row"><input type="checkbox" id="m-chan-nsfw" class="gcheck"${c.nsfw ? ' checked' : ''} /><span><b>NSFW channel</b><span class="muted small">Members must confirm they are 18 or older before entering. Asked once per account.</span></span></label>
   `, 'Save', async () => {
     const name = $('#m-chan-name').value.trim().replace(/\s+/g, '-');
     if (!name) { toast('Give the channel a name'); return; }
     await api(`/api/servers/${sid}/channels/${c.id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ name, description: $('#m-chan-desc').value.trim(), slowmode: Number($('#m-chan-slow').value) }),
+      body: JSON.stringify({ name, description: $('#m-chan-desc').value.trim(), slowmode: Number($('#m-chan-slow').value), nsfw: $('#m-chan-nsfw').checked }),
     });
     renderServerTab();
     if (sid === S.serverId) selectServer(sid);

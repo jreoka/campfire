@@ -152,6 +152,7 @@ function prettyError(e) {
     bad_color: 'Pick a valid color.', cannot_kick_admin: 'Only the owner can remove admins.',
     admin_only: 'Only site admins can do that.', account_disabled: 'This account has been disabled.',
     cannot_reset_own_2fa: 'Manage your own 2FA in Settings instead.', '2fa_not_enabled': 'That user does not have 2FA enabled.',
+    nsfw_confirm_required: 'Confirm you are 18 or older to view this channel.',
   };
   return map[e] || e.replace(/_/g, ' ');
 }
