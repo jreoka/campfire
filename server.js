@@ -69,19 +69,24 @@ const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(path.dirname(db.DB_PATH),
 const MAX_FILE_BYTES = parseInt(process.env.MAX_FILE_MB || '100', 10) * 1024 * 1024;
 const MAX_IMG_BYTES = 8 * 1024 * 1024;
 const IMG_MIMES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
-const FILE_MIMES = [...IMG_MIMES, 'video/mp4', 'video/webm', 'audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm', 'audio/mp4', 'application/pdf', 'text/plain', 'text/markdown', 'text/csv', 'text/css', 'text/html', 'text/xml', 'text/yaml', 'application/json', 'application/javascript', 'text/javascript', 'application/xml', 'application/x-yaml', 'application/x-sh', 'text/x-sh', 'text/x-python', 'application/x-python', 'application/zip'];
-// Code/text uploads are also accepted by file extension (browsers often send
-// these with an empty or generic MIME type). Only used by the general file
-// uploader — avatar/emoji/banner uploaders stay image-only.
+// General chat uploads accept ANY file type (images, audio incl. flac, video,
+// docs, archives, executables, ...). Only avatar/emoji/banner/icon uploaders
+// stay image-only. Served files default to Content-Disposition: attachment
+// except common inline-playable image/audio/video extensions (see the
+// /uploads static handlers below), so exotic types download safely instead
+// of rendering in-browser.
+// CODE_TEXT_EXTS: used to label extension-sent code/text with an empty or
+// generic MIME type as text/plain (see /api/upload below).
 const CODE_TEXT_EXTS = new Set(['txt', 'md', 'markdown', 'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'json', 'py', 'pyw', 'rb', 'java', 'c', 'h', 'hpp', 'cpp', 'cc', 'cs', 'go', 'rs', 'php', 'swift', 'kt', 'kts', 'scala', 'sh', 'bash', 'zsh', 'sql', 'html', 'htm', 'css', 'scss', 'xml', 'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf', 'csv', 'tsv', 'log', 'diff', 'patch', 'vue', 'svelte', 'lua', 'dart']);
 const EXT_BY_MIME = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/wav': '.wav', 'audio/webm': '.webm', 'audio/mp4': '.m4a', 'application/pdf': '.pdf', 'text/plain': '.txt', 'text/markdown': '.md', 'application/zip': '.zip' };
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 // Extension for a stored upload: known MIME map first, then the original
-// extension when it's an allowlisted code/text type, else .bin.
+// extension when it's filesystem-safe (any alnum ext, so arbitrary file
+// types keep their type), else .bin.
 function extForUpload(file) {
   if (EXT_BY_MIME[file.mimetype]) return EXT_BY_MIME[file.mimetype];
   const e = path.extname(String(file.originalname || '')).toLowerCase().slice(1);
-  return e && CODE_TEXT_EXTS.has(e) ? '.' + e : '.bin';
+  return /^[a-z0-9]{1,10}$/.test(e) ? '.' + e : '.bin';
 }
 function uploader(sub, mimes, maxBytes, allowCodeExt = false) {
   // S3 mode buffers in memory and uploads to the bucket in persistUpload()
@@ -100,6 +105,7 @@ function uploader(sub, mimes, maxBytes, allowCodeExt = false) {
     storage: store,
     limits: { fileSize: maxBytes, files: 1 },
     fileFilter: (req, file, cb) => {
+      if (!mimes) return cb(null, true); // general uploader: any file type
       if (mimes.includes(file.mimetype)) return cb(null, true);
       if (allowCodeExt && CODE_TEXT_EXTS.has(path.extname(String(file.originalname || '')).toLowerCase().slice(1))) return cb(null, true);
       cb(null, false);
@@ -116,7 +122,7 @@ async function persistUpload(sub, file) {
   await storage.s3Put(`${sub}/${filename}`, file.buffer, file.mimetype);
   file.filename = filename;
 }
-const upFile = uploader('files', FILE_MIMES, MAX_FILE_BYTES, true);
+const upFile = uploader('files', null, MAX_FILE_BYTES, true);
 const upImg = uploader('avatars', IMG_MIMES, MAX_IMG_BYTES);
 const upBanner = uploader('banners', IMG_MIMES, MAX_IMG_BYTES);
 const upSidebar = uploader('sidebar', IMG_MIMES, MAX_IMG_BYTES);
@@ -163,7 +169,7 @@ app.use('/uploads', express.static(UPLOAD_DIR, {
   dotfiles: 'deny', index: false, maxAge: '7d',
   setHeaders(res, filePath) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    if (!/\.(png|jpe?g|gif|webp|mp4|webm|mp3|ogg|wav)$/i.test(filePath)) {
+    if (!/\.(png|jpe?g|gif|webp|avif|mp4|m4v|mov|webm|mp3|m4a|ogg|oga|opus|wav|flac)$/i.test(filePath)) {
       res.setHeader('Content-Disposition', 'attachment');
     }
   },
@@ -192,7 +198,7 @@ if (storage.s3Enabled()) {
       res.setHeader('Accept-Ranges', 'bytes');
       if (data.ETag) res.setHeader('ETag', data.ETag);
       if (data.LastModified) res.setHeader('Last-Modified', data.LastModified.toUTCString());
-      if (!/\.(png|jpe?g|gif|webp|mp4|webm|mp3|ogg|wav)$/i.test(key)) {
+      if (!/\.(png|jpe?g|gif|webp|avif|mp4|m4v|mov|webm|mp3|m4a|ogg|oga|opus|wav|flac)$/i.test(key)) {
         res.setHeader('Content-Disposition', 'attachment');
       }
       if (data.$metadata?.httpStatusCode === 206 && data.ContentRange) {
@@ -1312,7 +1318,7 @@ app.post('/api/upload', authRequired, (req, res, next) => {
     next();
   });
 }, async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'bad_file (images, mp4/webm, mp3, txt/md/code, pdf, zip)' });
+  if (!req.file) return res.status(400).json({ error: 'bad_file (no file received)' });
   try { await persistUpload('files', req.file); }
   catch { return res.status(500).json({ error: 'storage_failed' }); }
   let mt = req.file.mimetype;
