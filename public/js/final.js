@@ -1,4 +1,31 @@
 'use strict';
+// ---------- desktop/mobile app: external links open in the OS browser ----------
+// Inside the Tauri wrapper, target=_blank clicks die silently in the WebView
+// (no navigation, no window, no error — at least on Windows/WebView2), so
+// external http(s) links are handed to the native `open_external` command
+// instead. Same-origin links (invites, uploads) keep navigating in-app.
+// No-ops in a real browser (no __TAURI__ global there).
+function tauriExternalLink(e) {
+  try {
+    if (!window.__TAURI__) return;
+    const isAux = e.type === 'auxclick';
+    if (isAux ? e.button !== 1 : e.button !== 0) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a) return;
+    const href = a.getAttribute('href');
+    if (!href || href.startsWith('#')) return;
+    let url;
+    try { url = new URL(href, location.href); } catch { return; }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+    if (url.origin === location.origin) return;
+    e.preventDefault();
+    const inv = window.__TAURI__.core && window.__TAURI__.core.invoke;
+    if (typeof inv === 'function') inv('open_external', { url: url.href }).catch(() => {});
+  } catch {}
+}
+document.addEventListener('click', tauriExternalLink);
+document.addEventListener('auxclick', tauriExternalLink);
 // ---------- presence: quick switch + timed revert ----------
 let statusMenuEl = null, statusSubEl = null;
 function closeStatusMenu() { statusMenuEl?.remove(); statusMenuEl = null; statusSubEl?.remove(); statusSubEl = null; }

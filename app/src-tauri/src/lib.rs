@@ -326,6 +326,22 @@ fn get_watch_state(app: AppHandle) -> serde_json::Value {
     })
 }
 
+// Open an external link in the OS default browser. Called by the
+// frontend's Tauri link interceptor: target=_blank clicks die silently
+// inside the WebView (at least on Windows/WebView2 — no navigation, no
+// window, no error), so the page hands them here instead. Strict
+// allowlist — http(s) only; same-origin links keep navigating in-app.
+// Ungated: the Android shell needs this too.
+#[tauri::command]
+fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    let u = url.trim();
+    if !(u.starts_with("https://") || u.starts_with("http://")) {
+        return Err("unsupported url".into());
+    }
+    use tauri_plugin_opener::OpenerExt;
+    app.opener().open_url(u, None::<&str>).map_err(|e| e.to_string())
+}
+
 #[cfg(desktop)]
 fn clear_game_on_exit<R: Runtime>(app: &AppHandle<R>) {
     let state = app.state::<State>();
@@ -351,7 +367,10 @@ fn clear_game_on_exit<R: Runtime>(app: &AppHandle<R>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default();
+    // Opener on every platform: the frontend's Tauri link interceptor
+    // hands external links to `open_external` so they launch in the OS
+    // browser instead of dying inside the WebView.
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
     #[cfg(desktop)]
     let builder = builder
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
@@ -371,7 +390,7 @@ pub fn run() {
             current_game: Mutex::new(None),
             running_games: Mutex::new(Vec::new()),
         })
-        .invoke_handler(tauri::generate_handler![get_autostart, set_autostart, get_watch_state, get_current_game, get_running_games])
+        .invoke_handler(tauri::generate_handler![get_autostart, set_autostart, get_watch_state, get_current_game, get_running_games, open_external])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
@@ -596,6 +615,10 @@ pub fn run() {
             }
             Ok(())
         });
+    // Mobile shell has no desktop plugins/commands — but it still needs
+    // the external-link opener (same WebView swallowing applies).
+    #[cfg(not(desktop))]
+    let builder = builder.invoke_handler(tauri::generate_handler![open_external]);
     builder
         .run(tauri::generate_context!())
         .expect("error while running tauri app");
