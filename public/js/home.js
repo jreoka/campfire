@@ -427,13 +427,65 @@ async function closeDm(tid) {
   if (S.dmThreadId === tid) { S.dmThreadId = null; renderDmBlank(); }
   refreshDms();
 }
+// Member-card style friend picker row: presence-ring avatar + name/sub-line
+// with a big native checkbox. Shared by new-group, add-members and the
+// server-invite friend picker.
+function gmemRowEl(u) {
+  const st = statusOf(u.id);
+  const off = isOff(st);
+  const streaming = !off && (u.streaming_game || null);
+  const dot = dotOf(st, streaming);
+  const playing = !off && !streaming && u.playing_game;
+  const lab = document.createElement('label');
+  lab.className = 'member gmem';
+  lab.dataset.search = `${u.display_name || ''} ${u.username || ''}`.toLowerCase();
+  lab.title = `Add ${u.display_name || u.username}`;
+  lab.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span>`
+    + `<span class="dmmain"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span>`
+    + `<span class="dmlast">@${esc(u.username)}${streaming ? ` · <span class="ustream-t">Streaming ${esc(streaming)}</span>` : (u.status_text ? ' · ' + esc(u.status_text) : (playing ? ` · Playing ${esc(playing)}` : ''))}</span></span>`
+    + `<input type="checkbox" class="gcheck" value="${u.id}" />`;
+  paintAvatar(lab.querySelector('.avatar'), u);
+  const cb = lab.querySelector('.gcheck');
+  cb.addEventListener('change', () => lab.classList.toggle('sel', cb.checked));
+  return lab;
+}
+function mountGmemPicker(box, users) {
+  box.innerHTML = '';
+  const sorted = [...users].sort((a, b) => String(a.display_name || a.username || '').localeCompare(String(b.display_name || b.username || '')));
+  for (const u of sorted) box.appendChild(gmemRowEl(u));
+}
+// Search filter + selected counter for a mounted picker.
+function wireGmemPicker(searchSel, boxSel, countSel) {
+  const inp = document.querySelector(searchSel), box = document.querySelector(boxSel), count = countSel && document.querySelector(countSel);
+  if (!box) return;
+  const total = box.querySelectorAll('.gmem').length;
+  const update = () => {
+    const q = (inp && inp.value || '').trim().toLowerCase();
+    let visible = 0, picked = 0;
+    for (const lab of box.querySelectorAll('.gmem')) {
+      const hit = !q || (lab.dataset.search || '').includes(q);
+      lab.style.display = hit ? '' : 'none';
+      if (hit) visible++;
+      if (lab.querySelector('.gcheck').checked) picked++;
+    }
+    let none = box.querySelector('.gmem-none');
+    if (!visible) {
+      if (!none) { none = document.createElement('p'); none.className = 'muted small gmem-none'; none.style.padding = '.4rem .2rem'; box.appendChild(none); }
+      none.textContent = 'No friends match.';
+    } else none?.remove();
+    if (count) count.textContent = picked ? `${picked} selected` : `${total} friend${total === 1 ? '' : 's'}`;
+  };
+  inp?.addEventListener('input', update);
+  box.addEventListener('change', update);
+  update();
+}
 function openGroupModal() {
-  const friends = S.friends.friends;
+  const friends = S.friends.friends || [];
   openModal('New group chat', `
-    <label>Group name<input id="m-group-name" maxlength="40" placeholder="e.g. Notes to self" /></label>
-    ${friends.length ? `<div style="margin-top:.6rem;max-height:220px;overflow-y:auto" id="m-group-picks">
-      ${friends.map((f) => `<label class="gpick"><input type="checkbox" value="${f.id}" /> ${esc(f.display_name)} <span class="muted">@${esc(f.username)}</span></label>`).join('')}
-    </div>` : '<p class="muted small">Just you for now — invite friends later.</p><div id="m-group-picks"></div>'}`, 'Create', async () => {
+    <label>Group name<input id="m-group-name" maxlength="40" placeholder="e.g. Weekend squad" /></label>
+    ${friends.length ? `<input id="m-group-search" placeholder="Search friends…" autocomplete="off" />
+    <div class="gmem-count muted small" id="m-group-count"></div>
+    <div class="gmem-list" id="m-group-picks"></div>` : '<p class="muted small">Just you for now — invite friends later.</p><div id="m-group-picks"></div>'}`, 'Create', async () => {
     const name = (document.querySelector('#m-group-name') || {}).value || '';
     const ids = [...document.querySelectorAll('#m-group-picks input:checked')].map((i) => i.value);
     try {
@@ -441,7 +493,9 @@ function openGroupModal() {
       await refreshDms();
       selectDmThread(thread.id);
     } catch (err) { toast(prettyError(err.message)); }
-  });
+  }, { wide: true });
+  const gbox = document.querySelector('#m-group-picks');
+  if (gbox && friends.length) { mountGmemPicker(gbox, friends); wireGmemPicker('#m-group-search', '#m-group-picks', '#m-group-count'); }
 }
 async function toggleDmPin(tid) {
   const t = S.dms.find((x) => x.id === tid);
@@ -485,9 +539,9 @@ async function openGroupAdd(tid) {
   const cands = (S.friends.friends || []).filter((f) => !inGroup.has(f.id));
   if (!cands.length) { toast('No friends to add — everyone is already here'); return; }
   openModal(`Add to ${esc(t.name || 'group chat')}`, `
-    <div style="margin-top:.2rem;max-height:220px;overflow-y:auto" id="m-add-picks">
-      ${cands.map((f) => `<label class="gpick"><input type="checkbox" value="${f.id}" /> ${esc(f.display_name)} <span class="muted">@${esc(f.username)}</span></label>`).join('')}
-    </div>`, 'Add', async () => {
+    <input id="m-add-search" placeholder="Search friends…" autocomplete="off" />
+    <div class="gmem-count muted small" id="m-add-count"></div>
+    <div class="gmem-list" id="m-add-picks"></div>`, 'Add', async () => {
     const ids = [...document.querySelectorAll('#m-add-picks input:checked')].map((i) => i.value);
     if (!ids.length) return;
     let failed = 0;
@@ -500,6 +554,8 @@ async function openGroupAdd(tid) {
     if (failed >= ids.length) toast('Could not add members');
     else if (failed) toast('Some members could not be added');
     else toast(ids.length === 1 ? 'Member added' : 'Members added');
-  });
+  }, { wide: true });
+  const abox = document.querySelector('#m-add-picks');
+  if (abox) { mountGmemPicker(abox, cands); wireGmemPicker('#m-add-search', '#m-add-picks', '#m-add-count'); }
 }
 

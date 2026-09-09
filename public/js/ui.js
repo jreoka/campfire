@@ -155,20 +155,8 @@ function showInvite(srv, invite) {
     if (!picks.length) { box.innerHTML = '<p class="muted small">No friends to invite — everyone is already here.</p>'; return; }
     box.innerHTML = '';
     const list = document.createElement('div');
-    list.style.cssText = 'max-height:180px;overflow-y:auto';
-    for (const f of picks) {
-      const lab = document.createElement('label');
-      lab.className = 'gpick';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox'; cb.value = f.id;
-      lab.appendChild(cb);
-      const nm = document.createElement('span');
-      nm.textContent = `${f.display_name} `;
-      const un = document.createElement('span');
-      un.className = 'muted'; un.textContent = `@${f.username}`;
-      nm.appendChild(un); lab.appendChild(nm);
-      list.appendChild(lab);
-    }
+    list.className = 'gmem-list';
+    for (const f of picks) list.appendChild(gmemRowEl(f));
     box.appendChild(list);
   })();
   $('#m-inv-send').onclick = async () => {
@@ -177,7 +165,7 @@ function showInvite(srv, invite) {
     try {
       const { sent } = await api(`/api/servers/${srv.id}/invite-friends`, { method: 'POST', body: JSON.stringify({ userIds: ids }) });
       toast(sent === 1 ? 'Invite sent' : `${sent} invites sent`);
-      document.querySelectorAll('#m-inv-friends input:checked').forEach((i) => { i.checked = false; });
+      document.querySelectorAll('#m-inv-friends input:checked').forEach((i) => { i.checked = false; i.closest('.gmem')?.classList.remove('sel'); });
     } catch (err) { toast('Invite failed: ' + prettyError(err.message)); }
   };
 }
