@@ -13,7 +13,6 @@ function openSettings(tab = 'profile') {
     if (rem.c && $('#set-namecolor').value === '#aac7ff') $('#set-namecolor').value = rem.c;
     if (rem.g && $('#set-namegrad').value === '#aac7ff') $('#set-namegrad').value = rem.g;
   };
-  $('#set-status').value = S.me.status || 'online';
   $('#set-statustext').value = S.me.status_text || '';
   updatePresenceNote();
   $('#set-bio').value = S.me.bio || '';
@@ -279,14 +278,14 @@ $('#set-banner-rm').onclick = async () => {
   catch { toast('Remove failed'); }
 };
 function rememberedNameColors() { try { return JSON.parse(localStorage.getItem('cf_namecolors') || 'null') || {}; } catch { return {}; } }
-// Pending timed-presence note under the Status select (the avatar flyout
-// owns the timer; saving here keeps it unless the presence itself changes).
+// Pending timed-presence note (status lives in the avatar menu;
+// saving here never touches it).
 function updatePresenceNote() {
   const el = $('#set-presence-note');
   if (!el) return;
   const ts = +((S.me || {}).presence_expires_at || 0);
   el.textContent = (ts > Date.now() && (S.me || {}).status !== 'online')
-    ? `Returns to Online ${fmtCountdown(ts)} — changing the status above clears the timer.`
+    ? `Returns to Online ${fmtCountdown(ts)} — changing status via your avatar clears the timer.`
     : '';
 }
 function updateBioCount() { const b = $('#set-bio'); if (b) $('#set-bio-count').textContent = `${b.value.length} / 300`; }
@@ -296,7 +295,6 @@ $('#set-profile-save').onclick = async () => {
     if ($('#set-namecustom').checked) { try { localStorage.setItem('cf_namecolors', JSON.stringify({ c: $('#set-namecolor').value, g: $('#set-namegrad').value })); } catch {} }
     const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify({
       displayName: $('#set-display').value.trim(),
-      status: $('#set-status').value,
       statusText: $('#set-statustext').value.trim(),
       bio: $('#set-bio').value,
       nameColor: $('#set-namecustom').checked ? $('#set-namecolor').value : '',
