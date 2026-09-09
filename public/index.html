@@ -142,11 +142,6 @@
         <button id="btn-members" class="icon-btn members-btn" title="Members"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></button>
       </header>
 
-      <div id="find-panel" class="hidden">
-        <input id="find-input" placeholder="Search chats…" autocomplete="off" />
-        <div id="find-results"></div>
-      </div>
-
       <div id="incoming-call" class="hidden">
         <span id="ic-avatar" class="avatar"></span>
         <span class="ic-main"><b id="ic-title">Incoming call</b><span id="ic-sub" class="muted"></span></span>
@@ -248,6 +243,16 @@
           <button class="btn primary small" type="submit">Reply</button>
         </div>
       </form>
+    </aside>
+
+    <!-- search tab -->
+    <aside id="find-panel" class="hidden">
+      <header><strong>Search</strong><span class="spacer"></span><button id="find-close" class="mini">✕</button></header>
+      <div id="find-search">
+        <input id="find-input" placeholder="Search chats and messages…" autocomplete="off" />
+        <div class="find-hint muted small">Channels, servers, DMs and message text</div>
+      </div>
+      <div id="find-results"></div>
     </aside>
   </section>
 </div>

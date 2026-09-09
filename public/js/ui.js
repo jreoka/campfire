@@ -176,16 +176,17 @@ $('#btn-menu').onclick = () => document.body.classList.toggle('nav-open');
 $('#btn-members').onclick = (e) => { e.stopPropagation(); document.body.classList.toggle('members-open'); };
 $('#sidebar-scrim').onclick = () => document.body.classList.remove('nav-open');
 
-/* ---------- chat finder: quick-jump to channels, servers, DMs ---------- */
-let findSel = 0, findRows = [];
+/* ---------- chat finder: quick-jump to channels, servers, DMs + message text ---------- */
+let findSel = 0, findRows = [], findLastQ = '', findMsgSeq = 0, findMsgTimer = null;
 function findOpen() { return !$('#find-panel')?.classList.contains('hidden'); }
 function openFind() {
   const p = $('#find-panel');
   if (!p) return;
   p.classList.remove('hidden');
   const inp = $('#find-input');
-  inp.value = '';
-  renderFindResults('');
+  // Keep your last search so hopping between results doesn't mean retyping.
+  inp.value = findLastQ;
+  renderFindResults(findLastQ);
   setTimeout(() => { try { inp.focus(); } catch {} }, 0);
   // DM list may be stale/empty if Home was never opened this session —
   // refresh in the background and repaint if the panel is still up.
@@ -197,16 +198,53 @@ async function findGoChannel(sid, cid, type) {
   if (type === 'voice') openVoiceChannel(sid, cid);
   else selectChannel(cid);
 }
-function renderFindResults(q) {
-  const box = $('#find-results');
-  if (!box) return;
-  findRows = [];
-  findSel = 0;
-  const query = q.trim().toLowerCase();
-  const hit = (s) => !query || String(s || '').toLowerCase().includes(query);
-  box.innerHTML = '';
-  const sec = (t) => { const e = document.createElement('div'); e.className = 'find-sec'; e.textContent = t; box.appendChild(e); };
-  const row = (icon, name, sub, fn) => {
+// Jump to a message search hit in context: navigate to its chat first (if
+// needed), then reuse the pin-jump window + highlight.
+async function findGoMessage(r) {
+  const m = r.message || {};
+  if (r.kind === 'dm') {
+    if (S.view !== 'home') await openHome();
+    if (S.dmThreadId !== m.threadId) await selectDmThread(m.threadId);
+    jumpToPin({ kind: 'dm', id: m.threadId }, m.id);
+  } else {
+    if (m.serverId !== S.serverId) await selectServer(m.serverId);
+    if (S.channelId !== m.channelId) await selectChannel(m.channelId);
+    jumpToPin({ kind: 'server', id: m.channelId, serverId: m.serverId }, m.id);
+  }
+}
+function runFindMsgSearch(q, box, searching) {
+  const my = ++findMsgSeq;
+  clearTimeout(findMsgTimer);
+  findMsgTimer = setTimeout(async () => {
+    let results = [];
+    try { ({ results } = await api('/api/search?q=' + encodeURIComponent(q) + '&limit=20')); } catch { results = []; }
+    if (my !== findMsgSeq || !findOpen() || !searching.isConnected) return;
+    if (($('#find-input')?.value || '').trim() !== q) return; // superseded
+    searching.remove();
+    if (!results.length) {
+      if (!findRows.length) box.innerHTML = '<p class="muted small find-empty">Nothing matches your search.</p>';
+      return;
+    }
+    const secEl = document.createElement('div');
+    secEl.className = 'find-sec';
+    secEl.textContent = 'MESSAGES';
+    box.appendChild(secEl);
+    const rowFn = findRowFactory(box);
+    for (const r of results) {
+      const m = r.message || {};
+      const text = m.content ? (m.content.length > 140 ? m.content.slice(0, 140) + '\u2026' : m.content)
+        : (m.attachments?.length ? `[${m.attachments.length} attachment${m.attachments.length === 1 ? '' : 's'}]` : '[no text]');
+      const who = m.user ? m.user.display_name : 'Someone';
+      const where = r.kind === 'dm' ? (r.threadTitle || 'Direct message') : ('#' + (r.channelName || 'chat') + ' \u00B7 ' + (r.serverName || ''));
+      rowFn((who || '?').trim().charAt(0).toUpperCase(), text, who + ' \u00B7 ' + where, () => findGoMessage(r));
+    }
+    paintFindSel();
+  }, 250);
+}
+// Row builder shared by the sync chat sections and the async message
+// section (which renders later into the same list).
+function findRowFactory(box) {
+  return (icon, name, sub, fn) => {
     const idx = findRows.length;
     findRows.push(fn);
     const b = document.createElement('button');
@@ -220,6 +258,17 @@ function renderFindResults(q) {
     b.onclick = () => activateFind(idx);
     box.appendChild(b);
   };
+}
+function renderFindResults(q) {
+  const box = $('#find-results');
+  if (!box) return;
+  findRows = [];
+  findSel = 0;
+  const query = q.trim().toLowerCase();
+  const hit = (s) => !query || String(s || '').toLowerCase().includes(query);
+  box.innerHTML = '';
+  const sec = (t) => { const e = document.createElement('div'); e.className = 'find-sec'; e.textContent = t; box.appendChild(e); };
+  const row = findRowFactory(box);
   const cap = (arr) => query ? arr.slice(0, 8) : arr;
   const chans = (S.view === 'server' && S.serverDetail) ? (S.serverDetail.channels || []) : [];
   const texts = cap(chans.filter((c) => c.type === 'text' && (hit(c.name) || hit(c.description))));
@@ -246,8 +295,17 @@ function renderFindResults(q) {
         async () => { if (S.view !== 'home') await openHome(); await selectDmThread(t.id); });
     }
   }
-  if (!findRows.length) box.innerHTML = '<p class="muted small find-empty">No chats match.</p>';
+  if (!findRows.length && query.length < 2) box.innerHTML = '<p class="muted small find-empty">No chats match.</p>';
   paintFindSel();
+  // Message text searches the server (debounced) once the query is long
+  // enough to be selective. Renders into this same list when it lands.
+  if (query.length >= 2) {
+    const searching = document.createElement('p');
+    searching.className = 'muted small find-empty';
+    searching.textContent = 'Searching messages…';
+    box.appendChild(searching);
+    runFindMsgSearch(q.trim(), box, searching);
+  }
 }
 function paintFindSel() {
   document.querySelectorAll('#find-results .find-row').forEach((el) => {
@@ -257,21 +315,20 @@ function paintFindSel() {
 }
 async function activateFind(idx) {
   const fn = findRows[idx];
-  closeFind();
+  // Docked tab: stay open on desktop so you can hop between results
+  // without re-searching. Overlay mode (narrow screens) covers the chat,
+  // so dismiss there after jumping.
+  if (matchMedia('(max-width: 1100px)').matches) closeFind();
   if (fn) { try { await fn(); } catch (err) { toast('Could not open chat'); } }
 }
+$('#find-close').onclick = () => closeFind();
 $('#btn-find').onclick = (e) => { e.stopPropagation(); findOpen() ? closeFind() : openFind(); };
-$('#find-input').addEventListener('input', (e) => renderFindResults(e.target.value));
+$('#find-input').addEventListener('input', (e) => { findLastQ = e.target.value; renderFindResults(e.target.value); });
 $('#find-input').addEventListener('keydown', (e) => {
   if (e.key === 'ArrowDown') { e.preventDefault(); if (findRows.length) { findSel = (findSel + 1) % findRows.length; paintFindSel(); } }
   else if (e.key === 'ArrowUp') { e.preventDefault(); if (findRows.length) { findSel = (findSel - 1 + findRows.length) % findRows.length; paintFindSel(); } }
   else if (e.key === 'Enter') { e.preventDefault(); activateFind(findSel); }
   else if (e.key === 'Escape') { closeFind(); }
-});
-document.addEventListener('click', (e) => {
-  if (!findOpen()) return;
-  if (e.target.closest && (e.target.closest('#find-panel') || e.target.closest('#btn-find'))) return;
-  closeFind();
 });
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); findOpen() ? closeFind() : openFind(); }

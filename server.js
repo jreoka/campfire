@@ -1268,6 +1268,77 @@ app.get('/api/servers/:id/channels/:chId/messages', authRequired, (req, res) => 
   res.json({ messages: hydrateMessages(rows.reverse(), req.user.id) });
 });
 
+// Unified quick-find: message text across every server channel + DM thread
+// the caller can read. Powers the header chat finder (MESSAGES section).
+// Thread replies are excluded — jump-to-context only supports top-level
+// channel messages (same constraint as jump-to-pin). NSFW channels stay
+// hidden until the account confirms 18+ (same rule as history loads).
+app.get('/api/search', authRequired, (req, res) => {
+  const q = String(req.query.q || '').trim().slice(0, 80);
+  if (q.length < 2) return res.json({ results: [] });
+  const lim = Math.min(parseInt(req.query.limit || '20', 10) || 20, 30);
+  const pat = '%' + q.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
+  const me = req.user.id;
+  let nsfwOk = 0;
+  try { nsfwOk = db.prepare('SELECT nsfw_ok FROM users WHERE id = ?').get(me)?.nsfw_ok ? 1 : 0; } catch {}
+  const out = [];
+  try {
+    const srows = db.prepare(`
+      SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,
+             p.content AS p_content, pu.display_name AS p_name
+      FROM messages m
+      JOIN channels ch ON ch.id = m.channel_id
+      JOIN server_members sm ON sm.server_id = m.server_id AND sm.user_id = ?
+      LEFT JOIN users u ON u.id = m.user_id
+      LEFT JOIN messages p ON p.id = m.reply_to_id
+      LEFT JOIN users pu ON pu.id = p.user_id
+      WHERE m.thread_root_id IS NULL AND m.sys IS NULL
+        AND (ch.nsfw = 0 OR ? = 1)
+        AND m.content LIKE ? ESCAPE '\\'
+      ORDER BY m.created_at DESC LIMIT ?
+    `).all(me, nsfwOk, pat, lim);
+    const smsgs = hydrateMessages(srows, me);
+    const sids = [...new Set(srows.map((r) => r.server_id))];
+    const cids = [...new Set(srows.map((r) => r.channel_id))];
+    const snames = {}, cnames = {};
+    if (sids.length) {
+      const ph = sids.map(() => '?').join(',');
+      for (const r of db.prepare(`SELECT id, name FROM servers WHERE id IN (${ph})`).all(...sids)) snames[r.id] = r.name;
+    }
+    if (cids.length) {
+      const ph = cids.map(() => '?').join(',');
+      for (const r of db.prepare(`SELECT id, name FROM channels WHERE id IN (${ph})`).all(...cids)) cnames[r.id] = r.name;
+    }
+    smsgs.forEach((msg, i) => out.push({
+      kind: 'server', message: msg,
+      serverName: snames[srows[i].server_id] || 'Server',
+      channelName: cnames[srows[i].channel_id] || 'chat',
+    }));
+  } catch {}
+  try {
+    const drows = db.prepare(`${DM_JOIN}
+      JOIN dm_members dmm ON dmm.thread_id = m.thread_id AND dmm.user_id = ?
+      WHERE m.sys IS NULL AND m.content LIKE ? ESCAPE '\\'
+      ORDER BY m.created_at DESC LIMIT ?
+    `).all(me, pat, lim);
+    const dmsgs = hydrateDm(drows, me);
+    dmsgs.forEach((msg, i) => {
+      const t = db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(drows[i].thread_id);
+      let title = 'Direct message';
+      if (t) {
+        if (t.is_group) title = t.name || 'Group chat';
+        else {
+          const peer = db.prepare(`SELECT ${USER_COLS} FROM users WHERE id IN (SELECT user_id FROM dm_members WHERE thread_id = ? AND user_id != ?) LIMIT 1`).get(t.id, me);
+          title = (peer && peer.display_name) || 'Direct message';
+        }
+      }
+      out.push({ kind: 'dm', message: msg, threadTitle: title });
+    });
+  } catch {}
+  out.sort((a, b) => b.message.created_at - a.message.created_at || (a.message.id < b.message.id ? -1 : 1));
+  res.json({ results: out.slice(0, lim) });
+});
+
 app.delete('/api/messages/:mid', authRequired, (req, res) => {
   const m = db.prepare('SELECT * FROM messages WHERE id = ?').get(req.params.mid);
   if (!m) return res.status(404).json({ error: 'no_message' });
