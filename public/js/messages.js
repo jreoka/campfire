@@ -628,6 +628,13 @@ $('#in-attach').addEventListener('change', (e) => {
   const f = e.target.files[0];
   e.target.value = '';
   uploadAndAttach(f);
+  // File picker steals focus — hand it back so Enter sends right away.
+  try { $('#in-message').focus({ preventScroll: true }); } catch { $('#in-message')?.focus(); }
+});
+// Dialog dismissed without picking: focus was still lost to the picker,
+// so restore it for the same Enter-to-send flow.
+$('#in-attach').addEventListener('cancel', () => {
+  try { $('#in-message').focus({ preventScroll: true }); } catch { $('#in-message')?.focus(); }
 });
 function composerTargetReady() {
   return S.view === 'home' ? !!S.dmThreadId : !!(S.serverId && S.channelId);
