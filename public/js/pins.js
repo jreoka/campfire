@@ -265,6 +265,8 @@ function sendDm(content, opts = {}) {
   if (!S.dmThreadId) return;
   if (S.ws && S.ws.readyState === 1) {
     S.ws.send(JSON.stringify({ t: 'dm', threadId: S.dmThreadId, content, attachments: opts.attachments || [], replyTo: opts.replyTo || null }));
-    renderDmMessages(true);
+    // Optimistic: echo appends incrementally — just jump to the bottom now
+    // (a full render here flashes every avatar in Safari).
+    try { const _b = $('#messages'); _b.scrollTop = _b.scrollHeight; updatePill(); } catch {}
   } else toast('Reconnecting… try again in a second');
 }

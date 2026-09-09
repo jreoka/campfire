@@ -77,7 +77,9 @@ function onWS(m) {
         arr.push(msg);
         S.messages.set(m.channelId, arr);
         if (m.channelId === S.channelId) {
-          renderMessages();
+          // Incremental append keeps every existing avatar <img> untouched
+          // (full rebuilds flash them in Safari); fall back if not live-tail.
+          if (!appendLiveMessage($('#messages'), arr, msg)) renderMessages();
           if (!msg.sys && document.hidden && !dnd) notifyMsg(msg);
           else if (!msg.sys && !document.hidden && !dnd && mentionsMe(msg)) sfx.msg();
         } else if (!msg.sys && !dnd) {
@@ -136,7 +138,7 @@ function onWS(m) {
             if (document.hidden && !ddnd) notifyMsg(msg);
           }
         } else {
-          renderDmMessages();
+          if (!appendLiveMessage($('#messages'), S.dmMessages.get(msg.threadId) || [], msg)) renderDmMessages();
           if (!msg.sys && document.hidden && !ddnd) notifyMsg(msg);
         }
         // Keep the DM/group list preview fresh — e.g. the first message sent

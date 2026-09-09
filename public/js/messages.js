@@ -397,6 +397,34 @@ function renderMessages(force = false) {
   if (force || nearBottom) anchorBottom(box);
   updatePill();
 }
+// Incremental live append: add ONE arriving message without rebuilding the
+// whole list. A full rebuild recreates every avatar <img>, which visibly
+// flashes (all profile pics disappear/reappear) in Safari on every
+// send/receive. Returns false when the list isn't in a plain live-tail
+// state — the caller then falls back to a full render.
+function appendLiveMessage(box, arr, msg) {
+  try {
+    if (!box || !msg || !arr.length || arr[arr.length - 1] !== msg) return false;
+    if (!box.querySelector('.msg')) return false; // empty/placeholder state
+    const prev = arr.length > 1 ? arr[arr.length - 2] : null;
+    // Out-of-order arrival (shouldn't happen — the server stamps now()):
+    // fall back so ordering stays correct.
+    if (prev && (msg.created_at || 0) < (prev.created_at || 0)) return false;
+    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+    let groupPrev = prev;
+    if (!prev || fmtDay(prev.created_at) !== fmtDay(msg.created_at)) {
+      const d = document.createElement('div');
+      d.className = 'day';
+      d.textContent = fmtDay(msg.created_at);
+      box.appendChild(d);
+      groupPrev = null;
+    }
+    box.appendChild(messageEl(msg, { grouped: shouldGroup(groupPrev, msg) }));
+    if (nearBottom) anchorBottom(box);
+    updatePill();
+    return true;
+  } catch { return false; }
+}
 function replyPreviewOf(m) {
   const t = String(m?.content || '').trim().slice(0, 60);
   if (t) return t;
@@ -687,7 +715,10 @@ function sendChat(content, opts = {}) {
       t: 'message', serverId: S.serverId, channelId: S.channelId, content,
       attachments: opts.attachments || [], replyTo: opts.replyTo || null, threadRoot: opts.threadRoot || null,
     }));
-    if (!opts.threadRoot) renderMessages(true);
+    // Optimistic: the echo arrives via WS in ms and appends incrementally
+    // (see appendLiveMessage) — just jump to the bottom now. A full render
+    // here would rebuild every avatar and flash them in Safari.
+    if (!opts.threadRoot) { try { const _b = $('#messages'); _b.scrollTop = _b.scrollHeight; updatePill(); } catch {} }
   } else {
     toast('Reconnecting… try again in a second');
   }
