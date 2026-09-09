@@ -305,6 +305,7 @@ async function selectChannel(id, opts = {}) {
   $('#in-message').placeholder = ch ? `Message #${ch.name}` : 'Message…';
   $('#messages').classList.remove('hidden');
   renderTopic();
+  paintSlowmodeHint();
   $('#messages').innerHTML = '<p class="muted">Loading…</p>';
   try {
     const { messages } = await api(`/api/servers/${S.serverId}/channels/${id}/messages?limit=80`);

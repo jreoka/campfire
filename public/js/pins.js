@@ -204,6 +204,7 @@ async function selectDmThread(id) {
   $('#messages').classList.remove('hidden');
   renderDmMembers();
   renderTopic();
+  paintSlowmodeHint();
   $('#chan-hash').textContent = t.isGroup ? '' : '@';
   const peer = dmPeer(t);
   $('#chan-name').textContent = t.isGroup ? (t.name || 'Group chat') : ((peer || {}).display_name || 'DM');

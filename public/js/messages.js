@@ -862,6 +862,25 @@ function clearTyping() {
   const bar = $('#typing-bar');
   if (bar) bar.classList.remove('show');
 }
+function fmtSlow(secs) {
+  secs = Number(secs) || 0;
+  return secs < 60 ? secs + 's' : Math.round(secs / 60) + 'm';
+}
+// Slowmode indicator above the input (far right of the typing strip).
+// Painted on every channel/DM switch and whenever the server pushes an
+// updated channel list, so admin toggles show up live.
+function paintSlowmodeHint() {
+  const hint = $('#slowmode-hint'), bar = $('#typing-bar');
+  if (!hint || !bar) return;
+  const ch = S.view === 'server'
+    ? (S.serverDetail?.channels || []).find((c) => c.id === S.channelId) : null;
+  const secs = ch && ch.type === 'text' ? (ch.slowmode || 0) : 0;
+  if (!secs) { hint.classList.add('hidden'); bar.classList.remove('slow'); return; }
+  hint.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Slow mode · ' + fmtSlow(secs) + '</span>';
+  hint.title = `You can send one message every ${fmtSlow(secs)} in this channel`;
+  hint.classList.remove('hidden');
+  bar.classList.add('slow');
+}
 function showTyping(userId, name) {
   if (userId === S.me.id) return;
   S.typingNames.set(userId, name || 'Someone');

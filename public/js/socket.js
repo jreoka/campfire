@@ -279,6 +279,7 @@ function onWS(m) {
         renderTopic();
         if (!m.server.channels.find((c) => c.id === keepChan)) S.channelId = (m.server.channels.find((c) => c.type === 'text') || {}).id || null;
         renderServerList(); renderChannels(); renderMembers();
+        paintSlowmodeHint();
         if (S.channelId && S.channelId !== keepChan) selectChannel(S.channelId);
       } else renderServerList();
       break;
