@@ -281,7 +281,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 #typing-bar.show{display:flex;min-height:1.35rem}
 #chat:has(#composer.hidden) #typing-bar{display:none}
 #typing{font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#typing-bar.slow{display:flex;min-height:1.35rem}
+#typing-bar.slow{display:flex;min-height:0;padding:.15rem 1.1rem .5rem}
 #slowmode-hint{display:inline-flex;align-items:center;gap:.32rem;font-size:.74rem;font-weight:700;color:var(--amber);white-space:nowrap}
 #slowmode-hint.hidden{display:none}
 .send-btn{width:46px;height:46px;border-radius:50%;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:background var(--t-fast),transform .1s ease}
