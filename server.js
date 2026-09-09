@@ -2494,7 +2494,7 @@ const DM_JOIN = `SELECT m.*, u.username, u.display_name, u.avatar_color, u.avata
   LEFT JOIN dm_messages p ON p.id = m.reply_to_id LEFT JOIN users pu ON pu.id = p.user_id`;
 function hydrateDm(rows, meId) {
   const ids = rows.map((r) => r.id);
-  const attBy = {}, reactBy = {};
+  const attBy = {}, reactBy = {}, parentAttBy = {};
   const pollBy = pollsForMessages('dm', ids);
   if (ids.length) {
     const ph = ids.map(() => '?').join(',');
@@ -2506,8 +2506,15 @@ function hydrateDm(rows, meId) {
       const e = (t[r.emoji] = t[r.emoji] || { emoji: r.emoji, count: 0, users: [] });
       e.count++; e.users.push(r.user_id);
     }
+    const parentIds = [...new Set(rows.filter((r) => r.reply_to_id && !String(r.p_content || '').trim()).map((r) => r.reply_to_id))];
+    if (parentIds.length) {
+      const pph = parentIds.map(() => '?').join(',');
+      for (const a of db.prepare(`SELECT message_id FROM dm_attachments WHERE message_id IN (${pph})`).all(...parentIds)) {
+        parentAttBy[a.message_id] = (parentAttBy[a.message_id] || 0) + 1;
+      }
+    }
   }
-  return rows.map((r) => ({
+  return patchAttachmentSnippets(rows.map((r) => ({
     id: r.id, threadId: r.thread_id, content: r.content, created_at: r.created_at,
     sys: r.sys || null,
     fwdFrom: r.fwd_from || null,
@@ -2517,7 +2524,7 @@ function hydrateDm(rows, meId) {
     poll: pollBy[r.id] || null,
     reactions: Object.values(reactBy[r.id] || {}).map((t) => ({ emoji: t.emoji, count: t.count, me: t.users.includes(meId) })),
     user: r.user_id ? publicUser({ id: r.user_id, username: r.username, display_name: r.display_name, avatar_color: r.avatar_color, avatar_url: r.avatar_url }) : null,
-  }));
+  })), parentAttBy);
 }
 function fullDm(mid, meId) {
   const row = db.prepare(`${DM_JOIN} WHERE m.id = ?`).get(mid);
@@ -3027,9 +3034,21 @@ function fmtMsg(r) {
   };
 }
 // Batch-load attachments, reaction tallies, and reply counts for a page of messages.
+// Reply quotes on attachment-only parents read 'sent an attachment' instead
+// of rendering an empty quote. Both hydrates batch-load parent attachment
+// counts and run their output through this.
+function patchAttachmentSnippets(out, parentAttBy) {
+  for (const m of out) {
+    if (m.replyTo && !m.replyTo.deleted && !String(m.replyTo.snippet || '').trim()) {
+      const n = parentAttBy[m.replyTo.id] || 0;
+      if (n > 0) m.replyTo.snippet = n === 1 ? 'sent an attachment' : `sent ${n} attachments`;
+    }
+  }
+  return out;
+}
 function hydrateMessages(rows, meId) {
   const ids = rows.map((r) => r.id);
-  const attBy = {}, reactBy = {}, countBy = {};
+  const attBy = {}, reactBy = {}, countBy = {}, parentAttBy = {};
   const pollBy = pollsForMessages('server', ids);
   if (ids.length) {
     const ph = ids.map(() => '?').join(',');
@@ -3044,8 +3063,15 @@ function hydrateMessages(rows, meId) {
     for (const c of db.prepare(`SELECT thread_root_id r, COUNT(*) c FROM messages WHERE thread_root_id IN (${ph}) GROUP BY thread_root_id`).all(...ids)) {
       countBy[c.r] = c.c;
     }
+    const parentIds = [...new Set(rows.filter((r) => r.reply_to_id && !String(r.p_content || '').trim()).map((r) => r.reply_to_id))];
+    if (parentIds.length) {
+      const pph = parentIds.map(() => '?').join(',');
+      for (const a of db.prepare(`SELECT message_id FROM attachments WHERE message_id IN (${pph})`).all(...parentIds)) {
+        parentAttBy[a.message_id] = (parentAttBy[a.message_id] || 0) + 1;
+      }
+    }
   }
-  return rows.map((r) => {
+  return patchAttachmentSnippets(rows.map((r) => {
     const m = fmtMsg(r);
     m.attachments = attBy[r.id] || [];
     m.poll = pollBy[r.id] || null;
@@ -3053,7 +3079,7 @@ function hydrateMessages(rows, meId) {
     m.reactions = tally.map((t) => ({ emoji: t.emoji, count: t.count, me: t.users.includes(meId) }));
     m.threadCount = countBy[r.id] || 0;
     return m;
-  });
+  }), parentAttBy);
 }
 function reactionTally(messageId, meId) {
   const rows = db.prepare('SELECT emoji, user_id FROM message_reactions WHERE message_id = ?').all(messageId);

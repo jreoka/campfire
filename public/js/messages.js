@@ -397,6 +397,13 @@ function renderMessages(force = false) {
   if (force || nearBottom) anchorBottom(box);
   updatePill();
 }
+function replyPreviewOf(m) {
+  const t = String(m?.content || '').trim().slice(0, 60);
+  if (t) return t;
+  if (m?.attachments?.length) return 'an attachment';
+  if (m?.poll) return 'a poll';
+  return '';
+}
 function renderComposerMeta() {
   const box = $('#attach-preview');
   box.innerHTML = '';
@@ -405,7 +412,7 @@ function renderComposerMeta() {
   if (hasReply) {
     const chip = document.createElement('div');
     chip.className = 'att-chip';
-    chip.innerHTML = `<span>Replying to <b>${esc(S.replyTo.user ? S.replyTo.user.display_name : '?')}</b>: ${esc(String(S.replyTo.content || '').slice(0, 60))}</span>`;
+    chip.innerHTML = `<span>Replying to <b>${esc(S.replyTo.user ? S.replyTo.user.display_name : '?')}</b>: ${esc(replyPreviewOf(S.replyTo))}</span>`;
     const x = document.createElement('button'); x.className = 'mini'; x.textContent = '✕';
     x.onclick = () => { S.replyTo = null; renderComposerMeta(); };
     chip.appendChild(x); box.appendChild(chip);
@@ -436,7 +443,7 @@ function renderThreadComposerMeta() {
   if (!S.threadReplyTo) return;
   const chip = document.createElement('div');
   chip.className = 'att-chip';
-  chip.innerHTML = `<span>Replying to <b>${esc(S.threadReplyTo.user ? S.threadReplyTo.user.display_name : '?')}</b>: ${esc(String(S.threadReplyTo.content || '').slice(0, 60))}</span>`;
+  chip.innerHTML = `<span>Replying to <b>${esc(S.threadReplyTo.user ? S.threadReplyTo.user.display_name : '?')}</b>: ${esc(replyPreviewOf(S.threadReplyTo))}</span>`;
   const x = document.createElement('button'); x.className = 'mini'; x.textContent = '✕'; x.type = 'button';
   x.onclick = () => { S.threadReplyTo = null; renderThreadComposerMeta(); };
   chip.appendChild(x); box.appendChild(chip);

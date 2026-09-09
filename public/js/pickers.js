@@ -321,15 +321,42 @@ async function toggleReaction(mid, emoji) {
   } catch (err) { toast('Reaction failed: ' + prettyError(err.message)); }
 }
 async function jumpToMessage(id) {
-  const el = document.querySelector(`#messages [data-mid="${CSS.escape(id)}"]`);
-  if (el) {
-    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
-    return;
+  const sel = `#messages [data-mid="${CSS.escape(id)}"]`;
+  const el = document.querySelector(sel);
+  if (el) { flashMsgEl(el); return; }
+  // Parent isn't in the loaded window: pull a context window around it (same
+  // UX as pin jumps) so the quote always lands + highlights. This sets
+  // histMode, so the jump-present pill offers a way back to the bottom.
+  const land = () => requestAnimationFrame(() => {
+    const target = document.querySelector(sel);
+    if (target) flashMsgEl(target);
+    updatePill();
+  });
+  // Replies land in the same thread, so try the current DM first.
+  if (S.view === 'home' && S.dmThreadId) {
+    try {
+      const { messages } = await api(`/api/dms/${S.dmThreadId}/messages?limit=60&around=${encodeURIComponent(id)}`);
+      S.dmMessages.set(S.dmThreadId, messages);
+      S.histMode = { kind: 'dm', id: S.dmThreadId };
+      S.histNew = 0;
+      renderDmMessages();
+      land();
+      return;
+    } catch {}
   }
   try {
     const { message } = await api('/api/messages/' + id);
-    toast(`${message.user ? message.user.display_name : '?'}: ${(message.content || '[attachment]').slice(0, 100)}`);
+    if (!message) throw new Error('no_message');
+    if (message.serverId !== S.serverId) await selectServer(message.serverId);
+    if (message.channelId !== S.channelId) await selectChannel(message.channelId, { keepNav: true });
+    const ctx = pinsCtx();
+    if (!ctx || ctx.kind !== 'server') throw new Error('no_message');
+    const { messages: msgs } = await api(`/api/servers/${ctx.serverId}/channels/${ctx.id}/messages?limit=60&around=${encodeURIComponent(id)}`);
+    S.messages.set(ctx.id, msgs);
+    S.histMode = { ...ctx };
+    S.histNew = 0;
+    renderMessages();
+    land();
   } catch { toast('Message not found'); }
 }
 function startEdit(mid) {
