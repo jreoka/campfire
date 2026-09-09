@@ -456,7 +456,7 @@ function mountGmemPicker(box, users) {
   const sorted = [...users].sort((a, b) => String(a.display_name || a.username || '').localeCompare(String(b.display_name || b.username || '')));
   for (const u of sorted) box.appendChild(gmemRowEl(u));
 }
-// Group chats fit DM_GROUP_MAX people total, creator included.
+// Group chats fit 9 friends + creator (DM_GROUP_MAX total).
 const DM_GROUP_MAX = 10;
 // Search filter + selected counter for a mounted picker. When max is set,
 // selection caps there (the rest disable) and the counter shows the cap.
@@ -493,13 +493,13 @@ function openGroupModal() {
   const max = DM_GROUP_MAX - 1; // seats for friends — you take one
   openModal('New group chat', `
     <label>Group name<input id="m-group-name" maxlength="40" placeholder="e.g. Weekend squad" /></label>
-    ${friends.length ? `<p class="muted small" style="margin:.4rem 0 0">Up to ${DM_GROUP_MAX} people, including you.</p>
+    ${friends.length ? `<p class="muted small" style="margin:.4rem 0 0">Up to ${DM_GROUP_MAX - 1} friends.</p>
     <input id="m-group-search" placeholder="Search friends…" autocomplete="off" />
     <div class="gmem-count muted small" id="m-group-count"></div>
     <div class="gmem-list" id="m-group-picks"></div>` : '<p class="muted small">Just you for now — invite friends later.</p><div id="m-group-picks"></div>'}`, 'Create', async () => {
     const name = (document.querySelector('#m-group-name') || {}).value || '';
     const ids = [...document.querySelectorAll('#m-group-picks input:checked')].map((i) => i.value);
-    if (ids.length > max) { toast(`Group chats fit ${DM_GROUP_MAX} people including you`); return; }
+    if (ids.length > max) { toast(`Group chats fit up to ${DM_GROUP_MAX - 1} friends`); return; }
     try {
       const { thread } = await api('/api/dms/group', { method: 'POST', body: JSON.stringify({ name, userIds: ids }) });
       await refreshDms();
@@ -551,9 +551,9 @@ async function openGroupAdd(tid) {
   const cands = (S.friends.friends || []).filter((f) => !inGroup.has(f.id));
   if (!cands.length) { toast('No friends to add — everyone is already here'); return; }
   const roomLeft = DM_GROUP_MAX - (t.members || []).length;
-  if (roomLeft <= 0) { toast(`Group is full — up to ${DM_GROUP_MAX} people`); return; }
+  if (roomLeft <= 0) { toast(`Group is full — ${DM_GROUP_MAX - 1} friends max`); return; }
   openModal(`Add to ${esc(t.name || 'group chat')}`, `
-    <p class="muted small" style="margin:.2rem 0 0">${roomLeft} spot${roomLeft === 1 ? '' : 's'} left · up to ${DM_GROUP_MAX} total.</p>
+    <p class="muted small" style="margin:.2rem 0 0">${roomLeft} of ${DM_GROUP_MAX - 1} friend spots left.</p>
     <input id="m-add-search" placeholder="Search friends…" autocomplete="off" />
     <div class="gmem-count muted small" id="m-add-count"></div>
     <div class="gmem-list" id="m-add-picks"></div>`, 'Add', async () => {
@@ -566,7 +566,7 @@ async function openGroupAdd(tid) {
     }
     await refreshDms();
     if (S.view === 'home' && S.dmThreadId === tid) selectDmThread(tid);
-    if (full) toast(`Group is full — up to ${DM_GROUP_MAX} people`);
+    if (full) toast(`Group is full — ${DM_GROUP_MAX - 1} friends max`);
     else if (failed >= ids.length) toast('Could not add members');
     else if (failed) toast('Some members could not be added');
     else toast(ids.length === 1 ? 'Member added' : 'Members added');

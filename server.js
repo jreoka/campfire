@@ -2892,7 +2892,7 @@ app.post('/api/dms', authRequired, (req, res) => {
   notifyUser(req.user.id, { t: 'dm-threads-changed' });
   res.json({ thread: dmThreadView(db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(id), req.user.id) });
 });
-// Group chats fit GROUP_MAX people total, creator included.
+// Group chats fit 9 friends + creator (GROUP_MAX total).
 const GROUP_MAX = 10;
 app.post('/api/dms/group', authRequired, (req, res) => {
   const name = String(req.body?.name || '').trim().slice(0, 40) || 'Group chat';
