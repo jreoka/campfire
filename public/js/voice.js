@@ -967,18 +967,36 @@ function fitStage() {
 window.addEventListener('resize', () => { try { fitStage(); } catch {} });
 // Mobile keyboard: track the visual viewport so the app shell compresses
 // instead of panning — top stays anchored, composer + messages slide up.
+// Syncs immediately (a debounce lets the WebView's focus-pan win the race:
+// it shoves the whole page up to reveal the input, then never un-pans,
+// leaving the composer stranded near the top). Any window-level pan is
+// always bogus here (only inner panes scroll), so reset it on sight.
 if (window.visualViewport) {
   const vv = window.visualViewport;
+  const resetWinScroll = () => {
+    try {
+      if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+      const se = document.scrollingElement;
+      if (se && (se.scrollTop || se.scrollLeft)) { se.scrollTop = 0; se.scrollLeft = 0; }
+    } catch {}
+  };
   const syncVV = () => {
     document.documentElement.style.setProperty('--vvh', vv.height + 'px');
+    resetWinScroll();
     const ae = document.activeElement;
     if (ae && (ae.id === 'in-message' || ae.id === 'in-thread')) {
       const m = $('#messages');
       if (m) m.scrollTop = m.scrollHeight;
     }
   };
-  let vvT = null;
-  vv.addEventListener('resize', () => { clearTimeout(vvT); vvT = setTimeout(syncVV, 60); });
+  vv.addEventListener('resize', syncVV);
+  vv.addEventListener('scroll', resetWinScroll);
+  // Focus lands before the keyboard animates: compress the shell first so
+  // the input is already visible and no focus-pan is needed.
+  document.addEventListener('focusin', (e) => {
+    if (e.target && (e.target.id === 'in-message' || e.target.id === 'in-thread')) syncVV();
+  });
+  window.addEventListener('scroll', resetWinScroll, { passive: true });
   syncVV();
 }
 const MIC_OFF_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3M2 2l20 20"/></svg>';
