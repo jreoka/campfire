@@ -412,7 +412,10 @@ async function saveEdit(mid) {
   if (imgEl) {
     const spWrap = imgEl.closest('.att-wrap.spoiler:not(.shown)');
     if (spWrap) { spWrap.classList.add('shown'); return; }
-    openLightbox(imgEl.src); return;
+    // Thread the attachment filename through so the lightbox corner button
+    // can download it (embed images have no attachment — no button then).
+    const dl = imgEl.closest('.att-wrap')?.querySelector('.att-dl');
+    openLightbox(imgEl.src, dl?.getAttribute('download') || ''); return;
   }
   if (clEl) {
     const ch = (S.serverDetail?.channels || []).find((c) => c.id === clEl.dataset.clink);
@@ -590,11 +593,24 @@ $('#thread-composer').addEventListener('submit', (e) => {
 });
 
 // ---------- lightbox ----------
-function openLightbox(src) {
+function openLightbox(src, name) {
   $('#lightbox-img').src = src;
+  const dl = $('#lightbox-dl');
+  if (dl) {
+    if (src && name) { dl.href = src; dl.setAttribute('download', name); dl.classList.remove('hidden'); }
+    else { dl.removeAttribute('href'); dl.classList.add('hidden'); }
+  }
   $('#lightbox').classList.remove('hidden');
 }
-$('#lightbox').onclick = () => { $('#lightbox').classList.add('hidden'); $('#lightbox-img').src = ''; };
+$('#lightbox-dl').addEventListener('click', (e) => {
+  // Don't bubble to #lightbox (which would close it); the anchor still
+  // downloads natively. Toast here — the document-level att-dl toast never
+  // sees this click because of the stopPropagation below.
+  e.stopPropagation();
+  const dl = e.currentTarget;
+  toast(`Downloading ${(dl.getAttribute('download') || 'image').slice(0, 60)}…`);
+});
+$('#lightbox').onclick = () => { $('#lightbox').classList.add('hidden'); $('#lightbox-img').src = ''; $('#lightbox-dl')?.classList.add('hidden'); };
 
 // ---------- user card ----------
 // Member-rail cards open to the LEFT of the sidebar, never over it.
