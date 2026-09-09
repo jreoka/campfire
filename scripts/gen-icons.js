@@ -1,5 +1,16 @@
-// Generates /public/icons/icon-192.png and icon-512.png — flat campfire mark.
-// Zero dependencies — hand-rasterized with 2x supersampling, hand-encoded PNGs.
+// Derives all PWA/app icons from public/icons/campfire-logo.png (the single
+// source of truth for the campfire mark) — zero dependencies.
+//
+// campfire-logo.png is the canonical artwork (transparent background). This
+// script regenerates:
+//   icon-192.png        transparent, area-resampled to 192x192  (manifest "any")
+//   icon-512.png        transparent, 512x512                    (manifest "any")
+//   icon-maskable-512.png  campfire mark centered at ~72% on the #1a1d29
+//                       theme background (Android adaptive-icon safe zone)
+//   apple-touch-icon.png   180x180 on the #1a1d29 theme background (iOS)
+// Keeping the Dockerfile's `RUN node scripts/gen-icons.js` step is safe:
+// it reproduces the committed icons instead of clobbering them with
+// stale procedurally-drawn art.
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
@@ -21,110 +32,165 @@ function chunk(type, data) {
   return Buffer.concat([len, td, crc]);
 }
 
-const dist2 = (x1, y1, x2, y2) => { const dx = x1 - x2, dy = y1 - y2; return dx * dx + dy * dy; };
-// capsule (thick segment) test for logs
-function inCapsule(x, y, x1, y1, x2, y2, r) {
-  const dx = x2 - x1, dy = y2 - y1;
-  const L2 = dx * dx + dy * dy || 1;
-  let t = ((x - x1) * dx + (y - y1) * dy) / L2;
-  t = Math.max(0, Math.min(1, t));
-  return dist2(x, y, x1 + t * dx, y1 + t * dy) <= r * r;
+// Minimal PNG decoder: 8-bit, non-interlaced, truecolor(+alpha).
+function decodePNG(file) {
+  const b = fs.readFileSync(file);
+  if (b.readUInt32BE(0) !== 0x89504e47) throw new Error('not a PNG: ' + file);
+  let p = 8, w = 0, h = 0, colorType = 0, bitDepth = 0, interlace = 0;
+  const idat = [];
+  while (p < b.length) {
+    const len = b.readUInt32BE(p), type = b.subarray(p + 4, p + 8).toString('ascii');
+    const data = b.subarray(p + 8, p + 8 + len);
+    if (type === 'IHDR') {
+      w = data.readUInt32BE(0); h = data.readUInt32BE(4);
+      bitDepth = data[8]; colorType = data[9]; interlace = data[12];
+    } else if (type === 'IDAT') {
+      idat.push(data);
+    } else if (type === 'IEND') {
+      break;
+    }
+    p += 12 + len;
+  }
+  if (bitDepth !== 8 || interlace !== 0 || (colorType !== 2 && colorType !== 6))
+    throw new Error(`unsupported PNG (bitDepth=${bitDepth} colorType=${colorType} interlace=${interlace}): ${file}`);
+  const ch = colorType === 6 ? 4 : 3;
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+  const stride = w * ch;
+  const px = Buffer.alloc(w * h * 4);
+  let prev = Buffer.alloc(stride);
+  let pos = 0;
+  for (let y = 0; y < h; y++) {
+    const filter = raw[pos++];
+    const cur = Buffer.alloc(stride);
+    raw.copy(cur, 0, pos, pos + stride); pos += stride;
+    for (let i = 0; i < stride; i++) {
+      const a = i >= ch ? cur[i - ch] : 0;
+      const bUp = prev[i];
+      const c = i >= ch ? prev[i - ch] : 0;
+      let v = cur[i];
+      if (filter === 1) v = (v + a) & 0xff;
+      else if (filter === 2) v = (v + bUp) & 0xff;
+      else if (filter === 3) v = (v + ((a + bUp) >> 1)) & 0xff;
+      else if (filter === 4) {
+        const pA = Math.abs(bUp - c), pB = Math.abs(a - c), pC = Math.abs(a + bUp - 2 * c);
+        const pr = pA <= pB && pA <= pC ? a : pB <= pC ? bUp : c;
+        v = (v + pr) & 0xff;
+      }
+      cur[i] = v;
+    }
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4, s = x * ch;
+      px[o] = cur[s]; px[o + 1] = cur[s + 1]; px[o + 2] = cur[s + 2];
+      px[o + 3] = ch === 4 ? cur[s + 3] : 255;
+    }
+    prev = cur;
+  }
+  return { w, h, px };
 }
 
-function renderCampfire(size) {
-  const SS = 2, S = size * SS;
-  const px = Buffer.alloc(S * S * 4);
-  const cx = S / 2, u = S / 100; // unit
-  const R = S * 0.24;
-  const ORANGE = [255, 107, 53], AMBER = [255, 179, 0], CORE = [255, 224, 130];
-  const LOG1 = [141, 110, 99], LOG2 = [109, 76, 65], LOGEND = [62, 39, 35];
-  const STONE = [130, 134, 139], STONE_D = [105, 109, 114];
-  const BG = [14, 17, 16];
-
-  const flame = (x, y) => {
-    const at = (dx, dy, r) => dist2(x, y, cx + dx * u, (54 - dy) * u) <= (r * u) ** 2;
-    // innermost first so layers nest instead of hiding each other
-    const core = [[0, 26, 5.2], [0, 20, 3.6], [0.5, 15.5, 2.2]];
-    for (const [dx, dy, r] of core) if (at(dx, dy, r)) return CORE;
-    const mid = [[0, 24, 9], [-5.5, 28.5, 7], [5.5, 28.5, 7], [0, 15, 6.4], [0.8, 7, 4.2], [1.5, 1, 2.5]];
-    for (const [dx, dy, r] of mid) if (at(dx, dy, r)) return AMBER;
-    const outer = [[0, 22, 13.5], [-7.5, 27, 9.5], [7.5, 27, 9.5], [0, 12, 10], [-4, 4, 6.8], [4, 4, 6.8], [1, -3, 5], [2, -9, 3.2], [2.5, -13.5, 1.7]];
-    for (const [dx, dy, r] of outer) if (at(dx, dy, r)) return ORANGE;
-    return null;
-  };
-  // log endpoints for capsule segments (unit space, y down from top)
-  const rad = (d) => (d * Math.PI) / 180;
-  const seg = (angDeg, len) => {
-    const a = rad(angDeg), hl = len / 2;
-    return [cx - Math.cos(a) * hl * u, 68 * u + Math.sin(a) * hl * u, cx + Math.cos(a) * hl * u, 68 * u - Math.sin(a) * hl * u];
-  };
-  const backLog = seg(-16, 46), frontLog = seg(16, 46);
-  const stones = [[-30, 74, 8, 6.4], [-15, 78, 8.6, 6.8], [0, 79, 8.6, 6.8], [15, 78, 8.6, 6.8], [30, 74, 8, 6.4]];
-
-  for (let y = 0; y < S; y++) {
-    for (let x = 0; x < S; x++) {
-      const inR = !(x < R && y < R && (R - x) ** 2 + (R - y) ** 2 > R * R)
-        && !(x > S - 1 - R && y < R && (x - (S - R)) ** 2 + (R - y) ** 2 > R * R)
-        && !(x < R && y > S - 1 - R && (R - x) ** 2 + (y - (S - R)) ** 2 > R * R)
-        && !(x > S - 1 - R && y > S - 1 - R && (x - (S - R)) ** 2 + (y - (S - R)) ** 2 > R * R);
-      let col = BG, a = inR ? 255 : 0;
-      if (inR) {
-        // back stones
-        for (let s = 0; s < stones.length; s++) {
-          const [dx, dy, rx, ry] = stones[s];
-          const ex = (x - (cx + dx * u)) / (rx * u), ey = (y - dy * u) / (ry * u);
-          if (ex * ex + ey * ey <= 1) { col = s % 2 ? STONE_D : STONE; break; }
-        }
-        // back log
-        if (inCapsule(x, y, ...backLog, 3.4 * u)) col = LOG2;
-        // flame
-        const f = flame(x, y);
-        if (f) col = f;
-        // front log + end cap
-        if (inCapsule(x, y, ...frontLog, 3.6 * u)) col = LOG1;
-        const ex = frontLog[2], ey = frontLog[3]; // right end cap
-        if (dist2(x, y, ex, ey) <= (3.6 * u) ** 2) col = LOGEND;
-      }
-      const i = (y * S + x) * 4;
-      px[i] = col[0]; px[i + 1] = col[1]; px[i + 2] = col[2]; px[i + 3] = a;
-    }
+function encodePNG(w, h, px) {
+  const rows = [];
+  for (let y = 0; y < h; y++) {
+    rows.push(Buffer.from([0]));
+    rows.push(Buffer.from(px.subarray(y * w * 4, (y + 1) * w * 4)));
   }
-  // box downsample 2x
-  const out = Buffer.alloc(size * size * 4);
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      let r = 0, g = 0, b = 0, al = 0;
-      for (let dy = 0; dy < SS; dy++) for (let dx = 0; dx < SS; dx++) {
-        const i = (((y * SS + dy) * S) + (x * SS + dx)) * 4;
-        r += px[i]; g += px[i + 1]; b += px[i + 2]; al += px[i + 3];
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; ihdr[9] = 6;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(Buffer.concat(rows), { level: 9 })),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+// Area-average resample (crisp downscales, no ringing).
+function resample(src, sw, sh, dw, dh) {
+  const out = Buffer.alloc(dw * dh * 4);
+  const xRatio = sw / dw, yRatio = sh / dh;
+  for (let y = 0; y < dh; y++) {
+    const y0 = y * yRatio, y1 = y0 + yRatio;
+    const ya = Math.floor(y0), yb = Math.min(Math.ceil(y1), sh);
+    for (let x = 0; x < dw; x++) {
+      const x0 = x * xRatio, x1 = x0 + xRatio;
+      const xa = Math.floor(x0), xb = Math.min(Math.ceil(x1), sw);
+      let r = 0, g = 0, b = 0, a = 0, wsum = 0;
+      for (let sy = ya; sy < yb; sy++) {
+        const wy = Math.min(sy + 1, y1) - Math.max(sy, y0);
+        for (let sx = xa; sx < xb; sx++) {
+          const wx = Math.min(sx + 1, x1) - Math.max(sx, x0);
+          const wt = wx * wy;
+          const i = (sy * sw + sx) * 4;
+          // Premultiplied accumulation so translucent edges stay clean.
+          const sa = src[i + 3] / 255;
+          r += src[i] * sa * wt; g += src[i + 1] * sa * wt; b += src[i + 2] * sa * wt;
+          a += sa * wt; wsum += wt;
+        }
       }
-      const o = (y * size + x) * 4, n = SS * SS;
-      out[o] = r / n; out[o + 1] = g / n; out[o + 2] = b / n; out[o + 3] = al / n;
+      const o = (y * dw + x) * 4;
+      if (a > 1e-6) {
+        out[o] = Math.min(255, Math.max(0, Math.round(r / a)));
+        out[o + 1] = Math.min(255, Math.max(0, Math.round(g / a)));
+        out[o + 2] = Math.min(255, Math.max(0, Math.round(b / a)));
+        out[o + 3] = Math.min(255, Math.max(0, Math.round((a / wsum) * 255)));
+      } else {
+        out[o] = out[o + 1] = out[o + 2] = out[o + 3] = 0;
+      }
     }
   }
   return out;
 }
 
-function encodePNG(size) {
-  const raw = renderCampfire(size);
-  const rows = [];
-  for (let y = 0; y < size; y++) {
-    rows.push(Buffer.from([0]));
-    rows.push(raw.subarray(y * size * 4, (y + 1) * size * 4));
+// Composite an RGBA layer over a solid background.
+function compositeOver(bg, layer, lw, lh, size, dbl) {
+  const out = Buffer.alloc(size * size * 4);
+  for (let i = 0; i < size * size; i++) {
+    out[i * 4] = bg[0]; out[i * 4 + 1] = bg[1]; out[i * 4 + 2] = bg[2]; out[i * 4 + 3] = 255;
   }
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0); ihdr.writeUInt32BE(size, 4);
-  ihdr[8] = 8; ihdr[9] = 6;
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', ihdr),
-    chunk('IDAT', zlib.deflateSync(Buffer.concat(rows))),
-    chunk('IEND', Buffer.alloc(0)),
-  ]);
+  const off = Math.round((size - dbl) / 2);
+  for (let y = 0; y < dbl; y++) {
+    // Map destination box back onto the (already resampled) layer.
+    const sy = Math.min(lh - 1, Math.floor((y / dbl) * lh));
+    for (let x = 0; x < dbl; x++) {
+      const sx = Math.min(lw - 1, Math.floor((x / dbl) * lw));
+      const s = (sy * lw + sx) * 4;
+      const sa = layer[s + 3] / 255;
+      if (sa <= 0) continue;
+      const o = ((y + off) * size + (x + off)) * 4;
+      out[o] = Math.round(layer[s] * sa + out[o] * (1 - sa));
+      out[o + 1] = Math.round(layer[s + 1] * sa + out[o + 1] * (1 - sa));
+      out[o + 2] = Math.round(layer[s + 2] * sa + out[o + 2] * (1 - sa));
+    }
+  }
+  return out;
 }
 
-const outDir = path.join(__dirname, '..', 'public', 'icons');
-fs.mkdirSync(outDir, { recursive: true });
-fs.writeFileSync(path.join(outDir, 'icon-192.png'), encodePNG(192));
-fs.writeFileSync(path.join(outDir, 'icon-512.png'), encodePNG(512));
-console.log('campfire icons written to', outDir);
+const dir = path.join(__dirname, '..', 'public', 'icons');
+const logoFile = path.join(dir, 'campfire-logo.png');
+const { w: lw, h: lh, px: logo } = decodePNG(logoFile);
+if (lw !== lh) throw new Error(`campfire-logo.png must be square, got ${lw}x${lh}`);
+
+const THEME = [0x1a, 0x1d, 0x29]; // --bg / manifest theme_color
+
+// Transparent "any" icons — the raw mark, matching favicon/home art.
+fs.writeFileSync(path.join(dir, 'icon-512.png'), encodePNG(lw, lh, logo));
+fs.writeFileSync(path.join(dir, 'icon-192.png'), encodePNG(192, 192, resample(logo, lw, lh, 192, 192)));
+
+// Maskable: mark at 72% on the theme background (adaptive-icon safe zone).
+const maskBox = Math.round(512 * 0.72);
+const maskLayer = resample(logo, lw, lh, maskBox, maskBox);
+fs.writeFileSync(
+  path.join(dir, 'icon-maskable-512.png'),
+  encodePNG(512, 512, compositeOver(THEME, maskLayer, maskBox, maskBox, 512, maskBox))
+);
+
+// Apple touch icon: 180x180 on the theme background.
+const appleBox = Math.round(180 * 0.8);
+const appleLayer = resample(logo, lw, lh, appleBox, appleBox);
+fs.writeFileSync(
+  path.join(dir, 'apple-touch-icon.png'),
+  encodePNG(180, 180, compositeOver(THEME, appleLayer, appleBox, appleBox, 180, appleBox))
+);
+
+console.log('icons derived from campfire-logo.png ->', dir);
