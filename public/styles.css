@@ -266,7 +266,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .msg .text{overflow-wrap:anywhere;white-space:pre-wrap;font-size:.93rem;color:#dde3ef}
 .msg .text a{color:var(--accent-hover)}
 .msg.sys{justify-content:center;color:var(--faint);font-size:.83rem}
-#composer{display:flex;gap:.55rem;align-items:center;padding:.4rem .9rem .7rem;padding-bottom:calc(.7rem + var(--safe-b));background:var(--panel);min-width:0;position:relative}
+#composer{display:flex;gap:.55rem;align-items:center;padding:.7rem .9rem .7rem;padding-bottom:calc(.7rem + var(--safe-b));background:var(--panel);min-width:0;position:relative}
 #typing-bar{display:none;align-items:center;padding:.1rem 1.1rem .15rem;background:var(--panel)}
 #typing-bar.show{display:flex;min-height:1.35rem}
 #chat:has(#composer.hidden) #typing-bar{display:none}
