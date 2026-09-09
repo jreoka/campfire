@@ -417,10 +417,10 @@ function messageEl(m, opts = {}) {
   const own = m.user && m.user.id === S.me.id;
   const lu = liveUserFor(m.user);
   let inner = grouped
-    ? `<span class="avatar ghost" title="${esc(fmtTime(m.created_at))}"><span class="gts">${esc(fmtTime(m.created_at))}</span></span><div class="body">`
+    ? `<span class="avatar ghost" title="${esc(fmtFull(m.created_at))}"><span class="gts">${esc(fmtTime(m.created_at))}</span></span><div class="body">`
     : '<span class="avatar" data-uid="' + (m.user ? m.user.id : '') + '"></span><div class="body">';
   if (!grouped) {
-    inner += `<div class="head"><span class="who" data-uid="${m.user ? m.user.id : ''}" style="${nameStyleFor(lu)}">${esc(lu ? lu.display_name : 'deleted')}</span><span class="when">${fmtTime(m.created_at)}</span>${m.edited ? '<span class="edited">(edited)</span>' : ''}</div>`;
+    inner += `<div class="head"><span class="who" data-uid="${m.user ? m.user.id : ''}" style="${nameStyleFor(lu)}">${esc(lu ? lu.display_name : 'deleted')}</span><span class="when" title="${esc(fmtFull(m.created_at))}">${fmtTime(m.created_at)}</span>${m.edited ? '<span class="edited">(edited)</span>' : ''}</div>`;
   }
   if (m.fwdFrom) {
     inner += `<div class="fwd-tag">Forwarded from <b>${esc(m.fwdFrom)}</b></div>`;

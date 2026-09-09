@@ -108,7 +108,7 @@ function openMsgSheet(mid) {
   } else {
     const lu = liveUserFor(m.user);
     paintAvatar(head.querySelector('.avatar'), lu);
-    head.querySelector('.sheet-who').innerHTML = `<span style="${nameStyleFor(lu)}">${esc(lu ? lu.display_name : 'deleted')}</span><span class="when">${fmtTime(m.created_at)}</span>`;
+    head.querySelector('.sheet-who').innerHTML = `<span style="${nameStyleFor(lu)}">${esc(lu ? lu.display_name : 'deleted')}</span><span class="when" title="${esc(fmtFull(m.created_at))}">${fmtTime(m.created_at)}</span>`;
     head.querySelector('.sheet-snip').textContent = m.content
       ? (m.content.length > 120 ? m.content.slice(0, 120) + '…' : m.content)
       : (m.attachments?.length ? `[${m.attachments.length} attachment${m.attachments.length === 1 ? '' : 's'}]` : '');

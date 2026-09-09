@@ -146,6 +146,7 @@ async function renderPinsList() {
     who.textContent = p.user ? p.user.display_name : 'deleted';
     if (p.user) who.style.cssText = nameStyleFor(p.user);
     row.querySelector('.when').textContent = fmtTime(p.created_at);
+    row.querySelector('.when').title = fmtFull(p.created_at);
     row.querySelector('.pin-text').textContent = text;
     row.querySelector('.pin-meta').textContent = 'Pinned by ' + (p.pinned_by ? p.pinned_by.display_name : '?');
     paintAvatar(row.querySelector('.avatar'), p.user);

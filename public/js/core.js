@@ -191,6 +191,10 @@ function isBigEmoji(text) {
 function fmtTime(ts) {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
+function fmtFull(ts) {
+  try { return new Date(ts).toLocaleString([], { month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+  catch { return String(ts || ''); }
+}
 function fmtDay(ts) {
   return new Date(ts).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 }
