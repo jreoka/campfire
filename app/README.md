@@ -82,7 +82,10 @@ versionCode derives from it); `main` keeps a placeholder version.
 `src-tauri/icons/` is generated from `public/icons/campfire-logo.png` via
 `npx tauri icon <png>` (gives `icon.icns`, PNGs, `icon.ico`). Afterwards re-run
 `node scripts/gen-ico.js` so `icon.ico` stays byte-identical to the web favicon
-(`public/favicon.ico`) — one source of truth.
+(`public/favicon.ico`) — one source of truth — and re-run
+`node scripts/gen-android-icons.js` from the repo root so the APK launcher
+icons are re-derived zoomed out to the adaptive-icon safe zone (`tauri icon`
+emits the foregrounds full-bleed, which the launcher circle clips).
 
 ## Notes
 

@@ -428,6 +428,21 @@ function anchorBottom(box) {
     img.addEventListener('load', once);
     img.addEventListener('error', once);
   }
+  // Same problem for videos: a 720p attach has no intrinsic size until its
+  // metadata loads, so the initial scroll strands the view mid-video once it
+  // grows. Re-anchor when each video's dimensions settle.
+  for (const v of box.querySelectorAll('video')) {
+    if (v.readyState >= 1) continue;
+    const once = () => {
+      v.removeEventListener('loadedmetadata', once);
+      v.removeEventListener('loadeddata', once);
+      v.removeEventListener('error', once);
+      box.scrollTop = box.scrollHeight;
+    };
+    v.addEventListener('loadedmetadata', once);
+    v.addEventListener('loadeddata', once);
+    v.addEventListener('error', once);
+  }
 }
 function renderMessages(force = false) {
   const box = $('#messages');

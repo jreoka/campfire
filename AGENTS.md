@@ -87,7 +87,9 @@ declared in the manifest); no tray/watcher on mobile — that Rust code is
 - **Icons:** `src-tauri/icons/` generated via `npx tauri icon
   public/icons/campfire-logo.png`, then `node scripts/gen-ico.js` so
   `icon.ico` stays identical to the web favicon (`public/favicon.ico`) —
-  one source of truth.
+  one source of truth. Then `node scripts/gen-android-icons.js` to re-derive
+  the APK launcher foregrounds zoomed out to the adaptive-icon safe zone
+  (`tauri icon` emits them full-bleed, so the launcher circle clips the mark).
 - **Android signing:** upload keystore lives OUTSIDE the repo
   (`~/.campfire-android/`, back it up — losing it bricks updates for existing
   installs); base64 + passwords are the `ANDROID_KEY_*` GitHub secrets,
