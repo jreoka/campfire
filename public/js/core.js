@@ -28,6 +28,7 @@ const S = {
   replyTo: null, // message being replied to (main composer)
   threadReplyTo: null, // message being replied to (thread composer)
   pendingAtts: [], // uploaded attachments awaiting send
+  uploads: [], // in-flight composer uploads (progress cards in #upload-list)
   thread: null, // {rootId, channelId, root, replies[]}
   histMode: null, // {kind:'server'|'dm', id, serverId?} — viewing older (jump-to-pin) context
   histNew: 0, // live arrivals while viewing history (drives the jump pill)

@@ -457,21 +457,137 @@ function replyToMsg(m) {
     const im = $('#in-message'); if (im) im.focus();
   }
 }
-async function uploadAndAttach(file) {
+// ---------- composer uploads: progress cards above the message box ----------
+// Each in-flight file gets a card in #upload-list with a live progress bar, %
+// readout, spinner, and cancel. XHR (not fetch) so we get upload progress
+// events. Finished files move into S.pendingAtts; failures stay on the card
+// with a Retry button instead of vanishing into a toast.
+let uploadSeq = 0;
+function activeUploadCount() { return (S.uploads || []).filter((u) => u.state === 'uploading').length; }
+function uploadCardEl(id) { const box = $('#upload-list'); return box ? box.querySelector('[data-up="' + id + '"]') : null; }
+function renderUploads() {
+  const box = $('#upload-list');
+  if (!box) return;
+  box.classList.toggle('hidden', !(S.uploads || []).length);
+  const seen = new Set();
+  (S.uploads || []).forEach((u) => {
+    seen.add(String(u.id));
+    let el = uploadCardEl(u.id);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'up-card';
+      el.dataset.up = u.id;
+      el.innerHTML =
+        '<div class="up-ic">' + (u.thumb ? '<img src="' + esc(u.thumb) + '" alt="" />'
+          : '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>')
+          + '<span class="up-spin"></span></div>'
+        + '<div class="up-body"><div class="up-top"><span class="up-name"></span><span class="up-pct">0%</span></div>'
+        + '<div class="up-track"><div class="up-fill"></div></div><div class="up-sub"></div></div>'
+        + '<button type="button" class="mini up-retry hidden">Retry</button>'
+        + '<button type="button" class="mini up-x" title="Cancel upload">✕</button>';
+      el.querySelector('.up-name').textContent = u.name;
+      el.querySelector('.up-x').onclick = () => cancelUpload(u.id);
+      el.querySelector('.up-retry').onclick = () => retryUpload(u.id);
+      box.appendChild(el);
+    }
+    paintUploadCard(el, u);
+  });
+  [...box.children].forEach((el) => { if (!seen.has(el.dataset.up)) el.remove(); });
+}
+function paintUploadCard(el, u) {
+  el.classList.toggle('done', u.state === 'done');
+  el.classList.toggle('failed', u.state === 'failed');
+  const pct = el.querySelector('.up-pct'), fill = el.querySelector('.up-fill'), sub = el.querySelector('.up-sub');
+  const retry = el.querySelector('.up-retry'), x = el.querySelector('.up-x');
+  if (u.state === 'done') {
+    pct.textContent = '✓'; fill.classList.remove('indet'); fill.style.width = '100%';
+    sub.textContent = fmtSize(u.size) + ' · Uploaded';
+    retry.classList.add('hidden'); x.classList.add('hidden');
+  } else if (u.state === 'failed') {
+    pct.textContent = '!'; fill.classList.remove('indet'); fill.style.width = '100%';
+    sub.textContent = 'Failed · ' + (u.err || 'upload failed');
+    retry.classList.remove('hidden'); x.classList.remove('hidden'); x.title = 'Dismiss';
+  } else {
+    const p = u.total > 0 ? Math.min(99, Math.round((u.loaded / u.total) * 100)) : 0;
+    pct.textContent = u.indet ? '…' : p + '%';
+    if (u.indet) fill.classList.add('indet');
+    else { fill.classList.remove('indet'); fill.style.width = p + '%'; }
+    sub.textContent = fmtSize(u.size) + ' · Uploading…';
+    retry.classList.add('hidden'); x.classList.remove('hidden'); x.title = 'Cancel upload';
+  }
+}
+function patchUploadProgress(u) { const el = uploadCardEl(u.id); if (el) paintUploadCard(el, u); }
+function uploadAndAttach(file) {
   if (!file) return;
   if (file.size > 100 * 1024 * 1024) { toast('File too big (max 100MB)'); return; }
-  if (S.pendingAtts.length >= 5) { toast('Max 5 attachments per message'); return; }
-  const fd = new FormData();
-  fd.append('file', file);
-  toast('Uploading…');
-  try {
-    const res = await fetch('/api/upload', { method: 'POST', headers: store.token ? { Authorization: 'Bearer ' + store.token } : {}, body: fd });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'upload_failed');
-    S.pendingAtts.push(data);
-    renderComposerMeta();
-  } catch (err) { toast('Upload failed: ' + prettyError(err.message)); }
+  if (S.pendingAtts.length + activeUploadCount() >= 5) { toast('Max 5 attachments per message'); return; }
+  S.uploads = S.uploads || [];
+  const entry = {
+    id: ++uploadSeq, file, name: file.name || 'file',
+    size: file.size || 0, loaded: 0, total: file.size || 0,
+    indet: false, state: 'uploading', err: '', xhr: null, thumb: '',
+  };
+  if (String(file.type || '').startsWith('image/')) {
+    try { entry.thumb = URL.createObjectURL(file); } catch {}
+  }
+  S.uploads.push(entry);
+  renderUploads();
+  startUpload(entry);
 }
+function startUpload(u) {
+  u.state = 'uploading'; u.loaded = 0; u.indet = false; u.err = '';
+  renderUploads();
+  const fd = new FormData();
+  fd.append('file', u.file);
+  const xhr = new XMLHttpRequest();
+  u.xhr = xhr;
+  xhr.open('POST', '/api/upload');
+  if (store.token) xhr.setRequestHeader('Authorization', 'Bearer ' + store.token);
+  xhr.upload.onprogress = (e) => {
+    if (e.lengthComputable && e.total > 0) { u.loaded = e.loaded; u.total = e.total; u.indet = false; }
+    else u.indet = true;
+    patchUploadProgress(u);
+  };
+  xhr.onload = () => {
+    let data = null;
+    try { data = JSON.parse(xhr.responseText); } catch {}
+    if (xhr.status >= 200 && xhr.status < 300 && data) {
+      u.state = 'done'; u.loaded = u.total || u.size;
+      S.pendingAtts.push(data);
+      renderComposerMeta();
+      patchUploadProgress(u);
+      setTimeout(() => removeUpload(u.id), 650);
+    } else failUpload(u, (data && data.error) || ('http_' + xhr.status));
+  };
+  xhr.onerror = () => failUpload(u, 'network_error');
+  try { xhr.send(fd); } catch (err) { failUpload(u, err && err.message); }
+}
+function failUpload(u, errMsg) {
+  if (!u || u.state !== 'uploading') return;
+  try { u.err = prettyError(errMsg || 'upload_failed'); } catch { u.err = String(errMsg || 'upload failed'); }
+  u.state = 'failed';
+  renderUploads();
+  toast('Upload failed: ' + u.err);
+}
+function cancelUpload(id) {
+  const u = (S.uploads || []).find((x) => x.id === id);
+  if (!u) return;
+  try { if (u.xhr && u.state === 'uploading') u.xhr.abort(); } catch {}
+  removeUpload(id);
+}
+function retryUpload(id) {
+  const u = (S.uploads || []).find((x) => x.id === id);
+  if (!u || u.state !== 'failed') return;
+  startUpload(u);
+}
+function removeUpload(id) {
+  const i = (S.uploads || []).findIndex((x) => x.id === id);
+  if (i < 0) return;
+  const [u] = S.uploads.splice(i, 1);
+  if (u && u.thumb) { try { URL.revokeObjectURL(u.thumb); } catch {} }
+  renderUploads();
+}
+
 $('#btn-attach').onclick = () => $('#in-attach').click();
 $('#in-attach').addEventListener('change', (e) => {
   const f = e.target.files[0];
