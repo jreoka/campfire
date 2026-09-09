@@ -262,6 +262,7 @@ function leaveVoice(silent) {
   const vkey = myVoiceKey();
   S.voice = null;
   stopSpeakingMonitor();
+  if (S.me?.streaming_game) { S.me.streaming_game = null; try { paintMe(); } catch {} }
   $('#voice-bar').classList.add('hidden');
   $('#voice-fab').classList.add('hidden');
   paintVoiceControls();
@@ -546,6 +547,7 @@ async function startStream({ audio = true, quality = null, label = '' } = {}) {
   sendVoiceState();
   paintVoiceControls();
   renderStage();
+  if (S.me) { S.me.streaming_game = S.voice.streamName || 'Screen'; try { paintMe(); renderMembers(); } catch {} }
   toast(S.voice.streamName ? `Streaming ${S.voice.streamName}` : 'You are sharing your screen');
 }
 function removeScreenAudioSender() {
@@ -569,6 +571,7 @@ function stopScreen() {
   sendVoiceState();
   paintVoiceControls();
   renderStage();
+  if (S.me?.streaming_game) { S.me.streaming_game = null; try { paintMe(); renderMembers(); } catch {} }
 }
 function renegotiate(peerId) {
   if (!S.voice) return;

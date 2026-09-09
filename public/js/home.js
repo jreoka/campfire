@@ -104,11 +104,13 @@ function renderDmRail() {
 }
 function friendRowEl(u, extra) {
   const st = statusOf(u.id);
-  const dot = dotOf(st);
+  const off = isOff(st);
+  const streaming = !off && (u.streaming_game || null);
+  const dot = dotOf(st, streaming);
   const div = document.createElement('div');
   div.className = 'dmrow';
-  const fPlaying = !isOff(st) && u.playing_game;
-  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="dmmain"><span class="mname-row"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${fPlaying ? gameBadgeHTML(u.playing_game) : ''}</span><span class="dmlast">@${esc(u.username)}${u.status_text ? ' · ' + esc(u.status_text) : (fPlaying ? ` · Playing ${esc(u.playing_game)}` : '')}</span></span>`;
+  const fPlaying = !off && !streaming && u.playing_game;
+  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="dmmain"><span class="mname-row"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${fPlaying ? gameBadgeHTML(u.playing_game) : ''}</span><span class="dmlast">@${esc(u.username)}${streaming ? ` · <span class="ustream-t">Streaming ${esc(streaming)}</span>` : (u.status_text ? ' · ' + esc(u.status_text) : (fPlaying ? ` · Playing ${esc(u.playing_game)}` : ''))}</span></span>`;
   paintAvatar(div.querySelector('.avatar'), u);
   paintGameBadge(div.querySelector('.gbadge'));
   if (extra) div.appendChild(extra);
@@ -142,11 +144,13 @@ function activeGamingFresh(un) {
   return c && Date.now() - c.at < 90000 ? c.data : null;
 }
 function activeCard(c) {
-  const dot = dotOf(c.st);
+  const dot = dotOf(c.st, c.stream);
   const el = document.createElement('div');
   el.className = 'anow-card' + (c.off ? ' anow-off' : '');
   let act = '';
-  if (c.live) {
+  if (c.stream) {
+    act = `<div class="anow-stream"><span class="vlive">LIVE</span><span>Streaming <b>${esc(c.stream)}</b></span></div>`;
+  } else if (c.live) {
     act = `<div class="anow-game">Playing ${c.hit?.icon_url ? `<img class="anow-gicon" src="${esc(c.hit.icon_url)}" alt="" loading="lazy" onerror="this.remove()" />` : ''}<b>${esc(c.live)}</b>${c.hit ? `<span> · Lv ${c.hit.level} · ${fmtPlay(c.hit.total_ms)}</span>` : ''}</div>`;
   } else if (c.recent && c.recent.last_seen_ms) {
     act = `<div class="anow-recent">Last played <b>${esc(c.recent.game)}</b> · ${agoStr(c.recent.last_seen_ms)}</div>`;
@@ -177,24 +181,27 @@ async function renderActiveNow() {
     const cards = friends.map((f) => {
       const st = statusOf(f.id);
       const off = isOff(st);
+      const stream = !off && (f.streaming_game || null);
       const g = activeGamingFresh(f.username);
-      const live = !off ? (g?.now_playing || (!off && f.playing_game)) : null;
+      const live = !off && !stream ? (g?.now_playing || (!off && f.playing_game)) : null;
       const games = g?.games || [];
       const recent = games.length ? games.reduce((a, b) => ((a.last_seen_ms || 0) > (b.last_seen_ms || 0) ? a : b)) : null;
       const hit = live ? games.find((x) => x.game === live) : null;
-      return { f, st, off, live, hit, recent };
+      return { f, st, off, stream, live, hit, recent };
     });
+    const streaming = cards.filter((c) => c.stream).sort((a, b) => a.f.display_name.localeCompare(b.f.display_name));
     const playing = cards.filter((c) => c.live).sort((a, b) => a.f.display_name.localeCompare(b.f.display_name));
-    const online = cards.filter((c) => !c.live && !c.off).sort((a, b) => a.f.display_name.localeCompare(b.f.display_name));
+    const online = cards.filter((c) => !c.live && !c.stream && !c.off).sort((a, b) => a.f.display_name.localeCompare(b.f.display_name));
     const offline = cards.filter((c) => c.off).sort((a, b) => ((b.recent?.last_seen_ms || 0) - (a.recent?.last_seen_ms || 0)) || a.f.display_name.localeCompare(b.f.display_name));
     $('#members-title').textContent = 'ACTIVE NOW';
-    $('#online-count').textContent = String(playing.length);
+    $('#online-count').textContent = String(streaming.length + playing.length);
     const sec = (t, n) => {
       const e = document.createElement('div');
       e.className = 'role-head';
       e.innerHTML = `<span>${t}</span><span class="muted"> — ${n}</span>`;
       box.appendChild(e);
     };
+    if (streaming.length) { sec('STREAMING', streaming.length); for (const c of streaming) box.appendChild(activeCard(c)); }
     if (playing.length) { sec('NOW PLAYING', playing.length); for (const c of playing) box.appendChild(activeCard(c)); }
     if (online.length) { sec('ONLINE', online.length); for (const c of online) box.appendChild(activeCard(c)); }
     if (offline.length) { sec('OFFLINE', offline.length); for (const c of offline) box.appendChild(activeCard(c)); }

@@ -316,7 +316,7 @@ function statusOf(id) {
 // section. (Only your own client ever sees 'invisible' — the server hides it
 // from everyone else, who just see you as offline.)
 function isOff(st) { return st === 'offline' || st === 'invisible'; }
-function dotOf(st) { return st === 'invisible' ? 'offline' : st; }
+function dotOf(st, streaming) { if (streaming && !isOff(st)) return 'streaming'; return st === 'invisible' ? 'offline' : st; }
 // ---------- game activity badge (Discord-style) ----------
 // Rows stay exactly one sub-line tall: custom status wins the line, the
 // game gets a controller icon that upgrades to its artwork thumbnail once
@@ -366,7 +366,8 @@ function paintMe() {
   paintAvatar($('#me-avatar'), S.me);
   const st = S.me.status || 'online';
   const off = isOff(st);
-  const dot = dotOf(st);
+  const streaming = !off && S.me.streaming_game;
+  const dot = dotOf(st, streaming);
   $('#me-avwrap').className = 'avwrap st-' + dot;
   $('#me-dot').className = 'status-dot ' + dot;
   const name = $('#me-name');
@@ -381,14 +382,15 @@ function paintMe() {
     card.style.backgroundImage = '';
   }
   card.classList.toggle('off', off);
-  // One sub-line max: custom status wins, otherwise the game. The game
-  // itself always gets the controller/art badge so rows never grow.
+  // One sub-line max: streaming wins, then custom status, otherwise the game.
+  // The game itself always gets the controller/art badge so rows never grow.
   const sub = $('#me-sub');
-  const showGameText = !off && S.me.playing_game && !S.me.status_text;
-  const stxt = (!off && S.me.status_text) ? S.me.status_text : (showGameText ? 'Playing ' + S.me.playing_game : '');
+  const showGameText = !off && !streaming && S.me.playing_game && !S.me.status_text;
+  const stxt = streaming ? ('Streaming ' + S.me.streaming_game) : ((!off && S.me.status_text) ? S.me.status_text : (showGameText ? 'Playing ' + S.me.playing_game : ''));
   if (stxt) { sub.textContent = stxt; sub.title = stxt; sub.style.display = ''; }
   else { sub.textContent = ''; sub.style.display = 'none'; }
   sub.classList.toggle('ugame', !!showGameText);
+  sub.classList.toggle('ustream', !!streaming);
   const gb = $('#me-game-badge');
   if (gb) {
     if (!off && S.me.playing_game) { gb.style.display = ''; gb.dataset.game = S.me.playing_game; paintGameBadge(gb); }
@@ -402,7 +404,8 @@ function mentionsMe(msg) {
 function memberRowEl(m) {
   const st = statusOf(m.id);
   const off = isOff(st);
-  const dot = dotOf(st);
+  const streaming = !off && (m.streaming_game || null);
+  const dot = dotOf(st, streaming);
   const div = document.createElement('div');
   div.className = 'member' + (off ? ' off' : '');
   div.dataset.uid = m.id;
@@ -411,7 +414,7 @@ function memberRowEl(m) {
     div.style.backgroundSize = 'cover';
     div.style.backgroundPosition = 'right center';
   }
-  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="mnames"><span class="mname-row"><span class="mname" style="${nameStyleFor(m)}">${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${!off && m.playing_game ? gameBadgeHTML(m.playing_game) : ''}</span>${(!off && m.status_text) ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ((!off && m.playing_game) ? `<span class="mstatus ugame" title="Playing ${esc(m.playing_game)}">Playing ${esc(m.playing_game)}</span>` : '')}</span>`;
+  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="mnames"><span class="mname-row"><span class="mname" style="${nameStyleFor(m)}">${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${!off && m.playing_game ? gameBadgeHTML(m.playing_game) : ''}</span>${streaming ? `<span class="mstatus ustream" title="Streaming ${esc(streaming)}">Streaming ${esc(streaming)}</span>` : ((!off && m.status_text) ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ((!off && m.playing_game) ? `<span class="mstatus ugame" title="Playing ${esc(m.playing_game)}">Playing ${esc(m.playing_game)}</span>` : ''))}</span>`;
   paintAvatar(div.querySelector('.avatar'), m);
   paintGameBadge(div.querySelector('.gbadge'));
   return div;

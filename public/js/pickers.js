@@ -631,7 +631,8 @@ async function openUserCard(uid, x, y) {
       <div class="uc-sec-label">Voice call</div>
       <div class="uc-actions" style="margin-top:0">${myPeer && myPeer.sharing ? '<button class="btn small primary" id="uc-watch">Watch stream</button>' : ''}${canVoiceMod ? `<button class="btn small${peerMuted ? '' : ' danger'}" id="uc-vmute">${peerMuted ? 'Unmute' : 'Mute'}</button><button class="btn small danger" id="uc-vdrop">Disconnect</button>` : ''}</div>` : '';
   const st = statusOf(uid);
-  const stLabel = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' }[st] || 'Offline';
+  const streaming = !isOff(st) && (u.streaming_game || null);
+  const stLabel = streaming ? 'Streaming' : ({ online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' }[st] || 'Offline');
   const ban = u.banner_url || u.sidebar_banner_url;
   card.dataset.uid = uid;
   card.innerHTML = `
@@ -640,9 +641,10 @@ async function openUserCard(uid, x, y) {
       <span class="avatar big"></span>
       <div class="uc-name" style="${nameStyleFor(u)}">${esc(u.display_name)}</div>
       <div class="uc-sub">@${esc(u.username)}${u.role === 'owner' ? ' · server owner' : ''}</div>
-      <div class="uc-status"><span class="status-dot ${dotOf(st)}"></span><span>${stLabel}</span></div>
+      <div class="uc-status"><span class="status-dot ${dotOf(st, streaming)}"></span><span>${stLabel}</span></div>
       ${uid !== S.me.id && u.status_text ? `<div class="uc-statustext">${esc(u.status_text)}</div>` : ''}
       ${uid === S.me.id ? statusEditHTML() : ''}
+      ${streaming ? `<div class="uc-statustext ustream"><span class="vlive">LIVE</span><span>Streaming ${esc(streaming)}</span></div>` : ''}
       ${u.playing_game ? `<div class="uc-statustext ugame">${gameBadgeHTML(u.playing_game)}<span>Playing ${esc(u.playing_game)}</span></div>` : ''}
       ${u.bio ? `<div class="uc-bio">${renderRich(u.bio)}</div>` : ''}
       ${u.created_at ? `<div class="uc-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
@@ -974,7 +976,8 @@ function openProfileScreen(uid) {
   const bd = $('#profile-backdrop');
   const isMe = uid === S.me.id;
   const st = statusOf(uid);
-  const stLabel = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' }[st] || 'Offline';
+  const pstreaming = !isOff(st) && (u.streaming_game || null);
+  const stLabel = pstreaming ? 'Streaming' : ({ online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' }[st] || 'Offline');
   $('#pf-banner').style.backgroundImage = u.banner_url ? `url('${esc(u.banner_url)}')` : '';
   paintAvatar($('#pf-avatar'), u);
   $('#pf-name').style.cssText = nameStyleFor(u);
@@ -987,7 +990,8 @@ function openProfileScreen(uid) {
     actions += `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="pf-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>`;
   }
   body.innerHTML = `
-    <div class="pf-status"><span class="status-dot ${dotOf(st)}"></span><span>${stLabel}</span>${u.status_text ? `<span class="pf-statustext">${esc(u.status_text)}</span>` : ''}</div>
+    <div class="pf-status"><span class="status-dot ${dotOf(st, pstreaming)}"></span><span>${stLabel}</span>${u.status_text ? `<span class="pf-statustext">${esc(u.status_text)}</span>` : ''}</div>
+    ${pstreaming ? `<div class="pf-playing ustream">Streaming ${esc(pstreaming)}</div>` : ''}
     ${u.playing_game ? `<div class="pf-playing">Playing ${esc(u.playing_game)}</div>` : ''}
     ${u.bio ? `<div class="pf-bio">${renderRich(u.bio)}</div>` : ''}
     ${u.created_at ? `<div class="pf-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}

@@ -253,7 +253,13 @@ function onWS(m) {
       }
       if (u.username) activeGaming.delete(u.username);
       renderMembers();
-      if (S.view === 'home') renderDmMembers();
+      if (S.view === 'home') {
+        renderDmMembers();
+        // Streaming flips + friend profile changes land here: keep the
+        // friends list and Active Now rail live without a manual refresh.
+        try { renderFriendLists(); } catch {}
+        try { renderActiveNow(); } catch {}
+      }
       if (S.channelId) renderMessages();
       break;
     }

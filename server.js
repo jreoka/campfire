@@ -343,7 +343,7 @@ function serverView(serverId) {
   const channels = db.prepare("SELECT * FROM channels WHERE server_id = ? ORDER BY type DESC, position ASC, created_at ASC").all(serverId);
   const members = db.prepare(`
     SELECT u.id, u.username, u.display_name, u.avatar_color, u.avatar_url, u.banner_url, u.sidebar_banner_url,
-           u.status, u.status_text, u.status_expires_at, u.playing_game, u.bio, u.name_color, u.name_gradient,
+           u.status, u.status_text, u.status_expires_at, u.playing_game, u.streaming_game, u.bio, u.name_color, u.name_gradient,
            CASE WHEN u.id = s.owner_id THEN 'owner' ELSE 'member' END as role
     FROM server_members m JOIN users u ON u.id = m.user_id JOIN servers s ON s.id = m.server_id
     WHERE m.server_id = ? ORDER BY u.display_name COLLATE NOCASE ASC
@@ -409,7 +409,7 @@ function publicUser(u) {
     id: u.id, username: u.username, display_name: u.display_name, avatar_color: u.avatar_color || '#5865f2',
     avatar_url: u.avatar_url || null, banner_url: u.banner_url || null,
     sidebar_banner_url: u.sidebar_banner_url || null,
-    status: u.status || 'online', status_text: statusTextVisible(u), status_expires_at: statusExpiryVisible(u), presence_expires_at: presenceExpiryVisible(u), playing_game: u.playing_game || null, bio: u.bio || '',
+    status: u.status || 'online', status_text: statusTextVisible(u), status_expires_at: statusExpiryVisible(u), presence_expires_at: presenceExpiryVisible(u), playing_game: u.playing_game || null, streaming_game: u.streaming_game || null, bio: u.bio || '',
     name_color: u.name_color || '', name_gradient: u.name_gradient || '',
     created_at: u.created_at || null,
     game_enabled: u.game_enabled === undefined ? 1 : u.game_enabled,
@@ -422,7 +422,7 @@ function requireSiteAdmin(req, res, next) {
   if (!req.user.is_admin) return res.status(403).json({ error: 'admin_only' });
   next();
 }
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, playing_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, playing_game, streaming_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -896,7 +896,8 @@ app.delete('/api/servers/:id/channels/:chId', authRequired, (req, res) => {
   // kick voice occupants out
   const key = s.id + ':' + ch.id;
   for (const c of voiceRooms.get(key) || []) {
-    c.voice = null;
+    if (c.meta) c.meta.voice = null;
+    syncStreaming(c);
     safeSend(c, { t: 'voice-kicked', serverId: s.id, channelId: ch.id });
   }
   voiceRooms.delete(key);
@@ -3137,6 +3138,20 @@ function findWsInVoice(key, userId) {
   }
   return null;
 }
+// Streaming presence: while a user shares (Go Live), their profile carries
+// streaming_game so friends see a purple Streaming status + Active Now entry.
+// Only writes + broadcasts on actual change (voice-state fires constantly).
+function syncStreaming(ws) {
+  const me = ws && ws.meta;
+  if (!me) return;
+  const v = me.voice;
+  const now = v && v.sharing ? (v.streamName || 'Screen') : null;
+  if (me.streaming === now) return;
+  me.streaming = now;
+  try { db.prepare('UPDATE users SET streaming_game = ? WHERE id = ?').run(now, me.userId); } catch {}
+  const u2 = freshUser(me.userId);
+  if (u2 && u2.id) broadcastUserUpdate(u2);
+}
 function leaveVoice(ws, notify = true) {
   const v = ws.meta && ws.meta.voice;
   if (!v) return;
@@ -3147,6 +3162,7 @@ function leaveVoice(ws, notify = true) {
     if (set.size === 0) voiceRooms.delete(key);
   }
   ws.meta.voice = null;
+  syncStreaming(ws);
   if (!notify) return;
   if (v.kind === 'dm') {
     dmNotify(v.threadId, { t: 'voice-peer-left', threadId: v.threadId, userId: ws.meta.userId });
@@ -3186,6 +3202,7 @@ function evictFromDmCall(threadId, userId) {
     if (c.meta && c.meta.userId === userId) {
       set.delete(c);
       c.meta.voice = null;
+      syncStreaming(c);
       safeSend(c, { t: 'voice-kicked', threadId });
     }
   }
@@ -3211,6 +3228,7 @@ wss.on('connection', (ws, req) => {
     avatar_url: u.avatar_url || null, status: u.status || 'online', sid: p.sid || null,
     servers: new Set(memberRows.map((r) => r.server_id)),
     voice: null,
+    streaming: null,
     visible: true,
   };
   clients.add(ws);
@@ -3423,6 +3441,7 @@ wss.on('connection', (ws, req) => {
       if (!me.voice.sharing) me.voice.streamName = null;
       if (typeof msg.speaking === 'boolean') me.voice.speaking = msg.speaking;
       if (me.voice.muted || me.voice.deafened) me.voice.speaking = false;
+      syncStreaming(ws);
       if (me.voice.kind === 'dm') {
         dmNotify(me.voice.threadId, {
           t: 'voice-state', threadId: me.voice.threadId,
@@ -3465,6 +3484,7 @@ wss.on('connection', (ws, req) => {
           for (const c of targets) {
             voiceRooms.get(key).delete(c);
             c.meta.voice = null;
+            syncStreaming(c);
             safeSend(c, { t: 'voice-kicked', threadId, reason: 'mod' });
           }
           afterDmVoiceChange(threadId);
@@ -3488,6 +3508,7 @@ wss.on('connection', (ws, req) => {
         for (const c of targets) {
           voiceRooms.get(key).delete(c);
           c.meta.voice = null;
+          syncStreaming(c);
           safeSend(c, { t: 'voice-kicked', serverId, channelId, reason: 'mod' });
         }
         broadcastToServer(serverId, { t: 'voice-peer-left', serverId, channelId, userId: targetId });
@@ -3538,6 +3559,8 @@ app.get('*', (req, res, next) => {
 
 // Clear stale playing_game on startup (watchers will re-beacon within 30s)
 db.prepare('UPDATE users SET playing_game = NULL WHERE playing_game IS NOT NULL').run();
+// Streaming never survives a restart (voice rooms don't either).
+try { db.prepare('UPDATE users SET streaming_game = NULL WHERE streaming_game IS NOT NULL').run(); } catch {}
 // Expired custom statuses clear within a minute (reads mask them instantly).
 sweepExpiredStatuses();
 setInterval(sweepExpiredStatuses, 60 * 1000);

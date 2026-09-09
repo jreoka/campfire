@@ -24,6 +24,7 @@
   --green:#34d399;
   --amber:#fbbf24;
   --red:#f87171;
+  --purple:#a06bff;
   --on-red:#ffffff;
   --danger-bg:rgba(248,113,113,.09);
   --danger-line:rgba(248,113,113,.38);
@@ -158,6 +159,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 #me-card .avwrap.st-online .avatar::after{border-color:var(--green)}
 #me-card .avwrap.st-away .avatar::after{border-color:var(--amber)}
 #me-card .avwrap.st-dnd .avatar::after{border-color:var(--red)}
+#me-card .avwrap.st-streaming .avatar::after{border-color:var(--purple)}
 #me-card .avwrap .status-dot{position:absolute;bottom:-3px;right:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2.5px var(--panel-2);z-index:2}
 #me-card .mnames{display:flex;flex-direction:column;min-width:0;flex:1;line-height:1.25}
 #me-card #me-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -299,6 +301,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .member .avwrap.st-online .avatar::after,.dmrow .avwrap.st-online .avatar::after{border-color:var(--green)}
 .member .avwrap.st-away .avatar::after,.dmrow .avwrap.st-away .avatar::after{border-color:var(--amber)}
 .member .avwrap.st-dnd .avatar::after,.dmrow .avwrap.st-dnd .avatar::after{border-color:var(--red)}
+.member .avwrap.st-streaming .avatar::after,.dmrow .avwrap.st-streaming .avatar::after{border-color:var(--purple)}
 .member .avwrap .status-dot,.dmrow .avwrap .status-dot{position:absolute;bottom:-3px;right:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2.5px var(--panel);z-index:2}
 #status-pop{position:fixed;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:190px;z-index:130;padding:.35rem}
 #status-sub{position:fixed;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:210px;z-index:131;padding:.35rem}
@@ -679,7 +682,14 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .status-dot.online{background:var(--green)}
 .status-dot.away{background:var(--amber)}
 .status-dot.dnd{background:var(--red)}
+.status-dot.streaming{background:var(--purple)}
 .status-dot.offline{background:#4f545c}
+.mstatus.ustream{color:var(--purple)}
+#me-card .mstatus.ustream{color:var(--purple)}
+.ustream-t{color:var(--purple);font-weight:700}
+.uc-statustext.ustream{color:var(--purple);background:rgba(160,107,255,.12);display:flex;align-items:center;gap:.4rem}
+.pf-playing.ustream{color:var(--purple)}
+.anow-stream{display:flex;align-items:center;gap:.4rem;font-size:.8rem;color:var(--purple);font-weight:600;margin-top:.15rem}
 
 /* ---------- lightbox ---------- */
 #lightbox{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:200;display:flex;align-items:center;justify-content:center;padding:1.5rem;cursor:zoom-out}
@@ -995,6 +1005,7 @@ body.view-home:not(.dm-open) #members{width:300px}
 .anow-card .avwrap.st-online .avatar::after{border-color:var(--green)}
 .anow-card .avwrap.st-away .avatar::after{border-color:var(--amber)}
 .anow-card .avwrap.st-dnd .avatar::after{border-color:var(--red)}
+.anow-card .avwrap.st-streaming .avatar::after{border-color:var(--purple)}
 .anow-card .avwrap .status-dot{position:absolute;bottom:-3px;right:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2.5px var(--panel-2);z-index:2}
 .anow-main{flex:1;min-width:0;line-height:1.32}
 .anow-name{display:block;font-weight:700;font-size:.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

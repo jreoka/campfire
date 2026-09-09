@@ -65,6 +65,7 @@ addColumn('users', 'status_text', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'status_expires_at', 'INTEGER');
 addColumn('users', 'presence_expires_at', 'INTEGER');
 addColumn('users', 'avatar_url', 'TEXT');
+addColumn('users', 'streaming_game', 'TEXT');
 addColumn('users', 'banner_url', 'TEXT');
 addColumn('users', 'sidebar_banner_url', 'TEXT');
 addColumn('servers', 'icon_url', 'TEXT');
