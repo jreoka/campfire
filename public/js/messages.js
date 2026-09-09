@@ -44,16 +44,16 @@ function attachmentHTML(a) {
 // starts. Capture a frame offscreen once per video URL and set it as the
 // poster thumbnail so every platform previews the same. Same-origin
 // uploads, so the canvas is never tainted.
-const videoPosterCache = new Map(); // url -> {img, w, h}
-const videoPosterWaiters = new Map();
-// Lock the video's true dimensions via width/height attributes: without them
-// the element sizes to the 320px poster until playback starts, then jumps to
-// the video's intrinsic size (and back on re-render). Attributes reserve the
-// same box in every state, so paused and playing sizes match.
-function applyVideoPoster(v, p) {
-  if (!v || !p) return;
-  try { v.poster = p.img; } catch {}
-  try { v.setAttribute('width', p.w); v.setAttribute('height', p.h); } catch {}
+const videoPosterCache = new Map(); // url -> dataURL thumbnail
+const videoPosterWaiters = new Map(); // url -> [video els awaiting capture]
+// Poster must be at least as large as the rendered box: the poster defines the
+// element's intrinsic size while paused, so a smaller poster shrinks the box
+// and playback grows it again. 640px covers the 420px wrap with no upscale.
+// (Deliberately no width/height attributes: they clamp each axis independently
+// against the max-width/max-height caps and letterbox the frame.)
+function applyVideoPoster(v, img) {
+  if (!v || !img) return;
+  try { v.poster = img; } catch {}
   v.dataset.posterOk = '1';
 }
 function ensureVideoPoster(v) {
@@ -61,8 +61,7 @@ function ensureVideoPoster(v) {
   const url = v.currentSrc || v.src;
   if (!url) return;
   const hit = videoPosterCache.get(url);
-  if (hit) { applyVideoPoster(v, hit); return; }
-  if (videoPosterWaiters.has(url)) { videoPosterWaiters.get(url).push(v); return; }
+  if (hit) { applyVideoPoster(v, hit); return; }  if (videoPosterWaiters.has(url)) { videoPosterWaiters.get(url).push(v); return; }
   videoPosterWaiters.set(url, [v]);
   const tmp = document.createElement('video');
   tmp.muted = true; tmp.playsInline = true; tmp.preload = 'auto'; tmp.src = url;
@@ -73,24 +72,23 @@ function ensureVideoPoster(v) {
     const waiters = videoPosterWaiters.get(url) || [];
     videoPosterWaiters.delete(url);
     if (shot) {
-      if (videoPosterCache.size > 60) { try { videoPosterCache.delete(videoPosterCache.keys().next().value); } catch {} }
+      if (videoPosterCache.size > 30) { try { videoPosterCache.delete(videoPosterCache.keys().next().value); } catch {} }
       videoPosterCache.set(url, shot);
       waiters.forEach((el) => applyVideoPoster(el, shot));
     } else {
       waiters.forEach((el) => { el.dataset.posterOk = '1'; });
     }
-  };
-  tmp.addEventListener('loadeddata', () => {
+  };  tmp.addEventListener('loadeddata', () => {
     try { tmp.currentTime = Math.min(0.5, (tmp.duration || 1) / 3) || 0.1; }
     catch { finish(null); }
   }, { once: true });
   tmp.addEventListener('seeked', () => {
     try {
       if (!tmp.videoWidth) { finish(null); return; }
-      const w = 320, h = Math.max(1, Math.round((w * tmp.videoHeight) / tmp.videoWidth));
+      const w = 640, h = Math.max(1, Math.round((w * tmp.videoHeight) / tmp.videoWidth));
       const c = document.createElement('canvas'); c.width = w; c.height = h;
       c.getContext('2d').drawImage(tmp, 0, 0, w, h);
-      finish({ img: c.toDataURL('image/jpeg', 0.6), w: tmp.videoWidth, h: tmp.videoHeight });
+      finish(c.toDataURL('image/jpeg', 0.8));
     } catch { finish(null); }
   }, { once: true });
   tmp.addEventListener('error', () => finish(null), { once: true });
