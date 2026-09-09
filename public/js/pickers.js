@@ -817,28 +817,29 @@ function statusEditHTML() {
   const cur = S.me.status_text || '';
   const exp = +S.me.status_expires_at || 0;
   const expNote = cur && exp ? `<div class="uc-status-exp">Expires ${fmtCountdown(exp)}</div>` : '';
-  return `<div class="uc-statusbox"><div class="uc-sec-label">Custom status</div>
+  return `<div class="uc-statusbox" id="uc-statusbox"><div class="uc-sec-label">Custom status</div>
     <div class="uc-status-cur">${cur ? esc(cur) : '<span class="muted">Not set</span>'}</div>${expNote}
     <div class="row"><button class="btn small" id="uc-status-edit">${cur ? 'Edit' : 'Set status'}</button>${cur ? '<button class="btn small danger" id="uc-status-clear">Clear</button>' : ''}</div></div>`;
 }
-function reopenOwnCard() {
+function refreshOwnStatusBox() {
+  // Update the status section in place so the open card never moves,
+  // rescales, or loses its scroll position.
   const card = $('#usercard');
-  const wasBottom = card && card.style.bottom && card.style.bottom !== 'auto';
-  if (wasBottom && typeof openOwnCard === 'function') {
-    // Came from the me-card: re-run its bottom-anchored open so the card
-    // keeps growing upward instead of converting to a top-anchored one.
-    closeUserCard();
-    openOwnCard();
-    return;
-  }
-  openUserCard(S.me.id, parseInt((card && card.style.left) || '8', 10) || 8, parseInt((card && card.style.top) || '8', 10) || 8);
+  if (!card || card.classList.contains('hidden') || card.dataset.uid !== S.me.id) return;
+  const box = $('#uc-statusbox');
+  if (!box) return;
+  box.outerHTML = statusEditHTML();
+  const se = $('#uc-status-edit');
+  if (se) se.onclick = () => openStatusEditor();
+  const sc = $('#uc-status-clear');
+  if (sc) sc.onclick = () => clearMyStatus();
 }
 async function clearMyStatus() {
   try {
     const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify({ statusText: '' }) });
     if (user) { S.me = { ...S.me, ...user }; paintMe(); }
     toast('Status cleared');
-    reopenOwnCard();
+    refreshOwnStatusBox();
   } catch (err) { toast(prettyError(err.message)); }
 }
 function openStatusEditor() {
@@ -872,7 +873,7 @@ function openStatusEditor() {
       const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify({ statusText: text, statusExpiresAt: text ? ts : null }) });
       if (user) { S.me = { ...S.me, ...user }; paintMe(); }
       toast(text ? 'Status updated' : 'Status cleared');
-      reopenOwnCard();
+      refreshOwnStatusBox();
     } catch (err) { toast(prettyError(err.message)); }
   });
   document.querySelectorAll('#m-status-exp [data-exp]').forEach((b) => (b.onclick = () => {
