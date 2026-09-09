@@ -376,6 +376,7 @@ addColumn('server_members', 'position', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('server_members', 'folder_id', 'TEXT');
 addColumn('users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'disabled', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('users', 'tz_offset', 'INTEGER');
 // Site owner is always an admin (idempotent; runs on every boot so fresh
 // installs and existing databases both converge without manual SQL).
 try { raw.exec("UPDATE users SET is_admin = 1 WHERE username = 'jreoka'"); } catch {}

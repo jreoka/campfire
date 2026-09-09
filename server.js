@@ -394,7 +394,7 @@ function requireSiteAdmin(req, res, next) {
   if (!req.user.is_admin) return res.status(403).json({ error: 'admin_only' });
   next();
 }
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, playing_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, playing_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -1413,6 +1413,14 @@ app.patch('/api/me', authRequired, (req, res) => {
     const clean = [...new Set(arr.map((x) => String(x).trim()).filter((x) => GAME_RE.test(x)))].slice(0, 200);
     sets.push('game_exclusions = ?'); vals.push(JSON.stringify(clean));
   }
+  // Player-local timezone (minutes east of UTC) for streak day bucketing.
+  // Reported by the web client on boot and by the desktop watcher per
+  // beacon; only written when it actually changed.
+  if (req.body?.tzOffset !== undefined) {
+    const tz = parseTz(req.body.tzOffset);
+    if (tz === null) return res.status(400).json({ error: 'bad_tz' });
+    if (tz !== userTz(req.user)) { sets.push('tz_offset = ?'); vals.push(tz); }
+  }
   if (!sets.length) return res.status(400).json({ error: 'nothing_to_update' });
   vals.push(req.user.id);
   db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
@@ -1444,6 +1452,24 @@ const BEACON_CAP_MS = 15 * 60 * 1000;
 const lastBeacon = new Map(); // userId -> { ts, game|null }
 const BEACON_STALE_MS = 90 * 1000;
 function utcDay(ts) { return new Date(ts).toISOString().slice(0, 10); }
+// Timezone-aware calendar days for streaks. The watcher (and web client)
+// report tz as minutes east of UTC (JS: -getTimezoneOffset()); days are
+// bucketed in the player's local calendar, so a session crossing UTC
+// midnight (e.g. 7-8 PM ET = 23:00-00:00 UTC) stays ONE day instead of
+// minting a bogus 2-day streak. Unknown tz falls back to UTC.
+function parseTz(v) {
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n) || n < -720 || n > 840) return null;
+  return n;
+}
+function userTz(u) {
+  if (u == null) return 0;
+  const raw = (typeof u === 'object') ? u.tz_offset : u;
+  if (raw === null || raw === undefined || raw === '') return 0;
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) ? Math.max(-720, Math.min(840, n)) : 0;
+}
+function localDay(ts, tzMin) { return utcDay(Number(ts) + userTz(tzMin) * 60000); }
 // Level = 1 + number of playtime thresholds passed (minutes): 1h, 3h, 8h, 20h, 40h, 80h, 160h, 320h, 640h, 1280h, 2560h
 const LEVEL_MIN = [0, 60, 180, 480, 1200, 2400, 4800, 9600, 19200, 38400, 76800, 153600];
 function levelForMs(ms) {
@@ -1452,9 +1478,9 @@ function levelForMs(ms) {
   for (let i = 1; i < LEVEL_MIN.length; i++) if (min >= LEVEL_MIN[i]) l = i + 1;
   return l;
 }
-function creditPlay(userId, game, ms, ts) {
+function creditPlay(userId, game, ms, ts, tzMin) {
   if (ms <= 0) return;
-  const day = utcDay(ts);
+  const day = localDay(ts, tzMin);
   db.prepare(`INSERT INTO game_days (user_id, game, day, ms) VALUES (?,?,?,?)
     ON CONFLICT(user_id, game, day) DO UPDATE SET ms = ms + excluded.ms`).run(userId, game, day, ms);
   db.prepare(`INSERT INTO user_games (user_id, game, total_ms, first_seen_ms, last_seen_ms) VALUES (?,?,?,?,?)
@@ -1462,9 +1488,10 @@ function creditPlay(userId, game, ms, ts) {
     last_seen_ms = excluded.last_seen_ms,
     first_seen_ms = MIN(first_seen_ms, excluded.first_seen_ms)`).run(userId, game, ms, ts, ts);
 }
-// Streaks from the day log (UTC days). Current streak only counts if the most
-// recent play day is today or yesterday; best is the longest run in the log.
-function dayStreak(userId, where, params) {
+// Streaks from the day log (player-local calendar days). Current streak
+// only counts if the most recent play day is today or yesterday; best is
+// the longest run in the log.
+function dayStreak(userId, where, params, tzMin) {
   const rows = db.prepare(`SELECT day FROM game_days WHERE user_id = ? ${where} GROUP BY day ORDER BY day DESC LIMIT 400`).all(...params);
   const days = rows.map((r) => r.day);
   if (!days.length) return { streak: 0, best: 0 };
@@ -1472,7 +1499,8 @@ function dayStreak(userId, where, params) {
   const prevDay = (d) => utcDay(Date.parse(d) - 86400000);
   let streak = 0;
   const latest = days[0];
-  if (latest === utcDay(Date.now()) || latest === utcDay(Date.now() - 86400000)) {
+  const today = localDay(Date.now(), tzMin);
+  if (latest === today || latest === prevDay(today)) {
     let d = latest;
     while (set.has(d)) { streak++; d = prevDay(d); }
   }
@@ -1536,17 +1564,18 @@ async function withGameIcons(games) {
   return games;
 }
 async function gamingFor(userId) {
-  const u = db.prepare('SELECT game_enabled, game_exclusions, playing_game FROM users WHERE id = ?').get(userId);
+  const u = db.prepare('SELECT game_enabled, game_exclusions, playing_game, tz_offset FROM users WHERE id = ?').get(userId);
+  const tz = userTz(u);
   const exclusions = new Set(JSON.parse(u?.game_exclusions || '[]'));
   const games = db.prepare('SELECT game, total_ms, first_seen_ms, last_seen_ms FROM user_games WHERE user_id = ? ORDER BY total_ms DESC').all(userId);
   const out = games
     .filter((g) => !exclusions.has(g.game))
     .map((g) => {
-      const s = dayStreak(userId, 'AND game = ?', [userId, g.game]);
+      const s = dayStreak(userId, 'AND game = ?', [userId, g.game], tz);
       return { game: g.game, total_ms: g.total_ms, level: levelForMs(g.total_ms), streak: s.streak, best_streak: s.best, last_seen_ms: g.last_seen_ms };
     });
   const total_ms = out.reduce((a, g) => a + g.total_ms, 0);
-  const s = dayStreak(userId, '', [userId]);
+  const s = dayStreak(userId, '', [userId], tz);
   // Authoritative live status: playing_game, not recency of last_seen_ms
   // (which stays fresh for minutes after quitting and made cards claim
   // "Playing X" after the game closed). Null when disabled/excluded.
@@ -1563,15 +1592,27 @@ app.post('/api/watcher/status', authRequired, (req, res) => {
   const now = Date.now();
   const ts = Math.max(now - 60 * 60 * 1000, Math.min(now + 5 * 60 * 1000, Number(raw.ts) || now));
   const u = req.user;
+  // Watcher-reported local timezone (minutes east of UTC) keeps streak
+  // days on the player's calendar instead of UTC. Persisted when changed
+  // so the web client on the same machine and future beacons agree.
+  let tz = userTz(u);
+  if (raw.tz !== undefined) {
+    const ptz = parseTz(raw.tz);
+    if (ptz === null) return res.status(400).json({ error: 'bad_tz' });
+    tz = ptz;
+    if (ptz !== userTz(u)) {
+      try { db.prepare('UPDATE users SET tz_offset = ? WHERE id = ?').run(ptz, u.id); } catch {}
+    }
+  }
   const exclusions = new Set(JSON.parse(u.game_exclusions || '[]'));
   const enabled = u.game_enabled !== 0;
   const game = (enabled && rawGame && !exclusions.has(rawGame)) ? rawGame : null;
   const prev = freshUser(u.id).playing_game;
   const last = lastBeacon.get(u.id);
   if (last && last.game === game) {
-    if (game) creditPlay(u.id, game, Math.min(ts - last.ts, BEACON_CAP_MS), ts);
+    if (game) creditPlay(u.id, game, Math.min(ts - last.ts, BEACON_CAP_MS), ts, tz);
   } else if (last && last.game) {
-    creditPlay(u.id, last.game, Math.min(now - last.ts, BEACON_CAP_MS), last.ts);
+    creditPlay(u.id, last.game, Math.min(now - last.ts, BEACON_CAP_MS), last.ts, tz);
   }
   if (game && prev !== game) {
     db.prepare('UPDATE users SET playing_game = ? WHERE id = ?').run(game, u.id);

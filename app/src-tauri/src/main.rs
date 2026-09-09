@@ -57,6 +57,13 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
+// Local timezone offset in minutes east of UTC (matches JS
+// `-new Date().getTimezoneOffset()`). Sent with every watcher beacon so
+// the server buckets playtime on the player's calendar days, not UTC.
+fn local_tz_offset_min() -> i32 {
+    ((chrono::Local::now().offset().local_minus_utc() / 60) as i32).clamp(-720, 840)
+}
+
 fn app_data_dir<R: Runtime>(app: &AppHandle<R>) -> std::path::PathBuf {
     app.path().app_data_dir().expect("app data dir")
 }
@@ -222,7 +229,7 @@ fn clear_game_on_exit<R: Runtime>(app: &AppHandle<R>) {
             let _ = client
                 .post(format!("{}/api/watcher/status", server_url()))
                 .bearer_auth(&tok)
-                .json(&serde_json::json!({ "game": null, "ts": ts }))
+                .json(&serde_json::json!({ "game": null, "ts": ts, "tz": local_tz_offset_min() }))
                 .send();
         }
     }
@@ -386,8 +393,8 @@ fn main() {
                                 .map(|d| d.as_millis())
                                 .unwrap_or(0);
                             let body = match &game {
-                                Some(g) => serde_json::json!({ "game": g, "ts": ts, "source": "process" }),
-                                None => serde_json::json!({ "game": null, "ts": ts }),
+                                Some(g) => serde_json::json!({ "game": g, "ts": ts, "tz": local_tz_offset_min(), "source": "process" }),
+                                None => serde_json::json!({ "game": null, "ts": ts, "tz": local_tz_offset_min() }),
                             };
                             let ok = client
                                 .post(format!("{}/api/watcher/status", server_url()))
