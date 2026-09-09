@@ -36,6 +36,9 @@
   --r-xl:18px;
   --t-fast:.14s ease;
   --safe-b:env(safe-area-inset-bottom,0px);
+  --safe-t:env(safe-area-inset-top,0px);
+  --safe-l:env(safe-area-inset-left,0px);
+  --safe-r:env(safe-area-inset-right,0px);
 }
 *{box-sizing:border-box}
 html,body{height:100%;overflow:hidden;overscroll-behavior:none}
@@ -101,7 +104,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 
 /* ---------- main layout ---------- */
 #view-main{display:flex;height:100vh;height:100dvh;overflow:hidden}
-#view-main{height:100%}
+#view-main{height:100%;padding:var(--safe-t) var(--safe-r) 0 var(--safe-l)}
 #left{display:contents}
 #rail{width:80px;background:var(--rail);border-right:1px solid var(--line-soft);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
 .rail-head{display:flex;flex-direction:column;align-items:center;gap:.45rem;padding:.8rem 0 .6rem;flex-shrink:0}
@@ -205,7 +208,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .uc-vol span{font-size:.8rem;font-weight:700;color:var(--muted);min-width:42px;text-align:right;font-variant-numeric:tabular-nums}
 /* Go Live setup dialog */
 .gol-row{display:flex;align-items:center;gap:.7rem;margin-top:.7rem}
-.gol-qs{display:flex;gap:.45rem}
+.gol-qs{display:flex;gap:.45rem;flex-wrap:wrap}
 .gol-q{display:flex;align-items:center;gap:.3rem;font-size:.85rem;font-weight:650;background:var(--panel-3);border-radius:999px;padding:.35rem .75rem;cursor:pointer}
 .gol-q input{accent-color:var(--accent)}
 .gol-games{display:flex;flex-wrap:wrap;gap:.4rem;margin:.1rem 0 .7rem}

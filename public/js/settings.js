@@ -622,7 +622,7 @@ async function renderMediaTab() {
   ag.appendChild(agInp); ag.appendChild(document.createTextNode(' Automatic gain control — keeps your volume steady'));
   box.appendChild(ag);
   h('Video quality');
-  const qSel = mkSelect(Object.entries(V_QUALITY).map(([v, q]) => [v, q.label + (v === 'high' ? ' (best)' : '')]), mp.quality);
+  const qSel = mkSelect(Object.entries(V_QUALITY).map(([v, q]) => [v, q.label + (v === 'fhd' ? ' (best)' : '')]), mp.quality);
   mkLabel('Camera resolution').appendChild(qSel);
   qSel.onchange = () => {
     saveMediaPref('quality', qSel.value);

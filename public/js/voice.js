@@ -211,7 +211,7 @@ async function joinVoice(serverId, channelId) {
   leaveVoice(true);
   const mic = await acquireMic();
   if (!mic) return;
-  S.voice = { kind: 'server', serverId, channelId, stream: mic.sendStream, micStream: mic.stream, noise: mic.noise, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, serverMuted: false, cameraOn: false, sharing: false, streamName: null, quality: mediaPrefs().quality, speaking: false, audioEls: new Map(), screenAudioEls: new Map(), remoteAudio: new Map(), remoteScreenAudio: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
+  S.voice = { kind: 'server', serverId, channelId, stream: mic.sendStream, micStream: mic.stream, noise: mic.noise, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, serverMuted: false, cameraOn: false, sharing: false, streamName: null, quality: mediaPrefs().quality, fps: mediaPrefs().fps, speaking: false, audioEls: new Map(), screenAudioEls: new Map(), remoteAudio: new Map(), remoteScreenAudio: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
   $('#voice-bar').classList.remove('hidden');
   $('#voice-fab').classList.remove('hidden');
   $('#voice-chan-name').textContent = voiceLabel();
@@ -229,7 +229,7 @@ async function joinDmCall(threadId, withVideo = false) {
   stopRinging();
   const mic = await acquireMic();
   if (!mic) return;
-  S.voice = { kind: 'dm', threadId, stream: mic.sendStream, micStream: mic.stream, noise: mic.noise, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, serverMuted: false, cameraOn: false, sharing: false, streamName: null, quality: mediaPrefs().quality, speaking: false, audioEls: new Map(), screenAudioEls: new Map(), remoteAudio: new Map(), remoteScreenAudio: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
+  S.voice = { kind: 'dm', threadId, stream: mic.sendStream, micStream: mic.stream, noise: mic.noise, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, serverMuted: false, cameraOn: false, sharing: false, streamName: null, quality: mediaPrefs().quality, fps: mediaPrefs().fps, speaking: false, audioEls: new Map(), screenAudioEls: new Map(), remoteAudio: new Map(), remoteScreenAudio: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
   $('#voice-bar').classList.remove('hidden');
   $('#voice-fab').classList.remove('hidden');
   $('#voice-chan-name').textContent = voiceLabel();
@@ -396,10 +396,12 @@ function toggleDeafen() {
   renderStage();
 }
 const V_QUALITY = {
+  fhd: { label: '1080p', w: 1920, h: 1080, br: 8000000 },
   high: { label: '720p', w: 1280, h: 720, br: 2500000 },
   medium: { label: '480p', w: 854, h: 480, br: 1000000 },
   low: { label: '360p', w: 640, h: 360, br: 500000 },
 };
+const V_FPS = [30, 60, 120];
 // Call device + processing prefs (Settings → Media). Mic/cam/quality apply on
 // the next join; the speaker output applies immediately, even mid-call.
 function mediaPrefs() {
@@ -410,6 +412,7 @@ function mediaPrefs() {
     camId: p.camId || '',
     speakerId: p.speakerId || '',
     quality: V_QUALITY[p.quality] ? p.quality : 'high',
+    fps: V_FPS.includes(+p.fps) ? +p.fps : 30,
     ec: p.ec !== false,
     agc: p.agc !== false,
   };
@@ -488,16 +491,20 @@ async function toggleScreen() {
     : '<p class="muted small">Pick a window or screen. On desktop with a game running, you can pick it here.</p>';
   const quals = Object.entries(V_QUALITY).map(([k, q]) =>
     `<label class="gol-q"><input type="radio" name="gol-q" value="${k}"${(S.voice.quality === k) ? ' checked' : ''} /> ${q.label}</label>`).join('');
+  const fpses = V_FPS.map((f) =>
+    `<label class="gol-q"><input type="radio" name="gol-fps" value="${f}"${(S.voice.fps === f) ? ' checked' : ''} /> ${f}</label>`).join('');
   openModal('Go Live', `
     ${chips}
     <label>Stream title (optional)<input id="gol-label" maxlength="60" placeholder="What are you playing?" value="${esc(picked)}" /></label>
     <div class="gol-row"><span class="muted small">Quality</span><div class="gol-qs">${quals}</div></div>
+    <div class="gol-row"><span class="muted small">Frame rate</span><div class="gol-qs">${fpses}</div></div>
     <label class="set-check" style="margin-top:.6rem"><input type="checkbox" id="gol-audio" checked /> Share system audio</label>
   `, 'Go Live', () => {
     const label = ($('#gol-label') || {}).value || '';
     const q = (document.querySelector('input[name="gol-q"]:checked') || {}).value;
+    const fps = +(document.querySelector('input[name="gol-fps"]:checked') || {}).value || 30;
     const audio = $('#gol-audio') ? $('#gol-audio').checked : true;
-    startStream({ audio, quality: q, label });
+    startStream({ audio, quality: q, fps, label });
   });
   // Picking a chip fills the title (still editable); typing a custom title
   // deselects the chips.
@@ -512,13 +519,15 @@ async function toggleScreen() {
     document.querySelectorAll('.gol-game').forEach((o) => o.classList.toggle('sel', o.dataset.game === v));
   };
 }
-async function startStream({ audio = true, quality = null, label = '' } = {}) {
+async function startStream({ audio = true, quality = null, fps = null, label = '' } = {}) {
   if (!S.voice || S.voice.sharing) return;
   if (!navigator.mediaDevices?.getDisplayMedia) { toast('Screen sharing is not supported here'); return; }
   if (quality && V_QUALITY[quality]) { S.voice.quality = quality; saveMediaPref('quality', quality); }
+  if (V_FPS.includes(+fps)) { S.voice.fps = +fps; saveMediaPref('fps', +fps); }
+  const q = V_QUALITY[S.voice.quality] || V_QUALITY.high;
   let screen;
   try {
-    screen = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30 } }, audio: !!audio });
+    screen = await navigator.mediaDevices.getDisplayMedia({ video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: S.voice.fps } }, audio: !!audio });
   } catch { return; }
   S.voice.screenStream = screen;
   S.voice.sharing = true;
