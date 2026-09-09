@@ -98,7 +98,18 @@ function folderBtn(f) {
   b.style.setProperty('--fcolor', f.color || '#5865f2');
   b.innerHTML = folderGridHtml(f);
   b.onclick = (e) => { e.stopPropagation(); toggleFolder(f.id); };
-  b.oncontextmenu = (e) => { e.preventDefault(); e.stopPropagation(); openFolderMenu(f.id, e.clientX, e.clientY); };
+  b.oncontextmenu = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    // Touch long-press is owned by the slide-up bottom sheet (see the hold
+    // handler in actions.js): the browser also fires contextmenu on a hold,
+    // which would otherwise stack the desktop flyout on top of the sheet.
+    if (isCoarse()) {
+      if (document.querySelector('#sheet')) return;
+      openFolderSheet(f.id);
+      return;
+    }
+    openFolderMenu(f.id, e.clientX, e.clientY);
+  };
   wireDrag(b, 'folder', f.id);
   w.appendChild(b);
   return w;

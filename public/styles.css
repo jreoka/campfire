@@ -611,6 +611,11 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .sheet-row.danger{color:var(--danger-tx)}
 .sheet-row .ctx-ic{width:20px}
 .sheet-sep{height:1px;background:var(--line);margin:.3rem .45rem;opacity:.5}
+.sheet-swatches{padding:.15rem .65rem .55rem}
+.sheet-swlabel{font-size:.72rem;font-weight:750;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:.1rem 0 .5rem}
+.sheet-swrow{display:flex;flex-wrap:wrap;gap:10px}
+.sheet-sw{width:30px;height:30px;border-radius:50%;cursor:pointer;border:2px solid transparent;padding:0}
+.sheet-sw.sel{border-color:#fff}
 .sheet-cancel{width:100%;margin-top:.65rem;border:0;background:var(--panel-3);color:var(--text);border-radius:12px;padding:.8rem;font-size:.92rem;font-weight:750;cursor:pointer;transition:background var(--t-fast)}
 .sheet-cancel:hover{background:var(--panel-4)}
 @media (hover:none){

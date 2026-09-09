@@ -171,7 +171,22 @@ function openChannelSheet(cid, ctype) {
 function openFolderSheet(fid) {
   const f = folderById(fid);
   if (!f) return;
-  openCtxSheet(folderSheetItems(fid), { title: f.name || 'Folder', sub: (f.servers || []).length + ' server' + ((f.servers || []).length === 1 ? '' : 's'), glyph: (f.name || 'F').trim().charAt(0).toUpperCase(), color: f.color || '#5865f2' });
+  // The slide-up sheet owns the touch experience: kill the desktop flyout
+  // first so the two can never stack (long-press also fires contextmenu).
+  try { if (typeof closeFolderFlyout === 'function') closeFolderFlyout(); } catch {}
+  const colors = (typeof FOLDER_COLORS !== 'undefined' && FOLDER_COLORS) || ['#5865f2', '#3ba55d', '#ed4245', '#faa81a', '#9b59b6', '#1abc9c', '#e91e63', '#00b0f4'];
+  openCtxSheet(folderSheetItems(fid), {
+    title: f.name || 'Folder',
+    sub: (f.servers || []).length + ' server' + ((f.servers || []).length === 1 ? '' : 's'),
+    glyph: (f.name || 'F').trim().charAt(0).toUpperCase(),
+    color: f.color || '#5865f2',
+    swatches: {
+      label: 'Folder color',
+      colors,
+      selected: f.color,
+      onPick: (c) => { f.color = c; try { saveLayout(); } catch {} try { renderServerList(); } catch {} },
+    },
+  });
 }
 function openCtxSheet(items, head) {
   if (!items || !items.length) return;
@@ -197,6 +212,33 @@ function openCtxSheet(items, head) {
     h.querySelector('.sheet-who').textContent = head.title || '';
     h.querySelector('.sheet-snip').textContent = head.sub || '';
     sh.appendChild(h);
+  }
+  if (head && head.swatches && head.swatches.colors) {
+    const sw = document.createElement('div');
+    sw.className = 'sheet-swatches';
+    const lab = document.createElement('div');
+    lab.className = 'sheet-swlabel';
+    lab.textContent = head.swatches.label || 'Color';
+    sw.appendChild(lab);
+    const row = document.createElement('div');
+    row.className = 'sheet-swrow';
+    for (const c of head.swatches.colors) {
+      const d = document.createElement('button');
+      d.type = 'button';
+      d.className = 'sheet-sw' + (head.swatches.selected === c ? ' sel' : '');
+      d.style.background = c;
+      d.setAttribute('aria-label', c);
+      d.onclick = () => {
+        try { head.swatches.onPick && head.swatches.onPick(c); } catch {}
+        head.swatches.selected = c;
+        row.querySelectorAll('.sheet-sw').forEach((el) => el.classList.toggle('sel', el === d));
+        const av = sh.querySelector('.sheet-head .avatar');
+        if (av) av.style.background = c;
+      };
+      row.appendChild(d);
+    }
+    sw.appendChild(row);
+    sh.appendChild(sw);
   }
   const rows = document.createElement('div');
   rows.className = 'sheet-rows';

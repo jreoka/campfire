@@ -258,7 +258,17 @@ function wireFolderOpenDrop(box, fid) {
 const FOLDER_COLORS = ['#5865f2', '#3ba55d', '#ed4245', '#faa81a', '#9b59b6', '#1abc9c', '#e91e63', '#00b0f4'];
 function closeFolderFlyout() { if (folderFlyoutEl) { folderFlyoutEl.remove(); folderFlyoutEl = null; } }
 function openFolderMenu(fid, x, y) {
+  // Touch devices never get the desktop flyout — the bottom sheet carries
+  // the same actions (plus color) and is the only menu that opens.
+  if (typeof isCoarse === 'function' && isCoarse()) {
+    // The hold-timer sheet is already up in the normal long-press flow —
+    // don't rebuild it (would restart the slide-up animation).
+    if (document.querySelector('#sheet')) return;
+    try { openFolderSheet(fid); } catch {} return;
+  }
   closeFolderFlyout();
+  try { if (typeof closeCtxSheet === 'function') closeCtxSheet(); } catch {}
+  try { if (typeof closeCtx === 'function') closeCtx(); } catch {}
   const f = folderById(fid); if (!f) return;
   const m = document.createElement('div');
   m.id = 'folder-menu';
@@ -294,7 +304,7 @@ function openFolderMenu(fid, x, y) {
   const del = document.createElement('button');
   del.className = 'fm-item danger';
   del.textContent = 'Delete folder';
-  del.addEventListener('click', () => { deleteFolder(fid); });
+  del.addEventListener('click', () => { closeFolderFlyout(); deleteFolder(fid); });
   m.appendChild(del);
   document.body.appendChild(m);
   m.style.visibility = 'hidden';
