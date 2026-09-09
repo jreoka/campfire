@@ -2292,11 +2292,16 @@ function dmThreadFor(userId, threadId) {
   if (!t) return null;
   return db.prepare('SELECT 1 FROM dm_members WHERE thread_id = ? AND user_id = ?').get(threadId, userId) ? t : null;
 }
-function dmThreadView(t) {
+function dmThreadView(t, userId) {
   const members = db.prepare(`SELECT ${USER_COLS} FROM users WHERE id IN (SELECT user_id FROM dm_members WHERE thread_id = ?)`).all(t.id).map(publicUser);
   const last = db.prepare('SELECT m.content, m.created_at, u.display_name AS dname FROM dm_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.thread_id = ? ORDER BY m.created_at DESC LIMIT 1').get(t.id);
+  let pinned = false;
+  if (userId) {
+    try { pinned = !!db.prepare('SELECT pinned FROM dm_members WHERE thread_id = ? AND user_id = ?').get(t.id, userId)?.pinned; } catch {}
+  }
   return {
     id: t.id, name: t.name, isGroup: !!t.is_group, created_by: t.created_by || null, created_at: t.created_at, members,
+    pinned,
     last: last ? { content: last.content, created_at: last.created_at, author: last.dname || '?' } : null,
   };
 }
@@ -2727,7 +2732,7 @@ app.get('/api/dms', authRequired, (req, res) => {
   for (const id of ids) {
     const t = db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(id);
     if (!t) continue;
-    const v = dmThreadView(t);
+    const v = dmThreadView(t, req.user.id);
     try { v.callCount = (voiceRooms.get(dmVoiceKey(id)) || new Set()).size; } catch { v.callCount = 0; }
     out.push(v);
   }
@@ -2747,7 +2752,7 @@ app.post('/api/dms', authRequired, (req, res) => {
     if (mems.length === 2 && mems.includes(target.id)) {
       db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ? AND user_id = ?').run(tid, req.user.id);
       notifyUser(req.user.id, { t: 'dm-threads-changed' });
-      return res.json({ thread: dmThreadView(t) });
+      return res.json({ thread: dmThreadView(t, req.user.id) });
     }
   }
   const id = uid();
@@ -2758,7 +2763,7 @@ app.post('/api/dms', authRequired, (req, res) => {
   })();
   notifyUser(target.id, { t: 'dm-threads-changed' });
   notifyUser(req.user.id, { t: 'dm-threads-changed' });
-  res.json({ thread: dmThreadView(db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(id)) });
+  res.json({ thread: dmThreadView(db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(id), req.user.id) });
 });
 app.post('/api/dms/group', authRequired, (req, res) => {
   const name = String(req.body?.name || '').trim().slice(0, 40) || 'Group chat';
@@ -2775,7 +2780,7 @@ app.post('/api/dms/group', authRequired, (req, res) => {
   })();
   for (const oid of ids) notifyUser(oid, { t: 'dm-threads-changed' });
   notifyUser(req.user.id, { t: 'dm-threads-changed' });
-  res.json({ thread: dmThreadView(db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(id)) });
+  res.json({ thread: dmThreadView(db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(id), req.user.id) });
 });
 app.post('/api/dms/:tid/members', authRequired, (req, res) => {
   const t = dmThreadFor(req.user.id, req.params.tid);
@@ -2817,7 +2822,24 @@ app.post('/api/dms/:tid/open', authRequired, (req, res) => {
   if (!t) return res.status(404).json({ error: 'no_thread' });
   db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ? AND user_id = ?').run(t.id, req.user.id);
   notifyUser(req.user.id, { t: 'dm-threads-changed' });
-  res.json({ thread: dmThreadView(t) });
+  res.json({ thread: dmThreadView(t, req.user.id) });
+});
+
+// Pin a DM / group chat to the top of your list (per-user; syncs to all your
+// devices via dm-threads-changed). Pinning also unhides a dismissed chat.
+app.post('/api/dms/:tid/pin', authRequired, (req, res) => {
+  const t = dmThreadFor(req.user.id, req.params.tid);
+  if (!t) return res.status(404).json({ error: 'no_thread' });
+  db.prepare('UPDATE dm_members SET pinned = 1, hidden = 0 WHERE thread_id = ? AND user_id = ?').run(t.id, req.user.id);
+  notifyUser(req.user.id, { t: 'dm-threads-changed' });
+  res.json({ ok: true });
+});
+app.post('/api/dms/:tid/unpin', authRequired, (req, res) => {
+  const t = dmThreadFor(req.user.id, req.params.tid);
+  if (!t) return res.status(404).json({ error: 'no_thread' });
+  db.prepare('UPDATE dm_members SET pinned = 0 WHERE thread_id = ? AND user_id = ?').run(t.id, req.user.id);
+  notifyUser(req.user.id, { t: 'dm-threads-changed' });
+  res.json({ ok: true });
 });
 
 app.post('/api/dms/:tid/members/:uid/remove', authRequired, (req, res) => {

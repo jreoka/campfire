@@ -349,7 +349,7 @@ function renderFriendLists() {
 }
 function dmRowEl(t) {
   const b = document.createElement('button');
-  b.className = 'dmrow' + (t.id === S.dmThreadId ? ' active' : '');
+  b.className = 'dmrow' + (t.id === S.dmThreadId ? ' active' : '') + (t.pinned ? ' pinned' : '');
   b.dataset.dmthread = t.id;
   const av = t.isGroup ? null : dmPeer(t);
   const callN = dmCallPeers(t.id).length || t.callCount || 0;
@@ -369,6 +369,13 @@ function dmRowEl(t) {
     b.style.backgroundPosition = 'right center';
   }
   b.onclick = () => selectDmThread(t.id);
+  if (t.pinned) {
+    const pin = document.createElement('span');
+    pin.className = 'dm-pin';
+    pin.title = 'Pinned to top';
+    pin.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l1 7 3 3v2H5v-2l3-3z"/><path d="M12 16v5"/></svg>';
+    b.appendChild(pin);
+  }
   const unread = S.dmUnread.get(t.id) || 0;
   if (unread > 0) {
     const badge = document.createElement('span');
@@ -390,11 +397,15 @@ function dmRowEl(t) {
   }
   return b;
 }
+function dmLastTs(t) { return (t.last && t.last.created_at) || t.created_at || 0; }
+function sortDmThreads(list) {
+  return [...list].sort((a, b) => ((b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)) || (dmLastTs(b) - dmLastTs(a)));
+}
 function renderDmLists() {
   const dl = $('#dm-list'), gl = $('#group-list');
   dl.innerHTML = ''; gl.innerHTML = '';
-  for (const t of S.dms.filter((x) => !x.isGroup)) dl.appendChild(dmRowEl(t));
-  for (const t of S.dms.filter((x) => x.isGroup)) gl.appendChild(dmRowEl(t));
+  for (const t of sortDmThreads(S.dms.filter((x) => !x.isGroup))) dl.appendChild(dmRowEl(t));
+  for (const t of sortDmThreads(S.dms.filter((x) => x.isGroup))) gl.appendChild(dmRowEl(t));
   paintHomeBadge();
 }
 async function openDmWith(userId) {
@@ -432,10 +443,23 @@ function openGroupModal() {
     } catch (err) { toast(prettyError(err.message)); }
   });
 }
+async function toggleDmPin(tid) {
+  const t = S.dms.find((x) => x.id === tid);
+  if (!t) return;
+  // Optimistic: flip locally so the list re-sorts instantly, then confirm.
+  t.pinned = !t.pinned;
+  renderDmLists();
+  try {
+    await api(`/api/dms/${tid}/${t.pinned ? 'pin' : 'unpin'}`, { method: 'POST' });
+    toast(t.pinned ? 'Pinned to top' : 'Unpinned');
+  } catch { t.pinned = !t.pinned; renderDmLists(); toast('Pin failed'); }
+  refreshDms();
+}
 function dmCtxMenu(tid, x, y) {
   const t = S.dms.find((t) => t.id === tid);
   const items = [
     { label: 'Open', icon: '→', fn: () => selectDmThread(tid) },
+    { label: t && t.pinned ? 'Unpin chat' : 'Pin chat', icon: (typeof PIN_SVG !== 'undefined' ? PIN_SVG : '📌'), fn: () => toggleDmPin(tid) },
   ];
   if (t && !t.isGroup) {
     items.push({ label: 'Close DM', icon: '×', fn: () => closeDm(tid) });
