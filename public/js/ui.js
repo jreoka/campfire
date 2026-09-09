@@ -176,3 +176,104 @@ $('#btn-menu').onclick = () => document.body.classList.toggle('nav-open');
 $('#btn-members').onclick = (e) => { e.stopPropagation(); document.body.classList.toggle('members-open'); };
 $('#sidebar-scrim').onclick = () => document.body.classList.remove('nav-open');
 
+/* ---------- chat finder: quick-jump to channels, servers, DMs ---------- */
+let findSel = 0, findRows = [];
+function findOpen() { return !$('#find-panel')?.classList.contains('hidden'); }
+function openFind() {
+  const p = $('#find-panel');
+  if (!p) return;
+  p.classList.remove('hidden');
+  const inp = $('#find-input');
+  inp.value = '';
+  renderFindResults('');
+  setTimeout(() => { try { inp.focus(); } catch {} }, 0);
+  // DM list may be stale/empty if Home was never opened this session —
+  // refresh in the background and repaint if the panel is still up.
+  try { refreshDms().then(() => { if (findOpen() && !$('#find-input').value) renderFindResults(''); }); } catch {}
+}
+function closeFind() { $('#find-panel')?.classList.add('hidden'); }
+async function findGoChannel(sid, cid, type) {
+  if (sid !== S.serverId) await selectServer(sid);
+  if (type === 'voice') openVoiceChannel(sid, cid);
+  else selectChannel(cid);
+}
+function renderFindResults(q) {
+  const box = $('#find-results');
+  if (!box) return;
+  findRows = [];
+  findSel = 0;
+  const query = q.trim().toLowerCase();
+  const hit = (s) => !query || String(s || '').toLowerCase().includes(query);
+  box.innerHTML = '';
+  const sec = (t) => { const e = document.createElement('div'); e.className = 'find-sec'; e.textContent = t; box.appendChild(e); };
+  const row = (icon, name, sub, fn) => {
+    const idx = findRows.length;
+    findRows.push(fn);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'find-row';
+    b.dataset.findIdx = idx;
+    b.innerHTML = '<span class="find-ic"></span><span class="find-main"><span class="find-name"></span><span class="find-sub"></span></span>';
+    b.querySelector('.find-ic').textContent = icon;
+    b.querySelector('.find-name').textContent = name;
+    b.querySelector('.find-sub').textContent = sub;
+    b.onclick = () => activateFind(idx);
+    box.appendChild(b);
+  };
+  const cap = (arr) => query ? arr.slice(0, 8) : arr;
+  const chans = (S.view === 'server' && S.serverDetail) ? (S.serverDetail.channels || []) : [];
+  const texts = cap(chans.filter((c) => c.type === 'text' && (hit(c.name) || hit(c.description))));
+  const voices = cap(chans.filter((c) => c.type === 'voice' && hit(c.name)));
+  if (texts.length) {
+    sec('TEXT CHANNELS');
+    for (const c of texts) row('#', '#' + c.name, S.serverDetail.name, () => findGoChannel(S.serverId, c.id, 'text'));
+  }
+  if (voices.length) {
+    sec('VOICE ROOMS');
+    for (const c of voices) row('\u266A', c.name, S.serverDetail.name, () => findGoChannel(S.serverId, c.id, 'voice'));
+  }
+  const srvHits = cap((S.servers || []).filter((s) => hit(s.name)));
+  if (srvHits.length) {
+    sec('SERVERS');
+    for (const s of srvHits) row((s.name || '?').trim().charAt(0).toUpperCase(), s.name, 'Server', () => selectServer(s.id));
+  }
+  const dmHits = cap((S.dms || []).filter((t) => hit(dmTitle(t)) || hit((dmPeer(t) || {}).username)));
+  if (dmHits.length) {
+    sec('DIRECT MESSAGES');
+    for (const t of dmHits) {
+      const peer = t.isGroup ? null : dmPeer(t);
+      row(t.isGroup ? '#' : '@', dmTitle(t), t.isGroup ? `Group · ${(t.members || []).length} members` : '@' + ((peer || {}).username || ''),
+        async () => { if (S.view !== 'home') await openHome(); await selectDmThread(t.id); });
+    }
+  }
+  if (!findRows.length) box.innerHTML = '<p class="muted small find-empty">No chats match.</p>';
+  paintFindSel();
+}
+function paintFindSel() {
+  document.querySelectorAll('#find-results .find-row').forEach((el) => {
+    el.classList.toggle('sel', Number(el.dataset.findIdx) === findSel);
+  });
+  try { document.querySelector('#find-results .find-row.sel')?.scrollIntoView({ block: 'nearest' }); } catch {}
+}
+async function activateFind(idx) {
+  const fn = findRows[idx];
+  closeFind();
+  if (fn) { try { await fn(); } catch (err) { toast('Could not open chat'); } }
+}
+$('#btn-find').onclick = (e) => { e.stopPropagation(); findOpen() ? closeFind() : openFind(); };
+$('#find-input').addEventListener('input', (e) => renderFindResults(e.target.value));
+$('#find-input').addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown') { e.preventDefault(); if (findRows.length) { findSel = (findSel + 1) % findRows.length; paintFindSel(); } }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); if (findRows.length) { findSel = (findSel - 1 + findRows.length) % findRows.length; paintFindSel(); } }
+  else if (e.key === 'Enter') { e.preventDefault(); activateFind(findSel); }
+  else if (e.key === 'Escape') { closeFind(); }
+});
+document.addEventListener('click', (e) => {
+  if (!findOpen()) return;
+  if (e.target.closest && (e.target.closest('#find-panel') || e.target.closest('#btn-find'))) return;
+  closeFind();
+});
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); findOpen() ? closeFind() : openFind(); }
+});
+

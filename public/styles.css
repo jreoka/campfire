@@ -874,6 +874,22 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .dmrow.pinned .dm-pin{color:var(--accent-hover)}
 /* ---------- pins + jump-to-present ---------- */
 .pins-btn{display:inline-flex;align-items:center;position:relative}
+.find-btn{display:inline-flex;align-items:center}
+#find-panel{position:fixed;top:calc(64px + var(--safe-t, 0px));right:12px;width:min(360px,calc(100vw - 24px));max-height:min(430px,calc(100dvh - 140px));display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:.6rem;z-index:140}
+#find-panel.hidden{display:none}
+#find-input{width:100%;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:.6rem .8rem;font-size:.92rem;outline:none;font-family:inherit}
+#find-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+#find-input::placeholder{color:var(--faint)}
+#find-results{overflow-y:auto;margin-top:.45rem;display:flex;flex-direction:column;gap:2px;min-height:0}
+.find-sec{font-size:.7rem;font-weight:800;letter-spacing:.08em;color:var(--faint);padding:.5rem .3rem .2rem}
+.find-row{display:flex;align-items:center;gap:.6rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:10px;padding:.5rem .6rem;cursor:pointer}
+.find-row:hover{background:var(--panel-2)}
+.find-row.sel{background:var(--panel-3)}
+.find-ic{width:30px;height:30px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--panel-2);border-radius:10px;color:var(--muted);font-weight:800}
+.find-main{flex:1;min-width:0;line-height:1.25}
+.find-name{display:block;font-size:.86rem;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.find-sub{display:block;font-size:.74rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.find-empty{padding:.8rem;text-align:center}
 .notifs-btn{display:inline-flex;align-items:center;position:relative}
 .call-btn{display:inline-flex;align-items:center;position:relative}
 .call-btn.hidden{display:none}

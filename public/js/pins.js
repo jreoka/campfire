@@ -248,6 +248,9 @@ function renderDmMessages(force = false) {
   const box = $('#messages');
   const msgs = S.dmMessages.get(S.dmThreadId) || [];
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+  // Same scroll-preservation as renderMessages: rebuilding resets scrollTop
+  // to 0, which used to yank scrolled-up readers to the top on updates.
+  const keepDist = box.scrollHeight - box.scrollTop;
   box.innerHTML = '';
   let lastDay = '', prev = null;
   for (const m of msgs) {
@@ -258,6 +261,7 @@ function renderDmMessages(force = false) {
   }
   if (!msgs.length) box.innerHTML += '<p class="muted" style="text-align:center">No messages yet — say hello.</p>';
   if (force || nearBottom) anchorBottom(box);
+  else box.scrollTop = Math.max(0, box.scrollHeight - keepDist);
   updatePill();
 }
 function sendDm(content, opts = {}) {

@@ -489,6 +489,10 @@ function renderMessages(force = false) {
   const box = $('#messages');
   const msgs = S.messages.get(S.channelId) || [];
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+  // Rebuilding the list resets scrollTop to 0 — remember the distance from
+  // the bottom so scrolled-up readers aren't yanked to the very top by
+  // every background update (reaction, edit, status change…).
+  const keepDist = box.scrollHeight - box.scrollTop;
   box.innerHTML = '';
   let lastDay = '', prev = null;
   for (const m of msgs) {
@@ -499,6 +503,7 @@ function renderMessages(force = false) {
   }
   if (!msgs.length) box.innerHTML += '<p class="muted" style="text-align:center">No messages yet — say hello.</p>';
   if (force || nearBottom) anchorBottom(box);
+  else box.scrollTop = Math.max(0, box.scrollHeight - keepDist);
   updatePill();
 }
 // Incremental live append: add ONE arriving message without rebuilding the
