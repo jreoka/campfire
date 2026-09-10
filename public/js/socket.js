@@ -432,7 +432,7 @@ function onWS(m) {
       // path every ~15s per gaming user and must NOT rebuild the whole list
       // (each rebuild risks nudging scrolled-up readers). Member list, DM
       // rows and cards below still update every time.
-      const rowKeys = ['display_name', 'avatar_url', 'avatar_color', 'name_color', 'name_gradient', 'card_color', 'card_gradient', 'active_tag', 'active_tag_server_id'];
+      const rowKeys = ['display_name', 'avatar_url', 'avatar_color', 'name_color', 'name_gradient', 'card_color', 'card_gradient', 'avatar_decoration', 'active_tag', 'active_tag_server_id'];
       const snapRow = (o) => (o ? rowKeys.map((k) => String(o[k] ?? '')) : []);
       const snapRows = () => [
         u.id === S.me?.id ? snapRow(S.me) : [],

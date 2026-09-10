@@ -139,6 +139,21 @@ function renderServerList() {
     if (!S.rootOrder.some((it) => it.kind === 'server' && it.id === s.id) && !inFolder.has(s.id)) box.appendChild(serverBtn(s));
   }
   if (addBtn) box.appendChild(addBtn);
+  popRailPill();
+}
+// Rail pill pop: the active-tab pill replays its entry animation only when
+// the selection actually moves (renderServerList also rebuilds on badges,
+// presence, etc. — those must not replay it).
+function popRailPill() {
+  const key = S.view + ':' + (S.view === 'server' ? (S.serverId || '') : 'home');
+  if (S.pillKey === key) return;
+  S.pillKey = key;
+  requestAnimationFrame(() => {
+    document.querySelectorAll('#server-list .server-btn.active, #server-list .fwrap.active, #home-wrap:has(> .active)').forEach((el) => {
+      el.classList.add('pill-pop');
+      setTimeout(() => { try { el.classList.remove('pill-pop'); } catch {} }, 350);
+    });
+  });
 }
 function toggleFolder(id) {
   S.openFolderId = (S.openFolderId === id) ? null : id;

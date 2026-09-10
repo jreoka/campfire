@@ -128,6 +128,16 @@ function esc(s) {
  * palette the backend uses at signup; keyed on stable account id so a user
  * keeps the same fallback color on every device. */
 const AV_COLORS = ['#5865f2', '#3ba55d', '#ed4245', '#faa81a', '#9b59b6', '#1abc9c', '#e91e63', '#00b0f4'];
+// Avatar decorations (settings → profile). IDs must match AVATAR_DECOS in server.js.
+const AVATAR_DECOS = [
+  { id: 'ember', name: 'Ember Glow', camp: true },
+  { id: 'fireflies', name: 'Fireflies', camp: true },
+  { id: 'aurora', name: 'Northern Lights', camp: true },
+  { id: 'neon', name: 'Neon Pulse', camp: false },
+  { id: 'tide', name: 'Tide Spin', camp: false },
+  { id: 'stardust', name: 'Stardust Sweep', camp: false },
+];
+const AV_DECO_IDS = new Set(AVATAR_DECOS.map((d) => d.id));
 /* Early-user badge: kept forever once earned. Eligibility is pinned to a fixed
  * cutoff (one year from 2026-09-10): any account created on or before that
  * date shows the badge permanently. */
@@ -173,6 +183,9 @@ function avatar(el, name, userOrColor) {
 function paintAvatar(el, user) {
   if (!el) return;
   el.classList.add('avatar');
+  for (const c of [...el.classList]) if (c.indexOf('deco-') === 0) el.classList.remove(c);
+  const dec = user && AV_DECO_IDS.has(user.avatar_decoration) ? user.avatar_decoration : '';
+  if (dec) el.classList.add('deco-' + dec);
   if (user && user.avatar_url) {
     el.style.background = 'transparent';
     el.style.boxShadow = 'none';

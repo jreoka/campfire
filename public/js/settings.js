@@ -3,6 +3,8 @@
 function openSettings(tab = 'profile') {
   setSettingsTab(tab);
   $('#set-display').value = S.me.display_name || '';
+  S.pendingDeco = undefined;
+  renderDecoPicker();
   $('#set-namecustom').checked = !!(S.me.name_color || S.me.name_gradient);
   const remNc = rememberedNameColors();
   $('#set-namecolor').value = S.me.name_color || remNc.c || '#aac7ff';
@@ -386,6 +388,34 @@ $('#set-banner-rm').onclick = async () => {
 };
 function rememberedNameColors() { try { return JSON.parse(localStorage.getItem('cf_namecolors') || 'null') || {}; } catch { return {}; } }
 function rememberedCardColors() { try { return JSON.parse(localStorage.getItem('cf_cardcolors') || 'null') || {}; } catch { return {}; } }
+function renderDecoPicker() {
+  const grid = $('#set-deco-grid');
+  if (!grid) return;
+  const cur = S.pendingDeco !== undefined ? S.pendingDeco : ((S.me || {}).avatar_decoration || '');
+  grid.innerHTML = '';
+  const mk = (id, name) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'deco-opt' + (cur === id ? ' sel' : '');
+    b.dataset.deco = id;
+    const av = document.createElement('span');
+    try { paintAvatar(av, { ...(S.me || {}), display_name: ((S.me || {}).display_name || '?'), avatar_decoration: id }); } catch {}
+    const nm = document.createElement('span');
+    nm.textContent = name;
+    b.append(av, nm);
+    b.onclick = () => {
+      S.pendingDeco = id;
+      grid.querySelectorAll('.deco-opt').forEach((o) => o.classList.toggle('sel', o === b));
+      try { paintAvatar($('#set-avatar-prev'), { ...(S.me || {}), avatar_decoration: id }); } catch {}
+    };
+    return b;
+  };
+  grid.appendChild(mk('', 'None'));
+  const camp = AVATAR_DECOS.filter((d) => d.camp), other = AVATAR_DECOS.filter((d) => !d.camp);
+  const lab = (t) => { const s = document.createElement('span'); s.className = 'deco-group'; s.textContent = t; return s; };
+  if (camp.length) { grid.appendChild(lab('Camping')); camp.forEach((d) => grid.appendChild(mk(d.id, d.name))); }
+  if (other.length) { grid.appendChild(lab('More')); other.forEach((d) => grid.appendChild(mk(d.id, d.name))); }
+}
 // Pending timed-presence note (status lives in the avatar menu;
 // saving here never touches it).
 function updatePresenceNote() {
@@ -410,6 +440,7 @@ $('#set-profile-save').onclick = async () => {
       nameGradient: $('#set-namecustom').checked ? $('#set-namegrad').value : '',
       cardColor: $('#set-cardcustom').checked ? $('#set-cardcolor').value : '',
       cardGradient: $('#set-cardcustom').checked ? $('#set-cardgrad').value : '',
+      decoration: S.pendingDeco !== undefined ? S.pendingDeco : ((S.me || {}).avatar_decoration || ''),
     };
     // Only send the tag when it changed: a stale selection (server removed
     // its tag) must never block the rest of the profile save.

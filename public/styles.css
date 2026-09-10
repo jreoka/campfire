@@ -220,6 +220,12 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .server-btn{width:48px;height:48px;border-radius:12px;border:0;background:var(--panel-2);color:var(--text);font-size:1.15rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;position:relative;flex-shrink:0;transition:background var(--t-fast),border-radius var(--t-fast)}
 .server-btn img{border-radius:inherit}
 .server-btn.active::before{content:'';position:absolute;left:-10px;top:50%;transform:translateY(-50%);width:6px;height:28px;border-radius:0 999px 999px 0;background:var(--text);z-index:2}
+/* Rail pill pop: replays only when the selection actually moves (see
+   popRailPill — rail rebuilds also fire on badges/presence, which must
+   not replay it). */
+@keyframes pill-pop{0%{transform:translateY(-50%) scaleY(.15);opacity:0}55%{opacity:1}100%{transform:translateY(-50%) scaleY(1);opacity:1}}
+.server-btn.pill-pop::before,.fwrap.pill-pop .folder-btn::before,#home-wrap.pill-pop:has(> .active)::before{animation:pill-pop .28s ease-out}
+@media (prefers-reduced-motion:reduce){.server-btn.pill-pop::before,.fwrap.pill-pop .folder-btn::before,#home-wrap.pill-pop:has(> .active)::before{animation:none}}
 .server-btn:hover{background:var(--panel-3);border-radius:10px}
 .server-btn.active{background:var(--accent);color:var(--on-accent)}
 .server-btn.has-icon{background-color:transparent;background-size:cover;background-position:center}
@@ -864,6 +870,31 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .avatar.big{width:56px;height:56px;font-size:1.3rem}
 .avatar img,.avatar-img{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block}
 .avatar{overflow:hidden}
+/* ---------- avatar decorations (settings → profile) ----------
+   Outer effects animate box-shadow (never clipped by the avatar's own
+   overflow); inner effects use ::before (::after stays free for the
+   status ring). Keyframe animations win over paintAvatar's inline
+   box-shadow:none, so they always render. */
+.avatar[class*="deco-"]{position:relative}
+.avatar.deco-ember{animation:deco-ember 1.6s ease-in-out infinite}
+@keyframes deco-ember{0%,100%{box-shadow:0 0 0 2px #ff9a3c,0 0 10px 2px rgba(255,122,26,.55)}50%{box-shadow:0 0 0 2px #ffd23c,0 0 18px 5px rgba(255,122,26,.85)}}
+.avatar.deco-neon{animation:deco-neon 2.2s ease-in-out infinite}
+@keyframes deco-neon{0%,100%{box-shadow:0 0 0 2px #5b6cff,0 0 8px 1px rgba(91,108,255,.5)}50%{box-shadow:0 0 0 2px #22d3ee,0 0 16px 4px rgba(34,211,238,.8)}}
+.avatar.deco-fireflies::before,.avatar.deco-aurora::before,.avatar.deco-tide::before,.avatar.deco-stardust::before{content:"";position:absolute;inset:0;border-radius:50%;pointer-events:none;z-index:2}
+.avatar.deco-fireflies::before{background:radial-gradient(circle 3px at 50% 10%,#ffe27a 60%,transparent 72%),radial-gradient(circle 2px at 50% 90%,#b6ff9e 60%,transparent 72%);animation:deco-spin 3.2s linear infinite}
+.avatar.deco-aurora::before{background:conic-gradient(from 0deg,transparent 0%,rgba(95,242,200,.55) 12%,transparent 26%,transparent 52%,rgba(122,162,255,.55) 64%,transparent 78%);animation:deco-spin 6s linear infinite}
+.avatar.deco-tide::before{background:conic-gradient(from 0deg,transparent 0%,rgba(34,211,238,.6) 18%,transparent 38%,transparent 55%,rgba(59,130,246,.6) 75%,transparent 95%);animation:deco-spin 4s linear infinite}
+.avatar.deco-stardust::before{background:linear-gradient(115deg,transparent 30%,rgba(255,255,255,.5) 47%,rgba(255,255,255,.95) 50%,rgba(255,255,255,.5) 53%,transparent 70%);background-size:280% 280%;animation:deco-sweep 2.8s ease-in-out infinite}
+@keyframes deco-spin{to{transform:rotate(360deg)}}
+@keyframes deco-sweep{0%{background-position:110% 0}55%,100%{background-position:-10% 0}}
+@media (prefers-reduced-motion:reduce){.avatar[class*="deco-"],.avatar[class*="deco-"]::before{animation:none}}
+/* decoration picker (settings → profile) */
+.deco-grid{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.35rem}
+.deco-group{flex-basis:100%;font-size:.68rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+.deco-opt{display:flex;flex-direction:column;align-items:center;gap:.35rem;border:1px solid var(--line-soft);background:var(--panel);border-radius:12px;padding:.6rem .5rem;min-width:78px;cursor:pointer;color:var(--muted);font-size:.68rem;font-weight:700;transition:border-color var(--t-fast),color var(--t-fast)}
+.deco-opt:hover{color:var(--text)}
+.deco-opt.sel{border-color:var(--accent);color:var(--text);box-shadow:0 0 0 3px var(--accent-dim)}
+.deco-opt .avatar{width:44px;height:44px;font-size:1rem}
 .status-dot{width:10px;height:10px;border-radius:50%;background:#4f545c;flex-shrink:0}
 .status-dot.online{background:var(--green)}
 .status-dot.away{background:var(--amber)}

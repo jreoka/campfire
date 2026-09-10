@@ -28,6 +28,7 @@ async function openHome() {
   $('#server-ui').classList.add('hidden');
   $('#home-ui').classList.remove('hidden');
   $('#btn-home').classList.add('active');
+  popRailPill();
   document.querySelectorAll('#server-list .server-btn').forEach((b) => b.classList.remove('active'));
   rememberView();
   closeThread(true);
