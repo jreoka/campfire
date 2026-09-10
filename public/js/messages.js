@@ -492,39 +492,56 @@ function shouldGroup(prev, m) {
   return true;
 }
 function anchorBottom(box) {
-  // Late media must not yank a reader who scrolled up mid-load (e.g. right
-  // after a scroll position was restored): re-anchor only while still near
-  // the bottom.
-  const stillNearBottom = () => box.scrollHeight - box.scrollTop - box.clientHeight < 200;
-  // Lazy `loading` images have 0 height until they load, so the first scroll
-  // lands above the true bottom and the content grows under us. Re-anchor on
-  // each image settling (they load roughly together, so re-check after every
-  // one) to reliably land on the bottom.
+  // Snap to the live bottom, then HOLD it while late media settles.
+  // Images, video and link embeds render at 0 height on a cold start
+  // (e.g. right after a refresh) and each one popping in above the
+  // viewport shoves the view upward as it grows. Without this guard the
+  // reader drifts hundreds of px up and gets stranded "way up" with the
+  // Jump-to-present pill showing. Re-snap on every settle until the user
+  // scrolls themselves, or after a few seconds — whichever comes first.
   box.scrollTop = box.scrollHeight;
-  for (const img of box.querySelectorAll('img')) {
-    if (img.complete) continue;
-    const once = () => {
-      img.removeEventListener('load', once); img.removeEventListener('error', once);
-      if (stillNearBottom()) box.scrollTop = box.scrollHeight;
-    };
-    img.addEventListener('load', once);
-    img.addEventListener('error', once);
-  }
-  // Same problem for videos: a 720p attach has no intrinsic size until its
-  // metadata loads, so the initial scroll strands the view mid-video once it
-  // grows. Re-anchor when each video's dimensions settle.
-  for (const v of box.querySelectorAll('video')) {
-    if (v.readyState >= 1) continue;
-    const once = () => {
-      v.removeEventListener('loadedmetadata', once);
-      v.removeEventListener('loadeddata', once);
-      v.removeEventListener('error', once);
-      if (stillNearBottom()) box.scrollTop = box.scrollHeight;
-    };
-    v.addEventListener('loadedmetadata', once);
-    v.addEventListener('loadeddata', once);
-    v.addEventListener('error', once);
-  }
+  let want = box.scrollTop, live = true;
+  const t0 = Date.now();
+  // Never yank a different conversation: a channel switch reuses the same
+  // #messages box, and late media from the old one may settle afterwards.
+  const v = S.view, c = S.channelId, d = S.dmThreadId;
+  const stillHere = () => S.view === v && S.channelId === c && S.dmThreadId === d && !box.classList.contains('hidden');
+  const stop = () => {
+    if (!live) return; live = false;
+    box.removeEventListener('wheel', take);
+    box.removeEventListener('touchmove', take);
+    box.removeEventListener('scroll', onScroll);
+    box.removeEventListener('load', onSettle, true);
+    box.removeEventListener('error', onSettle, true);
+    box.removeEventListener('loadedmetadata', onSettle, true);
+  };
+  const take = () => stop(); // wheel / touch scroll = the user took over
+  const snap = () => {
+    if (!live || !stillHere() || Date.now() - t0 > 8000) { stop(); return; }
+    want = box.scrollHeight;
+    if (Math.abs(box.scrollTop - want) > 0.5) box.scrollTop = want;
+    if (typeof updatePill === 'function') { try { updatePill(); } catch {} }
+  };
+  const onScroll = () => {
+    // Our own snaps fire scroll events too — only a position that doesn't
+    // match our last snap (checked next frame) means the user dragged the
+    // scrollbar themselves. Content growth above never changes scrollTop,
+    // so it can't false-trigger this.
+    requestAnimationFrame(() => { if (live && Math.abs(box.scrollTop - want) > 2) stop(); });
+  };
+  const onSettle = (e) => {
+    // Capture phase: 'load' doesn't bubble, but this still catches media
+    // injected later (link embeds resolving seconds after open).
+    if (!live) return;
+    if (e.target && e.target.matches && e.target.matches('img, video')) snap();
+  };
+  box.addEventListener('wheel', take, { passive: true });
+  box.addEventListener('touchmove', take, { passive: true });
+  box.addEventListener('scroll', onScroll, { passive: true });
+  box.addEventListener('load', onSettle, true);
+  box.addEventListener('error', onSettle, true);
+  box.addEventListener('loadedmetadata', onSettle, true);
+  setTimeout(stop, 8100);
 }
 // Anchor-based scroll preservation for full list rebuilds. Distance-from-
 // bottom breaks whenever content heights change across the rebuild (lazy
