@@ -1735,7 +1735,6 @@ body.story-open{overflow:hidden}
 .sc-shutter.rec{background:var(--red);border-radius:18px;width:54px;height:54px}
 .sc-rec-time{position:absolute;bottom:-1.35rem;left:50%;transform:translateX(-50%);font-size:.75rem;font-weight:700;color:rgba(255,255,255,.85);font-variant-numeric:tabular-nums}
 .sc-modes{display:flex;gap:.3rem;justify-content:flex-end;min-width:86px}
-.sc-aud-hint{margin:.35rem 0 0;text-align:center;font-size:.76rem;color:var(--amber);min-height:1em;font-weight:650}
 .sc-mode{background:rgba(255,255,255,.1);border:0;color:rgba(255,255,255,.72);border-radius:999px;padding:.35rem .8rem;font-size:.75rem;font-weight:700;cursor:pointer;font-family:inherit}
 .sc-mode.active{background:#fff;color:#111}
 .sc-ico{display:flex;flex-direction:column;align-items:center;gap:.2rem;background:none;border:0;color:#fff;font-size:.68rem;font-weight:650;cursor:pointer;font-family:inherit;width:66px;padding:.2rem 0}

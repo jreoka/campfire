@@ -1331,8 +1331,6 @@ function storyShowPreview(blob, kind, durationMs) {
   storyProgress(null);
   const next = $('#sc-next');
   if (next) next.textContent = 'Next';
-  const hint = $('#sc-aud-hint');
-  if (hint) hint.textContent = storyAudSummary();
 }
 function storyRetake() {
   if (!sc) return;
@@ -1350,22 +1348,6 @@ function storyAudCount() {
   if (!sc) return 0;
   if (sc.vo) return (sc.voIds || []).length;
   return (sc.audFriends ? 1 : 0) + (sc.audEveryone ? 1 : 0) + (sc.audServers || []).length + (sc.audUsers || []).length;
-}
-// One line under the caption on the preview step: who this is going to.
-function storyAudSummary() {
-  if (!sc) return '';
-  if (sc.vo) {
-    const n = (sc.voIds || []).length;
-    return n ? `View once → ${n} ${n === 1 ? 'friend' : 'friends'}` : 'View once · pick who gets it';
-  }
-  const bits = [];
-  if (sc.audFriends) bits.push('All friends');
-  if (sc.audEveryone) bits.push('Everyone');
-  const srv = (sc.audServers || []).length;
-  if (srv) bits.push(srv === 1 ? '1 server' : srv + ' servers');
-  const f = (sc.audUsers || []).length;
-  if (f) bits.push(f === 1 ? '1 friend' : f + ' friends');
-  return bits.length ? 'To: ' + bits.join(' · ') : 'Pick who can see this';
 }
 // Step 2: the audience menu. Everything is a toggle row — all friends,
 // everyone on this Campfire, whole servers, or individual friends.
@@ -1489,10 +1471,6 @@ function renderStoryAudience() {
     post.disabled = !n || !!sc.busy;
     if (!sc.busy) post.textContent = sc.vo ? (n ? `Send (${n})` : 'Send') : 'Post story';
   }
-  const hint = $('#sc-aud-hint');
-  if (hint) hint.textContent = sc.vo
-    ? 'They can open it once and replay it once — then it is deleted.'
-    : (n ? storyAudSummary() : 'Nothing selected yet');
 }
 
 function storyProgress(pct) {
