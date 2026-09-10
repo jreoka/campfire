@@ -6,22 +6,77 @@ function sendVisibility() {
 // Tell the server when the tab is foregrounded/backgrounded so it stops
 // suppressing pushes for hidden/closed mobile tabs.
 document.addEventListener('visibilitychange', sendVisibility);
+// ---------- connection overlay (full-page "Connecting..." state) ----------
+// A themed campfire splash covers the stale app whenever the live socket
+// drops, until the server is reachable again. A short grace delay keeps fast
+// blips (and the initial boot handshake) from flashing it.
+let connTimer = null, connAttempts = 0, connVisible = false;
+function connEl() { return document.getElementById('conn-overlay'); }
+function inMainView() { return !document.getElementById('view-main')?.classList.contains('hidden'); }
+function paintConn() {
+  const sub = connEl()?.querySelector('.conn-sub');
+  if (sub) {
+    if (!navigator.onLine) sub.textContent = "You're offline — check your connection.";
+    else if (connAttempts > 1) sub.textContent = `Trying to reach Campfire — retry ${connAttempts}…`;
+    else sub.textContent = 'Trying to reach Campfire — hang tight.';
+  }
+}
+function showConn() {
+  if (connVisible || !store.token || !inMainView()) { paintConn(); return; }
+  connVisible = true;
+  paintConn();
+  connEl()?.classList.remove('hidden');
+}
+function hideConn() {
+  if (connTimer) { clearTimeout(connTimer); connTimer = null; }
+  if (!connVisible) return;
+  connVisible = false;
+  connEl()?.classList.add('hidden');
+}
+function armConnSoon() {
+  paintConn();
+  if (connVisible || connTimer || !store.token || !inMainView()) return;
+  // First drop gets a grace window (fast blips stay invisible); once the
+  // overlay is up — or while retrying — later drops show instantly.
+  connTimer = setTimeout(() => { connTimer = null; showConn(); }, connAttempts <= 1 ? 1200 : 0);
+}
+// Auth was revoked server-side (bad/expired token): stop the reconnect loop
+// and send the user back to sign in instead of spinning forever.
+async function connAuthDead() {
+  try { if (S.ws) { S.ws.onclose = null; S.ws.onerror = null; } } catch {}
+  hideConn();
+  try { await api('/api/me'); return connectWS(); } catch {} // token still fine — just reconnect
+  try { S.ws?.close(); } catch {}
+  S.ws = null; S.me = null;
+  store.token = ''; store.sid = '';
+  try { showAuth(); setMode('login'); } catch {}
+  try { toast('Session expired — sign in again'); } catch {}
+}
 function connectWS() {
-  S.ws?.close();
+  try { if (S.ws) { S.ws.onclose = null; S.ws.onerror = null; try { S.ws.close(); } catch {} } } catch {}
+  if (!store.token) return;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(store.token)}`);
   S.ws = ws;
-  ws.onopen = () => { ws.send(JSON.stringify({ t: 'subscribe' })); sendVisibility(); checkVersion(); };
+  ws.onopen = () => { connAttempts = 0; hideConn(); ws.send(JSON.stringify({ t: 'subscribe' })); sendVisibility(); checkVersion(); };
   ws.onmessage = (ev) => {
     let m;
     try { m = JSON.parse(ev.data); } catch { return; }
     onWS(m);
   };
-  ws.onclose = () => {
+  ws.onerror = () => { try { ws.close(); } catch {} };
+  ws.onclose = (ev) => {
+    if (ev && ev.code === 4401) { connAuthDead(); return; } // bad token — don't loop
+    if (!store.token || S.ws !== ws) return; // logged out or superseded — stay quiet
+    connAttempts++;
+    armConnSoon();
     // auto-reconnect
-    setTimeout(() => { if (store.token) connectWS(); }, 2500);
+    setTimeout(() => { if (store.token && S.ws === ws) connectWS(); }, 2500);
   };
 }
+window.addEventListener('online', () => { paintConn(); if (store.token && inMainView() && (!S.ws || S.ws.readyState !== 1)) connectWS(); });
+window.addEventListener('offline', () => { if (store.token && inMainView()) showConn(); });
+document.getElementById('conn-retry')?.addEventListener('click', () => { if (store.token) { connAttempts++; connectWS(); } });
 function scrubReplyPreview(deletedId) {
   // A deleted message's text must not linger in the reply-quote previews of
   // messages that quoted it. Fresh history loads already come back scrubbed
