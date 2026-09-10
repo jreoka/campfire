@@ -308,9 +308,9 @@ function openFolderMenu(fid, x, y) {
   m.appendChild(del);
   document.body.appendChild(m);
   m.style.visibility = 'hidden';
-  const r = m.getBoundingClientRect();
-  m.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + 'px';
-  m.style.top = Math.max(8, Math.min(y, innerHeight - r.height - 8)) + 'px';
+  const b = popupBox(m); // offsetWidth/Height: the entry animation scales the rect
+  m.style.left = Math.max(8, Math.min(x, innerWidth - b.w - 8)) + 'px';
+  m.style.top = Math.max(8, Math.min(y, innerHeight - b.h - 8)) + 'px';
   m.style.visibility = '';
   folderFlyoutEl = m;
 }

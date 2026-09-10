@@ -125,6 +125,14 @@ function toast(msg, ms = 2500) {
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+// Layout size of a popup that was just inserted, for viewport clamping.
+// Deliberately offsetWidth/offsetHeight and NOT getBoundingClientRect():
+// popups enter with the cf-pop-in scale() animation, and the rect reports
+// that shrunken (transformed) box while the animation runs — a menu clamped
+// from a 94%-scale reading comes up ~6% short and hangs off the bottom edge.
+function popupBox(el) {
+  return { w: el.offsetWidth, h: el.offsetHeight };
+}
 /* Default avatar color: deterministic per account (no custom picker). Same
  * palette the backend uses at signup; keyed on stable account id so a user
  * keeps the same fallback color on every device. */

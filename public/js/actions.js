@@ -36,9 +36,9 @@ function openCtx(x, y, items) {
   }
   m.style.visibility = 'hidden';
   document.body.appendChild(m);
-  const r = m.getBoundingClientRect();
-  m.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + 'px';
-  m.style.top = Math.max(8, Math.min(y, innerHeight - r.height - 8)) + 'px';
+  const b = popupBox(m);
+  m.style.left = Math.max(8, Math.min(x, innerWidth - b.w - 8)) + 'px';
+  m.style.top = Math.max(8, Math.min(y, innerHeight - b.h - 8)) + 'px';
   m.style.visibility = '';
   ctxEl = m;
 }

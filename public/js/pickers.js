@@ -552,6 +552,20 @@ async function saveEdit(mid) {
   try { await api(base + mid, { method: 'PATCH', body: JSON.stringify({ content, removeAttachments: remove }) }); }
   catch (err) { toast('Edit failed: ' + prettyError(err.message)); if (S.channelId) renderMessages(); }
 }
+// Edit box: Enter saves the edit, Shift+Enter inserts a line break — same
+// contract as the composer. Without this, Enter only added a newline and the
+// edit could only be committed with the Save button. Works for channel, DM
+// and thread replies (the box is (re)created by messageEl in each of them).
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+  const t = e.target;
+  if (!t || t.id !== 'edit-area') return;
+  const owner = t.closest && t.closest('.msg[data-mid]');
+  const mid = owner ? owner.dataset.mid : null;
+  if (!mid) return; // stray box (no message to save): leave the default alone
+  e.preventDefault();
+  saveEdit(mid);
+});
 // global delegation for message interactions
  document.addEventListener('click', (e) => {
   const uidEl = e.target.closest('[data-uid]');
@@ -956,9 +970,9 @@ async function openUserCard(uid, x, y) {
   loadUserGaming($('#uc-gaming'), u.username, { compact: true });
   card.style.bottom = ''; card.style.maxHeight = ''; card.style.overflowY = '';
   card.classList.remove('hidden');
-  const r = card.getBoundingClientRect();
+  const h = card.offsetHeight || 300; // offsetHeight, not the animating rect (see popupBox)
   card.style.left = Math.max(8, Math.min(x || 8, innerWidth - Math.min(296, innerWidth - 16))) + 'px';
-  card.style.top = Math.max(8, Math.min(y || 8, innerHeight - (r.height || 300) - 8)) + 'px';
+  card.style.top = Math.max(8, Math.min(y || 8, innerHeight - h - 8)) + 'px';
   $('#uc-close').onclick = closeUserCard;
   const pr = $('#uc-profile');
   if (pr) pr.onclick = () => { closeUserCard(); openProfileScreen(uid); };
@@ -1218,13 +1232,13 @@ function clampUserCard() {
   const card = $('#usercard');
   if (!card || card.classList.contains('hidden')) return;
   if (card.style.bottom && card.style.bottom !== 'auto') return; // grows upward, always safe
-  const r = card.getBoundingClientRect();
+  const h = card.offsetHeight || 300; // see popupBox: never measure mid-animation
   let left = parseFloat(card.style.left);
   let top = parseFloat(card.style.top);
   if (!Number.isFinite(left)) left = 8;
   if (!Number.isFinite(top)) top = 8;
   card.style.left = Math.max(8, Math.min(left, innerWidth - Math.min(296, innerWidth - 16))) + 'px';
-  card.style.top = Math.max(8, Math.min(top, innerHeight - (r.height || 300) - 8)) + 'px';
+  card.style.top = Math.max(8, Math.min(top, innerHeight - h - 8)) + 'px';
 }
 // ---------- custom status quick-edit (own user card) ----------
 function fmtCountdown(ts) {
