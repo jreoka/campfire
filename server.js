@@ -161,6 +161,27 @@ function deleteUploaded(url) {
   const p = path.join(UPLOAD_DIR, clean.slice('/uploads/'.length));
   if (path.resolve(p).startsWith(path.resolve(UPLOAD_DIR))) fs.unlink(p, () => {});
 }
+// Remove stored bytes for deleted messages. Attachment DB rows cascade on
+// message delete, but S3/local files linger forever without this (the
+// orphan sweep is only a backstop). Call BEFORE the message rows are
+// deleted, with the table matching the message kind.
+async function deleteMessageFiles(table, messageIds) {
+  const ids = [...new Set((messageIds || []).filter(Boolean))];
+  if (!ids.length) return;
+  try {
+    const ph = ids.map(() => '?').join(',');
+    const rows = await db.prepare(`SELECT url FROM ${table} WHERE message_id IN (${ph})`).all(...ids);
+    for (const r of rows) { try { deleteUploaded(r.url); } catch {} }
+  } catch {}
+}
+// Storage key for a chat-upload URL ('/uploads/files/abc.jpg?v=k' ->
+// 'files/abc.jpg'), or null for remote URLs / other prefixes.
+function scanKeyForUrl(url) {
+  try {
+    const k = storage.s3KeyFromUrl(String(url || '').split('?')[0]);
+    return k && k.startsWith('files/') ? k : null;
+  } catch { return null; }
+}
 
 if (storage.s3Enabled()) console.log('[campfire] media storage: S3 bucket ' + (process.env.S3_BUCKET || ''));
 else console.log('[campfire] media storage: local disk ' + UPLOAD_DIR);
@@ -185,6 +206,28 @@ app.get(['/', '/index.html'], (req, res, next) => {
   });
 });
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
+// Virus-scan gate: chat uploads stay unservable until the scanner marks
+// them clean (423 while the verdict is pending, 410 once infected bytes
+// are deleted). Chat renders scanning/infected cards instead of the file,
+// so browsers never even request gated bytes in normal flow — this is the
+// backstop for direct links, embeds, and renamed-extension tricks.
+async function scanGate(req, res, next) {
+  try {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    const vs = require('./virus-scan');
+    if (!vs.scanGating()) return next();
+    const key = storage.s3KeyFromUrl('/uploads' + req.path);
+    if (!key || !key.startsWith('files/')) return next();
+    const st = await vs.scanStatus(key);
+    if (st === 'pending') {
+      res.setHeader('Retry-After', '5');
+      return res.status(423).json({ error: 'scan_pending' });
+    }
+    if (st === 'infected') return res.status(410).json({ error: 'file_removed_virus' });
+    return next();
+  } catch { return next(); }
+}
+app.use('/uploads', scanGate);
 app.use('/uploads', express.static(UPLOAD_DIR, {
   dotfiles: 'deny', index: false, maxAge: '7d',
   setHeaders(res, filePath) {
@@ -965,6 +1008,11 @@ app.delete('/api/servers/:id/channels/:chId', authRequired, async (req, res) => 
   if (!ch) return res.status(404).json({ error: 'no_channel' });
   const n = (await db.prepare('SELECT COUNT(*) c FROM channels WHERE server_id = ?').get(s.id)).c;
   if (n <= 1) return res.status(400).json({ error: 'cannot_delete_last_channel' });
+  // Channel delete cascades messages + attachments rows — remove the bytes first.
+  try {
+    const cmsgIds = (await db.prepare('SELECT id FROM messages WHERE channel_id = ?').all(ch.id)).map((r) => r.id);
+    await deleteMessageFiles('attachments', cmsgIds);
+  } catch {}
   await db.prepare('DELETE FROM channels WHERE id = ?').run(ch.id);
   // kick voice occupants out
   const key = s.id + ':' + ch.id;
@@ -1211,9 +1259,11 @@ app.delete('/api/webhooks/:wid/:token/messages/:mid', async (req, res) => {
     if (kidIds.length) {
       const ph = kidIds.map(() => '?').join(',');
       if ((await db.prepare(`DELETE FROM message_pins WHERE message_id IN (${ph})`).run(...kidIds)).changes) pinsChanged = true;
+      await deleteMessageFiles('attachments', [m.id, ...kidIds]);
       await db.prepare('DELETE FROM messages WHERE thread_root_id = ?').run(m.id);
     }
   }
+  if (!kidIds.length) await deleteMessageFiles('attachments', [m.id]);
   await db.prepare('DELETE FROM messages WHERE id = ?').run(m.id);
   await deletePollsFor('server', kidIds.length ? [m.id, ...kidIds] : [m.id]);
   if ((await db.prepare('DELETE FROM message_pins WHERE message_id = ?').run(m.id)).changes) pinsChanged = true;
@@ -1241,6 +1291,15 @@ app.delete('/api/servers/:id', authRequired, async (req, res) => {
   let affected = [];
   try { affected = (await db.prepare('SELECT id FROM users WHERE active_tag_server_id = ?').all(s.id)).map((r) => r.id); } catch {}
   await db.prepare('UPDATE users SET active_tag_server_id = NULL, active_tag = NULL WHERE active_tag_server_id = ?').run(s.id);
+  // Server delete cascades everything below — remove stored bytes first.
+  try {
+    const smsgIds = (await db.prepare('SELECT id FROM messages WHERE server_id = ?').all(s.id)).map((r) => r.id);
+    await deleteMessageFiles('attachments', smsgIds);
+    deleteUploaded(s.icon_url);
+    deleteUploaded(s.banner_url);
+    for (const e of await db.prepare('SELECT url FROM custom_emoji WHERE server_id = ?').all(s.id)) deleteUploaded(e.url);
+    for (const w of await db.prepare('SELECT avatar_url FROM webhooks WHERE server_id = ?').all(s.id)) deleteUploaded(w.avatar_url);
+  } catch {}
   await db.prepare('DELETE FROM servers WHERE id = ?').run(s.id);
   for (const uid of affected) { try { const fu = await freshUser(uid); await broadcastUserUpdate(fu); notifyUser(uid, { t: 'user-updated', user: fu }); } catch {} }
   broadcastToServer(s.id, { t: 'server-deleted', serverId: s.id });
@@ -1674,9 +1733,11 @@ app.delete('/api/messages/:mid', authRequired, async (req, res) => {
     if (kidIds.length) {
       const ph = kidIds.map(() => '?').join(',');
       if ((await db.prepare(`DELETE FROM message_pins WHERE message_id IN (${ph})`).run(...kidIds)).changes) pinsChanged = true;
+      await deleteMessageFiles('attachments', [m.id, ...kidIds]);
       await db.prepare('DELETE FROM messages WHERE thread_root_id = ?').run(m.id);
     }
   }
+  if (!kidIds.length) await deleteMessageFiles('attachments', [m.id]);
   await db.prepare('DELETE FROM messages WHERE id = ?').run(m.id);
   await deletePollsFor('server', kidIds.length ? [m.id, ...kidIds] : [m.id]);
   if ((await db.prepare('DELETE FROM message_pins WHERE message_id = ?').run(m.id)).changes) pinsChanged = true;
@@ -1739,11 +1800,16 @@ app.post('/api/upload', authRequired, (req, res, next) => {
   if (!req.file) return res.status(400).json({ error: 'bad_file (no file received)' });
   try { await persistUpload('files', req.file); }
   catch { return res.status(500).json({ error: 'storage_failed' }); }
+  // Every upload is virus-scanned by content (extensions lie — see
+  // virus-scan.js). The file posts to chat immediately but stays
+  // unservable until the verdict lands.
+  let scan = 'clean';
+  try { scan = await require('./virus-scan').queueFileScan('files/' + req.file.filename); } catch {}
   let mt = req.file.mimetype;
   // Extension-accepted code/text with an empty or generic MIME reads as text.
   if ((!mt || mt === 'application/octet-stream') && CODE_TEXT_EXTS.has(path.extname(String(req.file.originalname || '')).toLowerCase().slice(1))) mt = 'text/plain';
   const kind = mt.startsWith('image/') ? 'image' : mt.startsWith('video/') ? 'video' : mt.startsWith('audio/') ? 'audio' : 'file';
-  res.json({ url: uploadUrl('files', req.file), name: String(req.file.originalname || 'file').slice(0, 120), mime: mt, size: req.file.size, kind });
+  res.json({ url: uploadUrl('files', req.file), name: String(req.file.originalname || 'file').slice(0, 120), mime: mt, size: req.file.size, kind, scan });
 });
 
 // image upload middleware: rejects non-images / oversize with a clean 400/413
@@ -1753,6 +1819,10 @@ function imgSingle(up) {
     if (!req.file) return res.status(400).json({ error: 'bad_image (png, jpg, gif incl. animated, webp)' });
     try { await persistUpload(up._sub, req.file); }
     catch { return res.status(500).json({ error: 'storage_failed' }); }
+    // Scanned like everything else (content, not extension). Profile/
+    // server images aren't download-gated, but infected bytes are still
+    // deleted within seconds of the verdict.
+    try { require('./virus-scan').queueFileScan(up._sub + '/' + req.file.filename); } catch {}
     next();
   });
 }
@@ -2292,12 +2362,21 @@ app.get('/api/admin/stats', authRequired, requireSiteAdmin, async (req, res) => 
 // ---------- site admin: media compression ----------
 app.get('/api/admin/media', authRequired, requireSiteAdmin, async (req, res) => {
   const mc = require('./media-compress');
-  const [queue, totals] = await Promise.all([mc.mediaQueueCounts(), mc.mediaTotals()]);
-  res.json({ worker: mc.getMediaStats(), queue, totals });
+  const [queue, totals, scan, sweep] = await Promise.all([
+    mc.mediaQueueCounts(), mc.mediaTotals(),
+    require('./virus-scan').getScanStats().catch(() => null),
+    require('./storage-sweep').getSweepStats(),
+  ]);
+  res.json({ worker: mc.getMediaStats(), queue, totals, scan, sweep });
 });
 app.get('/api/admin/media/recent', authRequired, requireSiteAdmin, async (req, res) => {
   const mc = require('./media-compress');
   res.json({ jobs: await mc.mediaRecentJobs(req.query.limit) });
+});
+// Site admin: run the orphan sweep on demand (daily schedule runs anyway).
+app.post('/api/admin/sweep/run', authRequired, requireSiteAdmin, async (req, res) => {
+  const sw = require('./storage-sweep');
+  res.json({ result: await sw.runSweepOnce() });
 });
 app.get('/api/admin/users', authRequired, requireSiteAdmin, async (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase();
@@ -2366,6 +2445,10 @@ app.delete('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, r
   await db.prepare('UPDATE sessions SET revoked = 1 WHERE user_id = ?').run(target.id);
   closeSessionSockets(target.id, null);
   await evictFromServerAll(target.id);
+  // Their messages stay (SET NULL) with files intact; profile media goes.
+  deleteUploaded(target.avatar_url);
+  deleteUploaded(target.banner_url);
+  deleteUploaded(target.sidebar_banner_url);
   await db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
   for (const sid of serverIds) {
     broadcastToServer(sid, { t: 'member-left', serverId: sid, userId: target.id });
@@ -2923,6 +3006,11 @@ async function dmNotify(threadId, obj) {
 // no messages/attachments/reactions/pins dangle even if FK cascades lag.
 async function deleteDmThread(threadId) {
   await deletePollsFor('dm', (await db.prepare('SELECT id FROM dm_messages WHERE thread_id = ?').all(threadId)).map((r) => r.id));
+  // Attachment rows are wiped below — remove the bytes first.
+  try {
+    const tmsgIds = (await db.prepare('SELECT id FROM dm_messages WHERE thread_id = ?').all(threadId)).map((r) => r.id);
+    await deleteMessageFiles('dm_attachments', tmsgIds);
+  } catch {}
   (await db.transaction(async () => {
     await db.prepare('DELETE FROM dm_attachments WHERE message_id IN (SELECT id FROM dm_messages WHERE thread_id = ?)').run(threadId);
     await db.prepare('DELETE FROM dm_reactions WHERE message_id IN (SELECT id FROM dm_messages WHERE thread_id = ?)').run(threadId);
@@ -3131,8 +3219,12 @@ async function hydrateDm(rows, meId) {
   const pollBy = await pollsForMessages('dm', ids);
   if (ids.length) {
     const ph = ids.map(() => '?').join(',');
-    for (const a of await db.prepare(`SELECT * FROM dm_attachments WHERE message_id IN (${ph}) ORDER BY created_at ASC`).all(...ids)) {
-      (attBy[a.message_id] = attBy[a.message_id] || []).push({ id: a.id, url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler });
+    const attRows = await db.prepare(`SELECT * FROM dm_attachments WHERE message_id IN (${ph}) ORDER BY created_at ASC`).all(...ids);
+    let scanMap = new Map();
+    try { scanMap = await require('./virus-scan').scanStatusMap(attRows.map((a) => scanKeyForUrl(a.url))); } catch {}
+    for (const a of attRows) {
+      const sk = scanKeyForUrl(a.url);
+      (attBy[a.message_id] = attBy[a.message_id] || []).push({ id: a.id, url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler, scan: (sk && scanMap.get(sk)) || 'clean' });
     }
     for (const r of await db.prepare(`SELECT message_id, emoji, user_id FROM dm_reactions WHERE message_id IN (${ph})`).all(...ids)) {
       const t = (reactBy[r.message_id] = reactBy[r.message_id] || {});
@@ -3525,6 +3617,7 @@ app.delete('/api/dms/messages/:mid', authRequired, async (req, res) => {
   const m = await dmMsg(req.params.mid);
   if (!m || !(await dmThreadFor(req.user.id, m.thread_id))) return res.status(404).json({ error: 'no_message' });
   if (m.user_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
+  await deleteMessageFiles('dm_attachments', [m.id]);
   await db.prepare('DELETE FROM dm_messages WHERE id = ?').run(m.id);
   await deletePollsFor('dm', [m.id]);
   if ((await db.prepare('DELETE FROM dm_pins WHERE message_id = ?').run(m.id)).changes) {
@@ -3725,8 +3818,13 @@ async function hydrateMessages(rows, meId) {
   const pollBy = await pollsForMessages('server', ids);
   if (ids.length) {
     const ph = ids.map(() => '?').join(',');
-    for (const a of await db.prepare(`SELECT * FROM attachments WHERE message_id IN (${ph}) ORDER BY created_at ASC`).all(...ids)) {
-      (attBy[a.message_id] = attBy[a.message_id] || []).push({ id: a.id, url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler });
+    const attRows = await db.prepare(`SELECT * FROM attachments WHERE message_id IN (${ph}) ORDER BY created_at ASC`).all(...ids);
+    // Virus-scan verdicts, one query per page (missing row = clean).
+    let scanMap = new Map();
+    try { scanMap = await require('./virus-scan').scanStatusMap(attRows.map((a) => scanKeyForUrl(a.url))); } catch {}
+    for (const a of attRows) {
+      const sk = scanKeyForUrl(a.url);
+      (attBy[a.message_id] = attBy[a.message_id] || []).push({ id: a.id, url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler, scan: (sk && scanMap.get(sk)) || 'clean' });
     }
     for (const r of await db.prepare(`SELECT message_id, emoji, user_id FROM message_reactions WHERE message_id IN (${ph})`).all(...ids)) {
       const t = (reactBy[r.message_id] = reactBy[r.message_id] || {});
@@ -3766,6 +3864,34 @@ async function reactionTally(messageId, meId) {
 async function broadcastUserUpdate(user) {
   const rows = await db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(user.id);
   for (const r of rows) broadcastToServer(r.server_id, { t: 'user-updated', user });
+}
+// A virus-scan verdict landed: refresh every message showing that file so
+// scanning cards flip to the real file (or the infected warning) without
+// a refresh. A fresh `clean` also wakes the media compressor, which skips
+// unscanned files (see media-compress.js).
+async function notifyScanChange(key, status) {
+  try {
+    const like = '/uploads/' + key + '%';
+    let attRows = [];
+    try { attRows = await db.prepare('SELECT DISTINCT message_id FROM attachments WHERE url LIKE ?').all(like); } catch {}
+    for (const r of attRows) {
+      let m = null;
+      try { m = await db.prepare('SELECT server_id, channel_id FROM messages WHERE id = ?').get(r.message_id); } catch {}
+      if (!m) continue;
+      let full = null;
+      try { full = await fullMessage(r.message_id, null); } catch {}
+      if (full) broadcastToServer(m.server_id, { t: 'message-updated', serverId: m.server_id, channelId: m.channel_id, message: full });
+    }
+    let dmRows = [];
+    try { dmRows = await db.prepare('SELECT DISTINCT message_id FROM dm_attachments WHERE url LIKE ?').all(like); } catch {}
+    for (const r of dmRows) {
+      let full = null;
+      try { full = await fullDm(r.message_id, null); } catch {}
+      if (!full) continue;
+      try { await dmNotify(full.threadId, { t: 'dm-updated', message: full }); } catch {}
+    }
+  } catch {}
+  if (status === 'clean') { try { require('./media-compress').kickMediaCompress(); } catch {} }
 }
 
 // ---------- WebSocket (live chat + presence + voice signaling) ----------
@@ -4271,6 +4397,15 @@ async function boot() {
   // Chat-upload compressor (images/GIFs/video/audio): one file at a time,
   // niced + single-threaded, so the VPS never feels it.
   try { require('./media-compress').startMediaCompress(); } catch (e) { console.error('[media] scheduler failed to start:', (e && e.message) || e); }
+  // Virus scanner (ClamAV): every upload scanned by content, files gated
+  // until clean. Orphan sweep: unreferenced bytes deleted daily (backups/
+  // never listed).
+  try {
+    const vs = require('./virus-scan');
+    vs.setScanHooks({ onScanChange: notifyScanChange });
+    vs.startVirusScan();
+  } catch (e) { console.error('[virusscan] scheduler failed to start:', (e && e.message) || e); }
+  try { require('./storage-sweep').startStorageSweep(); } catch (e) { console.error('[sweep] scheduler failed to start:', (e && e.message) || e); }
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`[campfire] listening on :${PORT}  pg=${process.env.PGHOST || 'localhost'}:${process.env.PGPORT || '5432'}/${process.env.PGDATABASE || 'campfire'}`);
     try { require('./backup').startBackups(); } catch (e) { console.error('[backup] scheduler failed to start:', (e && e.message) || e); }

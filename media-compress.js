@@ -373,6 +373,7 @@ async function processRow(row) {
     const sameFormat = extOf(key) === outExt;
     const newMime = sameFormat ? String(row.mime) : (MIME_BY_OUT[outExt] || String(row.mime));
     let newUrl;
+    let resultKey = key;
     if (sameFormat) {
       await replaceBytes(key, tmpOut, newMime);
       newUrl = cacheBust('/uploads/' + key);
@@ -387,7 +388,12 @@ async function processRow(row) {
       await db.prepare('UPDATE ' + table + ' SET size = ?, url = ?, mime = ?, compressed = 1 WHERE id = ?')
         .run(outStat.size, newUrl, newMime, row.id);
       await removeKey(key);
+      try { require('./virus-scan').dropScan(key); } catch {}
+      resultKey = newKey;
     }
+    // Rewritten bytes need a fresh virus verdict (the scan gate holds the
+    // file as pending until the rescan lands seconds later).
+    try { require('./virus-scan').queueFileScan(resultKey); } catch {}
     stats.processed++;
     stats.savedBytes += inStat.size - outStat.size;
     stats.lastJob = { key, group: plan.group, pipeline: plan.pipeline, origSize: inStat.size, newSize: outStat.size, at: now() };
@@ -442,9 +448,21 @@ async function tick() {
     // tick looking for real work, but cap compressions at BATCH.
     const rows = await fetchCandidates(BATCH + 25);
     if (!rows.length) return 'idle';
+    // Virus-scan gate: only compress scan-clean files. Anything else stays
+    // queued (compressed = 0); the scan worker's clean verdict kicks us
+    // back, and rewritten bytes get rescanned anyway (see processRow).
+    // Lookup failures fail open — a rescan after rewrite keeps it correct.
+    let scanMap = null;
+    try {
+      scanMap = await require('./virus-scan').scanStatusMap(rows.map((r) => cleanKey(r.url)).filter(Boolean));
+    } catch { scanMap = null; }
     let done = 0;
     for (const row of rows) {
       if (done >= BATCH) break;
+      if (scanMap) {
+        const k = cleanKey(row.url);
+        if (k && (scanMap.get(k) || 'clean') !== 'clean') continue;
+      }
       let r;
       try { r = await processRow(row); }
       catch (e) { warn('row failed:', String((e && e.message) || e).slice(0, 160)); continue; }

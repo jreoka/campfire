@@ -98,6 +98,21 @@ async function loadAdminStats() {
 }
 
 // ---------- media compression monitor ----------
+function scanLine(sc) {
+  if (!sc) return '';
+  const eng = { off: 'OFF', none: 'NO ENGINE (fail-open)', starting: 'STARTING', ready: 'READY', failed: 'ENGINE FAILED (fail-open)' }[sc.engine || ''] || String(sc.engine || '?');
+  const c = sc.counts || {};
+  const sig = sc.dbPresent ? `signatures ${sc.dbAgeMs != null ? agoStr(Date.now() - sc.dbAgeMs) : 'present'}` : 'no signatures';
+  return `Virus scan: ${esc(eng)} · pending ${c.pending || 0} · infected ${c.infected || 0} · errors ${c.error || 0} · ${esc(sig)}`;
+}
+function sweepLine(sw) {
+  if (!sw) return '';
+  if (!sw.enabled) return ' · Orphan sweep: OFF';
+  const r = sw.lastResult;
+  const last = sw.lastRunAt ? agoStr(sw.lastRunAt) : 'never';
+  const what = r ? `${r.deleted} deleted (${fmtSize(r.bytes || 0)}) from ${r.scanned} stored` : 'no run yet';
+  return ` · Orphan sweep: ${esc(what)} · last ${esc(last)} · every 24h, grace ${sw.graceH || 48}h`;
+}
 async function loadAdminMedia() {
   const box = $('#adm-media');
   if (!box) return;
@@ -147,6 +162,7 @@ async function loadAdminMedia() {
       <div class="muted small">Schedule: continuous while queued (~${Math.round((w.activeMs || 2000) / 100) / 10}s between files) · idle poll every ${Math.round((w.everyMs || 30000) / 1000)}s · ${w.batch || 1} file/tick · 1 thread${missing.length ? '' : ' · low priority'} · load ${w.load != null ? Number(w.load).toFixed(2) : '?'} / ${w.cpus || '?'} cores${missing.length ? ` · encoders missing: ${esc(missing.join(', '))}` : ''}</div>
       ${!w.ffmpeg ? '<div class="muted small">ffmpeg is not on PATH — uploads work, they just stay uncompressed.</div>' : ''}
       <div class="muted small">Last file: ${lastJob}${w.lastError ? ` · last error: ${esc(w.lastError.key || '')} (${esc((w.lastError.error || '').slice(0, 80))})` : ''}</div>
+      <div class="muted small" style="margin-top:.4rem">${scanLine(m.scan)}${sweepLine(m.sweep)}</div>
       <div class="pf-sec-label" style="margin-top:1rem">Recent files</div>
       <div>${(r.jobs || []).length ? r.jobs.map(jobRow).join('') : '<p class="muted small">Nothing compressed yet.</p>'}</div>
       <div class="adm-actions"><button class="mini" id="adm-media-refresh">Refresh</button></div>`;

@@ -25,6 +25,8 @@ function updateMsgInCaches(mid, fn) {
 }
 const DL_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>';
 function attDl(a) { return `<a class="att-dl" href="${esc(a.url)}" download="${esc(a.name)}" target="_blank" rel="noopener" title="Download">${DL_ICON}</a>`; }
+// Shield mark for the virus-scan cards (inline SVG keeps UI chrome emoji-free).
+const SCAN_SHIELD_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 3.5v5.2c0 5-3.4 9.4-8 10.8-4.6-1.4-8-5.8-8-10.8V5.5z"/><path d="M9 11.5l2.2 2.2L15.5 9.5"/></svg>';
 // Media downloads go through plain anchor navigation (works in every WebView),
 // so confirm them with a toast — otherwise the file just lands in Downloads
 // with no indication anything happened. Native behavior is untouched.
@@ -34,6 +36,11 @@ document.addEventListener('click', (e) => {
   toast(`Downloading ${(dl.getAttribute('download') || 'file').slice(0, 60)}…`);
 });
 function attachmentHTML(a) {
+  // Virus-scan states (see virus-scan.js): pending files render an
+  // animated scanning card and infected files a greyed-out warning —
+  // never the bytes, no preview, no download link anywhere.
+  if (a.scan === 'infected') return `<div class="scan-block infected"><span class="scan-ic">${SCAN_SHIELD_SVG}</span><span class="scan-tx"><b>${esc(a.name)}</b><span>Virus detected — this file was removed and can't be downloaded.</span></span></div>`;
+  if (a.scan === 'pending') return `<div class="scan-block scanning"><span class="scan-ic">${SCAN_SHIELD_SVG}</span><span class="scan-tx"><b>${esc(a.name)} (${fmtSize(a.size)})</b><span>Making sure this file isn't malicious…</span><span class="scan-track"><span class="scan-fill"></span></span></span></div>`;
   if (a.kind === 'image') return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'video') return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><video class="att-vid" src="${esc(a.url)}" controls preload="metadata" playsinline></video>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'audio') return audioPlayerHTML(a);
@@ -454,7 +461,7 @@ function messageEl(m, opts = {}) {
   if (S.editing === m.id) {
     const eatts = (m.attachments || []).filter((a) => a.id && !(S.editRemovals && S.editRemovals.has(a.id)));
     inner += `<div class="edit-box"><textarea id="edit-area" maxlength="5000">${esc(m.content)}</textarea>`
-      + (eatts.length ? `<div class="edit-atts">` + eatts.map((a) => `<span class="edit-att">${a.kind === 'image' ? `<img src="${esc(a.url)}" alt="" loading="lazy" />` : ''}<span class="edit-att-name">${esc(a.name)}</span><button type="button" class="mini edit-att-x" data-act="edit-unattach" data-aid="${esc(a.id)}" title="Remove attachment">✕</button></span>`).join('') + `</div>` : '')
+      + (eatts.length ? `<div class="edit-atts">` + eatts.map((a) => `<span class="edit-att">${a.kind === 'image' && a.scan !== 'pending' && a.scan !== 'infected' ? `<img src="${esc(a.url)}" alt="" loading="lazy" />` : ''}<span class="edit-att-name">${esc(a.name)}${a.scan === 'pending' ? ' (scanning…)' : ''}${a.scan === 'infected' ? ' (removed: virus detected)' : ''}</span><button type="button" class="mini edit-att-x" data-act="edit-unattach" data-aid="${esc(a.id)}" title="Remove attachment">✕</button></span>`).join('') + `</div>` : '')
       + `<div class="row"><button class="btn small primary" data-act="edit-save">Save</button><button class="btn small" data-act="edit-cancel">Cancel</button></div></div>`;
   } else if (m.content) {
     const big = isBigEmoji(m.content) && !m.attachments?.length;
@@ -833,9 +840,9 @@ function renderComposerMeta() {
   }
   S.pendingAtts.forEach((a, i) => {
     const chip = document.createElement('div');
-    chip.className = 'att-chip';
-    const thumb = a.kind === 'image' ? `<img src="${esc(a.url)}" alt="" />` : '';
-    chip.innerHTML = `${thumb}<span>${esc(a.name)} (${fmtSize(a.size)})</span>`;
+    chip.className = 'att-chip' + (a.scan === 'pending' ? ' scanning' : '');
+    const thumb = (a.kind === 'image' && a.scan !== 'pending') ? `<img src="${esc(a.url)}" alt="" />` : '';
+    chip.innerHTML = `${thumb}<span>${esc(a.name)} (${fmtSize(a.size)})${a.scan === 'pending' ? ' · Scanning…' : ''}</span>`;
     const x = document.createElement('button'); x.className = 'mini'; x.textContent = '✕';
     x.onclick = () => { S.pendingAtts.splice(i, 1); renderComposerMeta(); };
     if (a.kind === 'image' || a.kind === 'video') {
