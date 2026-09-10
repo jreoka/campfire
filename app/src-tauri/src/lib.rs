@@ -1,18 +1,20 @@
 // Campfire desktop/mobile app.
 // - WebView loads https://campfire.dill.moe (the web app itself).
 // - Desktop: tray icon (open app / current game / start-on-login toggle /
-//   quit), autostart (Task Scheduler / LaunchAgent / XDG entry), and a game
+//   start-minimized toggle / quit), autostart (Task Scheduler / LaunchAgent /
+//   XDG entry; the entry passes `--autostart`, and such a launch stays
+//   tray-only while "Start minimized" is on), and a game
 //   watcher that polls process names (sysinfo), matches them against
 //   Discord's detectable-games DB, and beacons {game, ts} to the server so
 //   it logs "Playing X" + playtime.
 // - Android: plain app shell (no tray/watcher/autostart — mobile has none).
 #[cfg(desktop)]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 #[cfg(desktop)]
 use std::sync::Mutex;
 #[cfg(desktop)]
 use tauri::{
-    menu::{IsMenuItem, Menu, MenuItem},
+    menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle,
     Manager,
@@ -68,6 +70,8 @@ struct State {
     bare_share: Mutex<std::collections::HashMap<String, usize>>,
     db_at: Mutex<u64>,
     signed_in: AtomicBool,
+    // unread notification count mirrored onto the tray icon / taskbar badge
+    unread: AtomicU32,
     // last game successfully beaconed (for tray menu rebuilds)
     current_game: Mutex<Option<String>>,
     // every game scoring above threshold right now (for the Go Live picker)
@@ -130,6 +134,49 @@ fn local_tz_offset_min() -> i32 {
 #[cfg(desktop)]
 fn app_data_dir<R: Runtime>(app: &AppHandle<R>) -> std::path::PathBuf {
     app.path().app_data_dir().expect("app data dir")
+}
+
+// Per-machine app preferences (they describe this install, not the account,
+// so they never go in the server DB). Stored as JSON next to games.json.
+#[cfg(desktop)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy)]
+struct Settings {
+    // An autostart launch stays tray-only. Defaults to on: launching at login
+    // should never steal focus mid-boot, and the toggle is right there in the
+    // tray menu (and in Settings → Desktop app).
+    #[serde(default = "default_start_minimized")]
+    start_minimized: bool,
+}
+
+#[cfg(desktop)]
+fn default_start_minimized() -> bool {
+    true
+}
+
+#[cfg(desktop)]
+impl Default for Settings {
+    fn default() -> Self {
+        Self { start_minimized: default_start_minimized() }
+    }
+}
+
+#[cfg(desktop)]
+fn load_settings<R: Runtime>(app: &AppHandle<R>) -> Settings {
+    std::fs::read_to_string(app_data_dir(app).join("settings.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+#[cfg(desktop)]
+fn store_settings<R: Runtime>(app: &AppHandle<R>, settings: Settings) {
+    let path = app_data_dir(app).join("settings.json");
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(&settings) {
+        let _ = std::fs::write(path, json);
+    }
 }
 
 // Build the game list from Discord's detectable-games DB.
@@ -235,8 +282,10 @@ fn tray_menu<R: Runtime>(app: &AppHandle<R>, game: Option<&str>) -> tauri::Resul
         .map(|g| format!("Playing {g}"))
         .unwrap_or_else(|| "No game detected".to_string());
     let auto = app.autolaunch().is_enabled().unwrap_or(false);
+    let minimized = load_settings(app).start_minimized;
     let open = MenuItem::with_id(app, "open", "Open Campfire", true, None::<&str>)?;
     let game_item = MenuItem::with_id(app, "game", label, false, None::<&str>)?;
+    let sep_top = PredefinedMenuItem::separator(app)?;
     let autostart = MenuItem::with_id(
         app,
         "autostart",
@@ -244,8 +293,19 @@ fn tray_menu<R: Runtime>(app: &AppHandle<R>, game: Option<&str>) -> tauri::Resul
         true,
         None::<&str>,
     )?;
+    // Sub-option of start-on-login (Discord-style): only meaningful while the
+    // login entry exists, so it's disabled until that's on.
+    let start_minimized = MenuItem::with_id(
+        app,
+        "start_minimized",
+        if minimized { "Start minimized: on" } else { "Start minimized: off" },
+        auto,
+        None::<&str>,
+    )?;
+    let sep_bottom = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let items: [&dyn IsMenuItem<R>; 4] = [&open, &game_item, &autostart, &quit];
+    let items: [&dyn IsMenuItem<R>; 7] =
+        [&open, &game_item, &sep_top, &autostart, &start_minimized, &sep_bottom, &quit];
     Menu::with_items(app, &items)
 }
 
@@ -259,6 +319,126 @@ fn update_tray<R: Runtime>(app: &AppHandle<R>, game: Option<&str>) {
                 None => "Campfire".to_string(),
             };
             let _ = tray.set_tooltip(Some(tip.as_str()));
+        }
+    }
+}
+
+// ---------- unread notification badge ----------
+// The web app owns the unread count (`paintNotifBadge`) and pushes it here
+// through `set_unread_count`. Unread shows as a red dot in the tray icon's
+// bottom-right corner on every desktop platform, the same dot as the Windows
+// taskbar overlay icon, and the dock badge on macOS.
+#[cfg(desktop)]
+const BADGE_RED: [u8; 3] = [248, 113, 113]; // --red from the app's dark theme
+// Ring punched around the dot so it stays legible over the logo (or a light
+// taskbar) instead of blending into an orange flame.
+#[cfg(desktop)]
+const BADGE_RING: [u8; 3] = [26, 29, 41];
+
+// Alpha-blend one anti-aliased filled circle over an RGBA buffer.
+#[cfg(desktop)]
+fn blend_dot(rgba: &mut [u8], w: u32, h: u32, cx: f32, cy: f32, r: f32, rgb: [u8; 3]) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    let x0 = (cx - r - 1.0).max(0.0) as u32;
+    let y0 = (cy - r - 1.0).max(0.0) as u32;
+    let x1 = ((cx + r + 1.0).ceil() as u32).min(w);
+    let y1 = ((cy + r + 1.0).ceil() as u32).min(h);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let dx = x as f32 + 0.5 - cx;
+            let dy = y as f32 + 0.5 - cy;
+            let cover = (r + 0.5 - (dx * dx + dy * dy).sqrt()).clamp(0.0, 1.0);
+            if cover <= 0.0 {
+                continue;
+            }
+            let i = ((y * w + x) * 4) as usize;
+            let dst_a = rgba[i + 3] as f32 / 255.0;
+            let out_a = cover + dst_a * (1.0 - cover);
+            if out_a <= 0.0 {
+                continue;
+            }
+            for c in 0..3 {
+                let src = rgb[c] as f32;
+                rgba[i + c] = ((src * cover + rgba[i + c] as f32 * dst_a * (1.0 - cover)) / out_a)
+                    .round()
+                    .clamp(0.0, 255.0) as u8;
+            }
+            rgba[i + 3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+}
+
+// The app icon with the red dot added; cached because the PNG decode costs a
+// few ms and this only changes when unread crosses zero.
+#[cfg(desktop)]
+fn badged_tray_icon() -> tauri::Result<tauri::image::Image<'static>> {
+    static CACHED: std::sync::OnceLock<tauri::image::Image<'static>> = std::sync::OnceLock::new();
+    if let Some(icon) = CACHED.get() {
+        return Ok(icon.clone());
+    }
+    let base = tauri::image::Image::from_bytes(ICON_BYTES)?;
+    let (w, h) = (base.width(), base.height());
+    let mut rgba = base.rgba().to_vec();
+    // Everything scales off the short edge so the dot looks identical on any
+    // source size (512px logo today; a 16px tray render tomorrow).
+    let s = w.min(h) as f32;
+    let r = s * 0.17;
+    let cx = w as f32 - r - s * 0.05;
+    let cy = h as f32 - r - s * 0.05;
+    blend_dot(&mut rgba, w, h, cx, cy, r + s * 0.035, BADGE_RING);
+    blend_dot(&mut rgba, w, h, cx, cy, r, BADGE_RED);
+    let icon = tauri::image::Image::new_owned(rgba, w, h);
+    let _ = CACHED.set(icon.clone());
+    Ok(icon)
+}
+
+// Standalone dot for the Windows taskbar overlay (Windows scales it down to
+// the badge slot over the taskbar button).
+#[cfg(target_os = "windows")]
+fn taskbar_dot_icon() -> tauri::image::Image<'static> {
+    static CACHED: std::sync::OnceLock<tauri::image::Image<'static>> = std::sync::OnceLock::new();
+    if let Some(icon) = CACHED.get() {
+        return icon.clone();
+    }
+    const S: u32 = 32;
+    let mut rgba = vec![0u8; (S * S * 4) as usize];
+    let c = S as f32 / 2.0;
+    blend_dot(&mut rgba, S, S, c, c, 15.0, BADGE_RING);
+    blend_dot(&mut rgba, S, S, c, c, 12.5, BADGE_RED);
+    let icon = tauri::image::Image::new_owned(rgba, S, S);
+    let _ = CACHED.set(icon.clone());
+    icon
+}
+
+#[cfg(desktop)]
+fn apply_unread<R: Runtime>(app: &AppHandle<R>, count: u32) {
+    // Same count again (the frontend repaints freely) — nothing to redraw.
+    if app.state::<State>().unread.swap(count, Ordering::Relaxed) == count {
+        return;
+    }
+    let has = count > 0;
+    if let Some(tray) = app.tray_by_id("campfire") {
+        let icon = if has {
+            badged_tray_icon()
+        } else {
+            tauri::image::Image::from_bytes(ICON_BYTES)
+        };
+        if let Ok(icon) = icon {
+            let _ = tray.set_icon(Some(icon));
+        }
+    }
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    if let Some(w) = app.get_webview_window("main") {
+        #[cfg(target_os = "windows")]
+        {
+            let _ = w.set_overlay_icon(if has { Some(taskbar_dot_icon()) } else { None });
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let label = if count > 99 { "99+".to_string() } else { count.to_string() };
+            let _ = w.set_badge_label(if has { Some(label) } else { None });
         }
     }
 }
@@ -307,7 +487,36 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
     } else {
         a.disable().map_err(|e| e.to_string())?;
     }
+    // The tray's Start-minimized item is only enabled while this is on.
+    let cur = app.state::<State>().current_game.lock().unwrap().clone();
+    update_tray(&app, cur.as_deref());
     Ok(enabled)
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn get_start_minimized(app: AppHandle) -> bool {
+    load_settings(&app).start_minimized
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn set_start_minimized(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    let mut settings = load_settings(&app);
+    settings.start_minimized = enabled;
+    store_settings(&app, settings);
+    // Keep the tray menu's toggle in sync with the web settings checkbox.
+    let cur = app.state::<State>().current_game.lock().unwrap().clone();
+    update_tray(&app, cur.as_deref());
+    Ok(enabled)
+}
+
+// The web app reports its notification inbox unread count here whenever the
+// badge changes; 0 clears the tray/taskbar dot.
+#[cfg(desktop)]
+#[tauri::command]
+fn set_unread_count(app: AppHandle, count: u32) {
+    apply_unread(&app, count);
 }
 
 #[cfg(desktop)]
@@ -379,7 +588,12 @@ pub fn run() {
     let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
     #[cfg(desktop)]
     let builder = builder
-        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
+        // `--autostart` marks a login launch so setup can keep it in the tray;
+        // older builds passed no args, hence the entry refresh in setup below.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--autostart"]),
+        ))
         // Single instance: a second launch focuses the running window instead
         // of opening a duplicate app (which would double-beacon playtime).
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -393,10 +607,21 @@ pub fn run() {
             bare_share: Mutex::new(std::collections::HashMap::new()),
             db_at: Mutex::new(0),
             signed_in: AtomicBool::new(false),
+            unread: AtomicU32::new(0),
             current_game: Mutex::new(None),
             running_games: Mutex::new(Vec::new()),
         })
-        .invoke_handler(tauri::generate_handler![get_autostart, set_autostart, get_watch_state, get_current_game, get_running_games, open_external])
+        .invoke_handler(tauri::generate_handler![
+            get_autostart,
+            set_autostart,
+            get_start_minimized,
+            set_start_minimized,
+            set_unread_count,
+            get_watch_state,
+            get_current_game,
+            get_running_games,
+            open_external
+        ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
@@ -405,6 +630,13 @@ pub fn run() {
         })
         .setup(|app| {
             let app = app.handle().clone();
+            // Older builds never passed `--autostart`, so an already-enabled
+            // login entry still launches with no args. Rewrite it in place now
+            // that the plugin supplies the flag. A disabled entry is left
+            // alone — the user turned start-on-login off deliberately.
+            if app.autolaunch().is_enabled().unwrap_or(false) {
+                let _ = app.autolaunch().enable();
+            }
             let icon = tauri::image::Image::from_bytes(ICON_BYTES)?;
             let _tray = TrayIconBuilder::with_id("campfire")
                 .icon(icon)
@@ -437,6 +669,14 @@ pub fn run() {
                             } else {
                                 a.enable()
                             };
+                            let cur =
+                                app.state::<State>().current_game.lock().unwrap().clone();
+                            update_tray(app, cur.as_deref());
+                        }
+                        "start_minimized" => {
+                            let mut settings = load_settings(app);
+                            settings.start_minimized = !settings.start_minimized;
+                            store_settings(app, settings);
                             let cur =
                                 app.state::<State>().current_game.lock().unwrap().clone();
                             update_tray(app, cur.as_deref());
@@ -613,8 +853,9 @@ pub fn run() {
                 }
             });
 
-            // Launched via autostart: stay in the tray, no window.
-            if std::env::args().any(|a| a == "--autostart") {
+            // Launched at login: honor "Start minimized" — on stays tray-only,
+            // off shows the window exactly like a manual launch.
+            if std::env::args().any(|a| a == "--autostart") && load_settings(&app).start_minimized {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.hide();
                 }
@@ -628,4 +869,60 @@ pub fn run() {
     builder
         .run(tauri::generate_context!())
         .expect("error while running tauri app");
+}
+
+#[cfg(all(test, desktop))]
+mod tests {
+    use super::*;
+
+    // The tray badge is the logo plus a dot in the bottom-right corner; the
+    // rest of the image must stay byte-identical or the icon would look tinted.
+    #[test]
+    fn tray_badge_only_paints_the_corner_dot() {
+        let base = tauri::image::Image::from_bytes(ICON_BYTES).unwrap();
+        let badged = badged_tray_icon().unwrap();
+        assert_eq!(
+            (badged.width(), badged.height()),
+            (base.width(), base.height())
+        );
+        let (w, h) = (badged.width(), badged.height());
+        // Same geometry as the drawing code: anything outside this circle
+        // around the dot's center must be untouched.
+        let s = w.min(h) as f32;
+        let r = s * 0.17;
+        let cx = w as f32 - r - s * 0.05;
+        let cy = h as f32 - r - s * 0.05;
+        let ring = r + s * 0.035 + 1.0;
+        let mut changed_in = 0usize;
+        let mut changed_out = 0usize;
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * w + x) * 4) as usize;
+                if base.rgba()[i..i + 4] == badged.rgba()[i..i + 4] {
+                    continue;
+                }
+                let dx = x as f32 + 0.5 - cx;
+                let dy = y as f32 + 0.5 - cy;
+                if (dx * dx + dy * dy).sqrt() <= ring {
+                    changed_in += 1;
+                } else {
+                    changed_out += 1;
+                }
+            }
+        }
+        assert!(changed_in > 100, "badge should repaint the corner dot, changed={changed_in}");
+        assert_eq!(changed_out, 0, "badge must not repaint the rest of the logo");
+    }
+
+    // The Windows taskbar overlay is a standalone dot: exact red in the middle,
+    // fully transparent at the corners.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn taskbar_dot_is_a_red_circle() {
+        let dot = taskbar_dot_icon();
+        let (w, h) = (dot.width(), dot.height());
+        let mid = (((h / 2) * w + w / 2) * 4) as usize;
+        assert_eq!(&dot.rgba()[mid..mid + 4], &[BADGE_RED[0], BADGE_RED[1], BADGE_RED[2], 255]);
+        assert_eq!(dot.rgba()[3], 0, "corners stay transparent");
+    }
 }

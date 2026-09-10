@@ -238,6 +238,12 @@ function paintNotifBadge(n) {
   if (!b) return;
   b.textContent = n > 99 ? '99+' : String(n);
   b.classList.toggle('hidden', !n);
+  // Desktop app: mirror the count onto the tray icon + taskbar badge
+  // (no-op in a browser; older app builds reject the unknown command).
+  try {
+    const inv = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+    if (typeof inv === 'function') inv('set_unread_count', { count: n | 0 }).catch(() => {});
+  } catch {}
 }
 async function refreshNotifBadge() {
   if (!store.token) return;

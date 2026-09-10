@@ -345,6 +345,114 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the get_autostart command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-autostart",
+          "markdownDescription": "Enables the get_autostart command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_current_game command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-current-game",
+          "markdownDescription": "Enables the get_current_game command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_running_games command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-running-games",
+          "markdownDescription": "Enables the get_running_games command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_start_minimized command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-start-minimized",
+          "markdownDescription": "Enables the get_start_minimized command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_watch_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-watch-state",
+          "markdownDescription": "Enables the get_watch_state command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_external command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-external",
+          "markdownDescription": "Enables the open_external command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_autostart command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-autostart",
+          "markdownDescription": "Enables the set_autostart command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_start_minimized command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-start-minimized",
+          "markdownDescription": "Enables the set_start_minimized command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_unread_count command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-unread-count",
+          "markdownDescription": "Enables the set_unread_count command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_autostart command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-autostart",
+          "markdownDescription": "Denies the get_autostart command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_current_game command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-current-game",
+          "markdownDescription": "Denies the get_current_game command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_running_games command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-running-games",
+          "markdownDescription": "Denies the get_running_games command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_start_minimized command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-start-minimized",
+          "markdownDescription": "Denies the get_start_minimized command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_watch_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-watch-state",
+          "markdownDescription": "Denies the get_watch_state command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_external command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-external",
+          "markdownDescription": "Denies the open_external command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_autostart command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-autostart",
+          "markdownDescription": "Denies the set_autostart command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_start_minimized command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-start-minimized",
+          "markdownDescription": "Denies the set_start_minimized command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_unread_count command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-unread-count",
+          "markdownDescription": "Denies the set_unread_count command without any pre-configured scope."
+        },
+        {
           "description": "This permission set configures if your\napplication can enable or disable auto\nstarting the application on boot.\n\n#### Granted Permissions\n\nIt allows all to check, enable and\ndisable the automatic start on boot.\n\n\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-disable`\n- `allow-is-enabled`",
           "type": "string",
           "const": "autostart:default",

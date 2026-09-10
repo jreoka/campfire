@@ -487,9 +487,26 @@ async function renderDesktopApp() {
     cb.appendChild(inp); cb.appendChild(document.createTextNode(' Start on login'));
     row.appendChild(cb);
     try { inp.checked = !!(await window.__TAURI__.core.invoke('get_autostart')); } catch {}
+    // "Start minimized" ships with newer app builds: the invoke rejects on
+    // older ones, so the toggle is hidden rather than shown dead. It's a
+    // sub-option of start-on-login (disabled while that's off), like Discord.
+    let minInp = null;
+    try {
+      const minOn = !!(await window.__TAURI__.core.invoke('get_start_minimized'));
+      const cbm = document.createElement('label'); cbm.className = 'set-check';
+      minInp = document.createElement('input'); minInp.type = 'checkbox';
+      minInp.checked = minOn; minInp.disabled = !inp.checked;
+      cbm.appendChild(minInp); cbm.appendChild(document.createTextNode(' Start minimized'));
+      row.appendChild(cbm);
+      minInp.onchange = async () => {
+        try { await window.__TAURI__.core.invoke('set_start_minimized', { enabled: minInp.checked }); toast(minInp.checked ? 'Start minimized enabled' : 'Start minimized disabled'); }
+        catch (err) { toast('Failed: ' + prettyError(err.message)); }
+      };
+    } catch {}
     inp.onchange = async () => {
       try { await window.__TAURI__.core.invoke('set_autostart', { enabled: inp.checked }); toast(inp.checked ? 'Start on login enabled' : 'Start on login disabled'); }
       catch (err) { toast('Failed: ' + prettyError(err.message)); }
+      if (minInp) minInp.disabled = !inp.checked;
     };
   } else {
     const note = document.createElement('p'); note.className = 'muted small';

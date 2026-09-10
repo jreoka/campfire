@@ -2,7 +2,18 @@
   "$schema": "../schemas/schema.json",
   "identifier": "default",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-hide", "opener:default"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-hide",
+    "opener:default",
+    "allow-get-autostart",
+    "allow-set-autostart",
+    "allow-get-start-minimized",
+    "allow-set-start-minimized",
+    "allow-set-unread-count",
+    "allow-get-running-games",
+    "allow-open-external"
+  ],
   "remote": {
     "urls": ["https://campfire.dill.moe"]
   }
