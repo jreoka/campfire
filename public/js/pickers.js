@@ -501,11 +501,11 @@ async function jumpToMessage(id) {
   // Parent isn't in the loaded window: pull a context window around it (same
   // UX as pin jumps) so the quote always lands + highlights. This sets
   // histMode, so the jump-present pill offers a way back to the bottom.
-  const land = () => requestAnimationFrame(() => {
+  const land = () => {
     const target = document.querySelector(sel);
     if (target) flashMsgEl(target);
     updatePill();
-  });
+  };
   // Replies land in the same thread, so try the current DM first.
   if (S.view === 'home' && S.dmThreadId) {
     try {

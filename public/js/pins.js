@@ -172,9 +172,101 @@ async function renderPinsList() {
   }
   try { box.querySelectorAll('video.att-vid').forEach((v) => ensureVideoPoster(v)); } catch {}
 }
+// Jump-to-message flight control.
+//
+// A plain `scrollIntoView({behavior:'smooth'})` cannot survive this list. A
+// rebuilt window renders its lazy images/videos at zero height and they only
+// start loading as they near the viewport, so every one that pops in while the
+// animation runs moves the target — the animation keeps aiming at the offset
+// it computed at the start — and the browser's scroll anchoring rewrites
+// scrollTop to compensate for the growth, which aborts the in-flight smooth
+// scroll. The view stops partway, and clicking the hit again nudges it a
+// little further. So own the scroll instead: cancel the other scroll owners
+// (bottom hold, rebuild anchor hold) and native anchoring, land on the target
+// immediately, then re-center it on every settle until the user takes over.
 function flashMsgEl(el) {
-  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  if (!el) return;
   el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+  const box = el.closest('#messages,#thread-replies');
+  if (!box) { try { el.scrollIntoView({ block: 'center' }); } catch {} return; }
+  holdMsgCentered(box, el.dataset.mid || null, el);
+}
+// Center `mid` (falling back to the element itself) in `box` and keep it
+// centered while late media settles. Stops the moment the user scrolls
+// themselves, when the conversation changes, or after a few seconds.
+function holdMsgCentered(box, mid, fallbackEl) {
+  if (!box) return;
+  const sel = mid ? '[data-mid="' + CSS.escape(mid) + '"]' : null;
+  const find = () => (sel ? box.querySelector(sel) : (fallbackEl && fallbackEl.isConnected ? fallbackEl : null));
+  // One hold per box: bumping the bottom hold's gen (anchorBottom) and the
+  // rebuild anchor hold's gen (pinAnchorWhileSettling) retires both, so they
+  // can't yank the view back to where it was right after we land.
+  box._holdGen = (box._holdGen | 0) + 1;
+  box._pinGen = (box._pinGen | 0) + 1;
+  // Native scroll anchoring would do the same behind our back — this function
+  // is the anchor for the duration.
+  box._jumpHold = true;
+  const prevAnchorCss = box.style.overflowAnchor;
+  box.style.overflowAnchor = 'none';
+  const v = S.view, c = S.channelId, d = S.dmThreadId;
+  const stillHere = () => S.view === v && S.channelId === c && S.dmThreadId === d && !box.classList.contains('hidden');
+  // A second jump (impatient double-click on a hit) supersedes this one; the
+  // loser must stop without clobbering the winner's state.
+  const mine = (box._jumpGen = (box._jumpGen | 0) + 1);
+  const current = () => live && box._jumpGen === mine;
+  let live = true, expected = 0, mo = null, timer = 0;
+  const stop = () => {
+    if (!live) return; live = false;
+    try { if (mo) mo.disconnect(); } catch {}
+    clearTimeout(timer);
+    box.removeEventListener('wheel', stop);
+    box.removeEventListener('touchmove', stop);
+    box.removeEventListener('scroll', onScroll);
+    box.removeEventListener('load', onSettle, true);
+    box.removeEventListener('error', onSettle, true);
+    box.removeEventListener('loadedmetadata', onSettle, true);
+    if (box._jumpGen === mine) {
+      box._jumpHold = false;
+      box.style.overflowAnchor = prevAnchorCss;
+    }
+  };
+  const place = () => {
+    if (!current()) { stop(); return; }
+    if (!stillHere()) { stop(); return; }
+    const t = find();
+    if (!t || !t.isConnected) return;
+    const r = t.getBoundingClientRect(), b = box.getBoundingClientRect();
+    const delta = (r.top - b.top) - (box.clientHeight - r.height) / 2;
+    if (Math.abs(delta) > 0.5) box.scrollTop += delta;
+    expected = box.scrollTop; // our own landings must not look like a takeover
+  };
+  const onScroll = () => {
+    // Our own placements fire scroll events too — only a position that isn't
+    // ours (checked next frame) means the user dragged the scrollbar.
+    requestAnimationFrame(() => { if (current() && Math.abs(box.scrollTop - expected) > 2) stop(); });
+  };
+  const onSettle = (e) => {
+    // Capture phase: 'load' doesn't bubble, but this still catches media
+    // injected later (link embeds resolving seconds after the jump).
+    if (e.target && e.target.matches && e.target.matches('img, video')) place();
+  };
+  place();
+  // Not every late growth fires a media event (embeds, thumbnails, scans
+  // flipping to files) — re-center through those too.
+  try {
+    mo = new MutationObserver(() => place());
+    mo.observe(box, { childList: true, subtree: true, characterData: true });
+  } catch { mo = null; }
+  box.addEventListener('wheel', stop, { passive: true });
+  box.addEventListener('touchmove', stop, { passive: true });
+  box.addEventListener('scroll', onScroll, { passive: true });
+  box.addEventListener('load', onSettle, true);
+  box.addEventListener('error', onSettle, true);
+  box.addEventListener('loadedmetadata', onSettle, true);
+  // Media can keep landing for a while in a fresh window; stop chasing after
+  // a few seconds so the reader is always free to scroll again.
+  timer = setTimeout(stop, 6000);
+  if (typeof updatePill === 'function') { try { updatePill(); } catch {} }
 }
 async function jumpToPin(ctx, mid) {
   const sel = `#messages [data-mid="${CSS.escape(mid)}"]`;
@@ -194,11 +286,9 @@ async function jumpToPin(ctx, mid) {
   S.histNew = 0;
   if (ctx.kind === 'dm') renderDmMessages();
   else renderMessages();
-  requestAnimationFrame(() => {
-    const target = document.querySelector(sel);
-    if (target) flashMsgEl(target);
-    updatePill();
-  });
+  const target = document.querySelector(sel);
+  if (target) flashMsgEl(target);
+  updatePill();
 }
 function jumpToPresent() {
   const box = $('#messages');

@@ -651,13 +651,18 @@ function pinAnchorWhileSettling(box, anchor) {
   try {
     const mid = anchor && anchor.mid;
     if (!box || !mid || typeof anchor.off !== 'number') return;
+    if (box._jumpHold) return; // a jump owns the scroll until it settles
     const sel = '[data-mid="' + CSS.escape(mid) + '"]';
+    // One hold per box: a jump (holdMsgCentered) bumps this gen to retire any
+    // hold that is still chasing the pre-jump anchor.
+    const my = (box._pinGen = (box._pinGen | 0) + 1);
     const media = [...box.querySelectorAll('img, video')].filter((m) =>
       m.tagName === 'VIDEO' ? m.readyState < 1 : !m.complete);
     if (!media.length) return;
     const t0 = Date.now();
     let expected = box.scrollTop, done = 0;
     const realign = () => {
+      if (box._pinGen !== my) { done = media.length; return; } // a jump owns the scroll
       if (done >= media.length || Date.now() - t0 > 2500) return;
       if (Math.abs(box.scrollTop - expected) > 2) { done = media.length; return; } // user took over
       const el = box.querySelector(sel);
