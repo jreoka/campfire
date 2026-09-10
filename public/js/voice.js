@@ -544,23 +544,31 @@ async function toggleScreen() {
   const chips = games.length
     ? `<p class="muted small" style="margin:.1rem 0 .4rem">Running now — pick one:</p><div class="gol-games">${games.map((g, i) => `<button type="button" class="gol-game${i === 0 ? ' sel' : ''}" data-game="${esc(g)}">${esc(g)}</button>`).join('')}</div>`
     : '<p class="muted small">Pick a window or screen. On desktop with a game running, you can pick it here.</p>';
-  const quals = Object.entries(V_QUALITY).map(([k, q]) =>
-    `<label class="gol-q"><input type="radio" name="gol-q" value="${k}"${(S.voice.quality === k) ? ' checked' : ''} /> ${q.label}</label>`).join('');
+  const quals = Object.keys(V_QUALITY).map((k) =>
+    `<button type="button" class="tab${S.voice.quality === k ? ' active' : ''}" data-v="${k}">${V_QUALITY[k].label}</button>`).join('');
   const fpses = V_FPS.map((f) =>
-    `<label class="gol-q"><input type="radio" name="gol-fps" value="${f}"${(S.voice.fps === f) ? ' checked' : ''} /> ${f}</label>`).join('');
+    `<button type="button" class="tab${S.voice.fps === f ? ' active' : ''}" data-v="${f}">${f}</button>`).join('');
+  let qSel = V_QUALITY[S.voice.quality] ? S.voice.quality : undefined;
+  let fpsSel = V_FPS.includes(S.voice.fps) ? S.voice.fps : 30;
   openModal('Go Live', `
     ${chips}
     <label>Stream title (optional)<input id="gol-label" maxlength="60" placeholder="What are you playing?" value="${esc(picked)}" /></label>
-    <div class="gol-row"><span class="muted small">Quality</span><div class="gol-qs">${quals}</div></div>
-    <div class="gol-row"><span class="muted small">Frame rate</span><div class="gol-qs">${fpses}</div></div>
-    <label class="set-check" style="margin-top:.6rem"><input type="checkbox" id="gol-audio" checked /> Share system audio</label>
+    <span class="gol-lab">Quality</span>
+    <div class="tabs gol-seg" id="gol-qseg">${quals}</div>
+    <span class="gol-lab">Frame rate</span>
+    <div class="tabs gol-seg" id="gol-fseg">${fpses}</div>
+    <label class="set-check gol-audio"><input type="checkbox" id="gol-audio" checked /> Share system audio</label>
   `, 'Go Live', () => {
     const label = ($('#gol-label') || {}).value || '';
-    const q = (document.querySelector('input[name="gol-q"]:checked') || {}).value;
-    const fps = +(document.querySelector('input[name="gol-fps"]:checked') || {}).value || 30;
     const audio = $('#gol-audio') ? $('#gol-audio').checked : true;
-    startStream({ audio, quality: q, fps, label });
+    startStream({ audio, quality: qSel, fps: fpsSel, label });
   });
+  const segWire = (id, set) => document.querySelectorAll('#' + id + ' .tab').forEach((b) => (b.onclick = () => {
+    set(b.dataset.v);
+    document.querySelectorAll('#' + id + ' .tab').forEach((o) => o.classList.toggle('active', o === b));
+  }));
+  segWire('gol-qseg', (v) => (qSel = v));
+  segWire('gol-fseg', (v) => (fpsSel = +v || 30));
   // Picking a chip fills the title (still editable); typing a custom title
   // deselects the chips.
   document.querySelectorAll('.gol-game').forEach((b) => (b.onclick = () => {

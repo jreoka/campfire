@@ -102,12 +102,14 @@
   --danger-line:rgba(255,85,85,.4);
   --danger-tx:#ff8f8f;
 }
-/* OLED Black: pure-black surfaces for OLED screens, same indigo primary. */
+/* OLED Black: true-black chrome for OLED screens, same indigo primary.
+   Structural surfaces (--panel/--panel-2) are pure black; --panel-3/--panel-4
+   stay for hovers, inputs and controls (see the OLED extras block below). */
 [data-theme="oled"]{
   color-scheme:dark;
   --bg:#000000;
-  --panel:#0a0a0c;
-  --panel-2:#141417;
+  --panel:#000000;
+  --panel-2:#000000;
   --panel-3:#1e1e23;
   --panel-4:#2c2c34;
   --inset:#000000;
@@ -133,6 +135,10 @@
   --danger-line:rgba(248,113,113,.4);
   --danger-tx:#ffa3a3;
 }
+/* OLED Black extras: chrome is true black, so hovers lift to --panel-3 and
+   borderless rows/cards get a hairline edge to stay defined on black. */
+[data-theme="oled"] .chan:hover,[data-theme="oled"] .vuser:hover,[data-theme="oled"] .member:hover,[data-theme="oled"] .rx-user:hover,[data-theme="oled"] .set-tab:hover,[data-theme="oled"] .ftab:hover,[data-theme="oled"] .dmrow:hover,[data-theme="oled"] .find-row:hover,[data-theme="oled"] .inbox-item:hover,[data-theme="oled"] .fwd-dest:hover,[data-theme="oled"] .theme-card:hover{background:var(--panel-3)}
+[data-theme="oled"] .set-row,[data-theme="oled"] .sec-row,[data-theme="oled"] .set-check,[data-theme="oled"] .set-game-row,[data-theme="oled"] .adm-row,[data-theme="oled"] .adm-stat,[data-theme="oled"] .pin-row,[data-theme="oled"] .fwd-preview,[data-theme="oled"] .rx-group,[data-theme="oled"] .nsfw-row,[data-theme="oled"] #form-2fa,[data-theme="oled"] .txt-prev,[data-theme="oled"] .txt-full,[data-theme="oled"] #friends-page .dmrow,[data-theme="oled"] #set-blocked .dmrow{border:1px solid var(--line-soft)}
 html.no-sys-insets{--safe-t:30px}
 *{box-sizing:border-box}
 html,body{height:100%;overflow:hidden;overscroll-behavior:none}
@@ -318,10 +324,9 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .uc-vol input[type=range]{flex:1;accent-color:var(--accent);height:22px}
 .uc-vol span{font-size:.8rem;font-weight:700;color:var(--muted);min-width:42px;text-align:right;font-variant-numeric:tabular-nums}
 /* Go Live setup dialog */
-.gol-row{display:flex;align-items:center;gap:.7rem;margin-top:.7rem}
-.gol-qs{display:flex;gap:.45rem;flex-wrap:wrap}
-.gol-q{display:flex;align-items:center;gap:.3rem;font-size:.85rem;font-weight:650;background:var(--panel-3);border-radius:999px;padding:.35rem .75rem;cursor:pointer}
-.gol-q input{accent-color:var(--accent)}
+.gol-lab{display:block;font-size:.76rem;font-weight:700;color:var(--muted);letter-spacing:.02em;margin:.85rem 0 .35rem}
+.tabs.gol-seg{margin:0}
+.set-check.gol-audio{margin-top:.75rem}
 .gol-games{display:flex;flex-wrap:wrap;gap:.4rem;margin:.1rem 0 .7rem}
 .gol-game{border:1px solid var(--line-soft);background:var(--panel-3);color:var(--text);border-radius:999px;padding:.4rem .85rem;font-size:.83rem;font-weight:650;cursor:pointer;transition:background var(--t-fast),border-color var(--t-fast)}
 .gol-game:hover{background:var(--panel-4)}
