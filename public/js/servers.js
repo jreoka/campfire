@@ -352,10 +352,14 @@ async function selectChannel(id, opts = {}) {
   S.histMode = null;
   S.histNew = 0;
   const cached = S.messages.get(id);
+  // Restore a saved mid-read position, or hold the live bottom — never
+  // both: a stale-layout restore yank trips the hold's takeover check and
+  // strands cold opens scrolled-up with the Jump pill showing.
+  const wantMid = wantsMidReadRestore({ kind: 'server', id });
   if (cached && cached.length) {
     S.editing = null;
-    renderMessages();
-    restoreScrollPos({ kind: 'server', id });
+    if (wantMid) { renderMessages(); restoreScrollPos({ kind: 'server', id }); }
+    else renderMessages(true);
   } else {
     $('#messages').innerHTML = '<p class="muted">Loading…</p>';
   }
@@ -367,11 +371,10 @@ async function selectChannel(id, opts = {}) {
     S.histMode = null;
     S.histNew = 0;
     if (cached && cached.length) {
-      renderMessages(); // keepDist holds; anchor re-align nails it exactly
-      restoreScrollPos({ kind: 'server', id });
+      if (wantMid) { renderMessages(); restoreScrollPos({ kind: 'server', id }); }
+      else renderMessages(true);
     } else {
       renderMessages(true);
-      restoreScrollPos({ kind: 'server', id });
     }
     refreshPinsCount();
     updatePill();

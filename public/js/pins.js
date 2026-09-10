@@ -52,6 +52,19 @@ function restoreScrollPos(ctx) {
     updatePill();
   } catch {}
 }
+// Channel/DM open: restore the saved mid-read position, or go to the live
+// bottom? Only a position well beyond one viewport counts as mid-read — a
+// bottom view saves ≈ viewport height, and restoring that through a fresh
+// (media-unloaded) layout would yank the view and kill the bottom hold.
+function wantsMidReadRestore(ctx) {
+  try {
+    if (!sameCtx(pinsCtx(), ctx)) return false;
+    const box = $('#messages');
+    const ch = (box && box.clientHeight) || 600;
+    const mem = S.scrollMem.get(scrollMemKey(ctx));
+    return !!(mem && mem.dist != null && mem.dist > ch + 200);
+  } catch { return false; }
+}
 // Late media (cold-cache images, video metadata) changes heights after a
 // restore and would nudge the view. Briefly glue the anchor while things
 // settle — stops the moment the user scrolls themselves.
@@ -273,9 +286,12 @@ async function selectDmThread(id) {
   S.histMode = null;
   S.histNew = 0;
   const cachedDm = S.dmMessages.get(id);
+  // Restore a saved mid-read position, or hold the live bottom — never
+  // both (see selectChannel: a stale restore yank kills the bottom hold).
+  const wantMidDm = wantsMidReadRestore({ kind: 'dm', id });
   if (cachedDm && cachedDm.length) {
-    renderDmMessages();
-    restoreScrollPos({ kind: 'dm', id });
+    if (wantMidDm) { renderDmMessages(); restoreScrollPos({ kind: 'dm', id }); }
+    else renderDmMessages(true);
   } else {
     $('#messages').innerHTML = '<p class="muted">Loading…</p>';
   }
@@ -287,11 +303,10 @@ async function selectDmThread(id) {
     S.histMode = null;
     S.histNew = 0;
     if (cachedDm && cachedDm.length) {
-      renderDmMessages(); // keepDist holds; anchor re-align nails it exactly
-      restoreScrollPos({ kind: 'dm', id });
+      if (wantMidDm) { renderDmMessages(); restoreScrollPos({ kind: 'dm', id }); }
+      else renderDmMessages(true);
     } else {
       renderDmMessages(true);
-      restoreScrollPos({ kind: 'dm', id });
     }
     refreshPinsCount();
     updatePill();

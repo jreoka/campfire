@@ -262,7 +262,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .mini:disabled:hover{background:var(--panel-3)}
 .mini.danger{background:var(--danger-bg);border:1px solid var(--danger-line);color:var(--danger-tx)}
 .mini.danger:hover{background:rgba(248,113,113,.17)}
-#me-card{display:flex;align-items:center;gap:.55rem;padding:.5rem .7rem .5rem calc(.7rem + 10px);margin:.4rem .6rem .6rem -10px;border:0;border-radius:12px;background-color:var(--panel-2);font-size:.88rem;font-weight:600;cursor:pointer;overflow:hidden;transition:background-color .15s;position:relative;z-index:2}
+#me-card{display:flex;align-items:center;gap:.55rem;padding:.5rem .7rem .5rem calc(.7rem + 32px);margin:.4rem .6rem .6rem -32px;border:0;border-radius:12px;background-color:var(--panel-2);font-size:.88rem;font-weight:600;cursor:pointer;overflow:hidden;transition:background-color .15s;position:relative;z-index:2}
 #me-card:hover{background-color:var(--panel-3)}
 #me-card.off{opacity:.55}
 #me-card .avwrap{position:relative;width:28px;height:28px;flex-shrink:0}

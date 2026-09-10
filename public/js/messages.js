@@ -500,7 +500,15 @@ function anchorBottom(box) {
   // Jump-to-present pill showing. Re-snap on every settle until the user
   // scrolls themselves, or after a few seconds — whichever comes first.
   box.scrollTop = box.scrollHeight;
-  let want = box.scrollTop, live = true;
+  // Reachable target: max scrollTop is height minus viewport — tracking
+  // raw scrollHeight (unreachable by exactly clientHeight) made the
+  // takeover check below suicide the hold on its first settled image.
+  const bottomOf = () => Math.max(0, box.scrollHeight - box.clientHeight);
+  let want = bottomOf(), live = true;
+  // One hold per box: a newer hold (re-render, live message, thread reply)
+  // supersedes older ones so stale snaps can't cross-kill the current one.
+  const my = (box._holdGen = (box._holdGen | 0) + 1);
+  const current = () => live && box._holdGen === my;
   const t0 = Date.now();
   // Never yank a different conversation: a channel switch reuses the same
   // #messages box, and late media from the old one may settle afterwards.
@@ -517,8 +525,8 @@ function anchorBottom(box) {
   };
   const take = () => stop(); // wheel / touch scroll = the user took over
   const snap = () => {
-    if (!live || !stillHere() || Date.now() - t0 > 8000) { stop(); return; }
-    want = box.scrollHeight;
+    if (!current() || !stillHere() || Date.now() - t0 > 8000) { stop(); return; }
+    want = bottomOf();
     if (Math.abs(box.scrollTop - want) > 0.5) box.scrollTop = want;
     if (typeof updatePill === 'function') { try { updatePill(); } catch {} }
   };
@@ -527,12 +535,12 @@ function anchorBottom(box) {
     // match our last snap (checked next frame) means the user dragged the
     // scrollbar themselves. Content growth above never changes scrollTop,
     // so it can't false-trigger this.
-    requestAnimationFrame(() => { if (live && Math.abs(box.scrollTop - want) > 2) stop(); });
+    requestAnimationFrame(() => { if (!current()) { stop(); return; } if (Math.abs(box.scrollTop - want) > 2) stop(); });
   };
   const onSettle = (e) => {
     // Capture phase: 'load' doesn't bubble, but this still catches media
     // injected later (link embeds resolving seconds after open).
-    if (!live) return;
+    if (!current()) { stop(); return; }
     if (e.target && e.target.matches && e.target.matches('img, video')) snap();
   };
   box.addEventListener('wheel', take, { passive: true });
