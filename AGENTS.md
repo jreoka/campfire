@@ -301,7 +301,10 @@ individual friend is copied into `viewonce/` for the same gate), so nothing can
 fetch it before the recipient opens the message. Async discipline:
 never pass an async callback to map/filter/forEach when results are used
 synchronously (use for..of or Promise.all); background timers go through
-safeInterval so rejections log instead of crashing.
+safeInterval so rejections log instead of crashing. The typing strip above the
+composer always keeps its slot (`--strip-h`, fixed height, text fades) —
+hiding it resizes `#messages` and shoves the conversation up/down, and any
+overlay anchored to the composer top must pay `var(--strip-h)` too.
 
 NEXT: iterate per owner feedback on the live site.
 

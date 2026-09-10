@@ -39,6 +39,9 @@
   --safe-t:env(safe-area-inset-top,0px);
   --safe-l:env(safe-area-inset-left,0px);
   --safe-r:env(safe-area-inset-right,0px);
+  /* Height of the always-reserved typing strip (see #typing-bar). Anything
+     anchored to the top of the composer pays for it on top of its own 64px. */
+  --strip-h:1.7rem;
 }
 /* Light mode: bright flat surfaces, same indigo primary. */
 [data-theme="light"]{
@@ -442,12 +445,18 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .msg .text a{color:var(--accent-hover)}
 .msg.sys{justify-content:center;color:var(--faint);font-size:.83rem}
 #composer{display:flex;gap:.55rem;align-items:center;padding:.7rem .9rem .7rem;padding-bottom:calc(.7rem + var(--safe-b));background:var(--panel);min-width:0;position:relative}
-#typing-bar{display:none;align-items:center;padding:.35rem 1.1rem .15rem;background:var(--panel)}
-#typing-bar.show{display:flex;min-height:1.35rem}
+/* The strip keeps its slot at all times — only its contents fade. It used to be
+   display:none when idle, so every indicator appearing/disappearing resized
+   #messages and shoved the whole conversation up and down (and made the
+   stick-to-bottom ResizeObserver re-scroll a reader just off the bottom).
+   Slow-mode keeps the exact same box for the same reason: a live slowmode
+   toggle must not resize the list either. The height is fixed (not min-height)
+   because the text's line box is taller than a min-height box would be, which
+   left a few pixels of movement. */
+#typing-bar{display:flex;align-items:center;flex:0 0 auto;height:var(--strip-h);padding:0 1.1rem;background:var(--panel)}
 #chat:has(#composer.hidden) #typing-bar{display:none}
-#typing{font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#typing-bar.slow{display:flex;min-height:0;padding:.1rem 1.1rem .2rem}
-#chat:has(#typing-bar.slow) #composer{padding-top:.2rem}
+#typing{font-size:.78rem;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;visibility:hidden;transition:opacity .14s ease,visibility .14s ease}
+#typing-bar.show #typing{opacity:1;visibility:visible}
 #slowmode-hint{display:inline-flex;align-items:center;gap:.32rem;font-size:.74rem;font-weight:700;color:var(--amber);white-space:nowrap}
 #slowmode-hint.hidden{display:none}
 .send-btn{width:46px;height:46px;border-radius:50%;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:background var(--t-fast),transform .1s ease}
@@ -628,8 +637,8 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .scan-block.infected .scan-ic{color:var(--red);background:rgba(237,66,69,.1)}
 .scan-block.infected .scan-tx>span{color:var(--red)}
 @media (prefers-reduced-motion:reduce){.scan-fill,.scanning .scan-ic,.scan-dots::after{animation:none}}
-#mention-pop,#chan-pop{position:absolute;left:.9rem;bottom:calc(64px + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:230px;max-height:230px;overflow-y:auto;z-index:60;padding:.3rem}
-#emoji-pop{position:absolute;left:.9rem;bottom:calc(64px + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:270px;max-height:270px;overflow-y:auto;z-index:60;padding:.3rem}
+#mention-pop,#chan-pop{position:absolute;left:.9rem;bottom:calc(64px + var(--strip-h) + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:230px;max-height:230px;overflow-y:auto;z-index:60;padding:.3rem}
+#emoji-pop{position:absolute;left:.9rem;bottom:calc(64px + var(--strip-h) + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:270px;max-height:270px;overflow-y:auto;z-index:60;padding:.3rem}
 .emoji-item{display:flex;align-items:center;gap:.55rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);padding:.42rem .6rem;font-size:.88rem;cursor:pointer;border-radius:8px}
 .emoji-item:hover,.emoji-item.sel{background:var(--panel-3)}
 .emoji-item .ep-img{width:26px;height:26px;object-fit:contain;flex-shrink:0}
@@ -767,7 +776,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 @keyframes flash{0%,40%{background:rgba(91,108,255,.27)}100%{background:transparent}}
 
 /* ---------- picker (emoji + GIFs) ---------- */
-#picker{position:absolute;left:.9rem;bottom:calc(64px + var(--safe-b));width:min(370px,calc(100vw - 2rem));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-lg);z-index:150;display:flex;flex-direction:column;max-height:390px;overflow:hidden}
+#picker{position:absolute;left:.9rem;bottom:calc(64px + var(--strip-h) + var(--safe-b));width:min(370px,calc(100vw - 2rem));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-lg);z-index:150;display:flex;flex-direction:column;max-height:390px;overflow:hidden}
 #picker.anchored{position:fixed;bottom:auto}
 .pk-subrow{display:flex;align-items:center;gap:.5rem;width:100%;padding:.15rem 0 .3rem}
 .pk-subbtn{border:0;background:transparent;color:var(--muted);font-weight:700;font-size:.82rem;padding:.42rem .9rem;border-radius:8px;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
@@ -1284,7 +1293,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .sec-row .sub{display:block;font-size:.74rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:.1rem}
 .backup-codes{font-family:ui-monospace,Menlo,monospace;font-size:.85rem;background:var(--inset);border:1px dashed var(--line);border-radius:10px;padding:.75rem .95rem;margin:.65rem 0;user-select:all;line-height:1.9}
 #pins-count{position:absolute;top:-5px;right:-5px;background:var(--accent);color:var(--on-accent);font-size:.62rem;font-weight:800;border-radius:999px;padding:.1rem .38rem;min-width:19px;text-align:center;line-height:1.3}
-#jump-present{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(78px + var(--safe-b));z-index:30;display:flex;align-items:center;gap:.45rem;background:var(--panel-2);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:.6rem 1.05rem;font-size:.82rem;font-weight:700;cursor:pointer;white-space:nowrap;max-width:calc(100% - 2rem);transition:background var(--t-fast)}
+#jump-present{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(78px + var(--strip-h) + var(--safe-b));z-index:30;display:flex;align-items:center;gap:.45rem;background:var(--panel-2);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:.6rem 1.05rem;font-size:.82rem;font-weight:700;cursor:pointer;white-space:nowrap;max-width:calc(100% - 2rem);transition:background var(--t-fast)}
 #jump-present:hover{background:var(--panel-3)}
 #jump-present .jp-go{color:var(--accent-hover);font-weight:800}
 .pins-list{display:flex;flex-direction:column;gap:.55rem;max-height:60dvh;overflow-y:auto;margin-top:.85rem}
