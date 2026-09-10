@@ -222,6 +222,7 @@ function onWS(m) {
         if (m.channelId === S.channelId) paintThreadCount(msg.threadRoot);
         if (S.thread && S.thread.rootId === msg.threadRoot) {
           S.thread.replies.push(msg);
+          trimLiveTail(S.thread.replies); // renderThread rebuilds, so no DOM prune needed
           renderThread(true);
           if (document.hidden && !dnd) notifyMsg(msg);
         }
@@ -239,11 +240,13 @@ function onWS(m) {
         }
         const arr = S.messages.get(m.channelId) || [];
         arr.push(msg);
+        const dropOld = trimLiveTail(arr);
         S.messages.set(m.channelId, arr);
         if (m.channelId === S.channelId) {
           // Incremental append keeps every existing avatar <img> untouched
           // (full rebuilds flash them in Safari); fall back if not live-tail.
           if (!appendLiveMessage($('#messages'), arr, msg)) renderMessages();
+          else if (dropOld) pruneLiveTop($('#messages'), dropOld);
           if (!msg.sys && document.hidden && !dnd) notifyMsg(msg);
           else if (!msg.sys && !document.hidden && !dnd && mentionsMe(msg)) sfx.msg();
         } else if (!msg.sys && !dnd) {
@@ -295,9 +298,11 @@ function onWS(m) {
     case 'dm-new': {
       const msg = m.message;
       const inHistDm = S.histMode && S.histMode.kind === 'dm' && S.histMode.id === msg.threadId;
+      let dmDrop = 0;
       if (!inHistDm) {
         const arr = S.dmMessages.get(msg.threadId) || [];
         arr.push(msg);
+        dmDrop = trimLiveTail(arr);
         S.dmMessages.set(msg.threadId, arr);
       }
       const ddnd = S.me && S.me.status === 'dnd';
@@ -313,6 +318,7 @@ function onWS(m) {
           }
         } else {
           if (!appendLiveMessage($('#messages'), S.dmMessages.get(msg.threadId) || [], msg)) renderDmMessages();
+          else if (dmDrop) pruneLiveTop($('#messages'), dmDrop);
           if (!msg.sys && document.hidden && !ddnd) notifyMsg(msg);
         }
         // Keep the DM/group list preview fresh — e.g. the first message sent

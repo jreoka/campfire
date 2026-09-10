@@ -682,6 +682,42 @@ function appendLiveMessage(box, arr, msg) {
     return true;
   } catch { return false; }
 }
+// Live-tail cap: history loads are bounded (80), but WS arrivals push onto
+// the cached arrays (and append DOM nodes) forever — a busy chat left open
+// would hoard every message of the session in memory and in the DOM.
+// trimLiveTail drops the oldest entries past the cap (returns the count);
+// pruneLiveTop removes the same count from the top of the list, holding a
+// scrolled-up reader's place by compensating scrollTop for removed height.
+// (A full rebuild via renderMessages/renderDmMessages/renderThread repaints
+// from the array, so it needs no DOM prune — only incremental appends do.)
+const LIVE_TAIL_CAP = 300;
+function trimLiveTail(arr, cap) {
+  cap = cap || LIVE_TAIL_CAP;
+  if (!arr || arr.length <= cap) return 0;
+  const drop = arr.length - cap;
+  arr.splice(0, drop);
+  return drop;
+}
+function pruneLiveTop(box, n) {
+  try {
+    if (!box || !box.isConnected || !(n > 0)) return;
+    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+    const h0 = box.scrollHeight;
+    for (let i = 0; i < n; i++) {
+      const first = box.querySelector('.msg');
+      if (!first) break;
+      first.remove();
+    }
+    for (;;) { // drop orphaned day dividers (a .day with no .msg under it)
+      const f = box.firstElementChild;
+      if (!f || !f.classList || !f.classList.contains('day')) break;
+      const nx = f.nextElementSibling;
+      if (!nx || (nx.classList && nx.classList.contains('day'))) f.remove();
+      else break;
+    }
+    if (!nearBottom) box.scrollTop = Math.max(0, box.scrollTop - (h0 - box.scrollHeight));
+  } catch {}
+}
 function replyPreviewOf(m) {
   const t = String(m?.content || '').trim().slice(0, 60);
   if (t) return t;
