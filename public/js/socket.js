@@ -10,7 +10,7 @@ document.addEventListener('visibilitychange', sendVisibility);
 // A themed campfire splash covers the stale app whenever the live socket
 // drops, until the server is reachable again. A short grace delay keeps fast
 // blips (and the initial boot handshake) from flashing it.
-let connTimer = null, connAttempts = 0, connVisible = false, connPingSent = 0, connProbePending = false;
+let connTimer = null, connAttempts = 0, connVisible = false, connPingSent = 0, connProbePending = false, connFadeT = null;
 function connEl() { return document.getElementById('conn-overlay'); }
 function inMainView() { return !document.getElementById('view-main')?.classList.contains('hidden'); }
 function paintConn() {
@@ -24,6 +24,28 @@ function paintConn() {
     else sub.textContent = 'Trying to reach Campfire — hang tight.';
   }
 }
+function connShow() {
+  // Fade in: unhide at opacity 0, then rAF into opacity 1. Clears a
+  // pending fade-out so a quick hide→show never snaps or strands hidden.
+  const el = connEl();
+  if (!el) return;
+  if (connFadeT) { clearTimeout(connFadeT); connFadeT = null; }
+  el.classList.remove('hidden');
+  void el.offsetWidth;
+  el.classList.add('show');
+}
+function connHide() {
+  // Fade out, then display:none once the fade lands (guarded on the
+  // logical flag so a re-show mid-fade isn't buried by a stale timer).
+  const el = connEl();
+  if (!el) return;
+  el.classList.remove('show');
+  if (connFadeT) clearTimeout(connFadeT);
+  connFadeT = setTimeout(() => {
+    connFadeT = null;
+    if (!connVisible) el.classList.add('hidden');
+  }, 240);
+}
 function showConn() {
   if (connVisible) { paintConn(); return; }
   if (!navigator.onLine) {
@@ -31,19 +53,19 @@ function showConn() {
     // full-screen on whatever view is showing.
     connVisible = true;
     paintConn();
-    connEl()?.classList.remove('hidden');
+    connShow();
     return;
   }
   if (!store.token || !inMainView()) { paintConn(); return; }
   connVisible = true;
   paintConn();
-  connEl()?.classList.remove('hidden');
+  connShow();
 }
 function hideConn() {
   if (connTimer) { clearTimeout(connTimer); connTimer = null; }
   if (!connVisible) return;
   connVisible = false;
-  connEl()?.classList.add('hidden');
+  connHide();
 }
 function armConnSoon() {
   paintConn();

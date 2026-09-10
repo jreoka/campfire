@@ -1305,7 +1305,8 @@ body{touch-action:manipulation}
 /* The backdrop is var(--bg), so it automatically matches the active theme
    (dark navy / light / dracula) via <html data-theme>. Sits under the toast
    (z 500) but above every other layer, hiding the stale app while offline. */
-#conn-overlay{position:fixed;inset:0;z-index:480;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:1.5rem}
+#conn-overlay{position:fixed;inset:0;z-index:480;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:1.5rem;opacity:0;transition:opacity .22s ease}
+#conn-overlay.show{opacity:1}
 .conn-card{display:flex;flex-direction:column;align-items:center;text-align:center;gap:.55rem;max-width:22rem}
 .conn-firewrap{position:relative;width:148px;height:148px;display:flex;align-items:center;justify-content:center;margin-bottom:.5rem}
 .conn-halo{position:absolute;inset:0;border-radius:50%;background:var(--accent-dim);animation:cf-halo 2.4s ease-in-out infinite}
@@ -1326,6 +1327,7 @@ body{touch-action:manipulation}
 .conn-sub{margin:0}
 #conn-retry{margin-top:.55rem}
 @media (prefers-reduced-motion:reduce){
+  #conn-overlay{transition:none}
   .conn-halo,.cf-flame-o,.cf-flame-i,.cf-ember,.conn-ell span{animation:none!important}
   .cf-ember{opacity:0}
 }
