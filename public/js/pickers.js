@@ -34,7 +34,7 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null) {
   renderEmojiRail();
   renderEmojiGrid('');
   ensureEmojiData().then(() => { if (S.picker) renderEmojiGrid($('#pk-search').value); });
-  if (mode !== 'react') loadGifTrending();
+  if (mode !== 'react' && mode !== 'tag') loadGifTrending();
   loadGifFavs();
   setTimeout(() => $('#pk-search').focus(), 0);
 }
@@ -162,9 +162,12 @@ function renderEmojiGrid(filter) {
 function pickEmoji(e) {
   if (S.picker?.mode === 'tag') {
     // Server-tag emoji: standard unicode emoji only (no custom :shortcodes:).
-    if (!/\p{Extended_Pictographic}/u.test(e) || /^:[\w+-]+:$/.test(e)) toast('Tags support standard emoji only');
-    else if (S.tagEmojiInput && S.tagEmojiInput.isConnected) S.tagEmojiInput.dataset.emoji = e;
-    try { S.tagEmojiDone && S.tagEmojiDone(); } catch {}
+    // Done (auto-save) runs only on a valid pick.
+    if (!/\p{Extended_Pictographic}/u.test(e) || /^:[\w+-]+:$/.test(e)) { toast('Tags support standard emoji only'); }
+    else {
+      if (S.tagEmojiInput && S.tagEmojiInput.isConnected) S.tagEmojiInput.dataset.emoji = e;
+      try { S.tagEmojiDone && S.tagEmojiDone(); } catch {}
+    }
     S.tagEmojiInput = null; S.tagEmojiDone = null;
     closePicker();
     return;

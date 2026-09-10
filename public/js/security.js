@@ -457,12 +457,27 @@ function renderServerTab() {
   };
   paintEB();
   if (mgr) {
-    eBtn.onclick = () => {
-      S.tagEmojiInput = eBtn; S.tagEmojiDone = paintEB;
-      openPicker('tag', null, 'emoji');
+    eBtn.onclick = (e) => {
+      S.tagEmojiInput = eBtn;
+      // Picking saves immediately (like avatar/banner uploads) so the
+      // choice can't be lost by closing settings without pressing Save.
+      S.tagEmojiDone = async () => {
+        paintEB();
+        try {
+          await api(`/api/servers/${d.id}`, { method: 'PATCH', body: JSON.stringify({ name: box.querySelector('#srv-name').value, description: box.querySelector('#srv-desc').value, tag: box.querySelector('#srv-tag').value, tagEmoji: eBtn.dataset.emoji || '' }) });
+        } catch (err) { toast('Save failed: ' + prettyError(err.message)); }
+      };
+      openPicker('tag', null, 'emoji', { x: e.clientX, y: e.clientY });
       document.querySelector('#picker .pk-tabs').style.display = 'none';
+      document.querySelector('#pk-klipy').classList.add('hidden');
+      document.querySelector('#pk-search').placeholder = 'Search emoji';
     };
-    tagRow.querySelector('#srv-tag-unemoji').onclick = () => { eBtn.dataset.emoji = ''; paintEB(); };
+    tagRow.querySelector('#srv-tag-unemoji').onclick = async () => {
+      eBtn.dataset.emoji = ''; paintEB();
+      try {
+        await api(`/api/servers/${d.id}`, { method: 'PATCH', body: JSON.stringify({ name: box.querySelector('#srv-name').value, description: box.querySelector('#srv-desc').value, tag: box.querySelector('#srv-tag').value, tagEmoji: '' }) });
+      } catch (err) { toast('Save failed: ' + prettyError(err.message)); }
+    };
   } else eBtn.disabled = true;
   const iconRow = document.createElement('div');
   iconRow.className = 'row';

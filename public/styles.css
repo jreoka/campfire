@@ -766,7 +766,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 /* Server-tag emoji button: square swatch that opens the emoji picker. */
 .tag-emoji-btn{flex:0 0 40px;width:40px;height:40px;font-size:1.25rem;line-height:1;background:var(--inset);border:1px solid var(--line);border-radius:10px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:border-color var(--t-fast)}
 .tag-emoji-btn:hover{border-color:var(--accent)}
-.tag-emoji-btn.empty{opacity:.45}
+.tag-emoji-btn.empty{opacity:.55;border-style:dashed}
 .tag-emoji-btn:disabled{cursor:default;opacity:.45}
 .tag-emoji-btn:disabled:hover{border-color:var(--line)}
 .uc-statustext.ugame{color:var(--accent-hover);background:var(--accent-dim)}
@@ -1165,7 +1165,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .home-btn.active{background:var(--accent)}
 .home-btn.active::before{display:none}
 #home-wrap{position:relative;width:48px;height:48px;flex-shrink:0}
-#home-wrap:has(> .active)::before{content:'';position:absolute;left:-10px;top:50%;transform:translateY(-50%);width:8px;height:28px;border-radius:0 999px 999px 0;background:var(--text);z-index:2}
+#home-wrap:has(> .active)::before{content:'';position:absolute;left:-10px;top:50%;transform:translateY(-50%);width:6px;height:28px;border-radius:0 999px 999px 0;background:var(--text);z-index:2}
 .home-btn img{width:42px;height:42px;object-fit:cover;display:block;transition:opacity var(--t-fast)}
 .home-btn .home-fire{position:absolute;inset:0;margin:auto;width:42px;height:42px;opacity:0;transition:opacity var(--t-fast);pointer-events:none}
 @media (hover:hover){
