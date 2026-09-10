@@ -750,7 +750,6 @@ function channelMenuItems(cid, ctype) {
     items.push({ label: 'Move up', icon: '↑', fn: () => moveChannelRail(cid, -1) });
     items.push({ label: 'Move down', icon: '↓', fn: () => moveChannelRail(cid, 1) });
     items.push({ label: 'Channel settings', icon: '⚙', fn: () => openChannelSettings(S.serverId, c) });
-    if (c.type === 'text') items.push({ label: 'Webhooks', icon: '⧉', fn: () => openChannelSettings(S.serverId, c, 'webhooks') });
     items.push({ label: 'Delete channel', icon: '🗑', danger: true, fn: () => confirmDeleteChannel(c) });
   }
   return items;
