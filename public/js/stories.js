@@ -1042,7 +1042,7 @@ async function openStoryComposer(opts = {}) {
     stream: null, audio: null, micDenied: false, facing: 'user', mode: 'photo',
     rec: null, chunks: [], recT0: 0, recTimer: null, blob: null, kind: null,
     previewUrl: null, durationMs: 0, busy: false, camFailed: false, xhr: null,
-    step: 'capture', camSeq: 0,
+    step: 'capture', camSeq: 0, camReady: false,
     // audiences: friends / everyone / servers (multi-select)
     audFriends: true, audEveryone: false, audServers: [], audUsers: [],
     // view-once mode: pick friends instead of audiences, sends one DM each
@@ -1062,7 +1062,7 @@ function storySetStep(step) {
   const capture = step === 'capture';
   const preview = step === 'preview';
   const pick = step === 'audience';
-  $('#sc-cam').classList.toggle('hidden', !capture);
+  paintScCam();
   // Entering capture clears the preview; entering preview keeps whichever
   // media element storyShowPreview just revealed (hiding both here would
   // blank the freshly captured shot).
@@ -1085,10 +1085,11 @@ async function storyStartCam() {
   // stomp on a preview the user reached while the camera was still opening.
   const gen = ++sc.camSeq;
   const vid = $('#sc-cam');
+  storyCamHint('');
   if (!storyCamSupported()) {
     sc.camFailed = true;
-    storyCamHint('Camera not available here — pick a photo or video instead.');
     storySetStep('capture');
+    storyCamHint('Camera not available here — pick a photo or video instead.');
     return;
   }
   let stream = null;
@@ -1100,8 +1101,8 @@ async function storyStartCam() {
   } catch (err) {
     if (!sc || gen !== sc.camSeq || sc.step !== 'capture') return;
     sc.camFailed = true;
+    storySetStep('capture'); // first: entering capture clears a stale hint
     storyCamHint('Camera blocked — allow access, or pick a photo/video instead.');
-    storySetStep('capture');
     return;
   }
   const stop = () => { try { stream.getTracks().forEach((t) => t.stop()); } catch {} };
@@ -1113,8 +1114,47 @@ async function storyStartCam() {
   vid.muted = true;
   try { await vid.play(); } catch {}
   if (!sc || gen !== sc.camSeq || sc.step !== 'capture') { stop(); return; }
-  storyCamHint('');
+  await storyCamFrameReady(vid);
+  if (!sc || gen !== sc.camSeq || sc.step !== 'capture') { stop(); return; }
+  sc.camReady = true;
   storySetStep('capture');
+}
+// The camera element is kept out of the render until it has real frames. An
+// empty/loading <video> makes mobile browsers paint their own grey play-button
+// placeholder, so while the camera opens we show the viewer's wait pill
+// instead — and the element only appears with the first frame behind it.
+function paintScCam() {
+  const cam = $('#sc-cam'), wait = $('#sc-wait');
+  const capture = !!(sc && sc.step === 'capture');
+  const ready = capture && !!sc.camReady;
+  const loading = capture && !sc.camReady && !sc.camFailed;
+  if (cam) cam.classList.toggle('hidden', !ready);
+  if (wait) wait.classList.toggle('hidden', !loading);
+}
+// Resolves once the stream actually has frames (metadata is enough — the
+// element fires loadedmetadata for a MediaStream as soon as the track reports
+// its size). The 1.5s cap keeps a slow device from parking on the pill: after
+// that we reveal the element and let the stream paint its first frame.
+function storyCamFrameReady(vid) {
+  if (!vid || vid.videoWidth) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      vid.removeEventListener('loadedmetadata', onMeta);
+      vid.removeEventListener('canplay', onMeta);
+      resolve(true);
+    };
+    const onMeta = () => { if (vid.videoWidth) finish(); };
+    const timer = setTimeout(finish, 1500);
+    vid.addEventListener('loadedmetadata', onMeta);
+    vid.addEventListener('canplay', onMeta);
+    if (typeof vid.requestVideoFrameCallback === 'function') {
+      try { vid.requestVideoFrameCallback(() => finish()); } catch {}
+    }
+  });
 }
 function storyStopCamTracks() {
   if (!sc) return;
@@ -1122,8 +1162,10 @@ function storyStopCamTracks() {
   try { if (sc.stream) sc.stream.getTracks().forEach((t) => t.stop()); } catch {}
   storyStopMic();
   sc.stream = null; sc.audio = null;
+  sc.camReady = false;
   const vid = $('#sc-cam');
   if (vid) vid.srcObject = null;
+  paintScCam();
 }
 function storyCamHint(text) {
   const h = $('#sc-hint');

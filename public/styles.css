@@ -1707,8 +1707,9 @@ body.story-open{overflow:hidden}
 .sv-stage{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center;margin:.55rem 0;touch-action:pan-y}
 #sv-img,#sv-vid{max-width:100%;max-height:100%;border-radius:14px;object-fit:contain;background:#000;display:block}
 .sv-cap{position:absolute;left:50%;bottom:1rem;transform:translateX(-50%);max-width:min(680px,92%);background:rgba(0,0,0,.62);border-radius:12px;padding:.5rem .85rem;font-size:.92rem;text-align:center;white-space:pre-wrap;overflow-wrap:anywhere;z-index:2;pointer-events:none}
-/* Story viewer wait pill: a plain flat ring stacked above the label. (It used
-   the upload card's .up-spin, which is absolute-inset and stretched into a ring
+/* Story wait pill: a plain flat ring stacked above the label. Shared by the
+   viewer (Processing…) and the composer (Starting camera…). (It used the
+   upload card's .up-spin, which is absolute-inset and stretched into a ring
    around the whole pill.) */
 .sv-wait{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:.45rem;text-align:center;background:rgba(0,0,0,.6);border-radius:16px;padding:.7rem 1.05rem;font-size:.82rem;font-weight:650;z-index:3}
 .sv-spin{width:22px;height:22px;border-radius:50%;border:2.5px solid rgba(255,255,255,.22);border-top-color:#fff;animation:up-spin .8s linear infinite;flex-shrink:0}
