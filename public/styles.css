@@ -202,7 +202,8 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .uname-mark.checking{color:var(--faint)}
 .uname-mark.checking .ring{opacity:.35;stroke-dasharray:12 50}
 .uname-mark.checking svg{animation:uname-spin .9s linear infinite}
-.uname-msg{margin:-.45rem 0 .1rem;font-size:.82rem;min-height:1.05rem;color:var(--muted)}
+.uname-msg{display:none;margin:-.45rem 0 .1rem;font-size:.82rem;color:var(--muted)}
+#form-auth.reg .uname-msg{display:block;min-height:1.05rem}
 .uname-msg.ok{color:var(--green)}
 .uname-msg.bad{color:var(--red)}
 @keyframes uname-draw{to{stroke-dashoffset:0}}

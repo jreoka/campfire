@@ -153,6 +153,7 @@ function setMode(m) {
   $('#wrap-display').classList.toggle('hidden', m === 'login');
   $('#wrap-confirm').classList.toggle('hidden', m === 'login');
   $('#btn-auth').textContent = m === 'login' ? 'Log in' : 'Create account';
+  $('#form-auth').classList.toggle('reg', m === 'register'); // signup-only username status line
   $('#auth-error').classList.add('hidden');
   scheduleUnameCheck(); // switching tabs re-answers for whatever is in the field
 }
