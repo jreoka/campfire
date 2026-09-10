@@ -178,8 +178,26 @@ function reactionsHTML(m) {
     const label = r.emoji.startsWith(':') && r.emoji.endsWith(':') && em
       ? `<img class="cemoi" src="${em.url}" alt="${esc(r.emoji)}" data-fb-emoji="${esc(r.emoji)}">`
       : esc(r.emoji);
-    return `<button class="reaction${r.me ? ' me' : ''}" data-act="react" data-emoji="${esc(r.emoji)}" title="${esc(reactionTitle(r))}" aria-label="${esc(reactionTitle(r))}">${label} ${r.count}</button>`;
+    return `<button class="reaction${r.me ? ' me' : ''}" data-act="react" data-emoji="${esc(r.emoji)}" title="${esc(reactionTitle(r))}" aria-label="${esc(reactionTitle(r))}">${label} <span class="rcount">${r.count}</span></button>`;
   }).join('') + '</div>';
+}
+// Count went up on an existing pill: roll the number like an odometer tick
+// instead of swapping the digit under the reader's eye. Two stacked copies
+// animate past each other, then collapse back to plain text.
+function rollReactionCount(el, from, to) {
+  try {
+    if (!el) return;
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = String(to); return; }
+    const wrap = document.createElement('span');
+    wrap.className = 'rc-roll';
+    const a = document.createElement('span'); a.className = 'rc-old'; a.textContent = String(from);
+    const b = document.createElement('span'); b.className = 'rc-new'; b.textContent = String(to);
+    wrap.append(a, b);
+    el.replaceChildren(wrap);
+    const settle = () => { if (el.isConnected) el.textContent = String(to); };
+    wrap.addEventListener('animationend', settle, { once: true });
+    setTimeout(settle, 500); // background tabs / interrupted animations never fire it
+  } catch { try { el.textContent = String(to); } catch {} }
 }
 // ---------- text/code file previews (expandable + downloadable) ----------
 const TEXT_EXTS = new Set(['txt', 'md', 'markdown', 'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'json', 'py', 'pyw', 'rb', 'java', 'c', 'h', 'hpp', 'cpp', 'cc', 'cs', 'go', 'rs', 'php', 'swift', 'kt', 'kts', 'scala', 'sh', 'bash', 'zsh', 'sql', 'html', 'htm', 'css', 'scss', 'xml', 'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf', 'csv', 'tsv', 'log', 'diff', 'patch', 'vue', 'svelte', 'lua', 'dart']);
@@ -799,6 +817,15 @@ function patchMessageReactions(mid, box) {
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
   const html = reactionsHTML(m);
   const cur = body.querySelector(':scope > .reactions');
+  // Snapshot the counts first: the pill is rebuilt below, so "did this one go
+  // up?" can only be answered against the DOM we're about to replace.
+  const before = new Map();
+  if (cur) {
+    for (const b of cur.querySelectorAll('.reaction')) {
+      const n = parseInt((b.querySelector('.rcount') || {}).textContent || '', 10);
+      before.set(b.dataset.emoji, Number.isFinite(n) ? n : 0);
+    }
+  }
   if (!html) {
     if (cur) cur.remove();
   } else {
@@ -810,6 +837,14 @@ function patchMessageReactions(mid, box) {
       // Reactions sit after attachments/poll and before the thread link.
       const after = body.querySelector(':scope > .thread-link');
       body.insertBefore(next, after || null);
+    }
+    // Existing pill that gained a count → roll its number.
+    for (const b of next.querySelectorAll('.reaction')) {
+      const was = before.get(b.dataset.emoji);
+      const el = b.querySelector('.rcount');
+      const now = parseInt((el || {}).textContent || '', 10);
+      if (was == null || !el || !Number.isFinite(now) || now <= was) continue;
+      rollReactionCount(el, was, now);
     }
   }
   // A bar added/removed changes the column height: keep bottom-pinned readers
