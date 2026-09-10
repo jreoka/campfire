@@ -188,6 +188,7 @@ async function boot() {
     if (cfg?.iceServers?.length) S.iceServers = cfg.iceServers;
     const { user } = await api('/api/me');
     S.me = user;
+    S.bootRetrying = false;
     try { syncAccountTheme(); } catch {}
     // Report local timezone so game streaks bucket play on the player's
     // calendar days instead of UTC (a 7-8 PM ET session crosses UTC
@@ -196,7 +197,32 @@ async function boot() {
       const tz = -new Date().getTimezoneOffset();
       if (Number.isFinite(tz)) api('/api/me', { method: 'PATCH', body: JSON.stringify({ tzOffset: tz }) }).catch(() => {});
     } catch {}
-  } catch {
+  } catch (err) {
+    // Saved session but unreachable server (offline, wifi dead, server down):
+    // stay on the app shell under the full-screen reconnect overlay instead
+    // of dropping to the login form — the user is still signed in, just
+    // disconnected. Genuine auth failures (bad/expired token) still go to login.
+    const emsg = String((err && err.message) || '');
+    const authDead = /^(bad_token|user_gone|account_disabled|not_logged_in)$/.test(emsg) || /^http_40[13]/.test(emsg);
+    if (store.token && !authDead && !S.bootRetrying) {
+      S.bootRetrying = true;
+      const invR = consumeInvite();
+      if (invR) stashInvite(invR);
+      try { const shR = consumeShare(); if (shR) stashShare(shR); } catch {}
+      try { showMain(); } catch {}
+      try { showConn(); } catch {}
+      const retryBoot = () => {
+        if (!S.bootRetrying) return;
+        S.bootRetrying = false;
+        window.removeEventListener('online', retryBoot);
+        clearTimeout(retryBoot._t);
+        boot();
+      };
+      window.addEventListener('online', retryBoot);
+      retryBoot._t = setTimeout(retryBoot, 10000);
+      return;
+    }
+    S.bootRetrying = false;
     const inv0 = consumeInvite();
     if (inv0) stashInvite(inv0);
     const sh0 = consumeShare();

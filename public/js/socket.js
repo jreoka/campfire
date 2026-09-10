@@ -10,13 +10,16 @@ document.addEventListener('visibilitychange', sendVisibility);
 // A themed campfire splash covers the stale app whenever the live socket
 // drops, until the server is reachable again. A short grace delay keeps fast
 // blips (and the initial boot handshake) from flashing it.
-let connTimer = null, connAttempts = 0, connVisible = false;
+let connTimer = null, connAttempts = 0, connVisible = false, connPingSent = 0;
 function connEl() { return document.getElementById('conn-overlay'); }
 function inMainView() { return !document.getElementById('view-main')?.classList.contains('hidden'); }
 function paintConn() {
   const sub = connEl()?.querySelector('.conn-sub');
+  const title = connEl()?.querySelector('.conn-title-text');
+  const offline = !navigator.onLine;
+  if (title) title.textContent = offline ? "You're offline" : 'Connecting';
   if (sub) {
-    if (!navigator.onLine) sub.textContent = "You're offline — check your connection.";
+    if (offline) sub.textContent = "No connection — check your wifi or data. We'll reconnect automatically.";
     else if (connAttempts > 1) sub.textContent = `Trying to reach Campfire — retry ${connAttempts}…`;
     else sub.textContent = 'Trying to reach Campfire — hang tight.';
   }
@@ -36,9 +39,10 @@ function hideConn() {
 function armConnSoon() {
   paintConn();
   if (connVisible || connTimer || !store.token || !inMainView()) return;
-  // First drop gets a grace window (fast blips stay invisible); once the
-  // overlay is up — or while retrying — later drops show instantly.
-  connTimer = setTimeout(() => { connTimer = null; showConn(); }, connAttempts <= 1 ? 1200 : 0);
+  // Offline shows instantly (no grace); a dropped socket gets a short grace
+  // window so fast blips and the initial boot handshake never flash it.
+  const delay = !navigator.onLine ? 0 : (connAttempts <= 1 ? 1200 : 0);
+  connTimer = setTimeout(() => { connTimer = null; showConn(); }, delay);
 }
 // Auth was revoked server-side (bad/expired token): stop the reconnect loop
 // and send the user back to sign in instead of spinning forever.
@@ -58,8 +62,9 @@ function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(store.token)}`);
   S.ws = ws;
-  ws.onopen = () => { connAttempts = 0; hideConn(); ws.send(JSON.stringify({ t: 'subscribe' })); sendVisibility(); checkVersion(); };
+  ws.onopen = () => { connAttempts = 0; connPingSent = 0; S.lastWsMsg = Date.now(); hideConn(); ws.send(JSON.stringify({ t: 'subscribe' })); sendVisibility(); checkVersion(); };
   ws.onmessage = (ev) => {
+    S.lastWsMsg = Date.now(); connPingSent = 0;
     let m;
     try { m = JSON.parse(ev.data); } catch { return; }
     onWS(m);
@@ -75,8 +80,37 @@ function connectWS() {
   };
 }
 window.addEventListener('online', () => { paintConn(); if (store.token && inMainView() && (!S.ws || S.ws.readyState !== 1)) connectWS(); });
-window.addEventListener('offline', () => { if (store.token && inMainView()) showConn(); });
-document.getElementById('conn-retry')?.addEventListener('click', () => { if (store.token) { connAttempts++; connectWS(); } });
+window.addEventListener('offline', () => { showConn(); });
+document.getElementById('conn-retry')?.addEventListener('click', () => {
+  if (!store.token) return;
+  paintConn(); showConn();
+  if (!S.me) { try { boot(); } catch {} return; } // boot failed while offline — retry the whole boot
+  connAttempts++;
+  connectWS();
+});
+// Connectivity watchdog: the safety net under the socket events above.
+// - Some disconnects never fire onclose (half-open TCP looks OPEN forever,
+//   a reconnect stuck in CONNECTING fires nothing). Poll the actual state.
+// - Some environments never fire window offline/online reliably. Poll that too.
+// - An OPEN socket gone silent gets one app-level ping; no reply (not even
+//   our pong) means it's dead — close it so onclose runs the reconnect flow.
+setInterval(() => {
+  try {
+    if (!store.token || !inMainView()) return;
+    if (!navigator.onLine) { showConn(); return; }
+    const ws = S.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) { armConnSoon(); return; }
+    const idle = Date.now() - (S.lastWsMsg || 0);
+    if (idle > 35000 && !connPingSent) {
+      connPingSent = Date.now();
+      try { ws.send(JSON.stringify({ t: 'ping' })); } catch { try { ws.close(); } catch {} }
+    } else if (connPingSent && Date.now() - connPingSent > 10000) {
+      connPingSent = 0;
+      try { ws.close(); } catch {}
+      armConnSoon();
+    }
+  } catch {}
+}, 5000);
 function scrubReplyPreview(deletedId) {
   // A deleted message's text must not linger in the reply-quote previews of
   // messages that quoted it. Fresh history loads already come back scrubbed

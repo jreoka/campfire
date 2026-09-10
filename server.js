@@ -3396,6 +3396,8 @@ function evictFromDmCall(threadId, userId) {
 }
 
 wss.on('connection', (ws, req) => {
+  ws.isAlive = true; // protocol-level heartbeat (see interval below)
+  ws.on('pong', () => { ws.isAlive = true; });
   const url = new URL(req.url, 'http://x');
   const token = url.searchParams.get('token') || '';
   let p;
@@ -3427,6 +3429,7 @@ wss.on('connection', (ws, req) => {
     if (!me) return;
 
     if (msg.t === 'visibility') { me.visible = msg.visible !== false; return; }
+    if (msg.t === 'ping') { safeSend(ws, { t: 'pong' }); return; } // client liveness probe
 
     if (msg.t === 'subscribe') {
       // refresh memberships
@@ -3733,6 +3736,20 @@ wss.on('connection', (ws, req) => {
     }
   });
 });
+
+// Protocol-level heartbeat: browsers auto-answer ping with pong, so a socket
+// whose TCP died silently (phone sleep, pulled cable, dead NAT binding)
+// stops responding and gets terminated here — the client sees onclose and
+// runs its normal reconnect + full-screen connecting overlay flow instead
+// of sitting on a stale, half-open socket that looks alive but is dead.
+const wsHeartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) { try { ws.terminate(); } catch {} continue; }
+    ws.isAlive = false;
+    try { ws.ping(); } catch {}
+  }
+}, 30000);
+try { wsHeartbeat.unref(); } catch {}
 
 // SPA fallback (after API + static)
 app.get('*', (req, res, next) => {
