@@ -12,6 +12,8 @@ const Admin = {
   stats: null, statsAt: 0, statsErr: false, poll: null, refreshSoon: null,
 };
 const ADMIN_PAGE = 25;
+// Recent-files card in Admin → Media: fetch this many, scroll inside the card.
+const ADMIN_MEDIA_RECENT = 12;
 
 function fmtDate(ts) {
   try { return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }); }
@@ -244,9 +246,11 @@ async function loadAdminMedia() {
   const box = $('#adm-media');
   if (!box) return;
   try {
-    const [m, r] = await Promise.all([api('/api/admin/media'), api('/api/admin/media/recent?limit=25')]);
+    const [m, r] = await Promise.all([api('/api/admin/media'), api(`/api/admin/media/recent?limit=${ADMIN_MEDIA_RECENT}`)]);
     const w = m.worker || {};
     const badge = (txt, cls) => `<span class="adm-badge${cls ? ' ' + cls : ''}">${esc(txt)}</span>`;
+    const jobs = r.jobs || [];
+    const capped = jobs.length >= ADMIN_MEDIA_RECENT;
     const pend = m.queue?.pending || {};
     const pendN = Object.values(pend).reduce((a, x) => a + (x?.n || 0), 0);
     const pendB = Object.values(pend).reduce((a, x) => a + (x?.bytes || 0), 0);
@@ -281,7 +285,10 @@ async function loadAdminMedia() {
       ${!w.ffmpeg ? '<div class="muted small">ffmpeg is not on PATH — uploads work, they just stay uncompressed.</div>' : ''}
       <div class="muted small" style="margin-top:.4rem">${scanLine(m.scan)}${sweepLine(m.sweep)}</div>
       <div class="pf-sec-label" style="margin-top:1rem">Recent files</div>
-      <div>${(r.jobs || []).length ? r.jobs.map(jobRow).join('') : '<p class="muted small">Nothing compressed yet.</p>'}</div>
+      ${jobs.length
+        ? `<div class="adm-scroll">${jobs.map(jobRow).join('')}</div>`
+          + (capped ? `<div class="muted small adm-recent-note">Newest ${ADMIN_MEDIA_RECENT} · the log keeps more</div>` : '')
+        : '<p class="muted small">Nothing compressed yet.</p>'}
       <div class="adm-actions"><button class="mini" id="adm-media-refresh">Refresh</button></div>`;
     const rb = $('#adm-media-refresh');
     if (rb) rb.onclick = () => { box.innerHTML = '<p class="muted small">Loading…</p>'; loadAdminMedia(); };

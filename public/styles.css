@@ -1618,6 +1618,10 @@ body{touch-action:manipulation}
 .adm-subrow{display:flex;gap:.55rem;align-items:center;padding:.45rem 0;border-top:1px solid var(--line-soft);font-size:.88rem}
 .adm-subrow:first-child{border-top:0}
 .adm-subname{font-weight:650}
+/* long admin lists stay card-sized: the list scrolls, the panel doesn't */
+.adm-scroll{max-height:236px;overflow-y:auto;overscroll-behavior:contain;margin:0 -.2rem;padding:0 .2rem}
+.adm-scroll .adm-subrow{padding:.42rem 0}
+.adm-recent-note{margin-top:.3rem}
 .adm-snippet{color:var(--muted);font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 .codebox-inline{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--inset);border:1px solid var(--line);border-radius:8px;padding:.08rem .5rem;user-select:all}
 
