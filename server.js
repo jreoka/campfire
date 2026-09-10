@@ -529,6 +529,8 @@ async function sweepExpiredStatuses() {
       for (const c of clients) if (c.meta && c.meta.userId === id) c.meta.status = 'online';
     } catch {}
   }
+  // An invisible user lapsed back to online: the admin panel's count moved.
+  pushAdminPresence();
 }
 function publicUser(u) {
   if (!u) return { id: null, username: 'deleted', display_name: 'deleted user', avatar_color: '#555' };
@@ -2594,6 +2596,8 @@ app.patch('/api/me', authRequired, async (req, res) => {
   else notifyFriends(u.id, { t: 'user-status', userId: u.id, status: u.status });
   // sync live sockets' presence state
   for (const c of clients) if (c.meta && c.meta.userId === u.id) c.meta.status = u.status;
+  // An invisible<->visible flip moves the admin panel's Online number.
+  if ((u.status || 'online') !== (req.user.status || 'online')) pushAdminPresence();
   }
   // Friends hear about a custom-status change (falls through to no-op when
   // the text didn't actually change).
@@ -2948,7 +2952,10 @@ app.get('/api/admin/stats', authRequired, requireSiteAdmin, async (req, res) => 
     channels: await count('SELECT COUNT(*) c FROM channels'),
     messages: await count('SELECT COUNT(*) c FROM messages'),
     dmMessages: await count('SELECT COUNT(*) c FROM dm_messages'),
-    online: clients.size,
+    // People, not sockets: two tabs (or phone + desktop) are one user online.
+    // Invisible users are hidden from everyone, so they don't count either.
+    online: onlineUsers(),
+    sessions: clients.size,
   });
 });
 // ---------- site admin: media compression ----------
@@ -3056,6 +3063,10 @@ app.patch('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, re
     await db.prepare('UPDATE sessions SET revoked = 1 WHERE user_id = ?').run(target.id);
     closeSessionSockets(target.id, null);
   }
+  // Live sockets carry their owner's admin flag (the panel's live fan-out is
+  // addressed by it), so a grant/demotion applies without a reconnect.
+  for (const c of clients) if (c.meta && c.meta.userId === fresh.id) c.meta.is_admin = !!fresh.is_admin;
+  pushAdminPresence();
   await broadcastUserUpdate(fresh);
   res.json({ user: await adminUserView(fresh) });
 });
@@ -4710,6 +4721,24 @@ function broadcastToServer(serverId, obj, except) {
     if (ws.meta && ws.meta.servers.has(serverId) && ws !== except) safeSend(ws, obj);
   }
 }
+// Site-admin console: distinct users online (not sockets — two tabs or two
+// devices are one person), invisible users excluded like everywhere else.
+function onlineUsers() {
+  const ids = new Set();
+  for (const ws of clients) {
+    if (!ws.meta || (ws.meta.status || 'online') === 'invisible') continue;
+    ids.add(ws.meta.userId);
+  }
+  return ids.size;
+}
+// Push the live counts to every admin socket so the Overview card moves the
+// moment someone connects, disconnects or flips to/from invisible — no manual
+// refresh. Fired on the changes that can move the number; the DB-backed counts
+// are refreshed by the panel's own poll while it's open.
+function pushAdminPresence() {
+  const payload = { t: 'admin-presence', online: onlineUsers(), sessions: clients.size };
+  for (const ws of clients) if (ws.meta && ws.meta.is_admin) safeSend(ws, payload);
+}
 function voiceKey(s, c) { return s + ':' + c; }
 function dmVoiceKey(tid) { return 'dm:' + tid; }
 function voiceKeyOf(v) { return v.kind === 'dm' ? dmVoiceKey(v.threadId) : voiceKey(v.serverId, v.channelId); }
@@ -4842,9 +4871,11 @@ wss.on('connection', async (ws, req) => {
     voice: null,
     streaming: null,
     visible: true,
+    is_admin: !!u.is_admin,
   };
   clients.add(ws);
   safeSend(ws, { t: 'hello', user: publicUser(u), version: APP_VERSION });
+  pushAdminPresence();
 
   const onMessage = async raw => {
     try {
@@ -5175,6 +5206,7 @@ wss.on('connection', async (ws, req) => {
       // Friends see the flip even with no shared server (last socket only).
       const stillLive = [...clients].some((c) => c.meta && c.meta.userId === ws.meta.userId);
       if (!stillLive) notifyFriends(ws.meta.userId, { t: 'user-offline', userId: ws.meta.userId });
+      pushAdminPresence();
     }
     } catch (e) { console.error('[ws] close handler failed:', (e && e.message) || e); }
   });

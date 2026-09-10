@@ -463,6 +463,12 @@ function onWS(m) {
       if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
       repaintFriendsIfVisible();
       break;
+    // Site-admin Overview: live online/session counts pushed by the server on
+    // every connect/disconnect/status flip, so the panel needs no refresh.
+    case 'admin-presence': {
+      if (typeof adminPresence === 'function') adminPresence(m.online, m.sessions);
+      break;
+    }
     case 'user-updated': {
       const u = m.user;
       // Message rows render live identity (name / avatar / name colors) via

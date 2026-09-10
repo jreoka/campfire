@@ -9,6 +9,7 @@ const Admin = {
   uq: '', uf: 'all', uoff: 0, utotal: 0,
   sq: '', soff: 0, stotal: 0,
   membersOpen: null,
+  stats: null, statsAt: 0, statsErr: false, poll: null, refreshSoon: null,
 };
 const ADMIN_PAGE = 25;
 
@@ -32,6 +33,7 @@ function openAdminConsole(tab) {
 function closeAdminConsole() {
   try { $('#admin-backdrop')?.classList.add('hidden'); } catch {}
   try { $('#btn-admin')?.classList.remove('active'); } catch {}
+  stopAdminStatsLive();
 }
 
 // Panes are built the first time their tab opens and refreshed on every visit:
@@ -44,10 +46,11 @@ function setAdminTab(t) {
     const pane = document.getElementById('adm-' + key);
     if (pane) pane.classList.toggle('hidden', key !== t);
   }
-  if (t === 'overview') { ensureAdminOverviewPane(); loadAdminStats(); }
+  if (t === 'overview') { ensureAdminOverviewPane(); loadAdminStats(); startAdminStatsLive(); }
   else if (t === 'media') loadAdminMedia();
   else if (t === 'users') { ensureAdminUsersPane(); loadAdminUsers(); }
   else if (t === 'servers') { ensureAdminServersPane(); loadAdminServers(); }
+  if (t !== 'overview') stopAdminStatsLive();
 }
 
 function ensureAdminOverviewPane() {
@@ -106,17 +109,72 @@ function ensureAdminServersPane() {
   $('#adm-snext').onclick = () => { if (Admin.soff + ADMIN_PAGE < Admin.stotal) { Admin.soff += ADMIN_PAGE; loadAdminServers(); } };
 }
 
+// ---------- overview ----------
+// Renders from Admin.stats (the last full payload) with whatever the server
+// pushed since. Two live feeds keep it current without a manual refresh: the
+// WS 'admin-presence' push (instant, on every connect/disconnect/status flip —
+// it carries a fresh online/session count) and a slow poll while the pane is
+// open, which picks up the DB-backed counts (users/servers/channels/messages)
+// changing because of other people's actions.
+const ADMIN_STATS_POLL_MS = 10000;
+
+function renderAdminStats() {
+  const box = $('#adm-stats');
+  if (!box || !Admin.stats) return;
+  const s = Admin.stats;
+  const sessions = Number(s.sessions) || 0;
+  const when = Admin.statsErr ? 'reconnecting…' : (Admin.statsAt ? 'updated ' + agoStr(Admin.statsAt) : 'live');
+  const card = (n, l, sub) => `<div class="adm-stat"><b>${n}</b><span>${l}</span>${sub ? `<em>${esc(sub)}</em>` : ''}</div>`;
+  box.innerHTML =
+    card(s.users, 'Users') + card(s.servers, 'Servers') +
+    card(s.channels, 'Channels') + card(s.messages, 'Messages') +
+    card(s.online, 'Online', sessions ? `${sessions} session${sessions === 1 ? '' : 's'}` : '') +
+    card(s.newWeek, 'New this week') +
+    `<div class="adm-note muted small">Live · ${esc(when)}</div>`;
+}
+
 async function loadAdminStats() {
   const box = $('#adm-stats');
   if (!box) return;
   try {
     const s = await api('/api/admin/stats');
-    const card = (n, l) => `<div class="adm-stat"><b>${n}</b><span>${l}</span></div>`;
-    box.innerHTML =
-      card(s.users, 'Users') + card(s.servers, 'Servers') +
-      card(s.channels, 'Channels') + card(s.messages, 'Messages') +
-      card(s.online, 'Online') + card(s.newWeek, 'New this week');
-  } catch { box.innerHTML = '<p class="muted small">Could not load stats.</p>'; }
+    Admin.stats = s; Admin.statsAt = Date.now(); Admin.statsErr = false;
+    renderAdminStats();
+  } catch {
+    // A background refresh that fails (server restart, lost network) keeps the
+    // last numbers on screen and just flags the note, instead of blanking out.
+    Admin.statsErr = true;
+    if (Admin.stats) renderAdminStats();
+    else box.innerHTML = '<p class="muted small">Could not load stats.</p>';
+  }
+}
+
+// Server push (t:'admin-presence'): apply the fresh counts in place, then pull
+// the rest of the cards once behind a short debounce so a burst of people
+// connecting is a single fetch rather than one per socket.
+function adminPresence(online, sessions) {
+  if (!Admin.stats) return;
+  if (Admin.stats.online !== online || Admin.stats.sessions !== sessions) {
+    Admin.stats.online = online; Admin.stats.sessions = sessions;
+    if (adminConsoleOpen() && Admin.tab === 'overview') renderAdminStats();
+  }
+  if (Admin.refreshSoon) return;
+  Admin.refreshSoon = setTimeout(() => {
+    Admin.refreshSoon = null;
+    if (adminConsoleOpen() && Admin.tab === 'overview' && !document.hidden) loadAdminStats();
+  }, 2000);
+}
+
+function startAdminStatsLive() {
+  if (Admin.poll) return;
+  Admin.poll = setInterval(() => {
+    // The numbers matter only while someone is looking at them.
+    if (document.hidden || !adminConsoleOpen() || Admin.tab !== 'overview') return;
+    loadAdminStats();
+  }, ADMIN_STATS_POLL_MS);
+}
+function stopAdminStatsLive() {
+  if (Admin.poll) { clearInterval(Admin.poll); Admin.poll = null; }
 }
 
 // ---------- media compression monitor ----------
@@ -623,4 +681,9 @@ async function adminClick(e) {
   if (close) close.onclick = closeAdminConsole;
   const rail = $('#btn-admin');
   if (rail) rail.onclick = () => openAdminConsole();
+  // Returning to the tab shouldn't show numbers from when it was hidden — the
+  // poll is paused while hidden, so take one fresh reading on the way back.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && adminConsoleOpen() && Admin.tab === 'overview') loadAdminStats();
+  });
 })();

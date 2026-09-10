@@ -1596,6 +1596,8 @@ body{touch-action:manipulation}
 .adm-stat{background:var(--panel);border:0;border-radius:var(--radius);padding:.75rem .4rem;text-align:center}
 .adm-stat b{display:block;font-size:1.3rem;font-weight:800;letter-spacing:-.02em}
 .adm-stat span{font-size:.72rem;color:var(--muted);font-weight:600}
+.adm-stat em{display:block;font-style:normal;font-size:.66rem;color:var(--muted);opacity:.85;margin-top:.12rem}
+.adm-note{grid-column:1/-1;text-align:center;margin-top:.15rem}
 .adm-row{display:flex;gap:.75rem;align-items:flex-start;background:var(--panel);border:0;border-radius:var(--radius);padding:.7rem .75rem;margin-top:.55rem}
 .adm-av,.adm-sav{width:40px;height:40px;font-size:1rem;flex-shrink:0}
 .adm-sav{background:var(--panel-3)}

@@ -192,6 +192,10 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   `node scripts/test-viewonce.js` covers view-once messages against the same
 dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   one-replay lifecycle, and that unopened items never expire.
+  `node scripts/test-admin-stats.js` covers the site-admin Overview numbers
+  against a throwaway database: distinct-user Online count vs sessions (two
+  tabs are one person), invisible users excluded, and the live
+  `admin-presence` WS push that keeps the panel current without a refresh.
 - **Upload pipeline E2E:** `node scripts/test-upload-pipeline.js` (needs ffmpeg
   + the dev Postgres, skips otherwise) boots a real server against a throwaway
   database with a fake clamd and asserts the single-transition compression flow
