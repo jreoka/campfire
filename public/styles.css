@@ -320,7 +320,10 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .vtime{color:var(--green);font-size:.75rem;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
 .chan .dot{width:8px;height:8px;border-radius:50%;background:var(--green);margin-left:auto;flex-shrink:0}
 .mini{display:inline-flex;align-items:center;justify-content:center;min-height:30px;border:0;background:var(--panel-3);color:var(--text);border-radius:8px;padding:.32rem .85rem;font-size:.8rem;font-weight:700;line-height:1;cursor:pointer;transition:background var(--t-fast)}
-#settings-close,#srv-settings-close{padding:0;width:30px;height:30px;min-height:30px;flex-shrink:0}
+/* Square icon close buttons: every settings/admin panel uses the same 30×30
+   box so the ✕ lands in the same place everywhere (a stray .mini pill here
+   reads as a different control). */
+#settings-close,#admin-close,#srv-settings-close,#chan-settings-close{padding:0;width:30px;height:30px;min-height:30px;flex-shrink:0}
 .mini:hover{background:var(--panel-4)}
 .mini:disabled{opacity:.35;cursor:default}
 .mini:disabled:hover{background:var(--panel-3)}
@@ -1028,7 +1031,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
   .set-tabs{flex-direction:row;align-items:center;min-width:0;max-width:100%;flex-shrink:0;overflow-x:auto;overflow-y:hidden;padding:.6rem;border-right:0;border-bottom:1px solid var(--line-soft);overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
   .set-tab{flex-shrink:0;white-space:nowrap}
   .set-tabs .spacer{display:none}
-  #settings-close{flex-shrink:0;margin-left:auto;position:sticky;right:0}
+  #settings-close,#admin-close{flex-shrink:0;margin-left:auto;position:sticky;right:0}
   .set-body{min-height:0}
 }
 .set-pane h4{font-size:.95rem;font-weight:750;letter-spacing:-.01em;margin:1.2rem 0 .55rem}
