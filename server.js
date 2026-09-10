@@ -1914,6 +1914,7 @@ async function storyVisibleTo(s, viewerId) {
   if (s.user_id === viewerId) return true;
   for (const a of await storyShares(s.id)) {
     if (a.kind === 'everyone') return true;
+    if (a.kind === 'user' && a.user_id === viewerId) return true;
     if (a.kind === 'friends' && await areFriends(s.user_id, viewerId)) return true;
     if (a.kind === 'server' && a.server_id && await isMember(a.server_id, viewerId)) return true;
   }
@@ -1922,18 +1923,21 @@ async function storyVisibleTo(s, viewerId) {
 // Audiences live in story_audiences rows so one post can reach friends, every
 // account on this instance, and any number of servers at once.
 function normStoryAudiences(body) {
-  const out = { friends: false, everyone: false, servers: [] };
+  const out = { friends: false, everyone: false, servers: [], users: [] };
   if (body && typeof body === 'object') {
     if (body.friends === true) out.friends = true;
     if (body.everyone === true) out.everyone = true;
     if (Array.isArray(body.servers)) for (const id of body.servers.slice(0, 50)) { const s = String(id || ''); if (s) out.servers.push(s); }
+    if (Array.isArray(body.users)) for (const id of body.users.slice(0, 200)) { const s = String(id || ''); if (s) out.users.push(s); }
     // Legacy single-target shape (audience:'friends'|'server' + serverId).
-    if (!out.friends && !out.everyone && !out.servers.length) {
+    // Never when the caller named individual friends only.
+    if (!out.friends && !out.everyone && !out.servers.length && !out.users.length) {
       if (body.audience === 'server' && body.serverId) out.servers = [String(body.serverId)];
       else out.friends = true;
     }
   }
   out.servers = [...new Set(out.servers)];
+  out.users = [...new Set(out.users)];
   return out;
 }
 async function storyShares(storyId) {
@@ -1944,6 +1948,8 @@ function shareLabels(shares) {
     friends: shares.some((a) => a.kind === 'friends'),
     everyone: shares.some((a) => a.kind === 'everyone'),
     servers: [...new Set(shares.filter((a) => a.kind === 'server' && a.server_id).map((a) => a.server_id))],
+    // Explicit friends this post was sent to (the picker's "send to" list).
+    users: [...new Set(shares.filter((a) => a.kind === 'user' && a.user_id).map((a) => a.user_id))],
   };
 }
 function storyView(s, author, seen, views, shared) {
@@ -1963,6 +1969,7 @@ async function storyAudienceIds(s) {
   const ids = new Set();
   for (const a of await storyShares(s.id)) {
     if (a.kind === 'friends') for (const id of await acceptedFriendIds(s.user_id)) ids.add(id);
+    else if (a.kind === 'user' && a.user_id) ids.add(a.user_id);
     else if (a.kind === 'everyone') for (const r of await db.prepare('SELECT id FROM users WHERE disabled = 0').all()) ids.add(r.id);
     else if (a.kind === 'server' && a.server_id) for (const r of await db.prepare('SELECT user_id FROM server_members WHERE server_id = ?').all(a.server_id)) ids.add(r.user_id);
   }
@@ -1977,6 +1984,7 @@ async function notifyStoryAudience(s, msg) {
   for (const a of shares) {
     if (a.kind === 'server' && a.server_id) broadcastToServer(a.server_id, msg);
     else if (a.kind === 'everyone') all = true;
+    else if (a.kind === 'user' && a.user_id) ids.add(a.user_id);
     else if (a.kind === 'friends') for (const id of await acceptedFriendIds(s.user_id)) ids.add(id);
   }
   if (all) notifyAllClients(msg);
@@ -2040,10 +2048,12 @@ app.get('/api/stories', authRequired, async (req, res) => {
   const conds = ['s.user_id = ?'];
   const params = [me];
   conds.push("a.kind = 'everyone'");
+  conds.push("(a.kind = 'user' AND a.user_id = ?)");
+  params.push(me);
   if (friendIds.length) { conds.push(`(a.kind = 'friends' AND s.user_id IN (${friendIds.map(() => '?').join(',')}))`); params.push(...friendIds); }
   if (serverIds.length) { conds.push(`(a.kind = 'server' AND a.server_id IN (${serverIds.map(() => '?').join(',')}))`); params.push(...serverIds); }
   const raw = await db.prepare(`
-    SELECT s.*, a.kind AS a_kind, a.server_id AS a_server
+    SELECT s.*, a.kind AS a_kind, a.server_id AS a_server, a.user_id AS a_user
     FROM stories s JOIN story_audiences a ON a.story_id = s.id
     WHERE s.expires_at > ? AND (${conds.join(' OR ')})
     ORDER BY s.created_at ASC`).all(ts, ...params);
@@ -2052,7 +2062,7 @@ app.get('/api/stories', authRequired, async (req, res) => {
   for (const r of raw) {
     let e = byStory.get(r.id);
     if (!e) { e = { row: r, shares: [] }; byStory.set(r.id, e); }
-    e.shares.push({ kind: r.a_kind, server_id: r.a_server || null });
+    e.shares.push({ kind: r.a_kind, server_id: r.a_server || null, user_id: r.a_user || null });
   }
   const rows = [...byStory.values()];
   const ids = rows.map((e) => e.row.id);
@@ -2089,7 +2099,9 @@ app.get('/api/stories', authRequired, async (req, res) => {
     // Blocked pairs never see each other's personal (friend/everyone) stories;
     // a server story is room context, so it stays visible there.
     const personalOk = s.user_id === me || !hidden.has(s.user_id);
-    if (labels.friends && s.user_id !== me && personalOk) push(friendTrays, s.user_id, item);
+    // A share aimed at me personally reads like a friend share in the rail.
+    const sentToMe = labels.users.includes(me);
+    if ((labels.friends || sentToMe) && s.user_id !== me && personalOk) push(friendTrays, s.user_id, item);
     if (labels.everyone && s.user_id !== me && personalOk) push(everyoneTrays, s.user_id, item);
     for (const sid of labels.servers) {
       const t = push(serverTrays, sid, item);
@@ -2139,7 +2151,12 @@ app.post('/api/stories', authRequired, async (req, res) => {
   for (const sid of aud.servers) {
     if (await isMember(sid, me.id)) servers.push(sid);
   }
-  if (!aud.friends && !aud.everyone && !servers.length) return res.status(400).json({ error: 'pick_audience' });
+  const users = [];
+  for (const uid of aud.users) {
+    if (uid === me.id) continue;
+    if (await areFriends(me.id, uid)) users.push(uid);
+  }
+  if (!aud.friends && !aud.everyone && !servers.length && !users.length) return res.status(400).json({ error: 'pick_audience' });
   const caption = squashBreaks(String(req.body?.caption || '')).trim().slice(0, STORY_CAPTION_MAX);
   const durationMs = Math.max(1000, Math.min(60000, parseInt(req.body?.durationMs || 0, 10) || 5000));
   const id = uid();
@@ -2151,9 +2168,10 @@ app.post('/api/stories', authRequired, async (req, res) => {
   if (aud.friends) await insShare.run(uid(), id, 'friends', null, created);
   if (aud.everyone) await insShare.run(uid(), id, 'everyone', null, created);
   for (const sid of servers) await insShare.run(uid(), id, 'server', sid, created);
+  for (const u of users) await db.prepare('INSERT INTO story_audiences (id,story_id,kind,server_id,user_id,created_at) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING').run(uid(), id, 'user', null, u, created);
   storyPostAt.set(me.id, created);
   if (storyPostAt.size > 5000) storyPostAt.clear(); // bound the flood map
-  const shared = { friends: aud.friends, everyone: aud.everyone, servers };
+  const shared = { friends: aud.friends, everyone: aud.everyone, servers, users };
   const story = { id, user_id: me.id, audience: 'multi', server_id: null, url, mime, kind, caption, duration_ms: durationMs, created_at: created, expires_at: created + STORY_TTL_MS, shared };
   await announceStoryNew(story, publicUser(me));
   res.json({ story: storyView(story, publicUser(me), true, 0, shared) });

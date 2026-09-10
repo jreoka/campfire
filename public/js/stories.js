@@ -20,6 +20,9 @@ const STORY_MAX_EDGE = 1920;      // photos are downscaled to this long edge
 // Icon set (inline SVG, no emoji — see the design language in AGENTS.md).
 const svSvg = {
   plus: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  globe: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>',
+  users: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  check: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
   camera: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.2"/></svg>',
   soundOn: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z" fill="currentColor" stroke="none"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>',
   soundOff: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z" fill="currentColor" stroke="none"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"/></svg>',
@@ -336,12 +339,16 @@ function paintRowStoryRing(row, user, avatarSel) {
   if (av) av.style.boxShadow = '0 0 0 2px ' + (unseen ? 'var(--accent)' : 'var(--line)');
   const wrap = row.querySelector('.avwrap') || av;
   if (wrap) {
+    // The thumbnail goes INSIDE the avatar element: .avatar{overflow:hidden}
+    // clips it to the same circle, so its antialiased edge never blends with
+    // the person's avatar color at the rim.
     try {
-      const old = wrap.querySelector('.st-thumb-inline');
-      if (old) old.remove();
-      if (getComputedStyle(wrap).position === 'static') wrap.style.position = 'relative';
+      const host = av || wrap;
+      const prev = row.querySelector('.st-thumb-inline');
+      if (prev) prev.remove();
+      if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
       const thumb = storyThumbEl(storyThumbItem(items), 'st-thumb-inline');
-      if (thumb) wrap.appendChild(thumb);
+      if (thumb) host.appendChild(thumb);
     } catch {}
     wrap.classList.add('st-clickable');
     wrap.title = `Watch ${user.display_name || user.username || 'their'} story`;
@@ -367,8 +374,8 @@ function paintUserCardStory(card, u) {
     av.style.boxShadow = '0 0 0 2.5px ' + (unseen ? 'var(--accent)' : 'var(--line)');
     try {
       if (getComputedStyle(av).position === 'static') av.style.position = 'relative';
-      const old = av.querySelector('.st-thumb-inline');
-      if (old) old.remove();
+      const prev = av.querySelector('.st-thumb-inline');
+      if (prev) prev.remove();
       const thumb = storyThumbEl(storyThumbItem(items), 'st-thumb-inline');
       if (thumb) av.appendChild(thumb);
     } catch {}
@@ -571,6 +578,15 @@ function shareSummary(shared) {
     const s = (S.servers || []).find((x) => x.id === sid);
     bits.push(s ? s.name : 'Server');
   }
+  const users = shared.users || [];
+  if (users.length) {
+    const names = users.map((id) => {
+      const u = ((S.friends && S.friends.friends) || []).find((f) => f.id === id) || (typeof memberById === 'function' ? memberById(id) : null);
+      return u ? (u.display_name || u.username) : null;
+    }).filter(Boolean);
+    if (names.length && names.length <= 3) bits.push(names.join(', '));
+    else bits.push(users.length === 1 ? '1 friend' : users.length + ' friends');
+  }
   return bits.join(', ');
 }
 // Typing a reply holds the story: the auto-advance must never wipe the box.
@@ -629,7 +645,9 @@ function svShow(ti, ii) {
 
   // header
   paintAvatar($('#sv-av'), author);
-  $('#sv-name').textContent = tray.kind === 'mine' ? 'Your story' : (author.display_name || author.username || 'Story');
+  // "Your story" whenever the item is mine — including my post inside a
+  // server's tray (same rule the footer/menu use).
+  $('#sv-name').textContent = svItemIsMine(tray, it) ? 'Your story' : (author.display_name || author.username || 'Story');
   const bits = [storyAgo(it.created_at)];
   if (tray.kind === 'server' && tray.server) bits.push(tray.server.name);
   if (tray.kind === 'mine' && it.shared) { const who = shareSummary(it.shared); if (who) bits.push(who); }
@@ -712,7 +730,7 @@ function svShow(ti, ii) {
   }
 
   // footer: reply (others) vs viewers (mine)
-  const isMine = tray.kind === 'mine';
+  const isMine = svItemIsMine(tray, it);
   $('#sv-reply-row').classList.toggle('hidden', isMine);
   $('#sv-views').classList.toggle('hidden', !isMine);
   if (isMine) $('#sv-views-n').textContent = it.views === 1 ? '1 view' : (it.views || 0) + ' views';
@@ -838,8 +856,9 @@ function svPrev() {
   svShow(0, 0); // first item: restart it
 }
 function svSyncState() {
-  // A refresh landed while the viewer is open (someone posted, an item
-  // expired): rebuild the tray list in place, keeping the current item.
+  // A refresh landed while the viewer is open (someone posted, an item was
+  // deleted or expired): rebuild the tray list from the live data and keep the
+  // current item when it is still there.
   if (!sv) return;
   const cur = svCurrentItem();
   const curTray = sv.trays[sv.ti];
@@ -851,9 +870,12 @@ function svSyncState() {
   if (ti < 0) ti = Math.max(0, Math.min(sv.ti, nextTrays.length - 1));
   const items = storyLive(nextTrays[ti].items);
   if (!items.length) { sv.ti = ti; sv.ii = 0; return svNextTray(); }
-  const ii = cur ? items.findIndex((i) => i.id === cur.id) : 0;
+  const ii = cur ? items.findIndex((i) => i.id === cur.id) : -1;
+  // The item we were showing is gone (deleted / expired): land on the tray's
+  // first item instead of silently pointing at a stale index.
+  if (ii < 0) { sv.ti = ti; sv.ii = 0; return svShow(ti, 0); }
   sv.ti = ti;
-  sv.ii = Math.max(0, Math.min(ii < 0 ? 0 : ii, items.length - 1));
+  sv.ii = ii;
   const it = items[sv.ii];
   $('#sv-views-n').textContent = it.views === 1 ? '1 view' : (it.views || 0) + ' views';
 }
@@ -875,9 +897,9 @@ function storyRemoved(storyId) {
     if (!storyData.mine.items.length) storyData.mine = null;
   }
   if (sv) {
-    const cur = svCurrentItem();
-    if (cur && cur.id === storyId) svNext();
-    else svSyncState();
+    // Rebuild from the live data; svSyncState re-renders or advances when the
+    // item we were watching is the one that just vanished.
+    svSyncState();
   }
   renderStorySurfaces();
 }
@@ -917,6 +939,13 @@ async function svViewers() {
     if (row) paintAvatar(row.querySelector('.avatar'), u);
   });
 }
+// "Mine" is about who posted the item, not the tray: your own story also
+// appears inside a server's tray, and it must still offer viewers + delete.
+function svItemIsMine(tray, item) {
+  if (tray && tray.kind === 'mine') return true;
+  const a = (item && item.author) || null;
+  return !!(a && a.id && S.me && a.id === S.me.id);
+}
 function svMoreMenu(x, y) {
   if (!sv) return;
   const it = svCurrentItem();
@@ -925,7 +954,7 @@ function svMoreMenu(x, y) {
   const items = [
     { label: 'Copy link', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(location.origin + it.url); toast('Link copied'); } catch {} } },
   ];
-  if (tray.kind === 'mine') {
+  if (svItemIsMine(tray, it)) {
     items.push({ label: 'Who watched', icon: '◎', fn: () => svViewers() });
     items.push({ label: 'Delete story', icon: '✕', danger: true, fn: () => svDelete(it) });
   } else {
@@ -943,24 +972,10 @@ async function svDelete(it) {
   try {
     await api('/api/stories/' + encodeURIComponent(it.id), { method: 'DELETE' });
     toast('Story deleted');
-    const mine = storyData.mine;
-    if (mine) {
-      mine.items = (mine.items || []).filter((s) => s.id !== it.id);
-      if (!mine.items.length) storyData.mine = null;
-    }
-    if (!sv) { renderStorySurfaces(); return; }
-    const tray = sv.trays[sv.ti];
-    if (tray && tray.kind === 'mine') {
-      tray.items = storyLive(tray.items).filter((s) => s.id !== it.id);
-      if (!tray.items.length) sv.trays.splice(sv.ti, 1);
-    }
-    renderStorySurfaces();
-    if (!sv) return;
-    if (!sv.trays.length) return svClose();
-    const ti = Math.min(sv.ti, sv.trays.length - 1);
-    const items = storyLive(sv.trays[ti].items);
-    if (!items.length) { sv.ti = ti; sv.ii = 0; svNextTray(); }
-    else svShow(ti, Math.min(sv.ii, items.length - 1));
+    // Drives both the cached trays (mine/friends/everyone/servers) and the open
+    // viewer, whichever tray this item was reached through.
+    storyRemoved(it.id);
+    scheduleStoryRefresh(300);
   } catch (err) { toast('Delete failed: ' + prettyError(err.message)); svResume(); }
 }
 // Reply to someone's story without leaving the viewer: the server opens (or
@@ -1021,10 +1036,10 @@ async function openStoryComposer(opts = {}) {
     previewUrl: null, durationMs: 0, busy: false, camFailed: false, xhr: null,
     step: 'capture', camSeq: 0,
     // audiences: friends / everyone / servers (multi-select)
-    audFriends: true, audEveryone: false, audServers: [],
+    audFriends: true, audEveryone: false, audServers: [], audUsers: [],
     // view-once mode: pick friends instead of audiences, sends one DM each
     vo: !!opts.viewOnce, voIds: [],
-    micCtx: null, micGain: null, micAnalyser: null, micTimer: null, micSource: null, micRaw: null, micLevel: 0,
+    micCtx: null, micGain: null, micAnalyser: null, micTimer: null, micSource: null, micRaw: null,
   };
   if (opts.serverId) { sc.audServers = [opts.serverId]; sc.audFriends = true; }
   if (opts.everyone) sc.audEveryone = true;
@@ -1037,17 +1052,22 @@ async function openStoryComposer(opts = {}) {
 function storySetStep(step) {
   if (sc) sc.step = step;
   const capture = step === 'capture';
+  const preview = step === 'preview';
+  const pick = step === 'audience';
   $('#sc-cam').classList.toggle('hidden', !capture);
   // Entering capture clears the preview; entering preview keeps whichever
   // media element storyShowPreview just revealed (hiding both here would
   // blank the freshly captured shot).
   if (capture) { $('#sc-shot').classList.add('hidden'); $('#sc-play').classList.add('hidden'); }
-  $('#sc-edit').classList.toggle('hidden', capture);
+  $('#sc-edit').classList.toggle('hidden', !preview);
   $('#sc-foot').classList.toggle('hidden', !capture);
-  $('#sc-bar').classList.toggle('hidden', capture);
+  $('#sc-bar').classList.toggle('hidden', !preview);
+  $('#sc-bar2').classList.toggle('hidden', !pick);
+  $('#sc-pick').classList.toggle('hidden', !pick);
   $('#sc-flip').classList.toggle('hidden', !capture || sc.camFailed);
   $('#sc-mic').classList.toggle('hidden', !capture || sc.camFailed || sc.mode !== 'video');
   if (capture) $('#sc-hint').classList.add('hidden');
+  if (pick) renderStoryAudience();
 }
 async function storyStartCam() {
   if (!sc) return;
@@ -1156,8 +1176,6 @@ async function storyEnsureMic() {
           let sum = 0;
           for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
           const rms = Math.sqrt(sum / buf.length);
-          sc.micLevel = Math.min(1, rms * 8);
-          paintScLevel();
           if (rms < 0.0008) return; // silence: hold the current gain
           const want = Math.max(0.6, Math.min(8, TARGET / rms));
           const cur = sc.micGain.gain.value;
@@ -1169,13 +1187,6 @@ async function storyEnsureMic() {
   sc.audio = raw;
   try { if (sc.stream && outTrack) sc.stream.addTrack(outTrack); } catch {}
   paintScMic();
-  paintScLevel();
-}
-function paintScLevel() {
-  const bar = $('#sc-level-fill');
-  if (!bar) return;
-  const lvl = sc && sc.audio && !sc.micDenied ? (sc.micLevel || 0) : 0;
-  bar.style.width = Math.round(lvl * 100) + '%';
 }
 function storyStopMic() {
   if (!sc) return;
@@ -1186,8 +1197,6 @@ function storyStopMic() {
   sc.micCtx = null; sc.micGain = null; sc.micAnalyser = null; sc.micSource = null;
   try { if (sc.micRaw) sc.micRaw.getTracks().forEach((t) => t.stop()); } catch {}
   sc.micRaw = null;
-  sc.micLevel = 0;
-  paintScLevel();
 }
 function paintScMic() {
   const b = $('#sc-mic');
@@ -1319,10 +1328,11 @@ function storyShowPreview(blob, kind, durationMs) {
   }
   storySetStep('preview');
   renderStoryAudience();
-  $('#sc-post').disabled = false;
-  $('#sc-post').textContent = sc.vo ? 'Send' : 'Post story';
   storyProgress(null);
-  renderStoryAudience();
+  const next = $('#sc-next');
+  if (next) next.textContent = 'Next';
+  const hint = $('#sc-aud-hint');
+  if (hint) hint.textContent = storyAudSummary();
 }
 function storyRetake() {
   if (!sc) return;
@@ -1339,78 +1349,152 @@ function storyRetake() {
 function storyAudCount() {
   if (!sc) return 0;
   if (sc.vo) return (sc.voIds || []).length;
-  return (sc.audFriends ? 1 : 0) + (sc.audEveryone ? 1 : 0) + (sc.audServers || []).length;
+  return (sc.audFriends ? 1 : 0) + (sc.audEveryone ? 1 : 0) + (sc.audServers || []).length + (sc.audUsers || []).length;
 }
-// View-once recipients: your friends, pick as many as you like. Each one gets
-// their own DM (never a group), so the view/replay bookkeeping stays per chat.
-function renderViewOnceRecipients() {
-  const box = $('#sc-aud');
-  if (!box || !sc) return;
-  box.innerHTML = '';
-  const friends = [...((S.friends && S.friends.friends) || [])].sort((a, b) => String(a.display_name || '').localeCompare(String(b.display_name || '')));
-  for (const f of friends) {
-    const on = sc.voIds.includes(f.id);
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'sc-chip' + (on ? ' sel' : '');
-    b.textContent = f.display_name || f.username;
-    b.setAttribute('aria-pressed', on ? 'true' : 'false');
-    b.onclick = () => {
-      sc.voIds = on ? sc.voIds.filter((x) => x !== f.id) : [...sc.voIds, f.id];
-      renderStoryAudience();
-    };
-    box.appendChild(b);
+// One line under the caption on the preview step: who this is going to.
+function storyAudSummary() {
+  if (!sc) return '';
+  if (sc.vo) {
+    const n = (sc.voIds || []).length;
+    return n ? `View once → ${n} ${n === 1 ? 'friend' : 'friends'}` : 'View once · pick who gets it';
   }
-  const hint = $('#sc-aud-hint');
-  if (hint) {
-    hint.textContent = !friends.length ? 'Add friends first — view-once items go to friends only'
-      : (sc.voIds.length ? `Sends ${sc.voIds.length === 1 ? 'a separate DM to 1 friend' : sc.voIds.length + ' separate DMs'}` : 'Pick who gets it');
-  }
-  const post = $('#sc-post');
-  if (post) {
-    post.disabled = !sc.voIds.length || !!sc.busy;
-    if (!sc.busy) post.textContent = sc.voIds.length ? `Send (${sc.voIds.length})` : 'Send';
-  }
-  const wrap = $('#sc-edit .sc-vo-note');
-  if (!wrap) {
-    const n = document.createElement('p');
-    n.className = 'sc-vo-note';
-    n.textContent = 'View once · they can replay it one time, then it is deleted';
-    const host = $('#sc-edit');
-    if (host) host.appendChild(n);
-  }
+  const bits = [];
+  if (sc.audFriends) bits.push('All friends');
+  if (sc.audEveryone) bits.push('Everyone');
+  const srv = (sc.audServers || []).length;
+  if (srv) bits.push(srv === 1 ? '1 server' : srv + ' servers');
+  const f = (sc.audUsers || []).length;
+  if (f) bits.push(f === 1 ? '1 friend' : f + ' friends');
+  return bits.length ? 'To: ' + bits.join(' · ') : 'Pick who can see this';
 }
-// Audience chips are a multi-select: a post can go to friends, to everyone on
-// this Campfire, and to any number of servers in one shot.
+// Step 2: the audience menu. Everything is a toggle row — all friends,
+// everyone on this Campfire, whole servers, or individual friends.
 function renderStoryAudience() {
-  const box = $('#sc-aud');
-  if (!box || !sc) return;
-  if (sc.vo) return renderViewOnceRecipients();
-  box.innerHTML = '';
-  const chip = (label, selected, onToggle, title) => {
+  const list = $('#sc-pick-list');
+  if (!list || !sc) return;
+  const q = String(($('#sc-pick-search') || {}).value || '').trim().toLowerCase();
+  const friends = [...((S.friends && S.friends.friends) || [])]
+    .sort((a, b) => String(a.display_name || '').localeCompare(String(b.display_name || '')));
+  const shown = friends.filter((f) => !q || `${f.display_name || ''} ${f.username || ''}`.toLowerCase().includes(q));
+  list.innerHTML = '';
+  const section = (label) => {
+    const e = document.createElement('div');
+    e.className = 'sc-pick-sec';
+    e.textContent = label;
+    list.appendChild(e);
+  };
+  const row = (opts) => {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'sc-chip' + (selected ? ' sel' : '');
-    b.textContent = label;
-    if (title) b.title = title;
-    b.setAttribute('aria-pressed', selected ? 'true' : 'false');
-    b.onclick = () => { onToggle(); renderStoryAudience(); };
-    box.appendChild(b);
+    b.className = 'sc-pick-row' + (opts.on ? ' on' : '');
+    b.setAttribute('aria-pressed', opts.on ? 'true' : 'false');
+    if (opts.user) {
+      const av = document.createElement('span');
+      av.className = 'avatar';
+      paintAvatar(av, opts.user);
+      b.appendChild(av);
+    } else {
+      const ic = document.createElement('span');
+      ic.className = 'sc-pick-ico';
+      ic.innerHTML = opts.icon || '';
+      b.appendChild(ic);
+    }
+    const main = document.createElement('span');
+    main.className = 'sc-pick-main';
+    const nm = document.createElement('span');
+    nm.className = 'sc-pick-name';
+    nm.textContent = opts.name;
+    const sub = document.createElement('span');
+    sub.className = 'sc-pick-sub';
+    sub.textContent = opts.sub || '';
+    main.append(nm, sub);
+    b.appendChild(main);
+    const chk = document.createElement('span');
+    chk.className = 'sc-pick-check';
+    chk.innerHTML = svSvg.check;
+    b.appendChild(chk);
+    b.onclick = () => { opts.toggle(); renderStoryAudience(); };
+    list.appendChild(b);
     return b;
   };
-  chip('Friends', !!sc.audFriends, () => { sc.audFriends = !sc.audFriends; }, 'Your friends see it in their Home rail');
-  chip('Everyone', !!sc.audEveryone, () => { sc.audEveryone = !sc.audEveryone; }, 'Any account on this Campfire can watch it');
-  for (const s of S.servers || []) {
-    const on = (sc.audServers || []).includes(s.id);
-    chip(s.name, on, () => {
-      sc.audServers = on ? sc.audServers.filter((x) => x !== s.id) : [...(sc.audServers || []), s.id];
-    }, 'Everyone in this server');
+  if (sc.vo) {
+    section(friends.length ? 'SEND TO' : 'NO FRIENDS YET');
+    for (const f of shown) {
+      row({
+        user: f, name: f.display_name || f.username, sub: '@' + f.username,
+        on: sc.voIds.includes(f.id),
+        toggle: () => { sc.voIds = sc.voIds.includes(f.id) ? sc.voIds.filter((x) => x !== f.id) : [...sc.voIds, f.id]; },
+      });
+    }
+    if (!friends.length) {
+      const p = document.createElement('p');
+      p.className = 'sc-pick-sub';
+      p.style.padding = '.2rem .15rem';
+      p.textContent = 'View-once items go to friends — add someone from Home → Friends first.';
+      list.appendChild(p);
+    }
+  } else {
+    section('AUDIENCE');
+    row({
+      icon: svSvg.users, name: 'All friends', sub: 'Everyone on your friends list',
+      on: !!sc.audFriends, toggle: () => { sc.audFriends = !sc.audFriends; },
+    });
+    row({
+      icon: svSvg.globe, name: 'Everyone', sub: 'Any account on this Campfire',
+      on: !!sc.audEveryone, toggle: () => { sc.audEveryone = !sc.audEveryone; },
+    });
+    if ((S.servers || []).length) {
+      section('SERVERS');
+      for (const srv of S.servers) {
+        row({
+          icon: svSvg.camera, name: srv.name, sub: 'Everyone in this server',
+          on: (sc.audServers || []).includes(srv.id),
+          toggle: () => {
+            sc.audServers = (sc.audServers || []).includes(srv.id)
+              ? sc.audServers.filter((x) => x !== srv.id)
+              : [...(sc.audServers || []), srv.id];
+          },
+        });
+      }
+    }
+    section(shown.length ? 'SEND TO FRIENDS' : 'FRIENDS');
+    for (const f of shown) {
+      row({
+        user: f, name: f.display_name || f.username, sub: '@' + f.username,
+        on: (sc.audUsers || []).includes(f.id),
+        toggle: () => {
+          sc.audUsers = (sc.audUsers || []).includes(f.id)
+            ? sc.audUsers.filter((x) => x !== f.id)
+            : [...(sc.audUsers || []), f.id];
+        },
+      });
+    }
+    if (!friends.length) {
+      const p = document.createElement('p');
+      p.className = 'sc-pick-sub';
+      p.style.padding = '.2rem .15rem';
+      p.textContent = 'You have no friends yet — share to Everyone or a server instead.';
+      list.appendChild(p);
+    }
+  }
+  const search = $('#sc-pick-search');
+  if (search) search.classList.toggle('hidden', friends.length < 3);
+  const n = storyAudCount();
+  const count = $('#sc-pick-count');
+  if (count) count.textContent = n ? `${n} selected` : 'None selected';
+  const title = $('#sc-pick-title');
+  if (title) title.textContent = sc.vo ? 'Who gets this?' : 'Who can see this?';
+  const post = $('#sc-post');
+  if (post) {
+    post.disabled = !n || !!sc.busy;
+    if (!sc.busy) post.textContent = sc.vo ? (n ? `Send (${n})` : 'Send') : 'Post story';
   }
   const hint = $('#sc-aud-hint');
-  if (hint) hint.textContent = storyAudCount() ? '' : 'Pick at least one audience';
-  const post = $('#sc-post');
-  if (post) post.disabled = !storyAudCount() || !!sc.busy;
+  if (hint) hint.textContent = sc.vo
+    ? 'They can open it once and replay it once — then it is deleted.'
+    : (n ? storyAudSummary() : 'Nothing selected yet');
 }
+
 function storyProgress(pct) {
   const wrap = $('#sc-prog'), fill = $('#sc-prog-fill');
   if (!wrap || !fill) return;
@@ -1446,8 +1530,16 @@ function closeStoryComposer() {
   if (!$('#story-view') || $('#story-view').classList.contains('hidden')) document.body.classList.remove('story-open');
 }
 // Downscale a picked photo (max long edge 1920, JPEG) so phone photos don't
-// burn upload bandwidth. Any failure falls back to the original file.
+// burn upload bandwidth. Animated images are passed through untouched: drawing
+// a GIF/WebP onto a canvas bakes the first frame, so the animation would die.
+// Any failure falls back to the original file.
+function storyIsAnimated(file) {
+  const t = String((file && file.type) || '').toLowerCase();
+  const n = String((file && file.name) || '').toLowerCase();
+  return t === 'image/gif' || t === 'image/apng' || t === 'image/webp' || /\.(gif|apng|webp)$/.test(n);
+}
 async function storyDownscaleImage(file) {
+  if (storyIsAnimated(file)) return file;
   try {
     const bmp = await createImageBitmap(file);
     const scale = Math.min(1, STORY_MAX_EDGE / Math.max(bmp.width, bmp.height));
@@ -1550,7 +1642,8 @@ async function storyPostNow() {
       method: 'POST',
       body: JSON.stringify({
         url: up.url, mime: up.mime, kind: st.kind, caption,
-        friends: !!st.audFriends, everyone: !!st.audEveryone, servers: st.audServers || [],
+        friends: !!st.audFriends, everyone: !!st.audEveryone,
+        servers: st.audServers || [], users: st.audUsers || [],
         durationMs: st.durationMs || undefined,
       }),
     });
@@ -1666,6 +1759,11 @@ $('#sc-mic').onclick = () => storyToggleMic();
 $('#sc-gallery').onclick = () => $('#sc-file').click();
 $('#sc-retake').onclick = () => storyRetake();
 $('#sc-post').onclick = () => storyPostNow();
+$('#sc-next').onclick = () => { if (sc && !sc.busy) storySetStep('audience'); };
+$('#sc-back').onclick = () => { if (sc && !sc.busy) storySetStep('preview'); };
+$('#sc-pick-back').onclick = () => { if (sc && !sc.busy) storySetStep('preview'); };
+$('#sc-pick-close').onclick = () => closeStoryComposer();
+$('#sc-pick-search').addEventListener('input', () => renderStoryAudience());
 $('#sc-file').addEventListener('change', (e) => {
   const f = e.target.files && e.target.files[0];
   // Clear only after handing the File over: some browsers invalidate blobs

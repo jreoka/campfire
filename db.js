@@ -607,6 +607,15 @@ FROM stories s
 WHERE (s.audience = 'server' OR s.audience = 'friends')
   AND NOT EXISTS (SELECT 1 FROM story_audiences a WHERE a.story_id = s.id)`);
   } catch (e) { console.warn('[db] story audience backfill skipped:', (e && e.message) || e); }
+  // Individual-friend story shares reuse the audience rows with kind 'user'
+  // (the audience picker can target specific friends instead of all of them).
+  await addColumn('story_audiences', 'user_id', 'TEXT');
+  // The old unique index keyed on (story, kind, server) would collapse several
+  // individual recipients into one row; widen it to include the user.
+  try {
+    await db.exec('DROP INDEX IF EXISTS idx_story_audiences_uniq');
+    await db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_story_audiences_uniq ON story_audiences (story_id, kind, COALESCE(server_id, ''), COALESCE(user_id, ''))");
+  } catch (e) { console.warn('[db] story audience index rebuild skipped:', (e && e.message) || e); }
   // A DM that answers a story carries the story id so clients can label it
   // (the media itself is copied into the DM at reply time).
   await addColumn('dm_messages', 'story_id', 'TEXT');

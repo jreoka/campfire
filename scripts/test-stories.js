@@ -229,6 +229,29 @@ async function uploadAndStory(token, extra = {}) {
   ok(r.status === 200, 'author deletes the replied-to story');
   ok((await fetch(BASE + previewUrl)).status === 200, 'the DM preview survives the story being deleted');
 
+  console.log('\n[11] audience: individual friends');
+  await new Promise((s) => setTimeout(s, 3200));
+  const up4 = new FormData();
+  up4.append('file', new Blob([PngBytes], { type: 'image/png' }), 'solo.png');
+  const upRes4 = await req('POST', '/api/upload', { token: ta, form: up4 });
+  const bUserId = (await req('GET', '/api/friends', { token: ta })).data.friends.find((f) => f.username === B.username).id;
+  r = await req('POST', '/api/stories', { token: ta, body: { url: upRes4.data.url, mime: upRes4.data.mime, kind: 'image', caption: 'just you', users: [bUserId] } });
+  ok(r.status === 200 && r.data.story.shared.users.length === 1 && !r.data.story.shared.friends, 'posted to a single friend (nothing else)', r.data.story && r.data.story.shared);
+  const soloId = r.data.story.id;
+  r = await req('GET', '/api/stories', { token: tb });
+  ok((r.data.friends || []).some((t) => t.items.some((i) => i.id === soloId)), 'that friend sees it in their rail');
+  r = await req('GET', '/api/stories', { token: td });
+  ok(!(r.data.friends || []).some((t) => t.items.some((i) => i.id === soloId)), 'nobody else does');
+  r = await req('POST', '/api/stories/' + soloId + '/view', { token: td });
+  ok(r.status === 404, 'and cannot even mark a view', r.data);
+  // a non-friend id is dropped, but a valid friend id still makes the post
+  await new Promise((s) => setTimeout(s, 3200));
+  const up5 = new FormData();
+  up5.append('file', new Blob([PngBytes], { type: 'image/png' }), 'solo2.png');
+  const upRes5 = await req('POST', '/api/upload', { token: ta, form: up5 });
+  r = await req('POST', '/api/stories', { token: ta, body: { url: upRes5.data.url, mime: upRes5.data.mime, kind: 'image', users: [bUserId, td ? (await req('GET', '/api/me', { token: td })).data.user.id : ''] } });
+  ok(r.status === 200 && r.data.story.shared.users.length === 1, 'non-friends are dropped from the target list', r.data.story && r.data.story.shared);
+
   console.log(fails ? `\nFAILURES: ${fails}\n` : '\nALL STORY TESTS PASSED\n');
   process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
