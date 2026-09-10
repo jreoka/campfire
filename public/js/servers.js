@@ -203,6 +203,7 @@ async function selectServer(id) {
     renderChannels();
     renderMembers();
     if (S.srvSetId) { if (server.id === S.srvSetId) renderServerTab(); else closeServerSettings(); }
+    if (S.chanSet) { if (server.id === S.chanSet.sid) renderChanSettings(); else closeChannelSettings(); }
     if (S.channelId) selectChannel(S.channelId, { keepNav: true });
     else { $('#chan-name').textContent = '—'; $('#messages').innerHTML = ''; }
   } catch (err) {

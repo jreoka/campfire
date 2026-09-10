@@ -489,9 +489,9 @@ button.role-pill{cursor:pointer;transition:background var(--t-fast),color var(--
 button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .mini.on{background:var(--accent-container);border-color:transparent;color:var(--on-container)}
 .rdot{width:14px;height:14px;border-radius:50%;background:var(--panel-3);flex-shrink:0}
-#srv-settings-backdrop .settings{flex-direction:column}
+#srv-settings-backdrop .settings,#chan-settings-backdrop .settings{flex-direction:column}
 .srvset-head{display:flex;align-items:center;gap:.55rem;margin-bottom:.6rem}
-#srv-settings-title{font-size:1.1rem;font-weight:800;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#srv-settings-title,#chan-settings-title{font-size:1.1rem;font-weight:800;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #srvset-body input.clr{width:38px;flex:0 0 auto;padding:2px;height:32px;margin-top:0}
 #srv-newrole{flex:1;min-width:0}
 #srv-banner{height:88px;background-size:cover;background-position:center;border-bottom:1px solid var(--line-soft);flex-shrink:0}
@@ -931,7 +931,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 #lightbox-dl{position:absolute;top:1rem;right:1rem;z-index:2;cursor:pointer}
 
 /* ---------- settings ---------- */
-#settings-backdrop,#srv-settings-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.68);display:flex;align-items:center;justify-content:center;z-index:100;padding:1rem}
+#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.68);display:flex;align-items:center;justify-content:center;z-index:100;padding:1rem}
 .settings{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;width:100%;max-width:780px;max-height:88dvh;display:flex;flex-direction:row;overflow:hidden}
 @media (max-width:820px){
   .settings{max-width:620px}
@@ -1378,7 +1378,7 @@ body{touch-action:manipulation}
   #thread-panel{width:min(360px,100vw)!important}
   #thread-resizer{display:none}
   #usercard{width:min(300px,calc(100vw - 16px))}
-  #settings-backdrop,#srv-settings-backdrop{padding:var(--safe-t) 0 0}
+  #settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop{padding:var(--safe-t) 0 0}
   .settings{max-width:none;max-height:none;height:100%;border-radius:0}
   .srvset-wrap{flex-direction:column;gap:.25rem}
   .srv-subtabs.vertical{flex-direction:row;flex:0 0 auto;width:100%;overflow-x:auto;padding:.25rem 0 .6rem}
@@ -1533,7 +1533,7 @@ body{touch-action:manipulation}
 @keyframes cf-pop-in{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
 @keyframes cf-rise-x{from{opacity:0;transform:translate(-50%,6px)}to{opacity:1;transform:translate(-50%,0)}}
 .modal,.settings,.profile{animation:cf-rise .16s ease-out}
-#modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#profile-backdrop,#lightbox{animation:cf-fade .15s ease-out}
+#modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#profile-backdrop,#lightbox{animation:cf-fade .15s ease-out}
 #ctx-menu,#folder-menu,#status-pop,#status-sub,#picker,#usercard,#mention-pop,#emoji-pop,#chan-pop,#composer-more{animation:cf-pop-in .13s ease-out}
 #lightbox img{animation:cf-pop-in .18s ease-out}
 #toast,#jump-present{animation:cf-rise-x .16s ease-out}
@@ -1541,7 +1541,7 @@ body{touch-action:manipulation}
 #thread-panel,#find-panel{animation:cf-rise .16s ease-out}
 .folder-open{animation:cf-fade .14s ease-out}
 @media (prefers-reduced-motion:reduce){
-  .modal,.settings,.profile,#modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#profile-backdrop,#lightbox,#ctx-menu,#folder-menu,#status-pop,#status-sub,#picker,#usercard,#mention-pop,#emoji-pop,#chan-pop,#composer-more,#lightbox img,#toast,#jump-present,.auth-card,#thread-panel,#find-panel,.folder-open{animation:none}
+  .modal,.settings,.profile,#modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#profile-backdrop,#lightbox,#ctx-menu,#folder-menu,#status-pop,#status-sub,#picker,#usercard,#mention-pop,#emoji-pop,#chan-pop,#composer-more,#lightbox img,#toast,#jump-present,.auth-card,#thread-panel,#find-panel,.folder-open{animation:none}
   .msg-actions,.reaction,.send-btn svg{transition:none}
   .reaction:active,.dm-close:active{transform:none}
 }

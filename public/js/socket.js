@@ -397,6 +397,7 @@ function onWS(m) {
       if (m.serverId === S.serverId) {
         S.serverDetail.channels = S.serverDetail.channels.filter((c) => c.id !== m.channelId);
         renderChannels();
+        if (S.chanSet && S.chanSet.cid === m.channelId) closeChannelSettings();
         if (S.channelId === m.channelId) selectChannel((S.serverDetail.channels.find((c) => c.type === 'text') || {}).id);
       }
       break;
@@ -483,6 +484,10 @@ function onWS(m) {
         if (!m.server.channels.find((c) => c.id === keepChan)) S.channelId = (m.server.channels.find((c) => c.type === 'text') || {}).id || null;
         renderServerList(); renderChannels(); renderMembers();
         paintSlowmodeHint();
+        // Channel settings shows the open channel's fields — refresh them on
+        // the General tab, but leave the Webhooks tab alone so typing a new
+        // webhook name/URL is never wiped by background updates.
+        if (S.chanSet && S.chanSet.sid === m.server.id && (S.chanSetTab || 'general') === 'general' && !$('#chan-settings-backdrop')?.classList.contains('hidden')) renderChanSettings();
         if (S.channelId && S.channelId !== keepChan) selectChannel(S.channelId);
       } else renderServerList();
       break;

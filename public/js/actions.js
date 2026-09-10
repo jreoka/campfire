@@ -416,21 +416,70 @@ function modGroupItems(items, t, u) {
   if (u.id === t.created_by) return;
   items.push({ label: `Remove @${u.username}`, icon: '→', danger: true, fn: () => modGroupMember(t, u) });
 }
-async function openChannelSettings(sid, c) {
+/* ================= channel settings (General + Webhooks tabs) ============== */
+async function openChannelSettings(sid, c, tab) {
+  S.chanSet = { sid, cid: c.id };
+  S.chanSetTab = tab === 'webhooks' && c.type === 'text' ? 'webhooks' : 'general';
+  renderChanSettings();
+  $('#chan-settings-backdrop').classList.remove('hidden');
+}
+function closeChannelSettings() { S.chanSet = null; $('#chan-settings-backdrop')?.classList.add('hidden'); }
+function renderChanSettings() {
+  const box = $('#chanset-body');
+  if (!box || !S.chanSet) return;
+  const d = S.serverDetail;
+  const c = d && d.id === S.chanSet.sid ? d.channels.find((v) => v.id === S.chanSet.cid) : null;
+  if (!c) { closeChannelSettings(); return; } // channel deleted while open
+  $('#chan-settings-title').textContent = `#${c.name} settings`;
+  const tabs = [['general', 'General']];
+  if (c.type === 'text') tabs.push(['webhooks', 'Webhooks']);
+  let sub = S.chanSetTab || 'general';
+  if (!tabs.some(([id]) => id === sub)) sub = 'general';
+  S.chanSetTab = sub;
+  box.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'srvset-wrap';
+  box.appendChild(wrap);
+  const content = document.createElement('div');
+  content.className = 'srvset-content';
+  if (tabs.length > 1) {
+    const rail = document.createElement('div');
+    rail.className = 'srv-subtabs vertical';
+    for (const [id, label] of tabs) {
+      const b = document.createElement('button');
+      b.className = 'ftab' + (sub === id ? ' active' : '');
+      b.textContent = label;
+      b.onclick = () => {
+        S.chanSetTab = id;
+        rail.querySelectorAll('.ftab').forEach((x) => x.classList.toggle('active', x === b));
+        content.querySelectorAll('[data-csub]').forEach((x) => (x.style.display = x.dataset.csub === id ? '' : 'none'));
+      };
+      rail.appendChild(b);
+    }
+    wrap.appendChild(rail);
+  }
+  wrap.appendChild(content);
+  const sec = (id) => { const el = document.createElement('div'); el.dataset.csub = id; el.style.display = sub === id ? '' : 'none'; content.appendChild(el); return el; };
+  // general
+  const g = sec('general');
   const slows = [[0, 'Off'], [5, '5 seconds'], [10, '10 seconds'], [30, '30 seconds'], [60, '1 minute'], [300, '5 minutes']];
-  openModal(`#${c.name} settings`, `
-    <label>Channel name<input id="m-chan-name" maxlength="32" value="${esc(c.name)}" /></label>
-    <label style="margin-top:.6rem;display:block">Description<input id="m-chan-desc" maxlength="200" placeholder="What's this channel about?" value="${esc(c.description || '')}" /></label>
-    <label style="margin-top:.6rem;display:block">Slow mode<select id="m-chan-slow">${slows.map(([v, l]) => `<option value="${v}"${(c.slowmode || 0) === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
-    <label class="nsfw-row"><input type="checkbox" id="m-chan-nsfw" class="gcheck"${c.nsfw ? ' checked' : ''} /><span><b>NSFW channel</b><span class="muted small">Members must confirm they are 18 or older before entering. Asked once per account.</span></span></label>
-    ${c.type === 'text' ? '<div class="row" style="margin-top:.8rem"><button type="button" class="btn small" id="m-chan-hooks">Webhooks…</button></div>' : ''}
-  `, 'Save', async () => {
-    const name = $('#m-chan-name').value.trim().replace(/\s+/g, '-');
+  g.innerHTML = `
+    <label>Channel name<input id="chanset-name" maxlength="32" value="${esc(c.name)}" /></label>
+    <label style="margin-top:.6rem;display:block">Description<input id="chanset-desc" maxlength="200" placeholder="What's this channel about?" value="${esc(c.description || '')}" /></label>
+    <label style="margin-top:.6rem;display:block">Slow mode<select id="chanset-slow">${slows.map(([v, l]) => `<option value="${v}"${(c.slowmode || 0) === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+    <label class="nsfw-row"><input type="checkbox" id="chanset-nsfw" class="gcheck"${c.nsfw ? ' checked' : ''} /><span><b>NSFW channel</b><span class="muted small">Members must confirm they are 18 or older before entering. Asked once per account.</span></span></label>
+    <div class="row" style="margin-top:.8rem"><button type="button" class="btn small primary" id="chanset-save">Save</button></div>`;
+  g.querySelector('#chanset-save').onclick = async () => {
+    const name = g.querySelector('#chanset-name').value.trim().replace(/\s+/g, '-');
     if (!name) { toast('Give the channel a name'); return; }
-    await api(`/api/servers/${sid}/channels/${c.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ name, description: $('#m-chan-desc').value.trim(), slowmode: Number($('#m-chan-slow').value), nsfw: $('#m-chan-nsfw').checked }),
-    });
+    const { sid, cid } = S.chanSet || {};
+    try {
+      await api(`/api/servers/${sid}/channels/${cid}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name, description: g.querySelector('#chanset-desc').value.trim(), slowmode: Number(g.querySelector('#chanset-slow').value), nsfw: g.querySelector('#chanset-nsfw').checked }),
+      });
+      toast('Channel saved');
+    } catch (err) { toast('Save failed: ' + prettyError(err.message)); return; }
     renderServerTab();
     if (sid === S.serverId) {
       // Preserve whatever channel the admin was viewing — selectServer()
@@ -441,27 +490,32 @@ async function openChannelSettings(sid, c) {
         selectChannel(keep, { keepNav: true });
       }
     }
-  });
-  const hooksBtn = $('#m-chan-hooks');
-  if (hooksBtn) hooksBtn.onclick = () => openWebhookManager(sid, c.id);
+  };
+  // webhooks (text channels only)
+  if (c.type === 'text') renderChanWebhooks(sec('webhooks'), S.chanSet.sid, c.id);
 }
 /* ================= channel webhooks ================= */
 // Admins mint webhooks per text channel: each gets its own name + avatar
 // and a secret URL that posts into the channel with no account (bots,
 // feeds, CI). Posting can override the name/avatar per message.
-async function openWebhookManager(sid, cid) {
+// Lives as a tab inside channel settings (renderChanSettings above).
+async function renderChanWebhooks(box, sid, cid) {
   const c = S.serverDetail?.channels.find((v) => v.id === cid);
+  box.innerHTML = '<p class="muted small">Loading…</p>';
   let hooks = [];
   try {
     ({ webhooks: hooks } = await api(`/api/servers/${sid}/channels/${cid}/webhooks`));
-  } catch { toast('Could not load webhooks'); return; }
-  openModal(`Webhooks · #${esc(c ? c.name : 'channel')}`, `
-    <p class="muted small">Each webhook posts into <b>#${esc(c ? c.name : '')}</b> through its own secret URL — no account needed. Anyone with a URL can post, so share them carefully. A post may override the name and avatar per message (<b>username</b> / <b>avatar_url</b>); past messages keep whatever they were sent with.</p>
-    <div id="wh-list"></div>
-    <div class="wh-create"><input id="wh-new-name" maxlength="32" placeholder="New webhook name, e.g. Deploy Bot" /><button type="button" class="btn small primary" id="wh-create-btn">Create</button></div>
-  `, 'Close', null, { wide: true });
-  const list = $('#wh-list');
-  for (const w of hooks) list.appendChild(webhookRow(sid, w));
+  } catch { box.innerHTML = '<p class="muted small">Could not load webhooks.</p>'; return; }
+  if (!box.isConnected) return;
+  const refresh = () => renderChanWebhooks(box, sid, cid);
+  box.innerHTML = '';
+  const intro = document.createElement('p');
+  intro.className = 'muted small';
+  intro.innerHTML = `Each webhook posts into <b>#${esc(c ? c.name : '')}</b> through its own secret URL — no account needed. Anyone with a URL can post, so share them carefully. A post may override the name and avatar per message (<b>username</b> / <b>avatar_url</b>); past messages keep whatever they were sent with.`;
+  box.appendChild(intro);
+  const list = document.createElement('div');
+  list.id = 'wh-list';
+  box.appendChild(list);
   if (!hooks.length) {
     const p = document.createElement('p');
     p.className = 'muted small';
@@ -469,17 +523,28 @@ async function openWebhookManager(sid, cid) {
     p.textContent = 'No webhooks yet — create one below.';
     list.appendChild(p);
   }
-  $('#wh-create-btn').onclick = async () => {
-    const name = $('#wh-new-name').value.trim() || 'Webhook';
+  for (const w of hooks) list.appendChild(webhookRow(sid, w, refresh));
+  const add = document.createElement('div');
+  add.className = 'wh-create';
+  add.innerHTML = `<input maxlength="32" placeholder="New webhook name, e.g. Deploy Bot" />`;
+  const nameInp = add.querySelector('input');
+  const go = document.createElement('button');
+  go.type = 'button';
+  go.className = 'btn small primary';
+  go.textContent = 'Create';
+  go.onclick = async () => {
+    const name = nameInp.value.trim() || 'Webhook';
     try {
       await api(`/api/servers/${sid}/channels/${cid}/webhooks`, { method: 'POST', body: JSON.stringify({ name }) });
       toast('Webhook created — copy its URL');
     } catch (err) { toast('Create failed: ' + prettyError(err.message)); return; }
-    openWebhookManager(sid, cid);
+    refresh();
   };
+  add.appendChild(go);
+  box.appendChild(add);
 }
 let whAvatarTarget = null; // {sid, wid, cid} awaiting the shared file picker
-function webhookRow(sid, w) {
+function webhookRow(sid, w, refresh) {
   const row = document.createElement('div');
   row.className = 'wh-row';
   const fullUrl = location.origin + w.url;
@@ -511,7 +576,7 @@ function webhookRow(sid, w) {
       await api(`/api/servers/${sid}/webhooks/${w.id}`, { method: 'PATCH', body: JSON.stringify({ name }) });
       toast('Webhook saved');
     } catch (err) { toast('Save failed: ' + prettyError(err.message)); return; }
-    openWebhookManager(sid, w.channel_id);
+    refresh();
   };
   row.querySelector('.wh-avatar').onclick = () => {
     whAvatarTarget = { sid, wid: w.id, cid: w.channel_id };
@@ -527,21 +592,19 @@ function webhookRow(sid, w) {
   };
   row.querySelector('.wh-regen').onclick = async () => {
     const ok = await openConfirmModal({ title: `New URL for “${w.name}”?`, message: 'The current URL stops working immediately. Update anything posting to it.', okLabel: 'Issue new URL' });
-    openWebhookManager(sid, w.channel_id);
     if (!ok) return;
     try {
       await api(`/api/servers/${sid}/webhooks/${w.id}/regenerate`, { method: 'POST' });
       toast('New webhook URL issued');
     } catch (err) { toast('Failed: ' + prettyError(err.message)); return; }
-    openWebhookManager(sid, w.channel_id);
+    refresh();
   };
   row.querySelector('.wh-del').onclick = async () => {
     const ok = await openConfirmModal({ title: `Delete “${w.name}”?`, message: 'Its URL stops working immediately. Messages it already posted stay in chat.', okLabel: 'Delete' });
-    openWebhookManager(sid, w.channel_id);
     if (!ok) return;
     try { await api(`/api/servers/${sid}/webhooks/${w.id}`, { method: 'DELETE' }); toast('Webhook deleted'); }
     catch (err) { toast('Delete failed: ' + prettyError(err.message)); return; }
-    openWebhookManager(sid, w.channel_id);
+    refresh();
   };
   return row;
 }
@@ -558,7 +621,14 @@ async function uploadWebhookAvatar() {
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || ('http_' + r.status));
     toast('Webhook avatar updated');
   } catch (err) { toast('Avatar failed: ' + prettyError(err.message || 'upload_failed')); return; }
-  openWebhookManager(t.sid, t.cid);
+  // Refresh the webhooks tab in place when it is still open (a full panel
+  // re-render would also wipe any unsaved General-tab edits).
+  try {
+    if (S.chanSet && S.chanSet.sid === t.sid && S.chanSet.cid === t.cid && !$('#chan-settings-backdrop')?.classList.contains('hidden')) {
+      const secEl = $('#chanset-body [data-csub="webhooks"]');
+      if (secEl) renderChanWebhooks(secEl, t.sid, t.cid);
+    }
+  } catch {}
 }
 async function modGroupMember(t, u) {
   const ok = await openConfirmModal({
@@ -680,7 +750,7 @@ function channelMenuItems(cid, ctype) {
     items.push({ label: 'Move up', icon: '↑', fn: () => moveChannelRail(cid, -1) });
     items.push({ label: 'Move down', icon: '↓', fn: () => moveChannelRail(cid, 1) });
     items.push({ label: 'Channel settings', icon: '⚙', fn: () => openChannelSettings(S.serverId, c) });
-    if (c.type === 'text') items.push({ label: 'Webhooks', icon: '⧉', fn: () => openWebhookManager(S.serverId, cid) });
+    if (c.type === 'text') items.push({ label: 'Webhooks', icon: '⧉', fn: () => openChannelSettings(S.serverId, c, 'webhooks') });
     items.push({ label: 'Delete channel', icon: '🗑', danger: true, fn: () => confirmDeleteChannel(c) });
   }
   return items;

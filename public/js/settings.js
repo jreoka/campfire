@@ -291,6 +291,8 @@ $('#settings-close').onclick = closeSettings;
 $('#settings-backdrop').addEventListener('click', (e) => { if (e.target.id === 'settings-backdrop') closeSettings(); });
 $('#srv-settings-close').onclick = () => closeServerSettings();
 $('#srv-settings-backdrop').addEventListener('click', (e) => { if (e.target.id === 'srv-settings-backdrop') closeServerSettings(); });
+$('#chan-settings-close').onclick = () => closeChannelSettings();
+$('#chan-settings-backdrop').addEventListener('click', (e) => { if (e.target.id === 'chan-settings-backdrop') closeChannelSettings(); });
 async function uploadImage(url, file) {
   const fd = new FormData();
   fd.append('file', file);
