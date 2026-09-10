@@ -168,6 +168,7 @@ async function runOnce(opts) {
     // check a backend/prefix change against a real bucket before trusting it).
     if (dry) {
       result.dry = true;
+      result.victimsTotal = victims.length;
       result.victims = victims.slice(0, 200).map((f) => ({ key: f.key, where: f.where, size: f.size || 0, mtime: f.mtime || 0 }));
       result.ms = Date.now() - t0;
       log(`sweep (dry): ${stored.length} stored, ${referenced.size} referenced, would delete ${victims.length} (${Math.round(victims.reduce((a, f) => a + (f.size || 0), 0) / 1024)}KB)`);

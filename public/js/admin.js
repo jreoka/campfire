@@ -248,13 +248,14 @@ async function adminSweepCheck() {
     const res = r.result || {};
     if (!res.dry) { if (out) out.textContent = 'Sweep already running — try again in a moment.'; return; }
     const v = res.victims || [];
+    const n = Number.isFinite(res.victimsTotal) ? res.victimsTotal : v.length;
     const bytes = v.reduce((a, x) => a + (x.size || 0), 0);
     if (out) {
-      out.innerHTML = `Orphans: ${res.victims.length > 200 ? '200+' : v.length} file(s) · ${fmtSize(bytes)} older than the grace period, out of ${res.scanned} stored.`;
+      out.innerHTML = `Orphans: ${n} file(s) · ${fmtSize(bytes)} older than the grace period, out of ${res.scanned} stored.`;
       if (v.length) out.innerHTML += `<div class="muted small" style="margin-top:.3rem">${v.slice(0, 5).map((x) => esc(x.key) + ' · ' + fmtSize(x.size)).join('<br/>')}${v.length > 5 ? '<br/>…' : ''}</div>`;
     }
     if (v.length) {
-      const ok = await openConfirmModal({ title: 'Delete orphaned files?', message: `Removes ${res.victims.length} unreferenced file(s) (${fmtSize(bytes)}). Referenced or still-scanning files are never touched.`, okLabel: 'Delete' });
+      const ok = await openConfirmModal({ title: 'Delete orphaned files?', message: `Removes ${n} unreferenced file(s) (${fmtSize(bytes)}). Referenced or still-scanning files are never touched.`, okLabel: 'Delete' });
       if (ok) {
         const run = await api('/api/admin/sweep/run', { method: 'POST' });
         const d = run.result || {};
