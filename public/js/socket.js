@@ -10,7 +10,7 @@ document.addEventListener('visibilitychange', sendVisibility);
 // A themed campfire splash covers the stale app whenever the live socket
 // drops, until the server is reachable again. A short grace delay keeps fast
 // blips (and the initial boot handshake) from flashing it.
-let connTimer = null, connAttempts = 0, connVisible = false, connPingSent = 0;
+let connTimer = null, connAttempts = 0, connVisible = false, connPingSent = 0, connProbePending = false;
 function connEl() { return document.getElementById('conn-overlay'); }
 function inMainView() { return !document.getElementById('view-main')?.classList.contains('hidden'); }
 function paintConn() {
@@ -57,6 +57,7 @@ async function connAuthDead() {
   try { toast('Session expired — sign in again'); } catch {}
 }
 function connectWS() {
+  connPingSent = 0; connProbePending = false;
   try { if (S.ws) { S.ws.onclose = null; S.ws.onerror = null; try { S.ws.close(); } catch {} } } catch {}
   if (!store.token) return;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -88,29 +89,59 @@ document.getElementById('conn-retry')?.addEventListener('click', () => {
   connAttempts++;
   connectWS();
 });
+// Cheap reachability probe: fails fast when truly offline, hangs to timeout
+// in a packet blackhole. Only used when the socket has gone suspiciously
+// quiet — never on a healthy, chatty connection.
+function probeServer() {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => { if (!done) { done = true; resolve(ok); } };
+    try {
+      const c = new AbortController();
+      const t = setTimeout(() => { try { c.abort(); } catch {} finish(false); }, 3500);
+      fetch('/api/version', { cache: 'no-store', signal: c.signal })
+        .then((r) => { clearTimeout(t); finish(r.ok); })
+        .catch(() => { clearTimeout(t); finish(false); });
+    } catch { finish(false); }
+  });
+}
 // Connectivity watchdog: the safety net under the socket events above.
 // - Some disconnects never fire onclose (half-open TCP looks OPEN forever,
 //   a reconnect stuck in CONNECTING fires nothing). Poll the actual state.
 // - Some environments never fire window offline/online reliably. Poll that too.
-// - An OPEN socket gone silent gets one app-level ping; no reply (not even
-//   our pong) means it's dead — close it so onclose runs the reconnect flow.
+// - An OPEN socket gone quiet gets one app-level ping plus an HTTP probe in
+//   parallel: a failed probe means the network is gone (overlay at once),
+//   an unanswered ping means just the socket died — either way close it so
+//   onclose runs the reconnect flow. Worst case ~15s, no refresh needed.
 setInterval(() => {
   try {
     if (!store.token || !inMainView()) return;
     if (!navigator.onLine) { showConn(); return; }
     const ws = S.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) { armConnSoon(); return; }
-    const idle = Date.now() - (S.lastWsMsg || 0);
-    if (idle > 35000 && !connPingSent) {
-      connPingSent = Date.now();
-      try { ws.send(JSON.stringify({ t: 'ping' })); } catch { try { ws.close(); } catch {} }
-    } else if (connPingSent && Date.now() - connPingSent > 10000) {
-      connPingSent = 0;
+    if (connPingSent && Date.now() - connPingSent > 6000) {
+      // Pinged but nothing came back (not even our pong) — socket is dead.
+      connPingSent = 0; connProbePending = false;
+      paintConn(); showConn();
       try { ws.close(); } catch {}
-      armConnSoon();
+      return;
+    }
+    const idle = Date.now() - (S.lastWsMsg || 0);
+    if (idle > 10000 && !connPingSent && !connProbePending) {
+      connPingSent = Date.now();
+      try { ws.send(JSON.stringify({ t: 'ping' })); } catch { try { ws.close(); } catch {} return; }
+      connProbePending = true;
+      probeServer().then((ok) => {
+        connProbePending = false;
+        if (ok || S.ws !== ws) return; // network fine, or socket already superseded
+        if (!store.token || !inMainView()) return;
+        connPingSent = 0;
+        paintConn(); showConn();
+        try { ws.close(); } catch {}
+      });
     }
   } catch {}
-}, 5000);
+}, 3000);
 function scrubReplyPreview(deletedId) {
   // A deleted message's text must not linger in the reply-quote previews of
   // messages that quoted it. Fresh history loads already come back scrubbed

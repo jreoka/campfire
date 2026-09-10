@@ -250,7 +250,7 @@ async function checkVersion() {
     if (version === S.bootVersion) return;
     if (!S.updateReady) onUpdateReady();
     else if (!S.voice && !document.hidden) location.reload();
-  } catch {}
+  } catch { try { if (typeof armConnSoon === 'function') armConnSoon(); } catch {} }
 }
 function onUpdateReady() {
   S.updateReady = true;
