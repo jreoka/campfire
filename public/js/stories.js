@@ -294,42 +294,59 @@ function svShow(ti, ii) {
   cap.classList.toggle('hidden', !it.caption);
 
   // media
+  // Nothing is shown until the bytes actually decode: while an upload is still
+  // being scanned/compressed the route answers 423 and the browser would
+  // otherwise paint its broken-media placeholder behind the wait pill.
   const img = $('#sv-img'), vid = $('#sv-vid');
-  img.classList.add('hidden'); img.removeAttribute('src');
+  img.classList.add('hidden'); img.removeAttribute('src'); img.alt = '';
+  img.onload = null; img.onerror = null;
   vid.classList.add('hidden');
   try { vid.pause(); } catch {}
   vid.removeAttribute('src');
-  vid.onerror = null;
+  vid.onerror = null; vid.onloadeddata = null; vid.onloadedmetadata = null;
   $('#sv-wait').classList.add('hidden');
   $('#sv-wait').classList.remove('sv-wait-dead');
   const waitTxt = $('#sv-wait-txt');
   if (waitTxt) waitTxt.textContent = 'Processing…';
   sv.retries = 0;
+  sv.waiting = false;
+  const ti0 = ti, ii0 = ii;
+  const current = () => !!sv && sv.ti === ti0 && sv.ii === ii0;
+  const ready = () => {
+    if (!current()) return;
+    (it.kind === 'video' ? vid : img).classList.remove('hidden');
+    sv.waiting = false;
+    sv.elapsed = 0;
+    sv.t0 = performance.now();
+    $('#sv-wait').classList.add('hidden');
+    $('#sv-wait').classList.remove('sv-wait-dead');
+  };
   if (it.kind === 'video') {
-    vid.classList.remove('hidden');
     vid.muted = sv.muted;
-    vid.src = it.url;
-    vid.onerror = () => svMediaError(it);
+    vid.onerror = () => { if (current()) svMediaError(it); };
+    vid.onloadeddata = ready;
     let durMs = Math.max(1000, Math.min(STORY_VIDEO_MAX_MS, Number(it.duration_ms) || 5000));
     vid.onloadedmetadata = () => {
+      if (!current()) return;
       const d = vid.duration;
       if (isFinite(d) && d > 0.2) durMs = Math.max(1000, Math.min(STORY_VIDEO_MAX_MS, Math.round(d * 1000)));
-      if (sv && sv.ii === ii) sv.dur = durMs;
+      sv.dur = durMs;
     };
     sv.dur = durMs;
+    vid.src = it.url;
     const p = vid.play();
     if (p && p.catch) p.catch(() => {
       // Autoplay with sound was refused: fall back to muted playback so the
       // story still plays, and let the speaker button unmute.
-      if (!sv) return;
+      if (!sv || !current()) return;
       sv.muted = true;
       paintSvSound();
       vid.muted = true;
       vid.play().catch(() => {});
     });
   } else {
-    img.classList.remove('hidden');
-    img.onerror = () => svMediaError(it);
+    img.onerror = () => { if (current()) svMediaError(it); };
+    img.onload = ready;
     img.src = it.url;
     sv.dur = STORY_IMG_MS;
   }
@@ -360,11 +377,17 @@ function svShow(ti, ii) {
 }
 
 // A story's bytes may still be scanning/compressing right after posting:
-// /uploads answers 423 and the element fires an error. Wait and retry a few
-// times instead of showing a broken frame, then give up and move on.
+// /uploads answers 423 and the element fires an error. Hide the media, hold the
+// progress bar and retry (the pill explains the wait), then give up and move on.
 function svMediaError(it) {
   if (!sv) return;
   const img = $('#sv-img'), vid = $('#sv-vid');
+  (it.kind === 'video' ? vid : img).classList.add('hidden');
+  // The item was never really shown: rewind the bar so the crash-frame tick
+  // doesn't leave a sliver of progress behind the pill.
+  sv.waiting = true;
+  sv.elapsed = 0;
+  if (sv.fill) sv.fill.style.width = '0%';
   sv.retries++;
   const wait = $('#sv-wait');
   if (sv.retries > 12) {
@@ -374,28 +397,28 @@ function svMediaError(it) {
     if (txt) txt.textContent = 'Story unavailable';
     const gen = sv.gen;
     clearTimeout(sv.retryT);
-    sv.retryT = setTimeout(() => { if (sv && sv.gen === gen) svNext(); }, 1800);
+    sv.retryT = setTimeout(() => { if (sv && sv.gen === gen) { sv.waiting = false; svNext(); } }, 1800);
     return;
   }
   wait.classList.remove('hidden');
   wait.classList.remove('sv-wait-dead');
   const txt2 = $('#sv-wait-txt');
   if (txt2) txt2.textContent = 'Processing…';
-  if (it.kind !== 'video') img.alt = 'Story unavailable';
   const gen = sv.gen;
   clearTimeout(sv.retryT);
   sv.retryT = setTimeout(() => {
     if (!sv || sv.gen !== gen) return;
     const url = it.url + (it.url.includes('?') ? '&' : '?') + 'r=' + Date.now();
-    if (it.kind === 'video') { vid.src = url; if (!sv.paused) vid.play().catch(() => {}); }
+    if (it.kind === 'video') { vid.src = url; try { vid.play().catch(() => {}); } catch {} }
     else img.src = url;
-    $('#sv-wait').classList.add('hidden');
   }, 3000);
 }
 
 function svTick() {
   if (!sv) return;
-  if (!sv.paused) {
+  // `waiting`: the media is still being prepared server-side — hold the bar
+  // (and the auto-advance) until it actually decodes.
+  if (!sv.paused && !sv.waiting) {
     if (sv.fill) sv.fill.style.width = Math.min(1, (sv.elapsed + (performance.now() - sv.t0)) / sv.dur) * 100 + '%';
     if (sv.elapsed + (performance.now() - sv.t0) >= sv.dur) return svNext();
   }
