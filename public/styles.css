@@ -1643,7 +1643,12 @@ body{touch-action:manipulation}
 /* ---------- stories (24h photo/video posts) ---------- */
 /* Rail on the Friends page: your tile first (post / watch), then friends with
    live stories. Unseen = accent ring, seen = hairline grey. */
-#story-rail{display:flex;gap:.5rem;overflow-x:auto;padding:.1rem 0 .85rem;margin-bottom:.35rem;border-bottom:1px solid var(--line-soft);scrollbar-width:none}
+/* overflow-x:auto clips both axes, so a glowing avatar decoration (ember/
+   neon box-shadows reach ~23px past the ring) was cut off at the rail's square
+   padding box and the cut edge read as a box around the glow. The padding is
+   room for the glow; the matching negative margin keeps every tile exactly
+   where it was. */
+#story-rail{display:flex;gap:.5rem;overflow-x:auto;padding:1.1rem 16px .85rem;margin:-1rem -16px .35rem;border-bottom:1px solid var(--line-soft);scrollbar-width:none}
 #story-rail::-webkit-scrollbar{display:none}
 .st-tile{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:.28rem;width:68px;padding:0;background:none;border:0;cursor:pointer;font-family:inherit}
 .st-tile:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:12px}

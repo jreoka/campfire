@@ -541,6 +541,41 @@ function startEdit(mid) {
   if (S.thread) renderThread();
   setTimeout(() => { const t = $('#edit-area'); if (t) { t.focus(); t.selectionStart = t.value.length; } }, 0);
 }
+// Up arrow in an empty composer edits your last message in this conversation
+// (Discord's shortcut). Nothing else may own the key when it fires: an open
+// autocomplete popup, an in-flight attach, or an edit already in progress.
+// With text present, Up keeps its normal job of moving the caret.
+$('#in-message').addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowUp' || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
+  if (e.defaultPrevented) return; // a popup already handled it
+  const inp = e.target;
+  if (!inp || inp.value.trim()) return;
+  if ((S.pendingAtts || []).length) return;
+  if (S.editing) return;
+  for (const sel of ['#mention-pop', '#emoji-pop', '#chan-pop']) {
+    const pop = $(sel);
+    if (pop && !pop.classList.contains('hidden')) return;
+  }
+  const list = S.view === 'home'
+    ? (S.dmMessages.get(S.dmThreadId) || [])
+    : (S.messages.get(S.channelId) || []);
+  let last = null;
+  for (const m of list) {
+    if (m.sys || m.webhook) continue;
+    if (m.user && S.me && m.user.id === S.me.id) last = m; // keep scanning: we want the newest
+  }
+  if (!last) return;
+  e.preventDefault();
+  startEdit(last.id);
+  // The message can be above the viewport when the reader is up in history,
+  // and an edit box they can't see is worse than no shortcut at all.
+  setTimeout(() => {
+    try {
+      const el = document.querySelector('#messages [data-mid="' + CSS.escape(last.id) + '"]');
+      if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+    } catch {}
+  }, 0);
+});
 async function saveEdit(mid) {
   const t = $('#edit-area');
   const content = (t?.value || '').trim();
