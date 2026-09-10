@@ -292,11 +292,6 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #me-card.off{opacity:.55}
 #me-card .avwrap{position:relative;width:28px;height:28px;flex-shrink:0}
 #me-card .avwrap .avatar{width:100%;height:100%;font-size:.75rem}
-#me-card .avwrap .avatar::after{content:"";position:absolute;inset:-2px;border-radius:50%;border:2px solid rgba(255,255,255,.16);pointer-events:none;z-index:1}
-#me-card .avwrap.st-online .avatar::after{border-color:var(--green)}
-#me-card .avwrap.st-away .avatar::after{border-color:var(--amber)}
-#me-card .avwrap.st-dnd .avatar::after{border-color:var(--red)}
-#me-card .avwrap.st-streaming .avatar::after{border-color:var(--purple)}
 #me-card .avwrap .status-dot{position:absolute;bottom:-3px;right:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2.5px var(--panel-2);z-index:2}
 #me-card .mnames{display:flex;flex-direction:column;min-width:0;flex:1;line-height:1.25}
 #me-card #me-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -444,11 +439,6 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .member .avwrap{position:relative;width:28px;height:28px;flex-shrink:0}
 .dmrow .avwrap{position:relative;width:28px;height:28px;flex-shrink:0}
 .member .avwrap .avatar,.dmrow .avwrap .avatar{width:100%;height:100%;font-size:.75rem}
-.member .avwrap .avatar::after,.dmrow .avwrap .avatar::after{content:"";position:absolute;inset:-2px;border-radius:50%;border:2px solid rgba(255,255,255,.16);pointer-events:none;z-index:1}
-.member .avwrap.st-online .avatar::after,.dmrow .avwrap.st-online .avatar::after{border-color:var(--green)}
-.member .avwrap.st-away .avatar::after,.dmrow .avwrap.st-away .avatar::after{border-color:var(--amber)}
-.member .avwrap.st-dnd .avatar::after,.dmrow .avwrap.st-dnd .avatar::after{border-color:var(--red)}
-.member .avwrap.st-streaming .avatar::after,.dmrow .avwrap.st-streaming .avatar::after{border-color:var(--purple)}
 .member .avwrap .status-dot,.dmrow .avwrap .status-dot{position:absolute;bottom:-3px;right:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2.5px var(--panel);z-index:2}
 #status-pop{position:fixed;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:190px;z-index:130;padding:.35rem}
 #status-sub{position:fixed;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:210px;z-index:131;padding:.35rem}
@@ -459,6 +449,11 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .mention-item .stat-check{margin-left:auto;color:var(--green);font-weight:800}
 .edit-box textarea{width:100%;min-height:64px;background:var(--inset);border:1px solid var(--accent);color:var(--text);border-radius:10px;padding:.55rem .65rem;font-size:.9rem;outline:none;resize:vertical}
 .edit-box .row{margin-top:.35rem}
+.edit-atts{display:flex;flex-direction:column;gap:.35rem;margin:.5rem 0}
+.edit-att{display:flex;align-items:center;gap:.5rem;background:var(--panel-3);border-radius:8px;padding:.3rem .4rem;font-size:.78rem}
+.edit-att img{width:28px;height:28px;border-radius:6px;object-fit:cover;flex-shrink:0}
+.edit-att-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.edit-att-x{min-height:26px;padding:.25rem .6rem;flex-shrink:0}
 .msg .text code{background:var(--panel-3);border:0;border-radius:6px;padding:.08rem .38rem;font-size:.85em}
 .msg .text pre.codeblock{background:var(--inset);border:1px solid var(--line-soft);border-radius:var(--radius);padding:.6rem .75rem;margin:.4rem 0;overflow-x:auto;font-size:.85em}
 .msg .text pre.codeblock code{background:transparent;border:0;border-radius:0;padding:0;font-size:1em}
@@ -1323,11 +1318,6 @@ body.view-home:not(.dm-open) #members{width:300px}
 .anow-card:hover{background:var(--panel-3)}
 .anow-card .avwrap{position:relative;width:38px;height:38px;flex-shrink:0}
 .anow-card .avwrap .avatar{width:100%;height:100%;font-size:.8rem}
-.anow-card .avwrap .avatar::after{content:"";position:absolute;inset:-2px;border-radius:50%;border:2px solid rgba(255,255,255,.16);pointer-events:none;z-index:1}
-.anow-card .avwrap.st-online .avatar::after{border-color:var(--green)}
-.anow-card .avwrap.st-away .avatar::after{border-color:var(--amber)}
-.anow-card .avwrap.st-dnd .avatar::after{border-color:var(--red)}
-.anow-card .avwrap.st-streaming .avatar::after{border-color:var(--purple)}
 .anow-card .avwrap .status-dot{position:absolute;bottom:-3px;right:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2.5px var(--panel-2);z-index:2}
 .anow-main{flex:1;min-width:0;line-height:1.32}
 .anow-name{display:block;font-weight:700;font-size:.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

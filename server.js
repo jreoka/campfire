@@ -2690,6 +2690,11 @@ app.patch('/api/messages/:mid', authRequired, (req, res) => {
   const content = squashBreaks(String(req.body?.content || '')).trim().slice(0, 5000);
   if (!content) return res.status(400).json({ error: 'empty_message' });
   db.prepare('UPDATE messages SET content = ?, edited_at = ? WHERE id = ?').run(content, now(), m.id);
+  // Editing can also drop attachments (ids verified against this message).
+  const drop = Array.isArray(req.body?.removeAttachments) ? req.body.removeAttachments.map(String).filter(Boolean).slice(0, 5) : [];
+  if (drop.length) {
+    db.prepare(`DELETE FROM attachments WHERE message_id = ? AND id IN (${drop.map(() => '?').join(',')})`).run(m.id, ...drop);
+  }
   const full = hydrateMessages([db.prepare(`
     SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,
            p.content AS p_content, pu.display_name AS p_name
@@ -3085,7 +3090,7 @@ function hydrateDm(rows, meId) {
   if (ids.length) {
     const ph = ids.map(() => '?').join(',');
     for (const a of db.prepare(`SELECT * FROM dm_attachments WHERE message_id IN (${ph}) ORDER BY created_at ASC`).all(...ids)) {
-      (attBy[a.message_id] = attBy[a.message_id] || []).push({ url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler });
+      (attBy[a.message_id] = attBy[a.message_id] || []).push({ id: a.id, url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler });
     }
     for (const r of db.prepare(`SELECT message_id, emoji, user_id FROM dm_reactions WHERE message_id IN (${ph})`).all(...ids)) {
       const t = (reactBy[r.message_id] = reactBy[r.message_id] || {});
@@ -3466,6 +3471,10 @@ app.patch('/api/dms/messages/:mid', authRequired, (req, res) => {
   const content = squashBreaks(String(req.body?.content || '')).trim().slice(0, 5000);
   if (!content) return res.status(400).json({ error: 'empty_message' });
   db.prepare('UPDATE dm_messages SET content = ?, edited_at = ? WHERE id = ?').run(content, now(), m.id);
+  const drop = Array.isArray(req.body?.removeAttachments) ? req.body.removeAttachments.map(String).filter(Boolean).slice(0, 5) : [];
+  if (drop.length) {
+    db.prepare(`DELETE FROM dm_attachments WHERE message_id = ? AND id IN (${drop.map(() => '?').join(',')})`).run(m.id, ...drop);
+  }
   const full = fullDm(m.id, req.user.id);
   dmNotify(m.thread_id, { t: 'dm-updated', message: full });
   res.json({ message: full });
@@ -3674,7 +3683,7 @@ function hydrateMessages(rows, meId) {
   if (ids.length) {
     const ph = ids.map(() => '?').join(',');
     for (const a of db.prepare(`SELECT * FROM attachments WHERE message_id IN (${ph}) ORDER BY created_at ASC`).all(...ids)) {
-      (attBy[a.message_id] = attBy[a.message_id] || []).push({ url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler });
+      (attBy[a.message_id] = attBy[a.message_id] || []).push({ id: a.id, url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler });
     }
     for (const r of db.prepare(`SELECT message_id, emoji, user_id FROM message_reactions WHERE message_id IN (${ph})`).all(...ids)) {
       const t = (reactBy[r.message_id] = reactBy[r.message_id] || {});

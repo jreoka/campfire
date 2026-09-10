@@ -312,13 +312,26 @@ function sendGif(g) {
   const pick = S.gifPick;
   closePicker();
   if (pick === 'avatar' || pick === 'banner' || pick === 'sidebar') { if (url) applyProfileUrl(pick, url); return; }
+  const att = { url, name: (g.title || 'gif').slice(0, 80) + '.gif', mime: 'image/gif', size: 0, kind: 'image' };
+  // A pending reply (main composer chip or in-thread chip) rides along —
+  // otherwise the GIF lands as a standalone message.
   if (S.view === 'home') {
     if (!S.dmThreadId || !url) return;
-    sendDm('', { attachments: [{ url, name: (g.title || 'gif').slice(0, 80) + '.gif', mime: 'image/gif', size: 0, kind: 'image' }] });
+    sendDm('', { attachments: [att], replyTo: S.replyTo?.id || null });
+    S.replyTo = null;
+    renderComposerMeta();
     return;
   }
   if (!S.serverId || !S.channelId || !url) return;
-  sendChat('', { attachments: [{ url, name: (g.title || 'gif').slice(0, 80) + '.gif', mime: 'image/gif', size: 0, kind: 'image' }] });
+  if (S.threadReplyTo && S.thread) {
+    sendChat('', { attachments: [att], threadRoot: S.thread.rootId, replyTo: S.threadReplyTo.id });
+    S.threadReplyTo = null;
+    renderThreadComposerMeta();
+    return;
+  }
+  sendChat('', { attachments: [att], replyTo: S.replyTo?.id || null });
+  S.replyTo = null;
+  renderComposerMeta();
 }
 
 // ---------- reactions / reply / edit / thread actions ----------
@@ -519,6 +532,7 @@ async function jumpToMessage(id) {
 }
 function startEdit(mid) {
   S.editing = mid;
+  S.editRemovals = new Set(); // attachment ids to drop on save
   if (S.channelId) renderMessages();
   if (S.view === 'home' && S.dmThreadId) renderDmMessages();
   if (S.thread) renderThread();
@@ -528,9 +542,11 @@ async function saveEdit(mid) {
   const t = $('#edit-area');
   const content = (t?.value || '').trim();
   if (!content) return;
+  const remove = [...(S.editRemovals || [])];
   S.editing = null;
+  S.editRemovals = new Set();
   const base = msgById(mid)?._dm ? '/api/dms/messages/' : '/api/messages/';
-  try { await api(base + mid, { method: 'PATCH', body: JSON.stringify({ content }) }); }
+  try { await api(base + mid, { method: 'PATCH', body: JSON.stringify({ content, removeAttachments: remove }) }); }
   catch (err) { toast('Edit failed: ' + prettyError(err.message)); if (S.channelId) renderMessages(); }
 }
 // global delegation for message interactions
@@ -599,8 +615,20 @@ async function saveEdit(mid) {
     else if (act === 'vote' && mid) votePoll(mid, actEl.dataset.opt);
     else if (act === 'expand-file') expandTextFile(actEl);
     else if (act === 'edit' && mid) startEdit(mid);
+    else if (act === 'edit-unattach' && mid) {
+      const aid = actEl.dataset.aid;
+      if (aid) {
+        S.editRemovals = S.editRemovals || new Set();
+        S.editRemovals.add(aid);
+        // Drop just the chip — a full re-render would lose the textarea text.
+        const chip = actEl.closest('.edit-att');
+        const wrap = actEl.closest('.edit-atts');
+        if (chip) chip.remove();
+        if (wrap && !wrap.querySelector('.edit-att')) wrap.remove();
+      }
+    }
     else if (act === 'edit-save' && mid) saveEdit(mid);
-    else if (act === 'edit-cancel') { S.editing = null; if (S.channelId) renderMessages(); if (S.view === 'home' && S.dmThreadId) renderDmMessages(); if (S.thread) renderThread(); }
+    else if (act === 'edit-cancel') { S.editing = null; S.editRemovals = new Set(); if (S.channelId) renderMessages(); if (S.view === 'home' && S.dmThreadId) renderDmMessages(); if (S.thread) renderThread(); }
     else if (act === 'del' && mid) {
       const base = msgById(mid)?._dm ? '/api/dms/messages/' : '/api/messages/';
       api(base + mid, { method: 'DELETE' }).catch(() => toast('Delete failed'));
