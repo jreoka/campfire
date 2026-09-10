@@ -559,9 +559,7 @@ function admUserRow(u) {
         <button class="mini" data-act="u-2fa"${dis}>Reset 2FA</button>
         <button class="mini danger" data-act="u-del"${dis}>Delete</button>
       </div>
-      ${locked ? `<div class="muted small" style="margin-top:.4rem">${u.id === S.me.id
-        ? 'Protected account — read-only here for every admin, including you. Manage it from Settings → Profile / Account.'
-        : `Only @${esc(u.username)} can manage this account — no other admin can edit, disable, delete, log it out or reset its 2FA.`}</div>` : ''}
+      ${locked && u.id !== S.me.id ? `<div class="muted small" style="margin-top:.4rem">Only @${esc(u.username)} can manage this account — no other admin can edit, disable, delete, log it out or reset its 2FA.</div>` : ''}
     </div>
   </div>`;
 }
