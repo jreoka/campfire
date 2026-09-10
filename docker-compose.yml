@@ -1,4 +1,19 @@
 services:
+  db:
+    image: postgres:18-alpine
+    container_name: campfire-db
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-campfire}
+      - POSTGRES_USER=${POSTGRES_USER:-campfire}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (alphanumeric, e.g. openssl rand -base64 24 | tr -dc A-Za-z0-9)}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-campfire}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
   campfire:
     build: .
     container_name: campfire
@@ -9,7 +24,13 @@ services:
       - ./data:/data
     environment:
       - PORT=3000
-      - DB_PATH=/data/campfire.db
+      # Postgres (separate PG* vars so special characters in the password
+      # never break URL parsing; DATABASE_URL also works as an override).
+      - PGHOST=db
+      - PGPORT=5432
+      - PGDATABASE=${POSTGRES_DB:-campfire}
+      - PGUSER=${POSTGRES_USER:-campfire}
+      - PGPASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       - "JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env (generate with openssl rand -base64 32)}"
       # Voice (WebRTC) NAT traversal: STUN + TURN relay for strict NATs.
       # Set these in .env (server provisioning: scripts/setup-turn.sh).
@@ -18,4 +39,11 @@ services:
       - TURN_USER=${TURN_USER:-}
       - TURN_PASS=${TURN_PASS:-}
     env_file:
-      - .env
+      - path: .env
+        required: false
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

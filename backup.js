@@ -1,21 +1,23 @@
-// Scheduled SQLite backups to S3 (top-level `backups/` prefix).
+// Scheduled Postgres backups to S3 (top-level `backups/` prefix).
 //
 // - Runs twice a day at 00:00 and 12:00 server-local time, plus a catch-up
 //   run ~1 minute after boot when the newest backup is older than 11h
 //   (covers downtime/a missed slot across restarts and deploys).
-// - Online snapshot via `VACUUM INTO`: consistent copy, no restart, no
-//   downtime, readers/writers keep going. The snapshot is gzipped and
-//   uploaded as `backups/campfire-YYYYMMDDTHHMMSSZ.db.gz` (UTC stamp, so
-//   key order == chronological order).
-// - Keeps the newest BACKUP_KEEP dumps (default 10), pruning older ones.
+// - pg_dump custom format (-Fc, already compressed, transactional snapshot)
+//   straight from the live database: no restart, no downtime. Needs the
+//   postgres-client package (see Dockerfile).
+// - Uploaded as `backups/campfire-YYYYMMDDTHHMMSSZ.dump` (UTC stamp, so
+//   key order == chronological order). Keeps the newest BACKUP_KEEP dumps
+//   (default 10), pruning older ones. Restore: pg_restore -d <db> <file>.
 // - The `backups/` prefix is deliberately unservable: storage.s3KeyFromUrl
 //   refuses it, so no /uploads/* URL (guessed or otherwise) can ever reach
 //   a backup. Nothing here generates public URLs either.
 // - No-ops (with a log line) when S3_* env is not configured.
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const zlib = require('zlib');
-const db = require('./db');
+const { execFile } = require('node:child_process');
+const { pgEnv } = require('./db');
 const storage = require('./storage');
 
 const PREFIX = 'backups/';
@@ -33,13 +35,31 @@ function stamp(d = new Date()) {
 }
 
 function stampMs(key) {
-  const m = String(key || '').match(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z\.db\.gz$/);
+  const m = String(key || '').match(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z\.dump$/);
   if (!m) return null;
   return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
 }
 
 function isDumpKey(key) {
-  return typeof key === 'string' && key.startsWith(PREFIX) && key.endsWith('.db.gz');
+  return typeof key === 'string' && key.startsWith(PREFIX) && key.endsWith('.dump');
+}
+
+function pgDumpToFile(tmp) {
+  const e = pgEnv();
+  return new Promise((resolve, reject) => {
+    execFile('pg_dump', ['-Fc', '-f', tmp], {
+      env: {
+        ...process.env,
+        PGHOST: e.PGHOST, PGPORT: e.PGPORT, PGDATABASE: e.PGDATABASE,
+        PGUSER: e.PGUSER, PGPASSWORD: e.PGPASSWORD,
+      },
+      timeout: 10 * 60 * 1000,
+      maxBuffer: 64 * 1024 * 1024,
+    }, (err, stdout, stderr) => {
+      if (err) reject(new Error(`pg_dump failed: ${String(stderr || err.message).trim().slice(0, 300)}`));
+      else resolve();
+    });
+  });
 }
 
 async function runBackup(reason) {
@@ -52,16 +72,13 @@ async function runBackup(reason) {
     return;
   }
   running = true;
-  const tmp = path.join(path.dirname(db.DB_PATH), `.backup-${process.pid}-${Date.now()}.db`);
+  const tmp = path.join(os.tmpdir(), `.campfire-backup-${process.pid}-${Date.now()}.dump`);
   try {
-    // Consistent online snapshot; path is embedded as a literal (VACUUM
-    // takes no bound parameters), so single-quotes are doubled.
-    db.prepare(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`).run();
+    await pgDumpToFile(tmp);
     const raw = fs.readFileSync(tmp);
-    const gz = zlib.gzipSync(raw, { level: 9 });
-    const key = `${PREFIX}campfire-${stamp()}.db.gz`;
-    await storage.s3Put(key, gz, 'application/gzip');
-    console.log(`[backup] uploaded ${key} (${raw.length} -> ${gz.length} bytes) [${reason}]`);
+    const key = `${PREFIX}campfire-${stamp()}.dump`;
+    await storage.s3Put(key, raw, 'application/octet-stream');
+    console.log(`[backup] uploaded ${key} (${raw.length} bytes) [${reason}]`);
     // Retain the newest KEEP dumps (including the one just uploaded).
     const all = (await storage.s3List(PREFIX)).map((o) => o.key).filter((k) => k !== key && isDumpKey(k)).sort();
     const stale = all.slice(0, Math.max(0, all.length + 1 - KEEP));

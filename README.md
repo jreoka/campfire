@@ -7,9 +7,9 @@ A tiny **Mattermost / Steam-chat alternative** you can host in one Docker contai
 - 🔊 **Voice rooms** — click to join, talk in-browser (WebRTC, no app needed)
 - 🤖 **Channel webhooks** — per-channel bot URLs with their own name + avatar (channel menu → Webhooks)
 - 📲 **PWA installable** — friends can "Add to Home Screen" on iPhone/Android and use it like a native app
-- 🗄️ **SQLite, zero deps to run** — data lives in one `./data` volume
+- 🗄️ **Postgres 18** — data lives in a `pgdata` Docker volume
 
-Stack: Node 22 + Express + `ws` + built-in `node:sqlite`, vanilla-JS frontend. No build step, no native modules, no Redis, no Postgres.
+Stack: Node 22 + Express + `ws` + Postgres 18 (`pg`, async), vanilla-JS frontend. No build step, no native modules, no Redis.
 
 ---
 
@@ -91,42 +91,44 @@ certificate challenge.
 
 ## 4. Without Docker (dev)
 
+Needs a reachable Postgres 18 (the compose `db` service is the easy one):
+
 ```bash
 npm install
 node scripts/gen-icons.js
-JWT_SECRET=dev DB_PATH=./data/campfire.db node server.js
+docker compose up -d db
+JWT_SECRET=dev PGHOST=localhost PGUSER=campfire PGPASSWORD=... PGDATABASE=campfire node server.js
 # → http://localhost:3000
 ```
 
 ## 5. Data & backup
 
-Everything persistent lives in `./data/`: `campfire.db` (all chat history,
-accounts, servers) plus `uploads/` (attached files, avatars, banners, icons,
-emoji). Uploads are stored next to the database on purpose — never next to
-the code, which is wiped on every rebuild. Alternatively set `S3_*` in
-`.env` (see `.env.example`) to keep media in S3-compatible storage such as
-Cloudflare R2 instead of on disk — URLs stay the same, and existing files
-move over with `node scripts/migrate-uploads-to-r2.js [--delete]`. Back it
-all up by copying the folder while the container is stopped:
-
-```bash
-docker compose stop && cp -r data data-backup && docker compose start
-```
-
-To reset: `docker compose down && rm -rf data && docker compose up -d`.
+Everything persistent lives in two places: the `pgdata` Docker volume
+(Postgres — all chat history, accounts, servers) and `./data/uploads/`
+(attached files, avatars, banners, icons, emoji) plus the S3 bucket when
+`S3_*` is set. Uploads sit on a persistent volume on purpose — never
+inside the image layers, which are wiped on every rebuild. Alternatively
+set `S3_*` in `.env` (see `.env.example`) to keep media in S3-compatible
+storage such as Cloudflare R2 instead of on disk — URLs stay the same,
+and existing files move over with
+`node scripts/migrate-uploads-to-r2.js [--delete]`.
 
 When `S3_*` is configured, the database additionally backs itself up to
-the top-level `backups/` folder in the bucket: a gzipped snapshot at
+the top-level `backups/` folder in the bucket: a `pg_dump` snapshot at
 00:00 and 12:00 server-local time every day (plus a catch-up run after
 boot when the newest backup is stale), keeping the newest 10 dumps
 (`BACKUP_KEEP` overrides). Snapshots are taken online — no restart or
 downtime. The `backups/` prefix is never served over HTTP, so dump URLs
-can't be guessed or fetched; restore one with any S3 client, e.g.:
+can't be guessed or fetched; restore one with `pg_restore`, e.g.:
 
 ```bash
 aws --endpoint-url https://<account-id>.r2.cloudflarestorage.com \
-  s3 cp s3://campfire/backups/campfire-<stamp>.db.gz - | gunzip > campfire.db
+  s3 cp s3://campfire/backups/campfire-<stamp>.dump campfire.dump
+pg_restore -d campfire campfire.dump
 ```
+
+To reset: `docker compose down -v && rm -rf data && docker compose up -d`
+(wipes the database volume too).
 
 ## 7. Windows desktop app
 

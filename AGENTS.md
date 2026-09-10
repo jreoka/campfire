@@ -12,12 +12,19 @@ Mobile-friendly PWA. Repo: `https://github.com/jreoka/campfire`.
 
 ## Stack & key decisions
 
-- **Backend:** Node ≥22, Express 4, `ws` (WebSocket), `jsonwebtoken`, `bcryptjs`,
-  `cookie-parser`. No build step, no native modules, no Redis/Postgres.
-- **Database:** SQLite via Node's **built-in `node:sqlite`** (`db.js` wraps
-  `DatabaseSync` in a small better-sqlite3-compatible API: `prepare().get/all/run`,
-  `exec`, `transaction`). Chosen deliberately so `npm install` needs no build
-  tools and the Docker image stays tiny. **Do not switch to better-sqlite3.**
+- **Backend:** Node ≥22, Express 4 (+ `express-async-errors`: Express 4 drops
+  async handler rejections, so this forwards them), `ws` (WebSocket),
+  `jsonwebtoken`, `bcryptjs`, `cookie-parser`, `pg` (async Postgres driver).
+  No build step, no native modules, no Redis/Postgres-embedded.
+- **Database:** Postgres 18 (Docker `db` service, `pgdata` volume).
+  `db.js` wraps `node-postgres` in an async `prepare().get/all/run` +
+  `exec` + `transaction` API supporting both `?` and `@name` placeholders
+  (`@name` is translated to `$n`; quoted literals are left alone).
+  Transactions pin one pooled connection via AsyncLocalStorage, so existing
+  `db.transaction(async () => {...})` bodies stay atomic. Former INTEGER
+  columns are BIGINT (parsed back to JS numbers); 0/1 flag columns stay
+  ints so `=== 0` checks keep working. `COLLATE NOCASE` is gone — use
+  `lower(x)` comparisons/ordering instead.
 - **Frontend:** vanilla HTML/CSS/JS in `public/` (`index.html`, `styles.css`,
   `js/*.js` modules loaded in order via plain script tags). No framework, no
   bundler. Served by Express static.
@@ -39,8 +46,8 @@ Mobile-friendly PWA. Repo: `https://github.com/jreoka/campfire`.
 
 ```
 campfire/
-  server.js          # Express API + WebSocket server (chat, presence, voice signaling)
-  db.js              # SQLite wrapper + schema (CREATE TABLE IF NOT EXISTS)
+  server.js          # Express API + WebSocket server (all async; chat, presence, voice signaling)
+  db.js              # Postgres wrapper + schema (initDb: CREATE TABLE IF NOT EXISTS + guarded migrations)
   package.json       # deps (express, ws, jsonwebtoken, bcryptjs, cookie-parser)
   Dockerfile         # node:22-alpine, no build tools needed
   docker-compose.yml # one service, ./data volume, requires JWT_SECRET in .env
@@ -49,6 +56,7 @@ campfire/
                      # GitHub Actions, not in the Docker deploy
   scripts/gen-icons.js  # zero-dep PNG icon generator (runs in Docker build)
   scripts/gen-ico.js    # syncs app icon with the web favicon
+  scripts/migrate-sqlite-to-pg.js  # one-shot SQLite→Postgres pump (historical; keep)
   public/
     index.html       # SPA shell (auth view + main view + modals)
     styles.css       # flat professional dark UI (see design rules below)
@@ -59,7 +67,8 @@ campfire/
     manifest.webmanifest
     service-worker.js   # bump CACHE ('campfire-vN') on every frontend change
     icons/           # generated PNGs (committed so static serving works w/o build)
-  data/              # SQLite db lives here — NEVER delete, gitignored
+  data/              # local uploads live here — NEVER delete, gitignored
+                   # (the database itself is in the pgdata Docker volume)
 ```
 
 ## App (`./app`)
@@ -135,22 +144,27 @@ declared in the manifest); no tray/watcher on mobile — that Rust code is
 ## Data-safety contract (owner directive)
 
 The owner will iterate on features **without ever losing persistent data**.
-- Code and data are separate: everything lives in `data/campfire.db`.
-  Never `rm -rf data`, never delete the db, never write destructive one-offs
-  without explicit confirmation.
+- Code and data are separate: Postgres data lives in the `pgdata` Docker
+  volume, uploads in `./data`. Never `rm -rf data`, never drop the
+  database, never write destructive one-offs without explicit confirmation.
+  Nightly `pg_dump` snapshots also land in S3 `backups/` (see README §5).
 - Schema changes must be **guarded migrations** (`CREATE TABLE IF NOT EXISTS`,
-  `ALTER TABLE ... ADD COLUMN` only when the column is missing) so existing
-  databases upgrade in place and fresh installs still work.
-- Restarts/rebuilds must never wipe data. The `./data` Docker volume is permanent.
+  `ALTER TABLE ... ADD COLUMN` only when the column is missing — see
+  `columnExists`/`addColumn` in `db.js`) so existing databases upgrade in
+  place and fresh installs still work.
+- Restarts/rebuilds must never wipe data. The `pgdata` + `./data` Docker
+  volumes are permanent (`docker compose down -v` destroys the db — never
+  run that in production).
 
 ## Running it
 
 ```bash
 cd campfire
 npm install
-cp .env.example .env   # set a long random JWT_SECRET
+cp .env.example .env   # set JWT_SECRET + POSTGRES_PASSWORD (alphanumeric)
 # dev (frontend edits apply on refresh, backend edits need restart):
-JWT_SECRET=... PORT=3000 DB_PATH=./data/campfire.db node server.js
+docker compose up -d db   # Postgres 18 on localhost:5432
+JWT_SECRET=... PGHOST=localhost PGUSER=campfire PGPASSWORD=... PGDATABASE=campfire PORT=3000 node server.js
 # prod:
 docker compose up -d --build   # → http://host:3000
 ```
@@ -202,10 +216,13 @@ deploy → confirm the live site serves the change.
   `git pull` then `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`.
 - After deploying, confirm the live site responds (e.g. `curl https://campfire.dill.moe/api/config`).
 
-Non-obvious rules (learned the hard way): uploads must live next to the DB on
-the persistent volume (never the image layer); new uploads get `?v=` cache keys;
+Non-obvious rules (learned the hard way): uploads must live on the
+persistent volume (never the image layer); new uploads get `?v=` cache keys;
 missing `/uploads/*` must 404 (never SPA fallback); bump the SW `CACHE` version
-on every `public/` change; navigations are network-first.
+on every `public/` change; navigations are network-first. Async discipline:
+never pass an async callback to map/filter/forEach when results are used
+synchronously (use for..of or Promise.all); background timers go through
+safeInterval so rejections log instead of crashing.
 
 NEXT: iterate per owner feedback on the live site.
 - Open ideas (not requested yet): DMs, push notifications, moderation roles
