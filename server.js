@@ -989,6 +989,219 @@ app.patch('/api/servers/:id/channels/:chId', authRequired, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- channel webhooks ----------
+// Discord-style: admins mint a webhook per text channel (own name + avatar).
+// Posting needs only the secret URL, so bots/feeds can write without an
+// account: POST /api/webhooks/:id/:token {content, username?, avatar_url?}.
+// Messages snapshot the webhook's name/avatar at send time — renames and
+// deletes never rewrite history.
+function webhookPublic(w) {
+  return {
+    id: w.id, server_id: w.server_id, channel_id: w.channel_id,
+    name: w.name || 'Webhook', avatar_url: w.avatar_url || null,
+    created_by: w.created_by || null, created_at: w.created_at,
+    url: `/api/webhooks/${w.id}/${w.token}`,
+  };
+}
+function cleanWebhookName(v, fallback) {
+  const n = String(v ?? '').trim().slice(0, 32);
+  return n || fallback || 'Webhook';
+}
+function cleanWebhookAvatar(v) {
+  const u = String(v ?? '').trim().slice(0, 500);
+  if (!u) return null;
+  if (u.startsWith('/uploads/')) return u;
+  if (/^https:\/\/[^\s]{4,490}$/.test(u)) return u;
+  return null;
+}
+function textChannelOf(serverId, channelId) {
+  const ch = db.prepare('SELECT * FROM channels WHERE id = ? AND server_id = ?').get(channelId, serverId);
+  return ch && ch.type === 'text' ? ch : null;
+}
+function webhookRateOk(wid) {
+  const t = Date.now();
+  const arr = (rl.get('wh:' + wid) || []).filter((x) => t - x < 60000);
+  if (arr.length >= 30) return false;
+  arr.push(t);
+  rl.set('wh:' + wid, arr);
+  return true;
+}
+app.get('/api/servers/:id/channels/:chId/webhooks', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  if (!textChannelOf(s.id, req.params.chId)) return res.status(404).json({ error: 'no_channel' });
+  const rows = db.prepare('SELECT * FROM webhooks WHERE server_id = ? AND channel_id = ? ORDER BY created_at ASC').all(s.id, req.params.chId);
+  res.json({ webhooks: rows.map(webhookPublic) });
+});
+app.post('/api/servers/:id/channels/:chId/webhooks', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  if (!textChannelOf(s.id, req.params.chId)) return res.status(404).json({ error: 'no_channel' });
+  const n = db.prepare('SELECT COUNT(*) c FROM webhooks WHERE channel_id = ?').get(req.params.chId).c;
+  if (n >= 10) return res.status(400).json({ error: 'too_many_webhooks' });
+  const name = cleanWebhookName(req.body?.name);
+  const avatar = cleanWebhookAvatar(req.body?.avatar_url);
+  if (req.body?.avatar_url && !avatar) return res.status(400).json({ error: 'bad_avatar (upload an image or paste an https:// image URL)' });
+  const w = { id: uid(), server_id: s.id, channel_id: req.params.chId, name, avatar_url: avatar, token: crypto.randomBytes(24).toString('base64url'), created_by: req.user.id, created_at: now() };
+  db.prepare('INSERT INTO webhooks (id,server_id,channel_id,name,avatar_url,token,created_by,created_at) VALUES (@id,@server_id,@channel_id,@name,@avatar_url,@token,@created_by,@created_at)').run(w);
+  res.json({ webhook: webhookPublic(w) });
+});
+app.patch('/api/servers/:id/webhooks/:wid', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  const w = db.prepare('SELECT * FROM webhooks WHERE id = ? AND server_id = ?').get(req.params.wid, s.id);
+  if (!w) return res.status(404).json({ error: 'no_webhook' });
+  const sets = [], params = [];
+  if (req.body?.name !== undefined) { sets.push('name = ?'); params.push(cleanWebhookName(req.body.name, w.name)); }
+  if (req.body?.avatar_url !== undefined) {
+    const a = cleanWebhookAvatar(req.body.avatar_url);
+    if (req.body.avatar_url && !a) return res.status(400).json({ error: 'bad_avatar (upload an image or paste an https:// image URL)' });
+    sets.push('avatar_url = ?'); params.push(a);
+  }
+  if (sets.length) {
+    params.push(w.id);
+    db.prepare(`UPDATE webhooks SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  }
+  const fresh = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(w.id);
+  if (w.avatar_url && fresh.avatar_url !== w.avatar_url) deleteUploaded(w.avatar_url);
+  res.json({ webhook: webhookPublic(fresh) });
+});
+app.delete('/api/servers/:id/webhooks/:wid', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  const w = db.prepare('SELECT * FROM webhooks WHERE id = ? AND server_id = ?').get(req.params.wid, s.id);
+  if (!w) return res.status(404).json({ error: 'no_webhook' });
+  deleteUploaded(w.avatar_url);
+  db.prepare('DELETE FROM webhooks WHERE id = ?').run(w.id);
+  // Past messages keep their name/avatar snapshot — history is untouched.
+  res.json({ ok: true });
+});
+app.post('/api/servers/:id/webhooks/:wid/regenerate', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  const w = db.prepare('SELECT * FROM webhooks WHERE id = ? AND server_id = ?').get(req.params.wid, s.id);
+  if (!w) return res.status(404).json({ error: 'no_webhook' });
+  const token = crypto.randomBytes(24).toString('base64url');
+  db.prepare('UPDATE webhooks SET token = ? WHERE id = ?').run(token, w.id);
+  res.json({ webhook: webhookPublic({ ...w, token }) });
+});
+// Webhook avatar upload (image-only, like profile pictures).
+app.post('/api/servers/:id/webhooks/:wid/avatar', authRequired, imgSingle(upImg), (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  const w = db.prepare('SELECT * FROM webhooks WHERE id = ? AND server_id = ?').get(req.params.wid, s.id);
+  if (!w) return res.status(404).json({ error: 'no_webhook' });
+  const url = uploadUrl('avatars', req.file);
+  deleteUploaded(w.avatar_url);
+  db.prepare('UPDATE webhooks SET avatar_url = ? WHERE id = ?').run(url, w.id);
+  res.json({ webhook: webhookPublic({ ...w, avatar_url: url }) });
+});
+app.delete('/api/servers/:id/webhooks/:wid/avatar', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  const w = db.prepare('SELECT * FROM webhooks WHERE id = ? AND server_id = ?').get(req.params.wid, s.id);
+  if (!w) return res.status(404).json({ error: 'no_webhook' });
+  deleteUploaded(w.avatar_url);
+  db.prepare('UPDATE webhooks SET avatar_url = NULL WHERE id = ?').run(w.id);
+  res.json({ webhook: webhookPublic({ ...w, avatar_url: null }) });
+});
+// Execute a webhook (no login — the token IS the credential). Discord-shaped
+// body: {content, username?, avatar_url?, attachments?, replyTo?}.
+function webhookFromToken(wid, token) {
+  const w = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(String(wid || ''));
+  if (!w || w.token !== String(token || '')) return null;
+  return w;
+}
+app.get('/api/webhooks/:wid/:token', (req, res) => {
+  const w = webhookFromToken(req.params.wid, req.params.token);
+  if (!w) return res.status(404).json({ error: 'bad_webhook' });
+  const { token, ...rest } = webhookPublic(w);
+  res.json({ webhook: rest });
+});
+app.post('/api/webhooks/:wid/:token', (req, res) => {
+  const w = webhookFromToken(req.params.wid, req.params.token);
+  if (!w) return res.status(404).json({ error: 'bad_webhook' });
+  const ch = textChannelOf(w.server_id, w.channel_id);
+  if (!ch) return res.status(404).json({ error: 'no_channel' });
+  if (!webhookRateOk(w.id)) return res.status(429).json({ error: 'slow_down' });
+  const content = squashBreaks(String(req.body?.content || '')).trim().slice(0, 5000);
+  const atts = Array.isArray(req.body?.attachments) ? req.body.attachments.slice(0, 5) : [];
+  // Per-message overrides (fall back to the webhook's own name/avatar).
+  const name = cleanWebhookName(req.body?.username, w.name);
+  let avatar = w.avatar_url || null;
+  if (req.body?.avatar_url !== undefined) {
+    const a = cleanWebhookAvatar(req.body.avatar_url);
+    if (req.body.avatar_url && !a) return res.status(400).json({ error: 'bad_avatar (upload an image or paste an https:// image URL)' });
+    avatar = a || w.avatar_url || null;
+  }
+  const replyTo = String(req.body?.replyTo || '') || null;
+  if (replyTo) {
+    const pr = db.prepare('SELECT channel_id FROM messages WHERE id = ? AND server_id = ?').get(replyTo, w.server_id);
+    if (!pr || pr.channel_id !== w.channel_id) return res.status(400).json({ error: 'bad_reply' });
+  }
+  const cleanAtts = [];
+  for (const a of atts) {
+    const url = String(a?.url || '');
+    const isLocal = url.startsWith('/uploads/files/');
+    const isRemoteImg = a?.kind === 'image' && /^https:\/\//.test(url);
+    if (!isLocal && !isRemoteImg) continue;
+    const mime = String(a?.mime || 'application/octet-stream').slice(0, 80);
+    cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, 100 * 1024 * 1024)), kind: isLocal ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file') : 'image', spoiler: a?.spoiler ? 1 : 0 });
+  }
+  if (!content && !cleanAtts.length) return res.status(400).json({ error: 'empty_message' });
+  const mid = uid();
+  db.prepare('INSERT INTO messages (id,server_id,channel_id,user_id,content,reply_to_id,webhook_id,webhook_name,webhook_avatar,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run(mid, w.server_id, w.channel_id, null, content, replyTo, w.id, name, avatar, now());
+  const insAtt = db.prepare('INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,spoiler,created_at) VALUES (?,?,?,?,?,?,?,?,?)');
+  for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, now());
+  const full = fullMessage(mid, null);
+  broadcastToServer(w.server_id, { t: 'message-new', serverId: w.server_id, channelId: w.channel_id, message: full });
+  notifyServerMessage(w.server_id, w.channel_id, { userId: null, display_name: name, username: name, avatar_url: avatar }, content, mid);
+  res.json({ message: full });
+});
+// Webhooks can edit/delete their OWN messages with the same token.
+app.patch('/api/webhooks/:wid/:token/messages/:mid', (req, res) => {
+  const w = webhookFromToken(req.params.wid, req.params.token);
+  if (!w) return res.status(404).json({ error: 'bad_webhook' });
+  const m = db.prepare('SELECT * FROM messages WHERE id = ? AND webhook_id = ?').get(req.params.mid, w.id);
+  if (!m) return res.status(404).json({ error: 'no_message' });
+  const content = squashBreaks(String(req.body?.content || '')).trim().slice(0, 5000);
+  if (!content) return res.status(400).json({ error: 'empty_message' });
+  db.prepare('UPDATE messages SET content = ?, edited_at = ? WHERE id = ?').run(content, now(), m.id);
+  const full = fullMessage(m.id, null);
+  broadcastToServer(m.server_id, { t: 'message-updated', serverId: m.server_id, channelId: m.channel_id, message: full });
+  res.json({ message: full });
+});
+app.delete('/api/webhooks/:wid/:token/messages/:mid', (req, res) => {
+  const w = webhookFromToken(req.params.wid, req.params.token);
+  if (!w) return res.status(404).json({ error: 'bad_webhook' });
+  const m = db.prepare('SELECT * FROM messages WHERE id = ? AND webhook_id = ?').get(req.params.mid, w.id);
+  if (!m) return res.status(404).json({ error: 'no_message' });
+  let pinsChanged = false;
+  let kidIds = [];
+  if (!m.thread_root_id) {
+    kidIds = db.prepare('SELECT id FROM messages WHERE thread_root_id = ?').all(m.id).map((r) => r.id);
+    if (kidIds.length) {
+      const ph = kidIds.map(() => '?').join(',');
+      if (db.prepare(`DELETE FROM message_pins WHERE message_id IN (${ph})`).run(...kidIds).changes) pinsChanged = true;
+      db.prepare('DELETE FROM messages WHERE thread_root_id = ?').run(m.id);
+    }
+  }
+  db.prepare('DELETE FROM messages WHERE id = ?').run(m.id);
+  deletePollsFor('server', kidIds.length ? [m.id, ...kidIds] : [m.id]);
+  if (db.prepare('DELETE FROM message_pins WHERE message_id = ?').run(m.id).changes) pinsChanged = true;
+  if (pinsChanged) broadcastToServer(m.server_id, { t: 'pins-changed', serverId: m.server_id, channelId: m.channel_id });
+  broadcastToServer(m.server_id, { t: 'message-deleted', serverId: m.server_id, channelId: m.channel_id, messageId: m.id, threadRoot: m.thread_root_id || null });
+  res.json({ ok: true });
+});
+
 app.post('/api/servers/:id/leave', authRequired, (req, res) => {
   const s = getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });
@@ -2775,7 +2988,13 @@ function notifyServerMessage(serverId, channelId, author, content, messageId) {
   const text = String(content || '').trim();
   if (!text) return;
   let mems = [];
-  try { mems = db.prepare('SELECT user_id FROM server_members WHERE server_id = ? AND user_id != ?').all(serverId, author.userId).map((r) => r.user_id); } catch { return; }
+  try {
+    // Webhook posts have no author account (userId null, and `!= NULL` never
+    // matches in SQL) — they notify every member instead of excluding one.
+    mems = author.userId
+      ? db.prepare('SELECT user_id FROM server_members WHERE server_id = ? AND user_id != ?').all(serverId, author.userId).map((r) => r.user_id)
+      : db.prepare('SELECT user_id FROM server_members WHERE server_id = ?').all(serverId).map((r) => r.user_id);
+  } catch { return; }
   if (!mems.length) return;
   const cands = mems;
   if (!cands.length) return;
@@ -3425,6 +3644,7 @@ function fmtMsg(r) {
   return {
     id: r.id, serverId: r.server_id, channelId: r.channel_id,
     content: r.content, created_at: r.created_at,
+    webhook: r.webhook_id ? { id: r.webhook_id, name: r.webhook_name || 'Webhook', avatar_url: r.webhook_avatar || null } : null,
     replyTo: r.reply_to_id ? (r.p_content != null ? { id: r.reply_to_id, author: r.p_name || 'deleted', snippet: String(r.p_content).slice(0, 140) } : { id: r.reply_to_id, author: 'deleted', snippet: '', deleted: true }) : null,
     threadRoot: r.thread_root_id || null,
     sys: r.sys || null,

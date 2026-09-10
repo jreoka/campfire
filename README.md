@@ -5,6 +5,7 @@ A tiny **Mattermost / Steam-chat alternative** you can host in one Docker contai
 - 🛖 **Servers** (guilds) with invite codes — create one, share the code/link, friends join
 - 💬 **Text channels** with live chat, history, typing indicators, presence
 - 🔊 **Voice rooms** — click to join, talk in-browser (WebRTC, no app needed)
+- 🤖 **Channel webhooks** — per-channel bot URLs with their own name + avatar (channel menu → Webhooks)
 - 📲 **PWA installable** — friends can "Add to Home Screen" on iPhone/Android and use it like a native app
 - 🗄️ **SQLite, zero deps to run** — data lives in one `./data` volume
 

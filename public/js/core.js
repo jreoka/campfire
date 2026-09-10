@@ -199,6 +199,13 @@ function paintAvatar(el, user) {
     avatar(el, user ? user.display_name : '?', user || null);
   }
 }
+// Webhook messages carry their poster in m.webhook (a name/avatar snapshot),
+// not m.user. This resolves whichever author a message actually has, so
+// every surface (chat, sheets, forward, reply chips) renders bots right.
+function msgAuthor(m) {
+  if (m && m.webhook) return { id: 'wh:' + (m.webhook.id || m.webhook.name || '?'), display_name: m.webhook.name || 'Webhook', username: m.webhook.name || 'Webhook', avatar_url: m.webhook.avatar_url || null };
+  return liveUserFor(m && m.user);
+}
 function fmtSize(b) {
   b = +b || 0;
   if (b < 1024) return b + ' B';

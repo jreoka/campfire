@@ -1,6 +1,7 @@
 'use strict';
 // ---------- messages ----------
 function canMod(m) {
+  if (m.webhook) return S.view === 'server' && canManage();
   if (!m.user) return false;
   if (S.view === 'home') return m.user.id === S.me.id;
   return m.user.id === S.me.id || (S.view === 'server' && canManage());
@@ -432,13 +433,13 @@ function messageEl(m, opts = {}) {
   const grouped = !!opts.grouped;
   div.className = 'msg' + (grouped ? ' grouped' : '');
   div.dataset.mid = m.id;
-  const own = m.user && m.user.id === S.me.id;
-  const lu = liveUserFor(m.user);
+  const au = msgAuthor(m);
+  const own = au && au.id === S.me.id;
   let inner = grouped
     ? `<span class="avatar ghost" title="${esc(fmtFull(m.created_at))}"><span class="gts">${esc(fmtTime(m.created_at))}</span></span><div class="body">`
-    : '<span class="avatar" data-uid="' + (m.user ? m.user.id : '') + '"></span><div class="body">';
+    : '<span class="avatar" data-uid="' + (m.webhook ? '' : (m.user ? m.user.id : '')) + '"></span><div class="body">';
   if (!grouped) {
-    inner += `<div class="head"><span class="who" data-uid="${m.user ? m.user.id : ''}" style="${nameStyleFor(lu)}">${esc(lu ? lu.display_name : 'deleted')}</span>${tagHTML(lu)}<span class="when" title="${esc(fmtFull(m.created_at))}">${fmtTime(m.created_at)}</span>${m.edited ? '<span class="edited">(edited)</span>' : ''}</div>`;
+    inner += `<div class="head"><span class="who" data-uid="${m.webhook ? '' : (m.user ? m.user.id : '')}" style="${nameStyleFor(au)}">${esc(au ? au.display_name : 'deleted')}</span>${m.webhook ? '<span class="bot-tag">BOT</span>' : tagHTML(au)}<span class="when" title="${esc(fmtFull(m.created_at))}">${fmtTime(m.created_at)}</span>${m.edited ? '<span class="edited">(edited)</span>' : ''}</div>`;
   }
   if (m.fwdFrom) {
     inner += `<div class="fwd-tag">Forwarded from <b>${esc(m.fwdFrom)}</b></div>`;
@@ -476,7 +477,7 @@ function messageEl(m, opts = {}) {
   bar += `<button data-act="more" title="More reactions">➕</button><button data-act="reply" title="Reply">↩</button><button data-act="menu" title="More actions">⋯</button>`;
   inner += '<div class="msg-actions">' + bar + '</div>';
   div.innerHTML = inner;
-  if (!grouped) paintAvatar(div.querySelector('.avatar'), lu);
+  if (!grouped) paintAvatar(div.querySelector('.avatar'), au);
   try { div.querySelectorAll('video.att-vid').forEach((v) => { ensureVideoPoster(v); observeStick(v); }); } catch {}
   return div;
 }
@@ -486,6 +487,11 @@ function messageEl(m, opts = {}) {
 const GROUP_MS = 5 * 60 * 1000;
 function shouldGroup(prev, m) {
   if (!prev || !m || prev.sys || m.sys) return false;
+  // Webhook posts only group with the same webhook (never with each other,
+  // deleted users, or regular messages — all of which share user null).
+  if (prev.webhook || m.webhook) {
+    if (!prev.webhook || !m.webhook || prev.webhook.id !== m.webhook.id) return false;
+  }
   if ((prev.user?.id || null) !== (m.user?.id || null)) return false;
   if ((m.created_at - prev.created_at) > GROUP_MS) return false;
   if (m.replyTo || m.fwdFrom) return false;
@@ -733,7 +739,8 @@ function renderComposerMeta() {
   if (hasReply) {
     const chip = document.createElement('div');
     chip.className = 'att-chip';
-    chip.innerHTML = `<span>Replying to <b>${esc(S.replyTo.user ? S.replyTo.user.display_name : '?')}</b>: ${esc(replyPreviewOf(S.replyTo))}</span>`;
+    const rau = msgAuthor(S.replyTo);
+    chip.innerHTML = `<span>Replying to <b>${esc(rau ? rau.display_name : '?')}</b>: ${esc(replyPreviewOf(S.replyTo))}</span>`;
     const x = document.createElement('button'); x.className = 'mini'; x.textContent = '✕';
     x.onclick = () => { S.replyTo = null; renderComposerMeta(); };
     chip.appendChild(x); box.appendChild(chip);
@@ -764,7 +771,8 @@ function renderThreadComposerMeta() {
   if (!S.threadReplyTo) return;
   const chip = document.createElement('div');
   chip.className = 'att-chip';
-  chip.innerHTML = `<span>Replying to <b>${esc(S.threadReplyTo.user ? S.threadReplyTo.user.display_name : '?')}</b>: ${esc(replyPreviewOf(S.threadReplyTo))}</span>`;
+  const trau = msgAuthor(S.threadReplyTo);
+  chip.innerHTML = `<span>Replying to <b>${esc(trau ? trau.display_name : '?')}</b>: ${esc(replyPreviewOf(S.threadReplyTo))}</span>`;
   const x = document.createElement('button'); x.className = 'mini'; x.textContent = '✕'; x.type = 'button';
   x.onclick = () => { S.threadReplyTo = null; renderThreadComposerMeta(); };
   chip.appendChild(x); box.appendChild(chip);

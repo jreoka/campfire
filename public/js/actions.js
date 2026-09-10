@@ -106,9 +106,9 @@ function openMsgSheet(mid) {
     head.querySelector('.sheet-who').textContent = 'Message';
     head.querySelector('.sheet-snip').textContent = m.content || '';
   } else {
-    const lu = liveUserFor(m.user);
-    paintAvatar(head.querySelector('.avatar'), lu);
-    head.querySelector('.sheet-who').innerHTML = `<span style="${nameStyleFor(lu)}">${esc(lu ? lu.display_name : 'deleted')}</span>${tagHTML(lu)}<span class="when" title="${esc(fmtFull(m.created_at))}">${fmtTime(m.created_at)}</span>`;
+    const au = msgAuthor(m);
+    paintAvatar(head.querySelector('.avatar'), au);
+    head.querySelector('.sheet-who').innerHTML = `<span style="${nameStyleFor(au)}">${esc(au ? au.display_name : 'deleted')}</span>${m.webhook ? '<span class="bot-tag">BOT</span>' : tagHTML(au)}<span class="when" title="${esc(fmtFull(m.created_at))}">${fmtTime(m.created_at)}</span>`;
     head.querySelector('.sheet-snip').textContent = m.content
       ? (m.content.length > 120 ? m.content.slice(0, 120) + '…' : m.content)
       : (m.attachments?.length ? `[${m.attachments.length} attachment${m.attachments.length === 1 ? '' : 's'}]` : '');
@@ -332,7 +332,8 @@ async function openForward(mid) {
   const ctx = pinsCtx();
   S.fwdSrcCtx = ctx;
   S.fwdPick = null;
-  const author = m.user ? m.user.display_name : 'Someone';
+  const au0 = msgAuthor(m);
+  const author = au0 ? au0.display_name : 'Someone';
   const snip = m.content ? (m.content.length > 140 ? m.content.slice(0, 140) + '…' : m.content)
     : (m.attachments?.length ? `[${m.attachments.length} attachment${m.attachments.length === 1 ? '' : 's'}]` : '[no text]');
   openModal('Forward message', `
@@ -343,7 +344,7 @@ async function openForward(mid) {
   `, 'Forward', () => sendForward(), { wide: true });
   const pv = document.querySelector('#modal-body .fwd-preview');
   if (pv) {
-    paintAvatar(pv.querySelector('.avatar'), m.user);
+    paintAvatar(pv.querySelector('.avatar'), au0);
     pv.querySelector('.fwd-from').textContent = author;
     pv.querySelector('.fwd-snip').textContent = snip;
   }
@@ -422,6 +423,7 @@ async function openChannelSettings(sid, c) {
     <label style="margin-top:.6rem;display:block">Description<input id="m-chan-desc" maxlength="200" placeholder="What's this channel about?" value="${esc(c.description || '')}" /></label>
     <label style="margin-top:.6rem;display:block">Slow mode<select id="m-chan-slow">${slows.map(([v, l]) => `<option value="${v}"${(c.slowmode || 0) === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
     <label class="nsfw-row"><input type="checkbox" id="m-chan-nsfw" class="gcheck"${c.nsfw ? ' checked' : ''} /><span><b>NSFW channel</b><span class="muted small">Members must confirm they are 18 or older before entering. Asked once per account.</span></span></label>
+    ${c.type === 'text' ? '<div class="row" style="margin-top:.8rem"><button type="button" class="btn small" id="m-chan-hooks">Webhooks…</button></div>' : ''}
   `, 'Save', async () => {
     const name = $('#m-chan-name').value.trim().replace(/\s+/g, '-');
     if (!name) { toast('Give the channel a name'); return; }
@@ -440,6 +442,123 @@ async function openChannelSettings(sid, c) {
       }
     }
   });
+  const hooksBtn = $('#m-chan-hooks');
+  if (hooksBtn) hooksBtn.onclick = () => openWebhookManager(sid, c.id);
+}
+/* ================= channel webhooks ================= */
+// Admins mint webhooks per text channel: each gets its own name + avatar
+// and a secret URL that posts into the channel with no account (bots,
+// feeds, CI). Posting can override the name/avatar per message.
+async function openWebhookManager(sid, cid) {
+  const c = S.serverDetail?.channels.find((v) => v.id === cid);
+  let hooks = [];
+  try {
+    ({ webhooks: hooks } = await api(`/api/servers/${sid}/channels/${cid}/webhooks`));
+  } catch { toast('Could not load webhooks'); return; }
+  openModal(`Webhooks · #${esc(c ? c.name : 'channel')}`, `
+    <p class="muted small">Each webhook posts into <b>#${esc(c ? c.name : '')}</b> through its own secret URL — no account needed. Anyone with a URL can post, so share them carefully. A post may override the name and avatar per message (<b>username</b> / <b>avatar_url</b>); past messages keep whatever they were sent with.</p>
+    <div id="wh-list"></div>
+    <div class="wh-create"><input id="wh-new-name" maxlength="32" placeholder="New webhook name, e.g. Deploy Bot" /><button type="button" class="btn small primary" id="wh-create-btn">Create</button></div>
+  `, 'Close', null, { wide: true });
+  const list = $('#wh-list');
+  for (const w of hooks) list.appendChild(webhookRow(sid, w));
+  if (!hooks.length) {
+    const p = document.createElement('p');
+    p.className = 'muted small';
+    p.style.textAlign = 'center';
+    p.textContent = 'No webhooks yet — create one below.';
+    list.appendChild(p);
+  }
+  $('#wh-create-btn').onclick = async () => {
+    const name = $('#wh-new-name').value.trim() || 'Webhook';
+    try {
+      await api(`/api/servers/${sid}/channels/${cid}/webhooks`, { method: 'POST', body: JSON.stringify({ name }) });
+      toast('Webhook created — copy its URL');
+    } catch (err) { toast('Create failed: ' + prettyError(err.message)); return; }
+    openWebhookManager(sid, cid);
+  };
+}
+let whAvatarTarget = null; // {sid, wid, cid} awaiting the shared file picker
+function webhookRow(sid, w) {
+  const row = document.createElement('div');
+  row.className = 'wh-row';
+  const fullUrl = location.origin + w.url;
+  row.innerHTML = `
+    <span class="avatar wh-av"></span>
+    <div class="wh-main">
+      <input class="wh-name" maxlength="32" value="${esc(w.name)}" />
+      <div class="wh-urlrow"><input class="wh-url" readonly value="${esc(fullUrl)}" /><button type="button" class="mini wh-copy">Copy</button></div>
+    </div>
+    <div class="wh-btns">
+      <button type="button" class="mini wh-save">Save</button>
+      <button type="button" class="mini wh-avatar">Avatar</button>
+      <button type="button" class="mini wh-regen" title="Issue a new URL (the current one stops working)">New URL</button>
+      <button type="button" class="mini danger wh-del">Delete</button>
+    </div>`;
+  paintAvatar(row.querySelector('.wh-av'), { display_name: w.name, avatar_url: w.avatar_url });
+  row.querySelector('.wh-copy').onclick = async () => {
+    try { await navigator.clipboard.writeText(fullUrl); toast('Webhook URL copied'); }
+    catch {
+      const inp = row.querySelector('.wh-url');
+      try { inp.focus(); inp.select(); document.execCommand('copy'); toast('Webhook URL copied'); }
+      catch { toast('Copy failed — select the URL manually'); }
+    }
+  };
+  row.querySelector('.wh-save').onclick = async () => {
+    const name = row.querySelector('.wh-name').value.trim();
+    if (!name) { toast('Give the webhook a name'); return; }
+    try {
+      await api(`/api/servers/${sid}/webhooks/${w.id}`, { method: 'PATCH', body: JSON.stringify({ name }) });
+      toast('Webhook saved');
+    } catch (err) { toast('Save failed: ' + prettyError(err.message)); return; }
+    openWebhookManager(sid, w.channel_id);
+  };
+  row.querySelector('.wh-avatar').onclick = () => {
+    whAvatarTarget = { sid, wid: w.id, cid: w.channel_id };
+    let fi = $('#wh-file');
+    if (!fi) {
+      fi = document.createElement('input');
+      fi.type = 'file'; fi.id = 'wh-file'; fi.accept = 'image/*'; fi.style.display = 'none';
+      fi.onchange = uploadWebhookAvatar;
+      document.body.appendChild(fi);
+    }
+    fi.value = '';
+    fi.click();
+  };
+  row.querySelector('.wh-regen').onclick = async () => {
+    const ok = await openConfirmModal({ title: `New URL for “${w.name}”?`, message: 'The current URL stops working immediately. Update anything posting to it.', okLabel: 'Issue new URL' });
+    openWebhookManager(sid, w.channel_id);
+    if (!ok) return;
+    try {
+      await api(`/api/servers/${sid}/webhooks/${w.id}/regenerate`, { method: 'POST' });
+      toast('New webhook URL issued');
+    } catch (err) { toast('Failed: ' + prettyError(err.message)); return; }
+    openWebhookManager(sid, w.channel_id);
+  };
+  row.querySelector('.wh-del').onclick = async () => {
+    const ok = await openConfirmModal({ title: `Delete “${w.name}”?`, message: 'Its URL stops working immediately. Messages it already posted stay in chat.', okLabel: 'Delete' });
+    openWebhookManager(sid, w.channel_id);
+    if (!ok) return;
+    try { await api(`/api/servers/${sid}/webhooks/${w.id}`, { method: 'DELETE' }); toast('Webhook deleted'); }
+    catch (err) { toast('Delete failed: ' + prettyError(err.message)); return; }
+    openWebhookManager(sid, w.channel_id);
+  };
+  return row;
+}
+async function uploadWebhookAvatar() {
+  const fi = $('#wh-file');
+  const t = whAvatarTarget;
+  const f = fi && fi.files && fi.files[0];
+  whAvatarTarget = null;
+  if (!f || !t) return;
+  const fd = new FormData();
+  fd.append('file', f);
+  try {
+    const r = await fetch(`/api/servers/${t.sid}/webhooks/${t.wid}/avatar`, { method: 'POST', headers: store.token ? { Authorization: 'Bearer ' + store.token } : {}, body: fd });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || ('http_' + r.status));
+    toast('Webhook avatar updated');
+  } catch (err) { toast('Avatar failed: ' + prettyError(err.message || 'upload_failed')); return; }
+  openWebhookManager(t.sid, t.cid);
 }
 async function modGroupMember(t, u) {
   const ok = await openConfirmModal({
@@ -561,6 +680,7 @@ function channelMenuItems(cid, ctype) {
     items.push({ label: 'Move up', icon: '↑', fn: () => moveChannelRail(cid, -1) });
     items.push({ label: 'Move down', icon: '↓', fn: () => moveChannelRail(cid, 1) });
     items.push({ label: 'Channel settings', icon: '⚙', fn: () => openChannelSettings(S.serverId, c) });
+    if (c.type === 'text') items.push({ label: 'Webhooks', icon: '⧉', fn: () => openWebhookManager(S.serverId, cid) });
     items.push({ label: 'Delete channel', icon: '🗑', danger: true, fn: () => confirmDeleteChannel(c) });
   }
   return items;

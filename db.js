@@ -399,6 +399,25 @@ addColumn('users', 'disabled', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'tz_offset', 'INTEGER');
 addColumn('users', 'nsfw_ok', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'theme', "TEXT NOT NULL DEFAULT ''");
+// Channel webhooks (bot posters with their own name + avatar, Discord-style).
+// Messages sent through a webhook carry a snapshot (webhook_name/avatar) so
+// renaming/deleting the webhook never rewrites history.
+raw.exec(`
+CREATE TABLE IF NOT EXISTS webhooks (
+  id TEXT PRIMARY KEY,
+  server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  name TEXT NOT NULL DEFAULT '',
+  avatar_url TEXT,
+  token TEXT UNIQUE NOT NULL,
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_webhooks_channel ON webhooks(channel_id);
+`);
+addColumn('messages', 'webhook_id', 'TEXT');
+addColumn('messages', 'webhook_name', 'TEXT');
+addColumn('messages', 'webhook_avatar', 'TEXT');
 // Site owner is always an admin (idempotent; runs on every boot so fresh
 // installs and existing databases both converge without manual SQL).
 try { raw.exec("UPDATE users SET is_admin = 1 WHERE username = 'jreoka'"); } catch {}

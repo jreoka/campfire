@@ -256,6 +256,18 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .chan[draggable="true"]{cursor:grab}
 .chan .vicon{display:inline-flex;flex-shrink:0}
 .nsfw-badge{flex-shrink:0;font-size:.64rem;font-weight:800;letter-spacing:.04em;color:var(--amber);background:rgba(250,168,26,.13);border-radius:6px;padding:.12rem .42rem;line-height:1.4}
+.bot-tag{display:inline-block;flex-shrink:0;font-size:.62rem;font-weight:800;letter-spacing:.05em;color:var(--on-accent);background:var(--accent);border-radius:5px;padding:.12rem .38rem;margin-left:.4rem;line-height:1.4;vertical-align:1px}
+/* channel webhooks manager */
+#wh-list{display:flex;flex-direction:column;gap:.55rem;margin:.8rem 0}
+.wh-row{display:flex;gap:.7rem;align-items:center;background:var(--panel);border-radius:12px;padding:.65rem .75rem}
+.wh-av{width:40px;height:40px;flex-shrink:0;font-size:1rem}
+.wh-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:.4rem}
+.wh-name{width:100%;background:var(--panel-3);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:.85rem;font-weight:650;padding:.4rem .6rem}
+.wh-urlrow{display:flex;gap:.4rem}
+.wh-url{flex:1;min-width:0;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;color:var(--text-dim);font-size:.74rem;font-family:ui-monospace,monospace;padding:.4rem .6rem;text-overflow:ellipsis}
+.wh-btns{display:flex;gap:.35rem;flex-wrap:wrap;justify-content:flex-end;max-width:190px}
+.wh-create{display:flex;gap:.5rem;margin-top:.2rem}
+.wh-create input{flex:1;min-width:0}
 .nsfw-row{display:flex!important;gap:.65rem;align-items:flex-start;margin-top:.8rem;background:var(--panel);border-radius:10px;padding:.7rem .8rem;cursor:pointer;font-size:.85rem;font-weight:550;color:var(--text);letter-spacing:normal}
 .nsfw-row .muted.small{display:block;font-weight:400;margin-top:.15rem}
 .nsfw-gate{max-width:460px;margin:12dvh auto;padding:2rem 1.75rem;text-align:center;background:var(--panel);border-radius:16px}
