@@ -108,6 +108,7 @@ function ensureVideoPoster(v) {
 // playback starts. If the user is sitting at the bottom, stay pinned
 // through all of it instead of stranding the view mid-video.
 let stickRO = null;
+const stickH = typeof WeakMap !== 'undefined' ? new WeakMap() : new Map(); // target -> last seen height
 function observeStick(el) {
   if (!el || el.dataset.stickOn) return;
   el.dataset.stickOn = '1';
@@ -115,10 +116,23 @@ function observeStick(el) {
     if (!stickRO) {
       stickRO = new ResizeObserver((entries) => {
         for (const e of entries) {
-          if (!e.target.isConnected) { try { stickRO.unobserve(e.target); } catch {} continue; }
+          if (!e.target.isConnected) { try { stickRO.unobserve(e.target); stickH.delete(e.target); } catch {} continue; }
           const box = e.target.closest ? e.target.closest('#messages,#thread-replies') : null;
           if (!box) continue;
-          if (box.scrollHeight - box.scrollTop - box.clientHeight < 200) {
+          // Follow the bottom through the growth itself: one tall image can
+          // pop in 300px+ in a single step, jumping a pinned reader clean
+          // past the 200px near-bottom band. Subtract this resize's own
+          // growth so the check sees where the reader was *before* it grew
+          // (a scrolled-up reader's distance dwarfs any single growth and
+          // is still left alone).
+          let growth = 0;
+          try {
+            const h = e.contentRect ? e.contentRect.height : 0;
+            const prev = stickH.has(e.target) ? stickH.get(e.target) : h;
+            if (h > prev) growth = h - prev;
+            stickH.set(e.target, h);
+          } catch {}
+          if (box.scrollHeight - box.scrollTop - box.clientHeight - growth < 200) {
             box.scrollTop = box.scrollHeight;
           }
         }
@@ -488,7 +502,13 @@ function messageEl(m, opts = {}) {
   inner += '<div class="msg-actions">' + bar + '</div>';
   div.innerHTML = inner;
   if (!grouped) paintAvatar(div.querySelector('.avatar'), au);
-  try { div.querySelectorAll('video.att-vid').forEach((v) => { ensureVideoPoster(v); observeStick(v); }); } catch {}
+  try {
+    div.querySelectorAll('video.att-vid').forEach((v) => { ensureVideoPoster(v); observeStick(v); });
+    // Images grow 0 -> full height on load and shove bottom-pinned readers
+    // upward; load/error listeners can miss instant (cached) loads, but the
+    // resize itself is always observable — follow it while near the bottom.
+    div.querySelectorAll('img.att-img').forEach((img) => observeStick(img));
+  } catch {}
   return div;
 }
 // Discord-style grouping: consecutive messages from the same author collapse
