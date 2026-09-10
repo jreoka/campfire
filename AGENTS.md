@@ -210,6 +210,10 @@ are load-bearing:
 - **Never rewrite an upload in place.** `media-compress.replaceBytes` writes a
   sibling temp file and `rename()`s over the target. `copyFile()` exposes a torn
   file to clamd and to HTTP at the same time.
+- **S3 mode buffers uploads in memory** (`multer.memoryStorage`) before the
+  bucket PUT, so `MAX_FILE_MB` (default 200) is also a per-upload RAM budget on
+  the box. Scanning and compression stream; multer does not. The composer reads
+  the cap from `/api/config` (`maxUploadMb`) — never hardcode it in `public/`.
 - **Compression is scan -> compress -> scan, and only the last verdict gets
   published.** On a clean verdict the `virus-scan` slot compresses the file
   itself (`processMedia` -> `media-compress.processUpload`), streams the

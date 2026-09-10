@@ -1045,9 +1045,17 @@ function paintUploadIcon(u) {
   if (img) img.src = u.thumb;
   else try { ic.insertAdjacentHTML('afterbegin', '<img src="' + esc(u.thumb) + '" alt="" />'); } catch {}
 }
+// Server-owned attachment cap (see /api/config maxUploadMb) — a file the
+// server would reject must never start uploading. The fallback mirrors the
+// server default so the two can't drift before config lands.
+function maxUploadBytes() {
+  const mb = Number(S.maxUploadMb);
+  return (Number.isFinite(mb) && mb > 0 ? mb : 200) * 1024 * 1024;
+}
 function uploadAndAttach(file) {
   if (!file) return;
-  if (file.size > 100 * 1024 * 1024) { toast('File too big (max 100MB)'); return; }
+  const maxBytes = maxUploadBytes();
+  if (file.size > maxBytes) { toast('File too big (max ' + Math.round(maxBytes / 1048576) + 'MB)'); return; }
   if (S.pendingAtts.length + activeUploadCount() >= 5) { toast('Max 5 attachments per message'); return; }
   S.uploads = S.uploads || [];
   const entry = {
@@ -1060,7 +1068,7 @@ function uploadAndAttach(file) {
     try { entry.thumb = URL.createObjectURL(file); } catch {}
   } else if (mime.startsWith('video/')) {
     // Videos have no <img>-able bytes: grab a frame for both the upload card
-    // and the composer chip, then drop the blob before it holds a 100MB file.
+    // and the composer chip, then drop the blob before it holds a large file.
     let src = '';
     try { src = URL.createObjectURL(file); } catch {}
     if (src) {

@@ -86,7 +86,7 @@ function kickMedia() { try { require('./media-compress').kickMediaCompress(); } 
 // Uploads live next to the database (persistent volume), never next to the code
 // (container image layers are ephemeral and wiped on every rebuild).
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'data', 'uploads');
-const MAX_FILE_BYTES = parseInt(process.env.MAX_FILE_MB || '100', 10) * 1024 * 1024;
+const MAX_FILE_BYTES = parseInt(process.env.MAX_FILE_MB || '200', 10) * 1024 * 1024;
 const MAX_IMG_BYTES = 8 * 1024 * 1024;
 const IMG_MIMES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 // General chat uploads accept ANY file type (images, audio incl. flac, video,
@@ -565,7 +565,7 @@ app.get('/api/config', (req, res) => {
       credential: process.env.TURN_PASS || undefined,
     });
   }
-  res.json({ iceServers, origin: ORIGIN, turnstileSiteKey: process.env.TURNSTILE_SITEKEY || null, linkPreviews: String(process.env.UNFURL === undefined ? '1' : process.env.UNFURL) !== '0' });
+  res.json({ iceServers, origin: ORIGIN, turnstileSiteKey: process.env.TURNSTILE_SITEKEY || null, linkPreviews: String(process.env.UNFURL === undefined ? '1' : process.env.UNFURL) !== '0', maxUploadMb: Math.round(MAX_FILE_BYTES / 1048576) });
 });
 
 // ---------- Cloudflare Turnstile (login/signup captcha) ----------
@@ -1221,7 +1221,7 @@ app.post('/api/webhooks/:wid/:token', async (req, res) => {
     const isRemoteImg = a?.kind === 'image' && /^https:\/\//.test(url);
     if (!isLocal && !isRemoteImg) continue;
     const mime = String(a?.mime || 'application/octet-stream').slice(0, 80);
-    cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, 100 * 1024 * 1024)), kind: isLocal ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file') : 'image', spoiler: a?.spoiler ? 1 : 0 });
+    cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, MAX_FILE_BYTES)), kind: isLocal ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file') : 'image', spoiler: a?.spoiler ? 1 : 0 });
   }
   if (!content && !cleanAtts.length) return res.status(400).json({ error: 'empty_message' });
   const mid = uid();
@@ -3268,7 +3268,7 @@ function cleanAttachments(atts) {
     const mime = String(a?.mime || 'application/octet-stream').slice(0, 80);
     out.push({
       url, name: String(a?.name || 'file').slice(0, 120), mime,
-      size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, 100 * 1024 * 1024)),
+      size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, MAX_FILE_BYTES)),
       kind: isLocal ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file') : 'image',
       spoiler: a?.spoiler ? 1 : 0,
     });
@@ -4162,7 +4162,7 @@ wss.on('connection', async (ws, req) => {
         const kind = isLocal
           ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file')
           : 'image';
-        cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, 100 * 1024 * 1024)), kind, spoiler: a?.spoiler ? 1 : 0 });
+        cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, MAX_FILE_BYTES)), kind, spoiler: a?.spoiler ? 1 : 0 });
       }
       if (!content && !cleanAtts.length && !pollOpts) return;
       const mid = uid();

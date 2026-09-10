@@ -239,6 +239,11 @@ async function main() {
 
     if (!(await waitForHttp('/api/config', 30000))) return fail('server did not come up');
 
+    // The composer's own cap comes from here (public/js/messages.js) so client
+    // and server can't disagree about MAX_FILE_MB.
+    const bootCfg = await api('GET', '/api/config');
+    check('server advertises the upload cap', bootCfg.maxUploadMb === (parseInt(process.env.MAX_FILE_MB || '200', 10) || 200), 'maxUploadMb=' + bootCfg.maxUploadMb);
+
     const reg = await api('POST', '/api/register', { username: 'pipetest', password: 'test1234', displayName: 'Pipe Test' });
     const token = reg.token;
     const srv = await api('POST', '/api/servers', { name: 'Pipeline' }, token);

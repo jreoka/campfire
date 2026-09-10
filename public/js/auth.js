@@ -56,7 +56,9 @@ window.cfTurnstileReady = () => {
 async function initTurnstile() {
   try {
     const cfg = await api('/api/config');
-    if (!cfg || !cfg.turnstileSiteKey) return;
+    if (!cfg) return;
+    if (cfg.maxUploadMb) S.maxUploadMb = Number(cfg.maxUploadMb) || S.maxUploadMb;
+    if (!cfg.turnstileSiteKey) return;
     S.turnstileKey = cfg.turnstileSiteKey;
   } catch {}
 }
@@ -186,6 +188,7 @@ async function boot() {
   try {
     const cfg = await api('/api/config').catch(() => null);
     if (cfg?.iceServers?.length) S.iceServers = cfg.iceServers;
+    if (cfg?.maxUploadMb) S.maxUploadMb = Number(cfg.maxUploadMb) || S.maxUploadMb;
     // Link previews are a server-side fetch (UNFURL=0 disables them fleet-wide).
     if (cfg && cfg.linkPreviews === false && typeof setLinkPreviews === 'function') setLinkPreviews(false);
     const { user } = await api('/api/me');

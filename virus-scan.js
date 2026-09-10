@@ -54,7 +54,7 @@ const now = () => Date.now();
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'data', 'uploads');
 const ENABLED = process.env.VIRUS_SCAN !== '0';
 const CLAM_PORT = Math.max(1, parseInt(process.env.CLAM_PORT || '3310', 10) || 3310);
-const MAX_FILE_BYTES = parseInt(process.env.MAX_FILE_MB || '100', 10) * 1024 * 1024;
+const MAX_FILE_BYTES = parseInt(process.env.MAX_FILE_MB || '200', 10) * 1024 * 1024;
 const KICK_MS = 500;
 const IDLE_MS = 10000;
 const MAX_ATTEMPTS = 3;

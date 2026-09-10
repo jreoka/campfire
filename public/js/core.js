@@ -106,6 +106,7 @@ const S = {
   voiceOccupancy: new Map(), // channelId -> [peers]
   voiceSince: new Map(), // channelId -> epoch ms first seen occupied (drives room timers)
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+  maxUploadMb: 200, // attachment cap, refreshed from /api/config at boot (server-owned)
   voice: null, // {serverId, channelId, stream, pcs:Map, muted, analysers}
   ws: null,
   typingTimers: new Map(),
