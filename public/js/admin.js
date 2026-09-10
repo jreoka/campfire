@@ -37,6 +37,8 @@ async function renderAdminTab() {
     box.dataset.built = '1';
     box.innerHTML = `
       <div id="adm-stats" class="adm-stats"><p class="muted small">Loading…</p></div>
+      <div class="pf-sec-label">Safety — known illegal content</div>
+      <div id="adm-safety"><p class="muted small">Loading…</p></div>
       <div class="pf-sec-label">Media compression</div>
       <div id="adm-media"><p class="muted small">Loading…</p></div>
       <div class="pf-sec-label">Users</div>
@@ -79,6 +81,7 @@ async function renderAdminTab() {
     box.addEventListener('click', adminClick);
   }
   loadAdminStats();
+  loadAdminSafety();
   loadAdminMedia();
   loadAdminUsers();
   loadAdminServers();
@@ -95,6 +98,252 @@ async function loadAdminStats() {
       card(s.channels, 'Channels') + card(s.messages, 'Messages') +
       card(s.online, 'Online') + card(s.newWeek, 'New this week');
   } catch { box.innerHTML = '<p class="muted small">Could not load stats.</p>'; }
+}
+
+// ---------- safety (known-CSAM hash matching) ----------
+// The review UI deliberately shows NO preview of suspected material: viewing
+// suspected CSAM is itself an offence in most jurisdictions. Match kind,
+// Hamming distance, uploader and context are enough to judge a false positive.
+function safetyBadge(txt, cls) { return `<span class="adm-badge${cls ? ' ' + cls : ''}">${esc(txt)}</span>`; }
+
+function admReviewRow(r) {
+  const who = r.displayName || r.username || 'deleted user';
+  const state = r.status === 'open' ? safetyBadge('OPEN', 'off')
+    : r.status === 'cleared' ? safetyBadge('CLEARED', 'admin') : safetyBadge('CONFIRMED', 'off');
+  const exact = r.matchKind === 'sha256' || r.matchKind === 'md5';
+  const dist = r.matchDistance === null ? '' : ` · distance ${r.matchDistance}`;
+  const note = r.notes ? `<div class="muted small">Note: ${esc(r.notes)}</div>` : '';
+  const reviewed = r.reviewedAt ? `<span class="muted small">${r.status === 'cleared' ? 'cleared' : 'confirmed'} by ${esc(r.reviewedByName || 'admin')} ${agoStr(r.reviewedAt)}</span>` : '';
+  // An exact hash hit is a byte-for-byte match: never a false positive, and
+  // worth saying so, because it changes how an admin should treat it.
+  const certainty = exact
+    ? '<div class="muted small">Byte-for-byte match — this cannot be a false positive.</div>'
+    : `<div class="muted small">Perceptual match${dist}. Near-misses happen; check the uploader and context before deciding.</div>`;
+  return `<div class="adm-row" data-rid="${esc(r.id)}" data-uid="${esc(r.userId || '')}">
+    <span class="avatar adm-av" style="background:${esc(r.avatarColor || '#5865f2')}"></span>
+    <div class="adm-main">
+      <div class="adm-name">${esc(who)} ${state}</div>
+      <div class="muted small">@${esc(r.username || 'unknown')}${r.isAdmin ? ' · site admin' : ''} · ${esc(r.context || 'upload')} · ${agoStr(r.createdAt)}</div>
+      <div class="muted small">matched <b>${esc(r.matchKind)}</b>${dist}${r.matchSource ? ' · list: ' + esc(r.matchSource) : ''}</div>
+      <div class="muted small" style="word-break:break-all">${esc(r.matchHash || '')}</div>
+      ${certainty}
+      ${note}
+      ${reviewed}
+      <div class="adm-actions">
+        ${r.status === 'open'
+          ? `<button class="mini" data-act="safe-clear">False positive — unlock</button>
+             <button class="mini danger" data-act="safe-confirm">Confirm &amp; keep locked</button>`
+          : `<button class="mini" data-act="safe-reopen">Reopen</button>`}
+        <button class="mini" data-act="safe-unlock">Unlock account</button>
+        <button class="mini danger" data-act="safe-purge">Delete evidence</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function loadAdminSafety() {
+  const box = $('#adm-safety');
+  if (!box) return;
+  try {
+    const [st, rv] = await Promise.all([
+      api('/api/admin/safety'),
+      api('/api/admin/safety/reviews?status=all&limit=25'),
+    ]);
+    Admin.safety = st;
+    const card = (n, l) => `<div class="adm-stat"><b>${n}</b><span>${l}</span></div>`;
+    const total = (st.listCounts.sha256 || 0) + (st.listCounts.md5 || 0) + (st.listCounts.pdq || 0);
+    const reviews = rv.reviews || [];
+    const open = reviews.filter((r) => r.status === 'open');
+    const done = reviews.filter((r) => r.status !== 'open');
+    box.innerHTML = `
+      <div class="adm-badges" style="margin:0 0 .55rem">
+        ${st.enabled ? safetyBadge('DETECTION ON', 'admin') : safetyBadge('DETECTION OFF', 'off')}
+        ${st.hasList ? safetyBadge(`${total} HASHES`, 'admin') : safetyBadge('NO HASH LIST — INACTIVE', 'off')}
+        ${st.action === 'lock' ? safetyBadge('AUTO-LOCK') : safetyBadge('FLAG ONLY')}
+        ${st.adminExempt ? safetyBadge('ADMINS EXEMPT') : safetyBadge('ADMINS NOT EXEMPT', 'off')}
+        ${safetyBadge('CHECKS ' + st.matchDistance + '/256')}
+        ${safetyBadge('PREVIEW ' + String(st.preview || 'off').toUpperCase())}
+        ${st.ffmpeg ? '' : safetyBadge('NO FFMPEG — EXACT MATCH ONLY', 'off')}
+      </div>
+      <div class="adm-stats" style="grid-template-columns:repeat(4,1fr)">
+        ${card(st.listCounts.pdq || 0, 'PDQ hashes')}
+        ${card((st.listCounts.sha256 || 0) + (st.listCounts.md5 || 0), 'Exact hashes')}
+        ${card(st.reviews.open || 0, 'Open reviews')}
+        ${card(st.lockedUsers || 0, 'Locked accounts')}
+      </div>
+      <div class="muted small" style="margin-top:.55rem">
+        Uploads are fingerprinted and compared against the hash list stored on this server.
+        No image, video or hash is ever sent to a third party.
+        ${st.hasList ? '' : '<b>Detection is inactive until hashes are imported</b> — known-CSAM hash lists are issued by NCMEC, Project Arachnid and the IWF.'}
+      </div>
+      <div class="muted small">
+        scanned ${st.scanned || 0} · clean ${st.clean || 0} · matched ${st.matched || 0} · errors ${st.errors || 0}
+        · quarantined ${st.quarantineFiles || 0} file${st.quarantineFiles === 1 ? '' : 's'}
+        · retention ${st.retentionDays || 0}d
+        · allowlisted ${(st.allowCounts.pdq || 0) + (st.allowCounts.sha256 || 0) + (st.allowCounts.md5 || 0)}
+        ${st.loadedAt ? '· list loaded ' + agoStr(st.loadedAt) : ''}
+      </div>
+      ${st.lastError ? `<div class="muted small">Last error: ${esc(st.lastError.error || '')} (${esc(String(st.lastError.key || '').split('/').pop())})</div>` : ''}
+      <div class="adm-actions" style="margin-top:.5rem">
+        <button class="mini" data-act="safe-import">Import hash list…</button>
+        <button class="mini" data-act="safe-rescan">Rescan existing uploads</button>
+        <button class="mini" data-act="safe-allowlist">Allowlist</button>
+      </div>
+      <div class="pf-sec-label" style="margin-top:.7rem">Open reviews (${open.length})</div>
+      ${open.length ? open.map(admReviewRow).join('') : '<p class="muted small">No open reviews.</p>'}
+      ${done.length ? `<div class="pf-sec-label">Recently reviewed</div>${done.map(admReviewRow).join('')}` : ''}
+      <div class="muted small" style="margin-top:.5rem">
+        Suspected material is never previewed here. Preserved files are kept out of the served upload area
+        and purged automatically after the retention window. If a match is confirmed, report it to your
+        national hotline (NCMEC CyberTipline in the US) — an ESP that learns of illegal material must report it.
+      </div>`;
+  } catch (e) {
+    box.innerHTML = `<p class="muted small">Could not load safety state: ${esc(String(e && e.message || e))}</p>`;
+  }
+}
+
+async function importHashList() {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.csv,.txt,.tsv,text/plain';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    const kind = await promptHashKind(f.name);
+    if (kind === undefined) return;
+    const fd = new FormData();
+    fd.append('file', f);
+    if (kind) fd.append('kind', kind);
+    fd.append('source', f.name.slice(0, 100));
+    try {
+      const res = await fetch('/api/admin/safety/hashlist', {
+        method: 'POST', headers: store.token ? { Authorization: 'Bearer ' + store.token } : {}, body: fd,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || data.error || res.status);
+      const parts = Object.entries(data.byKind || {}).map(([k, n]) => `${n} ${k}`).join(', ');
+      toast(`Imported ${data.added} hash${data.added === 1 ? '' : 'es'} (${parts}).`);
+      loadAdminSafety();
+    } catch (e) { toast('Import failed: ' + prettyError(String(e.message || e))); }
+  };
+  inp.click();
+}
+
+// A kind is only required when the file is a bare list of 64-hex hashes, which
+// are ambiguous between PDQ and SHA-256. Cancelling returns undefined.
+function promptHashKind(filename) {
+  return new Promise((resolve) => {
+    openModal('Import hash list', `
+      <p class="muted small" style="margin-top:0">Importing <b>${esc(filename)}</b>.</p>
+      <p class="muted small">If the file has a header row (for example <code>kind,hash</code> or
+      <code>hashType,hashValue</code>) the types are detected automatically. Otherwise pick the hash type:</p>
+      <label>Hash type<select id="m-kl-kind">
+        <option value="">Auto-detect from the file</option>
+        <option value="pdq">PDQ (perceptual, 64 hex chars)</option>
+        <option value="sha256">SHA-256 (exact, 64 hex chars)</option>
+        <option value="md5">MD5 (exact, 32 hex chars)</option>
+      </select></label>
+      <p class="muted small">Existing hashes of the same type are kept; duplicates are ignored.</p>
+    `, 'Import', async () => { resolve($('#m-kl-kind').value); }, { onCancel: () => resolve(undefined) });
+  });
+}
+
+async function adminSafetyClick(act, row) {
+  const rid = row && row.dataset.rid;
+  if (act === 'safe-import') return importHashList();
+  if (act === 'safe-rescan') {
+    return openModal('Rescan existing uploads', `
+      <p class="muted small" style="margin-top:0">Re-hashes media that was uploaded before the current hash list.
+      Hash lists are updated continuously, so content that did not match previously may match now.</p>
+      <label>What to scan<select id="m-rescan-scope">
+        <option value="files">Chat attachments (including DMs)</option>
+        <option value="profiles">Profile images (avatars, banners, emoji, server icons)</option>
+        <option value="all">Everything</option>
+      </select></label>
+      <p class="muted small">Runs in the background; the server stays responsive. Anything that matches is quarantined and reviewed.</p>
+    `, 'Start scan', async () => {
+      const scope = $('#m-rescan-scope').value;
+      const r = await api('/api/admin/safety/rescan', { method: 'POST', body: JSON.stringify({ scope }) });
+      toast(`Queued ${r.queued} file${r.queued === 1 ? '' : 's'} for rescan.`);
+      setTimeout(loadAdminSafety, 1200);
+    });
+  }
+  if (act === 'safe-allowlist') {
+    const r = await api('/api/admin/safety/allowlist');
+    const rows = r.allowlist || [];
+    openModal('Allowlisted hashes', `
+      <p class="muted small" style="margin-top:0">Hashes cleared as false positives. They never trigger a lock, for anyone.</p>
+      <div id="m-allow-list">${rows.length ? rows.map((a) => `<div class="adm-subrow" data-hash="${esc(a.hash)}" data-kind="${esc(a.kind)}">
+        <span class="adm-subname" style="word-break:break-all">${esc(a.hash.slice(0, 24))}…</span>
+        <span class="muted small">${esc(a.kind)}${a.reason ? ' · ' + esc(a.reason) : ''}</span>
+        <span class="spacer"></span>
+        <button class="mini danger" data-act="safe-allow-del">Remove</button>
+      </div>`).join('') : '<p class="muted small">Nothing allowlisted.</p>'}</div>
+    `, 'Close', null, { wide: true });
+    // Modal content lives outside the settings pane, so delegate on its own body.
+    const list = $('#m-allow-list');
+    if (list) list.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-act="safe-allow-del"]');
+      if (!b) return;
+      const sub = b.closest('.adm-subrow');
+      try {
+        await api(`/api/admin/safety/allowlist?hash=${encodeURIComponent(sub.dataset.hash)}&kind=${encodeURIComponent(sub.dataset.kind)}`, { method: 'DELETE' });
+        sub.remove();
+        toast('Removed from allowlist');
+        loadAdminSafety();
+      } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+    });
+    return;
+  }
+  if (act === 'safe-unlock') {
+    const uid = row && row.dataset.uid;
+    if (!uid) return;
+    await api(`/api/admin/safety/users/${uid}/unlock`, { method: 'POST' });
+    toast('Account unlocked');
+    return loadAdminSafety();
+  }
+  if (act === 'safe-purge') {
+    return openModal('Delete preserved evidence', `
+      <p class="muted small" style="margin-top:0">Permanently deletes the preserved file for this review.</p>
+      <p class="muted small">Only do this once you no longer need it — in the US, an ESP that reports to the
+      CyberTipline is expected to preserve the material for 90 days. This cannot be undone.</p>
+    `, 'Delete', async () => {
+      await api('/api/admin/safety/quarantine/purge', { method: 'POST', body: JSON.stringify({ reviewId: rid }) });
+      toast('Evidence deleted');
+      loadAdminSafety();
+    });
+  }
+  if (!rid) return;
+  if (act === 'safe-clear') {
+    return openModal('Clear as false positive', `
+      <p class="muted small" style="margin-top:0">Unlocks the account, restores the file and allowlists this hash
+      so the same image never triggers a lock again — for anyone.</p>
+      <label>Note (optional)<input id="m-safe-note" maxlength="200" placeholder="why this is a false positive" /></label>
+    `, 'Clear & unlock', async () => {
+      await api(`/api/admin/safety/reviews/${rid}/clear`, { method: 'POST', body: JSON.stringify({ notes: $('#m-safe-note').value.trim() }) });
+      toast('Cleared — account unlocked');
+      loadAdminSafety();
+    });
+  }
+  if (act === 'safe-confirm') {
+    return openModal('Confirm match', `
+      <p class="muted small" style="margin-top:0">Keeps the account locked and the file preserved.
+      Review the evidence, then report it to your national hotline.</p>
+      <label style="display:flex;gap:.5rem;align-items:center;margin:.4rem 0">
+        <input type="checkbox" id="m-safe-ban" style="width:auto" /> Also disable the account permanently
+      </label>
+      <label>Note (optional)<input id="m-safe-note" maxlength="200" /></label>
+    `, 'Confirm', async () => {
+      await api(`/api/admin/safety/reviews/${rid}/confirm`, { method: 'POST', body: JSON.stringify({ notes: $('#m-safe-note').value.trim(), ban: $('#m-safe-ban').checked }) });
+      toast('Confirmed');
+      loadAdminSafety();
+    });
+  }
+  if (act === 'safe-reopen') {
+    await api(`/api/admin/safety/reviews/${rid}/reopen`, { method: 'POST' });
+    toast('Review reopened');
+    return loadAdminSafety();
+  }
 }
 
 // ---------- media compression monitor ----------
@@ -300,6 +549,12 @@ async function adminClick(e) {
   const b = e.target.closest('[data-act]');
   if (!b) return;
   const act = b.dataset.act;
+  // Safety actions live in their own module section and use their own row ids.
+  if (act.startsWith('safe-')) {
+    try { await adminSafetyClick(act, b.closest('.adm-row[data-rid]')); }
+    catch (err) { toast('Failed: ' + prettyError(err.message)); }
+    return;
+  }
   const urow = b.closest('.adm-row[data-uid]');
   const srow = b.closest('.adm-row[data-sid]');
   const sub = b.closest('.adm-subrow[data-uid]');

@@ -48,6 +48,10 @@ Mobile-friendly PWA. Repo: `https://github.com/jreoka/campfire`.
 campfire/
   server.js          # Express API + WebSocket server (all async; chat, presence, voice signaling)
   db.js              # Postgres wrapper + schema (initDb: CREATE TABLE IF NOT EXISTS + guarded migrations)
+  pdq.js             # PDQ perceptual image hashing (port of Meta/Thorn's reference impl; see below)
+  csam-scan.js       # known-CSAM hash matching: hash list, quarantine, account lock, review queue
+  virus-scan.js      # ClamAV scanning + gated serving
+  media-compress.js  # background ffmpeg re-encode of over-large media
   package.json       # deps (express, ws, jsonwebtoken, bcryptjs, cookie-parser)
   Dockerfile         # node:22-alpine, no build tools needed
   docker-compose.yml # one service, ./data volume, requires JWT_SECRET in .env
@@ -174,7 +178,12 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
 
 ## Verification conventions
 
-- `node --check <file>` after every JS edit.
+- **`node --check <file>` after every JS edit.**
+- **Tests:** `node scripts/test-pdq.js [--ref <ThreatExchange checkout>]` (PDQ
+  correctness: unit + property + reference regression images) and
+  `BASE=http://localhost:3000 node scripts/test-csam.js` (end-to-end illegal-
+  content flow). Both must pass after touching hashing, uploads or the scan
+  pipeline.
 - Smoke test API: `curl localhost:3000/api/config`, register/login flow.
 - E2E (register → create server → invite-join → WS live message → history →
   channel create/delete → voice-join signaling) was verified passing; re-run an
@@ -182,6 +191,31 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
 - **Bump `service-worker.js` CACHE version on any `public/` change** or clients
   keep stale cached shells.
 - Static-only changes need no server restart (Express serves from disk).
+
+## Upload pipeline hazards (learned the hard way)
+
+Three background workers touch the same uploaded bytes, so ordering and
+atomicity are load-bearing:
+
+- **`child_process.execFile` defaults to `encoding: 'utf8'`.** Decoding raw RGB
+  frames as UTF-8 silently corrupts them (measured: 686180 "chars" instead of
+  786432 bytes). Always pass `encoding: 'buffer'` for binary stdout —
+  `execFileSync` defaults to buffer, which is why the sync path in the tests
+  never showed the bug.
+- **Never rewrite an upload in place.** `media-compress.replaceBytes` writes a
+  sibling temp file and `rename()`s over the target. `copyFile()` exposes a torn
+  file to clamd, to the CSAM hasher and to HTTP at the same time.
+- **Compression runs after the illegal-content verdict, never before.**
+  Re-encoding changes both the SHA-256 and the PDQ, so a compressor that wins
+  the race destroys exact-hash matching. `media-compress.fetchCandidates`
+  filters on `csam_scans` (skip `pending` younger than `CSAM_HOLD_MS`, never
+  touch `match`) and re-queues `csam-scan` after rewriting.
+- Scan keys are the storage key (`files/<hex>.png`), derived from the URL — NOT
+  the `attachments.id` uid. They are not interchangeable.
+- The CSAM serving gate covers **every** `/uploads/*` prefix (avatars, banners,
+  emoji, icons), unlike the virus gate, which only covers `files/`. Profile
+  media is scanned *inline* before the URL is stored; chat attachments are
+  async + gated.
 
 ## Environment notes (this dev machine)
 
@@ -201,7 +235,8 @@ Shipped: auth, servers/invites, text channels, voice rooms (mesh WebRTC, sidebar
 occupants + VAD rings), uploads, emoji (Emojibase set + custom + Klipy GIFs),
 replies/threads/reactions/edits/mentions/markdown, presence + statuses, user
 cards, tabbed settings, rail folders + DnD, B&W theme, ctx menus, auto-update,
-TOTP 2FA + passkeys + sessions, notification inbox.
+TOTP 2FA + passkeys + sessions, notification inbox,
+known-CSAM hash matching (local, admin review + account lock).
 Detail per change lives in `git log` — don't duplicate it here.
 
 ## Deployment (owner directive)
@@ -224,5 +259,33 @@ synchronously (use for..of or Promise.all); background timers go through
 safeInterval so rejections log instead of crashing.
 
 NEXT: iterate per owner feedback on the live site.
+
+## Illegal-content detection (CSAM)
+
+`csam-scan.js` + `pdq.js`. Uploads are fingerprinted (SHA-256/MD5 exact + PDQ
+perceptual, all 8 dihedral variants) and matched against a hash list imported
+into Postgres. **Fully local — nothing is sent to a third party.** The operator
+must obtain a list (NCMEC / Project Arachnid / IWF); until then detection is
+inert and the admin panel says so.
+
+On a match: bytes move to a quarantine dir outside the web-served tree
+(preserved, not deleted — 18 USC 2258A), the uploader is locked, a review opens
+in Admin → Safety. Admins can clear a false positive (unlock + allowlist so it
+never re-triggers) or confirm. **`is_admin` users are exempt from the automatic
+lock** so a false positive can't softlock the instance.
+
+Rules for changes here:
+- `pdq.js` is a line-by-line port of Meta's reference implementation and is
+  validated by `scripts/test-pdq.js` against the reference's own dihedral and
+  bridge-mods regression images. Keep it that way — a subtly wrong hash matches
+  nothing. Don't "improve" the constants; `torben()` returning the 129th order
+  statistic (not the 128th) is intentional and load-bearing.
+- Never render suspected material in the UI. `CSAM_REVIEW_PREVIEW` defaults to
+  `off` for legal and psychological reasons; distance + uploader + context are
+  what an admin adjudicates with.
+- The hash list is confidential. It lives in Postgres, never in `./data`.
+- PDQ matching is approximate by design (threshold 31/256); that is precisely
+  why the human review step exists.
+
 - Open ideas (not requested yet): DMs, push notifications, moderation roles
   beyond owner. (File/image sharing + custom emoji/GIFs already shipped.)

@@ -151,6 +151,8 @@ function prettyError(e) {
     captcha_required: 'Complete the captcha to continue.', captcha_failed: 'Captcha check failed — please try again.',
     bad_color: 'Pick a valid color.', cannot_kick_admin: 'Only the owner can remove admins.',
     admin_only: 'Only site admins can do that.', account_disabled: 'This account has been disabled.',
+    account_locked: 'This account is locked pending a safety review. Contact a site admin.',
+    illegal_content: 'That file was rejected: it matches known illegal material. The account has been locked pending review.',
     cannot_reset_own_2fa: 'Manage your own 2FA in Settings instead.', '2fa_not_enabled': 'That user does not have 2FA enabled.',
     nsfw_confirm_required: 'Confirm you are 18 or older to view this channel.',
     group_full: 'Group chats fit up to 9 friends.',
@@ -203,7 +205,14 @@ async function boot() {
     // of dropping to the login form — the user is still signed in, just
     // disconnected. Genuine auth failures (bad/expired token) still go to login.
     const emsg = String((err && err.message) || '');
-    const authDead = /^(bad_token|user_gone|account_disabled|not_logged_in)$/.test(emsg) || /^http_40[13]/.test(emsg);
+    const authDead = /^(bad_token|user_gone|account_disabled|account_locked|not_logged_in)$/.test(emsg) || /^http_40[13]/.test(emsg);
+    // A locked account is a deliberate, admin-visible state, not a broken
+    // session: say so plainly instead of recycling the login screen silently.
+    if (emsg === 'account_locked') {
+      showAuth();
+      try { toast(prettyError('account_locked'), 8000); } catch {}
+      return;
+    }
     if (store.token && !authDead && !S.bootRetrying) {
       S.bootRetrying = true;
       const invR = consumeInvite();

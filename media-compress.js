@@ -63,6 +63,10 @@ const MIN_SAVING = 0.08; // replace only when the output is >=8% smaller
 
 // Skip files below these sizes (CPU would buy almost nothing).
 const MIN_BYTES = { image: 400 * 1024, gif: 800 * 1024, video: 2 * 1024 * 1024, audio: 1024 * 1024 };
+// How long a file waits for its illegal-content verdict before we stop holding
+// it back from compression. Bounds the coupling: a wedged scanner delays
+// compression, it never blocks it forever.
+const CSAM_HOLD_MS = 10 * 60 * 1000;
 
 const log = (...a) => console.log('[media]', ...a);
 const warn = (...a) => console.warn('[media]', ...a);
@@ -295,7 +299,22 @@ async function downloadToTemp(key, tmpPath) {
 
 async function replaceBytes(key, srcPath, mime) {
   if (!storage.s3Enabled()) {
-    await fs.promises.copyFile(srcPath, path.join(UPLOAD_DIR, key));
+    const dest = path.join(UPLOAD_DIR, key);
+    if (!path.resolve(dest).startsWith(path.resolve(UPLOAD_DIR) + path.sep)) throw new Error('bad_key');
+    // Swap ATOMICALLY (write beside, then rename). copyFile() would expose a
+    // torn file to anything reading this path concurrently — and three things
+    // do: clamd, the CSAM hasher, and HTTP serving. A half-written file read
+    // by the scanner is a false verdict, which is exactly the failure mode we
+    // cannot afford. rename() is atomic, so readers see either the whole old
+    // file or the whole new one.
+    const tmp = dest + '.tmp-' + crypto.randomBytes(6).toString('hex');
+    try {
+      await fs.promises.copyFile(srcPath, tmp);
+      await fs.promises.rename(tmp, dest);
+    } catch (e) {
+      try { await fs.promises.unlink(tmp); } catch {}
+      throw e;
+    }
     return;
   }
   const buf = await fs.promises.readFile(srcPath);
@@ -391,9 +410,11 @@ async function processRow(row) {
       try { require('./virus-scan').dropScan(key); } catch {}
       resultKey = newKey;
     }
-    // Rewritten bytes need a fresh virus verdict (the scan gate holds the
-    // file as pending until the rescan lands seconds later).
+    // Rewritten bytes need fresh verdicts: the virus scan gate holds the file
+    // as pending until the rescan lands, and the CSAM hash must be recomputed
+    // because the encoder produced different bytes (and a different PDQ).
     try { require('./virus-scan').queueFileScan(resultKey); } catch {}
+    try { require('./csam-scan').queueHashScan(resultKey, {}); } catch {}
     stats.processed++;
     stats.savedBytes += inStat.size - outStat.size;
     stats.lastJob = { key, group: plan.group, pipeline: plan.pipeline, origSize: inStat.size, newSize: outStat.size, at: now() };
@@ -416,13 +437,33 @@ async function processRow(row) {
 
 async function fetchCandidates(limit) {
   // Oldest first so the pre-existing backlog drains in upload order.
+  //
+  // Two exclusions protect known-CSAM detection, which hashes the ORIGINAL
+  // upload bytes:
+  //   * a file whose verdict is still `pending` is skipped, so the scanner gets
+  //     to hash the pristine bytes before we re-encode them (compression
+  //     rewrites the container, which changes both the SHA-256 and the PDQ —
+  //     an exact-hash hit would be destroyed);
+  //   * a file that MATCHED is never re-encoded at all (its bytes were moved to
+  //     quarantine pending review and must stay untouched as evidence).
+  // The pending hold is time-bounded so a wedged scanner can never wedge the
+  // compressor permanently — see CSAM_HOLD_MS.
+  const holdSince = Date.now() - CSAM_HOLD_MS;
+  // The scan key is derived from the URL ('/uploads/files/x.png?v=1' ->
+  // 'files/x.png'), NOT from the row id. NULL-safe: a non-/uploads URL makes
+  // the comparison NULL, so NOT EXISTS is true and the row proceeds as before.
+  const keyExpr = (alias) => `split_part(substring(${alias}.url from '/uploads/(.*)$'), '?', 1)`;
+  const guard = (alias) => `AND NOT EXISTS (
+    SELECT 1 FROM csam_scans cs WHERE cs.key = ${keyExpr(alias)} AND (
+      cs.status = 'match' OR (cs.status = 'pending' AND cs.created_at > ?)
+    ))`;
   return await db.prepare(`
-    SELECT id, url, filename, mime, size, kind, created_at, 'att' AS tbl FROM attachments
-    WHERE compressed = 0 AND kind IN ('image','video','audio')
+    SELECT a.id, a.url, a.filename, a.mime, a.size, a.kind, a.created_at, 'att' AS tbl FROM attachments a
+    WHERE a.compressed = 0 AND a.kind IN ('image','video','audio') ${guard('a')}
     UNION ALL
-    SELECT id, url, filename, mime, size, kind, created_at, 'dm' AS tbl FROM dm_attachments
-    WHERE compressed = 0 AND kind IN ('image','video','audio')
-    ORDER BY created_at ASC LIMIT ?`).all(limit);
+    SELECT d.id, d.url, d.filename, d.mime, d.size, d.kind, d.created_at, 'dm' AS tbl FROM dm_attachments d
+    WHERE d.compressed = 0 AND d.kind IN ('image','video','audio') ${guard('d')}
+    ORDER BY created_at ASC LIMIT ?`).all(holdSince, holdSince, limit);
 }
 
 // 'more' = queue still has pending files (keep running hot),

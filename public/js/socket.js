@@ -80,11 +80,19 @@ function armConnSoon() {
 async function connAuthDead() {
   try { if (S.ws) { S.ws.onclose = null; S.ws.onerror = null; } } catch {}
   hideConn();
-  try { await api('/api/me'); return connectWS(); } catch {} // token still fine — just reconnect
+  let why = '';
+  try { await api('/api/me'); return connectWS(); } catch (e) { why = String((e && e.message) || ''); }
   try { S.ws?.close(); } catch {}
   S.ws = null; S.me = null;
   store.token = ''; store.sid = '';
   try { showAuth(); setMode('login'); } catch {}
+  // Distinguish "your account was locked" from "your session expired": the
+  // first is an admin action the user needs to understand, the second just
+  // needs a fresh sign-in.
+  if (why === 'account_locked') {
+    try { toast(prettyError('account_locked'), 9000); } catch {}
+    return;
+  }
   try { toast('Session expired — sign in again'); } catch {}
 }
 function connectWS() {
