@@ -1,7 +1,8 @@
 FROM node:22-alpine
 
-# pg_dump for the automatic S3 database backups (no build tools needed).
-RUN apk add --no-cache postgresql-client
+# pg_dump for the automatic S3 database backups + ffmpeg for the
+# background media compressor (both runtime binaries, no build tools).
+RUN apk add --no-cache postgresql-client ffmpeg
 
 WORKDIR /app
 COPY package.json ./

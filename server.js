@@ -33,7 +33,7 @@ const APP_VERSION = (() => {
       const p = path.join(dir, e.name);
       return e.isDirectory() ? walk(p) : [p];
     });
-    for (const f of [path.join(__dirname, 'server.js'), path.join(__dirname, 'db.js'), path.join(__dirname, 'backup.js'), path.join(__dirname, 'storage.js'), path.join(__dirname, 'package.json'), ...walk(path.join(__dirname, 'public'))]) {
+    for (const f of [path.join(__dirname, 'server.js'), path.join(__dirname, 'db.js'), path.join(__dirname, 'backup.js'), path.join(__dirname, 'storage.js'), path.join(__dirname, 'media-compress.js'), path.join(__dirname, 'package.json'), ...walk(path.join(__dirname, 'public'))]) {
       try { h.update(fs.readFileSync(f)); } catch {}
     }
     return h.digest('hex').slice(0, 12);
@@ -4251,6 +4251,9 @@ async function boot() {
   // Expired custom statuses clear within a minute (reads mask them instantly).
   await sweepExpiredStatuses();
   safeInterval(sweepExpiredStatuses, 60 * 1000);
+  // Chat-upload compressor (images/GIFs/video/audio): one file at a time,
+  // niced + single-threaded, so the VPS never feels it.
+  try { require('./media-compress').startMediaCompress(); } catch (e) { console.error('[media] scheduler failed to start:', (e && e.message) || e); }
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`[campfire] listening on :${PORT}  pg=${process.env.PGHOST || 'localhost'}:${process.env.PGPORT || '5432'}/${process.env.PGDATABASE || 'campfire'}`);
     try { require('./backup').startBackups(); } catch (e) { console.error('[backup] scheduler failed to start:', (e && e.message) || e); }
