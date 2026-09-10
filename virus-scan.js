@@ -247,7 +247,8 @@ function clamdScanStream(source, timeoutMs) {
     });
     sock.on('data', (d) => {
       resp += d.toString('utf8');
-      if (!resp.includes('\n')) return;
+      // clamd z-commands terminate the verdict with NUL (no newline).
+      if (!resp.includes('\n') && !resp.includes('\0')) return;
       const line = resp.trim();
       const found = line.match(/^stream:\s*(.+?)\s+FOUND$/);
       if (/OK$/.test(line)) finish(resolve, { clean: true });
