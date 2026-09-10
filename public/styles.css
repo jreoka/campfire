@@ -750,6 +750,12 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .sysadmin-badge{display:inline-flex;align-items:center;font-size:.68rem;font-weight:700;letter-spacing:.02em;color:var(--danger-tx);background:var(--danger-bg);border-radius:999px;padding:.18rem .6rem}
 /* Server tags (guild tags): tiny tonal pill after display names, uppercase. */
 .usertag{display:inline-flex;align-items:center;font-size:.62rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);background:var(--panel-3);border-radius:6px;padding:.12rem .38rem;margin-left:.35rem;white-space:nowrap;vertical-align:1px}
+/* Server-tag emoji button: square swatch that opens the emoji picker. */
+.tag-emoji-btn{flex:0 0 40px;width:40px;height:40px;font-size:1.25rem;line-height:1;background:var(--inset);border:1px solid var(--line);border-radius:10px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:border-color var(--t-fast)}
+.tag-emoji-btn:hover{border-color:var(--accent)}
+.tag-emoji-btn.empty{opacity:.45}
+.tag-emoji-btn:disabled{cursor:default;opacity:.45}
+.tag-emoji-btn:disabled:hover{border-color:var(--line)}
 .uc-statustext.ugame{color:var(--accent-hover);background:var(--accent-dim)}
 .member .mstatus.ugame,.dmrow .dmlast.ugame{color:var(--accent-hover)}
 /* name + game badge row (badge never wraps, name ellipsizes) */

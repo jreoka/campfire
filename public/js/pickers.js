@@ -40,7 +40,8 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null) {
 }
 function closePicker() { $('#picker').classList.add('hidden'); S.picker = null; S.gifPick = null; }
 S.gifPick = null; // 'avatar'|'banner' when the GIF picker is choosing profile media
-S.tagEmojiInput = null; // target input when the picker is choosing a server-tag emoji
+S.tagEmojiInput = null; // target button when the picker is choosing a server-tag emoji
+S.tagEmojiDone = null; // repaint callback after a tag-emoji pick
 function setPickerTab(t) {
   document.querySelectorAll('.pk-tab').forEach((b) => b.classList.toggle('active', b.dataset.ptab === t));
   $('#pk-emoji').classList.toggle('hidden', t !== 'emoji');
@@ -162,8 +163,9 @@ function pickEmoji(e) {
   if (S.picker?.mode === 'tag') {
     // Server-tag emoji: standard unicode emoji only (no custom :shortcodes:).
     if (!/\p{Extended_Pictographic}/u.test(e) || /^:[\w+-]+:$/.test(e)) toast('Tags support standard emoji only');
-    else if (S.tagEmojiInput && S.tagEmojiInput.isConnected) S.tagEmojiInput.value = e;
-    S.tagEmojiInput = null;
+    else if (S.tagEmojiInput && S.tagEmojiInput.isConnected) S.tagEmojiInput.dataset.emoji = e;
+    try { S.tagEmojiDone && S.tagEmojiDone(); } catch {}
+    S.tagEmojiInput = null; S.tagEmojiDone = null;
     closePicker();
     return;
   }
