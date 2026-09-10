@@ -127,7 +127,7 @@ function esc(s) {
 function avatar(el, name, color) {
   const c = color || '#5865f2';
   el.style.background = c;
-  el.style.boxShadow = '0 0 0 2px rgba(255,255,255,.06),0 2px 14px ' + c + '55';
+  el.style.boxShadow = 'none';
   el.textContent = (name || '?').trim().charAt(0).toUpperCase() || '?';
 }
 function paintAvatar(el, user) {
@@ -135,7 +135,7 @@ function paintAvatar(el, user) {
   el.classList.add('avatar');
   if (user && user.avatar_url) {
     el.style.background = 'transparent';
-    el.style.boxShadow = '0 0 0 2px rgba(255,255,255,.06),0 2px 14px ' + (user.avatar_color || '#5865f2') + '55';
+    el.style.boxShadow = 'none';
     el.innerHTML = '';
     const img = document.createElement('img');
     img.src = user.avatar_url; img.alt = ''; img.loading = 'lazy';
