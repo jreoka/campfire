@@ -607,8 +607,13 @@ async function saveEdit(mid) {
     }
     return;
   }
+  // Server tags own their clicks (final.js opens the server mini-panel) — a
+  // tag click must never re-open/re-anchor the user card underneath (e.g.
+  // the tag inside an open user card), and plain clicks inside the open card
+  // (whose own container carries data-uid) must not rebuild it either.
+  if (e.target.closest && e.target.closest('.usertag[data-tag-sid]')) return;
   if (memberEl?.dataset.uid) { openMemberCard(memberEl.dataset.uid, memberEl); return; }
-  if (uidEl?.dataset.uid) { openUserCard(uidEl.dataset.uid, e.clientX, e.clientY); return; }
+  if (uidEl?.dataset.uid && uidEl.id !== 'usercard') { openUserCard(uidEl.dataset.uid, e.clientX, e.clientY); return; }
 });
 
 // ---------- threads ----------
