@@ -1176,6 +1176,29 @@ app.patch('/api/servers/:id/roles/:rid', authRequired, (req, res) => {
   broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
   res.json({ ok: true });
 });
+app.post('/api/servers/:id/roles/:rid/move', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  if (!isAdmin(s.id, req.user.id)) return res.status(403).json({ error: 'owner_only' });
+  // Display order is position DESC (index 0 = top role): up swaps with the
+  // neighbor above, down with the one below. Hoisted member groups and top
+  // role name colors all follow this order.
+  const dir = req.body?.dir === 'down' ? 1 : -1;
+  const roles = db.prepare('SELECT * FROM roles WHERE server_id = ? ORDER BY position DESC, created_at ASC').all(s.id);
+  const i = roles.findIndex((r) => r.id === req.params.rid);
+  if (i < 0) return res.status(404).json({ error: 'no_role' });
+  db.transaction(() => {
+    // Normalize first so legacy duplicate positions can't misbehave, then swap.
+    roles.forEach((r, k) => db.prepare('UPDATE roles SET position = ? WHERE id = ?').run(roles.length - k, r.id));
+    const j = i + dir;
+    if (j >= 0 && j < roles.length) {
+      db.prepare('UPDATE roles SET position = ? WHERE id = ?').run(roles.length - j, roles[i].id);
+      db.prepare('UPDATE roles SET position = ? WHERE id = ?').run(roles.length - i, roles[j].id);
+    }
+  })();
+  broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
+  res.json({ ok: true });
+});
 app.delete('/api/servers/:id/roles/:rid', authRequired, (req, res) => {
   const s = getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });

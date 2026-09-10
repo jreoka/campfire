@@ -227,6 +227,8 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .chan .dot{width:8px;height:8px;border-radius:50%;background:var(--green);margin-left:auto;flex-shrink:0}
 .mini{display:inline-flex;align-items:center;justify-content:center;min-height:30px;border:0;background:var(--panel-3);color:var(--text);border-radius:8px;padding:.32rem .85rem;font-size:.8rem;font-weight:700;cursor:pointer;transition:background var(--t-fast)}
 .mini:hover{background:var(--panel-4)}
+.mini:disabled{opacity:.35;cursor:default}
+.mini:disabled:hover{background:var(--panel-3)}
 .mini.danger{background:var(--danger-bg);border:1px solid var(--danger-line);color:var(--danger-tx)}
 .mini.danger:hover{background:rgba(248,113,113,.17)}
 #me-card{display:flex;align-items:center;gap:.55rem;padding:.5rem .7rem;margin:.4rem .6rem .6rem;border:0;border-radius:12px;background-color:var(--panel-2);font-size:.88rem;font-weight:600;cursor:pointer;overflow:hidden;transition:background-color .15s}

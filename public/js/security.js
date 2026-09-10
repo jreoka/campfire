@@ -612,9 +612,17 @@ function renderServerTab() {
       rbox.innerHTML = '';
       const roles = (S.serverDetail?.roles || []);
       if (!roles.length) rbox.innerHTML = '<p class="muted small">No roles yet — create one below. Assign them from a member\'s profile card.</p>';
-      for (const r of roles) {
+      else rbox.innerHTML = '<p class="muted small">Top first — hoisted roles show in this order.</p>';
+      for (const [idx, r] of roles.entries()) {
         const row = document.createElement('div'); row.className = 'set-row';
         row.innerHTML = `<span class="rdot"${r.color ? ` style="background:${esc(r.color)}"` : ''}></span><span class="grow">${esc(r.name)}${r.admin ? ' <span class="muted small">· admin</span>' : ''}${r.hoist ? ' <span class="muted small">· hoisted</span>' : ''}</span>`;
+        const up = document.createElement('button'); up.className = 'mini'; up.textContent = '▲'; up.title = 'Move up';
+        up.disabled = idx === 0;
+        up.onclick = async () => { try { await api(`/api/servers/${d.id}/roles/${r.id}/move`, { method: 'POST', body: JSON.stringify({ dir: 'up' }) }); refreshServerTab(); } catch (err) { toast('Failed: ' + prettyError(err.message)); } };
+        const dn = document.createElement('button'); dn.className = 'mini'; dn.textContent = '▼'; dn.title = 'Move down';
+        dn.disabled = idx === roles.length - 1;
+        dn.onclick = async () => { try { await api(`/api/servers/${d.id}/roles/${r.id}/move`, { method: 'POST', body: JSON.stringify({ dir: 'down' }) }); refreshServerTab(); } catch (err) { toast('Failed: ' + prettyError(err.message)); } };
+        row.append(up, dn);
         const nm = document.createElement('button'); nm.className = 'mini'; nm.textContent = 'Rename';
         nm.onclick = async () => {
           const v = await openPromptModal({ title: 'Rename role', label: 'Role name', initial: r.name, okLabel: 'Save', maxlength: 32 });
