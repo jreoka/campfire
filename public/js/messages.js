@@ -146,8 +146,42 @@ function setScrollTop(box, v, intent) {
 function watchBottomState(box) {
   if (!box || box.dataset.atBottomWatch) return;
   box.dataset.atBottomWatch = '1';
+  // Input proves the reader is driving, a scroll event does not. The box also
+  // scrolls on its own: browsers restore a scroll offset on reload, layout
+  // clamps scrollTop when the viewport shrinks (composer grows, call stage
+  // opens), and native scroll anchoring rewrites it under late media. Reading
+  // any of those as "the reader scrolled up" is how a pinned view gets
+  // stranded partway up the history with the Jump-to-present pill as the only
+  // way back — so only wheel/touch/drag/keyboard input may un-pin it.
+  const noteUser = () => { box._userScrollAt = Date.now(); };
+  box.addEventListener('wheel', noteUser, { passive: true });
+  box.addEventListener('touchstart', noteUser, { passive: true });
+  box.addEventListener('touchmove', noteUser, { passive: true });
+  box.addEventListener('keydown', noteUser, { passive: true });
+  box.addEventListener('focusin', noteUser, { passive: true });
+  box.addEventListener('pointerdown', (e) => { box._scrollPointer = e.pointerId; }, { passive: true });
+  // Dragging inside the box (scrollbar thumb, text selection) only counts once
+  // the pointer actually moves with a button held — a plain click must not
+  // hand the next stray scroll event to the reader.
+  box.addEventListener('pointermove', (e) => {
+    if (box._scrollPointer === e.pointerId && (e.buttons & 1)) noteUser();
+  }, { passive: true });
+  const endPointer = (e) => { if (box._scrollPointer === e.pointerId) box._scrollPointer = null; };
+  window.addEventListener('pointerup', endPointer, { passive: true });
+  window.addEventListener('pointercancel', endPointer, { passive: true });
+  const userDrove = () => box._scrollPointer != null || Date.now() - (box._userScrollAt || 0) < 900;
   box.addEventListener('scroll', () => {
-    if (typeof box._autoTop === 'number' && Math.abs(box.scrollTop - box._autoTop) <= 2) return; // ours
+    if (box._jumpHold) return; // a jump owns the scroll until it settles
+    // An in-flight smooth landing (jump-to-present) is ours too: its pass over
+    // the history is not the reader leaving the bottom, and re-pinning mid
+    // animation would cut it short.
+    if (box._smoothUntil && Date.now() < box._smoothUntil) { box._smoothUntil = Date.now() + 250; return; }
+    if (box.dataset.atBottom === '1' && !userDrove()) {
+      // Nobody asked for this — hold the bottom the reader never left.
+      setScrollTop(box, box.scrollHeight, '1');
+      try { if (typeof updatePill === 'function') updatePill(); } catch {}
+      return;
+    }
     markBottomState(box);
   }, { passive: true });
   document.addEventListener('visibilitychange', () => {
@@ -610,13 +644,13 @@ function anchorBottom(box) {
   // (e.g. right after a refresh) and each one popping in above the
   // viewport shoves the view upward as it grows. Without this guard the
   // reader drifts hundreds of px up and gets stranded "way up" with the
-  // Jump-to-present pill showing. Re-snap on every settle until the user
-  // scrolls themselves, or after a few seconds — whichever comes first.
+  // Jump-to-present pill showing. Keep re-snapping until the reader takes
+  // over with real input, or after a few seconds — whichever comes first.
   setScrollTop(box, box.scrollHeight, '1');
   watchBottomState(box);
-  // Reachable target: max scrollTop is height minus viewport — tracking
-  // raw scrollHeight (unreachable by exactly clientHeight) made the
-  // takeover check below suicide the hold on its first settled image.
+  // Reachable target: max scrollTop is height minus viewport — tracking raw
+  // scrollHeight (unreachable by exactly clientHeight) left every comparison
+  // here a few pixels short.
   const bottomOf = () => Math.max(0, box.scrollHeight - box.clientHeight);
   let want = bottomOf(), live = true;
   // One hold per box: a newer hold (re-render, live message, thread reply)
@@ -633,7 +667,6 @@ function anchorBottom(box) {
     try { if (mo) mo.disconnect(); } catch {}
     box.removeEventListener('wheel', take);
     box.removeEventListener('touchmove', take);
-    box.removeEventListener('scroll', onScroll);
     box.removeEventListener('load', onSettle, true);
     box.removeEventListener('error', onSettle, true);
     box.removeEventListener('loadedmetadata', onSettle, true);
@@ -641,16 +674,12 @@ function anchorBottom(box) {
   const take = () => stop(); // wheel / touch scroll = the user took over
   const snap = () => {
     if (!current() || !stillHere() || Date.now() - t0 > 8000) { stop(); return; }
+    // The reader took over (watchBottomState flips this off their input, not
+    // off a stray scroll event) — let go at once.
+    if (box.dataset.atBottom === '0') { stop(); return; }
     want = bottomOf();
     if (Math.abs(box.scrollTop - want) > 0.5) setScrollTop(box, want, '1');
     if (typeof updatePill === 'function') { try { updatePill(); } catch {} }
-  };
-  const onScroll = () => {
-    // Our own snaps fire scroll events too — only a position that doesn't
-    // match our last snap (checked next frame) means the user dragged the
-    // scrollbar themselves. Content growth above never changes scrollTop,
-    // so it can't false-trigger this.
-    requestAnimationFrame(() => { if (!current()) { stop(); return; } if (Math.abs(box.scrollTop - want) > 2) stop(); });
   };
   const onSettle = (e) => {
     // Capture phase: 'load' doesn't bubble, but this still catches media
@@ -668,9 +697,13 @@ function anchorBottom(box) {
     mo = new MutationObserver(() => snap());
     mo.observe(box, { childList: true, subtree: true, characterData: true });
   } catch { mo = null; }
+  // Also watch the box itself: when #messages resizes (the composer grows for
+  // a restored draft, a call stage opens, the recording bar appears) its
+  // scrollTop is clamped — a pinned reader silently ends up short of the
+  // bottom with nothing left to snap them back.
+  observeStick(box);
   box.addEventListener('wheel', take, { passive: true });
   box.addEventListener('touchmove', take, { passive: true });
-  box.addEventListener('scroll', onScroll, { passive: true });
   box.addEventListener('load', onSettle, true);
   box.addEventListener('error', onSettle, true);
   box.addEventListener('loadedmetadata', onSettle, true);
@@ -904,8 +937,16 @@ function renderMessages(force = false) {
   const msgs = S.messages.get(S.channelId) || [];
   // Stamp the box with the conversation it now shows: saveScrollPos() refuses
   // to key a list under a different one (see there).
-  box.dataset.ctx = 'server:' + (S.channelId || '');
-  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+  const ctx = 'server:' + (S.channelId || '');
+  // Explicit pin state beats inference: late media (or a viewport that shrank
+  // underneath the reader) can push the live bottom further than the 200px
+  // band without a single scroll event, and demoting a pinned view there is
+  // exactly the "refresh left me up in the history" failure. Only trusted for
+  // the conversation already on screen — this box is reused across channels,
+  // and a switch must still restore its own anchor.
+  const pinned = box.dataset.ctx === ctx && box.dataset.atBottom === '1';
+  box.dataset.ctx = ctx;
+  const nearBottom = pinned || box.scrollHeight - box.scrollTop - box.clientHeight < 200;
   // Rebuilding the list resets scrollTop to 0 — anchor on the topmost
   // visible message so scrolled-up readers keep their exact place through
   // every background update (reaction, edit, thread reply, status change…).
@@ -937,7 +978,9 @@ function appendLiveMessage(box, arr, msg) {
     // Out-of-order arrival (shouldn't happen — the server stamps now()):
     // fall back so ordering stays correct.
     if (prev && (msg.created_at || 0) < (prev.created_at || 0)) return false;
-    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+    // Same rule as renderMessages: a pinned reader follows the live tail even
+    // if late growth already drifted the geometry out of the near-bottom band.
+    const nearBottom = box.dataset.atBottom === '1' || box.scrollHeight - box.scrollTop - box.clientHeight < 200;
     let groupPrev = prev;
     if (!prev || fmtDay(prev.created_at) !== fmtDay(msg.created_at)) {
       const d = document.createElement('div');

@@ -302,8 +302,8 @@ function jumpToPresent() {
     box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
     // A deliberate request for the bottom: mark it now, and track our own
     // landing so the smooth scroll's pass over the history isn't mistaken for
-    // the reader scrolling up.
-    try { box.dataset.atBottom = '1'; box._autoTop = Math.max(0, box.scrollHeight - box.clientHeight); } catch {}
+    // the reader scrolling up (or cut short by the pinned-state re-pin).
+    try { box.dataset.atBottom = '1'; box._autoTop = Math.max(0, box.scrollHeight - box.clientHeight); box._smoothUntil = Date.now() + 400; } catch {}
     updatePill();
   }
 }

@@ -306,6 +306,14 @@ composer always keeps its slot (`--strip-h`, one text line, transparent, text
 fades) — hiding it resizes `#messages` and shoves the conversation up/down.
 `#messages` pays for that slot by giving up its bottom padding, and anything
 anchored to the composer top stacks `var(--strip-h)` on `var(--composer-h)`.
+The bottom-pin state (`#messages`/`#thread-replies` `dataset.atBottom`) flips
+only on real input (wheel/touch/drag/key) — never on a bare scroll event.
+Browsers fire those for their own reasons (reload scroll restore, layout
+clamping when the viewport shrinks, native scroll anchoring under late media)
+and reading them as "the reader scrolled up" is what stranded pinned views
+mid-history after a refresh; the container must also be observed by the stick
+ResizeObserver, or a shrunken viewport silently leaves the reader short of the
+bottom.
 
 NEXT: iterate per owner feedback on the live site.
 
