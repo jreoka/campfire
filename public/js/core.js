@@ -134,6 +134,7 @@ function isEarlyUser(u) {
   const t = Number(u && u.created_at);
   return Number.isFinite(t) && t > 0 && (Date.now() - t) <= EARLY_USER_MS;
 }
+function isSysAdmin(u) { return !!(u && u.is_admin); }
 function avatarColorFor(user) {
   const key = String((user && (user.id || user.username || user.display_name)) || '');
   if (!key) return AV_COLORS[0]; let h = 2166136261;
