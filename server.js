@@ -1863,6 +1863,215 @@ async function mediaHist(userId, kind) {
   return await db.prepare('SELECT id,url,created_at FROM media_history WHERE user_id = ? AND kind = ? ORDER BY created_at DESC LIMIT 8').all(userId, kind);
 }
 
+// ---------- stories (24-hour photo/video posts) ----------
+// A story item is a normal chat upload (files/ key — the virus-scan gate and
+// the compression pipeline cover it for free) plus an audience: 'friends'
+// (accepted friends) or 'server' (everyone in one server). Views are recorded
+// once per viewer so trays show a seen/unseen ring and your own story shows
+// who watched it. Expiry (24h) deletes the row and the bytes behind it.
+const STORY_TTL_MS = 24 * 60 * 60 * 1000;
+const STORY_MAX_ACTIVE = 20;   // live items per user, across audiences
+const STORY_CAPTION_MAX = 200;
+const STORY_MIN_GAP_MS = 3000; // anti-flood: one post per few seconds
+const storyPostAt = new Map();
+
+async function acceptedFriendIds(userId) {
+  const rows = await db.prepare('SELECT user_a, user_b FROM friendships WHERE status = ? AND (user_a = ? OR user_b = ?)').all('accepted', userId, userId);
+  return rows.map((f) => (f.user_a === userId ? f.user_b : f.user_a));
+}
+async function storyVisibleTo(s, viewerId) {
+  if (!s) return false;
+  if (s.user_id === viewerId) return true;
+  if (s.audience === 'server') return !!(s.server_id && await isMember(s.server_id, viewerId));
+  return await areFriends(s.user_id, viewerId);
+}
+function storyView(s, author, seen, views) {
+  return {
+    id: s.id, url: s.url, kind: s.kind, mime: s.mime, caption: s.caption || '',
+    duration_ms: Math.max(1000, Math.min(60000, Number(s.duration_ms) || 5000)),
+    created_at: s.created_at, expires_at: s.expires_at,
+    audience: s.audience, server_id: s.server_id || null,
+    author: author || null, seen: !!seen, views: Number(views) || 0,
+  };
+}
+async function storyAudienceIds(s) {
+  if (s.audience === 'server') {
+    return (await db.prepare('SELECT user_id FROM server_members WHERE server_id = ?').all(s.server_id)).map((r) => r.user_id);
+  }
+  return await acceptedFriendIds(s.user_id);
+}
+// Tell everyone who can see it. Server audiences fan out through the socket
+// roster (broadcastToServer already covers the author's own sockets); friend
+// audiences go socket-to-socket per accepted friend.
+async function notifyStoryAudience(s, msg) {
+  if (s.audience === 'server') broadcastToServer(s.server_id, msg);
+  else for (const id of await storyAudienceIds(s)) notifyUser(id, msg);
+  notifyUser(s.user_id, msg); // the author's other tabs/devices
+}
+async function announceStoryNew(s, author) {
+  await notifyStoryAudience(s, { t: 'story-new', story: storyView(s, author, true, 0), serverId: s.audience === 'server' ? s.server_id : null });
+}
+
+// GET /api/stories — every live story I can see, grouped into trays:
+//   mine    { items, viewers }            (one item per post)
+//   friends [ { user, items, unseen, latest } ]
+//   servers [ { server, items, unseen, latest, mine } ]
+app.get('/api/stories', authRequired, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const me = req.user.id;
+  const ts = now();
+  const friendIds = await acceptedFriendIds(me);
+  const blocked = (await db.prepare('SELECT blocked_id FROM blocks WHERE user_id = ?').all(me)).map((r) => r.blocked_id);
+  const blockedBy = (await db.prepare('SELECT user_id FROM blocks WHERE blocked_id = ?').all(me)).map((r) => r.user_id);
+  const hidden = new Set([...blocked, ...blockedBy]);
+  const serverIds = (await db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(me)).map((r) => r.server_id);
+  const conds = [];
+  const params = [];
+  if (friendIds.length) { conds.push(`(audience = 'friends' AND user_id IN (${friendIds.map(() => '?').join(',')}))`); params.push(...friendIds); }
+  if (serverIds.length) { conds.push(`(audience = 'server' AND server_id IN (${serverIds.map(() => '?').join(',')}))`); params.push(...serverIds); }
+  conds.push('user_id = ?'); params.push(me);
+  const rows = (await db.prepare(`SELECT * FROM stories WHERE expires_at > ? AND (${conds.join(' OR ')}) ORDER BY created_at ASC`).all(ts, ...params))
+    // Blocked pairs never see each other's friend-stories (a server story is
+    // room context, not a personal share, so it stays visible).
+    .filter((s) => s.user_id === me || s.audience === 'server' || !hidden.has(s.user_id));
+  const ids = rows.map((s) => s.id);
+  const authorIds = [...new Set(rows.map((s) => s.user_id))];
+  const byId = new Map(authorIds.length
+    ? (await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id IN (${authorIds.map(() => '?').join(',')})`).all(...authorIds)).map((u) => [u.id, publicUser(u)])
+    : []);
+  const seen = new Set(ids.length ? (await db.prepare(`SELECT story_id FROM story_views WHERE user_id = ? AND story_id IN (${ids.map(() => '?').join(',')})`).all(me, ...ids)).map((r) => r.story_id) : []);
+  const viewCount = new Map();
+  const mineIds = rows.filter((s) => s.user_id === me).map((s) => s.id);
+  if (mineIds.length) {
+    for (const r of await db.prepare(`SELECT story_id, COUNT(*) c FROM story_views WHERE story_id IN (${mineIds.map(() => '?').join(',')}) GROUP BY story_id`).all(...mineIds)) {
+      viewCount.set(r.story_id, r.c);
+    }
+  }
+  const friendTrays = new Map(), serverTrays = new Map();
+  let mine = null;
+  for (const s of rows) {
+    const item = storyView(s, byId.get(s.user_id) || publicUser(null), seen.has(s.id), viewCount.get(s.id) || 0);
+    if (s.user_id === me) {
+      if (!mine) mine = { items: [], latest: 0, viewers: 0 };
+      mine.items.push(item);
+      mine.latest = Math.max(mine.latest, s.created_at);
+      mine.viewers = Math.max(mine.viewers, item.views);
+      continue;
+    }
+    if (s.audience === 'server') {
+      const t = serverTrays.get(s.server_id) || serverTrays.set(s.server_id, { id: s.server_id, items: [], unseen: 0, latest: 0 }).get(s.server_id);
+      t.items.push(item);
+      t.latest = Math.max(t.latest, s.created_at);
+      if (!item.seen) t.unseen++;
+    } else {
+      const t = friendTrays.get(s.user_id) || friendTrays.set(s.user_id, { id: s.user_id, items: [], unseen: 0, latest: 0 }).get(s.user_id);
+      t.items.push(item);
+      t.latest = Math.max(t.latest, s.created_at);
+      if (!item.seen) t.unseen++;
+    }
+  }
+  const srvIds = [...serverTrays.keys()];
+  const srvById = new Map(srvIds.length
+    ? (await db.prepare('SELECT id, name, icon_url FROM servers WHERE id IN (' + srvIds.map(() => '?').join(',') + ')').all(...srvIds)).map((s) => [s.id, { id: s.id, name: s.name, icon_url: s.icon_url || null }])
+    : []);
+  res.json({
+    mine,
+    friends: [...friendTrays.values()]
+      .map((t) => ({ user: byId.get(t.id) || publicUser(null), items: t.items, unseen: t.unseen, latest: t.latest }))
+      .sort((a, b) => (b.unseen - a.unseen) || (b.latest - a.latest)),
+    servers: [...serverTrays.values()]
+      .map((t) => ({ server: srvById.get(t.id) || { id: t.id, name: 'Server', icon_url: null }, items: t.items, unseen: t.unseen, latest: t.latest }))
+      .sort((a, b) => (b.unseen - a.unseen) || (b.latest - a.latest)),
+  });
+});
+
+// POST /api/stories — publish an already-uploaded file (see /api/upload).
+app.post('/api/stories', authRequired, async (req, res) => {
+  const me = req.user;
+  const url = String(req.body?.url || '');
+  // Chat uploads carry a ?v=<ts> cache key (see uploadUrl).
+  if (!/^\/uploads\/files\/[A-Za-z0-9._-]+(?:\?v=[a-z0-9]+)?$/.test(url)) return res.status(400).json({ error: 'bad_media' });
+  const mime = String(req.body?.mime || '').slice(0, 80);
+  const kind = mime.startsWith('video/') ? 'video' : mime.startsWith('image/') ? 'image' : '';
+  if (!kind) return res.status(400).json({ error: 'bad_media (photos and videos only)' });
+  // Never announce bytes the scanner already flagged. (A pending verdict is
+  // fine: the /uploads gate serves the file the moment it turns clean.)
+  try {
+    const key = 'files/' + url.split('?')[0].split('/').pop();
+    if ((await require('./virus-scan').scanStatus(key)) === 'infected') return res.status(400).json({ error: 'media_blocked' });
+  } catch {}
+  const since = storyPostAt.get(me.id) || 0;
+  if (now() - since < STORY_MIN_GAP_MS) return res.status(429).json({ error: 'slow_down' });
+  const active = (await db.prepare('SELECT COUNT(*) c FROM stories WHERE user_id = ? AND expires_at > ?').get(me.id, now())).c;
+  if (active >= STORY_MAX_ACTIVE) return res.status(400).json({ error: 'too_many_stories (wait for some to expire)' });
+  const audience = req.body?.audience === 'server' ? 'server' : 'friends';
+  let serverId = null;
+  if (audience === 'server') {
+    serverId = String(req.body?.serverId || '');
+    if (!serverId || !(await isMember(serverId, me.id))) return res.status(403).json({ error: 'not_member' });
+  }
+  const caption = squashBreaks(String(req.body?.caption || '')).trim().slice(0, STORY_CAPTION_MAX);
+  const durationMs = Math.max(1000, Math.min(60000, parseInt(req.body?.durationMs || 0, 10) || 5000));
+  const id = uid();
+  const created = now();
+  await db.prepare('INSERT INTO stories (id,user_id,audience,server_id,url,mime,kind,caption,duration_ms,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+    .run(id, me.id, audience, serverId, url, mime, kind, caption, durationMs, created, created + STORY_TTL_MS);
+  storyPostAt.set(me.id, created);
+  if (storyPostAt.size > 5000) storyPostAt.clear(); // bound the flood map
+  const story = { id, user_id: me.id, audience, server_id: serverId, url, mime, kind, caption, duration_ms: durationMs, created_at: created, expires_at: created + STORY_TTL_MS };
+  await announceStoryNew(story, publicUser(me));
+  res.json({ story: storyView(story, publicUser(me), true, 0) });
+});
+
+// POST /api/stories/:id/view — record that I watched an item.
+app.post('/api/stories/:id/view', authRequired, async (req, res) => {
+  const s = await db.prepare('SELECT * FROM stories WHERE id = ?').get(String(req.params.id || ''));
+  if (!s || s.expires_at <= now() || !(await storyVisibleTo(s, req.user.id))) return res.status(404).json({ error: 'not_found' });
+  if (s.user_id === req.user.id) return res.json({ ok: true, views: 0 });
+  try {
+    await db.prepare('INSERT INTO story_views (story_id,user_id,viewed_at) VALUES (?,?,?) ON CONFLICT (story_id,user_id) DO UPDATE SET viewed_at = EXCLUDED.viewed_at')
+      .run(s.id, req.user.id, now());
+  } catch {}
+  const views = (await db.prepare('SELECT COUNT(*) c FROM story_views WHERE story_id = ?').get(s.id)).c;
+  notifyUser(s.user_id, { t: 'story-viewed', storyId: s.id, userId: req.user.id, views });
+  res.json({ ok: true, views });
+});
+
+// GET /api/stories/:id/viewers — who watched my story (author only).
+app.get('/api/stories/:id/viewers', authRequired, async (req, res) => {
+  const s = await db.prepare('SELECT * FROM stories WHERE id = ?').get(String(req.params.id || ''));
+  if (!s || s.user_id !== req.user.id) return res.status(404).json({ error: 'not_found' });
+  const rows = await db.prepare('SELECT u.*, v.viewed_at FROM story_views v JOIN users u ON u.id = v.user_id WHERE v.story_id = ? ORDER BY v.viewed_at DESC LIMIT 200').all(s.id);
+  res.json({ viewers: rows.map((r) => ({ ...publicUser(r), viewed_at: r.viewed_at })) });
+});
+
+// DELETE /api/stories/:id — remove one of my items (bytes and all).
+app.delete('/api/stories/:id', authRequired, async (req, res) => {
+  const s = await db.prepare('SELECT * FROM stories WHERE id = ?').get(String(req.params.id || ''));
+  if (!s) return res.status(404).json({ error: 'not_found' });
+  if (s.user_id !== req.user.id && !req.user.is_admin) return res.status(403).json({ error: 'not_yours' });
+  await db.prepare('DELETE FROM stories WHERE id = ?').run(s.id);
+  deleteUploaded(s.url);
+  const msg = { t: 'story-deleted', storyId: s.id, userId: s.user_id, serverId: s.audience === 'server' ? s.server_id : null };
+  await notifyStoryAudience(s, msg);
+  res.json({ ok: true });
+});
+
+// Expiry reaper: drop rows past 24h and their stored bytes.
+async function reapStories() {
+  try {
+    const rows = await db.prepare('SELECT id, url, user_id, audience, server_id FROM stories WHERE expires_at <= ?').all(now());
+    if (!rows.length) return;
+    for (const s of rows) {
+      try { await db.prepare('DELETE FROM stories WHERE id = ?').run(s.id); } catch {}
+      try { deleteUploaded(s.url); } catch {}
+      const msg = { t: 'story-deleted', storyId: s.id, userId: s.user_id, serverId: s.audience === 'server' ? s.server_id : null, expired: true };
+      try { await notifyStoryAudience(s, msg); } catch {}
+    }
+    console.log('[stories] reaped ' + rows.length + ' expired ' + (rows.length === 1 ? 'story' : 'stories'));
+  } catch (e) { console.warn('[stories] reap failed:', (e && e.message) || e); }
+}
+
 // ---------- profile ----------
 app.post('/api/me/avatar', authRequired, imgSingle(upImg), async (req, res) => {
   const url = uploadUrl('avatars', req.file);
@@ -2031,6 +2240,10 @@ app.patch('/api/me', authRequired, async (req, res) => {
   for (const sid of [...clients].filter((c) => c.meta && c.meta.userId === u.id).flatMap((c) => [...c.meta.servers])) {
     broadcastToServer(sid, { t: 'user-status', serverId: sid, userId: u.id, status: u.status });
   }
+  // Friends outside my servers follow my status too. Invisible reads as a
+  // plain offline to everyone else (only your own clients know you're hidden).
+  if (u.status === 'invisible') notifyFriends(u.id, { t: 'user-offline', userId: u.id });
+  else notifyFriends(u.id, { t: 'user-status', userId: u.id, status: u.status });
   // sync live sockets' presence state
   for (const c of clients) if (c.meta && c.meta.userId === u.id) c.meta.status = u.status;
   }
@@ -3498,6 +3711,9 @@ app.post('/api/friends/:oid/accept', authRequired, async (req, res) => {
   await db.prepare('UPDATE friendships SET status = ? WHERE user_a = ? AND user_b = ?').run('accepted', f.user_a, f.user_b);
   notifyUser(req.params.oid, { t: 'friends-changed' });
   notifyUser(req.user.id, { t: 'friends-changed' });
+  // A new friend is immediately presence-visible on both sides (they may not
+  // share a server, in which case nothing else would report them).
+  try { await syncSocketFriends(req.user.id); await syncSocketFriends(req.params.oid); } catch {}
   await pushInbox(req.params.oid, { kind: 'friend', title: 'Friend request accepted', body: `${displayOf(req.user)} accepted your friend request` });
   res.json({ ok: true });
 });
@@ -3506,6 +3722,7 @@ app.delete('/api/friends/:oid', authRequired, async (req, res) => {
   if (!f) return res.status(404).json({ error: 'not_found' });
   await db.prepare('DELETE FROM friendships WHERE user_a = ? AND user_b = ?').run(f.user_a, f.user_b);
   notifyUser(req.params.oid, { t: 'friends-changed' });
+  try { await syncSocketFriends(req.user.id); await syncSocketFriends(req.params.oid); } catch {}
   res.json({ ok: true });
 });
 app.post('/api/blocks', authRequired, async (req, res) => {
@@ -3518,6 +3735,7 @@ app.post('/api/blocks', authRequired, async (req, res) => {
   }));
   notifyUser(req.user.id, { t: 'friends-changed' });
   notifyUser(target.id, { t: 'friends-changed' });
+  try { await syncSocketFriends(req.user.id); await syncSocketFriends(target.id); } catch {}
   res.json({ ok: true });
 });
 app.delete('/api/blocks/:oid', authRequired, async (req, res) => {
@@ -3964,6 +4182,46 @@ function presenceFor(serverId, forUserId) {
   }
   return map;
 }
+// ---------- friend-scoped presence ----------
+// Friends who share no server with you would otherwise never exchange
+// presence at all: the friends list, DM rows and Active Now would show them
+// permanently offline. Every socket carries its owner's accepted-friend ids
+// so online/offline/status flips can be pushed straight to friends.
+async function friendIdsOf(userId) {
+  try {
+    const rows = await db.prepare("SELECT user_a, user_b FROM friendships WHERE status = 'accepted' AND (user_a = ? OR user_b = ?)").all(userId, userId);
+    return new Set(rows.map((f) => (f.user_a === userId ? f.user_b : f.user_a)));
+  } catch { return new Set(); }
+}
+function presenceForUsers(ids, forUserId) {
+  const map = {};
+  if (!ids || !ids.size) return map;
+  for (const c of clients) {
+    if (!c.meta || !ids.has(c.meta.userId)) continue;
+    if (c.meta.userId !== forUserId && (c.meta.status || 'online') === 'invisible') continue;
+    map[c.meta.userId] = c.meta.status || 'online';
+  }
+  return map;
+}
+// Send a payload to every live socket of the given user's friends.
+function notifyFriends(userId, obj) {
+  for (const c of clients) {
+    if (!c.meta || c.meta.userId === userId) continue;
+    if (c.meta.friends && c.meta.friends.has(userId)) safeSend(c, obj);
+  }
+}
+// Refresh one user's friend set across their sockets and hand them the current
+// friend presence roster. Called on connect, subscribe, and whenever a
+// friendship is created/removed so the change applies without a reload.
+async function syncSocketFriends(userId) {
+  const ids = await friendIdsOf(userId);
+  for (const c of clients) {
+    if (!c.meta || c.meta.userId !== userId) continue;
+    c.meta.friends = ids;
+    safeSend(c, { t: 'presence', online: presenceForUsers(ids, userId) });
+  }
+  return ids;
+}
 function fmtMsg(r) {
   return {
     id: r.id, serverId: r.server_id, channelId: r.channel_id,
@@ -4217,6 +4475,7 @@ wss.on('connection', async (ws, req) => {
     active_tag: u.active_tag || null,
     avatar_url: u.avatar_url || null, status: u.status || 'online', sid: p.sid || null,
     servers: new Set(memberRows.map((r) => r.server_id)),
+    friends: await friendIdsOf(u.id),
     voice: null,
     streaming: null,
     visible: true,
@@ -4242,9 +4501,14 @@ wss.on('connection', async (ws, req) => {
       for (const sid of me.servers) {
         safeSend(ws, { t: 'presence', serverId: sid, online: presenceFor(sid, me.userId) });
       }
+      // Friends are visible regardless of shared servers: refresh the set and
+      // hand over their presence (serverId-less roster merges into the same map).
+      me.friends = await friendIdsOf(me.userId);
+      safeSend(ws, { t: 'presence', online: presenceForUsers(me.friends, me.userId) });
       // announce online to others (unless invisible)
       if ((me.status || 'online') !== 'invisible') {
         for (const sid of me.servers) broadcastToServer(sid, { t: 'user-online', serverId: sid, userId: me.userId, status: me.status || 'online' }, ws);
+        notifyFriends(me.userId, { t: 'user-online', userId: me.userId, status: me.status || 'online' });
       }
       // send current voice occupancy for my servers
       for (const [key, set] of voiceRooms) {
@@ -4545,6 +4809,9 @@ wss.on('connection', async (ws, req) => {
         const stillOn = [...clients].some((c) => c.meta && c.meta.userId === ws.meta.userId && c.meta.servers.has(sid));
         if (!stillOn) broadcastToServer(sid, { t: 'user-offline', serverId: sid, userId: ws.meta.userId });
       }
+      // Friends see the flip even with no shared server (last socket only).
+      const stillLive = [...clients].some((c) => c.meta && c.meta.userId === ws.meta.userId);
+      if (!stillLive) notifyFriends(ws.meta.userId, { t: 'user-offline', userId: ws.meta.userId });
     }
     } catch (e) { console.error('[ws] close handler failed:', (e && e.message) || e); }
   });
@@ -4582,6 +4849,9 @@ async function boot() {
   // Expired custom statuses clear within a minute (reads mask them instantly).
   await sweepExpiredStatuses();
   safeInterval(sweepExpiredStatuses, 60 * 1000);
+  // Stories expire after 24h: rows + their uploaded bytes go together.
+  await reapStories();
+  safeInterval(reapStories, 20 * 60 * 1000);
   // Chat-upload compressor (images/GIFs/video/audio): one file at a time,
   // niced + single-threaded, so the VPS never feels it.
   try { require('./media-compress').startMediaCompress(); } catch (e) { console.error('[media] scheduler failed to start:', (e && e.message) || e); }

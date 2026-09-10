@@ -403,6 +403,18 @@ function onWS(m) {
       // correct even when looking at a server; no popup.
       refreshFriends();
       break;
+    // ---- stories ----
+    case 'story-new':
+      // Someone posted: pull the tray list again (coalesced) and repaint the
+      // rails. A server post only matters while that server is open.
+      scheduleStoryRefresh(400);
+      break;
+    case 'story-deleted':
+      storyRemoved(m.storyId);
+      break;
+    case 'story-viewed':
+      storyViewsUpdated(m.storyId, m.views);
+      break;
     case 'dm-typing':
       if (S.view === 'home' && S.dmThreadId === m.threadId) showTyping(m.userId, m.display_name);
       break;
@@ -421,16 +433,19 @@ function onWS(m) {
       Object.assign(S.presenceAll, m.online || {});
       if (m.serverId === S.serverId) { S.online = m.online || {}; S.online[S.me.id] = S.me.status || 'online'; }
       if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
+      repaintFriendsIfVisible();
       break;
     case 'user-online':
       S.presenceAll[m.userId] = m.status || 'online';
       if (m.serverId === S.serverId) S.online[m.userId] = m.status || 'online';
       if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
+      repaintFriendsIfVisible();
       break;
     case 'user-offline':
       delete S.presenceAll[m.userId];
       if (m.serverId === S.serverId) delete S.online[m.userId];
       if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
+      repaintFriendsIfVisible();
       break;
     case 'user-status':
       if (m.status === 'invisible') delete S.presenceAll[m.userId];
@@ -440,6 +455,7 @@ function onWS(m) {
         else S.online[m.userId] = m.status;
       }
       if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
+      repaintFriendsIfVisible();
       break;
     case 'user-updated': {
       const u = m.user;

@@ -70,6 +70,7 @@ async function collectReferenced() {
   };
   await col('SELECT url FROM attachments', ['url']);
   await col('SELECT url FROM dm_attachments', ['url']);
+  await col('SELECT url FROM stories', ['url']);
   await col('SELECT avatar_url, banner_url, sidebar_banner_url FROM users', ['avatar_url', 'banner_url', 'sidebar_banner_url']);
   await col('SELECT icon_url, banner_url FROM servers', ['icon_url', 'banner_url']);
   await col('SELECT url FROM custom_emoji', ['url']);

@@ -359,6 +359,9 @@ async function boot() {
   // requests) is live even before Home is opened this session.
   refreshDms().catch(() => {});
   ensureFriends().catch(() => {});
+  // Stories ride alongside friends: fetched once at boot so the Home rail
+  // and each server's sidebar row are warm before they're opened.
+  loadStories().then(renderStorySurfaces).catch(() => {});
   // Warm the per-user notification prefs so channel/server right-click menus
   // and muted indicators are correct from the start.
   refreshNotifPrefs().then(() => { renderServerList(); renderChannels(); }).catch(() => {});

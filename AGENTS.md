@@ -67,7 +67,7 @@ campfire/
     embeds.js        # link embeds: known providers client-side, generic link cards via /api/unfurl
     js/              # SPA modules (ordered classic scripts): core, auth, noise,
                      # servers, messages, socket, ui, voice, actions, rail, home,
-                     # pins, compose, pickers, settings, security, final
+                     # pins, compose, stories, pickers, settings, security, final
     vendor/rnnoise/  # RNNoise wasm + worklet (mic noise suppression) vendored
     manifest.webmanifest
     service-worker.js   # bump CACHE ('campfire-vN') on every frontend change
@@ -184,6 +184,10 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
 - **Tests:** `node scripts/test-unfurl.js [--live]` covers the link-preview parser
   and the SSRF guard (offline by default; `--live` also fetches real pages and
   proves a 302 to a link-local address is refused).
+  `node scripts/test-stories.js` covers stories end-to-end against the dev
+  server (audiences, view receipts, delete, 24h reaper) and restarts the dev
+  server for the boot-reaper check. It expects the dev Postgres and a
+  `JWT_SECRET`-equivalent `.env` (see Running it).
 - **Upload pipeline E2E:** `node scripts/test-upload-pipeline.js` (needs ffmpeg
   + the dev Postgres, skips otherwise) boots a real server against a throwaway
   database with a fake clamd and asserts the single-transition compression flow
@@ -259,7 +263,8 @@ occupants + VAD rings), uploads, emoji (Emojibase set + custom + Klipy GIFs),
 replies/threads/reactions/edits/mentions/markdown, presence + statuses, user
 cards, tabbed settings, rail folders + DnD, B&W theme, ctx menus, auto-update,
 TOTP 2FA + passkeys + sessions, notification inbox, link previews (server-side
-OpenGraph/oEmbed unfurl → cached card with thumbnail, SSRF-guarded).
+OpenGraph/oEmbed unfurl → cached card with thumbnail, SSRF-guarded), stories
+(24h photo/video posts with an in-app camera, friend + server audiences).
 Detail per change lives in `git log` — don't duplicate it here.
 
 ## Deployment (owner directive)
@@ -276,7 +281,10 @@ deploy → confirm the live site serves the change.
 Non-obvious rules (learned the hard way): uploads must live on the
 persistent volume (never the image layer); new uploads get `?v=` cache keys;
 missing `/uploads/*` must 404 (never SPA fallback); bump the SW `CACHE` version
-on every `public/` change; navigations are network-first. Async discipline:
+on every `public/` change; navigations are network-first. Presence is
+server-scoped **and** friend-scoped: a friend with no shared server would
+otherwise look permanently offline (see `notifyFriends`/`presenceForUsers` in
+`server.js`) — any new presence surface must respect both. Async discipline:
 never pass an async callback to map/filter/forEach when results are used
 synchronously (use for..of or Promise.all); background timers go through
 safeInterval so rejections log instead of crashing.

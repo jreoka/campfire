@@ -35,6 +35,9 @@ async function openHome() {
   await Promise.all([refreshFriends(), refreshDms()]);
   S.dmThreadId = null;
   renderDmBlank();
+  // Stories live at the top of the Friends feed — refresh on every visit so
+  // the 24h window and seen rings are current.
+  try { loadStories().then(renderStorySurfaces); } catch {}
 }
 // Sidebar Friends button → back to the friends menu in the main panel.
 function showFriendsPanel() {
@@ -120,10 +123,15 @@ function friendRowEl(u, extra) {
   const dot = dotOf(st, streaming);
   const div = document.createElement('div');
   div.className = 'dmrow';
+  // data-uid lets the story ring painter find this row again after a rebuild
+  // (friends with an unseen story get an accent ring on their avatar).
+  div.dataset.uid = u.id;
+  div.dataset.uname = u.display_name || '';
   const fPlaying = !off && !streaming && u.playing_game;
   div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="dmmain"><span class="mname-row"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u)}${fPlaying ? gameBadgeHTML(u.playing_game) : ''}</span><span class="dmlast">@${esc(u.username)}${streaming ? ` · <span class="ustream-t">Streaming ${esc(streaming)}</span>` : (u.status_text ? ' · ' + esc(u.status_text) : (fPlaying ? ` · Playing ${esc(u.playing_game)}` : ''))}</span></span>`;
   paintAvatar(div.querySelector('.avatar'), u);
   paintGameBadge(div.querySelector('.gbadge'));
+  try { paintFriendStoryRing(div, u); } catch {}
   if (extra) div.appendChild(extra);
   div.onclick = (e) => { if (e.target.closest('button')) return; openUserCard(u.id, e.clientX, e.clientY); };
   return div;
@@ -155,6 +163,16 @@ function friendMoreMenu(u, anchor) {
   ]);
 }
 function isBlocked(id) { return (S.friends.blocked || []).some((u) => u.id === id); }
+// The friends page is a live roster: presence flips (online/offline/status/
+// playing) must repaint its rows. Coalesced so a burst of presence frames
+// (every server roster arriving at once) only costs one rebuild.
+let friendsPaintT = null;
+function repaintFriendsIfVisible() {
+  if (S.view !== 'home') return;
+  if ($('#friends-page')?.classList.contains('hidden')) return;
+  clearTimeout(friendsPaintT);
+  friendsPaintT = setTimeout(() => { try { renderFriendLists(); } catch {} }, 120);
+}
 // ---------- Active Now (friends activity rail on the friends page) ----------
 const activeGaming = new Map(); // username -> { at, data }
 let activeNowGen = 0;
@@ -369,6 +387,7 @@ function renderFriendLists() {
     }
   }
   if (S.view === 'home' && !S.dmThreadId) renderActiveNow();
+  try { renderFriendStoryRings(); } catch {}
 }
 function dmRowEl(t) {
   const b = document.createElement('button');

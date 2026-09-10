@@ -206,6 +206,11 @@ async function selectServer(id) {
     if (texts.length && !texts.find((c) => c.id === S.channelId)) S.channelId = texts[0].id;
     renderChannels();
     renderMembers();
+    // This server may have stories this client hasn't snapshotted yet (a
+    // brand-new or just-joined server, or posts made while off-server): one
+    // small fetch per switch keeps the sidebar row honest (mirrors the
+    // refreshAllEmojis() call above).
+    try { loadStories().then(renderStorySurfaces); } catch {}
     if (S.srvSetId) { if (server.id === S.srvSetId) renderServerTab(); else closeServerSettings(); }
     if (S.chanSet) { if (server.id === S.chanSet.sid) renderChanSettings(); else closeChannelSettings(); }
     if (S.channelId) selectChannel(S.channelId, { keepNav: true });
@@ -260,6 +265,9 @@ function renderChannels() {
     vc.appendChild(wrap);
   }
   renderVoiceUsers();
+  // Server stories row (above the channel groups) — other members' 24h
+  // photos/videos. Repainting here covers server switches and channel changes.
+  try { renderServerStories(); } catch {}
 }
 // Admin channel reordering: drag a channel above/below another of the same
 // type (text and voice order independently). Reuses the rail drop marker.

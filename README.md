@@ -7,6 +7,7 @@ A tiny **Mattermost / Steam-chat alternative** you can host in one Docker contai
 - 🔊 **Voice rooms** — click to join, talk in-browser (WebRTC, no app needed)
 - 🤖 **Channel webhooks** — per-channel bot URLs with their own name + avatar (channel menu → Webhooks)
 - 🔗 **Link previews** — paste a link and it becomes a card (thumbnail, title, description): HuggingFace model pages, articles, docs, shops. YouTube, Spotify, X, Twitch, TikTok, Instagram, Vimeo, SoundCloud and Streamable embed as real players
+- 📸 **Stories** — post a photo or video (shoot it in-app or pick one) for friends or one server; it lives 24 hours, friends see it as a ring on Home and server stories get a row in the sidebar
 - 📲 **PWA installable** — friends can "Add to Home Screen" on iPhone/Android and use it like a native app
 - 🗄️ **Postgres 18** — data lives in a `pgdata` Docker volume
 

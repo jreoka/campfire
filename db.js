@@ -552,6 +552,34 @@ CREATE TABLE IF NOT EXISTS link_embeds (
   fetched_at BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_link_embeds_fetched ON link_embeds(fetched_at);
+-- Stories (Snapchat-style): one row per photo/video post that friends (or the
+-- members of one server) can watch for 24 hours. The media itself is a normal
+-- chat upload under files/, so the existing scan + compression pipeline
+-- covers it; expiry deletes the row and the bytes. story_views powers the
+-- seen/unseen ring and the viewer list on your own story.
+CREATE TABLE IF NOT EXISTS stories (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  audience TEXT NOT NULL DEFAULT 'friends',
+  server_id TEXT REFERENCES servers(id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  mime TEXT NOT NULL DEFAULT 'image/jpeg',
+  kind TEXT NOT NULL DEFAULT 'image',
+  caption TEXT NOT NULL DEFAULT '',
+  duration_ms BIGINT NOT NULL DEFAULT 5000,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_stories_user ON stories(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stories_server ON stories(server_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stories_expires ON stories(expires_at);
+CREATE TABLE IF NOT EXISTS story_views (
+  story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  viewed_at BIGINT NOT NULL,
+  PRIMARY KEY (story_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_story_views_story ON story_views(story_id);
 `);
   await addColumn('messages', 'webhook_id', 'TEXT');
   await addColumn('messages', 'webhook_name', 'TEXT');

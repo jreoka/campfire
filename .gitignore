@@ -12,3 +12,6 @@ app/src-tauri/gen/android/.gradle/
 app/src-tauri/gen/android/build/
 app/src-tauri/gen/android/app/build/
 app/src-tauri/gen/android/app/.cxx/
+
+# Local uploads (dev): runtime data, never committed
+data/
