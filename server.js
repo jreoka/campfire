@@ -558,6 +558,20 @@ function requireSiteAdmin(req, res, next) {
   if (!req.user.is_admin) return res.status(403).json({ error: 'admin_only' });
   next();
 }
+// ---------- the owner account is untouchable by other site admins ----------
+// The instance owner (db.OWNER_USERNAME, auto-admin at boot) can only be
+// managed by signing into that account: every admin route that would change
+// it — edit, password, disable, delete, forced logout, 2FA reset, profile
+// media, kick, ban — refuses 'owner_protected' for anyone else. The panel
+// greys the row out to match, but this is the enforcement.
+const OWNER_USERNAME = String(db.OWNER_USERNAME || 'jreoka').toLowerCase();
+function isOwnerAccount(u) { return !!u && String(u.username || '').toLowerCase() === OWNER_USERNAME; }
+// Sends the 403 itself; returns true when the caller must stop.
+function blockedByOwnerLock(req, res, target) {
+  if (!target || target.id === req.user.id || !isOwnerAccount(target)) return false;
+  res.status(403).json({ error: 'owner_protected' });
+  return true;
+}
 // Avatar decorations (settings → profile). IDs must match AVATAR_DECOS in public/js/core.js.
 const AVATAR_DECOS = ['ember', 'fireflies', 'aurora', 'neon', 'tide', 'stardust'];
 const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, playing_game, streaming_game, bio, name_color, name_gradient, card_color, card_gradient, avatar_decoration, active_tag_server_id, active_tag, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset, nsfw_ok, theme';
@@ -663,7 +677,7 @@ app.post('/api/register', async (req, res) => {
   await db.prepare('INSERT INTO users (id, username, display_name, password_hash, avatar_color, created_at) VALUES (@id,@username,@display_name,@password_hash,@avatar_color,@created_at)').run(user);
   // Site owner is always an admin (also enforced by a boot-time UPDATE in db.js
   // for pre-existing databases).
-  if (username === 'jreoka') await db.prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(user.id);
+  if (username === OWNER_USERNAME) await db.prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(user.id);
   const sid = await newSession(user.id, req);
   const token = signSession(user, sid);
   res.cookie('cf_token', token, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 864e5 });
@@ -3098,7 +3112,7 @@ async function adminUserView(u) {
     messageCount = (await db.prepare('SELECT COUNT(*) c FROM messages WHERE user_id = ?').get(u.id)).c;
     dmCount = (await db.prepare('SELECT COUNT(*) c FROM dm_messages WHERE user_id = ?').get(u.id)).c;
   } catch {}
-  return { ...base, is_admin: !!u.is_admin, disabled: !!u.disabled, has2fa: !!u.totp_enabled, serverCount, messageCount, dmCount, ...(u.role ? { role: u.role } : {}) };
+  return { ...base, is_admin: !!u.is_admin, disabled: !!u.disabled, has2fa: !!u.totp_enabled, serverCount, messageCount, dmCount, ownerAccount: isOwnerAccount(u), ...(u.role ? { role: u.role } : {}) };
 }
 app.get('/api/admin/stats', authRequired, requireSiteAdmin, async (req, res) => {
   const count = async (sql, ...a) => { try { return (await db.prepare(sql).get(...a)).c; } catch { return 0; } };
@@ -3194,6 +3208,10 @@ async function adminReportView(r) {
   let snapshot = {};
   try { snapshot = JSON.parse(r.snapshot || '{}'); } catch {}
   const authorName = r.author_display || r.author_name || '';
+  // The protected owner account can't be disabled/banned from the report card,
+  // so the UI needs to know who it is (live username, or the snapshot's when
+  // the account is gone).
+  const authorOwner = [r.author_user, r.author_username].some((x) => String(x || '').toLowerCase() === OWNER_USERNAME);
   return {
     id: r.id, kind: r.kind, status: r.status, reason: r.reason, reasonLabel: reportReasonLabel(r.reason),
     details: r.details || '', content: r.content || '', created_at: r.created_at,
@@ -3205,6 +3223,7 @@ async function adminReportView(r) {
       username: r.author_user || r.author_username || '',
       avatar_color: r.author_color || null, avatar_url: r.author_avatar || null,
       gone: !r.author_id,
+      ownerAccount: authorOwner,
     } : null,
     reporter: r.reporter_id ? {
       id: r.reporter_id,
@@ -3270,6 +3289,12 @@ app.post('/api/admin/reports/:id/resolve', authRequired, requireSiteAdmin, async
   if (!r) return res.status(404).json({ error: 'no_report' });
   const action = String(req.body?.action || '');
   if (!REPORT_ACTIONS.has(action)) return res.status(400).json({ error: 'bad_action' });
+  // Account-level actions are refused on the owner's account (moderating the
+  // reported message itself still works).
+  if ((action === 'disable' || action === 'delete_disable' || action === 'ban') && r.author_id && r.author_id !== req.user.id) {
+    const authorUser = await db.prepare('SELECT id, username FROM users WHERE id = ?').get(r.author_id);
+    if (blockedByOwnerLock(req, res, authorUser)) return;
+  }
   const note = squashBreaks(String(req.body?.note || '')).trim().slice(0, 500);
   let messageDeleted = false;
   try {
@@ -3336,6 +3361,7 @@ app.get('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, res)
 app.patch('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, res) => {
   const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!target) return res.status(404).json({ error: 'no_user' });
+  if (blockedByOwnerLock(req, res, target)) return;
   const self = target.id === req.user.id;
   const sets = [], params = [];
   if (req.body?.displayName !== undefined) {
@@ -3380,6 +3406,7 @@ app.patch('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, re
 app.delete('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, res) => {
   const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!target) return res.status(404).json({ error: 'no_user' });
+  if (blockedByOwnerLock(req, res, target)) return;
   if (target.id === req.user.id) return res.status(400).json({ error: 'cannot_delete_self' });
   const serverIds = (await db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(target.id)).map((r) => r.server_id);
   await db.prepare('UPDATE sessions SET revoked = 1 WHERE user_id = ?').run(target.id);
@@ -3405,8 +3432,9 @@ async function evictFromServerAll(userId) {
   }
 }
 app.post('/api/admin/users/:id/sessions/revoke', authRequired, requireSiteAdmin, async (req, res) => {
-  const target = await db.prepare('SELECT id FROM users WHERE id = ?').get(req.params.id);
+  const target = await db.prepare('SELECT id, username FROM users WHERE id = ?').get(req.params.id);
   if (!target) return res.status(404).json({ error: 'no_user' });
+  if (blockedByOwnerLock(req, res, target)) return;
   await db.prepare('UPDATE sessions SET revoked = 1 WHERE user_id = ?').run(target.id);
   await db.prepare('UPDATE users SET token_valid_after = ? WHERE id = ?').run(now(), target.id);
   closeSessionSockets(target.id, null);
@@ -3416,8 +3444,9 @@ app.post('/api/admin/users/:id/sessions/revoke', authRequired, requireSiteAdmin,
 // in with just their password again. Never usable on yourself — use your
 // own Settings -> 2FA flow for that.
 app.post('/api/admin/users/:id/2fa/disable', authRequired, requireSiteAdmin, async (req, res) => {
-  const target = await db.prepare('SELECT id, totp_enabled FROM users WHERE id = ?').get(req.params.id);
+  const target = await db.prepare('SELECT id, username, totp_enabled FROM users WHERE id = ?').get(req.params.id);
   if (!target) return res.status(404).json({ error: 'no_user' });
+  if (blockedByOwnerLock(req, res, target)) return;
   if (target.id === req.user.id) return res.status(400).json({ error: 'cannot_reset_own_2fa' });
   if (!target.totp_enabled) return res.status(400).json({ error: '2fa_not_enabled' });
   await db.prepare('UPDATE users SET totp_secret = NULL, totp_enabled = 0 WHERE id = ?').run(target.id);
@@ -3429,6 +3458,7 @@ app.post('/api/admin/users/:id/2fa/disable', authRequired, requireSiteAdmin, asy
 async function adminTargetUser(req, res) {
   const u = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!u) { res.status(404).json({ error: 'no_user' }); return null; }
+  if (blockedByOwnerLock(req, res, u)) return null; // committed the 403 already
   return u;
 }
 async function adminSetUserMedia(req, res, col, sub, kind) {
@@ -3563,6 +3593,8 @@ app.delete('/api/admin/servers/:id/members/:uid', authRequired, requireSiteAdmin
   if (!s) return res.status(404).json({ error: 'no_server' });
   const target = String(req.params.uid);
   if (target === s.owner_id) return res.status(400).json({ error: 'cannot_kick_owner' });
+  const targetUser = await db.prepare('SELECT id, username FROM users WHERE id = ?').get(target);
+  if (blockedByOwnerLock(req, res, targetUser)) return;
   await db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(s.id, target);
   broadcastToServer(s.id, { t: 'member-left', serverId: s.id, userId: target });
   evictFromServer(s.id, target);

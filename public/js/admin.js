@@ -170,9 +170,13 @@ function admReportRow(r) {
   const where = r.kind === 'dm'
     ? ('Direct message' + (w.thread && w.thread.isGroup && w.thread.name ? ' · ' + esc(w.thread.name) : ''))
     : ('#' + esc((w.channel && w.channel.name) || 'chat') + ' · ' + esc((w.server && w.server.name) || 'server'));
-  const author = r.author ? `<span style="${nameStyleFor(r.author)}">${esc(r.author.display_name)}</span>${r.author.username ? ' <span class="muted small">@' + esc(r.author.username) + '</span>' : ''}${r.author.gone ? ' <span class="adm-badge off">GONE</span>' : ''}` : '<span class="muted">unknown author</span>';
+  const author = r.author ? `<span style="${nameStyleFor(r.author)}">${esc(r.author.display_name)}</span>${r.author.username ? ' <span class="muted small">@' + esc(r.author.username) + '</span>' : ''}${r.author.ownerAccount ? ' <span class="adm-badge owner" title="Instance owner account — other admins cannot disable or ban it">PROTECTED</span>' : ''}${r.author.gone ? ' <span class="adm-badge off">GONE</span>' : ''}` : '<span class="muted">unknown author</span>';
   const reporter = r.reporter ? `<span class="muted">reported by</span> <span style="${nameStyleFor(r.reporter)}">${esc(r.reporter.display_name)}</span>${r.reporter.username ? ' <span class="muted small">@' + esc(r.reporter.username) + '</span>' : ''}` : '<span class="muted">reporter account deleted</span>';
   const prior = r.priorReports ? ` <span class="adm-badge off">${r.priorReports} prior report${r.priorReports === 1 ? '' : 's'}</span>` : '';
+  // Account actions are off the table when the reported message came from the
+  // protected owner account (the server refuses them); moderating the message
+  // itself is still allowed.
+  const lockedAuthor = !!(r.author && r.author.ownerAccount && r.author.id !== S.me.id);
   const peers = r.kind === 'dm'
     ? ((w.thread && w.thread.members) || []).map((u) => '@' + u.username).filter((x) => x !== '@').join(', ')
     : '';
@@ -186,9 +190,9 @@ function admReportRow(r) {
     ? `<div class="adm-actions">
         ${r.messageExists ? '<button class="mini" data-act="rep-jump">Open in chat</button>' : '<span class="muted small" style="align-self:center">message deleted</span>'}
         ${r.messageExists ? '<button class="mini danger" data-act="rep-del">Delete message</button>' : ''}
-        ${r.messageExists && r.author && !r.author.gone ? '<button class="mini danger" data-act="rep-del-disable">Delete + disable</button>' : ''}
-        ${r.author && !r.author.gone ? '<button class="mini danger" data-act="rep-disable">Disable author</button>' : ''}
-        ${r.author && !r.author.gone && r.kind === 'server' && r.server_id ? '<button class="mini danger" data-act="rep-ban">Ban from server</button>' : ''}
+        ${r.messageExists && r.author && !r.author.gone && !lockedAuthor ? '<button class="mini danger" data-act="rep-del-disable">Delete + disable</button>' : ''}
+        ${r.author && !r.author.gone && !lockedAuthor ? '<button class="mini danger" data-act="rep-disable">Disable author</button>' : ''}
+        ${r.author && !r.author.gone && !lockedAuthor && r.kind === 'server' && r.server_id ? '<button class="mini danger" data-act="rep-ban">Ban from server</button>' : ''}
         <button class="mini" data-act="rep-dismiss">Dismiss</button>
       </div>
       <input class="adm-rep-note" maxlength="500" placeholder="Note (optional) — saved with the outcome" />`
@@ -527,26 +531,33 @@ async function adminSweepCheck() {
 }
 
 function admUserRow(u) {
+  // The instance owner's account is untouchable by every other admin (the
+  // server refuses with 'owner_protected'): grey the row out and disable its
+  // buttons. The owner themselves still sees it as a normal row.
+  const locked = !!u.ownerAccount && u.id !== S.me.id;
+  const dis = locked ? ' disabled' : '';
   const badges =
+    (u.ownerAccount ? '<span class="adm-badge owner" title="Instance owner account — other admins cannot change it">PROTECTED</span>' : '') +
     (u.is_admin ? '<span class="adm-badge admin">ADMIN</span>' : '') +
     (u.disabled ? '<span class="adm-badge off">DISABLED</span>' : '') +
     (u.has2fa ? '<span class="adm-badge me">2FA</span>' : '') +
     (u.id === S.me.id ? '<span class="adm-badge me">YOU</span>' : '');
-  return `<div class="adm-row" data-uid="${esc(u.id)}">
+  return `<div class="adm-row${locked ? ' protected' : ''}" data-uid="${esc(u.id)}">
     <span class="avatar adm-av"></span>
     <div class="adm-main">
       <div class="adm-name" style="${nameStyleFor(u)}">${esc(u.display_name)}</div>
       <div class="muted small">@${esc(u.username)} · ${u.serverCount} server${u.serverCount === 1 ? '' : 's'} · ${u.messageCount + u.dmCount} msgs · joined ${fmtDate(u.created_at)}</div>
       <div class="adm-badges">${badges}</div>
       <div class="adm-actions">
-        <button class="mini" data-act="u-edit">Edit</button>
-        <button class="mini" data-act="u-pw">Password</button>
-        <button class="mini${u.disabled ? '' : ' danger'}" data-act="u-disable">${u.disabled ? 'Enable' : 'Disable'}</button>
-        <button class="mini" data-act="u-admin">${u.is_admin ? 'Remove admin' : 'Make admin'}</button>
-        <button class="mini" data-act="u-logout">Log out</button>
-        <button class="mini" data-act="u-2fa">Reset 2FA</button>
-        <button class="mini danger" data-act="u-del">Delete</button>
+        <button class="mini" data-act="u-edit"${dis}>Edit</button>
+        <button class="mini" data-act="u-pw"${dis}>Password</button>
+        <button class="mini${u.disabled ? '' : ' danger'}" data-act="u-disable"${dis}>${u.disabled ? 'Enable' : 'Disable'}</button>
+        <button class="mini" data-act="u-admin"${dis}>${u.is_admin ? 'Remove admin' : 'Make admin'}</button>
+        <button class="mini" data-act="u-logout"${dis}>Log out</button>
+        <button class="mini" data-act="u-2fa"${dis}>Reset 2FA</button>
+        <button class="mini danger" data-act="u-del"${dis}>Delete</button>
       </div>
+      ${locked ? `<div class="muted small" style="margin-top:.4rem">Only @${esc(u.username)} can manage this account — no other admin can edit, disable, delete, log it out or reset its 2FA.</div>` : ''}
     </div>
   </div>`;
 }
@@ -640,11 +651,12 @@ async function loadAdminMembers(sid, slot) {
   try {
     const { members } = await api(`/api/admin/servers/${sid}/members`);
     slot.innerHTML = members.length ? members.map((m) =>
-      `<div class="adm-subrow" data-uid="${esc(m.id)}">
+      `<div class="adm-subrow${m.ownerAccount && m.id !== S.me.id ? ' protected' : ''}" data-uid="${esc(m.id)}">
         <span class="adm-subname" style="${nameStyleFor(m)}">${esc(m.display_name)}</span>
         <span class="muted small">@${esc(m.username)}${m.role === 'owner' ? ' · owner' : ''}${m.disabled ? ' · disabled' : ''}</span>
+        ${m.ownerAccount ? '<span class="adm-badge owner" title="Instance owner account — other admins cannot kick or change it">PROTECTED</span>' : ''}
         <span class="spacer"></span>
-        ${m.role === 'owner' ? '' : `<button class="mini" data-act="s-owner">Make owner</button>
+        ${m.role === 'owner' || (m.ownerAccount && m.id !== S.me.id) ? '' : `<button class="mini" data-act="s-owner">Make owner</button>
         <button class="mini danger" data-act="s-kick">Kick</button>`}
       </div>`).join('') : '<p class="muted small">No members.</p>';
   } catch { slot.innerHTML = '<p class="muted small">Could not load members.</p>'; }

@@ -31,6 +31,11 @@ function poolConfig() {
 const pool = new Pool({ ...poolConfig(), max: parseInt(process.env.PG_POOL_MAX || '10', 10) || 10 });
 pool.on('error', (e) => console.error('[pg] pool error:', (e && e.message) || e));
 
+// The instance owner's account. Single source of truth: the boot-time
+// auto-admin below and server.js's "other admins may not touch this account"
+// guard both key off this username.
+const OWNER_USERNAME = 'jreoka';
+
 // Active transaction client (if any) — db.transaction() pins one connection
 // here so every query inside the callback shares it.
 const als = new AsyncLocalStorage();
@@ -667,7 +672,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_one_open ON message_reports(report
 `);
   // Site owner is always an admin (idempotent; runs on every boot so fresh
   // installs and existing databases both converge without manual SQL).
-  try { await db.exec("UPDATE users SET is_admin = 1 WHERE username = 'jreoka'"); } catch {}
+  try { await db.exec(`UPDATE users SET is_admin = 1 WHERE username = '${OWNER_USERNAME}'`); } catch {}
   // status_text cap lowered to 64: trim any legacy longer values (idempotent)
   try { await db.exec('UPDATE users SET status_text = substr(status_text, 1, 64) WHERE length(status_text) > 64'); } catch {}
 }
@@ -680,3 +685,4 @@ module.exports = db;
 module.exports.initDb = initDb;
 module.exports.closePool = closePool;
 module.exports.pgEnv = pgEnv;
+module.exports.OWNER_USERNAME = OWNER_USERNAME;

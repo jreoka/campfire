@@ -1617,6 +1617,10 @@ body{touch-action:manipulation}
 .adm-badge{font-size:.68rem;font-weight:800;letter-spacing:.06em;border-radius:999px;padding:.14rem .6rem;background:var(--panel-3);color:var(--muted)}
 .adm-badge.admin{background:var(--accent-container);color:var(--on-container)}
 .adm-badge.off{background:var(--danger-bg);color:var(--danger-tx)}
+.adm-badge.owner{background:var(--panel-4);color:var(--text)}
+/* The protected owner account: dimmed and read-only for every other admin */
+.adm-row.protected{opacity:.6}
+.adm-subrow.protected{opacity:.6}
 .adm-badge.me{background:var(--panel-3);color:var(--text)}
 .adm-actions{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.5rem}
 .adm-members{margin-top:.55rem;border-top:1px solid var(--line-soft);padding-top:.35rem}

@@ -222,6 +222,10 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   access, search/counts, the live `report-new`/`report-updated` pushes and the
   inbox entry, one decision closing every open report on the same message, and
   the delete / delete+disable / disable / ban / dismiss actions.
+  `node scripts/test-owner-protection.js` covers the owner lock against a
+  throwaway database: a second site admin gets `owner_protected` from every
+  account route and from the account-level report actions, the owner still
+  manages their own account and other users, and ordinary users are unaffected.
 - **Upload pipeline E2E:** `node scripts/test-upload-pipeline.js` (needs ffmpeg
   + the dev Postgres, skips otherwise) boots a real server against a throwaway
   database with a fake clamd and asserts the single-transition compression flow
@@ -327,7 +331,14 @@ deploy → confirm the live site serves the change.
 Non-obvious rules (learned the hard way): uploads must live on the
 persistent volume (never the image layer); new uploads get `?v=` cache keys;
 missing `/uploads/*` must 404 (never SPA fallback); bump the SW `CACHE` version
-on every `public/` change; navigations are network-first. Presence is
+on every `public/` change; navigations are network-first. The instance owner's
+account (`jreoka`, exported as `db.OWNER_USERNAME`) is untouchable by every
+other site admin: `blockedByOwnerLock()` 403s `owner_protected` on each
+account route (edit, password, disable, demote, delete, forced logout, 2FA
+reset, profile media, server kick) and on the account-level report actions
+(disable / delete+disable / ban — moderating the message itself stays allowed).
+The panel just mirrors it off `ownerAccount` in the admin payloads, so any new
+admin route that changes an account must call the same guard. Presence is
 server-scoped **and** friend-scoped: a friend with no shared server would
 otherwise look permanently offline (see `notifyFriends`/`presenceForUsers` in
 `server.js`) — any new presence surface must respect both. Friends' voice
