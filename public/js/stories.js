@@ -20,13 +20,14 @@ const STORY_MAX_EDGE = 1920;      // photos are downscaled to this long edge
 // Icon set (inline SVG, no emoji — see the design language in AGENTS.md).
 const svSvg = {
   plus: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  camera: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.2"/></svg>',
   soundOn: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z" fill="currentColor" stroke="none"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>',
   soundOff: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z" fill="currentColor" stroke="none"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"/></svg>',
   mic: '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/></svg>',
   micOff: '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9V5a3 3 0 0 1 6 0v6"/><path d="M5 10a7 7 0 0 0 10.5 6.1M12 19v3"/><path d="M4 4l16 16"/></svg>',
 };
 
-let storyData = { mine: null, friends: [], servers: [] };
+let storyData = { mine: null, friends: [], everyone: [], servers: [] };
 let storyFetch = null;
 let storyRefreshT = null;
 
@@ -34,8 +35,41 @@ function storyLive(items) {
   const t = Date.now();
   return (items || []).filter((s) => s && s.expires_at > t);
 }
-function storyTrayFor(userId) { return (storyData.friends || []).find((t) => t.user && t.user.id === userId) || null; }
+// A tray is a person: their friend-audience and everyone-audience stories are
+// merged so the rail stays people-based (one tile per person) no matter which
+// audience each item used.
+function storyUserTrays() {
+  const by = new Map();
+  const add = (list, friend) => {
+    for (const t of list || []) {
+      const items = storyLive(t.items);
+      if (!items.length || !t.user) continue;
+      let e = by.get(t.user.id);
+      if (!e) { e = { id: t.user.id, user: t.user, items: [], unseen: 0, latest: 0, friend: false }; by.set(t.user.id, e); }
+      if (friend) e.friend = true;
+      const seenIds = new Set(e.items.map((i) => i.id));
+      for (const it of items) if (!seenIds.has(it.id)) e.items.push(it);
+    }
+  };
+  add(storyData.friends, true);
+  add(storyData.everyone, false);
+  for (const e of by.values()) {
+    e.items.sort((a, b) => a.created_at - b.created_at);
+    e.unseen = e.items.filter((i) => !i.seen).length;
+    e.latest = e.items.reduce((m, i) => Math.max(m, i.created_at), 0);
+  }
+  // People first, then public-only authors; unseen first, newest within each.
+  return [...by.values()].sort((a, b) => (b.friend - a.friend) || (b.unseen - a.unseen) || (b.latest - a.latest));
+}
+function storyTrayFor(userId) { return storyUserTrays().find((t) => t.id === userId) || null; }
 function storyServerTray(serverId) { return (storyData.servers || []).find((t) => t.server && t.server.id === serverId) || null; }
+// Unseen count across everything I can watch (drives the Home dot/rows).
+function storyUnseenTotal() {
+  let n = 0;
+  for (const t of storyUserTrays()) n += t.unseen;
+  for (const t of storyData.servers || []) n += (t.unseen || 0);
+  return n;
+}
 function storyAgo(ts) {
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
   if (s < 60) return 'just now';
@@ -51,7 +85,7 @@ async function loadStories() {
   if (storyFetch) return storyFetch;
   storyFetch = api('/api/stories')
     .then((d) => {
-      storyData = { mine: d.mine || null, friends: d.friends || [], servers: d.servers || [] };
+      storyData = { mine: d.mine || null, friends: d.friends || [], everyone: d.everyone || [], servers: d.servers || [] };
       return storyData;
     })
     .catch(() => storyData)
@@ -70,17 +104,61 @@ function scheduleStoryRefresh(ms = 600) {
 function renderStorySurfaces() {
   try { renderStoryRail(); } catch {}
   try { renderServerStories(); } catch {}
-  try { renderFriendStoryRings(); } catch {}
+  try { renderHomeStories(); } catch {}
+  try { paintStoryRingsEverywhere(); } catch {}
+}
+// Rings live on rows that other code rebuilds, so story changes repaint them
+// (friend list, server member list, DM list) without a full view refresh.
+function paintStoryRingsEverywhere() {
+  renderFriendStoryRings();
+  try { if (S.view === 'server') renderMembers(); } catch {}
+  try { if (S.dms && S.dms.length) renderDmLists(); } catch {}
 }
 
 // ---------- shared bits ----------
-function storyRing(user, unseen) {
+// The ring shows a thumbnail of the story itself, cropped into the circle
+// behind the person's avatar ("cookie-cutter" style): the avatar is the
+// fallback if the media can't render.
+function storyThumbItem(items) {
+  const live = storyLive(items);
+  if (!live.length) return null;
+  const unseen = live.filter((i) => !i.seen);
+  const pool = unseen.length ? unseen : live;
+  return pool[pool.length - 1];
+}
+function storyThumbEl(it, cls) {
+  if (!it) return null;
+  let el;
+  if (it.kind === 'video') {
+    el = document.createElement('video');
+    el.muted = true;
+    el.defaultMuted = true;
+    el.playsInline = true;
+    el.setAttribute('playsinline', '');
+    el.preload = 'metadata';
+    el.onerror = () => { try { el.remove(); } catch {} };
+    el.onloadeddata = () => { try { el.currentTime = 0.06; } catch {} };
+    el.src = it.url;
+  } else {
+    el = document.createElement('img');
+    el.alt = '';
+    el.loading = 'lazy';
+    el.decoding = 'async';
+    el.onerror = () => { try { el.remove(); } catch {} };
+    el.src = it.url;
+  }
+  el.className = (cls || 'st-thumb');
+  return el;
+}
+function storyRing(user, unseen, items) {
   const ring = document.createElement('span');
   ring.className = 'st-ring' + (unseen ? '' : ' seen');
   const av = document.createElement('span');
   av.className = 'avatar';
   paintAvatar(av, user || { display_name: '?' });
   ring.appendChild(av);
+  const thumb = storyThumbEl(storyThumbItem(items));
+  if (thumb) ring.appendChild(thumb);
   return ring;
 }
 function storyTile(user, label, unseen, onClick, opts = {}) {
@@ -89,7 +167,7 @@ function storyTile(user, label, unseen, onClick, opts = {}) {
   wrap.tabIndex = 0;
   wrap.setAttribute('role', 'button');
   wrap.title = opts.title || label;
-  const ring = storyRing(user, unseen);
+  const ring = storyRing(user, unseen, opts.items);
   wrap.appendChild(ring);
   if (opts.plus) {
     // A real button so "post another" stays reachable once you have a live
@@ -127,72 +205,201 @@ function renderStoryRail() {
   box.appendChild(storyTile(S.me, mineItems.length ? 'Your story' : 'Add story', false, () => {
     if (mineItems.length) openStoryViewer({ kind: 'mine' });
     else openStoryComposer({});
-  }, { plus: true, onPlus: () => openStoryComposer({}) }));
-  for (const t of storyData.friends || []) {
-    const items = storyLive(t.items);
-    if (!items.length) continue;
-    const unseen = items.some((i) => !i.seen);
-    box.appendChild(storyTile(t.user, t.user.display_name, unseen, () => openStoryViewer({ kind: 'friend', userId: t.user.id })));
+  }, { plus: true, onPlus: () => openStoryComposer({}), items: mineItems }));
+  for (const t of storyUserTrays()) {
+    box.appendChild(storyTile(t.user, t.user.display_name, t.unseen > 0, () => openStoryViewer({ kind: 'user', userId: t.id }), { items: t.items }));
   }
   box.classList.remove('hidden');
 }
 
-// ---------- server sidebar row (other members' stories in this server) ----------
-function renderServerStories() {
-  const box = $('#srv-stories');
-  if (!box) return;
-  const tray = S.serverId ? storyServerTray(S.serverId) : null;
-  const items = tray ? storyLive(tray.items) : [];
-  if (!items.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
-  box.classList.remove('hidden');
-  box.innerHTML = '';
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'srv-stories';
-  btn.title = 'Watch stories from this server';
+// ---------- server sidebar row + Home sidebar entry ----------
+function storyStackHTML(users) {
   const stack = document.createElement('span');
   stack.className = 'ss-stack';
-  const seen = new Set();
-  for (const it of items) {
-    const u = it.author;
-    if (!u || seen.has(u.id)) continue;
-    seen.add(u.id);
-    if (seen.size > 3) break;
+  for (const u of users.slice(0, 3)) {
     const a = document.createElement('span');
     a.className = 'avatar';
     paintAvatar(a, u);
     stack.appendChild(a);
   }
-  btn.appendChild(stack);
+  return stack;
+}
+function renderServerStories() {
+  const box = $('#srv-stories');
+  if (!box) return;
+  if (!S.serverId || !S.serverDetail) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  const tray = storyServerTray(S.serverId);
+  const items = tray ? storyLive(tray.items) : [];
+  const others = items.filter((i) => i.author && i.author.id !== S.me.id);
+  box.classList.remove('hidden');
+  box.innerHTML = '';
+  const row = document.createElement('div');
+  row.className = 'srv-stories' + (items.length ? '' : ' srv-stories-empty');
+  row.setAttribute('role', 'button');
+  row.tabIndex = 0;
+  row.title = items.length ? 'Watch stories from this server' : 'Post the first story in this server';
+  const users = [];
+  const seen = new Set();
+  for (const it of items) {
+    const u = it.author;
+    if (!u || seen.has(u.id)) continue;
+    seen.add(u.id);
+    users.push(u);
+  }
+  if (users.length) row.appendChild(storyStackHTML(users));
+  else {
+    const ic = document.createElement('span');
+    ic.className = 'ss-ic';
+    ic.innerHTML = svSvg.camera;
+    row.appendChild(ic);
+  }
   const lab = document.createElement('span');
   lab.className = 'ss-label';
   lab.textContent = 'Stories';
-  btn.appendChild(lab);
-  const n = document.createElement('span');
-  n.className = 'ss-count';
-  n.textContent = tray.unseen ? `${tray.unseen} new` : String(items.length);
-  btn.appendChild(n);
-  btn.onclick = () => openStoryViewer({ kind: 'server', serverId: S.serverId });
-  box.appendChild(btn);
+  row.appendChild(lab);
+  if (!items.length) {
+    const hint = document.createElement('span');
+    hint.className = 'ss-hint';
+    hint.textContent = 'Be the first';
+    row.appendChild(hint);
+  } else if (tray.unseen) {
+    const n = document.createElement('span');
+    n.className = 'ss-count';
+    n.textContent = tray.unseen + ' new';
+    row.appendChild(n);
+  } else {
+    const n = document.createElement('span');
+    n.className = 'ss-count seen';
+    n.textContent = String(others.length || items.length);
+    row.appendChild(n);
+  }
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'ss-add';
+  add.title = 'Post to this server\'s stories';
+  add.setAttribute('aria-label', add.title);
+  add.innerHTML = svSvg.plus;
+  add.onclick = (e) => { e.stopPropagation(); openStoryComposer({ serverId: S.serverId }); };
+  row.appendChild(add);
+  const open = () => openStoriesSheet({ serverId: S.serverId, name: S.serverDetail.name });
+  row.onclick = open;
+  row.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
+  box.appendChild(row);
+}
+// Home sidebar: a Stories entry (with an unseen badge) that opens the sheet.
+function renderHomeStories() {
+  const btn = $('#btn-stories');
+  if (!btn) return;
+  const trays = storyUserTrays();
+  const mineItems = storyLive(storyData.mine && storyData.mine.items);
+  const srvTrays = (storyData.servers || []).filter((t) => storyLive(t.items).length);
+  const unseen = storyUnseenTotal();
+  const av = $('#stories-nav-av');
+  if (av) {
+    av.innerHTML = '';
+    const first = trays[0] || srvTrays[0];
+    if (first && first.user) paintAvatar(av, first.user);
+    else if (first && first.items && first.items[0] && first.items[0].author) paintAvatar(av, first.items[0].author);
+    else {
+      av.textContent = '';
+      av.style.background = 'var(--panel-3)';
+      av.innerHTML = svSvg.camera;
+    }
+    av.classList.add('avatar');
+    av.style.width = '28px';
+    av.style.height = '28px';
+  }
+  const badge = $('#stories-nav-count');
+  if (badge) { badge.textContent = unseen > 99 ? '99+' : String(unseen); badge.classList.toggle('hidden', !unseen); }
+  // Home rail dot: "someone you can watch posted" even while inside a server.
+  const homeDot = $('#home-story-dot');
+  if (homeDot) homeDot.classList.toggle('hidden', !unseen);
+  const sub = $('#stories-nav-sub');
+  if (sub) {
+    const n = trays.length + srvTrays.length;
+    sub.textContent = unseen ? `${unseen} new from ${n} ${n === 1 ? 'person' : 'people'}`
+      : (n ? `${n} ${n === 1 ? 'person' : 'people'} with stories` : 'No stories yet — be the first');
+  }
 }
 
-// ---------- friend-list rings ----------
-function paintFriendStoryRing(row, u) {
-  if (!row || !u) return;
-  const tray = storyTrayFor(u.id);
+// ---------- rings on other people's rows ----------
+// One helper for every roster surface: accent ring when unread, hairline when
+// read, and a tap on the avatar opens that person's tray.
+function paintRowStoryRing(row, user, avatarSel) {
+  if (!row || !user || !user.id) return false;
+  if (S.me && user.id === S.me.id) return false;
+  const tray = storyTrayFor(user.id);
   const items = tray ? storyLive(tray.items) : [];
-  const av = row.querySelector('.avatar');
-  if (!items.length) return;
+  if (!items.length) return false;
   const unseen = items.some((i) => !i.seen);
+  const av = row.querySelector(avatarSel || '.avatar');
   if (av) av.style.boxShadow = '0 0 0 2px ' + (unseen ? 'var(--accent)' : 'var(--line)');
   const wrap = row.querySelector('.avwrap') || av;
-  if (!wrap) return;
-  wrap.classList.add('st-clickable');
-  wrap.title = unseen ? `Watch ${u.display_name}'s story` : `Watch ${u.display_name}'s story (seen)`;
-  wrap.onclick = (e) => {
-    e.stopPropagation();
-    openStoryViewer({ kind: 'friend', userId: u.id });
-  };
+  if (wrap) {
+    try {
+      const old = wrap.querySelector('.st-thumb-inline');
+      if (old) old.remove();
+      if (getComputedStyle(wrap).position === 'static') wrap.style.position = 'relative';
+      const thumb = storyThumbEl(storyThumbItem(items), 'st-thumb-inline');
+      if (thumb) wrap.appendChild(thumb);
+    } catch {}
+    wrap.classList.add('st-clickable');
+    wrap.title = `Watch ${user.display_name || user.username || 'their'} story`;
+    wrap.onclick = (e) => { e.stopPropagation(); openStoryViewer({ kind: 'user', userId: user.id }); };
+  }
+  return true;
+}
+// ---------- friend-list rings ----------
+function paintFriendStoryRing(row, u) { paintRowStoryRing(row, u); }
+function paintDMStoryRing(row, peer) { paintRowStoryRing(row, peer); }
+function paintMemberStoryRing(row, m) { paintRowStoryRing(row, m); }
+// ---------- user card / profile ----------
+// "Watch story" on the card (ring around the avatar too) — the affordance
+// people look for after clicking someone's name.
+function paintUserCardStory(card, u) {
+  if (!card || !u || !S.me || u.id === S.me.id) return;
+  const tray = storyTrayFor(u.id);
+  const items = tray ? storyLive(tray.items) : [];
+  if (!items.length) return;
+  const unseen = items.some((i) => !i.seen);
+  const av = card.querySelector('.avatar');
+  if (av) {
+    av.style.boxShadow = '0 0 0 2.5px ' + (unseen ? 'var(--accent)' : 'var(--line)');
+    try {
+      if (getComputedStyle(av).position === 'static') av.style.position = 'relative';
+      const old = av.querySelector('.st-thumb-inline');
+      if (old) old.remove();
+      const thumb = storyThumbEl(storyThumbItem(items), 'st-thumb-inline');
+      if (thumb) av.appendChild(thumb);
+    } catch {}
+  }
+  const actions = card.querySelector('.uc-actions');
+  if (!actions || card.querySelector('#uc-story')) return;
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'btn small' + (unseen ? ' primary' : '');
+  b.id = 'uc-story';
+  b.textContent = unseen ? 'Watch story' : 'Watch story (seen)';
+  b.onclick = () => { try { closeUserCard(); } catch {} openStoryViewer({ kind: 'user', userId: u.id }); };
+  actions.insertBefore(b, actions.firstChild);
+}
+// Same affordance inside the full profile screen.
+function paintProfileStory(u) {
+  const host = $('#pf-story');
+  if (!host || !u || !S.me || u.id === S.me.id) { if (host) host.innerHTML = ''; return; }
+  const tray = storyTrayFor(u.id);
+  const items = tray ? storyLive(tray.items) : [];
+  host.innerHTML = '';
+  if (!items.length) return;
+  const unseen = items.some((i) => !i.seen);
+  const av = $('#pf-avatar');
+  if (av) av.style.boxShadow = '0 0 0 3px ' + (unseen ? 'var(--accent)' : 'var(--line)');
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'btn small' + (unseen ? ' primary' : '');
+  b.textContent = unseen ? 'Watch story' : 'Watch story (seen)';
+  b.onclick = () => { try { closeProfileScreen(); } catch {} openStoryViewer({ kind: 'user', userId: u.id }); };
+  host.appendChild(b);
 }
 function renderFriendStoryRings() {
   const list = $('#friend-list');
@@ -202,36 +409,188 @@ function renderFriendStoryRings() {
   }
 }
 
+// ================= stories sheet (the "stories area") =================
+// scope: 'home' (friends + everyone) or { serverId, name }.
+function storySheetRow(user, items, unseen, onClick) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'story-row';
+  const ring = storyRing(user, unseen > 0, items);
+  ring.style.width = ring.style.height = '44px';
+  row.appendChild(ring);
+  const main = document.createElement('span');
+  main.className = 'story-row-main';
+  const name = document.createElement('span');
+  name.className = 'story-row-name';
+  name.style.cssText = nameStyleFor(user);
+  name.textContent = user.display_name || user.username || 'User';
+  main.appendChild(name);
+  const sub = document.createElement('span');
+  sub.className = 'story-row-sub';
+  const last = items[items.length - 1];
+  sub.textContent = `${items.length} ${items.length === 1 ? 'story' : 'stories'} · ${storyAgo(last ? last.created_at : Date.now())}`;
+  main.appendChild(sub);
+  row.appendChild(main);
+  if (unseen) {
+    const dot = document.createElement('span');
+    dot.className = 'story-row-new';
+    dot.textContent = `${unseen} new`;
+    row.appendChild(dot);
+  }
+  const go = document.createElement('span');
+  go.className = 'story-row-go';
+  go.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
+  row.appendChild(go);
+  row.onclick = onClick;
+  return row;
+}
+function openStoriesSheet(scope = 'home') {
+  const serverId = scope && scope.serverId ? scope.serverId : null;
+  const title = serverId ? `Stories · ${scope.name || 'Server'}` : 'Stories';
+  const body = document.createElement('div');
+  body.className = 'story-sheet';
+  const addSec = (label) => {
+    const e = document.createElement('div');
+    e.className = 'story-sec';
+    e.textContent = label;
+    body.appendChild(e);
+  };
+  const addPost = (label, serverIdForPost) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'story-post';
+    b.innerHTML = svSvg.camera + `<span>${esc(label)}</span>`;
+    b.onclick = () => { $('#modal-backdrop').classList.add('hidden'); openStoryComposer({ serverId: serverIdForPost || null }); };
+    body.appendChild(b);
+  };
+  if (serverId) {
+    const tray = storyServerTray(serverId);
+    const items = tray ? storyLive(tray.items) : [];
+    const byAuthor = new Map();
+    for (const it of items) {
+      const u = it.author;
+      if (!u) continue;
+      const e = byAuthor.get(u.id) || byAuthor.set(u.id, { user: u, items: [], unseen: 0 }).get(u.id);
+      e.items.push(it);
+      if (!it.seen && u.id !== S.me.id) e.unseen++;
+    }
+    const rows = [...byAuthor.values()].sort((a, b) => (b.unseen - a.unseen));
+    addPost('Post to this server\'s story', serverId);
+    if (!rows.length) {
+      const p = document.createElement('p');
+      p.className = 'muted small story-empty';
+      p.textContent = 'No stories here yet — post the first one and it shows up for everyone in this server for 24 hours.';
+      body.appendChild(p);
+    } else {
+      addSec('THIS SERVER');
+      for (const t of rows) {
+        body.appendChild(storySheetRow(t.user, t.items, t.unseen, () => {
+          $('#modal-backdrop').classList.add('hidden');
+          openStoryViewer({ kind: 'server', serverId });
+        }));
+      }
+    }
+  } else {
+    const trays = storyUserTrays();
+    const mineItems = storyLive(storyData.mine && storyData.mine.items);
+    addPost('Post a story', null);
+    if (mineItems.length) {
+      addSec('YOUR STORY');
+      body.appendChild(storySheetRow(S.me, mineItems, 0, () => {
+        $('#modal-backdrop').classList.add('hidden');
+        openStoryViewer({ kind: 'mine' });
+      }));
+    }
+    const friends = trays.filter((t) => t.friend);
+    const others = trays.filter((t) => !t.friend);
+    if (friends.length) {
+      addSec('FRIENDS');
+      for (const t of friends) body.appendChild(storySheetRow(t.user, t.items, t.unseen, () => {
+        $('#modal-backdrop').classList.add('hidden');
+        openStoryViewer({ kind: 'user', userId: t.id });
+      }));
+    }
+    if (others.length) {
+      addSec('EVERYONE');
+      for (const t of others) body.appendChild(storySheetRow(t.user, t.items, t.unseen, () => {
+        $('#modal-backdrop').classList.add('hidden');
+        openStoryViewer({ kind: 'user', userId: t.id });
+      }));
+    }
+    const srvTrays = (storyData.servers || []).filter((t) => storyLive(t.items).length);
+    if (srvTrays.length) {
+      addSec('SERVERS');
+      for (const t of srvTrays) {
+        const author = (t.items.find((i) => i.author && i.author.id !== S.me.id) || {}).author || S.me;
+        body.appendChild(storySheetRow(
+          { id: t.server.id, display_name: t.server.name, username: 'server' },
+          t.items, t.unseen,
+          () => { $('#modal-backdrop').classList.add('hidden'); openStoryViewer({ kind: 'server', serverId: t.server.id }); },
+        ));
+        void author;
+      }
+    }
+    if (!mineItems.length && !friends.length && !others.length && !srvTrays.length) {
+      const p = document.createElement('p');
+      p.className = 'muted small story-empty';
+      p.textContent = 'No stories right now. Post one — your friends see it in their Home rail, and you can also share it to everyone here or to a specific server.';
+      body.appendChild(p);
+    }
+  }
+  openModal(title, '<div id="story-sheet-mount"></div>', 'Close', null);
+  document.querySelector('#modal-body').innerHTML = '';
+  document.querySelector('#modal-body').appendChild(body);
+}
+
 // ================= viewer =================
 let sv = null;
 
-function storyViewerTrays() {
+function storyViewerTrays(opt = {}) {
   const out = [];
-  for (const t of storyData.friends || []) {
-    const items = storyLive(t.items);
-    if (items.length) out.push({ kind: 'friend', id: t.user.id, user: t.user, items });
-  }
-  for (const t of storyData.servers || []) {
-    const items = storyLive(t.items);
+  // Opening from a server scopes the playlist to that server's stories, so
+  // watching a server's Stories area never wanders into friends' trays.
+  if (opt.kind === 'server') {
+    const t = storyServerTray(opt.serverId);
+    const items = t ? storyLive(t.items) : [];
     if (items.length) out.push({ kind: 'server', id: t.server.id, server: t.server, items });
+    return out;
   }
+  for (const t of storyUserTrays()) out.push({ kind: 'user', id: t.id, user: t.user, items: t.items });
   const mine = storyLive(storyData.mine && storyData.mine.items);
   if (mine.length) out.push({ kind: 'mine', id: S.me.id, user: S.me, items: mine });
   return out;
 }
 function svAuthor(tray, item) { return (tray.kind === 'mine') ? (S.me || (item && item.author)) : ((item && item.author) || tray.user); }
+// "Friends, Everyone, Studio" — who can see my own post.
+function shareSummary(shared) {
+  if (!shared) return '';
+  const bits = [];
+  if (shared.friends) bits.push('Friends');
+  if (shared.everyone) bits.push('Everyone');
+  for (const sid of shared.servers || []) {
+    const s = (S.servers || []).find((x) => x.id === sid);
+    bits.push(s ? s.name : 'Server');
+  }
+  return bits.join(', ');
+}
+// Typing a reply holds the story: the auto-advance must never wipe the box.
+function svReplyBusy() {
+  const inp = $('#sv-reply');
+  return !!(inp && (document.activeElement === inp || String(inp.value || '').trim()));
+}
 
 function openStoryViewer(opt = {}) {
-  const trays = storyViewerTrays();
+  const trays = storyViewerTrays(opt);
   if (!trays.length) return;
   let ti = 0;
-  if (opt.kind === 'friend') { const i = trays.findIndex((t) => t.kind === 'friend' && t.id === opt.userId); ti = i < 0 ? 0 : i; }
+  if (opt.kind === 'user') { const i = trays.findIndex((t) => t.kind === 'user' && t.id === opt.userId); ti = i < 0 ? 0 : i; }
   else if (opt.kind === 'server') { const i = trays.findIndex((t) => t.kind === 'server' && t.id === opt.serverId); ti = i < 0 ? 0 : i; }
   else if (opt.kind === 'mine') { const i = trays.findIndex((t) => t.kind === 'mine'); ti = i < 0 ? 0 : i; }
   if (sv) svTeardown();
-  sv = { trays, ti: 0, ii: 0, dur: STORY_IMG_MS, t0: 0, elapsed: 0, paused: false, raf: 0, holdT: 0, swipe: null, muted: false, gen: 0, seenT: 0, retryT: 0, retries: 0 };
+  sv = { trays, ti: 0, ii: 0, dur: STORY_IMG_MS, t0: 0, elapsed: 0, paused: false, raf: 0, holdT: 0, swipe: null, muted: false, gen: 0, seenT: 0, retryT: 0, retries: 0, waiting: false, replyFor: null, opt: { kind: opt.kind, userId: opt.userId, serverId: opt.serverId } };
   $('#story-view').classList.remove('hidden');
   document.body.classList.add('story-open');
+  $('#sv-reply').value = '';
   svShow(ti, 0);
 }
 function svTeardown() {
@@ -273,6 +632,7 @@ function svShow(ti, ii) {
   $('#sv-name').textContent = tray.kind === 'mine' ? 'Your story' : (author.display_name || author.username || 'Story');
   const bits = [storyAgo(it.created_at)];
   if (tray.kind === 'server' && tray.server) bits.push(tray.server.name);
+  if (tray.kind === 'mine' && it.shared) { const who = shareSummary(it.shared); if (who) bits.push(who); }
   $('#sv-sub').textContent = bits.join(' · ');
 
   // progress bars
@@ -356,7 +716,12 @@ function svShow(ti, ii) {
   $('#sv-reply-row').classList.toggle('hidden', isMine);
   $('#sv-views').classList.toggle('hidden', !isMine);
   if (isMine) $('#sv-views-n').textContent = it.views === 1 ? '1 view' : (it.views || 0) + ' views';
-  else { $('#sv-reply').value = ''; }
+  else {
+    // Keep a half-written reply while it still belongs to this author (typing
+    // pauses the story, but a manual skip must not eat what you wrote).
+    const rid = (author && author.id) || '';
+    if (sv.replyFor !== rid) { $('#sv-reply').value = ''; sv.replyFor = rid; }
+  }
   paintSvSound();
 
   // resume/pause state + timer
@@ -479,7 +844,7 @@ function svSyncState() {
   const cur = svCurrentItem();
   const curTray = sv.trays[sv.ti];
   const curKey = curTray ? curTray.kind + ':' + curTray.id : '';
-  const nextTrays = storyViewerTrays();
+  const nextTrays = storyViewerTrays(sv.opt || {});
   if (!nextTrays.length) return svClose();
   sv.trays = nextTrays;
   let ti = nextTrays.findIndex((t) => t.kind + ':' + t.id === curKey);
@@ -503,6 +868,7 @@ function storyViewsUpdated(storyId, views) {
 function storyRemoved(storyId) {
   const drop = (list) => (list || []).filter((t) => (t.items = (t.items || []).filter((i) => i.id !== storyId)).length);
   storyData.friends = drop(storyData.friends);
+  storyData.everyone = drop(storyData.everyone);
   storyData.servers = drop(storyData.servers);
   if (storyData.mine) {
     storyData.mine.items = (storyData.mine.items || []).filter((i) => i.id !== storyId);
@@ -597,8 +963,9 @@ async function svDelete(it) {
     else svShow(ti, Math.min(sv.ii, items.length - 1));
   } catch (err) { toast('Delete failed: ' + prettyError(err.message)); svResume(); }
 }
-// Reply to someone's story without leaving the viewer: opens (or reuses) the
-// 1:1 DM and posts the text there.
+// Reply to someone's story without leaving the viewer: the server opens (or
+// reuses) the 1:1 DM and copies the story's media in as the preview, so what
+// they see in chat survives the story's 24h expiry.
 async function storySendReply() {
   if (!sv) return;
   const inp = $('#sv-reply');
@@ -607,15 +974,14 @@ async function storySendReply() {
   const tray = sv.trays[sv.ti];
   const it = svCurrentItem();
   const author = svAuthor(tray, it);
-  if (!author || !author.id) return;
+  if (!author || !author.id || !it) return;
   inp.value = '';
+  sv.replyFor = author.id;
   svResume();
   try {
-    const { thread } = await api('/api/dms', { method: 'POST', body: JSON.stringify({ userId: author.id }) });
-    if (!S.ws || S.ws.readyState !== 1) { toast('Reconnecting… try again'); return; }
-    S.ws.send(JSON.stringify({ t: 'dm', threadId: thread.id, content: text, attachments: [] }));
+    const { threadId } = await api('/api/stories/' + encodeURIComponent(it.id) + '/reply', { method: 'POST', body: JSON.stringify({ text }) });
     toast('Reply sent to ' + (author.display_name || 'them'));
-    refreshDms().catch(() => {});
+    if (threadId) refreshDms().catch(() => {});
   } catch (err) { toast('Reply failed: ' + prettyError(err.message)); }
 }
 
@@ -652,10 +1018,17 @@ async function openStoryComposer(opts = {}) {
   sc = {
     stream: null, audio: null, micDenied: false, facing: 'user', mode: 'photo',
     rec: null, chunks: [], recT0: 0, recTimer: null, blob: null, kind: null,
-    previewUrl: null, durationMs: 0, audience: opts.serverId ? 'server' : 'friends',
-    serverId: opts.serverId || null, busy: false, camFailed: false, xhr: null,
+    previewUrl: null, durationMs: 0, busy: false, camFailed: false, xhr: null,
     step: 'capture', camSeq: 0,
+    // audiences: friends / everyone / servers (multi-select)
+    audFriends: true, audEveryone: false, audServers: [],
+    // view-once mode: pick friends instead of audiences, sends one DM each
+    vo: !!opts.viewOnce, voIds: [],
+    micCtx: null, micGain: null, micAnalyser: null, micTimer: null, micSource: null, micRaw: null, micLevel: 0,
   };
+  if (opts.serverId) { sc.audServers = [opts.serverId]; sc.audFriends = true; }
+  if (opts.everyone) sc.audEveryone = true;
+  if (opts.viewOnce) { try { await ensureFriends(); } catch {} }
   storySetStep('capture');
   renderStoryAudience();
   paintScMic();
@@ -719,7 +1092,7 @@ function storyStopCamTracks() {
   if (!sc) return;
   sc.camSeq = (sc.camSeq || 0) + 1; // invalidate any in-flight start
   try { if (sc.stream) sc.stream.getTracks().forEach((t) => t.stop()); } catch {}
-  try { if (sc.audio) sc.audio.getTracks().forEach((t) => t.stop()); } catch {}
+  storyStopMic();
   sc.stream = null; sc.audio = null;
   const vid = $('#sc-cam');
   if (vid) vid.srcObject = null;
@@ -730,21 +1103,91 @@ function storyCamHint(text) {
   h.textContent = text || '';
   h.classList.toggle('hidden', !text);
 }
+// Mic capture for video stories goes through a small Web Audio chain so quiet
+// speakers still come out audible: high-pass (rumble) → auto gain → gentle
+// compressor (tames the boosted peaks) → the track the recorder captures.
+// The gain rides the measured RMS toward a speech target. Falls back to the
+// raw mic track whenever Web Audio isn't available.
 async function storyEnsureMic() {
   if (!sc || sc.audio || sc.micDenied) return;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+  let raw = null;
   try {
-    sc.audio = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    raw = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
   } catch {
     sc.micDenied = true;
     paintScMic();
     toast('Microphone blocked — recording without sound');
     return;
   }
-  if (!sc) { try { sc.audio.getTracks().forEach((t) => t.stop()); } catch {} return; }
-  // The mic track joins the camera stream so the recorder captures both.
-  try { for (const t of sc.audio.getAudioTracks()) if (sc.stream) sc.stream.addTrack(t); } catch {}
+  if (!sc) { try { raw.getTracks().forEach((t) => t.stop()); } catch {} return; }
+  sc.micRaw = raw;
+  let outTrack = raw.getAudioTracks()[0] || null;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (AC && outTrack) {
+    try {
+      const ctx = new AC();
+      try { await ctx.resume(); } catch {}
+      const src = ctx.createMediaStreamSource(raw);
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 85;
+      const gain = ctx.createGain();
+      gain.gain.value = 1;
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -18;
+      comp.knee.value = 24;
+      comp.ratio.value = 4;
+      comp.attack.value = 0.004;
+      comp.release.value = 0.18;
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      const dest = ctx.createMediaStreamDestination();
+      src.connect(hp); hp.connect(gain); gain.connect(comp); comp.connect(analyser); comp.connect(dest);
+      const track = dest.stream.getAudioTracks()[0];
+      if (track) {
+        sc.micCtx = ctx; sc.micGain = gain; sc.micAnalyser = analyser; sc.micSource = src;
+        outTrack = track;
+        const buf = new Float32Array(analyser.fftSize);
+        const TARGET = 0.06; // ≈ -24 dBFS RMS
+        sc.micTimer = setInterval(() => {
+          if (!sc || !sc.micGain || !sc.micAnalyser) return;
+          try { sc.micAnalyser.getFloatTimeDomainData(buf); } catch { return; }
+          let sum = 0;
+          for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+          const rms = Math.sqrt(sum / buf.length);
+          sc.micLevel = Math.min(1, rms * 8);
+          paintScLevel();
+          if (rms < 0.0008) return; // silence: hold the current gain
+          const want = Math.max(0.6, Math.min(8, TARGET / rms));
+          const cur = sc.micGain.gain.value;
+          sc.micGain.gain.value = cur + (want - cur) * 0.3; // smooth, no pumping
+        }, 120);
+      }
+    } catch { /* fall back to the raw track */ }
+  }
+  sc.audio = raw;
+  try { if (sc.stream && outTrack) sc.stream.addTrack(outTrack); } catch {}
   paintScMic();
+  paintScLevel();
+}
+function paintScLevel() {
+  const bar = $('#sc-level-fill');
+  if (!bar) return;
+  const lvl = sc && sc.audio && !sc.micDenied ? (sc.micLevel || 0) : 0;
+  bar.style.width = Math.round(lvl * 100) + '%';
+}
+function storyStopMic() {
+  if (!sc) return;
+  clearInterval(sc.micTimer);
+  sc.micTimer = null;
+  try { if (sc.micSource) sc.micSource.disconnect(); } catch {}
+  try { if (sc.micCtx) sc.micCtx.close(); } catch {}
+  sc.micCtx = null; sc.micGain = null; sc.micAnalyser = null; sc.micSource = null;
+  try { if (sc.micRaw) sc.micRaw.getTracks().forEach((t) => t.stop()); } catch {}
+  sc.micRaw = null;
+  sc.micLevel = 0;
+  paintScLevel();
 }
 function paintScMic() {
   const b = $('#sc-mic');
@@ -877,8 +1320,9 @@ function storyShowPreview(blob, kind, durationMs) {
   storySetStep('preview');
   renderStoryAudience();
   $('#sc-post').disabled = false;
-  $('#sc-post').textContent = 'Post story';
+  $('#sc-post').textContent = sc.vo ? 'Send' : 'Post story';
   storyProgress(null);
+  renderStoryAudience();
 }
 function storyRetake() {
   if (!sc) return;
@@ -892,20 +1336,80 @@ function storyRetake() {
   storySetStep('capture');
   storyStartCam();
 }
-function renderStoryAudience() {
+function storyAudCount() {
+  if (!sc) return 0;
+  if (sc.vo) return (sc.voIds || []).length;
+  return (sc.audFriends ? 1 : 0) + (sc.audEveryone ? 1 : 0) + (sc.audServers || []).length;
+}
+// View-once recipients: your friends, pick as many as you like. Each one gets
+// their own DM (never a group), so the view/replay bookkeeping stays per chat.
+function renderViewOnceRecipients() {
   const box = $('#sc-aud');
   if (!box || !sc) return;
   box.innerHTML = '';
-  const mk = (label, value, serverId) => {
+  const friends = [...((S.friends && S.friends.friends) || [])].sort((a, b) => String(a.display_name || '').localeCompare(String(b.display_name || '')));
+  for (const f of friends) {
+    const on = sc.voIds.includes(f.id);
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'sc-chip' + ((sc.audience === value && (value === 'friends' || sc.serverId === serverId)) ? ' sel' : '');
-    b.textContent = label;
-    b.onclick = () => { sc.audience = value; sc.serverId = serverId || null; renderStoryAudience(); };
+    b.className = 'sc-chip' + (on ? ' sel' : '');
+    b.textContent = f.display_name || f.username;
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    b.onclick = () => {
+      sc.voIds = on ? sc.voIds.filter((x) => x !== f.id) : [...sc.voIds, f.id];
+      renderStoryAudience();
+    };
     box.appendChild(b);
+  }
+  const hint = $('#sc-aud-hint');
+  if (hint) {
+    hint.textContent = !friends.length ? 'Add friends first — view-once items go to friends only'
+      : (sc.voIds.length ? `Sends ${sc.voIds.length === 1 ? 'a separate DM to 1 friend' : sc.voIds.length + ' separate DMs'}` : 'Pick who gets it');
+  }
+  const post = $('#sc-post');
+  if (post) {
+    post.disabled = !sc.voIds.length || !!sc.busy;
+    if (!sc.busy) post.textContent = sc.voIds.length ? `Send (${sc.voIds.length})` : 'Send';
+  }
+  const wrap = $('#sc-edit .sc-vo-note');
+  if (!wrap) {
+    const n = document.createElement('p');
+    n.className = 'sc-vo-note';
+    n.textContent = 'View once · they can replay it one time, then it is deleted';
+    const host = $('#sc-edit');
+    if (host) host.appendChild(n);
+  }
+}
+// Audience chips are a multi-select: a post can go to friends, to everyone on
+// this Campfire, and to any number of servers in one shot.
+function renderStoryAudience() {
+  const box = $('#sc-aud');
+  if (!box || !sc) return;
+  if (sc.vo) return renderViewOnceRecipients();
+  box.innerHTML = '';
+  const chip = (label, selected, onToggle, title) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'sc-chip' + (selected ? ' sel' : '');
+    b.textContent = label;
+    if (title) b.title = title;
+    b.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    b.onclick = () => { onToggle(); renderStoryAudience(); };
+    box.appendChild(b);
+    return b;
   };
-  mk('Friends', 'friends', null);
-  for (const s of S.servers || []) mk(s.name, 'server', s.id);
+  chip('Friends', !!sc.audFriends, () => { sc.audFriends = !sc.audFriends; }, 'Your friends see it in their Home rail');
+  chip('Everyone', !!sc.audEveryone, () => { sc.audEveryone = !sc.audEveryone; }, 'Any account on this Campfire can watch it');
+  for (const s of S.servers || []) {
+    const on = (sc.audServers || []).includes(s.id);
+    chip(s.name, on, () => {
+      sc.audServers = on ? sc.audServers.filter((x) => x !== s.id) : [...(sc.audServers || []), s.id];
+    }, 'Everyone in this server');
+  }
+  const hint = $('#sc-aud-hint');
+  if (hint) hint.textContent = storyAudCount() ? '' : 'Pick at least one audience';
+  const post = $('#sc-post');
+  if (post) post.disabled = !storyAudCount() || !!sc.busy;
 }
 function storyProgress(pct) {
   const wrap = $('#sc-prog'), fill = $('#sc-prog-fill');
@@ -921,6 +1425,10 @@ function closeStoryComposer() {
   if (st.xhr) { try { st.xhr.abort(); } catch {} }
   if (st.rec) { try { st.cancelled = true; st.rec.stop(); } catch {} }
   clearInterval(st.recTimer);
+  clearInterval(st.micTimer);
+  try { if (st.micSource) st.micSource.disconnect(); } catch {}
+  try { if (st.micCtx) st.micCtx.close(); } catch {}
+  try { if (st.micRaw) st.micRaw.getTracks().forEach((t) => t.stop()); } catch {}
   try { if (st.stream) st.stream.getTracks().forEach((t) => t.stop()); } catch {}
   try { if (st.audio) st.audio.getTracks().forEach((t) => t.stop()); } catch {}
   try { if (st.previewUrl) URL.revokeObjectURL(st.previewUrl); } catch {}
@@ -998,11 +1506,11 @@ async function storyPostNow() {
   const caption = ($('#sc-caption').value || '').trim().slice(0, 200);
   const fd = new FormData();
   const type = st.blob.type || (st.kind === 'video' ? 'video/webm' : 'image/jpeg');
-  fd.append('file', new File([st.blob], 'story-' + Date.now() + '.' + storyExtFor(type), { type }));
+  fd.append('file', new File([st.blob], (st.vo ? 'viewonce-' : 'story-') + Date.now() + '.' + storyExtFor(type), { type }));
   const up = await new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     st.xhr = xhr;
-    xhr.open('POST', '/api/upload');
+    xhr.open('POST', st.vo ? '/api/upload/viewonce' : '/api/upload');
     if (store.token) xhr.setRequestHeader('Authorization', 'Bearer ' + store.token);
     xhr.upload.onprogress = (e) => {
       if (!sc) return;
@@ -1021,14 +1529,28 @@ async function storyPostNow() {
   if (!sc) return;
   st.xhr = null;
   if (up.error) { st.busy = false; btn.disabled = false; btn.textContent = 'Post story'; storyProgress(null); toast('Upload failed: ' + prettyError(up.error)); return; }
-  if (up.scan === 'infected') { st.busy = false; btn.disabled = false; btn.textContent = 'Post story'; storyProgress(null); toast('That file was blocked by the scanner'); return; }
+  if (up.scan === 'infected') { st.busy = false; btn.disabled = false; btn.textContent = st.vo ? 'Send' : 'Post story'; storyProgress(null); toast('That file was blocked by the scanner'); return; }
+  if (st.vo) {
+    btn.textContent = 'Sending…';
+    try {
+      const r = await sendViewOnce({ url: up.url, mime: up.mime, kind: up.kind || st.kind, caption, userIds: st.voIds });
+      storyProgress(null);
+      closeStoryComposer();
+      toast(r.sent === 1 ? 'View-once sent' : `View-once sent to ${r.sent} friends`);
+      refreshDms().catch(() => {});
+    } catch (err) {
+      st.busy = false; btn.disabled = false; btn.textContent = 'Send'; storyProgress(null);
+      toast('Could not send: ' + prettyError(err.message));
+    }
+    return;
+  }
   btn.textContent = 'Posting…';
   try {
     await api('/api/stories', {
       method: 'POST',
       body: JSON.stringify({
         url: up.url, mime: up.mime, kind: st.kind, caption,
-        audience: st.audience, serverId: st.audience === 'server' ? st.serverId : null,
+        friends: !!st.audFriends, everyone: !!st.audEveryone, servers: st.audServers || [],
         durationMs: st.durationMs || undefined,
       }),
     });
@@ -1047,11 +1569,17 @@ async function storyPostNow() {
 }
 
 // ================= wiring =================
+$('#cm-viewonce').onclick = (e) => {
+  e.stopPropagation();
+  $('#composer-more').classList.add('hidden');
+  openStoryComposer({ viewOnce: true });
+};
 $('#cm-story').onclick = (e) => {
   e.stopPropagation();
   $('#composer-more').classList.add('hidden');
   openStoryComposer({ serverId: S.view === 'server' ? S.serverId : null });
 };
+$('#btn-stories').onclick = () => openStoriesSheet('home');
 $('#sv-close').onclick = () => svClose();
 $('#sv-sound').onclick = () => {
   if (!sv) return;
@@ -1070,7 +1598,11 @@ $('#sv-reply-send').onclick = () => storySendReply();
 $('#sv-reply').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); storySendReply(); }
 });
-$('#sv-vid').addEventListener('ended', () => svNext());
+$('#sv-vid').addEventListener('ended', () => { if (svReplyBusy()) svPause(); else svNext(); });
+// Focusing the reply box pauses the story (blur lets it run again): the story
+// must never advance out from under someone mid-sentence.
+$('#sv-reply').addEventListener('focus', () => svPause());
+$('#sv-reply').addEventListener('blur', () => { if (sv && !svReplyBusy()) svResume(); });
 // Tap zones with press-and-hold to pause (like Snapchat/Instagram).
 function storyZoneEl(el, fn) {
   let held = false;

@@ -143,6 +143,10 @@ async function persistUpload(sub, file) {
   file.filename = filename;
 }
 const upFile = uploader('files', null, MAX_FILE_BYTES, true);
+// View-once media lives under its own prefix so it can be gated: /uploads
+// refuses these keys unless the URL carries a signed, short-lived ticket that
+// only the recipient gets when they actually open the message.
+const upViewOnce = uploader('viewonce', null, MAX_FILE_BYTES, true);
 const upImg = uploader('avatars', IMG_MIMES, MAX_IMG_BYTES);
 const upBanner = uploader('banners', IMG_MIMES, MAX_IMG_BYTES);
 const upSidebar = uploader('sidebar', IMG_MIMES, MAX_IMG_BYTES);
@@ -229,6 +233,32 @@ async function scanGate(req, res, next) {
   } catch { return next(); }
 }
 app.use('/uploads', scanGate);
+// View-once gate: a viewonce/ key is only served with a valid ticket minted by
+// POST /api/dm/:id/viewonce/open (HMAC over key+viewer+expiry). Nothing can
+// peek at the media before the recipient opens the message, and the ticket
+// dies after a few minutes.
+function viewOnceSig(key, userId, exp) {
+  return crypto.createHmac('sha256', JWT_SECRET).update(key + ':' + userId + ':' + exp).digest('hex').slice(0, 32);
+}
+function viewOnceTicket(key, userId, ttlMs = 10 * 60 * 1000) {
+  const exp = Date.now() + ttlMs;
+  return `${userId}.${exp}.${viewOnceSig(key, userId, exp)}`;
+}
+app.use('/uploads/viewonce', (req, res, next) => {
+  try {
+    const key = storage.s3KeyFromUrl(String(req.originalUrl || '').split('?')[0]);
+    if (!key || !key.startsWith('viewonce/')) return next();
+    const raw = String((req.query && req.query.t) || '');
+    const [uid, exp, sig] = raw.split('.');
+    if (!uid || !exp || !sig) return res.status(403).json({ error: 'viewonce_locked' });
+    if (Number(exp) < Date.now()) return res.status(410).json({ error: 'ticket_expired' });
+    const want = viewOnceSig(key, uid, exp);
+    if (sig.length !== want.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want))) {
+      return res.status(403).json({ error: 'bad_ticket' });
+    }
+    return next();
+  } catch { return res.status(403).json({ error: 'viewonce_locked' }); }
+})
 app.use('/uploads', express.static(UPLOAD_DIR, {
   dotfiles: 'deny', index: false, maxAge: '7d',
   setHeaders(res, filePath) {
@@ -1882,40 +1912,122 @@ async function acceptedFriendIds(userId) {
 async function storyVisibleTo(s, viewerId) {
   if (!s) return false;
   if (s.user_id === viewerId) return true;
-  if (s.audience === 'server') return !!(s.server_id && await isMember(s.server_id, viewerId));
-  return await areFriends(s.user_id, viewerId);
+  for (const a of await storyShares(s.id)) {
+    if (a.kind === 'everyone') return true;
+    if (a.kind === 'friends' && await areFriends(s.user_id, viewerId)) return true;
+    if (a.kind === 'server' && a.server_id && await isMember(a.server_id, viewerId)) return true;
+  }
+  return false;
 }
-function storyView(s, author, seen, views) {
+// Audiences live in story_audiences rows so one post can reach friends, every
+// account on this instance, and any number of servers at once.
+function normStoryAudiences(body) {
+  const out = { friends: false, everyone: false, servers: [] };
+  if (body && typeof body === 'object') {
+    if (body.friends === true) out.friends = true;
+    if (body.everyone === true) out.everyone = true;
+    if (Array.isArray(body.servers)) for (const id of body.servers.slice(0, 50)) { const s = String(id || ''); if (s) out.servers.push(s); }
+    // Legacy single-target shape (audience:'friends'|'server' + serverId).
+    if (!out.friends && !out.everyone && !out.servers.length) {
+      if (body.audience === 'server' && body.serverId) out.servers = [String(body.serverId)];
+      else out.friends = true;
+    }
+  }
+  out.servers = [...new Set(out.servers)];
+  return out;
+}
+async function storyShares(storyId) {
+  try { return await db.prepare('SELECT kind, server_id FROM story_audiences WHERE story_id = ?').all(storyId); } catch { return []; }
+}
+function shareLabels(shares) {
+  return {
+    friends: shares.some((a) => a.kind === 'friends'),
+    everyone: shares.some((a) => a.kind === 'everyone'),
+    servers: [...new Set(shares.filter((a) => a.kind === 'server' && a.server_id).map((a) => a.server_id))],
+  };
+}
+function storyView(s, author, seen, views, shared) {
   return {
     id: s.id, url: s.url, kind: s.kind, mime: s.mime, caption: s.caption || '',
     duration_ms: Math.max(1000, Math.min(60000, Number(s.duration_ms) || 5000)),
     created_at: s.created_at, expires_at: s.expires_at,
     audience: s.audience, server_id: s.server_id || null,
+    shared: shared || null,
     author: author || null, seen: !!seen, views: Number(views) || 0,
   };
 }
-async function storyAudienceIds(s) {
-  if (s.audience === 'server') {
-    return (await db.prepare('SELECT user_id FROM server_members WHERE server_id = ?').all(s.server_id)).map((r) => r.user_id);
-  }
-  return await acceptedFriendIds(s.user_id);
+function notifyAllClients(obj) {
+  for (const c of clients) safeSend(c, obj);
 }
-// Tell everyone who can see it. Server audiences fan out through the socket
-// roster (broadcastToServer already covers the author's own sockets); friend
-// audiences go socket-to-socket per accepted friend.
+async function storyAudienceIds(s) {
+  const ids = new Set();
+  for (const a of await storyShares(s.id)) {
+    if (a.kind === 'friends') for (const id of await acceptedFriendIds(s.user_id)) ids.add(id);
+    else if (a.kind === 'everyone') for (const r of await db.prepare('SELECT id FROM users WHERE disabled = 0').all()) ids.add(r.id);
+    else if (a.kind === 'server' && a.server_id) for (const r of await db.prepare('SELECT user_id FROM server_members WHERE server_id = ?').all(a.server_id)) ids.add(r.user_id);
+  }
+  return [...ids];
+}
+// Tell everyone who can see it. Server targets fan out through the socket
+// roster, 'everyone' to every socket, and friend targets socket-to-socket.
 async function notifyStoryAudience(s, msg) {
-  if (s.audience === 'server') broadcastToServer(s.server_id, msg);
-  else for (const id of await storyAudienceIds(s)) notifyUser(id, msg);
+  const shares = await storyShares(s.id);
+  const ids = new Set([s.user_id]);
+  let all = false;
+  for (const a of shares) {
+    if (a.kind === 'server' && a.server_id) broadcastToServer(a.server_id, msg);
+    else if (a.kind === 'everyone') all = true;
+    else if (a.kind === 'friends') for (const id of await acceptedFriendIds(s.user_id)) ids.add(id);
+  }
+  if (all) notifyAllClients(msg);
+  else for (const id of ids) notifyUser(id, msg);
   notifyUser(s.user_id, msg); // the author's other tabs/devices
 }
 async function announceStoryNew(s, author) {
-  await notifyStoryAudience(s, { t: 'story-new', story: storyView(s, author, true, 0), serverId: s.audience === 'server' ? s.server_id : null });
+  await notifyStoryAudience(s, { t: 'story-new', story: storyView(s, author, true, 0, s.shared || null) });
+}
+// Copy an uploaded story file so a DM answering a story keeps a durable preview
+// after the story itself expires (24h) and its bytes are reaped.
+async function copyUpload(url) {
+  const clean = String(url || '').split('?')[0];
+  if (!clean.startsWith('/uploads/files/')) return null;
+  const srcKey = clean.slice('/uploads/'.length);
+  const rawExt = path.extname(srcKey).slice(1);
+  const ext = /^[a-z0-9]{1,10}$/i.test(rawExt) ? '.' + rawExt : '.bin';
+  const dstKey = 'files/' + crypto.randomBytes(16).toString('hex') + ext;
+  try {
+    if (storage.s3Enabled()) {
+      const data = await storage.s3Get(srcKey);
+      const buf = Buffer.from(await data.Body.transformToByteArray());
+      await storage.s3Put(dstKey, buf, data.ContentType || storage.mimeForFilename(srcKey));
+    } else {
+      const src = path.join(UPLOAD_DIR, srcKey);
+      if (!path.resolve(src).startsWith(path.resolve(UPLOAD_DIR))) return null;
+      await fs.promises.copyFile(src, path.join(UPLOAD_DIR, dstKey));
+    }
+  } catch { return null; }
+  return `/uploads/${dstKey}?v=${Date.now().toString(36)}`;
+}
+const storyKindForMime = (mime) => (String(mime || '').startsWith('video/') ? 'video' : String(mime || '').startsWith('image/') ? 'image' : '');
+// Byte size of a stored upload (used for the copied story preview).
+async function uploadSize(url) {
+  try {
+    const clean = String(url || '').split('?')[0];
+    const key = clean.slice('/uploads/'.length);
+    if (storage.s3Enabled()) {
+      const head = await storage.s3Head(key);
+      return Number(head.ContentLength) || 0;
+    }
+    const st = await fs.promises.stat(path.join(UPLOAD_DIR, key));
+    return st.size || 0;
+  } catch { return 0; }
 }
 
 // GET /api/stories — every live story I can see, grouped into trays:
-//   mine    { items, viewers }            (one item per post)
-//   friends [ { user, items, unseen, latest } ]
-//   servers [ { server, items, unseen, latest, mine } ]
+//   mine     { items, viewers }                       (all of my posts)
+//   friends  [ { user, items, unseen, latest } ]      (shared with friends)
+//   everyone [ { user, items, unseen, latest } ]      (shared instance-wide)
+//   servers  [ { server, items, unseen, latest, mine } ]  (per server, incl. mine)
 app.get('/api/stories', authRequired, async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   const me = req.user.id;
@@ -1925,74 +2037,91 @@ app.get('/api/stories', authRequired, async (req, res) => {
   const blockedBy = (await db.prepare('SELECT user_id FROM blocks WHERE blocked_id = ?').all(me)).map((r) => r.user_id);
   const hidden = new Set([...blocked, ...blockedBy]);
   const serverIds = (await db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(me)).map((r) => r.server_id);
-  const conds = [];
-  const params = [];
-  if (friendIds.length) { conds.push(`(audience = 'friends' AND user_id IN (${friendIds.map(() => '?').join(',')}))`); params.push(...friendIds); }
-  if (serverIds.length) { conds.push(`(audience = 'server' AND server_id IN (${serverIds.map(() => '?').join(',')}))`); params.push(...serverIds); }
-  conds.push('user_id = ?'); params.push(me);
-  const rows = (await db.prepare(`SELECT * FROM stories WHERE expires_at > ? AND (${conds.join(' OR ')}) ORDER BY created_at ASC`).all(ts, ...params))
-    // Blocked pairs never see each other's friend-stories (a server story is
-    // room context, not a personal share, so it stays visible).
-    .filter((s) => s.user_id === me || s.audience === 'server' || !hidden.has(s.user_id));
-  const ids = rows.map((s) => s.id);
-  const authorIds = [...new Set(rows.map((s) => s.user_id))];
+  const conds = ['s.user_id = ?'];
+  const params = [me];
+  conds.push("a.kind = 'everyone'");
+  if (friendIds.length) { conds.push(`(a.kind = 'friends' AND s.user_id IN (${friendIds.map(() => '?').join(',')}))`); params.push(...friendIds); }
+  if (serverIds.length) { conds.push(`(a.kind = 'server' AND a.server_id IN (${serverIds.map(() => '?').join(',')}))`); params.push(...serverIds); }
+  const raw = await db.prepare(`
+    SELECT s.*, a.kind AS a_kind, a.server_id AS a_server
+    FROM stories s JOIN story_audiences a ON a.story_id = s.id
+    WHERE s.expires_at > ? AND (${conds.join(' OR ')})
+    ORDER BY s.created_at ASC`).all(ts, ...params);
+  // One row per (story, audience): collapse back to one entry per story.
+  const byStory = new Map();
+  for (const r of raw) {
+    let e = byStory.get(r.id);
+    if (!e) { e = { row: r, shares: [] }; byStory.set(r.id, e); }
+    e.shares.push({ kind: r.a_kind, server_id: r.a_server || null });
+  }
+  const rows = [...byStory.values()];
+  const ids = rows.map((e) => e.row.id);
+  const authorIds = [...new Set(rows.map((e) => e.row.user_id))];
   const byId = new Map(authorIds.length
     ? (await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id IN (${authorIds.map(() => '?').join(',')})`).all(...authorIds)).map((u) => [u.id, publicUser(u)])
     : []);
   const seen = new Set(ids.length ? (await db.prepare(`SELECT story_id FROM story_views WHERE user_id = ? AND story_id IN (${ids.map(() => '?').join(',')})`).all(me, ...ids)).map((r) => r.story_id) : []);
   const viewCount = new Map();
-  const mineIds = rows.filter((s) => s.user_id === me).map((s) => s.id);
+  const mineIds = rows.filter((e) => e.row.user_id === me).map((e) => e.row.id);
   if (mineIds.length) {
     for (const r of await db.prepare(`SELECT story_id, COUNT(*) c FROM story_views WHERE story_id IN (${mineIds.map(() => '?').join(',')}) GROUP BY story_id`).all(...mineIds)) {
       viewCount.set(r.story_id, r.c);
     }
   }
-  const friendTrays = new Map(), serverTrays = new Map();
+  const friendTrays = new Map(), everyoneTrays = new Map(), serverTrays = new Map();
   let mine = null;
-  for (const s of rows) {
-    const item = storyView(s, byId.get(s.user_id) || publicUser(null), seen.has(s.id), viewCount.get(s.id) || 0);
+  const push = (map, key, item) => {
+    const t = map.get(key) || map.set(key, { id: key, items: [], unseen: 0, latest: 0, mine: 0 }).get(key);
+    t.items.push(item);
+    t.latest = Math.max(t.latest, item.created_at);
+    if (!item.seen) t.unseen++;
+    return t;
+  };
+  for (const { row: s, shares } of rows) {
+    const labels = shareLabels(shares);
+    const item = storyView(s, byId.get(s.user_id) || publicUser(null), seen.has(s.id), viewCount.get(s.id) || 0, labels);
     if (s.user_id === me) {
       if (!mine) mine = { items: [], latest: 0, viewers: 0 };
       mine.items.push(item);
       mine.latest = Math.max(mine.latest, s.created_at);
       mine.viewers = Math.max(mine.viewers, item.views);
-      continue;
     }
-    if (s.audience === 'server') {
-      const t = serverTrays.get(s.server_id) || serverTrays.set(s.server_id, { id: s.server_id, items: [], unseen: 0, latest: 0 }).get(s.server_id);
-      t.items.push(item);
-      t.latest = Math.max(t.latest, s.created_at);
-      if (!item.seen) t.unseen++;
-    } else {
-      const t = friendTrays.get(s.user_id) || friendTrays.set(s.user_id, { id: s.user_id, items: [], unseen: 0, latest: 0 }).get(s.user_id);
-      t.items.push(item);
-      t.latest = Math.max(t.latest, s.created_at);
-      if (!item.seen) t.unseen++;
+    // Blocked pairs never see each other's personal (friend/everyone) stories;
+    // a server story is room context, so it stays visible there.
+    const personalOk = s.user_id === me || !hidden.has(s.user_id);
+    if (labels.friends && s.user_id !== me && personalOk) push(friendTrays, s.user_id, item);
+    if (labels.everyone && s.user_id !== me && personalOk) push(everyoneTrays, s.user_id, item);
+    for (const sid of labels.servers) {
+      const t = push(serverTrays, sid, item);
+      if (s.user_id === me) t.mine++;
     }
   }
+  const trayList = (map) => [...map.values()]
+    .map((t) => ({ user: byId.get(t.id) || publicUser(null), items: t.items, unseen: t.unseen, latest: t.latest }))
+    .sort((a, b) => (b.unseen - a.unseen) || (b.latest - a.latest));
   const srvIds = [...serverTrays.keys()];
   const srvById = new Map(srvIds.length
     ? (await db.prepare('SELECT id, name, icon_url FROM servers WHERE id IN (' + srvIds.map(() => '?').join(',') + ')').all(...srvIds)).map((s) => [s.id, { id: s.id, name: s.name, icon_url: s.icon_url || null }])
     : []);
   res.json({
     mine,
-    friends: [...friendTrays.values()]
-      .map((t) => ({ user: byId.get(t.id) || publicUser(null), items: t.items, unseen: t.unseen, latest: t.latest }))
-      .sort((a, b) => (b.unseen - a.unseen) || (b.latest - a.latest)),
+    friends: trayList(friendTrays),
+    everyone: trayList(everyoneTrays),
     servers: [...serverTrays.values()]
-      .map((t) => ({ server: srvById.get(t.id) || { id: t.id, name: 'Server', icon_url: null }, items: t.items, unseen: t.unseen, latest: t.latest }))
+      .map((t) => ({ server: srvById.get(t.id) || { id: t.id, name: 'Server', icon_url: null }, items: t.items, unseen: t.unseen, latest: t.latest, mine: t.mine }))
       .sort((a, b) => (b.unseen - a.unseen) || (b.latest - a.latest)),
   });
 });
 
 // POST /api/stories — publish an already-uploaded file (see /api/upload).
+// Body: { url, mime, caption, durationMs, friends, everyone, servers: [id] }
 app.post('/api/stories', authRequired, async (req, res) => {
   const me = req.user;
   const url = String(req.body?.url || '');
   // Chat uploads carry a ?v=<ts> cache key (see uploadUrl).
   if (!/^\/uploads\/files\/[A-Za-z0-9._-]+(?:\?v=[a-z0-9]+)?$/.test(url)) return res.status(400).json({ error: 'bad_media' });
   const mime = String(req.body?.mime || '').slice(0, 80);
-  const kind = mime.startsWith('video/') ? 'video' : mime.startsWith('image/') ? 'image' : '';
+  const kind = storyKindForMime(mime);
   if (!kind) return res.status(400).json({ error: 'bad_media (photos and videos only)' });
   // Never announce bytes the scanner already flagged. (A pending verdict is
   // fine: the /uploads gate serves the file the moment it turns clean.)
@@ -2004,23 +2133,30 @@ app.post('/api/stories', authRequired, async (req, res) => {
   if (now() - since < STORY_MIN_GAP_MS) return res.status(429).json({ error: 'slow_down' });
   const active = (await db.prepare('SELECT COUNT(*) c FROM stories WHERE user_id = ? AND expires_at > ?').get(me.id, now())).c;
   if (active >= STORY_MAX_ACTIVE) return res.status(400).json({ error: 'too_many_stories (wait for some to expire)' });
-  const audience = req.body?.audience === 'server' ? 'server' : 'friends';
-  let serverId = null;
-  if (audience === 'server') {
-    serverId = String(req.body?.serverId || '');
-    if (!serverId || !(await isMember(serverId, me.id))) return res.status(403).json({ error: 'not_member' });
+  const aud = normStoryAudiences(req.body);
+  // Server audiences must be servers I'm actually in.
+  const servers = [];
+  for (const sid of aud.servers) {
+    if (await isMember(sid, me.id)) servers.push(sid);
   }
+  if (!aud.friends && !aud.everyone && !servers.length) return res.status(400).json({ error: 'pick_audience' });
   const caption = squashBreaks(String(req.body?.caption || '')).trim().slice(0, STORY_CAPTION_MAX);
   const durationMs = Math.max(1000, Math.min(60000, parseInt(req.body?.durationMs || 0, 10) || 5000));
   const id = uid();
   const created = now();
+  // Legacy columns hold a coarse summary (audiences are read from the shares).
   await db.prepare('INSERT INTO stories (id,user_id,audience,server_id,url,mime,kind,caption,duration_ms,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-    .run(id, me.id, audience, serverId, url, mime, kind, caption, durationMs, created, created + STORY_TTL_MS);
+    .run(id, me.id, aud.friends || aud.everyone ? 'friends' : 'server', servers.length === 1 && !aud.friends && !aud.everyone ? servers[0] : null, url, mime, kind, caption, durationMs, created, created + STORY_TTL_MS);
+  const insShare = db.prepare('INSERT INTO story_audiences (id,story_id,kind,server_id,created_at) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING');
+  if (aud.friends) await insShare.run(uid(), id, 'friends', null, created);
+  if (aud.everyone) await insShare.run(uid(), id, 'everyone', null, created);
+  for (const sid of servers) await insShare.run(uid(), id, 'server', sid, created);
   storyPostAt.set(me.id, created);
   if (storyPostAt.size > 5000) storyPostAt.clear(); // bound the flood map
-  const story = { id, user_id: me.id, audience, server_id: serverId, url, mime, kind, caption, duration_ms: durationMs, created_at: created, expires_at: created + STORY_TTL_MS };
+  const shared = { friends: aud.friends, everyone: aud.everyone, servers };
+  const story = { id, user_id: me.id, audience: 'multi', server_id: null, url, mime, kind, caption, duration_ms: durationMs, created_at: created, expires_at: created + STORY_TTL_MS, shared };
   await announceStoryNew(story, publicUser(me));
-  res.json({ story: storyView(story, publicUser(me), true, 0) });
+  res.json({ story: storyView(story, publicUser(me), true, 0, shared) });
 });
 
 // POST /api/stories/:id/view — record that I watched an item.
@@ -2045,28 +2181,187 @@ app.get('/api/stories/:id/viewers', authRequired, async (req, res) => {
   res.json({ viewers: rows.map((r) => ({ ...publicUser(r), viewed_at: r.viewed_at })) });
 });
 
-// DELETE /api/stories/:id — remove one of my items (bytes and all).
+// POST /api/stories/:id/reply — answer a story in the DM with its author.
+// The story media is copied into the DM so the preview survives the story's
+// 24h expiry (the original bytes are reaped then).
+async function dmThreadWith(meId, authorId) {
+  const mine = (await db.prepare('SELECT thread_id FROM dm_members WHERE user_id = ?').all(meId)).map((r) => r.thread_id);
+  for (const tid of mine) {
+    const t = await db.prepare('SELECT * FROM dm_threads WHERE id = ? AND (is_group IS NULL OR is_group = 0)').get(tid);
+    if (!t) continue;
+    const mems = (await db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ?').all(tid)).map((r) => r.user_id);
+    if (mems.length === 2 && mems.includes(authorId)) {
+      await db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ? AND user_id = ?').run(tid, meId);
+      return t;
+    }
+  }
+  const id = uid();
+  await db.transaction(async () => {
+    await db.prepare('INSERT INTO dm_threads (id,name,is_group,created_by,created_at) VALUES (?,?,?,?,?)').run(id, '', 0, meId, now());
+    await db.prepare('INSERT INTO dm_members (thread_id,user_id,joined_at) VALUES (?,?,?)').run(id, meId, now());
+    await db.prepare('INSERT INTO dm_members (thread_id,user_id,joined_at) VALUES (?,?,?)').run(id, authorId, now());
+  });
+  return await db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(id);
+}
+app.post('/api/stories/:id/reply', authRequired, async (req, res) => {
+  const me = req.user;
+  const text = squashBreaks(String(req.body?.text || '')).trim().slice(0, 500);
+  const s = await db.prepare('SELECT * FROM stories WHERE id = ?').get(String(req.params.id || ''));
+  if (!s || s.expires_at <= now() || !(await storyVisibleTo(s, me.id))) return res.status(404).json({ error: 'not_found' });
+  if (s.user_id === me.id) return res.status(400).json({ error: 'own_story' });
+  if (await db.prepare('SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)').get(s.user_id, me.id, me.id, s.user_id)) {
+    return res.status(403).json({ error: 'blocked' });
+  }
+  if (!text) return res.status(400).json({ error: 'empty_reply' });
+  if (!rateOk(me.id)) return res.status(429).json({ error: 'slow_down' });
+  const t = await dmThreadWith(me.id, s.user_id);
+  const mid = uid();
+  await db.prepare('INSERT INTO dm_messages (id,thread_id,user_id,content,reply_to_id,fwd_from,story_id,created_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(mid, t.id, me.id, text, null, null, s.id, now());
+  await db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ?').run(t.id);
+  // Durable copy of the story's media so the DM preview outlives the story.
+  let preview = null;
+  try {
+    const kind = s.kind === 'video' ? 'video' : 'image';
+    const copy = await copyUpload(s.url);
+    if (copy) {
+      const size = await uploadSize(copy);
+      const name = s.caption ? String(s.caption).slice(0, 60) : (kind === 'video' ? 'Story video' : 'Story photo');
+      preview = { url: copy, name, mime: s.mime || (kind === 'video' ? 'video/mp4' : 'image/jpeg'), size, kind };
+      await db.prepare('INSERT INTO dm_attachments (id,message_id,url,filename,mime,size,kind,spoiler,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+        .run(uid(), mid, preview.url, preview.name, preview.mime, preview.size, preview.kind, 0, now());
+    }
+  } catch (e) { console.warn('[stories] reply preview failed:', (e && e.message) || e); }
+  const full = await fullDm(mid, null);
+  await dmNotify(t.id, { t: 'dm-new', message: full });
+  try { await notifyDmMessage(t, me, text, mid); } catch {}
+  res.json({ ok: true, threadId: t.id, message: full });
+});
+
+// ---------- view-once messages (one view + one replay, then gone) ----------
+// Media is uploaded to the viewonce/ prefix (gated, see the /uploads ticket
+// check) and sent to each selected friend as a separate 1:1 DM. Nothing is
+// fetchable until the recipient opens it; the bytes are deleted when the view
+// (and its single replay) are used up. Unopened items never expire.
+app.post('/api/upload/viewonce', authRequired, (req, res, next) => {
+  upViewOnce.single('file')(req, res, (err) => {
+    if (err) return res.status(413).json({ error: 'file_too_large (max ' + Math.round(MAX_FILE_BYTES / 1048576) + 'MB)' });
+    next();
+  });
+}, async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'bad_file (no file received)' });
+  try { await persistUpload('viewonce', req.file); }
+  catch { return res.status(500).json({ error: 'storage_failed' }); }
+  const fileKey = 'viewonce/' + req.file.filename;
+  let scan = 'clean';
+  try { scan = await require('./virus-scan').queueFileScan(fileKey); } catch {}
+  let mt = req.file.mimetype;
+  if ((!mt || mt === 'application/octet-stream') && CODE_TEXT_EXTS.has(path.extname(String(req.file.originalname || '')).toLowerCase().slice(1))) mt = 'text/plain';
+  const kind = mt.startsWith('image/') ? 'image' : mt.startsWith('video/') ? 'video' : 'file';
+  if (kind === 'file') { deleteUploaded('/uploads/' + fileKey); return res.status(400).json({ error: 'bad_media (photos and videos only)' }); }
+  res.json({ url: '/uploads/' + fileKey + '?v=' + Date.now().toString(36), name: String(req.file.originalname || 'file').slice(0, 120), mime: mt, size: req.file.size, kind, scan });
+});
+
+app.post('/api/dm/viewonce', authRequired, async (req, res) => {
+  const me = req.user;
+  const url = String(req.body?.url || '');
+  if (!/^\/uploads\/viewonce\/[A-Za-z0-9._-]+(?:\?v=[a-z0-9]+)?$/.test(url)) return res.status(400).json({ error: 'bad_media' });
+  const mime = String(req.body?.mime || '').slice(0, 80);
+  const kind = storyKindForMime(mime);
+  if (!kind) return res.status(400).json({ error: 'bad_media (photos and videos only)' });
+  try {
+    const key = 'viewonce/' + url.split('?')[0].split('/').pop();
+    if ((await require('./virus-scan').scanStatus(key)) === 'infected') return res.status(400).json({ error: 'media_blocked' });
+  } catch {}
+  const caption = squashBreaks(String(req.body?.caption || '')).trim().slice(0, 200);
+  const ids = [...new Set((Array.isArray(req.body?.userIds) ? req.body.userIds : []).map(String).filter((x) => x && x !== me.id))].slice(0, 25);
+  if (!ids.length) return res.status(400).json({ error: 'pick_friends' });
+  if (!rateOk(me.id)) return res.status(429).json({ error: 'slow_down' });
+  const size = await uploadSize('/uploads/' + 'viewonce/' + url.split('?')[0].split('/').pop());
+  const sent = [];
+  for (const otherId of ids) {
+    if (!(await areFriends(me.id, otherId))) continue;
+    if (await db.prepare('SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)').get(me.id, otherId, otherId, me.id)) continue;
+    const t = await dmThreadWith(me.id, otherId);
+    const mid = uid();
+    await db.prepare('INSERT INTO dm_messages (id,thread_id,user_id,content,reply_to_id,fwd_from,view_once,view_once_state,view_once_replays,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+      .run(mid, t.id, me.id, caption, null, null, 1, 'unopened', 1, now());
+    await db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ?').run(t.id);
+    await db.prepare('INSERT INTO dm_attachments (id,message_id,url,filename,mime,size,kind,spoiler,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run(uid(), mid, url, caption || (kind === 'video' ? 'View-once video' : 'View-once photo'), mime, size, kind, 0, now());
+    const full = await fullDm(mid, null);
+    await dmNotify(t.id, { t: 'dm-new', message: full });
+    try { await notifyDmMessage(t, me, caption || 'Sent a view-once', mid); } catch {}
+    sent.push(t.id);
+  }
+  if (!sent.length) return res.status(403).json({ error: 'not_friends' });
+  res.json({ ok: true, sent: sent.length, threadIds: sent });
+});
+
+// Only the recipient can open it, and only while views remain.
+async function viewOnceMessage(mid, userId) {
+  const m = await db.prepare('SELECT * FROM dm_messages WHERE id = ?').get(String(mid || ''));
+  if (!m || !m.view_once) return { error: 'not_found' };
+  if (m.user_id === userId) return { error: 'own_message' };
+  const mem = await db.prepare('SELECT 1 FROM dm_members WHERE thread_id = ? AND user_id = ?').get(m.thread_id, userId);
+  if (!mem) return { error: 'not_found' };
+  if (m.view_once_state === 'consumed') return { error: 'already_opened' };
+  return { m };
+}
+app.post('/api/dm/:mid/viewonce/open', authRequired, async (req, res) => {
+  const { m, error } = await viewOnceMessage(req.params.mid, req.user.id);
+  if (error) return res.status(error === 'not_found' ? 404 : 403).json({ error });
+  const att = await db.prepare('SELECT * FROM dm_attachments WHERE message_id = ? ORDER BY created_at ASC LIMIT 1').get(m.id);
+  if (!att || !String(att.url).includes('/uploads/viewonce/')) return res.status(410).json({ error: 'media_gone' });
+  const key = storage.s3KeyFromUrl(String(att.url).split('?')[0]);
+  const ticket = viewOnceTicket(key, req.user.id);
+  res.json({
+    url: String(att.url).split('?')[0] + '?t=' + ticket,
+    kind: att.kind, mime: att.mime, caption: m.content || '', name: att.filename,
+    state: m.view_once_state, replaysLeft: Number(m.view_once_replays) || 0,
+  });
+});
+app.post('/api/dm/:mid/viewonce/consume', authRequired, async (req, res) => {
+  const { m, error } = await viewOnceMessage(req.params.mid, req.user.id);
+  if (error) return res.status(error === 'not_found' ? 404 : 403).json({ error });
+  const replays = Number(m.view_once_replays) || 0;
+  let state = 'consumed';
+  let deleted = false;
+  if (m.view_once_state === 'unopened' && replays > 0) {
+    state = 'replayable';
+    await db.prepare('UPDATE dm_messages SET view_once_state = ?, view_once_replays = ? WHERE id = ?').run(state, replays - 1, m.id);
+  } else {
+    await db.prepare('UPDATE dm_messages SET view_once_state = ? WHERE id = ?').run('consumed', m.id);
+    const rows = await db.prepare('SELECT * FROM dm_attachments WHERE message_id = ?').all(m.id);
+    for (const a of rows) { try { deleteUploaded(a.url); } catch {} }
+    await db.prepare('DELETE FROM dm_attachments WHERE message_id = ?').run(m.id);
+    deleted = true;
+  }
+  const full = await fullDm(m.id, null);
+  await dmNotify(m.thread_id, { t: 'dm-updated', message: full });
+  res.json({ ok: true, state, deleted, message: full });
+});
+
+
 app.delete('/api/stories/:id', authRequired, async (req, res) => {
   const s = await db.prepare('SELECT * FROM stories WHERE id = ?').get(String(req.params.id || ''));
   if (!s) return res.status(404).json({ error: 'not_found' });
   if (s.user_id !== req.user.id && !req.user.is_admin) return res.status(403).json({ error: 'not_yours' });
   await db.prepare('DELETE FROM stories WHERE id = ?').run(s.id);
   deleteUploaded(s.url);
-  const msg = { t: 'story-deleted', storyId: s.id, userId: s.user_id, serverId: s.audience === 'server' ? s.server_id : null };
-  await notifyStoryAudience(s, msg);
+  await notifyStoryAudience(s, { t: 'story-deleted', storyId: s.id, userId: s.user_id });
   res.json({ ok: true });
 });
 
 // Expiry reaper: drop rows past 24h and their stored bytes.
 async function reapStories() {
   try {
-    const rows = await db.prepare('SELECT id, url, user_id, audience, server_id FROM stories WHERE expires_at <= ?').all(now());
+    const rows = await db.prepare('SELECT id, url, user_id FROM stories WHERE expires_at <= ?').all(now());
     if (!rows.length) return;
     for (const s of rows) {
       try { await db.prepare('DELETE FROM stories WHERE id = ?').run(s.id); } catch {}
       try { deleteUploaded(s.url); } catch {}
-      const msg = { t: 'story-deleted', storyId: s.id, userId: s.user_id, serverId: s.audience === 'server' ? s.server_id : null, expired: true };
-      try { await notifyStoryAudience(s, msg); } catch {}
+      try { await notifyStoryAudience(s, { t: 'story-deleted', storyId: s.id, userId: s.user_id, expired: true }); } catch {}
     }
     console.log('[stories] reaped ' + rows.length + ' expired ' + (rows.length === 1 ? 'story' : 'stories'));
   } catch (e) { console.warn('[stories] reap failed:', (e && e.message) || e); }
@@ -3561,7 +3856,8 @@ const DM_JOIN = `SELECT m.*, u.username, u.display_name, u.avatar_color, u.avata
   LEFT JOIN dm_messages p ON p.id = m.reply_to_id LEFT JOIN users pu ON pu.id = p.user_id`;
 async function hydrateDm(rows, meId) {
   const ids = rows.map((r) => r.id);
-  const attBy = {}, reactBy = {}, parentAttBy = {};
+  const attBy = {}, reactBy = {}, parentAttBy = {}, voBy = {};
+  const voIds = new Set(rows.filter((r) => r.view_once).map((r) => r.id));
   const pollBy = await pollsForMessages('dm', ids);
   if (ids.length) {
     const ph = ids.map(() => '?').join(',');
@@ -3570,6 +3866,9 @@ async function hydrateDm(rows, meId) {
     try { scanMap = await require('./virus-scan').scanStatusMap(attRows.map((a) => scanKeyForUrl(a.url))); } catch {}
     for (const a of attRows) {
       const sk = scanKeyForUrl(a.url);
+      // View-once media is never handed out as a normal attachment: it stays
+      // gated behind /viewonce/open, and the card only carries its shape.
+      if (voIds.has(a.message_id)) { voBy[a.message_id] = { kind: a.kind, mime: a.mime, name: a.filename }; continue; }
       (attBy[a.message_id] = attBy[a.message_id] || []).push({ id: a.id, url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler, scan: (sk && scanMap.get(sk)) || 'clean' });
     }
     for (const r of await db.prepare(`SELECT message_id, emoji, user_id FROM dm_reactions WHERE message_id IN (${ph})`).all(...ids)) {
@@ -3589,6 +3888,11 @@ async function hydrateDm(rows, meId) {
     id: r.id, threadId: r.thread_id, content: r.content, created_at: r.created_at,
     sys: r.sys || null,
     fwdFrom: r.fwd_from || null,
+    // Set when this DM answers a story (the attached media is the story's
+    // preview, copied so it survives the story's expiry).
+    storyId: r.story_id || null,
+    // View-once: state + shape only, the media comes from /viewonce/open.
+    viewOnce: r.view_once ? Object.assign({ state: r.view_once_state || 'unopened', replaysLeft: Number(r.view_once_replays) || 0 }, voBy[r.id] || {}) : null,
     replyTo: r.reply_to_id ? (r.p_content != null ? { id: r.reply_to_id, author: r.p_name || 'deleted', snippet: String(r.p_content).slice(0, 140) } : { id: r.reply_to_id, author: 'deleted', snippet: '', deleted: true }) : null,
     threadCount: 0, edited: !!r.edited_at, _dm: true,
     attachments: attBy[r.id] || [],

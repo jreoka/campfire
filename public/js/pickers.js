@@ -944,6 +944,7 @@ async function openUserCard(uid, x, y) {
     </div>`;
   paintAvatar(card.querySelector('.avatar'), u);
   paintGameBadge(card.querySelector('.gbadge'));
+  try { paintUserCardStory(card, u); } catch {}
   const se = $('#uc-status-edit');
   if (se) se.onclick = () => openStatusEditor();
   const sc = $('#uc-status-clear');
@@ -1327,7 +1328,9 @@ function openProfileScreen(uid) {
     ${u.bio ? `<div class="pf-bio">${renderRich(u.bio)}</div>` : ''}
     ${u.created_at ? `<div class="pf-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
     <div id="pf-gaming" class="pf-gaming hidden"></div>
+    <div id="pf-story" class="pf-story"></div>
     <div class="pf-actions">${actions}<button class="btn small" id="pf-close">Close</button></div>`;
+  try { paintProfileStory(u); } catch {}
   loadUserGaming($('#pf-gaming'), u.username, { canDelete: isMe });
   $('#pf-close').onclick = closeProfileScreen;
   const msg = $('#pf-message');

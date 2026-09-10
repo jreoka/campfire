@@ -476,6 +476,9 @@ function messageEl(m, opts = {}) {
   if (m.fwdFrom) {
     inner += `<div class="fwd-tag">Forwarded from <b>${esc(m.fwdFrom)}</b></div>`;
   }
+  if (m.storyId) {
+    inner += '<div class="story-tag"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.2"/></svg><span>Story reply</span></div>';
+  }
   if (m.replyTo) {
     if (m.replyTo.deleted || (m.replyTo.author === 'deleted' && !m.replyTo.snippet)) {
       inner += `<div class="reply-quote deleted"><span class="rq-text">Original message was deleted</span></div>`;
@@ -496,6 +499,7 @@ function messageEl(m, opts = {}) {
   if (m.attachments?.length) {
     inner += '<div class="msg-atts">' + m.attachments.map(attachmentHTML).join('') + '</div>';
   }
+  if (m.viewOnce && typeof voCardHTML === 'function') inner += voCardHTML(m);
   if (m.poll) inner += pollHTML(m);
   inner += reactionsHTML(m);
   if (!opts.inThread && !m.threadRoot && m.threadCount > 0) {

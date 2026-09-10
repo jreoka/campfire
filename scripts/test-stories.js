@@ -130,7 +130,7 @@ async function uploadAndStory(token, extra = {}) {
   r = await req('DELETE', '/api/stories/' + sStory.id, { token: ta });
   ok(r.status === 200, 'author can delete', r.data);
   r = await req('GET', '/api/stories', { token: tb });
-  ok(!(r.data.servers || []).some((t) => t.server.id === srv.id), 'deleted server story is gone');
+  ok(!(r.data.servers || []).some((t) => t.items.some((i) => i.id === sStory.id)), 'deleted server story is gone');
 
   console.log('\n[8] expiry reaper (backdate + restart)');
   r = await req('GET', '/api/stories', { token: ta });
@@ -176,6 +176,58 @@ async function uploadAndStory(token, extra = {}) {
   ok(!log || /\[stories\] reaped 1 expired story/.test(log), 'reaper logged');
   r = await req('GET', '/api/stories', { token: ta });
   ok(r.status === 200, 'server healthy after restart', r.data);
+
+  console.log('\n[9] audiences: everyone + multi-target');
+  // A stranger: no friendship, no shared server — the case that started this.
+  r = await req('POST', '/api/register', { body: { username: 'sd' + tag, displayName: 'StoryD', password: 'passw0rd!x' } });
+  const td = r.data.token;
+  await new Promise((s) => setTimeout(s, 3200));
+  const up2 = new FormData();
+  up2.append('file', new Blob([PngBytes], { type: 'image/png' }), 'pub.png');
+  const upRes2 = await req('POST', '/api/upload', { token: ta, form: up2 });
+  r = await req('POST', '/api/stories', { token: ta, body: { url: upRes2.data.url, mime: upRes2.data.mime, kind: 'image', caption: 'public', everyone: true } });
+  ok(r.status === 200 && r.data.story.shared.everyone === true, 'everyone post is accepted', r.data);
+  const pub = r.data.story;
+  r = await req('GET', '/api/stories', { token: td });
+  ok((r.data.everyone || []).some((t) => t.items.some((i) => i.id === pub.id)), 'a stranger (no friend, no shared server) sees the everyone story');
+  ok(!(r.data.friends || []).some((t) => t.items.some((i) => i.caption === 'server only')), '…but not posts they cannot see');
+  await new Promise((s) => setTimeout(s, 3200));
+  const up3 = new FormData();
+  up3.append('file', new Blob([PngBytes], { type: 'image/png' }), 'multi.png');
+  const upRes3 = await req('POST', '/api/upload', { token: ta, form: up3 });
+  r = await req('POST', '/api/stories', { token: ta, body: { url: upRes3.data.url, mime: upRes3.data.mime, kind: 'image', caption: 'multi', friends: true, servers: [srv.id] } });
+  ok(r.status === 200, 'friends+server post accepted', r.data);
+  const multiId = r.data.story.id;
+  r = await req('GET', '/api/stories', { token: tb });
+  ok((r.data.friends || []).some((t) => t.items.some((i) => i.id === multiId)), 'multi post is in the friend tray');
+  ok((r.data.servers || []).some((t) => t.items.some((i) => i.id === multiId)), 'multi post is in the server tray');
+  r = await req('GET', '/api/stories', { token: ta });
+  const mineSrv = (r.data.servers || []).find((t) => t.server.id === srv.id);
+  ok(!!mineSrv && mineSrv.items.some((i) => i.id === multiId) && mineSrv.mine >= 1, 'my post also shows in the server area (mine count)', mineSrv && { n: mineSrv.items.length, mine: mineSrv.mine });
+
+  console.log('\n[10] story reply → DM with a durable preview');
+  r = await req('GET', '/api/stories', { token: td });
+  const pubView = ((r.data.everyone || [])[0] || { items: [] }).items[0];
+  r = await req('POST', '/api/stories/' + pubView.id + '/reply', { token: td, body: { text: 'nice one' } });
+  ok(r.status === 200 && !!r.data.threadId, 'stranger replies to a public story', r.data.error || r.data.ok);
+  const replyMsg = r.data.message;
+  ok(replyMsg.storyId === pubView.id && replyMsg.content === 'nice one', 'DM carries the text + story id', { s: replyMsg.storyId, c: replyMsg.content });
+  ok(replyMsg.attachments.length === 1 && replyMsg.attachments[0].url !== pubView.url, 'preview is a copy of the story media', replyMsg.attachments);
+  const previewUrl = replyMsg.attachments[0].url;
+  ok((await fetch(BASE + previewUrl)).status === 200, 'preview bytes are servable now');
+  // A friends-only post: a stranger must not be able to reply to it.
+  const multiStory = (await req('GET', '/api/stories', { token: ta })).data.mine.items.find((i) => i.caption === 'multi');
+  r = await req('POST', '/api/stories/' + multiStory.id + '/reply', { token: td, body: { text: 'nope' } });
+  ok(r.status === 404, 'a stranger cannot reply to a post they cannot see', r.data);
+  r = await req('POST', '/api/stories/' + multiStory.id + '/reply', { token: tb, body: { text: 'noticed it' } });
+  ok(r.status === 200, 'a friend can reply to it', r.data.error || r.data.ok);
+  r = await req('POST', '/api/stories/' + pubView.id + '/reply', { token: ta, body: { text: 'me' } });
+  ok(r.status === 400 && r.data.error === 'own_story', 'no replies to your own story', r.data);
+  r = await req('POST', '/api/stories/' + pubView.id + '/reply', { token: td, body: { text: '  ' } });
+  ok(r.status === 400, 'empty replies rejected', r.data);
+  r = await req('DELETE', '/api/stories/' + pubView.id, { token: ta });
+  ok(r.status === 200, 'author deletes the replied-to story');
+  ok((await fetch(BASE + previewUrl)).status === 200, 'the DM preview survives the story being deleted');
 
   console.log(fails ? `\nFAILURES: ${fails}\n` : '\nALL STORY TESTS PASSED\n');
   process.exit(fails ? 1 : 0);

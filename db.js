@@ -580,7 +580,42 @@ CREATE TABLE IF NOT EXISTS story_views (
   PRIMARY KEY (story_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_story_views_story ON story_views(story_id);
+-- Who each story is shared with, one row per audience. A post can target
+-- several at once (friends + a couple of servers), so visibility is read from
+-- here — the legacy stories.audience/server_id columns are backfilled below
+-- and then left alone. kind: 'friends' | 'everyone' | 'server'.
+CREATE TABLE IF NOT EXISTS story_audiences (
+  id TEXT PRIMARY KEY,
+  story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  server_id TEXT REFERENCES servers(id) ON DELETE CASCADE,
+  created_at BIGINT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_story_audiences_uniq ON story_audiences (story_id, kind, COALESCE(server_id, ''));
+CREATE INDEX IF NOT EXISTS idx_story_audiences_server ON story_audiences (server_id);
 `);
+  // One-time backfill: stories posted before audiences were a list keep their
+  // original single target. Idempotent (skips stories that already have rows).
+  try {
+    await db.exec(`
+INSERT INTO story_audiences (id, story_id, kind, server_id, created_at)
+SELECT 'legacy-' || s.id, s.id,
+  CASE WHEN s.audience = 'server' THEN 'server' ELSE 'friends' END,
+  CASE WHEN s.audience = 'server' THEN s.server_id ELSE NULL END,
+  s.created_at
+FROM stories s
+WHERE (s.audience = 'server' OR s.audience = 'friends')
+  AND NOT EXISTS (SELECT 1 FROM story_audiences a WHERE a.story_id = s.id)`);
+  } catch (e) { console.warn('[db] story audience backfill skipped:', (e && e.message) || e); }
+  // A DM that answers a story carries the story id so clients can label it
+  // (the media itself is copied into the DM at reply time).
+  await addColumn('dm_messages', 'story_id', 'TEXT');
+  // View-once messages: media that stays gated until the recipient opens it
+  // (state: 'unopened' | 'replayable' | 'consumed'), with one replay allowed.
+  // Unopened items never expire; the bytes go when the view is used up.
+  await addColumn('dm_messages', 'view_once', 'BIGINT NOT NULL DEFAULT 0');
+  await addColumn('dm_messages', 'view_once_state', "TEXT NOT NULL DEFAULT ''");
+  await addColumn('dm_messages', 'view_once_replays', 'BIGINT NOT NULL DEFAULT 1');
   await addColumn('messages', 'webhook_id', 'TEXT');
   await addColumn('messages', 'webhook_name', 'TEXT');
   await addColumn('messages', 'webhook_avatar', 'TEXT');

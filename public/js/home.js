@@ -419,6 +419,7 @@ function dmRowEl(t) {
   if (av) paintAvatar(avSpan, av);
   else avSpan.style.background = 'var(--panel-3)';
   avSpan.style.boxShadow = 'none'; // no grey ring on sidebar DM pfps (matches the DM rail)
+  if (av) { try { paintDMStoryRing(b, av); } catch {} }
   // Sidebar banner: the DM list is a people roster, not a presence view (rows
   // aren't dimmed), so the peer's banner shows even while they're offline —
   // same picture the member sidebar paints next to their name.
