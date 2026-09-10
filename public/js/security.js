@@ -441,8 +441,16 @@ function renderServerTab() {
   descRow.innerHTML = `<label style="flex:1">Description (shown on invites)<input id="srv-desc" maxlength="200" placeholder="What is this server about?" value="${esc(d.description || '')}" ${mgr ? '' : 'disabled'} /></label>`;
   cur.appendChild(descRow);
   const tagRow = document.createElement('div');
-  tagRow.innerHTML = `<label style="flex:1">Server tag (max 4 characters, members can show it after their name)<input id="srv-tag" maxlength="4" placeholder="e.g. NOOB" value="${esc(d.tag || '')}" ${mgr ? '' : 'disabled'} /></label>`;
+  tagRow.innerHTML = `<label style="flex:1">Server tag (optional emoji + up to 4 characters, members can show it after their name)<span class="row" style="margin-top:.35rem">`
+    + `<input id="srv-tag-emoji" maxlength="8" placeholder="😀" title="Tag emoji (optional)" value="${esc(d.tag_emoji || '')}" style="flex:0 0 64px;width:auto;text-align:center" ${mgr ? '' : 'disabled'} />`
+    + `<input id="srv-tag" maxlength="4" placeholder="e.g. NOOB" value="${esc(d.tag || '')}" style="flex:1;width:auto;min-width:0" ${mgr ? '' : 'disabled'} />`
+    + (mgr ? `<button class="btn small" id="srv-tag-pick" type="button">Pick emoji</button>` : '') + `</span></label>`;
   cur.appendChild(tagRow);
+  if (mgr) tagRow.querySelector('#srv-tag-pick').onclick = () => {
+    S.tagEmojiInput = tagRow.querySelector('#srv-tag-emoji');
+    openPicker('tag', null, 'emoji');
+    document.querySelector('#picker .pk-tabs').style.display = 'none';
+  };
   const iconRow = document.createElement('div');
   iconRow.className = 'row';
   iconRow.style.margin = '.5rem 0';
@@ -469,7 +477,7 @@ function renderServerTab() {
     fi.onchange = async () => { if (!fi.files[0]) return; try { await uploadImage(`/api/servers/${d.id}/icon`, fi.files[0]); renderServerTab(); } catch (err) { toast('Icon failed: ' + prettyError(err.message)); } };
     rm.onclick = async () => { try { await api(`/api/servers/${d.id}/icon`, { method: 'DELETE' }); renderServerTab(); } catch {} };
     const sv = document.createElement('button'); sv.className = 'btn small primary'; sv.textContent = 'Save name';
-    sv.onclick = async () => { try { await api(`/api/servers/${d.id}`, { method: 'PATCH', body: JSON.stringify({ name: box.querySelector('#srv-name').value, description: box.querySelector('#srv-desc').value, tag: box.querySelector('#srv-tag').value }) }); toast('Server saved'); } catch (err) { toast('Save failed: ' + prettyError(err.message)); } };
+    sv.onclick = async () => { try { await api(`/api/servers/${d.id}`, { method: 'PATCH', body: JSON.stringify({ name: box.querySelector('#srv-name').value, description: box.querySelector('#srv-desc').value, tag: box.querySelector('#srv-tag').value, tagEmoji: box.querySelector('#srv-tag-emoji').value }) }); toast('Server saved'); } catch (err) { toast('Save failed: ' + prettyError(err.message)); } };
     iconRow.append(ch, rm, sv);
   }
   cur.appendChild(iconRow);

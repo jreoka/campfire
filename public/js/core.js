@@ -142,7 +142,12 @@ function isSysAdmin(u) { return !!(u && u.is_admin); }
  * every surface renders it with zero lookups. */
 function activeTagFor(u) {
   const t = u && u.active_tag ? String(u.active_tag).replace(/\s/g, '') : '';
-  return t ? Array.from(t).slice(0, 4).join('') : '';
+  if (!t) return '';
+  // Emoji + up to 4 chars: cap at 5 graphemes as a backstop (server validates).
+  try {
+    const segs = [...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(t)].map((s) => s.segment);
+    return segs.slice(0, 5).join('');
+  } catch { return Array.from(t).slice(0, 5).join(''); }
 }
 function tagHTML(u) {
   const t = activeTagFor(u);

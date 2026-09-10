@@ -23,9 +23,9 @@ function openSettings(tab = 'profile') {
     const none = document.createElement('option');
     none.value = ''; none.textContent = 'None';
     sel.appendChild(none);
-    for (const s of (S.servers || []).filter((x) => x && x.tag)) {
+    for (const s of (S.servers || []).filter((x) => x && (x.tag || x.tag_emoji))) {
       const o = document.createElement('option');
-      o.value = s.id; o.textContent = `${s.tag} — ${s.name}`;
+      o.value = s.id; o.textContent = `${s.tag_emoji || ''}${s.tag || ''} — ${s.name}`;
       if (S.me.active_tag_server_id === s.id) o.selected = true;
       sel.appendChild(o);
     }

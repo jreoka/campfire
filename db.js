@@ -70,6 +70,7 @@ addColumn('users', 'banner_url', 'TEXT');
 addColumn('users', 'sidebar_banner_url', 'TEXT');
 addColumn('servers', 'icon_url', 'TEXT');
 addColumn('servers', 'tag', 'TEXT');
+addColumn('servers', 'tag_emoji', 'TEXT');
 addColumn('users', 'active_tag_server_id', 'TEXT');
 addColumn('users', 'active_tag', 'TEXT');
 addColumn('messages', 'reply_to_id', 'TEXT');

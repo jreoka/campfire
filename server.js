@@ -235,6 +235,19 @@ const pickColor = () => COLORS[Math.floor(Math.random() * COLORS.length)];
 function cleanTag(t) {
   return Array.from(String(t ?? '').replace(/\s/g, '')).slice(0, 4).join('');
 }
+// Tag emoji: one standard unicode emoji (first grapheme, must be pictographic).
+// Custom :shortcode: emoji and plain text are rejected ('' = none).
+function cleanTagEmoji(t) {
+  const s = String(t ?? '').replace(/\s/g, '');
+  if (!s) return '';
+  let g = '';
+  try {
+    const it = new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(s)[Symbol.iterator]();
+    const first = it.next();
+    g = first.done ? '' : first.value.segment;
+  } catch { g = Array.from(s)[0] || ''; }
+  return g && /\p{Extended_Pictographic}/u.test(g) ? g : '';
+}
 // Push a user's fresh profile to every connected client that can see them.
 function clearTagSelection(userId, serverId) {
   db.prepare('UPDATE users SET active_tag_server_id = NULL, active_tag = NULL WHERE id = ? AND active_tag_server_id = ?').run(userId, serverId);
@@ -1613,9 +1626,9 @@ app.patch('/api/me', authRequired, (req, res) => {
       const srv = getServer(tid);
       if (!srv) return res.status(404).json({ error: 'no_server' });
       if (!isMember(srv.id, req.user.id)) return res.status(403).json({ error: 'not_member' });
-      if (!srv.tag) return res.status(400).json({ error: 'no_tag' });
+      if (!srv.tag && !srv.tag_emoji) return res.status(400).json({ error: 'no_tag' });
       sets.push('active_tag_server_id = ?'); vals.push(srv.id);
-      sets.push('active_tag = ?'); vals.push(srv.tag);
+      sets.push('active_tag = ?'); vals.push((srv.tag_emoji || '') + (srv.tag || ''));
     }
   }
   if (req.body?.gameEnabled !== undefined) {
@@ -2265,13 +2278,16 @@ app.patch('/api/servers/:id', authRequired, (req, res) => {
   if (!name) return res.status(400).json({ error: 'name_required' });
   const sets = ['name = ?'], params = [name];
   if (req.body?.description !== undefined) { sets.push('description = ?'); params.push(String(req.body.description).slice(0, 200)); }
-  if (req.body?.tag !== undefined) {
-    const tag = cleanTag(req.body.tag);
+  if (req.body?.tag !== undefined || req.body?.tagEmoji !== undefined) {
+    const tag = req.body?.tag !== undefined ? cleanTag(req.body.tag) : (s.tag || '');
+    const emoji = req.body?.tagEmoji !== undefined ? cleanTagEmoji(req.body.tagEmoji) : (s.tag_emoji || '');
+    const full = (emoji || '') + (tag || '');
     sets.push('tag = ?'); params.push(tag || null);
+    sets.push('tag_emoji = ?'); params.push(emoji || null);
     // Keep every displayed tag in sync: members showing this server's tag
     // follow renames, and lose it when the tag is cleared (their selection
     // is kept, so it comes back if a new tag is set).
-    db.prepare('UPDATE users SET active_tag = ? WHERE active_tag_server_id = ?').run(tag || null, s.id);
+    db.prepare('UPDATE users SET active_tag = ? WHERE active_tag_server_id = ?').run(full || null, s.id);
     try {
       const affected = db.prepare('SELECT id FROM users WHERE active_tag_server_id = ?').all(s.id);
       for (const r of affected) { try { broadcastUserUpdate(freshUser(r.id)); } catch {} }

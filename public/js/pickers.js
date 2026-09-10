@@ -40,6 +40,7 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null) {
 }
 function closePicker() { $('#picker').classList.add('hidden'); S.picker = null; S.gifPick = null; }
 S.gifPick = null; // 'avatar'|'banner' when the GIF picker is choosing profile media
+S.tagEmojiInput = null; // target input when the picker is choosing a server-tag emoji
 function setPickerTab(t) {
   document.querySelectorAll('.pk-tab').forEach((b) => b.classList.toggle('active', b.dataset.ptab === t));
   $('#pk-emoji').classList.toggle('hidden', t !== 'emoji');
@@ -158,6 +159,14 @@ function renderEmojiGrid(filter) {
   if (!box.children.length) box.innerHTML = '<div class="pk-empty">No emoji match.</div>';
 }
 function pickEmoji(e) {
+  if (S.picker?.mode === 'tag') {
+    // Server-tag emoji: standard unicode emoji only (no custom :shortcodes:).
+    if (!/\p{Extended_Pictographic}/u.test(e) || /^:[\w+-]+:$/.test(e)) toast('Tags support standard emoji only');
+    else if (S.tagEmojiInput && S.tagEmojiInput.isConnected) S.tagEmojiInput.value = e;
+    S.tagEmojiInput = null;
+    closePicker();
+    return;
+  }
   if (S.picker?.mode === 'react' && S.picker.mid) toggleReaction(S.picker.mid, e);
   else { bumpFreq(e); insertAtCursor($('#in-message'), e); }
   closePicker();
