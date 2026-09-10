@@ -233,6 +233,12 @@ $('#btn-home').onclick = openHome;
 $('#btn-pins').onclick = openPins;
 $('#jump-present').onclick = jumpToPresent;
 $('#messages').addEventListener('scroll', () => updatePill(), { passive: true });
+$('#btn-friend-add-open').onclick = () => {
+  const w = $('#friend-add-wrap');
+  w.classList.toggle('hidden');
+  if (!w.classList.contains('hidden')) $('#in-friend').focus();
+};
+$('#in-friend').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#btn-friend-add').click(); } });
 $('#btn-friend-add').onclick = async () => {
   const v = $('#in-friend').value.trim();
   if (!v) return;

@@ -99,11 +99,20 @@
       </div>
       <div id="home-ui" class="hidden">
         <div class="home-head"><strong>Home</strong></div>
-        <div class="chan-group-label">ADD FRIEND</div>
-        <div class="row pad-x">
-          <input id="in-friend" maxlength="24" placeholder="username" autocomplete="off" />
-          <button id="btn-friend-add" class="btn small primary">Add</button>
+        <div class="chan-group-label row-between">FRIENDS <button id="btn-friend-add-open" class="mini" title="Add friend"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 6v12M6 12h12"/></svg></button></div>
+        <div id="friend-add-wrap" class="hidden">
+          <div class="row pad-x">
+            <input id="in-friend" maxlength="24" placeholder="username" autocomplete="off" />
+            <button id="btn-friend-add" class="btn small primary">Add</button>
+          </div>
         </div>
+        <div class="ftabs side-tabs" id="friend-tabs">
+          <button data-ftab="online" class="ftab">Online</button>
+          <button data-ftab="all" class="ftab active">All</button>
+          <button data-ftab="pending" class="ftab">Pending<span id="req-count"></span></button>
+        </div>
+        <div id="friend-reqs-wrap"><div class="chan-group-label">REQUESTS</div><div id="friend-reqs"></div></div>
+        <div id="friend-list"></div>
         <div class="chan-group-label">DIRECT MESSAGES</div>
         <div id="dm-list"></div>
         <div class="chan-group-label row-between">GROUP CHATS <button id="btn-group-new" class="mini" title="New group chat"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 6v12M6 12h12"/></svg></button></div>
@@ -153,13 +162,9 @@
 
       <div id="friends-page" class="hidden">
         <div class="fp-title">Friends</div>
-        <div class="ftabs" id="friend-tabs">
-          <button data-ftab="online" class="ftab">Online</button>
-          <button data-ftab="all" class="ftab active">All</button>
-          <button data-ftab="pending" class="ftab">Pending <span id="req-count"></span></button>
+        <div class="home-blank">
+          <p class="muted">Pick a friend from the sidebar to start chatting.<br />Use the + next to FRIENDS to add someone new.</p>
         </div>
-        <div id="friend-reqs-wrap"><div class="chan-group-label">REQUESTS</div><div id="friend-reqs"></div></div>
-        <div id="friend-list"></div>
       </div>
 
       <div id="stage" class="hidden">
