@@ -11,10 +11,10 @@ const store = {
 };
 const isCoarse = () => window.matchMedia && matchMedia('(hover: none)').matches;
 // ---------- themes (Settings → Themes): 'dark' (default Campfire skin) |
-// 'light' | 'dracula'. Stored globally in localStorage so the auth page and
+// 'light' | 'dracula' | 'oled'. Stored globally in localStorage so the auth page and
 // the app shell match; applied via <html data-theme> before CSS paints
 // (see the inline head script in index.html — this keeps it live after).
-const THEME_IDS = ['dark', 'light', 'dracula'];
+const THEME_IDS = ['dark', 'light', 'dracula', 'oled'];
 function validTheme(t) { return THEME_IDS.includes(t) ? t : null; }
 function localTheme() {
   try { return validTheme(localStorage.getItem('cf_theme')); } catch { return null; }
@@ -31,7 +31,7 @@ function applyTheme(t, opts = {}) {
   document.documentElement.setAttribute('data-theme', t);
   try { localStorage.setItem('cf_theme', t); } catch {}
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = t === 'light' ? '#f2f4f8' : t === 'dracula' ? '#282a36' : '#07090e';
+  if (meta) meta.content = t === 'light' ? '#f2f4f8' : t === 'dracula' ? '#282a36' : t === 'oled' ? '#000000' : '#07090e';
   // Persist to the account so it follows the user cross-device.
   // Fire-and-forget; the server value is authoritative on next boot.
   if (opts.save !== false && typeof S !== 'undefined' && S.me && S.me.theme !== t) {

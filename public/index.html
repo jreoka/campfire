@@ -17,7 +17,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Campfire" />
 <link rel="stylesheet" href="/styles.css" />
-<script>try{var __t=localStorage.getItem('cf_theme');document.documentElement.setAttribute('data-theme',(__t==='light'||__t==='dracula')?__t:'dark');}catch(e){}</script>
+<script>try{var __t=localStorage.getItem('cf_theme');document.documentElement.setAttribute('data-theme',(['light','dracula','oled'].indexOf(__t)>=0)?__t:'dark');}catch(e){}</script>
 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=cfTurnstileReady&render=explicit" async defer></script>
 </head>
 <body>
@@ -102,7 +102,7 @@
         <button id="btn-friends" class="dmrow friends-btn" title="Friends">
           <span class="dmmain"><span class="dmname">Friends</span></span>
           <span id="friends-nav-count" class="dm-badge hidden"></span>
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         </button>
         <div class="chan-group-label">DIRECT MESSAGES</div>
         <div id="dm-list"></div>

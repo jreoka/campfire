@@ -102,6 +102,37 @@
   --danger-line:rgba(255,85,85,.4);
   --danger-tx:#ff8f8f;
 }
+/* OLED Black: pure-black surfaces for OLED screens, same indigo primary. */
+[data-theme="oled"]{
+  color-scheme:dark;
+  --bg:#000000;
+  --panel:#0a0a0c;
+  --panel-2:#141417;
+  --panel-3:#1e1e23;
+  --panel-4:#2c2c34;
+  --inset:#000000;
+  --rail:#000000;
+  --line:#2a2a31;
+  --line-soft:#1b1b20;
+  --text:#f2f3f7;
+  --muted:#9aa0b4;
+  --faint:#62687d;
+  --accent:#5b6cff;
+  --on-accent:#ffffff;
+  --accent-hover:#7682ff;
+  --accent-active:#4553d9;
+  --accent-container:#232a55;
+  --on-container:#ccd4ff;
+  --accent-dim:rgba(91,108,255,.18);
+  --green:#34d399;
+  --amber:#fbbf24;
+  --red:#f87171;
+  --purple:#a06bff;
+  --on-red:#ffffff;
+  --danger-bg:rgba(248,113,113,.12);
+  --danger-line:rgba(248,113,113,.4);
+  --danger-tx:#ffa3a3;
+}
 html.no-sys-insets{--safe-t:30px}
 *{box-sizing:border-box}
 html,body{height:100%;overflow:hidden;overscroll-behavior:none}
@@ -952,8 +983,8 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .ftab.active{background:var(--panel-3);color:var(--text)}
 .ftab #req-count{color:var(--accent-hover)}
 /* sidebar Friends nav button (full-width row, icon right) */
-.friends-btn{margin-top:.3rem;padding:.62rem .75rem}
-.friends-btn .dmname{font-size:.9rem}
+.friends-btn{margin-top:.3rem;padding:1.35rem 1rem}
+.friends-btn .dmname{font-size:1rem}
 .friends-btn svg{flex-shrink:0;color:var(--muted)}
 .friends-btn:hover svg{color:var(--text)}
 /* friends page header + add-friend row */
@@ -1312,13 +1343,13 @@ body{touch-action:manipulation}
 .theme-prev .tp-line.short{width:55%}
 .theme-prev.prev-dark{background:#07090e}.theme-prev.prev-dark .tp-bar{background:#04070c}.theme-prev.prev-dark .tp-dot{background:#5b6cff}.theme-prev.prev-dark .tp-line{background:#1d2536}
 .theme-prev.prev-light{background:#eef1f6}.theme-prev.prev-light .tp-bar{background:#e2e7f0}.theme-prev.prev-light .tp-dot{background:#5b6cff}.theme-prev.prev-light .tp-line{background:#cbd3e3}
-.theme-prev.prev-dracula{background:#1e1f29}.theme-prev.prev-dracula .tp-bar{background:#282a36}.theme-prev.prev-dracula .tp-dot{background:#bd93f9}.theme-prev.prev-dracula .tp-line{background:#44475a}
+.theme-prev.prev-oled{background:#000}.theme-prev.prev-oled .tp-bar{background:#0a0a0c}.theme-prev.prev-oled .tp-dot{background:#5b6cff}.theme-prev.prev-oled .tp-line{background:#1e1e23}
 .theme-name{font-weight:750;font-size:.9rem}
 .theme-desc{font-size:.76rem;color:var(--muted)}
 
 /* ---------- connection overlay (full-page "reconnecting" state) ---------- */
 /* The backdrop is var(--bg), so it automatically matches the active theme
-   (dark navy / light / dracula) via <html data-theme>. Sits under the toast
+   (dark navy / light / dracula / oled) via <html data-theme>. Sits under the toast
    (z 500) but above every other layer, hiding the stale app while offline. */
 #conn-overlay{position:fixed;inset:0;z-index:480;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:1.5rem;opacity:0;transition:opacity .22s ease}
 #conn-overlay.show{opacity:1}

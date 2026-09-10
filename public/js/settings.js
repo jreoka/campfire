@@ -192,11 +192,12 @@ async function renderBlockedTab() {
   }
   box.appendChild(list);
 }
-// ---------- themes (dark = current skin, light, dracula) ----------
+// ---------- themes (dark = current skin, light, dracula, oled) ----------
 const THEME_META = [
   { id: 'dark', name: 'Dark', desc: 'The current Campfire look.' },
   { id: 'light', name: 'Light', desc: 'Bright surfaces for daylight.' },
   { id: 'dracula', name: 'Dracula', desc: 'Official Dracula palette.' },
+  { id: 'oled', name: 'OLED Black', desc: 'Pure black for OLED screens.' },
 ];
 function renderThemesTab() {
   const box = $('#set-themes');

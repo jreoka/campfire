@@ -417,7 +417,7 @@ function publicUser(u) {
     game_exclusions: u.game_exclusions || '[]',
     // '' = never set: clients resolve it to 'dark' locally. Stored (not just
     // localStorage) so the theme follows the account cross-device.
-    theme: ['dark', 'light', 'dracula'].includes(u.theme) ? u.theme : '',
+    theme: ['dark', 'light', 'dracula', 'oled'].includes(u.theme) ? u.theme : '',
     is_admin: !!u.is_admin,
     disabled: !!u.disabled,
   };
@@ -1585,7 +1585,7 @@ app.patch('/api/me', authRequired, (req, res) => {
   }
   if (req.body?.theme !== undefined) {
     const th = String(req.body.theme);
-    if (!['dark', 'light', 'dracula'].includes(th)) return res.status(400).json({ error: 'bad_theme' });
+    if (!['dark', 'light', 'dracula', 'oled'].includes(th)) return res.status(400).json({ error: 'bad_theme' });
     sets.push('theme = ?'); vals.push(th);
   }
   // Player-local timezone (minutes east of UTC) for streak day bucketing.
