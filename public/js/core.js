@@ -128,11 +128,13 @@ function esc(s) {
  * palette the backend uses at signup; keyed on stable account id so a user
  * keeps the same fallback color on every device. */
 const AV_COLORS = ['#5865f2', '#3ba55d', '#ed4245', '#faa81a', '#9b59b6', '#1abc9c', '#e91e63', '#00b0f4'];
-/* Early-user badge: account created within the last year. */
-const EARLY_USER_MS = 365 * 864e5;
+/* Early-user badge: kept forever once earned. Eligibility is pinned to a fixed
+ * cutoff (one year from 2026-09-10): any account created on or before that
+ * date shows the badge permanently. */
+const EARLY_USER_CUTOFF = Date.parse('2027-09-10T00:00:00Z');
 function isEarlyUser(u) {
   const t = Number(u && u.created_at);
-  return Number.isFinite(t) && t > 0 && (Date.now() - t) <= EARLY_USER_MS;
+  return Number.isFinite(t) && t > 0 && t <= EARLY_USER_CUTOFF;
 }
 function isSysAdmin(u) { return !!(u && u.is_admin); }
 function avatarColorFor(user) {
