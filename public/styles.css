@@ -389,7 +389,8 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .send-btn{width:46px;height:46px;border-radius:50%;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:background var(--t-fast),transform .1s ease}
 .send-btn:hover{background:var(--accent-hover)}
 .send-btn:active{transform:scale(.94)}
-.send-btn svg{display:block}
+.send-btn svg{display:block;transition:transform .15s ease}
+.send-btn:hover svg{transform:translateX(2px)}
 #btn-more{display:none}
 #composer-more{position:absolute;left:0;bottom:calc(100% + .4rem);z-index:60;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);padding:.35rem;min-width:210px}
 #composer .tool-btn,#composer .gif-btn,#composer .btn{flex-shrink:0}
@@ -597,12 +598,13 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .file-card .fname{font-size:.85rem;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .file-card .fsize{font-size:.72rem;color:var(--muted)}
 .reactions{display:flex;gap:.32rem;flex-wrap:wrap;margin-top:.32rem}
-.reaction{display:inline-flex;align-items:center;gap:.25rem;border:1px solid var(--line);background:var(--panel-2);color:var(--text);border-radius:999px;padding:.18rem .6rem;font-size:.82rem;cursor:pointer;transition:background var(--t-fast),border-color var(--t-fast)}
+.reaction{display:inline-flex;align-items:center;gap:.25rem;border:1px solid var(--line);background:var(--panel-2);color:var(--text);border-radius:999px;padding:.18rem .6rem;font-size:.82rem;cursor:pointer;transition:background var(--t-fast),border-color var(--t-fast),transform .1s ease}
+.reaction:active{transform:scale(.9)}
 .reaction:hover{border-color:var(--accent)}
 .reaction.me{background:var(--accent-container);border-color:transparent;color:var(--on-container)}
-.msg-actions{position:absolute;right:.6rem;top:-18px;display:none;gap:2px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:4px 6px;z-index:5}
+.msg-actions{position:absolute;right:.6rem;top:-18px;display:flex;gap:2px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:4px 6px;z-index:5;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .13s ease-out,visibility .13s}
 .msg{position:relative}
-.msg:hover .msg-actions{display:flex}
+.msg:hover .msg-actions,.msg:focus-within .msg-actions{opacity:1;visibility:visible;pointer-events:auto}
 .msg-actions button{border:0;background:transparent;color:var(--text);border-radius:8px;padding:.2rem .35rem;font-size:1rem;line-height:1.2;cursor:pointer;min-width:30px;transition:background var(--t-fast)}
 .msg-actions button:hover{background:var(--panel-3)}
 .msg.flip-actions .msg-actions{top:2px}
@@ -1395,4 +1397,26 @@ body{touch-action:manipulation}
   #conn-overlay{transition:none}
   .conn-halo,.cf-flame-o,.cf-flame-i,.cf-ember,.conn-ell span{animation:none!important}
   .cf-ember{opacity:0}
+}
+
+/* ---------- micro-motion: quick compositor-only entrances + press feedback.
+   One restrained language (fade / 6px rise / .94 pop, ≤180ms) so the app
+   feels polished without ever feeling animated. Hover-bar, reactions and
+   the send arrow are handled inline above. */
+@keyframes cf-rise{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes cf-fade{from{opacity:0}to{opacity:1}}
+@keyframes cf-pop-in{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
+@keyframes cf-rise-x{from{opacity:0;transform:translate(-50%,6px)}to{opacity:1;transform:translate(-50%,0)}}
+.modal,.settings,.profile{animation:cf-rise .16s ease-out}
+#modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#profile-backdrop,#lightbox{animation:cf-fade .15s ease-out}
+#ctx-menu,#folder-menu,#status-pop,#status-sub,#picker,#usercard,#mention-pop,#emoji-pop,#chan-pop,#composer-more{animation:cf-pop-in .13s ease-out}
+#lightbox img{animation:cf-pop-in .18s ease-out}
+#toast,#jump-present{animation:cf-rise-x .16s ease-out}
+.auth-card{animation:cf-rise .2s ease-out}
+#thread-panel,#find-panel{animation:cf-rise .16s ease-out}
+.folder-open{animation:cf-fade .14s ease-out}
+@media (prefers-reduced-motion:reduce){
+  .modal,.settings,.profile,#modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#profile-backdrop,#lightbox,#ctx-menu,#folder-menu,#status-pop,#status-sub,#picker,#usercard,#mention-pop,#emoji-pop,#chan-pop,#composer-more,#lightbox img,#toast,#jump-present,.auth-card,#thread-panel,#find-panel,.folder-open{animation:none}
+  .msg-actions,.reaction,.send-btn svg{transition:none}
+  .reaction:active{transform:none}
 }
