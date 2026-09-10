@@ -50,13 +50,13 @@ function restoreScrollPos(ctx) {
     if (a && a.mid) {
       const el = box.querySelector('[data-mid="' + CSS.escape(a.mid) + '"]');
       if (el) {
-        box.scrollTop += (el.getBoundingClientRect().top - box.getBoundingClientRect().top) - a.off;
+        setScrollTop(box, box.scrollTop + ((el.getBoundingClientRect().top - box.getBoundingClientRect().top) - a.off), '0');
         updatePill();
         stickRestoredAnchor(box, scrollMemKey(ctx));
         return;
       }
     }
-    if (mem.dist != null && mem.dist > 200) box.scrollTop = Math.max(0, box.scrollHeight - mem.dist);
+    if (mem.dist != null && mem.dist > 200) setScrollTop(box, Math.max(0, box.scrollHeight - mem.dist), '0');
     updatePill();
   } catch {}
 }
@@ -237,7 +237,7 @@ function holdMsgCentered(box, mid, fallbackEl) {
     if (!t || !t.isConnected) return;
     const r = t.getBoundingClientRect(), b = box.getBoundingClientRect();
     const delta = (r.top - b.top) - (box.clientHeight - r.height) / 2;
-    if (Math.abs(delta) > 0.5) box.scrollTop += delta;
+    if (Math.abs(delta) > 0.5) setScrollTop(box, box.scrollTop + delta, '0'); // jumping to a message is not the live bottom
     expected = box.scrollTop; // our own landings must not look like a takeover
   };
   const onScroll = () => {
@@ -300,6 +300,10 @@ function jumpToPresent() {
     reloadLatest(ctx);
   } else {
     box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+    // A deliberate request for the bottom: mark it now, and track our own
+    // landing so the smooth scroll's pass over the history isn't mistaken for
+    // the reader scrolling up.
+    try { box.dataset.atBottom = '1'; box._autoTop = Math.max(0, box.scrollHeight - box.clientHeight); } catch {}
     updatePill();
   }
 }

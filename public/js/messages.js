@@ -120,6 +120,44 @@ function ensureVideoPoster(v) {
 // through all of it instead of stranding the view mid-video.
 let stickRO = null;
 const stickH = typeof WeakMap !== 'undefined' ? new WeakMap() : new Map(); // target -> last seen height
+// Explicit "the reader is pinned to the live bottom" state, per scroll box.
+// Distance-from-bottom is only a snapshot of the current layout: when media
+// finishes loading while the page isn't rendering at all (background tab,
+// deferred lazy images), after the bottom hold has expired, or between a
+// restore and the images that follow it, the geometry reads "scrolled up" even
+// though the reader never scrolled — believing that is what strands people
+// hundreds of px up with the Jump-to-present pill as their only way back.
+// So the flag only changes when someone *asks*: the reader's own scrolling, or
+// a placement we make on their behalf ('1' pinned, '0' an anchor restore).
+function markBottomState(box) {
+  try { box.dataset.atBottom = (box.scrollHeight - box.scrollTop - box.clientHeight < 200) ? '1' : '0'; } catch {}
+}
+// Programmatic placement. Records where we put the box so the scroll listener
+// can tell our own moves (bottom holds, anchor restores, jumps) apart from the
+// reader's — only theirs may un-pin the view. `intent` states the resulting
+// pin state outright instead of inferring it from a layout we're mid-way through.
+function setScrollTop(box, v, intent) {
+  try {
+    box.scrollTop = v;
+    box._autoTop = box.scrollTop; // the clamped value our own scroll event will report
+    if (intent) box.dataset.atBottom = intent;
+  } catch {}
+}
+function watchBottomState(box) {
+  if (!box || box.dataset.atBottomWatch) return;
+  box.dataset.atBottomWatch = '1';
+  box.addEventListener('scroll', () => {
+    if (typeof box._autoTop === 'number' && Math.abs(box.scrollTop - box._autoTop) <= 2) return; // ours
+    markBottomState(box);
+  }, { passive: true });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden || box.dataset.atBottom !== '1') return;
+    // Lazy media only started loading once we came back — re-pin the reader
+    // who was at the bottom when we lost sight of them.
+    setScrollTop(box, box.scrollHeight, '1');
+    try { if (typeof updatePill === 'function') updatePill(); } catch {}
+  });
+}
 function observeStick(el) {
   if (!el || el.dataset.stickOn) return;
   el.dataset.stickOn = '1';
@@ -143,8 +181,14 @@ function observeStick(el) {
             if (h > prev) growth = h - prev;
             stickH.set(e.target, h);
           } catch {}
-          if (box.scrollHeight - box.scrollTop - box.clientHeight - growth < 200) {
-            box.scrollTop = box.scrollHeight;
+          // Explicit state beats inference: '1' = the reader is on the live
+          // bottom, '0' = they scrolled up (never yank those back, however big
+          // the growth). Only when nothing has seeded the box yet do we fall
+          // back to distance-minus-growth.
+          const at = box.dataset.atBottom;
+          if (at === '1' || (at === undefined && box.scrollHeight - box.scrollTop - box.clientHeight - growth < 200)) {
+            setScrollTop(box, box.scrollHeight, '1');
+            try { if (typeof updatePill === 'function') updatePill(); } catch {}
           }
         }
       });
@@ -252,7 +296,7 @@ function paintTextPreviews(url) {
     try {
       if (pin && box) {
         const dh = card.offsetHeight - hBefore;
-        if (dh) box.scrollTop += dh;
+        if (dh) setScrollTop(box, box.scrollTop + dh);
       }
     } catch {}
   });
@@ -568,7 +612,8 @@ function anchorBottom(box) {
   // reader drifts hundreds of px up and gets stranded "way up" with the
   // Jump-to-present pill showing. Re-snap on every settle until the user
   // scrolls themselves, or after a few seconds — whichever comes first.
-  box.scrollTop = box.scrollHeight;
+  setScrollTop(box, box.scrollHeight, '1');
+  watchBottomState(box);
   // Reachable target: max scrollTop is height minus viewport — tracking
   // raw scrollHeight (unreachable by exactly clientHeight) made the
   // takeover check below suicide the hold on its first settled image.
@@ -597,7 +642,7 @@ function anchorBottom(box) {
   const snap = () => {
     if (!current() || !stillHere() || Date.now() - t0 > 8000) { stop(); return; }
     want = bottomOf();
-    if (Math.abs(box.scrollTop - want) > 0.5) box.scrollTop = want;
+    if (Math.abs(box.scrollTop - want) > 0.5) setScrollTop(box, want, '1');
     if (typeof updatePill === 'function') { try { updatePill(); } catch {} }
   };
   const onScroll = () => {
@@ -652,12 +697,12 @@ function restoreListAnchor(box, anchor, keepDist) {
     if (anchor && anchor.mid) {
       const el = box.querySelector('[data-mid="' + CSS.escape(anchor.mid) + '"]');
       if (el) {
-        box.scrollTop += (el.getBoundingClientRect().top - box.getBoundingClientRect().top) - anchor.off;
+        setScrollTop(box, box.scrollTop + ((el.getBoundingClientRect().top - box.getBoundingClientRect().top) - anchor.off), '0');
         return anchor;
       }
     }
   } catch {}
-  box.scrollTop = Math.max(0, box.scrollHeight - keepDist);
+  setScrollTop(box, Math.max(0, box.scrollHeight - keepDist), '0');
   return null;
 }
 // Hold a restored anchor steady while late media settles. A fresh rebuild
@@ -667,6 +712,7 @@ function restoreListAnchor(box, anchor, keepDist) {
 // scrolls themselves, when everything settles, or after ~2.5s.
 function pinAnchorWhileSettling(box, anchor) {
   try {
+    watchBottomState(box); // a scrolled-up reader: growth must not re-pin them
     const mid = anchor && anchor.mid;
     if (!box || !mid || typeof anchor.off !== 'number') return;
     if (box._jumpHold) return; // a jump owns the scroll until it settles
@@ -686,7 +732,7 @@ function pinAnchorWhileSettling(box, anchor) {
       const el = box.querySelector(sel);
       if (!el || !el.isConnected) return;
       const want = expected + ((el.getBoundingClientRect().top - box.getBoundingClientRect().top) - anchor.off);
-      if (Math.abs(want - box.scrollTop) > 0.5) box.scrollTop = want;
+      if (Math.abs(want - box.scrollTop) > 0.5) setScrollTop(box, want, '0');
       expected = box.scrollTop;
     };
     setTimeout(() => { done = media.length; }, 2600);
@@ -779,7 +825,7 @@ function removeMessageNode(box, arr, mid) {
       }
     } catch {}
     if (!box.querySelector('.msg')) return false; // caller renders the empty placeholder
-    if (nearBottom) { try { box.scrollTop = box.scrollHeight; } catch {} }
+    if (nearBottom) { try { setScrollTop(box, box.scrollHeight, '1'); } catch {} }
     else restoreListAnchor(box, anchor, keepDist);
     try { if (typeof updatePill === 'function') updatePill(); } catch {}
     return true;
@@ -849,7 +895,7 @@ function patchMessageReactions(mid, box) {
   }
   // A bar added/removed changes the column height: keep bottom-pinned readers
   // pinned (a scrolled-up reader's place is untouched — no rebuild, no jump).
-  if (nearBottom) { try { box.scrollTop = box.scrollHeight; } catch {} }
+  if (nearBottom) { try { setScrollTop(box, box.scrollHeight, '1'); } catch {} }
   try { if (typeof updatePill === 'function') updatePill(); } catch {}
   return true;
 }
@@ -939,7 +985,7 @@ function pruneLiveTop(box, n) {
       if (!nx || (nx.classList && nx.classList.contains('day'))) f.remove();
       else break;
     }
-    if (!nearBottom) box.scrollTop = Math.max(0, box.scrollTop - (h0 - box.scrollHeight));
+    if (!nearBottom) setScrollTop(box, Math.max(0, box.scrollTop - (h0 - box.scrollHeight)), '0');
   } catch {}
 }
 function replyPreviewOf(m) {
