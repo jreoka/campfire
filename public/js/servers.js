@@ -116,10 +116,13 @@ function folderBtn(f) {
 }
 function renderServerList() {
   const box = $('#server-list');
-  // The create/join button lives at the end of the scrollable rail (below
-  // the last server), so detach it before clearing and re-append it after.
+  // The create/join and admin-console buttons live at the end of the
+  // scrollable rail (below the last server), so detach them before clearing
+  // and re-append them after.
   const addBtn = document.getElementById('btn-add-server');
   if (addBtn) addBtn.remove();
+  const adminBtn = document.getElementById('btn-admin');
+  if (adminBtn) { adminBtn.remove(); adminBtn.classList.toggle('hidden', !isSiteAdmin()); }
   box.innerHTML = '';
   const byId = new Map(S.servers.map((s) => [s.id, s]));
   const inFolder = new Set([...S.layoutFolders].flatMap((f) => f.servers || []));
@@ -139,6 +142,7 @@ function renderServerList() {
     if (!S.rootOrder.some((it) => it.kind === 'server' && it.id === s.id) && !inFolder.has(s.id)) box.appendChild(serverBtn(s));
   }
   if (addBtn) box.appendChild(addBtn);
+  if (adminBtn) box.appendChild(adminBtn);
   popRailPill();
 }
 // Rail pill pop: the active-tab pill replays its entry animation only when

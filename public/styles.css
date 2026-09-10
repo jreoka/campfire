@@ -236,6 +236,14 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 #btn-add-server:hover{background:var(--accent-hover)}
 #btn-add-server:active{transform:scale(.95)}
 #btn-add-server svg{display:block}
+/* site-admin shield: same rail geometry as the add button, but a quiet tonal
+   tool rather than a primary action (indigo only on hover/active) */
+#server-list #btn-admin{margin:.15rem 0 .5rem;flex-shrink:0}
+#btn-admin{width:48px;height:48px;border-radius:12px;border:0;background:var(--panel-3);color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background var(--t-fast),color var(--t-fast),border-radius var(--t-fast)}
+#btn-admin:hover{background:var(--panel-4);color:var(--text);border-radius:10px}
+#btn-admin.active{background:var(--accent-container);color:var(--on-container)}
+#btn-admin.hidden{display:none}
+#btn-admin svg{display:block}
 
 #sidebar{width:268px;background:var(--panel);border-right:1px solid var(--line-soft);display:flex;flex-direction:column;flex-shrink:0;z-index:30;position:relative}
 #sidebar-resizer{position:absolute;right:-5px;top:0;bottom:0;width:10px;cursor:ew-resize;touch-action:none;z-index:6;border-radius:6px}
@@ -965,7 +973,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 #lightbox-dl{position:absolute;top:1rem;right:1rem;z-index:2;cursor:pointer}
 
 /* ---------- settings ---------- */
-#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.68);display:flex;align-items:center;justify-content:center;z-index:100;padding:1rem}
+#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#admin-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.68);display:flex;align-items:center;justify-content:center;z-index:100;padding:1rem}
 .settings{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;width:100%;max-width:780px;max-height:88dvh;display:flex;flex-direction:row;overflow:hidden}
 @media (max-width:820px){
   .settings{max-width:620px}
@@ -1407,7 +1415,7 @@ body{touch-action:manipulation}
   #thread-panel{width:min(360px,100vw)!important}
   #thread-resizer{display:none}
   #usercard{width:min(300px,calc(100vw - 16px))}
-  #settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop{padding:var(--safe-t) 0 0}
+  #settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#admin-backdrop{padding:var(--safe-t) 0 0}
   .settings{max-width:none;max-height:none;height:100%;border-radius:0}
   .srvset-wrap{flex-direction:column;gap:.25rem}
   .srv-subtabs.vertical{flex-direction:row;flex:0 0 auto;width:100%;overflow-x:auto;padding:.25rem 0 .6rem}
@@ -1426,6 +1434,7 @@ body{touch-action:manipulation}
   #left #rail{width:62px;flex-shrink:0}
   #left .rail-head{padding:.7rem 0 .5rem}
   #left .server-btn,#left #btn-add-server{width:44px;height:44px}
+  #left #btn-admin{width:44px;height:44px}
   #left .fwrap,#left .folder-btn{width:44px;height:44px}
   #left .folder-open{width:48px;padding:5px 2px;gap:8px}
   #left .fwrap.active .folder-btn::before{left:-8px;width:4px;height:22px}

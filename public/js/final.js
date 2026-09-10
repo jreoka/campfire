@@ -166,7 +166,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
  document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeTagCard(); closeStatusMenu(); closeCtx(); closeFolderFlyout(); closeFolderPopout(); closeSettings(); closeServerSettings(); closeChannelSettings(); closeProfileScreen(); $('#composer-more')?.classList.add('hidden'); cancelModal(); $('#lightbox').classList.add('hidden'); hideEmojiPop(); }
+  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeTagCard(); closeStatusMenu(); closeCtx(); closeFolderFlyout(); closeFolderPopout(); closeSettings(); closeServerSettings(); closeChannelSettings(); closeAdminConsole(); closeProfileScreen(); $('#composer-more')?.classList.add('hidden'); cancelModal(); $('#lightbox').classList.add('hidden'); hideEmojiPop(); }
 });
 function composerAnchor() {
   const t = $('#composer-tools')?.getBoundingClientRect();

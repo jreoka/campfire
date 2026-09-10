@@ -189,14 +189,12 @@ function setSettingsTab(t) {
   $('#set-notifs').classList.toggle('hidden', t !== 'notifs');
   $('#set-blocked').classList.toggle('hidden', t !== 'blocked');
   $('#set-themes').classList.toggle('hidden', t !== 'themes');
-  $('#set-admin').classList.toggle('hidden', t !== 'admin');
   if (t === 'notifs') renderNotifsTab();
   if (t === 'blocked') renderBlockedTab();
   if (t === 'themes') renderThemesTab();
   if (t === 'games') renderGamesTab();
   if (t === 'media') renderMediaTab();
   else if (typeof stopMediaPreview === 'function') stopMediaPreview();
-  if (t === 'admin' && typeof renderAdminTab === 'function') renderAdminTab();
 }
 // ---------- blocked users (moved here from the Home friends tabs) ----------
 async function renderBlockedTab() {

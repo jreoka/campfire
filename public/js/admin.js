@@ -1,10 +1,11 @@
 'use strict';
-// ---------- site admin panel (Settings → Admin, is_admin users only) ----------
-// Controls: stats, media compression monitor, broadcast, user management (edit / disable / admin role /
-// password reset / forced logout / delete) and server management (rename /
-// transfer owner / reset invite / members + kick / delete) plus recent-message
-// moderation. All data comes from /api/admin/* (server-enforced admin_only).
+// ---------- site admin console (rail shield button, is_admin users only) ----------
+// A surface of its own rather than a Settings tab: the shield under the
+// create-server button opens it, with a tab per area (Overview / Media / Users
+// / Servers). All data comes from /api/admin/* (server-enforced admin_only)
+// and every row action is delegated through adminClick().
 const Admin = {
+  tab: 'overview',
   uq: '', uf: 'all', uoff: 0, utotal: 0,
   sq: '', soff: 0, stotal: 0,
   membersOpen: null,
@@ -16,72 +17,93 @@ function fmtDate(ts) {
   catch { return ''; }
 }
 
-// Wrap openSettings so the Admin tab only appears for admins (and a stale
-// admin deep-link can never land on a dead pane).
-(function () {
-  const base = openSettings;
-  openSettings = function (tab = 'profile') {
-    const isAdmin = !!(S.me && S.me.is_admin);
-    if (tab === 'admin' && !isAdmin) tab = 'profile';
-    base(tab);
-    const btn = $('#set-tab-admin');
-    if (btn) btn.classList.toggle('hidden', !isAdmin);
-  };
-})();
+function isSiteAdmin() { return !!(S.me && S.me.is_admin); }
+function adminConsoleOpen() { return !!($('#admin-backdrop') && !$('#admin-backdrop').classList.contains('hidden')); }
 
-async function renderAdminTab() {
-  const box = $('#set-admin');
+function openAdminConsole(tab) {
+  if (!isSiteAdmin()) { toast('Site admins only'); return; }
+  const box = $('#admin-backdrop');
   if (!box) return;
-  if (!S.me || !S.me.is_admin) { box.innerHTML = '<p class="muted">Not available.</p>'; return; }
-  if (!box.dataset.built) {
-    box.dataset.built = '1';
-    box.innerHTML = `
-      <div id="adm-stats" class="adm-stats"><p class="muted small">Loading…</p></div>
-      <div class="pf-sec-label">Media compression</div>
-      <div id="adm-media"><p class="muted small">Loading…</p></div>
-      <div class="pf-sec-label">Users</div>
-      <div class="row" style="gap:.4rem">
-        <input id="adm-uq" placeholder="Search username or display name…" style="flex:1" autocomplete="off" />
-        <select id="adm-uf" style="max-width:130px">
-          <option value="all">Everyone</option>
-          <option value="admins">Admins</option>
-          <option value="disabled">Disabled</option>
-        </select>
-        <button id="adm-usearch" class="btn small">Search</button>
-      </div>
-      <div id="adm-users"></div>
-      <div class="row end" style="gap:.5rem;align-items:center">
-        <button id="adm-uprev" class="btn small">Prev</button>
-        <span id="adm-ucount" class="muted small"></span>
-        <button id="adm-unext" class="btn small">Next</button>
-      </div>
-      <div class="pf-sec-label">Servers</div>
-      <div class="row" style="gap:.4rem">
-        <input id="adm-sq" placeholder="Search servers…" style="flex:1" autocomplete="off" />
-        <button id="adm-ssearch" class="btn small">Search</button>
-      </div>
-      <div id="adm-servers"></div>
-      <div class="row end" style="gap:.5rem;align-items:center">
-        <button id="adm-sprev" class="btn small">Prev</button>
-        <span id="adm-scount" class="muted small"></span>
-        <button id="adm-snext" class="btn small">Next</button>
-      </div>`;
-    const uSearch = () => { Admin.uq = $('#adm-uq').value.trim(); Admin.uf = $('#adm-uf').value; Admin.uoff = 0; loadAdminUsers(); };
-    $('#adm-usearch').onclick = uSearch;
-    $('#adm-uq').addEventListener('keydown', (e) => { if (e.key === 'Enter') uSearch(); });
-    $('#adm-uprev').onclick = () => { Admin.uoff = Math.max(0, Admin.uoff - ADMIN_PAGE); loadAdminUsers(); };
-    $('#adm-unext').onclick = () => { if (Admin.uoff + ADMIN_PAGE < Admin.utotal) { Admin.uoff += ADMIN_PAGE; loadAdminUsers(); } };
-    const sSearch = () => { Admin.sq = $('#adm-sq').value.trim(); Admin.soff = 0; loadAdminServers(); };
-    $('#adm-ssearch').onclick = sSearch;
-    $('#adm-sq').addEventListener('keydown', (e) => { if (e.key === 'Enter') sSearch(); });
-    $('#adm-sprev').onclick = () => { Admin.soff = Math.max(0, Admin.soff - ADMIN_PAGE); loadAdminServers(); };
-    $('#adm-snext').onclick = () => { if (Admin.soff + ADMIN_PAGE < Admin.stotal) { Admin.soff += ADMIN_PAGE; loadAdminServers(); } };
-    box.addEventListener('click', adminClick);
+  try { document.body.classList.remove('nav-open'); } catch {} // mobile drawer out of the way
+  box.classList.remove('hidden');
+  try { $('#btn-admin')?.classList.add('active'); } catch {}
+  setAdminTab(tab || Admin.tab || 'overview');
+}
+function closeAdminConsole() {
+  try { $('#admin-backdrop')?.classList.add('hidden'); } catch {}
+  try { $('#btn-admin')?.classList.remove('active'); } catch {}
+}
+
+// Panes are built the first time their tab opens and refreshed on every visit:
+// the numbers move between opens and the list panes are search-driven.
+function setAdminTab(t) {
+  if (!isSiteAdmin()) return;
+  Admin.tab = t;
+  document.querySelectorAll('#admin-backdrop .set-tab').forEach((b) => b.classList.toggle('active', b.dataset.atab === t));
+  for (const key of ['overview', 'media', 'users', 'servers']) {
+    const pane = document.getElementById('adm-' + key);
+    if (pane) pane.classList.toggle('hidden', key !== t);
   }
-  loadAdminStats();
-  loadAdminMedia();
-  loadAdminUsers();
-  loadAdminServers();
+  if (t === 'overview') { ensureAdminOverviewPane(); loadAdminStats(); }
+  else if (t === 'media') loadAdminMedia();
+  else if (t === 'users') { ensureAdminUsersPane(); loadAdminUsers(); }
+  else if (t === 'servers') { ensureAdminServersPane(); loadAdminServers(); }
+}
+
+function ensureAdminOverviewPane() {
+  const pane = $('#adm-overview');
+  if (!pane || pane.dataset.built) return;
+  pane.dataset.built = '1';
+  pane.innerHTML = '<div id="adm-stats" class="adm-stats"><p class="muted small">Loading…</p></div>';
+}
+
+function ensureAdminUsersPane() {
+  const pane = $('#adm-users');
+  if (!pane || pane.dataset.built) return;
+  pane.dataset.built = '1';
+  pane.innerHTML = `
+    <div class="row" style="gap:.4rem">
+      <input id="adm-uq" placeholder="Search username or display name…" style="flex:1" autocomplete="off" />
+      <select id="adm-uf" style="max-width:130px">
+        <option value="all">Everyone</option>
+        <option value="admins">Admins</option>
+        <option value="disabled">Disabled</option>
+      </select>
+      <button id="adm-usearch" class="btn small">Search</button>
+    </div>
+    <div id="adm-users-list"></div>
+    <div class="row end" style="gap:.5rem;align-items:center">
+      <button id="adm-uprev" class="btn small">Prev</button>
+      <span id="adm-ucount" class="muted small"></span>
+      <button id="adm-unext" class="btn small">Next</button>
+    </div>`;
+  const uSearch = () => { Admin.uq = $('#adm-uq').value.trim(); Admin.uf = $('#adm-uf').value; Admin.uoff = 0; loadAdminUsers(); };
+  $('#adm-usearch').onclick = uSearch;
+  $('#adm-uq').addEventListener('keydown', (e) => { if (e.key === 'Enter') uSearch(); });
+  $('#adm-uprev').onclick = () => { Admin.uoff = Math.max(0, Admin.uoff - ADMIN_PAGE); loadAdminUsers(); };
+  $('#adm-unext').onclick = () => { if (Admin.uoff + ADMIN_PAGE < Admin.utotal) { Admin.uoff += ADMIN_PAGE; loadAdminUsers(); } };
+}
+
+function ensureAdminServersPane() {
+  const pane = $('#adm-servers');
+  if (!pane || pane.dataset.built) return;
+  pane.dataset.built = '1';
+  pane.innerHTML = `
+    <div class="row" style="gap:.4rem">
+      <input id="adm-sq" placeholder="Search servers…" style="flex:1" autocomplete="off" />
+      <button id="adm-ssearch" class="btn small">Search</button>
+    </div>
+    <div id="adm-servers-list"></div>
+    <div class="row end" style="gap:.5rem;align-items:center">
+      <button id="adm-sprev" class="btn small">Prev</button>
+      <span id="adm-scount" class="muted small"></span>
+      <button id="adm-snext" class="btn small">Next</button>
+    </div>`;
+  const sSearch = () => { Admin.sq = $('#adm-sq').value.trim(); Admin.soff = 0; loadAdminServers(); };
+  $('#adm-ssearch').onclick = sSearch;
+  $('#adm-sq').addEventListener('keydown', (e) => { if (e.key === 'Enter') sSearch(); });
+  $('#adm-sprev').onclick = () => { Admin.soff = Math.max(0, Admin.soff - ADMIN_PAGE); loadAdminServers(); };
+  $('#adm-snext').onclick = () => { if (Admin.soff + ADMIN_PAGE < Admin.stotal) { Admin.soff += ADMIN_PAGE; loadAdminServers(); } };
 }
 
 async function loadAdminStats() {
@@ -184,7 +206,7 @@ function admUserRow(u) {
 }
 
 async function loadAdminUsers() {
-  const box = $('#adm-users');
+  const box = $('#adm-users-list');
   if (!box) return;
   box.innerHTML = '<p class="muted small">Loading…</p>';
   try {
@@ -241,7 +263,7 @@ function paintServerIcon(el, s) {
 }
 
 async function loadAdminServers() {
-  const box = $('#adm-servers');
+  const box = $('#adm-servers-list');
   if (!box) return;
   box.innerHTML = '<p class="muted small">Loading…</p>';
   try {
@@ -266,7 +288,7 @@ async function loadAdminServers() {
 }
 
 async function loadAdminMembers(sid, slot) {
-  slot = slot || document.querySelector(`#adm-servers [data-sid="${CSS.escape(sid)}"] .adm-members`);
+  slot = slot || document.querySelector(`#adm-servers-list [data-sid="${CSS.escape(sid)}"] .adm-members`);
   if (!slot) return;
   slot.innerHTML = '<p class="muted small">Loading…</p>';
   try {
@@ -497,3 +519,22 @@ async function adminClick(e) {
     }
   } catch (err) { toast('Failed: ' + prettyError(err.message)); }
 }
+
+// ---------- console wiring ----------
+// One delegated listener for every admin row button plus the tab strip, wired
+// once at load (the console markup is static; panes are built on demand).
+(function wireAdminConsole() {
+  const box = $('#admin-backdrop');
+  if (!box) return;
+  const tabs = box.querySelector('.adm-tabs');
+  if (tabs) tabs.addEventListener('click', (e) => {
+    const b = e.target.closest('.set-tab[data-atab]');
+    if (b) setAdminTab(b.dataset.atab);
+  });
+  box.addEventListener('click', adminClick);
+  box.addEventListener('click', (e) => { if (e.target === box) closeAdminConsole(); });
+  const close = $('#admin-close');
+  if (close) close.onclick = closeAdminConsole;
+  const rail = $('#btn-admin');
+  if (rail) rail.onclick = () => openAdminConsole();
+})();
