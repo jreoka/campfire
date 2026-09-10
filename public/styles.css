@@ -281,7 +281,9 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #me-card .mstatus{font-size:.72rem;color:var(--muted);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #me-card .mstatus.ugame{color:var(--accent)}
 .avatar{width:38px;height:38px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:700;color:#fff;flex-shrink:0;font-size:.85rem;background:var(--panel-3)}
-#voice-bar{display:flex;flex-direction:column;gap:.55rem;margin:0 .6rem .6rem;padding:.65rem .75rem;background:var(--panel-2);border:1px solid rgba(52,211,153,.35);font-size:.85rem;border-radius:12px}
+#voice-bar{display:flex;flex-direction:column;gap:.55rem;margin:0 .6rem 0 -70px;padding:.65rem .75rem;background:var(--panel-2);border:1px solid rgba(52,211,153,.35);border-bottom:0;font-size:.85rem;border-radius:12px 12px 0 0}
+/* In-call: the voice widget fuses to the top of the me bar (same width, no seam). */
+#voice-bar:not(.hidden)+#me-card{margin-top:0;border-top-left-radius:0;border-top-right-radius:0}
 .vb-btns{display:flex;align-items:center;justify-content:center;gap:.4rem}
 .vb-btn{border:0;background:var(--panel-3);color:var(--text);border-radius:10px;width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:background var(--t-fast),transform .1s ease}
 .vb-btn:hover{background:var(--panel-4)}
@@ -1302,6 +1304,7 @@ body{touch-action:manipulation}
   #home-wrap:has(> .active)::before{left:-8px;width:4px;height:22px}
   #server-list{align-items:center;padding:.4rem 0 64px;gap:.5rem}
   #me-card{margin-left:-52px}
+  #voice-bar{margin-left:-52px}
   #sidebar-resizer{display:none}
   #dm-rail{gap:.45rem}
   .server-btn.active::before{left:-8px;width:4px;height:22px}
