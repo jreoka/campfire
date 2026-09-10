@@ -124,8 +124,19 @@ function toast(msg, ms = 2500) {
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-function avatar(el, name, color) {
-  const c = color || '#5865f2';
+/* Default avatar color: deterministic per account (no custom picker). Same
+ * palette the backend uses at signup; keyed on stable account id so a user
+ * keeps the same fallback color on every device. */
+const AV_COLORS = ['#5865f2', '#3ba55d', '#ed4245', '#faa81a', '#9b59b6', '#1abc9c', '#e91e63', '#00b0f4'];
+function avatarColorFor(user) {
+  const key = String((user && (user.id || user.username || user.display_name)) || '');
+  if (!key) return AV_COLORS[0]; let h = 2166136261;
+  for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return AV_COLORS[(h >>> 0) % AV_COLORS.length];
+}
+function avatar(el, name, userOrColor) {
+  const c = (userOrColor && typeof userOrColor === 'object') ? avatarColorFor(userOrColor)
+    : avatarColorFor({ id: String((name || '?') + '') });
   el.style.background = c;
   el.style.boxShadow = 'none';
   el.textContent = (name || '?').trim().charAt(0).toUpperCase() || '?';
@@ -139,11 +150,11 @@ function paintAvatar(el, user) {
     el.innerHTML = '';
     const img = document.createElement('img');
     img.src = user.avatar_url; img.alt = ''; img.loading = 'lazy';
-    img.onerror = () => { el.innerHTML = ''; avatar(el, user.display_name, user.avatar_color); };
+    img.onerror = () => { el.innerHTML = ''; avatar(el, user.display_name, user); };
     el.appendChild(img);
   } else {
     el.innerHTML = '';
-    avatar(el, user ? user.display_name : '?', user ? user.avatar_color : '#555');
+    avatar(el, user ? user.display_name : '?', user || null);
   }
 }
 function fmtSize(b) {
@@ -160,10 +171,24 @@ function memberByUsername(un) {
 }
 function memberById(id) {
   if (S.me && S.me.id === id) return S.me;
-  return (S.serverDetail?.members || []).find((m) => m.id === id)
-    || (S.dms.find((t) => t.id === S.dmThreadId)?.members || []).find((m) => m.id === id)
-    || [...S.friends.friends, ...S.friends.pendingIn, ...S.friends.pendingOut, ...(S.friends.blocked || [])].find((m) => m.id === id)
-    || null;
+  // A user can appear in several sources at once (server members, current DM
+  // members, friends). Server rows are partial (no created_at), so merge
+  // matches: first source wins, missing fields are filled from the others.
+  const matches = [
+    ...((S.serverDetail && S.serverDetail.members) || []),
+    ...((((S.dms || []).find((t) => t.id === S.dmThreadId)) || {}).members || []),
+    ...((S.friends && S.friends.friends) || []),
+    ...((S.friends && S.friends.pendingIn) || []),
+    ...((S.friends && S.friends.pendingOut) || []),
+    ...((S.friends && S.friends.blocked) || []),
+  ].filter((m) => m && m.id === id);
+  if (!matches.length) return null;
+  if (matches.length === 1) return matches[0];
+  const merged = { ...matches[0] };
+  for (const m of matches.slice(1)) {
+    for (const k in m) if (merged[k] === undefined || merged[k] === null || merged[k] === '') merged[k] = m[k];
+  }
+  return merged;
 }
 // Escape + fenced code / quotes / inline code / bold / italic / strike +
 // spoilers + custom + standard emoji + @mentions + links.

@@ -232,9 +232,6 @@ async function adminClick(e) {
       if (!u) return toast('User not found');
       openModal(`Edit @${u.username}`, `
         <label>Display name<input id="m-adm-display" maxlength="32" value="${esc(u.display_name)}" /></label>
-        <div class="row" style="margin-top:.6rem;gap:.6rem">
-          <label style="flex:1">Avatar color<input id="m-adm-color" type="color" value="${/^#[0-9a-fA-F]{6}$/.test(u.avatar_color) ? u.avatar_color : '#5865f2'}" /></label>
-        </div>
         <label style="margin-top:.6rem">Bio<textarea id="m-adm-bio" maxlength="300" rows="3">${esc(u.bio || '')}</textarea></label>
         <div class="pf-sec-label">Avatar</div>
         <div class="row" style="gap:.6rem"><span class="avatar adm-av" id="m-adm-avatar"></span>
@@ -249,7 +246,6 @@ async function adminClick(e) {
       `, 'Save', async () => {
         await api(`/api/admin/users/${u.id}`, { method: 'PATCH', body: JSON.stringify({
           displayName: $('#m-adm-display').value.trim(),
-          avatarColor: $('#m-adm-color').value,
           bio: $('#m-adm-bio').value,
         }) });
         toast('User updated');

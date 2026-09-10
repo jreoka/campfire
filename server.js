@@ -220,6 +220,15 @@ app.use('/uploads', (req, res) => res.status(404).json({ error: 'not_found' }));
 const uid = () => crypto.randomUUID();
 const now = () => Date.now();
 const COLORS = ['#5865f2', '#3ba55d', '#ed4245', '#faa81a', '#9b59b6', '#1abc9c', '#e91e63', '#00b0f4'];
+// Deterministic per-account fallback color (no custom picker): same hash as
+// the client's avatarColorFor(), keyed on the stable account id.
+const colorForId = (id) => {
+  const s = String(id || '');
+  if (!s) return COLORS[0];
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return COLORS[(h >>> 0) % COLORS.length];
+};
 const pickColor = () => COLORS[Math.floor(Math.random() * COLORS.length)];
 
 function makeInvite() {
@@ -344,6 +353,7 @@ function serverView(serverId) {
   const members = db.prepare(`
     SELECT u.id, u.username, u.display_name, u.avatar_color, u.avatar_url, u.banner_url, u.sidebar_banner_url,
            u.status, u.status_text, u.status_expires_at, u.playing_game, u.streaming_game, u.bio, u.name_color, u.name_gradient,
+           u.created_at,
            CASE WHEN u.id = s.owner_id THEN 'owner' ELSE 'member' END as role
     FROM server_members m JOIN users u ON u.id = m.user_id JOIN servers s ON s.id = m.server_id
     WHERE m.server_id = ? ORDER BY u.display_name COLLATE NOCASE ASC
@@ -502,7 +512,8 @@ app.post('/api/register', async (req, res) => {
   const exists = db.prepare('SELECT 1 FROM users WHERE username = ?').get(username);
   if (exists) return res.status(409).json({ error: 'username_taken' });
   const hash = await bcrypt.hash(password, 10);
-  const user = { id: uid(), username, display_name: displayName || username, password_hash: hash, avatar_color: pickColor(), created_at: now() };
+  const newId = uid();
+  const user = { id: newId, username, display_name: displayName || username, password_hash: hash, avatar_color: colorForId(newId), created_at: now() };
   db.prepare('INSERT INTO users (id, username, display_name, password_hash, avatar_color, created_at) VALUES (@id,@username,@display_name,@password_hash,@avatar_color,@created_at)').run(user);
   // Site owner is always an admin (also enforced by a boot-time UPDATE in db.js
   // for pre-existing databases).
