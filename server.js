@@ -415,6 +415,9 @@ function publicUser(u) {
     game_enabled: u.game_enabled === undefined ? 1 : u.game_enabled,
     nsfw_ok: !!u.nsfw_ok,
     game_exclusions: u.game_exclusions || '[]',
+    // '' = never set: clients resolve it to 'dark' locally. Stored (not just
+    // localStorage) so the theme follows the account cross-device.
+    theme: ['dark', 'light', 'dracula'].includes(u.theme) ? u.theme : '',
     is_admin: !!u.is_admin,
     disabled: !!u.disabled,
   };
@@ -423,7 +426,7 @@ function requireSiteAdmin(req, res, next) {
   if (!req.user.is_admin) return res.status(403).json({ error: 'admin_only' });
   next();
 }
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, playing_game, streaming_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset, nsfw_ok';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, playing_game, streaming_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset, nsfw_ok, theme';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -1557,6 +1560,11 @@ app.patch('/api/me', authRequired, (req, res) => {
     const clean = [...new Set(arr.map((x) => String(x).trim()).filter((x) => GAME_RE.test(x)))].slice(0, 200);
     sets.push('game_exclusions = ?'); vals.push(JSON.stringify(clean));
   }
+  if (req.body?.theme !== undefined) {
+    const th = String(req.body.theme);
+    if (!['dark', 'light', 'dracula'].includes(th)) return res.status(400).json({ error: 'bad_theme' });
+    sets.push('theme = ?'); vals.push(th);
+  }
   // Player-local timezone (minutes east of UTC) for streak day bucketing.
   // Reported by the web client on boot and by the desktop watcher per
   // beacon; only written when it actually changed.
@@ -1579,12 +1587,16 @@ app.patch('/api/me', authRequired, (req, res) => {
     }
   } catch {}
   const u = freshUser(req.user.id);
+  // Theme-only saves stay silent: no user-update broadcast (nothing other
+  // clients render), no presence fan-out — just the PATCH response.
+  if (!(sets.length === 1 && sets[0] === 'theme = ?')) {
   broadcastUserUpdate(u);
   for (const sid of [...clients].filter((c) => c.meta && c.meta.userId === u.id).flatMap((c) => [...c.meta.servers])) {
     broadcastToServer(sid, { t: 'user-status', serverId: sid, userId: u.id, status: u.status });
   }
   // sync live sockets' presence state
   for (const c of clients) if (c.meta && c.meta.userId === u.id) c.meta.status = u.status;
+  }
   res.json({ user: u });
 });
 // ---------- game activity watcher (Windows desktop app beacon) ----------

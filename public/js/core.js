@@ -15,20 +15,43 @@ const isCoarse = () => window.matchMedia && matchMedia('(hover: none)').matches;
 // the app shell match; applied via <html data-theme> before CSS paints
 // (see the inline head script in index.html — this keeps it live after).
 const THEME_IDS = ['dark', 'light', 'dracula'];
-function getTheme() {
-  try {
-    const t = localStorage.getItem('cf_theme');
-    return THEME_IDS.includes(t) ? t : 'dark';
-  } catch { return 'dark'; }
+function validTheme(t) { return THEME_IDS.includes(t) ? t : null; }
+function localTheme() {
+  try { return validTheme(localStorage.getItem('cf_theme')); } catch { return null; }
 }
-function applyTheme(t) {
-  if (!THEME_IDS.includes(t)) t = 'dark';
+// Account setting wins (S.me.theme may be '' = never set); otherwise the
+// device-local value, so the signed-out auth page still matches.
+function accountTheme() {
+  try { return (typeof S !== 'undefined' && S.me) ? validTheme(S.me.theme) : null; }
+  catch { return null; }
+}
+function getTheme() { return accountTheme() || localTheme() || 'dark'; }
+function applyTheme(t, opts = {}) {
+  t = validTheme(t) || 'dark';
   document.documentElement.setAttribute('data-theme', t);
   try { localStorage.setItem('cf_theme', t); } catch {}
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = t === 'light' ? '#f2f4f8' : t === 'dracula' ? '#282a36' : '#07090e';
+  // Persist to the account so it follows the user cross-device.
+  // Fire-and-forget; the server value is authoritative on next boot.
+  if (opts.save !== false && typeof S !== 'undefined' && S.me && S.me.theme !== t) {
+    S.me.theme = t;
+    try {
+      api('/api/me', { method: 'PATCH', body: JSON.stringify({ theme: t }) })
+        .then(({ user }) => { if (user && validTheme(user.theme)) S.me.theme = user.theme; })
+        .catch(() => {});
+    } catch {}
+  }
 }
-try { applyTheme(getTheme()); } catch {}
+// Reconcile on boot: server wins once set; otherwise the device-local choice
+// is adopted as the account default (covers themes picked while signed out).
+function syncAccountTheme() {
+  const server = accountTheme(), local = localTheme();
+  if (server) { if (local !== server) applyTheme(server, { save: false }); }
+  else if (local) applyTheme(local);
+  else applyTheme('dark', { save: false });
+}
+try { applyTheme(localTheme() || 'dark', { save: false }); } catch {}
 // Tauri Android draws edge-to-edge; the CSS env() insets normally report the
 // status-bar/cutout size, but some WebViews report 0 — probe once and fall
 // back to a standard 30px status-bar pad so the header never sits under the

@@ -188,6 +188,7 @@ async function boot() {
     if (cfg?.iceServers?.length) S.iceServers = cfg.iceServers;
     const { user } = await api('/api/me');
     S.me = user;
+    try { syncAccountTheme(); } catch {}
     // Report local timezone so game streaks bucket play on the player's
     // calendar days instead of UTC (a 7-8 PM ET session crosses UTC
     // midnight and used to mint a bogus 2-day streak). Fire-and-forget.
