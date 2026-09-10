@@ -40,8 +40,12 @@
   --safe-l:env(safe-area-inset-left,0px);
   --safe-r:env(safe-area-inset-right,0px);
   /* Height of the always-reserved typing strip (see #typing-bar). Anything
-     anchored to the top of the composer pays for it on top of its own 64px. */
-  --strip-h:1.7rem;
+     anchored to the top of the composer pays for it on top of --composer-h.
+     Kept to one text line: #messages gives up its old bottom padding to pay
+     for it, so the gap above the input box is the same as it always was. */
+  --strip-h:1.2rem;
+  /* One-row composer, measured; composer-anchored popovers stack on it. */
+  --composer-h:68px;
 }
 /* Light mode: bright flat surfaces, same indigo primary. */
 [data-theme="light"]{
@@ -422,7 +426,11 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 }
 .muted-tag{font-size:.65rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--danger-tx);background:rgba(248,113,113,.14);border-radius:6px;padding:.18rem .45rem}
 
-#messages{flex:1;overflow-y:auto;padding:1rem 1rem;display:flex;flex-direction:column;gap:.15rem}
+/* No bottom padding: the typing strip above the composer owns that gap now
+   (the list would otherwise end up ~1rem further from the input box). */
+#messages{flex:1;overflow-y:auto;padding:1rem 1rem 0;display:flex;flex-direction:column;gap:.15rem}
+#chat:has(#composer.hidden) #typing-bar{display:none}
+#chat:has(#composer.hidden) #messages{padding-bottom:1rem}
 #chat.dropping #messages{outline:2px dashed var(--accent);outline-offset:-10px;background:var(--accent-dim);border-radius:var(--r-lg)}
 .day{display:flex;align-items:center;gap:.7rem;color:var(--faint);font-size:.72rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;text-align:center;margin:.8rem 0 .45rem}
 .day::before,.day::after{content:'';flex:1;height:1px;background:var(--line-soft)}
@@ -452,9 +460,10 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
    Slow-mode keeps the exact same box for the same reason: a live slowmode
    toggle must not resize the list either. The height is fixed (not min-height)
    because the text's line box is taller than a min-height box would be, which
-   left a few pixels of movement. */
-#typing-bar{display:flex;align-items:center;flex:0 0 auto;height:var(--strip-h);padding:0 1.1rem;background:var(--panel)}
-#chat:has(#composer.hidden) #typing-bar{display:none}
+   left a few pixels of movement. No background: the strip lives in the chat
+   background just above the composer, so the only thing that changes size at
+   rest is nothing at all. */
+#typing-bar{display:flex;align-items:center;flex:0 0 auto;height:var(--strip-h);padding:0 1.1rem}
 #typing{font-size:.78rem;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;visibility:hidden;transition:opacity .14s ease,visibility .14s ease}
 #typing-bar.show #typing{opacity:1;visibility:visible}
 #slowmode-hint{display:inline-flex;align-items:center;gap:.32rem;font-size:.74rem;font-weight:700;color:var(--amber);white-space:nowrap}
@@ -637,8 +646,8 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .scan-block.infected .scan-ic{color:var(--red);background:rgba(237,66,69,.1)}
 .scan-block.infected .scan-tx>span{color:var(--red)}
 @media (prefers-reduced-motion:reduce){.scan-fill,.scanning .scan-ic,.scan-dots::after{animation:none}}
-#mention-pop,#chan-pop{position:absolute;left:.9rem;bottom:calc(64px + var(--strip-h) + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:230px;max-height:230px;overflow-y:auto;z-index:60;padding:.3rem}
-#emoji-pop{position:absolute;left:.9rem;bottom:calc(64px + var(--strip-h) + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:270px;max-height:270px;overflow-y:auto;z-index:60;padding:.3rem}
+#mention-pop,#chan-pop{position:absolute;left:.9rem;bottom:calc(var(--composer-h) + var(--strip-h) + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:230px;max-height:230px;overflow-y:auto;z-index:60;padding:.3rem}
+#emoji-pop{position:absolute;left:.9rem;bottom:calc(var(--composer-h) + var(--strip-h) + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:270px;max-height:270px;overflow-y:auto;z-index:60;padding:.3rem}
 .emoji-item{display:flex;align-items:center;gap:.55rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);padding:.42rem .6rem;font-size:.88rem;cursor:pointer;border-radius:8px}
 .emoji-item:hover,.emoji-item.sel{background:var(--panel-3)}
 .emoji-item .ep-img{width:26px;height:26px;object-fit:contain;flex-shrink:0}
@@ -776,7 +785,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 @keyframes flash{0%,40%{background:rgba(91,108,255,.27)}100%{background:transparent}}
 
 /* ---------- picker (emoji + GIFs) ---------- */
-#picker{position:absolute;left:.9rem;bottom:calc(64px + var(--strip-h) + var(--safe-b));width:min(370px,calc(100vw - 2rem));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-lg);z-index:150;display:flex;flex-direction:column;max-height:390px;overflow:hidden}
+#picker{position:absolute;left:.9rem;bottom:calc(var(--composer-h) + var(--strip-h) + var(--safe-b));width:min(370px,calc(100vw - 2rem));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-lg);z-index:150;display:flex;flex-direction:column;max-height:390px;overflow:hidden}
 #picker.anchored{position:fixed;bottom:auto}
 .pk-subrow{display:flex;align-items:center;gap:.5rem;width:100%;padding:.15rem 0 .3rem}
 .pk-subbtn{border:0;background:transparent;color:var(--muted);font-weight:700;font-size:.82rem;padding:.42rem .9rem;border-radius:8px;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}

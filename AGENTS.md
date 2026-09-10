@@ -302,9 +302,10 @@ fetch it before the recipient opens the message. Async discipline:
 never pass an async callback to map/filter/forEach when results are used
 synchronously (use for..of or Promise.all); background timers go through
 safeInterval so rejections log instead of crashing. The typing strip above the
-composer always keeps its slot (`--strip-h`, fixed height, text fades) —
-hiding it resizes `#messages` and shoves the conversation up/down, and any
-overlay anchored to the composer top must pay `var(--strip-h)` too.
+composer always keeps its slot (`--strip-h`, one text line, transparent, text
+fades) — hiding it resizes `#messages` and shoves the conversation up/down.
+`#messages` pays for that slot by giving up its bottom padding, and anything
+anchored to the composer top stacks `var(--strip-h)` on `var(--composer-h)`.
 
 NEXT: iterate per owner feedback on the live site.
 
