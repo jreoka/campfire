@@ -1068,11 +1068,11 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .home-btn.active::before{display:none}
 #home-wrap{position:relative;width:48px;height:48px;flex-shrink:0}
 #home-wrap:has(> .active)::before{content:'';position:absolute;left:-10px;top:50%;transform:translateY(-50%);width:8px;height:28px;border-radius:0 999px 999px 0;background:var(--text);z-index:2}
-.home-btn img{width:42px;height:42px;object-fit:cover;display:block;transition:opacity var(--t-fast),transform var(--t-fast)}
-.home-btn .home-fire{position:absolute;inset:0;margin:auto;width:42px;height:42px;opacity:0;transform:scale(.8);transition:opacity var(--t-fast),transform var(--t-fast);pointer-events:none}
+.home-btn img{width:42px;height:42px;object-fit:cover;display:block;transition:opacity var(--t-fast)}
+.home-btn .home-fire{position:absolute;inset:0;margin:auto;width:42px;height:42px;opacity:0;transition:opacity var(--t-fast);pointer-events:none}
 @media (hover:hover){
-  .home-btn:hover img{opacity:0;transform:scale(.8)}
-  .home-btn:hover .home-fire{opacity:1;transform:scale(1)}
+  .home-btn:hover img{opacity:0}
+  .home-btn:hover .home-fire{opacity:1}
 }
 .server-btn,.chan,.dmrow,.member{-webkit-touch-callout:none}
 #home-badge{position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;font-size:.62rem;font-weight:800;border-radius:999px;padding:.1rem .38rem;min-width:19px;text-align:center;line-height:1.3;pointer-events:none}
