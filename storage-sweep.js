@@ -3,19 +3,22 @@
 // Files become orphaned whenever a row pointing at them disappears without
 // removing the bytes (message/channel/server deletes sweep their known
 // files on the request path, but crashes, older versions, and uploads that
-// never got attached to a message still strand bytes). This worker lists
-// everything under uploads/ (S3 prefix + local disk, independently) and
+// never got attached to a message still strand bytes). This worker walks the
+// bucket (minus `backups/`) and the local upload dir independently, and
 // deletes files that are (a) unreferenced by any DB row, (b) older than
 // ORPHAN_GRACE_H (uploads need time to get attached + scanned), and (c)
 // not awaiting a virus scan.
 //
 // Safety posture is fail-CLOSED: any failure collecting the referenced set
-// aborts the run before deleting anything. The top-level `backups/`
-// prefix is never even listed, so database dumps can't be touched.
+// aborts the run before deleting anything. `backups/` objects are skipped
+// before victim selection, so database dumps can never be touched.
 //
 // Env:
 //   ORPHAN_SWEEP=0     disable entirely (default: enabled)
 //   ORPHAN_GRACE_H     minimum file age before deletion (default 48, hours)
+//
+// `runSweepOnce({ dry: true })` reports the victims without deleting anything
+// (admin: POST /api/admin/sweep/run?dry=1).
 'use strict';
 
 const fs = require('fs');
@@ -87,14 +90,18 @@ async function pendingScanKeys() {
   return set;
 }
 
-// Every stored file: S3 `uploads/` listing (backups/ prefix untouched) +
-// recursive local walk (covers pre-S3-migration leftovers in S3 mode).
+// Every stored file: the whole bucket except `backups/` (keys are top-level:
+// files/, avatars/, banners/, emoji/, icons/, sidebar/ — never a shared
+// 'uploads/' prefix; listing that used to match nothing) + recursive local
+// walk (covers pre-S3-migration leftovers in S3 mode).
 async function listStored() {
   const out = []; // {key, mtime, size, where:'s3'|'local'}
   if (storage.s3Enabled()) {
-    const objs = await storage.s3List('uploads/');
+    const objs = await storage.s3List('');
     for (const o of objs) {
       if (!o.key || o.key.endsWith('/')) continue;
+      // Database dumps live under backups/ and are never listed as sweepable.
+      if (o.key === storage.BACKUP_PREFIX.slice(0, -1) || o.key.startsWith(storage.BACKUP_PREFIX)) continue;
       out.push({ key: o.key, mtime: o.modified ? new Date(o.modified).getTime() : 0, size: o.size || 0, where: 's3' });
     }
   }
@@ -139,8 +146,9 @@ async function pruneScanRows(storedKeys, referenced) {
   return pruned;
 }
 
-async function runOnce() {
+async function runOnce(opts) {
   if (!ENABLED || running) return null;
+  const dry = !!(opts && opts.dry);
   running = true;
   const t0 = Date.now();
   const result = { scanned: 0, referenced: 0, deleted: 0, bytes: 0, prunedScans: 0, ms: 0 };
@@ -156,6 +164,15 @@ async function runOnce() {
     // copy independently — stored[] carries its own `where`.
     const victims = stored.filter((f) =>
       !referenced.has(f.key) && !pending.has(f.key) && (f.mtime || 0) < cutoff);
+    // Dry run: report exactly what would go, delete nothing (used to sanity
+    // check a backend/prefix change against a real bucket before trusting it).
+    if (dry) {
+      result.dry = true;
+      result.victims = victims.slice(0, 200).map((f) => ({ key: f.key, where: f.where, size: f.size || 0, mtime: f.mtime || 0 }));
+      result.ms = Date.now() - t0;
+      log(`sweep (dry): ${stored.length} stored, ${referenced.size} referenced, would delete ${victims.length} (${Math.round(victims.reduce((a, f) => a + (f.size || 0), 0) / 1024)}KB)`);
+      return result;
+    }
     for (const f of victims) {
       try {
         await deleteStored(f);

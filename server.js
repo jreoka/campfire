@@ -2364,23 +2364,53 @@ app.get('/api/admin/stats', authRequired, requireSiteAdmin, async (req, res) => 
   });
 });
 // ---------- site admin: media compression ----------
+// What the DB still points at, for comparison with what storage holds. Only
+// chat/DM attachments carry a size — profile media (avatars, emoji, icons)
+// is counted by the storage listing instead.
+async function trackedMediaBytes() {
+  const out = { chat: { objects: 0, bytes: 0 }, byKind: {} };
+  for (const table of ['attachments', 'dm_attachments']) {
+    let rows = [];
+    try { rows = await db.prepare(`SELECT kind, COUNT(*) n, COALESCE(SUM(size),0) b FROM ${table} GROUP BY kind`).all(); } catch { continue; }
+    for (const r of rows) {
+      const k = r.kind || 'file';
+      const e = out.byKind[k] || (out.byKind[k] = { objects: 0, bytes: 0 });
+      e.objects += Number(r.n) || 0;
+      e.bytes += Number(r.b) || 0;
+      out.chat.objects += Number(r.n) || 0;
+      out.chat.bytes += Number(r.b) || 0;
+    }
+  }
+  return out;
+}
 app.get('/api/admin/media', authRequired, requireSiteAdmin, async (req, res) => {
   const mc = require('./media-compress');
-  const [queue, totals, scan, sweep] = await Promise.all([
+  const [queue, totals, scan, sweep, tracked] = await Promise.all([
     mc.mediaQueueCounts(), mc.mediaTotals(),
     require('./virus-scan').getScanStats().catch(() => null),
     require('./storage-sweep').getSweepStats(),
+    trackedMediaBytes().catch(() => null),
   ]);
-  res.json({ worker: mc.getMediaStats(), queue, totals, scan, sweep });
+  // Cached listing (10 min); ?refresh=1 forces a fresh walk of the bucket.
+  const usage = await require('./storage').storageStats({ refresh: req.query.refresh === '1' }).catch(() => null);
+  res.json({ worker: mc.getMediaStats(), queue, totals, scan, sweep, usage, tracked });
+});
+app.get('/api/admin/media/storage', authRequired, requireSiteAdmin, async (req, res) => {
+  const [usage, tracked] = await Promise.all([
+    require('./storage').storageStats({ refresh: req.query.refresh === '1' }),
+    trackedMediaBytes().catch(() => null),
+  ]);
+  res.json({ usage, tracked });
 });
 app.get('/api/admin/media/recent', authRequired, requireSiteAdmin, async (req, res) => {
   const mc = require('./media-compress');
   res.json({ jobs: await mc.mediaRecentJobs(req.query.limit) });
 });
 // Site admin: run the orphan sweep on demand (daily schedule runs anyway).
+// ?dry=1 reports what would be deleted without deleting anything.
 app.post('/api/admin/sweep/run', authRequired, requireSiteAdmin, async (req, res) => {
   const sw = require('./storage-sweep');
-  res.json({ result: await sw.runSweepOnce() });
+  res.json({ result: await sw.runSweepOnce({ dry: req.query.dry === '1' }) });
 });
 app.get('/api/admin/users', authRequired, requireSiteAdmin, async (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase();

@@ -226,7 +226,7 @@ async function main() {
         CLAM_DB_DIR: clamdb,
         MEDIA_COMPRESS_ACTIVE_MS: '250',
         MEDIA_COMPRESS_EVERY_MS: '5000',
-        ORPHAN_SWEEP: '0',
+        ORPHAN_SWEEP: '1', // exercised below (dry run + real sweep on a planted orphan)
         UNFURL: '0',
         PATH: bindir + path.delimiter + (process.env.PATH || ''),
       },
@@ -368,6 +368,30 @@ async function main() {
       const sweptRow = (await db.query("SELECT compressed FROM attachments WHERE split_part(url,'?',1) = $1", ['/uploads/' + newKey])).rows[0];
       check('attachment row marked compressed', !!sweptRow && Number(sweptRow.compressed) === 1);
     }
+
+    console.log('');
+    console.log('-- admin storage stats + orphan sweep --');
+    await db.query('UPDATE users SET is_admin = 1 WHERE id = $1', [reg.user.id]);
+    const st = await api('GET', '/api/admin/media/storage', undefined, token);
+    check('storage stats: local mode, backup-aware shape', !!st.usage && st.usage.mode === 'local' && typeof st.usage.backups.bytes === 'number', JSON.stringify(st.usage && st.usage.total));
+    check('prefixes aggregate the upload tree', (st.usage.prefixes || []).some((p) => p.prefix === 'files/'), JSON.stringify((st.usage.prefixes || []).map((p) => p.prefix)));
+    check('total excludes a local backups/ tree', st.usage.total.bytes >= 0 && st.usage.local.bytes === st.usage.total.bytes, JSON.stringify(st.usage.local));
+    check('tracked chat attachment bytes are reported', !!st.tracked && st.tracked.chat.bytes > 0, JSON.stringify(st.tracked && st.tracked.chat));
+    const cached = await api('GET', '/api/admin/media/storage', undefined, token);
+    check('second call is served from the cache', cached.usage.cached === true);
+
+    // Plant an old, unreferenced file: the dry run must list it and delete
+    // nothing; the real run must remove exactly it.
+    const orphanKey = 'files/' + crypto.randomBytes(16).toString('hex') + '.bin';
+    const orphanPath = path.join(uploads, orphanKey);
+    fs.writeFileSync(orphanPath, Buffer.alloc(4096));
+    const old3d = new Date(Date.now() - 72 * 3600 * 1000);
+    fs.utimesSync(orphanPath, old3d, old3d);
+    const dry = await api('POST', '/api/admin/sweep/run?dry=1', undefined, token);
+    check('sweep dry-run lists the orphan and deletes nothing', !!dry.result && dry.result.dry === true && (dry.result.victims || []).some((v) => v.key === orphanKey) && fs.existsSync(orphanPath), JSON.stringify(dry.result && dry.result.victims));
+    const real = await api('POST', '/api/admin/sweep/run', undefined, token);
+    check('real sweep deletes it', !!real.result && !fs.existsSync(orphanPath), JSON.stringify(real.result && { deleted: real.result.deleted, scanned: real.result.scanned }));
+    await db.query('UPDATE users SET is_admin = 0 WHERE id = $1', [reg.user.id]);
 
     await db.end();
   } finally {

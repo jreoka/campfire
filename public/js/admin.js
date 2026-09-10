@@ -135,6 +135,53 @@ function sweepLine(sw) {
   const what = r ? `${r.deleted} deleted (${fmtSize(r.bytes || 0)}) from ${r.scanned} stored` : 'no run yet';
   return ` · Orphan sweep: ${esc(what)} · last ${esc(last)} · every 24h, grace ${sw.graceH || 48}h`;
 }
+// Where the bytes went: media total (backups/ excluded), a per-prefix split
+// with share bars, and what the database still points at. Server-cached for
+// 10 minutes; Recompute forces a fresh listing.
+function storageCard(usage, tracked) {
+  if (!usage) return '<p class="muted small">Storage usage unavailable.</p>';
+  const t = usage.total || { bytes: 0, objects: 0 };
+  const bk = usage.backups || { bytes: 0, objects: 0 };
+  const card = (n, l) => `<div class="adm-stat"><b>${n}</b><span>${l}</span></div>`;
+  const rows = (usage.prefixes || []).map((p) => {
+    const pct = t.bytes ? Math.max(1, Math.round((p.bytes / t.bytes) * 100)) : 0;
+    return `<div class="adm-subrow">
+      <span class="adm-subname" style="flex:0 0 72px">${esc(p.prefix)}</span>
+      <span class="muted small" style="flex:0 0 62px">${p.objects} file${p.objects === 1 ? '' : 's'}</span>
+      <span class="scan-track" style="flex:1;margin-top:0"><span class="scan-fill" style="width:${pct}%;animation:none"></span></span>
+      <span class="muted small" style="flex:0 0 74px;text-align:right">${fmtSize(p.bytes)}</span>
+      <span class="muted small" style="flex:0 0 34px;text-align:right">${pct}%</span>
+    </div>`;
+  }).join('');
+  const chat = tracked && tracked.chat ? tracked.chat : null;
+  const filesPrefix = (usage.prefixes || []).find((p) => p.prefix === 'files/');
+  const orphanHint = (usage.mode === 's3' && chat && filesPrefix && filesPrefix.bytes > chat.bytes * 1.1)
+    ? `<div class="muted small">files/ holds ${fmtSize(filesPrefix.bytes - chat.bytes)} more than chat references — uploads never attached, deleted uploads the sweep hasn't reached yet, or webhook/profile media.</div>`
+    : '';
+  const localNote = usage.mode === 's3'
+    ? `<div class="muted small">Local disk leftovers: ${usage.local.objects} file${usage.local.objects === 1 ? '' : 's'} · ${fmtSize(usage.local.bytes)}${usage.local.objects ? ' (pre-S3 files the sweep also walks)' : ''}</div>`
+    : '';
+  const cacheNote = `${usage.cached ? 'cached' : 'fresh'} · computed ${usage.cached ? agoStr(Date.now() - usage.ageMs) : 'just now'}${usage.listing ? ' · ' + usage.listing.objects + ' objects listed in ' + usage.listing.ms + 'ms' : ''}`;
+  return `
+    <div class="adm-stats" style="grid-template-columns:repeat(3,1fr)">
+      ${card(fmtSize(t.bytes), 'Media total')}
+      ${card(t.objects, 'Files')}
+      ${card(fmtSize(bk.bytes), 'Backups (excluded)')}
+    </div>
+    ${usage.listing && usage.listing.truncated ? '<div class="muted small">Listing truncated — totals cover the first 100k objects.</div>' : ''}
+    <div style="margin-top:.5rem">${rows || '<p class="muted small">Nothing stored yet.</p>'}</div>
+    <div class="muted small" style="margin-top:.4rem">
+      ${chat ? `Chat attachments the database still points at: ${chat.objects} file${chat.objects === 1 ? '' : 's'} · ${fmtSize(chat.bytes)}<br/>` : ''}
+      Backups: ${bk.objects} dump${bk.objects === 1 ? '' : 's'} · ${fmtSize(bk.bytes)} — never served, never swept, not in the total above.<br/>
+      ${localNote}${orphanHint}
+    </div>
+    <div class="muted small" style="margin-top:.35rem">${esc(cacheNote)}</div>
+    <div class="adm-actions">
+      <button class="mini" id="adm-storage-refresh">Recompute</button>
+      <button class="mini" id="adm-sweep-check">Check for orphans</button>
+    </div>
+    <div id="adm-sweep-out" class="muted small"></div>`;
+}
 async function loadAdminMedia() {
   const box = $('#adm-media');
   if (!box) return;
@@ -164,6 +211,9 @@ async function loadAdminMedia() {
         ${badge(w.s3 ? 'S3 STORAGE' : 'LOCAL DISK', 'me')}
         ${w.busy ? badge('WORKING NOW', 'admin') : ''}
       </div>
+      <div class="pf-sec-label" style="margin-top:.2rem">Storage</div>
+      ${storageCard(m.usage, m.tracked)}
+      <div class="pf-sec-label" style="margin-top:1rem">Compression</div>
       <div class="adm-stats" style="grid-template-columns:repeat(4,1fr)">
         ${card(pendN, 'Queued')}
         ${card(fmtSize(pendB), 'Queued size')}
@@ -177,7 +227,42 @@ async function loadAdminMedia() {
       <div class="adm-actions"><button class="mini" id="adm-media-refresh">Refresh</button></div>`;
     const rb = $('#adm-media-refresh');
     if (rb) rb.onclick = () => { box.innerHTML = '<p class="muted small">Loading…</p>'; loadAdminMedia(); };
+    const sb = $('#adm-storage-refresh');
+    if (sb) sb.onclick = async () => {
+      sb.disabled = true;
+      try { await api('/api/admin/media/storage?refresh=1'); }
+      catch (e) { toast(prettyError(e.message)); }
+      loadAdminMedia(); // the forced walk is cached now, so this is instant
+    };
+    const ck = $('#adm-sweep-check');
+    if (ck) ck.onclick = () => adminSweepCheck();
   } catch { box.innerHTML = '<p class="muted small">Could not load media info.</p>'; }
+}
+// Dry-run the orphan sweep: what would be deleted right now, without deleting.
+// Deletion stays opt-in behind a confirm (the nightly run does it anyway).
+async function adminSweepCheck() {
+  const out = $('#adm-sweep-out');
+  if (out) out.innerHTML = '<span class="muted small">Walking storage…</span>';
+  try {
+    const r = await api('/api/admin/sweep/run?dry=1', { method: 'POST' });
+    const res = r.result || {};
+    if (!res.dry) { if (out) out.textContent = 'Sweep already running — try again in a moment.'; return; }
+    const v = res.victims || [];
+    const bytes = v.reduce((a, x) => a + (x.size || 0), 0);
+    if (out) {
+      out.innerHTML = `Orphans: ${res.victims.length > 200 ? '200+' : v.length} file(s) · ${fmtSize(bytes)} older than the grace period, out of ${res.scanned} stored.`;
+      if (v.length) out.innerHTML += `<div class="muted small" style="margin-top:.3rem">${v.slice(0, 5).map((x) => esc(x.key) + ' · ' + fmtSize(x.size)).join('<br/>')}${v.length > 5 ? '<br/>…' : ''}</div>`;
+    }
+    if (v.length) {
+      const ok = await openConfirmModal({ title: 'Delete orphaned files?', message: `Removes ${res.victims.length} unreferenced file(s) (${fmtSize(bytes)}). Referenced or still-scanning files are never touched.`, okLabel: 'Delete' });
+      if (ok) {
+        const run = await api('/api/admin/sweep/run', { method: 'POST' });
+        const d = run.result || {};
+        toast(`Swept ${d.deleted || 0} file(s), ${fmtSize(d.bytes || 0)} freed`);
+        loadAdminMedia();
+      }
+    }
+  } catch (e) { if (out) out.textContent = prettyError(e.message); }
 }
 
 function admUserRow(u) {

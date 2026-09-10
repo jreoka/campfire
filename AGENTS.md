@@ -214,6 +214,12 @@ are load-bearing:
   bucket PUT, so `MAX_FILE_MB` (default 200) is also a per-upload RAM budget on
   the box. Scanning and compression stream; multer does not. The composer reads
   the cap from `/api/config` (`maxUploadMb`) — never hardcode it in `public/`.
+- **Bucket keys are top-level** (`files/`, `avatars/`, `banners/`, `emoji/`,
+  `icons/`, `sidebar/`) — there is no shared `uploads/` prefix, so anything
+  listing the bucket must list `''` and skip `backups/` explicitly (DB dumps;
+  never served, never swept). `storage.storageStats()` powers the admin Media
+  tab's Storage card (`/api/admin/media/storage`, 10-min cache, `?refresh=1` to
+  force); the sweep has a `?dry=1` mode that reports victims without deleting.
 - **Compression is scan -> compress -> scan, and only the last verdict gets
   published.** On a clean verdict the `virus-scan` slot compresses the file
   itself (`processMedia` -> `media-compress.processUpload`), streams the

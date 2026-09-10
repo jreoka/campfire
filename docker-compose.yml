@@ -24,6 +24,9 @@ services:
       - ./data:/data
     environment:
       - PORT=3000
+      # Local media tree lives on the mounted volume (S3 mode ignores it, but a
+      # deployment without S3 must never write uploads into the image layer).
+      - UPLOAD_DIR=/data/uploads
       # Postgres (separate PG* vars so special characters in the password
       # never break URL parsing; DATABASE_URL also works as an override).
       - PGHOST=db
