@@ -55,7 +55,9 @@ function onWS(m) {
       const dnd = S.me && S.me.status === 'dnd';
       if (msg.threadRoot) {
         updateMsgInCaches(msg.threadRoot, (r) => { r.threadCount = (r.threadCount || 0) + 1; });
-        if (m.channelId === S.channelId) renderMessages();
+        // Thread replies don't change the channel list itself — just patch
+        // the root's reply-count link in place (no rebuild, no scroll jump).
+        if (m.channelId === S.channelId) paintThreadCount(msg.threadRoot);
         if (S.thread && S.thread.rootId === msg.threadRoot) {
           S.thread.replies.push(msg);
           renderThread(true);
@@ -105,8 +107,14 @@ function onWS(m) {
       break;
     }
     case 'message-deleted': {
-      const arr = (S.messages.get(m.channelId) || []).filter((x) => x.id !== m.messageId);
+      const prev = S.messages.get(m.channelId) || [];
+      const arr = prev.filter((x) => x.id !== m.messageId);
       S.messages.set(m.channelId, arr);
+      const removed = arr.length !== prev.length;
+      // A deleted thread reply isn't in the channel list at all — unless
+      // something quoted it (quote previews need the deleted placeholder),
+      // only its root's count changes: patch in place, skip the rebuild.
+      const quoted = prev.some((x) => x.replyTo && x.replyTo.id === m.messageId);
       scrubReplyPreview(m.messageId);
       // A deleted reply drops the root's live reply count (drives the N-replies link).
       if (m.threadRoot) updateMsgInCaches(m.threadRoot, (r) => { r.threadCount = Math.max(0, (r.threadCount || 1) - 1); });
@@ -116,7 +124,10 @@ function onWS(m) {
         renderThread();
       }
       const inHistDel = S.histMode && S.histMode.kind === 'server' && S.histMode.id === m.channelId;
-      if (m.channelId === S.channelId && !inHistDel) renderMessages();
+      if (m.channelId === S.channelId && !inHistDel) {
+        if (!removed && m.threadRoot && !quoted) paintThreadCount(m.threadRoot);
+        else renderMessages();
+      }
       break;
     }
     case 'dm-new': {

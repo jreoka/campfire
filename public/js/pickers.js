@@ -655,13 +655,14 @@ function renderThread(scroll = false) {
   rootBox.innerHTML = '';
   rootBox.appendChild(messageEl(S.thread.root, { inThread: true }));
   const nearBottom = repBox.scrollHeight - repBox.scrollTop - repBox.clientHeight < 200;
-  const keepDist = repBox.scrollHeight - repBox.scrollTop; // preserve reading pos (see renderMessages)
+  const anchor = nearBottom ? null : captureListAnchor(repBox);
+  const keepDist = repBox.scrollHeight - repBox.scrollTop; // fallback (anchor scrolled away)
   repBox.innerHTML = '';
   let tprev = null;
   for (const r of S.thread.replies) { repBox.appendChild(messageEl(r, { inThread: true, grouped: shouldGroup(tprev, r) })); tprev = r; }
   if (!S.thread.replies.length) repBox.innerHTML = '<p class="muted small" style="text-align:center">No replies yet.</p>';
   if (scroll || nearBottom) anchorBottom(repBox);
-  else repBox.scrollTop = Math.max(0, repBox.scrollHeight - keepDist);
+  else restoreListAnchor(repBox, anchor, keepDist);
 }
 function closeThread(silent) {
   S.thread = null;

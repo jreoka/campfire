@@ -508,14 +508,58 @@ function anchorBottom(box) {
     v.addEventListener('error', once);
   }
 }
+// Anchor-based scroll preservation for full list rebuilds. Distance-from-
+// bottom breaks whenever content heights change across the rebuild (lazy
+// images / video metadata load at 0 height, avatar <img>s, waveform bars),
+// landing scrolled-up readers noticeably higher after any background update
+// (reaction, edit, thread reply…). Pinning the topmost visible message
+// instead survives those height changes exactly.
+function captureListAnchor(box) {
+  try {
+    const btop = box.getBoundingClientRect().top;
+    for (const el of box.querySelectorAll('.msg')) {
+      const r = el.getBoundingClientRect();
+      if (r.bottom > btop + 1) return { mid: el.dataset.mid || null, off: r.top - btop };
+    }
+  } catch {}
+  return null;
+}
+function restoreListAnchor(box, anchor, keepDist) {
+  try {
+    if (anchor && anchor.mid) {
+      const el = box.querySelector('[data-mid="' + CSS.escape(anchor.mid) + '"]');
+      if (el) {
+        box.scrollTop += (el.getBoundingClientRect().top - box.getBoundingClientRect().top) - anchor.off;
+        return;
+      }
+    }
+  } catch {}
+  box.scrollTop = Math.max(0, box.scrollHeight - keepDist);
+}
+// A thread reply changes only its root's reply-count link — patch that one
+// button in place instead of rebuilding the whole list (a full rebuild
+// re-creates every avatar/media node and used to visibly jump the scroll).
+function paintThreadCount(rootId) {
+  try {
+    const el = document.querySelector('#messages [data-mid="' + CSS.escape(rootId) + '"]');
+    const root = (S.messages.get(S.channelId) || []).find((x) => x.id === rootId);
+    const n = root ? (root.threadCount || 0) : 0;
+    const link = el && el.querySelector('.thread-link');
+    if (link) {
+      if (n > 0) link.textContent = n + ' ' + (n === 1 ? 'reply' : 'replies') + ' →';
+      else link.remove();
+    } else if (el && n > 0) renderMessages();
+  } catch { try { renderMessages(); } catch {} }
+}
 function renderMessages(force = false) {
   const box = $('#messages');
   const msgs = S.messages.get(S.channelId) || [];
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
-  // Rebuilding the list resets scrollTop to 0 — remember the distance from
-  // the bottom so scrolled-up readers aren't yanked to the very top by
-  // every background update (reaction, edit, status change…).
-  const keepDist = box.scrollHeight - box.scrollTop;
+  // Rebuilding the list resets scrollTop to 0 — anchor on the topmost
+  // visible message so scrolled-up readers keep their exact place through
+  // every background update (reaction, edit, thread reply, status change…).
+  const anchor = nearBottom ? null : captureListAnchor(box);
+  const keepDist = box.scrollHeight - box.scrollTop; // fallback (anchor scrolled away)
   box.innerHTML = '';
   let lastDay = '', prev = null;
   for (const m of msgs) {
@@ -526,7 +570,7 @@ function renderMessages(force = false) {
   }
   if (!msgs.length) box.innerHTML += '<p class="muted" style="text-align:center">No messages yet — say hello.</p>';
   if (force || nearBottom) anchorBottom(box);
-  else box.scrollTop = Math.max(0, box.scrollHeight - keepDist);
+  else restoreListAnchor(box, anchor, keepDist);
   updatePill();
 }
 // Incremental live append: add ONE arriving message without rebuilding the
