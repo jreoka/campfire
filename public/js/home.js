@@ -126,6 +126,24 @@ function smallBtn(label, fn, danger) {
   b.onclick = (e) => { e.stopPropagation(); fn(); };
   return b;
 }
+const MAIL_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m2.5 6.5 9.5 7 9.5-7"/></svg>';
+const DOTS_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
+function friendIconBtn(label, svg, fn) {
+  const b = document.createElement('button');
+  b.className = 'fact-btn';
+  b.title = label;
+  b.setAttribute('aria-label', label);
+  b.innerHTML = svg;
+  b.onclick = (e) => { e.stopPropagation(); fn(e); };
+  return b;
+}
+function friendMoreMenu(u, anchor) {
+  const r = anchor.getBoundingClientRect();
+  openCtx(r.left, r.bottom + 6, [
+    { label: 'Unfriend', icon: '\u2212', fn: () => unfriendUser(u.id, u.username) },
+    { label: 'Block', icon: '\u2298', danger: true, fn: () => blockUser(u.id, u.username) },
+  ]);
+}
 function isBlocked(id) { return (S.friends.blocked || []).some((u) => u.id === id); }
 // ---------- Active Now (friends activity rail on the friends page) ----------
 const activeGaming = new Map(); // username -> { at, data }
@@ -331,9 +349,8 @@ function renderFriendLists() {
       : '<p class="muted small" style="padding:0 .7rem">No friends yet — add someone above.</p>';
     for (const u of list) {
       const row = friendRowEl(u);
-      row.appendChild(smallBtn('Message', () => openDmWith(u.id)));
-      row.appendChild(smallBtn('Unfriend', () => unfriendUser(u.id, u.username), true));
-      row.appendChild(smallBtn('Block', () => blockUser(u.id, u.username), true));
+      row.appendChild(friendIconBtn('Message', MAIL_SVG, () => openDmWith(u.id)));
+      row.appendChild(friendIconBtn('More actions', DOTS_SVG, (e) => friendMoreMenu(u, e.currentTarget)));
       fl.appendChild(row);
     }
   }

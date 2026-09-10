@@ -964,6 +964,9 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .dmrow .dmname{display:block;font-size:.85rem;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dmrow .dmlast{display:block;font-size:.74rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dmrow .mini{flex-shrink:0}
+.fact-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:0;background:var(--panel-3);color:var(--muted);border-radius:50%;cursor:pointer;transition:background var(--t-fast),color var(--t-fast);flex-shrink:0}
+.fact-btn:hover{background:var(--panel-4);color:var(--text)}
+.fact-btn svg{display:block}
 .dm-pin{flex-shrink:0;display:inline-flex;align-items:center;color:var(--faint);margin-left:.15rem}
 .dmrow.pinned .dm-pin{color:var(--accent-hover)}
 /* ---------- pins + jump-to-present ---------- */
