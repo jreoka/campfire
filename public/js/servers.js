@@ -478,6 +478,7 @@ function paintMe() {
     card.style.backgroundImage = '';
   }
   card.classList.toggle('off', off);
+  card.classList.toggle('has-banner', !!(S.me.sidebar_banner_url && !off));
   // One sub-line max: streaming wins, then custom status, otherwise the game.
   // The game itself always gets the controller/art badge so rows never grow.
   const sub = $('#me-sub');
@@ -503,9 +504,10 @@ function memberRowEl(m) {
   const streaming = !off && (m.streaming_game || null);
   const dot = dotOf(st, streaming);
   const div = document.createElement('div');
-  div.className = 'member' + (off ? ' off' : '');
+  const hasBanner = !!(m.sidebar_banner_url && !off);
+  div.className = 'member' + (off ? ' off' : '') + (hasBanner ? ' has-banner' : '');
   div.dataset.uid = m.id;
-  if (m.sidebar_banner_url && !off) {
+  if (hasBanner) {
     div.style.backgroundImage = `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${m.sidebar_banner_url}")`;
     div.style.backgroundSize = 'cover';
     div.style.backgroundPosition = 'right center';

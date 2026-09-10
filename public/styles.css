@@ -1265,6 +1265,18 @@ body{touch-action:manipulation}
 [data-theme="light"] #toast{background:#141a26;color:#f2f4f8}
 [data-theme="light"] #toast .btn.small.primary{background:#f2f4f8;border-color:transparent;color:#141a26}
 [data-theme="light"] .msg .text .spoiler:not(.shown),[data-theme="light"] .uc-bio .spoiler:not(.shown){background:#141a26}
+/* Sidebar-banner rows sit under a dark scrim in every theme: keep their
+   text light (custom name colors still win via inline style). */
+[data-theme="light"] .member.has-banner .mname,
+[data-theme="light"] #me-card.has-banner #me-name,
+[data-theme="light"] .dmrow.has-banner .dmname{color:#fff}
+[data-theme="light"] .member.has-banner .mstatus:not(.ugame):not(.ustream),
+[data-theme="light"] #me-card.has-banner .mstatus:not(.ugame):not(.ustream),
+[data-theme="light"] .dmrow.has-banner .dmlast{color:rgba(255,255,255,.8)}
+[data-theme="light"] .member.has-banner .mstatus.ugame,
+[data-theme="light"] #me-card.has-banner .mstatus.ugame{color:#b9c1ff}
+[data-theme="light"] .member.has-banner .mstatus.ustream,
+[data-theme="light"] #me-card.has-banner .mstatus.ustream{color:#d6b8ff}
 
 /* ---------- settings: blocked list ---------- */
 .set-blocked-list{display:flex;flex-direction:column}

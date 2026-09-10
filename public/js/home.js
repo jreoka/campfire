@@ -356,6 +356,7 @@ function dmRowEl(t) {
   else avSpan.style.background = 'var(--panel-3)';
   avSpan.style.boxShadow = 'none'; // no grey ring on sidebar DM pfps (matches the DM rail)
   if (av && av.sidebar_banner_url && !isOff(statusOf(av.id))) {
+    b.classList.add('has-banner');
     b.style.backgroundImage = `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${av.sidebar_banner_url}")`;
     b.style.backgroundSize = 'cover';
     b.style.backgroundPosition = 'right center';
