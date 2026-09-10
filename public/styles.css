@@ -169,9 +169,6 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .auth-card .logo{display:flex;justify-content:flex-start;margin-bottom:.9rem}
 .auth-card h1{margin:.25rem 0 .3rem;font-size:1.55rem;font-weight:800}
 .auth-card>p{margin:.25rem 0 1.25rem;font-size:.92rem}
-.auth-credit{margin:1.1rem 0 0!important;text-align:center;font-size:.7rem!important;color:var(--faint)}
-.auth-credit a{color:inherit;text-decoration:none}
-.auth-credit a:hover{color:var(--muted);text-decoration:underline}
 .tabs{display:flex;background:var(--inset);border:0;border-radius:12px;padding:4px;margin:0 0 1.25rem}
 .tab{flex:1;border:0;background:transparent;color:var(--muted);padding:.6rem;border-radius:8px;font-size:.9rem;font-weight:700;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
 .tab:hover{color:var(--text)}
