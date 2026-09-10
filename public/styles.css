@@ -951,14 +951,14 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .ftab:hover{background:var(--panel-2);color:var(--text)}
 .ftab.active{background:var(--panel-3);color:var(--text)}
 .ftab #req-count{color:var(--accent-hover)}
-/* friends live in the home sidebar: compact tabs, wrapping request rows */
-#home-ui .side-tabs{padding:.25rem .75rem .4rem;overflow-x:auto}
-#home-ui .ftab{padding:.4rem .7rem;font-size:.78rem}
-#home-ui #friend-reqs-wrap .chan-group-label{padding-top:.5rem}
-#home-ui #friend-reqs .row{flex-wrap:wrap;row-gap:.4rem}
-#home-ui #friend-add-wrap{padding-bottom:.35rem}
-.home-blank{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;padding:2rem 1rem}
-.home-blank p{line-height:1.6}
+/* sidebar Friends nav button (full-width row, icon right) */
+.friends-btn{margin-top:.3rem}
+.friends-btn svg{flex-shrink:0;color:var(--muted)}
+.friends-btn:hover svg{color:var(--text)}
+/* friends page header + add-friend row */
+.fp-head{display:flex;align-items:center;justify-content:space-between;gap:.6rem;margin:.1rem 0 .5rem}
+.fp-head .fp-title{margin:0}
+.fp-addrow{margin:.1rem 0 .6rem;max-width:420px}
 #friends-page{flex:1;overflow-y:auto;min-height:0;padding:1rem 1.25rem 2rem;display:flex;flex-direction:column}
 .fp-title{font-size:1.2rem;font-weight:800;letter-spacing:-.02em;margin:.1rem 0 .5rem}
 #friends-page .chan-group-label{padding:.85rem 0 .3rem}

@@ -99,20 +99,11 @@
       </div>
       <div id="home-ui" class="hidden">
         <div class="home-head"><strong>Home</strong></div>
-        <div class="chan-group-label row-between">FRIENDS <button id="btn-friend-add-open" class="mini" title="Add friend"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 6v12M6 12h12"/></svg></button></div>
-        <div id="friend-add-wrap" class="hidden">
-          <div class="row pad-x">
-            <input id="in-friend" maxlength="24" placeholder="username" autocomplete="off" />
-            <button id="btn-friend-add" class="btn small primary">Add</button>
-          </div>
-        </div>
-        <div class="ftabs side-tabs" id="friend-tabs">
-          <button data-ftab="online" class="ftab">Online</button>
-          <button data-ftab="all" class="ftab active">All</button>
-          <button data-ftab="pending" class="ftab">Pending<span id="req-count"></span></button>
-        </div>
-        <div id="friend-reqs-wrap"><div class="chan-group-label">REQUESTS</div><div id="friend-reqs"></div></div>
-        <div id="friend-list"></div>
+        <button id="btn-friends" class="dmrow friends-btn" title="Friends">
+          <span class="dmmain"><span class="dmname">Friends</span></span>
+          <span id="friends-nav-count" class="dm-badge hidden"></span>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        </button>
         <div class="chan-group-label">DIRECT MESSAGES</div>
         <div id="dm-list"></div>
         <div class="chan-group-label row-between">GROUP CHATS <button id="btn-group-new" class="mini" title="New group chat"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 6v12M6 12h12"/></svg></button></div>
@@ -161,10 +152,20 @@
       </div>
 
       <div id="friends-page" class="hidden">
-        <div class="fp-title">Friends</div>
-        <div class="home-blank">
-          <p class="muted">Pick a friend from the sidebar to start chatting.<br />Use the + next to FRIENDS to add someone new.</p>
+        <div class="fp-head"><div class="fp-title">Friends</div><button id="btn-friend-add-open" class="btn small primary">Add Friend</button></div>
+        <div id="friend-add-wrap" class="hidden">
+          <div class="row fp-addrow">
+            <input id="in-friend" maxlength="24" placeholder="username" autocomplete="off" />
+            <button id="btn-friend-add" class="btn small primary">Add</button>
+          </div>
         </div>
+        <div class="ftabs" id="friend-tabs">
+          <button data-ftab="online" class="ftab">Online</button>
+          <button data-ftab="all" class="ftab active">All</button>
+          <button data-ftab="pending" class="ftab">Pending <span id="req-count"></span></button>
+        </div>
+        <div id="friend-reqs-wrap"><div class="chan-group-label">REQUESTS</div><div id="friend-reqs"></div></div>
+        <div id="friend-list"></div>
       </div>
 
       <div id="stage" class="hidden">

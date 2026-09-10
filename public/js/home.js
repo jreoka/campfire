@@ -35,6 +35,14 @@ async function openHome() {
   S.dmThreadId = null;
   renderDmBlank();
 }
+// Sidebar Friends button → back to the friends menu in the main panel.
+function showFriendsPanel() {
+  if (S.view !== 'home') { openHome(); return; }
+  saveScrollPos();
+  S.dmThreadId = null;
+  renderDmBlank();
+  rememberView();
+}
 async function refreshFriends() {
   try { S.friends = await api('/api/friends'); S.friendsAt = Date.now(); renderFriendLists(); paintHomeBadge(); } catch {}
 }
@@ -312,6 +320,8 @@ function renderFriendLists() {
   });
   const nReq = f.pendingIn.length + f.pendingOut.length;
   $('#req-count').textContent = nReq ? ` (${nReq})` : '';
+  const nbc = $('#friends-nav-count');
+  if (nbc) { nbc.textContent = nReq > 99 ? '99+' : String(nReq); nbc.classList.toggle('hidden', !nReq); }
   // pending requests tab
   const rq = $('#friend-reqs');
   rq.innerHTML = '';

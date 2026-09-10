@@ -312,6 +312,8 @@ function renderDmBlank() {
   $('#composer').classList.add('hidden');
   $('#messages').classList.add('hidden');
   $('#friends-page').classList.remove('hidden');
+  document.querySelectorAll('#home-ui .dmrow').forEach((b) => b.classList.remove('active'));
+  $('#btn-friends')?.classList.add('active');
   $('#chan-hash').textContent = '';
   $('#chan-name').textContent = 'Friends';
   try { clearTyping(); } catch {}
