@@ -148,9 +148,6 @@ const upBanner = uploader('banners', IMG_MIMES, MAX_IMG_BYTES);
 const upSidebar = uploader('sidebar', IMG_MIMES, MAX_IMG_BYTES);
 const upIcon = uploader('icons', IMG_MIMES, MAX_IMG_BYTES);
 const upEmoji = uploader('emoji', IMG_MIMES, 4 * 1024 * 1024);
-// Hash-list import is held in memory only: blocklists are confidential and
-// must never land in the served ./data/uploads tree.
-const upHashlist = multer({ storage: multer.memoryStorage(), limits: { fileSize: 256 * 1024 * 1024, files: 1 } });
 function uploadUrl(sub, file) { return `/uploads/${sub}/${file.filename}?v=${Date.now().toString(36)}`; }
 function deleteUploaded(url) {
   if (!url || !url.startsWith('/uploads/')) return;
@@ -219,17 +216,6 @@ async function scanGate(req, res, next) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next();
     const key = storage.s3KeyFromUrl('/uploads' + req.path);
     if (!key) return next();
-    // Illegal-content gate first, and for EVERY prefix (files, avatars,
-    // banners, emoji, icons, sidebar) — unlike the virus gate below it is not
-    // limited to chat attachments. Bytes are already quarantined off-disk by
-    // the time this is set, so this is the backstop for cached URLs, embeds
-    // and direct links.
-    try {
-      if (require('./csam-scan').isMatched(key)) {
-        res.setHeader('Cache-Control', 'no-store');
-        return res.status(410).json({ error: 'file_removed' });
-      }
-    } catch {}
     const vs = require('./virus-scan');
     if (!vs.scanGating()) return next();
     if (!key.startsWith('files/')) return next();
@@ -415,7 +401,6 @@ async function authRequired(req, res, next) {
     const user = await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(p.sub);
     if (!user) return res.status(401).json({ error: 'user_gone' });
     if (user.disabled) return res.status(403).json({ error: 'account_disabled' });
-    if (user.locked_at) return res.status(403).json({ error: 'account_locked' });
     // 2s grace: JWT iat is second-precision while token_valid_after is ms —
     // without it a token minted in the same second as a reset looks older.
     // Precise kills come from the sessions-table revocation below.
@@ -543,7 +528,7 @@ function requireSiteAdmin(req, res, next) {
 }
 // Avatar decorations (settings → profile). IDs must match AVATAR_DECOS in public/js/core.js.
 const AVATAR_DECOS = ['ember', 'fireflies', 'aurora', 'neon', 'tide', 'stardust'];
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, playing_game, streaming_game, bio, name_color, name_gradient, card_color, card_gradient, avatar_decoration, active_tag_server_id, active_tag, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, locked_at, lock_reason, tz_offset, nsfw_ok, theme';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, playing_game, streaming_game, bio, name_color, name_gradient, card_color, card_gradient, avatar_decoration, active_tag_server_id, active_tag, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset, nsfw_ok, theme';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -638,7 +623,6 @@ app.post('/api/login', async (req, res) => {
   const u = await db.prepare('SELECT * FROM users WHERE username = ?').get(String(username || '').trim().toLowerCase());
   if (!u) return res.status(401).json({ error: 'invalid_login' });
   if (u.disabled) return res.status(403).json({ error: 'account_disabled' });
-  if (u.locked_at) return res.status(403).json({ error: 'account_locked' });
   const ok = await bcrypt.compare(String(password || ''), u.password_hash);
   if (!ok) return res.status(401).json({ error: 'invalid_login' });
   if (u.totp_enabled) {
@@ -758,7 +742,6 @@ app.post('/api/login/2fa', async (req, res) => {
   const u = await db.prepare('SELECT * FROM users WHERE id = ?').get(p.sub);
   if (!u) return res.status(401).json({ error: 'invalid_login' });
   if (u.disabled) return res.status(403).json({ error: 'account_disabled' });
-  if (u.locked_at) return res.status(403).json({ error: 'account_locked' });
   if (!u.totp_enabled) return res.status(400).json({ error: 'not_enabled' });
   if (!(await check2faCode(u.id, u.totp_secret, req.body?.code))) {
     const f = twofaFails.get(u.id);
@@ -868,7 +851,6 @@ app.post('/api/passkeys/login/verify', async (req, res) => {
     const u = await db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id);
     if (!u) return res.status(401).json({ error: 'invalid_login' });
     if (u.disabled) return res.status(403).json({ error: 'account_disabled' });
-    if (u.locked_at) return res.status(403).json({ error: 'account_locked' });
     const sid = await newSession(u.id, req);
     const token = signSession(u, sid);
     res.cookie('cf_token', token, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 864e5 });
@@ -876,12 +858,7 @@ app.post('/api/passkeys/login/verify', async (req, res) => {
   } catch { res.status(400).json({ error: 'verify_failed' }); }
 });
 
-// NB: `locked` is deliberately NOT part of publicUser — that serializer is
-// used for OTHER users (member lists, user cards, DMs), and exposing who is
-// under a safety review would be a privacy leak. Only /api/me reports it, for
-// the requester themselves. locked_at/lock_reason ride along in USER_COLS but
-// are never serialised.
-app.get('/api/me', authRequired, (req, res) => res.json({ user: { ...publicUser(req.user), locked: !!req.user.locked_at } }));
+app.get('/api/me', authRequired, (req, res) => res.json({ user: publicUser(req.user) }));
 
 app.get('/api/servers', authRequired, async (req, res) => {
   const rows = await db.prepare(`
@@ -1830,9 +1807,6 @@ app.post('/api/upload', authRequired, (req, res, next) => {
   let scan = 'clean';
   const fileKey = 'files/' + req.file.filename;
   try { scan = await require('./virus-scan').queueFileScan(fileKey); } catch {}
-  // Known-CSAM hash match runs asynchronously (these can be 100MB videos) and
-  // the bytes are held out of /uploads by scanGate until the verdict lands.
-  try { require('./csam-scan').queueHashScan(fileKey, { userId: req.user && req.user.id, context: 'files' }); } catch {}
   let mt = req.file.mimetype;
   // Extension-accepted code/text with an empty or generic MIME reads as text.
   if ((!mt || mt === 'application/octet-stream') && CODE_TEXT_EXTS.has(path.extname(String(req.file.originalname || '')).toLowerCase().slice(1))) mt = 'text/plain';
@@ -1848,20 +1822,6 @@ function imgSingle(up) {
     try { await persistUpload(up._sub, req.file); }
     catch { return res.status(500).json({ error: 'storage_failed' }); }
     const ikey = up._sub + '/' + req.file.filename;
-    // Scanned like everything else (content, not extension). Profile/ server
-    // images aren't download-gated, so illegal-content scanning for them runs
-    // INLINE, before the handler can store a URL for these bytes: the file
-    // must be judged before it can ever be referenced.
-    try {
-      const cs = require('./csam-scan');
-      const verdict = await cs.scanUploadedNow(ikey, { userId: req.user && req.user.id, context: up._sub });
-      if (verdict && verdict.status === 'match') {
-        return res.status(451).json({
-          error: 'illegal_content',
-          detail: 'This file matches known illegal material and was not saved. The account has been locked pending review.',
-        });
-      }
-    } catch (e) { console.error('[csam] inline scan failed:', (e && e.message) || e); }
     try { require('./virus-scan').queueFileScan(ikey); } catch {}
     next();
   });
@@ -2671,174 +2631,6 @@ app.delete('/api/admin/servers/:id/members/:uid', authRequired, requireSiteAdmin
   broadcastToServer(s.id, { t: 'member-left', serverId: s.id, userId: target });
   evictFromServer(s.id, target);
   notifyUser(target, { t: 'removed-from-server', serverId: s.id, reason: 'kicked' });
-  res.json({ ok: true });
-});
-
-// ---------- site admin: safety (known-CSAM hash matching) ----------
-// Matching runs entirely on this box against a locally imported hash list;
-// nothing about a user's upload is ever sent to a third party. See csam-scan.js
-// for the design, the legal basis and how to obtain a hash list.
-const csam = () => require('./csam-scan');
-
-// Push a safety event to every connected admin socket. Matches are rare, so
-// resolving the admin set here costs nothing in the common case.
-async function broadcastToAdmins(obj) {
-  try {
-    const ids = new Set((await db.prepare('SELECT id FROM users WHERE is_admin = 1').all()).map((r) => r.id));
-    if (!ids.size) return;
-    const payload = JSON.stringify(obj);
-    for (const c of clients) {
-      if (!c.meta || !ids.has(c.meta.userId)) continue;
-      try { c.send(payload); } catch {}
-    }
-  } catch {}
-}
-
-app.get('/api/admin/safety', authRequired, requireSiteAdmin, async (req, res) => {
-  res.json(await csam().getSafetyStats());
-});
-
-app.get('/api/admin/safety/reviews', authRequired, requireSiteAdmin, async (req, res) => {
-  const status = String(req.query.status || 'open');
-  const limit = parseInt(req.query.limit || '25', 10);
-  const offset = parseInt(req.query.offset || '0', 10);
-  res.json({
-    reviews: await csam().listReviews(status, limit, offset),
-    counts: await csam().reviewCounts(),
-    config: (await csam().getSafetyStats()),
-  });
-});
-
-// Import a hash list (multipart `file`, or a raw text body). `kind` is
-// required for bare-hash lists; CSV files with a header are auto-detected.
-app.post('/api/admin/safety/hashlist', authRequired, requireSiteAdmin, upHashlist.single('file'), async (req, res) => {
-  const text = req.file ? req.file.buffer.toString('utf8') : String(req.body?.text || '');
-  if (!text.trim()) return res.status(400).json({ error: 'empty_list' });
-  const kind = ['md5', 'sha256', 'pdq'].includes(String(req.body?.kind || '')) ? String(req.body.kind) : null;
-  const rows = csam().parseHashList(text, kind);
-  if (!rows.length) {
-    return res.status(400).json({
-      error: 'no_hashes_parsed',
-      detail: 'Expected PDQ/SHA-256 (64 hex chars) or MD5 (32 hex chars) values. '
-        + 'If the list has no header row, pick the hash type explicitly.',
-    });
-  }
-  const byKind = rows.reduce((a, r) => (a[r.kind] = (a[r.kind] || 0) + 1, a), {});
-  const out = await csam().importHashes(rows, String(req.body?.source || req.file?.originalname || 'manual').slice(0, 120),
-    req.body?.replace === '1' || req.body?.replace === 'true');
-  console.log(`[csam] imported ${out.added} hashes (${JSON.stringify(byKind)}) from ${req.file?.originalname || 'body'}`);
-  res.json({ ok: true, parsed: rows.length, byKind, ...out });
-});
-
-app.post('/api/admin/safety/hashlist/clear', authRequired, requireSiteAdmin, async (req, res) => {
-  const kind = String(req.body?.kind || '');
-  if (kind && !['md5', 'sha256', 'pdq'].includes(kind)) return res.status(400).json({ error: 'bad_kind' });
-  if (kind) await db.prepare('DELETE FROM csam_hashlist WHERE kind = ?').run(kind);
-  else await db.exec('DELETE FROM csam_hashlist');
-  await csam().loadBlocklist();
-  res.json({ ok: true, counts: (await csam().getSafetyStats()).listCounts });
-});
-
-app.get('/api/admin/safety/allowlist', authRequired, requireSiteAdmin, async (req, res) => {
-  const rows = await db.prepare('SELECT hash, kind, reason, added_at FROM csam_allowlist ORDER BY added_at DESC LIMIT 200').all();
-  res.json({ allowlist: rows.map((r) => ({ hash: r.hash, kind: r.kind, reason: r.reason, addedAt: Number(r.added_at) })) });
-});
-
-app.delete('/api/admin/safety/allowlist', authRequired, requireSiteAdmin, async (req, res) => {
-  const hash = String(req.query.hash || '').toLowerCase();
-  const kind = String(req.query.kind || 'pdq');
-  if (!/^[0-9a-f]{32,64}$/.test(hash)) return res.status(400).json({ error: 'bad_hash' });
-  await db.prepare('DELETE FROM csam_allowlist WHERE hash = ? AND kind = ?').run(hash, kind);
-  await csam().loadBlocklist();
-  res.json({ ok: true });
-});
-
-app.post('/api/admin/safety/reviews/:id/clear', authRequired, requireSiteAdmin, async (req, res) => {
-  const r = await csam().clearReview(req.params.id, req.user.id, req.user.display_name, req.body?.notes);
-  if (!r) return res.status(404).json({ error: 'no_review' });
-  await broadcastToAdmins({ t: 'safety-changed' });
-  res.json({ ok: true });
-});
-
-app.post('/api/admin/safety/reviews/:id/confirm', authRequired, requireSiteAdmin, async (req, res) => {
-  const ban = req.body?.ban === true || req.body?.ban === 1;
-  const r = await csam().confirmReview(req.params.id, req.user.id, req.user.display_name, req.body?.notes, ban);
-  if (!r) return res.status(404).json({ error: 'no_review' });
-  if (ban && r.user_id) {
-    await db.prepare('UPDATE sessions SET revoked = 1 WHERE user_id = ?').run(r.user_id);
-    closeSessionSockets(r.user_id, null);
-  }
-  await broadcastToAdmins({ t: 'safety-changed' });
-  res.json({ ok: true });
-});
-
-app.post('/api/admin/safety/reviews/:id/reopen', authRequired, requireSiteAdmin, async (req, res) => {
-  const r = await csam().reopenReview(req.params.id, req.user.id, req.user.display_name);
-  if (!r) return res.status(404).json({ error: 'no_review' });
-  await broadcastToAdmins({ t: 'safety-changed' });
-  res.json({ ok: true });
-});
-
-// Manual lock/unlock, so an admin can act on a report that did not come from
-// an automatic match (and undo one that did).
-app.post('/api/admin/safety/users/:id/unlock', authRequired, requireSiteAdmin, async (req, res) => {
-  await csam().unlockAccount(req.params.id);
-  const fresh = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
-  if (fresh) await broadcastUserUpdate(fresh);
-  res.json({ ok: true });
-});
-
-// Retroactive scan (Project Arachnid best practice): hash every upload that
-// predates the current hash list. Hash lists are updated continuously, so
-// content that did not match last month may match today.
-app.post('/api/admin/safety/rescan', authRequired, requireSiteAdmin, async (req, res) => {
-  // key -> owning user id, so a match found retroactively still attributes to
-  // (and can lock) the account that uploaded it.
-  const keys = new Map();
-  const addKey = (url, userId) => {
-    const k = storage.s3KeyFromUrl(String(url || '').split('?')[0]);
-    if (!k || k.startsWith('quarantine/')) return;
-    if (!keys.has(k) || (!keys.get(k) && userId)) keys.set(k, userId || null);
-  };
-  const scopes = String(req.body?.scope || 'files');
-  if (scopes === 'files' || scopes === 'all') {
-    // The uploader lives on the message, not the attachment row.
-    for (const r of await db.prepare(
-      'SELECT a.url, m.user_id FROM attachments a LEFT JOIN messages m ON m.id = a.message_id').all()) {
-      addKey(r.url, r.user_id);
-    }
-    for (const r of await db.prepare(
-      'SELECT a.url, m.user_id FROM dm_attachments a LEFT JOIN dm_messages m ON m.id = a.message_id').all()) {
-      addKey(r.url, r.user_id);
-    }
-  }
-  if (scopes === 'profiles' || scopes === 'all') {
-    for (const col of ['avatar_url', 'banner_url', 'sidebar_banner_url']) {
-      for (const r of await db.prepare(`SELECT ${col} AS url, id FROM users WHERE ${col} IS NOT NULL`).all()) addKey(r.url, r.id);
-    }
-    for (const col of ['icon_url', 'banner_url']) {
-      for (const r of await db.prepare(`SELECT ${col} AS url, owner_id FROM servers WHERE ${col} IS NOT NULL`).all()) addKey(r.url, r.owner_id);
-    }
-    for (const r of await db.prepare('SELECT url, created_by FROM custom_emoji').all()) addKey(r.url, r.created_by);
-    for (const r of await db.prepare('SELECT avatar_url AS url, created_by FROM webhooks WHERE avatar_url IS NOT NULL').all()) addKey(r.url, r.created_by);
-  }
-  let queued = 0;
-  for (const [k, userId] of keys) {
-    try { await csam().queueHashScan(k, { userId, context: 'rescan' }); queued++; } catch {}
-  }
-  // Let the worker revisit rows it previously passed: the list has changed.
-  try {
-    await db.prepare("UPDATE csam_scans SET status = 'pending', attempts = 0 WHERE status IN ('clean','error')").run();
-  } catch {}
-  await csam().kickCsamScan();
-  res.json({ ok: true, queued, total: keys.size });
-});
-
-app.post('/api/admin/safety/quarantine/purge', authRequired, requireSiteAdmin, async (req, res) => {
-  const reviewId = String(req.body?.reviewId || '');
-  const row = await db.prepare('SELECT scan_key FROM csam_reviews WHERE id = ?').get(reviewId);
-  if (!row) return res.status(404).json({ error: 'no_review' });
-  await csam().purgeQuarantined(row.scan_key);
   res.json({ ok: true });
 });
 
@@ -4275,7 +4067,6 @@ wss.on('connection', async (ws, req) => {
   const u = await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(p.sub);
   if (!u) { ws.close(4401, 'no user'); return; }
   if (u.disabled) { ws.close(4401, 'disabled'); return; }
-  if (u.locked_at) { ws.close(4401, 'locked'); return; }
   if ((p.iat || 0) * 1000 < (u.token_valid_after || 0) - 2000) { ws.close(4401, 'bad token'); return; }
   if (p.sid) {
     const s = await db.prepare('SELECT id,user_id,revoked FROM sessions WHERE id = ?').get(p.sid);
@@ -4661,23 +4452,6 @@ async function boot() {
     vs.startVirusScan();
   } catch (e) { console.error('[virusscan] scheduler failed to start:', (e && e.message) || e); }
   try { require('./storage-sweep').startStorageSweep(); } catch (e) { console.error('[sweep] scheduler failed to start:', (e && e.message) || e); }
-  // Known-CSAM hash matching. Local-only: hashes are compared against a list
-  // imported into this database, never sent to a third party.
-  try {
-    const cs = require('./csam-scan');
-    cs.setCsamHooks({
-      onMatch: async (info) => {
-        await broadcastToAdmins({ t: 'safety-match', kind: info.hit.kind, distance: info.hit.distance });
-        if (info.userId) {
-          try { notifyUser(info.userId, { t: 'account-locked' }); } catch {}
-          // Drop their sockets immediately so a live session cannot keep going.
-          try { closeSessionSockets(info.userId, null); } catch {}
-        }
-      },
-      onReviewChange: async () => { await broadcastToAdmins({ t: 'safety-changed' }); },
-    });
-    cs.startCsamScan();
-  } catch (e) { console.error('[csam] scheduler failed to start:', (e && e.message) || e); }
   // Link previews: one fetch per URL (cached in link_embeds), swept monthly.
   try { require('./unfurl').prune(); } catch (e) { console.error('[unfurl] prune failed:', (e && e.message) || e); }
   safeInterval(() => require('./unfurl').prune(), 6 * 3600 * 1000);

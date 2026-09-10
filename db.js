@@ -526,11 +526,6 @@ CREATE INDEX IF NOT EXISTS idx_game_days_user ON game_days(user_id, day);
   await addColumn('server_members', 'folder_id', 'TEXT');
   await addColumn('users', 'is_admin', 'BIGINT NOT NULL DEFAULT 0');
   await addColumn('users', 'disabled', 'BIGINT NOT NULL DEFAULT 0');
-  // CSAM-review lock. Distinct from `disabled` (a human admin decision) so an
-  // automatic lock is always reversible by clearing its review, and so the two
-  // states can never be confused. Set by csam-scan.js; cleared in Admin → Safety.
-  await addColumn('users', 'locked_at', 'BIGINT');
-  await addColumn('users', 'lock_reason', 'TEXT');
   await addColumn('users', 'tz_offset', 'BIGINT');
   await addColumn('users', 'nsfw_ok', 'BIGINT NOT NULL DEFAULT 0');
   await addColumn('users', 'theme', "TEXT NOT NULL DEFAULT ''");

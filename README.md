@@ -131,82 +131,11 @@ pg_restore -d campfire campfire.dump
 To reset: `docker compose down -v && rm -rf data && docker compose up -d`
 (wipes the database volume too).
 
-## 6. Illegal content (known-CSAM detection)
-
-Campfire can fingerprint every upload and compare it against a list of hashes
-describing material that some other body has already confirmed illegal. **The
-comparison happens on your own server** — no image, video or hash of a user's
-content is ever sent to a third party.
-
-Two fingerprints are taken for every upload:
-
-* **SHA-256 / MD5** — exact, byte-for-byte. A hit here is never a false
-  positive.
-* **PDQ** — a perceptual hash (the same algorithm NCMEC, Project Arachnid and
-  the IWF publish lists in), plus all 7 rotations/mirrors of it, so a re-encoded,
-  resized or flipped re-upload still matches.
-
-Avatars, banners, sidebar banners, custom emoji and server icons are scanned
-**before the upload is accepted**. Chat attachments are scanned in the
-background and stay unservable until the verdict lands.
-
-### It is inert until you load a hash list
-
-That is not a switch you can flip on your own: known-CSAM hash databases are
-released only to vetted organisations. Apply first, then import:
-
-| Source | Where |
-| --- | --- |
-| NCMEC Hash Sharing (US) | https://report.cybertip.org/hashsharing |
-| Project Arachnid / Shield (CA) | https://projectarachnid.ca |
-| IWF (UK, membership) | https://www.iwf.org.uk |
-
-Then **Admin → Safety → Import hash list**. It accepts NCMEC-style
-`hashType,hashValue` CSV, one hash per line (hex or base64), `kind:hash`, and
-header rows naming `pdq`/`sha256`/`md5` columns. The list is stored in your
-database, never in the web-served upload directory.
-
-Without a list (or without the hash type of the list) detection does nothing
-and uploads are unaffected — the admin panel says so plainly.
-
-### What happens on a match
-
-1. The bytes are **moved out of the served upload area** into a quarantine
-directory and are preserved rather than deleted — a US provider that learns of
-this material is expected to report and retain it (18 U.S.C. § 2258A). Retention
-is capped by `CSAM_RETENTION_DAYS` (default 90).
-2. The uploader's account is **locked** pending human review, and their live
-sessions are dropped.
-3. A review appears in **Admin → Safety**, showing the match type, the Hamming
-   distance, the uploader and where it was uploaded.
-
-An admin can then:
-
-* **Clear as false positive** — unlocks the account, restores the file, and
-  allowlists that hash so the same image can never lock anyone again.
-* **Confirm** — keeps the account locked, preserves the evidence, and can
-  disable the account outright.
-
-**Site admins are exempt from the automatic lock**, so a false positive can
-never lock every operator out of an instance.
-
-### Two things worth being clear about
-
-* **The review UI never displays the suspected file.** Viewing suspected CSAM
-  is itself an offence in most jurisdictions, and the match type, distance and
-  uploader are enough to judge a false positive. `CSAM_REVIEW_PREVIEW` exists
-  but defaults to `off`; leave it there.
-* **This finds known material only.** It cannot identify new material, and a
-  clean scan means "not on the list", not "safe". A confirmed match should be
-  reported to your national hotline (NCMEC CyberTipline in the US).
-
-All options are documented in `.env.example`.
-
-## 7. Windows desktop app
+## 6. Windows desktop app
 
 `app/` is a small Tauri (WebView2) wrapper of the web app — tray icon, start-on-login, and automatic game detection. While a game is running it shows "Playing …" next to your name (separate from your custom status) and logs playtime, which drives per-game levels and day-streaks shown on profile cards. Builds ship via GitHub Releases (`.github/workflows/app-windows.yml`). See `app/README.md`.
 
-## 8. Link previews and what they send
+## 7. Link previews and what they send
 
 Paste a link and Campfire shows a preview card under the message. Videos,
 music and posts from the big platforms embed as real players in your browser
