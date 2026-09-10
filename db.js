@@ -550,9 +550,6 @@ CREATE INDEX IF NOT EXISTS idx_webhooks_channel ON webhooks(channel_id);
   try { await db.exec("UPDATE users SET is_admin = 1 WHERE username = 'jreoka'"); } catch {}
   // status_text cap lowered to 64: trim any legacy longer values (idempotent)
   try { await db.exec('UPDATE users SET status_text = substr(status_text, 1, 64) WHERE length(status_text) > 64'); } catch {}
-  // NOTE: the SQLite-era invite_code column rebuild has no Postgres
-  // equivalent — fresh Postgres schemas never had that column, and data
-  // arrives via scripts/migrate-sqlite-to-pg.js which targets this schema.
 }
 
 async function closePool() {

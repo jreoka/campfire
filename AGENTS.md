@@ -56,7 +56,6 @@ campfire/
                      # GitHub Actions, not in the Docker deploy
   scripts/gen-icons.js  # zero-dep PNG icon generator (runs in Docker build)
   scripts/gen-ico.js    # syncs app icon with the web favicon
-  scripts/migrate-sqlite-to-pg.js  # one-shot SQLite→Postgres pump (historical; keep)
   public/
     index.html       # SPA shell (auth view + main view + modals)
     styles.css       # flat professional dark UI (see design rules below)
