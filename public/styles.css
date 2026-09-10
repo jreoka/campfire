@@ -265,7 +265,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .mini:disabled:hover{background:var(--panel-3)}
 .mini.danger{background:var(--danger-bg);border:1px solid var(--danger-line);color:var(--danger-tx)}
 .mini.danger:hover{background:rgba(248,113,113,.17)}
-#me-card{display:flex;align-items:center;gap:.55rem;padding:.5rem .7rem .5rem calc(.7rem + 70px);margin:.4rem .6rem .6rem -70px;border:0;border-radius:12px;background-color:var(--panel-2);font-size:.88rem;font-weight:600;cursor:pointer;overflow:hidden;transition:background-color .15s;position:relative;z-index:2}
+#me-card{display:flex;align-items:center;gap:.55rem;padding:.5rem .7rem;margin:.4rem .6rem .6rem -70px;border:0;border-radius:12px;background-color:var(--panel-2);font-size:.88rem;font-weight:600;cursor:pointer;overflow:hidden;transition:background-color .15s;position:relative;z-index:2}
 #me-card:hover{background-color:var(--panel-3)}
 #me-card.off{opacity:.55}
 #me-card .avwrap{position:relative;width:28px;height:28px;flex-shrink:0}
@@ -1271,7 +1271,7 @@ body{touch-action:manipulation}
   #home-wrap .home-btn .home-fire{width:38px;height:38px}
   #home-wrap:has(> .active)::before{left:-8px;width:4px;height:22px}
   #server-list{align-items:center;padding:.4rem 0 64px;gap:.5rem}
-  #me-card{margin-left:-52px;padding-left:calc(.7rem + 52px)}
+  #me-card{margin-left:-52px}
   #sidebar-resizer{display:none}
   #dm-rail{gap:.45rem}
   .server-btn.active::before{left:-8px;width:4px;height:22px}
