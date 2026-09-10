@@ -896,6 +896,49 @@ async function openUserCard(uid, x, y) {
   }));
 }
 function closeUserCard() { $('#usercard').classList.add('hidden'); }
+// ---------- server tag mini-panel ----------
+function closeTagCard() { $('#tagcard').classList.add('hidden'); }
+async function tagServerInfo(sid) {
+  const local = (S.servers || []).find((s) => s && s.id === sid)
+    || (S.serverDetail && S.serverDetail.id === sid ? S.serverDetail : null);
+  if (local) return { id: local.id, name: local.name, description: local.description || '', icon_url: local.icon_url || null, banner_url: local.banner_url || null, tag: local.tag || null, tag_emoji: local.tag_emoji || null, member: true };
+  const { server } = await api('/api/servers/' + sid + '/preview');
+  return { ...server, member: false };
+}
+async function openTagCard(sid, x, y) {
+  if (!sid) return;
+  const card = $('#tagcard');
+  card.innerHTML = '<div class="tc-banner"></div><div class="tc-body"><div class="tc-name muted">Loading…</div></div>';
+  card.classList.remove('hidden');
+  const place = () => {
+    const r = card.getBoundingClientRect();
+    card.style.left = Math.max(8, Math.min(x || 8, innerWidth - (r.width || 280) - 8)) + 'px';
+    card.style.top = Math.max(8, Math.min(y || 8, innerHeight - (r.height || 200) - 8)) + 'px';
+  };
+  place();
+  let info = null;
+  try { info = await tagServerInfo(sid); } catch { info = null; }
+  if (card.classList.contains('hidden')) return;
+  if (!info) {
+    card.innerHTML = '<div class="tc-error">Couldn\'t load this server.</div><div class="tc-actions" style="padding:0 1rem 1rem"><button class="btn small" id="tc-close">Close</button></div>';
+  } else {
+    const initial = (info.name || '?').trim().charAt(0).toUpperCase() || '?';
+    card.innerHTML = `
+      <div class="tc-banner"${info.banner_url ? ` style="background-image:url('${esc(info.banner_url)}')"` : ''}></div>
+      <div class="tc-body">
+        <span class="tc-icon">${info.icon_url ? `<img src="${esc(info.icon_url)}" alt="" />` : esc(initial)}</span>
+        <div class="tc-name">${esc(info.name || 'Unknown server')}</div>
+        ${(info.tag_emoji || info.tag) ? `<div class="tc-tagline"><span class="usertag">${esc((info.tag_emoji || '') + (info.tag || ''))}</span></div>` : ''}
+        ${info.description ? `<div class="tc-desc">${esc(info.description)}</div>` : ''}
+        <div class="tc-actions">${info.member ? '<button class="btn small primary" id="tc-view">View server</button>' : ''}<button class="btn small" id="tc-close">Close</button></div>
+      </div>`;
+    const vw = $('#tc-view');
+    if (vw) vw.onclick = () => { closeTagCard(); selectServer(info.id); };
+  }
+  const cl = $('#tc-close');
+  if (cl) cl.onclick = closeTagCard;
+  place();
+}
 function cardRolesHTML(uid) {
   if (S.view !== 'server' || !S.serverDetail) return '';
   const d = S.serverDetail;

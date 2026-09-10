@@ -149,9 +149,24 @@ function poke() {
   // on outside/background clicks or when selecting one of its servers.
   if (document.body.classList.contains('members-open') && !e.target.closest('#members') && !e.target.closest('#btn-members')) document.body.classList.remove('members-open');
   if (!e.target.closest('#composer-more') && !e.target.closest('#btn-more') && !e.target.closest('#btn-plus')) $('#composer-more')?.classList.add('hidden');
+  if (!e.target.closest('#tagcard') && !e.target.closest('.usertag[data-tag-sid]')) closeTagCard();
+});
+// Server tags open their server's mini-panel (banner + icon + name +
+// description). Delegated: tags render inside chat, lists, cards, voice…
+document.addEventListener('click', (e) => {
+  const t = e.target.closest && e.target.closest('.usertag[data-tag-sid]');
+  if (!t) return;
+  openTagCard(t.dataset.tagSid, e.clientX, e.clientY);
+});
+document.addEventListener('keydown', (e) => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.closest && e.target.closest('.usertag[data-tag-sid]')) {
+    e.preventDefault();
+    const r = e.target.getBoundingClientRect();
+    openTagCard(e.target.dataset.tagSid, r.left + r.width / 2, r.bottom + 6);
+  }
 });
  document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeStatusMenu(); closeCtx(); closeFolderFlyout(); closeFolderPopout(); closeSettings(); closeServerSettings(); closeProfileScreen(); $('#composer-more')?.classList.add('hidden'); cancelModal(); $('#lightbox').classList.add('hidden'); hideEmojiPop(); }
+  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeTagCard(); closeStatusMenu(); closeCtx(); closeFolderFlyout(); closeFolderPopout(); closeSettings(); closeServerSettings(); closeProfileScreen(); $('#composer-more')?.classList.add('hidden'); cancelModal(); $('#lightbox').classList.add('hidden'); hideEmojiPop(); }
 });
 function composerAnchor() {
   const t = $('#composer-tools')?.getBoundingClientRect();

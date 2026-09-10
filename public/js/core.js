@@ -151,7 +151,11 @@ function activeTagFor(u) {
 }
 function tagHTML(u) {
   const t = activeTagFor(u);
-  return t ? '<span class="usertag">' + esc(t) + '</span>' : '';
+  if (!t) return '';
+  const sid = u && u.active_tag_server_id ? String(u.active_tag_server_id) : '';
+  // Span (not button: tags render inside buttons/links elsewhere) with a
+  // delegated click in final.js that opens the server mini-panel.
+  return '<span class="usertag' + (sid ? ' clickable' : '') + '"' + (sid ? ' data-tag-sid="' + esc(sid) + '" role="button" tabindex="0" title="View server"' : '') + '>' + esc(t) + '</span>';
 }
 function avatarColorFor(user) {
   const key = String((user && (user.id || user.username || user.display_name)) || '');

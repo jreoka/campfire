@@ -890,6 +890,13 @@ app.get('/api/servers/:id', authRequired, (req, res) => {
   if (!isMember(req.params.id, req.user.id)) return res.status(403).json({ error: 'not_member' });
   res.json({ server: serverView(req.params.id) });
 });
+// Tag-card preview: tags are visible app-wide, so any logged-in user can
+// resolve one to the server's banner, name, icon and description.
+app.get('/api/servers/:id/preview', authRequired, (req, res) => {
+  const s = getServer(req.params.id);
+  if (!s) return res.status(404).json({ error: 'no_server' });
+  res.json({ server: { id: s.id, name: s.name, description: s.description || '', icon_url: s.icon_url || null, banner_url: s.banner_url || null, tag: s.tag || null, tag_emoji: s.tag_emoji || null } });
+});
 
 app.post('/api/servers/:id/channels', authRequired, (req, res) => {
   const { id } = req.params;
