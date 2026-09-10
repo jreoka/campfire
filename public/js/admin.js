@@ -144,7 +144,7 @@ async function loadAdminMedia() {
       <div class="muted small" style="margin-top:.55rem">${
         pendKinds.length ? 'Queued: ' + pendKinds.map((x) => `${x.k} ${x.n} (${fmtSize(x.bytes)})`).join(' · ') : 'Queue empty — everything is compressed.'
       }</div>
-      <div class="muted small">Schedule: every ${Math.round((w.everyMs || 30000) / 1000)}s · ${w.batch || 1} file/tick · 1 thread${missing.length ? '' : ' · low priority'} · load ${w.load != null ? Number(w.load).toFixed(2) : '?'} / ${w.cpus || '?'} cores${missing.length ? ` · encoders missing: ${esc(missing.join(', '))}` : ''}</div>
+      <div class="muted small">Schedule: continuous while queued (~${Math.round((w.activeMs || 2000) / 100) / 10}s between files) · idle poll every ${Math.round((w.everyMs || 30000) / 1000)}s · ${w.batch || 1} file/tick · 1 thread${missing.length ? '' : ' · low priority'} · load ${w.load != null ? Number(w.load).toFixed(2) : '?'} / ${w.cpus || '?'} cores${missing.length ? ` · encoders missing: ${esc(missing.join(', '))}` : ''}</div>
       ${!w.ffmpeg ? '<div class="muted small">ffmpeg is not on PATH — uploads work, they just stay uncompressed.</div>' : ''}
       <div class="muted small">Last file: ${lastJob}${w.lastError ? ` · last error: ${esc(w.lastError.key || '')} (${esc((w.lastError.error || '').slice(0, 80))})` : ''}</div>
       <div class="pf-sec-label" style="margin-top:1rem">Recent files</div>

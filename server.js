@@ -78,6 +78,9 @@ function safeInterval(fn, ms) {
   try { t.unref(); } catch {}
   return t;
 }
+// Wake the media compressor after new attachment rows land (fire-and-forget;
+// the worker pulls its next tick forward instead of waiting for idle poll).
+function kickMedia() { try { require('./media-compress').kickMediaCompress(); } catch {} }
 
 // ---------- uploads ----------
 // Uploads live next to the database (persistent volume), never next to the code
@@ -1177,6 +1180,7 @@ app.post('/api/webhooks/:wid/:token', async (req, res) => {
     .run(mid, w.server_id, w.channel_id, null, content, replyTo, w.id, name, avatar, now());
   const insAtt = db.prepare('INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,spoiler,created_at) VALUES (?,?,?,?,?,?,?,?,?)');
   for (const a of cleanAtts) await insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, now());
+  if (cleanAtts.length) kickMedia();
   const full = await fullMessage(mid, null);
   broadcastToServer(w.server_id, { t: 'message-new', serverId: w.server_id, channelId: w.channel_id, message: full });
   await notifyServerMessage(w.server_id, w.channel_id, { userId: null, display_name: name, username: name, avatar_url: avatar }, content, mid);
@@ -3997,6 +4001,7 @@ wss.on('connection', async (ws, req) => {
       if (threadRoot) { try { await db.prepare('DELETE FROM thread_unfollows WHERE thread_root_id = ? AND user_id = ?').run(threadRoot, me.userId); } catch {} }
       const insAtt = db.prepare('INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,spoiler,created_at) VALUES (?,?,?,?,?,?,?,?,?)');
       for (const a of cleanAtts) await insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, now());
+      if (cleanAtts.length) kickMedia();
       if (pollOpts) {
         if (!content) return; // a poll needs its question as the message text
         await createPoll('server', { serverId, channelId }, mid, me.userId, content, pollOpts);
@@ -4033,6 +4038,7 @@ wss.on('connection', async (ws, req) => {
       await db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ?').run(threadId);
       const insAtt = db.prepare('INSERT INTO dm_attachments (id,message_id,url,filename,mime,size,kind,spoiler,created_at) VALUES (?,?,?,?,?,?,?,?,?)');
       for (const a of cleanAtts) await insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, now());
+      if (cleanAtts.length) kickMedia();
       if (pollOpts) {
         if (!content) return; // a poll needs its question as the message text
         await createPoll('dm', { threadId }, mid, me.userId, content, pollOpts);

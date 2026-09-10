@@ -2,11 +2,18 @@
 // audio) in place so storage + bandwidth stay small without anyone noticing.
 //
 // Design notes:
-// - Single-container friendly: runs in-process on a timer (see
-//   startMediaCompress), never on the request path, so uploads stay instant.
+// - Single-container friendly: runs in-process (see startMediaCompress),
+//   never on the request path, so uploads stay instant.
+// - Continuous while work exists: the worker chains ticks back-to-back with
+//   a short breather (MEDIA_COMPRESS_ACTIVE_MS, default 2s) whenever the
+//   queue still has pending files, and falls back to a slow idle poll
+//   (MEDIA_COMPRESS_EVERY_MS, default 30s) once the queue drains. New
+//   uploads also wake it via kickMediaCompress, so files typically compress
+//   within seconds instead of waiting for the next idle poll.
 // - Low CPU by construction: ONE file at a time (busy guard), `nice -n 19`
-//   on POSIX, ffmpeg `-threads 1`, small per-tick batch, spaced interval,
-//   and a load-average check that skips ticks when the box is busy.
+//   on POSIX, ffmpeg `-threads 1`, small per-tick batch, short breather
+//   between hot ticks, and a load-average check that defers ticks when
+//   the box is busy.
 // - Visually transparent settings only (see PIPELINES): quality levels where
 //   artifacts are essentially invisible in chat embeds, plus downscale caps
 //   (2048px stills / 1280px GIFs / 1080p video) that only bite oversized
@@ -24,7 +31,10 @@
 //
 // Env:
 //   MEDIA_COMPRESS=0          disable entirely (default: enabled)
-//   MEDIA_COMPRESS_EVERY_MS   ms between ticks (default 30000, min 5000)
+//   MEDIA_COMPRESS_EVERY_MS   ms between ticks once the queue is empty
+//                             (idle poll; default 30000, min 5000)
+//   MEDIA_COMPRESS_ACTIVE_MS  ms between ticks while files remain queued
+//                             (default 2000, min 250)
 //   MEDIA_COMPRESS_BATCH      files compressed per tick (default 1, max 5)
 'use strict';
 
@@ -44,6 +54,9 @@ const now = () => Date.now();
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'data', 'uploads');
 const ENABLED = process.env.MEDIA_COMPRESS !== '0';
 const EVERY_MS = Math.max(5000, parseInt(process.env.MEDIA_COMPRESS_EVERY_MS || '30000', 10) || 30000);
+const ACTIVE_MS = Math.max(250, parseInt(process.env.MEDIA_COMPRESS_ACTIVE_MS || '2000', 10) || 2000);
+const DEFER_MS = Math.max(ACTIVE_MS, 5000); // retry delay when the box is hot
+const KICK_MS = 500; // wake-up delay after a new upload lands
 const BATCH = Math.min(5, Math.max(1, parseInt(process.env.MEDIA_COMPRESS_BATCH || '1', 10) || 1));
 const JOB_TIMEOUT_MS = 15 * 60 * 1000; // pathological inputs can't wedge the queue
 const MIN_SAVING = 0.08; // replace only when the output is >=8% smaller
@@ -55,7 +68,9 @@ const log = (...a) => console.log('[media]', ...a);
 const warn = (...a) => console.warn('[media]', ...a);
 
 let started = false;
+let ready = false; // migrations + ffmpeg probe done, loop may run
 let busy = false;
+let timer = null; // pending loop timeout (null when running/unscheduled)
 let ffmpegOK = null; // null = unprobed
 let encCache = null; // {x264, mp3, opus, webp}
 let niceOK = null;
@@ -404,16 +419,20 @@ async function fetchCandidates(limit) {
     ORDER BY created_at ASC LIMIT ?`).all(limit);
 }
 
+// 'more' = queue still has pending files (keep running hot),
+// 'idle' = queue drained (fall back to the slow idle poll),
+// 'busy' = a tick is already running, 'deferred' = box hot / not ready yet.
 async function tick() {
-  if (!ENABLED || busy) return;
+  if (!ENABLED || !ready) return 'deferred';
+  if (busy) return 'busy';
   if (!checkFfmpeg()) {
     if (!loggedIdle) { loggedIdle = true; warn('ffmpeg not found on PATH — media compression idle (uploads work, just uncompressed)'); }
-    return;
+    return 'idle';
   }
   // Don't pile onto an already-hot box: defer this tick.
   try {
     const cpus = (os.cpus() || []).length || 1;
-    if (os.loadavg()[0] > cpus) return;
+    if (os.loadavg()[0] > cpus) return 'deferred';
   } catch {}
   busy = true;
   stats.ticks++;
@@ -422,7 +441,7 @@ async function tick() {
     // Skips (tiny/foreign/missing files) are cheap: burn through a few per
     // tick looking for real work, but cap compressions at BATCH.
     const rows = await fetchCandidates(BATCH + 25);
-    if (!rows.length) return;
+    if (!rows.length) return 'idle';
     let done = 0;
     for (const row of rows) {
       if (done >= BATCH) break;
@@ -431,11 +450,40 @@ async function tick() {
       catch (e) { warn('row failed:', String((e && e.message) || e).slice(0, 160)); continue; }
       if (r === 'compressed') done++;
     }
+    // Anything left? A cheap 1-row probe decides hot-loop vs idle poll.
+    try {
+      const rest = await fetchCandidates(1);
+      return rest.length ? 'more' : 'idle';
+    } catch { return 'more'; }
   } catch (e) {
     warn('tick failed:', String((e && e.message) || e).slice(0, 200));
+    return 'idle';
   } finally {
     busy = false;
   }
+}
+
+// Self-scheduling loop: hot while the queue has work, slow poll when idle.
+function schedule(ms) {
+  if (timer) clearTimeout(timer);
+  timer = setTimeout(loop, ms);
+  try { timer.unref(); } catch {}
+}
+
+async function loop() {
+  timer = null;
+  let st = 'idle';
+  try { st = await tick(); }
+  catch (e) { warn('tick failed:', String((e && e.message) || e).slice(0, 200)); st = 'idle'; }
+  schedule(st === 'more' ? ACTIVE_MS : (st === 'busy' || st === 'deferred') ? DEFER_MS : EVERY_MS);
+}
+
+// Wake the worker soon (called on the message-send path after attachment
+// rows are inserted). Cheap + debounced by nature: it just pulls the next
+// tick forward, and no-ops while a tick is already running.
+function kickMediaCompress() {
+  if (!started || !ENABLED || !ready || busy) return;
+  schedule(KICK_MS);
 }
 
 // ---------- admin introspection ----------
@@ -445,7 +493,7 @@ function getMediaStats() {
   let load = null, cpus = 1;
   try { cpus = (os.cpus() || []).length || 1; load = os.loadavg()[0]; } catch {}
   return {
-    enabled: ENABLED, everyMs: EVERY_MS, batch: BATCH,
+    enabled: ENABLED, everyMs: EVERY_MS, activeMs: ACTIVE_MS, batch: BATCH,
     ffmpeg: checkFfmpeg(), encoders: { ...probeEncoders() },
     busy, s3: storage.s3Enabled(), cpus, load,
     startedAt: stats.startedAt, ticks: stats.ticks,
@@ -512,12 +560,11 @@ function startMediaCompress() {
     const enc = probeEncoders();
     const missing = Object.entries(enc).filter(([, v]) => !v).map(([k]) => k);
     stats.startedAt = now();
-    log(`worker on: every ${Math.round(EVERY_MS / 1000)}s, ${BATCH}/tick, 1 thread${checkNice() ? ', nice 19' : ''}` +
+    ready = true;
+    log(`worker on: continuous while queued (every ~${Math.round(ACTIVE_MS / 100) / 10}s), idle poll every ${Math.round(EVERY_MS / 1000)}s, ${BATCH}/tick, 1 thread${checkNice() ? ', nice 19' : ''}` +
       (missing.length ? ` (encoders missing, related types skipped: ${missing.join(', ')})` : ' (all encoders present)'));
-    const t = setInterval(() => { tick().catch((e) => warn('tick failed:', String((e && e.message) || e).slice(0, 200))); }, EVERY_MS);
-    try { t.unref(); } catch {}
-    setTimeout(() => { tick().catch(() => {}); }, 10000);
+    if (!timer) schedule(10000); // first pass after boot settles; kicks pull it forward
   }).catch((e) => warn('migration failed:', String((e && e.message) || e).slice(0, 200)));
 }
 
-module.exports = { startMediaCompress, tickMediaCompress: tick, ensureColumns, planFor, buildArgs, cleanKey, MIN_BYTES, getMediaStats, mediaQueueCounts, mediaTotals, mediaRecentJobs };
+module.exports = { startMediaCompress, tickMediaCompress: tick, kickMediaCompress, ensureColumns, planFor, buildArgs, cleanKey, MIN_BYTES, getMediaStats, mediaQueueCounts, mediaTotals, mediaRecentJobs };
