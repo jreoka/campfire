@@ -894,6 +894,7 @@ async function openUserCard(uid, x, y) {
   const stLabel = streaming ? 'Streaming' : ({ online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' }[st] || 'Offline');
   const ban = u.banner_url || u.sidebar_banner_url;
   card.dataset.uid = uid;
+  card.style.background = cardBgFor(u);
   card.innerHTML = `
     <div class="uc-banner"${ban ? ` style="background-image:url('${esc(ban)}')"` : ''}></div>
     <div class="uc-body">

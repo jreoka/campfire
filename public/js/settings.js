@@ -13,6 +13,16 @@ function openSettings(tab = 'profile') {
     if (rem.c && $('#set-namecolor').value === '#aac7ff') $('#set-namecolor').value = rem.c;
     if (rem.g && $('#set-namegrad').value === '#aac7ff') $('#set-namegrad').value = rem.g;
   };
+  $('#set-cardcustom').checked = !!(S.me.card_color || S.me.card_gradient);
+  const remCc = rememberedCardColors();
+  $('#set-cardcolor').value = S.me.card_color || remCc.c || '#aac7ff';
+  $('#set-cardgrad').value = S.me.card_gradient || S.me.card_color || remCc.g || remCc.c || '#aac7ff';
+  $('#set-cardcustom').onchange = () => {
+    if (!$('#set-cardcustom').checked) return;
+    const rem = rememberedCardColors();
+    if (rem.c && $('#set-cardcolor').value === '#aac7ff') $('#set-cardcolor').value = rem.c;
+    if (rem.g && $('#set-cardgrad').value === '#aac7ff') $('#set-cardgrad').value = rem.g;
+  };
   $('#set-statustext').value = S.me.status_text || '';
   updatePresenceNote();
   // Server-tag picker: every joined server that has a tag set, plus None.
@@ -375,6 +385,7 @@ $('#set-banner-rm').onclick = async () => {
   catch { toast('Remove failed'); }
 };
 function rememberedNameColors() { try { return JSON.parse(localStorage.getItem('cf_namecolors') || 'null') || {}; } catch { return {}; } }
+function rememberedCardColors() { try { return JSON.parse(localStorage.getItem('cf_cardcolors') || 'null') || {}; } catch { return {}; } }
 // Pending timed-presence note (status lives in the avatar menu;
 // saving here never touches it).
 function updatePresenceNote() {
@@ -390,12 +401,15 @@ $('#set-bio').addEventListener('input', updateBioCount);
 $('#set-profile-save').onclick = async () => {
   try {
     if ($('#set-namecustom').checked) { try { localStorage.setItem('cf_namecolors', JSON.stringify({ c: $('#set-namecolor').value, g: $('#set-namegrad').value })); } catch {} }
+    if ($('#set-cardcustom').checked) { try { localStorage.setItem('cf_cardcolors', JSON.stringify({ c: $('#set-cardcolor').value, g: $('#set-cardgrad').value })); } catch {} }
     const body = {
       displayName: $('#set-display').value.trim(),
       statusText: $('#set-statustext').value.trim(),
       bio: $('#set-bio').value,
       nameColor: $('#set-namecustom').checked ? $('#set-namecolor').value : '',
       nameGradient: $('#set-namecustom').checked ? $('#set-namegrad').value : '',
+      cardColor: $('#set-cardcustom').checked ? $('#set-cardcolor').value : '',
+      cardGradient: $('#set-cardcustom').checked ? $('#set-cardgrad').value : '',
     };
     // Only send the tag when it changed: a stale selection (server removed
     // its tag) must never block the rest of the profile save.

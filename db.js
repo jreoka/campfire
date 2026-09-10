@@ -306,6 +306,8 @@ addColumn('servers', 'banner_url', 'TEXT');
 addColumn('servers', 'description', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'name_color', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'name_gradient', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'card_color', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'card_gradient', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'bio', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'totp_secret', 'TEXT');
 addColumn('users', 'totp_enabled', 'INTEGER NOT NULL DEFAULT 0');

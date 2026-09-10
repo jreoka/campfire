@@ -652,6 +652,15 @@ function nameStyleFor(u) {
   }
   return '';
 }
+// Card background: solid color, or a top-to-bottom gradient when both
+// colors are set (mirrors nameStyleFor, which runs left-to-right).
+function cardBgFor(u) {
+  if (!u) return '';
+  const c1 = HEXC.test(u.card_color || '') ? u.card_color : '';
+  const c2 = HEXC.test(u.card_gradient || '') ? u.card_gradient : '';
+  if (c1 && c2) return `linear-gradient(180deg,${c1},${c2})`;
+  return c1 || '';
+}
 // Live profile for a message author: chat embeds a snapshot at send time, so
 // resolve display name / avatar / name color from fresh state first so color
 // and gradient names show in chat, not just the member sidebar.

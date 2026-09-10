@@ -375,6 +375,7 @@ function serverView(serverId) {
   const members = db.prepare(`
     SELECT u.id, u.username, u.display_name, u.avatar_color, u.avatar_url, u.banner_url, u.sidebar_banner_url,
            u.status, u.status_text, u.status_expires_at, u.playing_game, u.streaming_game, u.bio, u.name_color, u.name_gradient,
+           u.card_color, u.card_gradient,
            u.created_at, u.is_admin, u.active_tag, u.active_tag_server_id,
            CASE WHEN u.id = s.owner_id THEN 'owner' ELSE 'member' END as role
     FROM server_members m JOIN users u ON u.id = m.user_id JOIN servers s ON s.id = m.server_id
@@ -443,6 +444,7 @@ function publicUser(u) {
     sidebar_banner_url: u.sidebar_banner_url || null,
     status: u.status || 'online', status_text: statusTextVisible(u), status_expires_at: statusExpiryVisible(u), presence_expires_at: presenceExpiryVisible(u), playing_game: u.playing_game || null, streaming_game: u.streaming_game || null, bio: u.bio || '',
     name_color: u.name_color || '', name_gradient: u.name_gradient || '',
+    card_color: u.card_color || '', card_gradient: u.card_gradient || '',
     active_tag: u.active_tag || null, active_tag_server_id: u.active_tag_server_id || null,
     created_at: u.created_at || null,
     game_enabled: u.game_enabled === undefined ? 1 : u.game_enabled,
@@ -459,7 +461,7 @@ function requireSiteAdmin(req, res, next) {
   if (!req.user.is_admin) return res.status(403).json({ error: 'admin_only' });
   next();
 }
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, playing_game, streaming_game, bio, name_color, name_gradient, active_tag_server_id, active_tag, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset, nsfw_ok, theme';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, playing_game, streaming_game, bio, name_color, name_gradient, card_color, card_gradient, active_tag_server_id, active_tag, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset, nsfw_ok, theme';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -1625,6 +1627,16 @@ app.patch('/api/me', authRequired, (req, res) => {
     const c = String(req.body.nameGradient);
     if (c && !/^#[0-9a-fA-F]{6}$/.test(c)) return res.status(400).json({ error: 'bad_color' });
     sets.push('name_gradient = ?'); vals.push(c || '');
+  }
+  if (req.body?.cardColor !== undefined) {
+    const c = String(req.body.cardColor);
+    if (c && !/^#[0-9a-fA-F]{6}$/.test(c)) return res.status(400).json({ error: 'bad_color' });
+    sets.push('card_color = ?'); vals.push(c || '');
+  }
+  if (req.body?.cardGradient !== undefined) {
+    const c = String(req.body.cardGradient);
+    if (c && !/^#[0-9a-fA-F]{6}$/.test(c)) return res.status(400).json({ error: 'bad_color' });
+    sets.push('card_gradient = ?'); vals.push(c || '');
   }
   if (req.body?.tagServerId !== undefined) {
     const tid = req.body.tagServerId === null || req.body.tagServerId === '' ? null : String(req.body.tagServerId);
