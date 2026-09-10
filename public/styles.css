@@ -1251,6 +1251,17 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .txtfile .mini{align-self:flex-start}
 .txt-full{margin:0;background:var(--panel);border-radius:10px;padding:.85rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;line-height:1.55;max-height:60vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 body.view-home:not(.dm-open) #btn-members{display:none!important}
+/* Mobile DM header: call buttons stay on top, the rest move into the ⋯ sheet */
+#btn-chat-more{display:none}
+@media (max-width:700px){
+  body.view-home.dm-open #btn-find,
+  body.view-home.dm-open #btn-notifs,
+  body.view-home.dm-open #btn-threads,
+  body.view-home.dm-open #btn-pins,
+  body.view-home.dm-open #btn-members{display:none}
+  body.view-home.dm-open #btn-chat-more{display:inline-flex}
+  body.view-home.dm-open #chan-name{flex-shrink:1;min-width:0}
+}
 /* Active Now rail: thicker sidebar on the friends page only (open DMs/groups
    keep the standard 244px member bar, same as servers) */
 body.view-home:not(.dm-open) #members{width:300px}

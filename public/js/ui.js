@@ -174,6 +174,28 @@ function showInvite(srv, invite) {
 // ---------- mobile navigation ----------
 $('#btn-menu').onclick = () => document.body.classList.toggle('nav-open');
 $('#btn-members').onclick = (e) => { e.stopPropagation(); document.body.classList.toggle('members-open'); };
+// Mobile DM header overflow (⋯): voice/video call buttons stay on top; the
+// rest open from a bottom sheet. Items mirror the header buttons' own
+// enabled state (.hidden), so the sheet never offers anything unavailable.
+$('#btn-chat-more').onclick = (e) => {
+  e.stopPropagation();
+  const defs = [
+    ['#btn-find', 'Search chats'],
+    ['#btn-notifs', 'Notifications'],
+    ['#btn-threads', 'Active threads'],
+    ['#btn-pins', 'Pinned messages'],
+    ['#btn-members', 'Members'],
+  ];
+  const items = [];
+  for (const [sel, label] of defs) {
+    const b = $(sel);
+    if (!b || b.classList.contains('hidden')) continue;
+    if (sel === '#btn-members' && !document.body.classList.contains('dm-open')) continue;
+    items.push({ label, fn: () => b.click() });
+  }
+  if (!items.length) return;
+  openCtxSheet(items, { title: ($('#chan-name') || {}).textContent || 'Chat', sub: 'Chat options' });
+};
 $('#sidebar-scrim').onclick = () => document.body.classList.remove('nav-open');
 
 /* ---------- chat finder: quick-jump to channels, servers, DMs + message text ---------- */
