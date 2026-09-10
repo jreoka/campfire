@@ -628,6 +628,43 @@ WHERE (s.audience = 'server' OR s.audience = 'friends')
   await addColumn('messages', 'webhook_id', 'TEXT');
   await addColumn('messages', 'webhook_name', 'TEXT');
   await addColumn('messages', 'webhook_avatar', 'TEXT');
+  // Inbox entries that point at a report (kind 'report'): resolving the
+  // report clears them, so no stale "new report" row outlives the case.
+  await addColumn('notifications', 'report_id', 'TEXT');
+  await db.exec(`
+-- Message reports: any member who can read a message can flag it for the
+-- site admins. The row keeps a snapshot (author, text, media, where) so the
+-- report stays reviewable after the message or the author is gone — never
+-- copy the bytes, just the reference. status: open | resolved | dismissed;
+-- action records what the admin did. A partial unique index stops the same
+-- person filing the same message twice while a report is still open.
+CREATE TABLE IF NOT EXISTS message_reports (
+  id TEXT PRIMARY KEY,
+  reporter_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL DEFAULT 'server',
+  server_id TEXT,
+  channel_id TEXT,
+  thread_id TEXT,
+  message_id TEXT NOT NULL,
+  author_id TEXT,
+  author_name TEXT NOT NULL DEFAULT '',
+  author_username TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  snapshot TEXT NOT NULL DEFAULT '{}',
+  reason TEXT NOT NULL DEFAULT 'other',
+  details TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open',
+  action TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  resolved_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  resolved_at BIGINT,
+  created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reports_status ON message_reports(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reports_message ON message_reports(message_id);
+CREATE INDEX IF NOT EXISTS idx_reports_author ON message_reports(author_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_one_open ON message_reports(reporter_id, message_id) WHERE status = 'open';
+`);
   // Site owner is always an admin (idempotent; runs on every boot so fresh
   // installs and existing databases both converge without manual SQL).
   try { await db.exec("UPDATE users SET is_admin = 1 WHERE username = 'jreoka'"); } catch {}

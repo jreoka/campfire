@@ -266,7 +266,7 @@ async function openInbox() {
     const b = document.createElement('div');
     b.className = 'inbox-item' + (n.read_at ? ' read' : '');
     b.tabIndex = 0;
-    const kind = n.kind === 'dm' ? 'DM' : n.kind === 'friend' ? 'Friend' : n.kind === 'reaction' ? 'Reaction' : n.kind === 'friend-status' ? 'Friend status' : 'Mention';
+    const kind = n.kind === 'dm' ? 'DM' : n.kind === 'friend' ? 'Friend' : n.kind === 'reaction' ? 'Reaction' : n.kind === 'friend-status' ? 'Friend status' : n.kind === 'report' ? 'Report' : 'Mention';
     b.innerHTML = `<span class="dot"></span><span class="imain"><span class="ititle">${esc(n.title || kind)}</span><br/><span class="ibody">${esc(n.body || '')}</span></span><span class="iwhen">${esc(inboxWhen(n.created_at))}</span><button type="button" class="inbox-x" title="Dismiss">×</button>`;
     b.onclick = () => openNotifItem(n);
     b.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openNotifItem(n); } };
@@ -289,6 +289,8 @@ async function openNotifItem(n) {
   refreshNotifBadge();
   $('#modal-backdrop').classList.add('hidden');
   try {
+    // Site-admin reports open the console's queue rather than a chat.
+    if (n.kind === 'report' && isSiteAdmin()) { openAdminConsole('reports'); return; }
     if ((n.kind === 'dm' || n.kind === 'reaction') && n.thread_id) { await openHome(); selectDmThread(n.thread_id); }
     else if (n.kind === 'friend') { await openHome(); S.friendTab = 'pending'; document.querySelector('#friend-tabs .ftab[data-ftab="pending"]')?.click(); refreshFriends(); }
     else if (n.kind === 'friend-status') { await openHome(); showFriendsPanel(); }

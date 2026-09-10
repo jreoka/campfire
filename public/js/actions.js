@@ -43,6 +43,7 @@ function openCtx(x, y, items) {
   ctxEl = m;
 }
 const PIN_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l1 7 3 3v2H5v-2l3-3z"/><path d="M12 16v5"/></svg>';
+const REPORT_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4"/><path d="M5 4h12l-2 4 2 4H5"/></svg>';
 const RX_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.2 1.8 3.5 1.8 3.5-1.8 3.5-1.8"/><line x1="9" y1="9.5" x2="9" y2="9.6"/><line x1="15" y1="9.5" x2="15" y2="9.6"/></svg>';
 function sysMenuItems(m) {
   return [{ label: 'Copy text', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(m.content || ''); toast('Copied'); } catch {} } }];
@@ -65,7 +66,48 @@ function messageMenuItems(m, mid, x, y) {
   if (own) items.push({ label: 'Edit message', icon: '✎', fn: () => startEdit(mid) });
   if (canMod(m)) items.push({ label: 'Delete message', icon: '🗑', danger: true, fn: () => api((dm ? '/api/dms/messages/' : '/api/messages/') + mid, { method: 'DELETE' }).catch(() => toast('Delete failed')) });
   items.push({ label: 'Copy text', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(m.content || ''); toast('Copied'); } catch {} } });
+  // Reporting sits at the very bottom, set apart and in red: you cannot report
+  // your own message, and it goes to site admins (never the author).
+  if (!own && !m.sys) {
+    items.push({ sep: true });
+    items.push({ label: 'Report message', icon: REPORT_SVG, danger: true, fn: () => openReportModal(mid) });
+  }
   return items;
+}
+// Report composer: reason + optional details. The server snapshots the message
+// so the admins can still review it if it is deleted afterwards.
+function openReportModal(mid) {
+  const m = msgById(mid);
+  if (!m || m.sys) return;
+  const dm = !!m._dm;
+  const who = m.user ? m.user.display_name : (m.webhook ? (m.webhook.name || 'this webhook') : 'the author');
+  openModal('Report message', `
+    <p class="muted small">This goes to the site admins only. ${esc(who)} is never told who reported, and a copy of the message is attached so it can still be reviewed if it is deleted.</p>
+    <label style="margin-top:.7rem;display:block">Reason
+      <select id="m-rep-reason">
+        <option value="spam">Spam</option>
+        <option value="harassment">Harassment or bullying</option>
+        <option value="hate">Hate speech</option>
+        <option value="sexual">Sexual content</option>
+        <option value="violence">Violence or threats</option>
+        <option value="illegal">Illegal content</option>
+        <option value="other">Other</option>
+      </select>
+    </label>
+    <label style="margin-top:.6rem;display:block">Details <span class="muted">(optional)</span>
+      <textarea id="m-rep-details" rows="3" maxlength="1000" placeholder="What is wrong with this message?"></textarea>
+    </label>
+  `, 'Report', async () => {
+    const reason = $('#m-rep-reason')?.value || 'other';
+    const details = $('#m-rep-details')?.value || '';
+    try {
+      await api('/api/reports', { method: 'POST', body: JSON.stringify({ messageId: mid, kind: dm ? 'dm' : 'server', reason, details }) });
+      toast('Report sent to site admins');
+    } catch (err) {
+      if (err.message === 'already_reported') toast('You already reported this message');
+      else toast('Report failed: ' + prettyError(err.message));
+    }
+  }, { danger: true });
 }
 function messageCtxMenu(mid, x, y) {
   const m = msgById(mid);

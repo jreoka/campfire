@@ -1781,12 +1781,11 @@ app.get('/api/search', authRequired, async (req, res) => {
   res.json({ results: out.slice(0, lim) });
 });
 
-app.delete('/api/messages/:mid', authRequired, async (req, res) => {
-  const m = await db.prepare('SELECT * FROM messages WHERE id = ?').get(req.params.mid);
-  if (!m) return res.status(404).json({ error: 'no_message' });
-  const s = await getServer(m.server_id);
-  const canDelete = m.user_id === req.user.id || (s && (await isAdmin(s.id, req.user.id)));
-  if (!canDelete) return res.status(403).json({ error: 'forbidden' });
+// Remove one channel message (plus its thread replies, attachments, polls and
+// pins) and tell everyone watching. Shared by the author/mod delete route and
+// the site-admin report actions; deleting an already-gone row is a no-op.
+async function deleteServerMessage(m) {
+  if (!m) return false;
   // Deleting a thread root removes its replies too (threads are 1 level deep).
   let pinsChanged = false;
   let kidIds = [];
@@ -1807,7 +1806,158 @@ app.delete('/api/messages/:mid', authRequired, async (req, res) => {
     broadcastToServer(m.server_id, { t: 'pins-changed', serverId: m.server_id, channelId: m.channel_id });
   }
   broadcastToServer(m.server_id, { t: 'message-deleted', serverId: m.server_id, channelId: m.channel_id, messageId: m.id, threadRoot: m.thread_root_id || null });
+  return true;
+}
+app.delete('/api/messages/:mid', authRequired, async (req, res) => {
+  const m = await db.prepare('SELECT * FROM messages WHERE id = ?').get(req.params.mid);
+  if (!m) return res.status(404).json({ error: 'no_message' });
+  const s = await getServer(m.server_id);
+  const canDelete = m.user_id === req.user.id || (s && (await isAdmin(s.id, req.user.id)));
+  if (!canDelete) return res.status(403).json({ error: 'forbidden' });
+  await deleteServerMessage(m);
   res.json({ ok: true });
+});
+
+// ---------- message reports (members → site admins) ----------
+// Any member who can read a message can flag it. A report keeps a snapshot of
+// the message (author, text, media references, where) so the admins can still
+// review and act after the author deletes it — the bytes themselves are never
+// copied. Every site admin gets a live push + an inbox entry; the message's
+// author is never told who reported. Site admins work the queue in
+// Admin → Reports (see /api/admin/reports*).
+const REPORT_REASONS = new Set(['spam', 'harassment', 'hate', 'sexual', 'violence', 'illegal', 'other']);
+const REPORT_REASON_LABEL = {
+  spam: 'Spam', harassment: 'Harassment or bullying', hate: 'Hate speech', sexual: 'Sexual content',
+  violence: 'Violence or threats', illegal: 'Illegal content', other: 'Other',
+};
+function reportReasonLabel(r) { return REPORT_REASON_LABEL[r] || 'Other'; }
+async function openReportCount() {
+  try { return (await db.prepare("SELECT COUNT(*) c FROM message_reports WHERE status = 'open'").get()).c; }
+  catch { return 0; }
+}
+// Everything an admin needs to judge a report without browsing the chat: the
+// text, where it lives, who wrote it, and each attachment's shape. View-once
+// media stays gated — only its kind/name are recorded, never a media URL.
+async function reportSnapshotFor(kind, m) {
+  const snap = {
+    at: now(),
+    message: { id: m.id, created_at: m.created_at, edited: !!m.edited_at, content: String(m.content || '').slice(0, 5000) },
+    where: {},
+  };
+  const media = [];
+  if (kind === 'dm') {
+    const t = await db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(m.thread_id);
+    const members = t
+      ? await db.prepare('SELECT id, username, display_name FROM users WHERE id IN (SELECT user_id FROM dm_members WHERE thread_id = ?)').all(t.id)
+      : [];
+    snap.where.thread = { id: m.thread_id, name: (t && t.name) || '', isGroup: !!(t && t.is_group), members };
+    for (const a of await db.prepare('SELECT filename, mime, size, kind, url FROM dm_attachments WHERE message_id = ?').all(m.id)) {
+      media.push(m.view_once
+        ? { name: a.filename, mime: a.mime, kind: a.kind, gated: true }
+        : { name: a.filename, mime: a.mime, kind: a.kind, url: a.url });
+    }
+  } else {
+    const s = await db.prepare('SELECT id, name FROM servers WHERE id = ?').get(m.server_id);
+    const c = await db.prepare('SELECT id, name FROM channels WHERE id = ?').get(m.channel_id);
+    snap.where.server = { id: m.server_id, name: (s && s.name) || '' };
+    snap.where.channel = { id: m.channel_id, name: (c && c.name) || '' };
+    for (const a of await db.prepare('SELECT filename, mime, size, kind, url, spoiler FROM attachments WHERE message_id = ?').all(m.id)) {
+      media.push({ name: a.filename, mime: a.mime, kind: a.kind, url: a.url, spoiler: !!a.spoiler });
+    }
+  }
+  snap.message.media = media.slice(0, 12);
+  if (m.fwd_from) snap.message.fwdFrom = m.fwd_from;
+  if (m.webhook_id) snap.message.webhook = m.webhook_name || 'Webhook';
+  if (m.reply_to_id) {
+    const parent = kind === 'dm'
+      ? await db.prepare('SELECT content FROM dm_messages WHERE id = ?').get(m.reply_to_id)
+      : await db.prepare('SELECT content FROM messages WHERE id = ?').get(m.reply_to_id);
+    if (parent) snap.message.replyTo = String(parent.content || '').slice(0, 300);
+  }
+  return snap;
+}
+async function notifyAdminsOfReport(rep) {
+  let admins = [];
+  try { admins = await db.prepare('SELECT id FROM users WHERE is_admin = 1 AND disabled = 0').all(); } catch { return; }
+  const open = await openReportCount();
+  let where = 'a direct message';
+  if (rep.kind === 'server') {
+    const c = await db.prepare('SELECT name FROM channels WHERE id = ?').get(rep.channel_id);
+    const s = await db.prepare('SELECT name FROM servers WHERE id = ?').get(rep.server_id);
+    where = `#${(c && c.name) || 'chat'} · ${(s && s.name) || 'server'}`;
+  }
+  const reason = reportReasonLabel(rep.reason);
+  const who = rep.author_name || 'Deleted user';
+  for (const a of admins) {
+    if (a.id === rep.reporter_id) continue; // an admin reporting knows already
+    notifyUser(a.id, {
+      t: 'report-new', openReports: open,
+      report: { id: rep.id, kind: rep.kind, reason: rep.reason, reasonLabel: reason, author: who, where, created_at: rep.created_at, content: String(rep.content || '').slice(0, 300) },
+    });
+    await pushInbox(a.id, {
+      kind: 'report',
+      title: `New report · ${reason}`,
+      body: `${who}: ${String(rep.content || '').slice(0, 140) || '[attachment]'}`,
+      report_id: rep.id, server_id: rep.server_id || null, channel_id: rep.channel_id || null,
+      message_id: rep.message_id || null, thread_id: rep.thread_id || null,
+    });
+    if (!userVisible(a.id)) {
+      await pushToUser(a.id, {
+        title: 'New report',
+        body: `${reason} · ${where}${who ? ' · ' + who : ''}`,
+        tag: 'report',
+        url: '/?admin=reports',
+      });
+    }
+  }
+}
+app.post('/api/reports', authRequired, async (req, res) => {
+  const mid = String(req.body?.messageId || '');
+  const kind = req.body?.kind === 'dm' ? 'dm' : 'server';
+  const reason = REPORT_REASONS.has(String(req.body?.reason)) ? String(req.body.reason) : 'other';
+  const details = squashBreaks(String(req.body?.details || '')).trim().slice(0, 1000);
+  if (!mid) return res.status(400).json({ error: 'bad_request' });
+  let m = null, serverId = null, channelId = null, threadId = null;
+  if (kind === 'dm') {
+    m = await dmMsg(mid);
+    if (!m || !(await dmThreadFor(req.user.id, m.thread_id))) return res.status(404).json({ error: 'no_message' });
+    threadId = m.thread_id;
+  } else {
+    m = await db.prepare('SELECT * FROM messages WHERE id = ?').get(mid);
+    if (!m || !(await isMember(m.server_id, req.user.id))) return res.status(404).json({ error: 'no_message' });
+    serverId = m.server_id; channelId = m.channel_id;
+  }
+  if (m.sys) return res.status(400).json({ error: 'cannot_report_system' });
+  if (m.user_id && m.user_id === req.user.id) return res.status(400).json({ error: 'cannot_report_self' });
+  if (await db.prepare("SELECT id FROM message_reports WHERE reporter_id = ? AND message_id = ? AND status = 'open'").get(req.user.id, mid)) {
+    return res.status(409).json({ error: 'already_reported' });
+  }
+  const author = m.user_id ? await db.prepare('SELECT id, username, display_name FROM users WHERE id = ?').get(m.user_id) : null;
+  const rep = {
+    id: uid(), reporter_id: req.user.id, kind, server_id: serverId, channel_id: channelId, thread_id: threadId,
+    message_id: mid,
+    author_id: author ? author.id : null,
+    author_name: author ? author.display_name : (m.webhook_id ? (m.webhook_name || 'Webhook') : 'Deleted user'),
+    author_username: author ? author.username : '',
+    content: String(m.content || '').slice(0, 5000),
+    reason, details, created_at: now(),
+  };
+  const snap = await reportSnapshotFor(kind, m);
+  try {
+    await db.prepare(`INSERT INTO message_reports
+      (id,reporter_id,kind,server_id,channel_id,thread_id,message_id,author_id,author_name,author_username,content,snapshot,reason,details,status,action,note,resolved_by,resolved_at,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(rep.id, rep.reporter_id, rep.kind, rep.server_id, rep.channel_id, rep.thread_id, rep.message_id,
+        rep.author_id, rep.author_name, rep.author_username, rep.content, JSON.stringify(snap), rep.reason, rep.details,
+        'open', '', '', null, null, rep.created_at);
+  } catch (e) {
+    // Two reports racing from the same member: the partial unique index wins.
+    if (e && e.code === '23505') return res.status(409).json({ error: 'already_reported' });
+    throw e;
+  }
+  // The report is in; a notification hiccup must never turn it into an error.
+  notifyAdminsOfReport(rep).catch(() => {});
+  res.json({ ok: true, id: rep.id });
 });
 
 // ---------- pinned messages (server channels) ----------
@@ -2966,6 +3116,7 @@ app.get('/api/admin/stats', authRequired, requireSiteAdmin, async (req, res) => 
     // Invisible users are hidden from everyone, so they don't count either.
     online: onlineUsers(),
     sessions: clients.size,
+    openReports: await openReportCount(),
   });
 });
 // ---------- site admin: media compression ----------
@@ -3017,6 +3168,152 @@ app.post('/api/admin/sweep/run', authRequired, requireSiteAdmin, async (req, res
   const sw = require('./storage-sweep');
   res.json({ result: await sw.runSweepOnce({ dry: req.query.dry === '1' }) });
 });
+// ---------- site admin: message reports ----------
+// The queue behind the Report action in chat. Reports are kept after they are
+// worked (resolved/dismissed) so an admin can see what was decided and why;
+// one open report per reporter per message is enforced at insert time.
+const REPORT_STATES = new Set(['open', 'resolved', 'dismissed']);
+const REPORT_ACTIONS = new Set(['dismiss', 'delete', 'delete_disable', 'disable', 'ban']);
+// Same effect as the Users tab's Disable: revoke every session and drop them.
+async function adminDisableAccount(uid) {
+  await db.prepare('UPDATE users SET disabled = 1 WHERE id = ?').run(uid);
+  await db.prepare('UPDATE sessions SET revoked = 1 WHERE user_id = ?').run(uid);
+  closeSessionSockets(uid, null);
+}
+async function adminReportView(r) {
+  let messageExists = false;
+  try {
+    messageExists = r.kind === 'dm'
+      ? !!(await db.prepare('SELECT 1 FROM dm_messages WHERE id = ?').get(r.message_id))
+      : !!(await db.prepare('SELECT 1 FROM messages WHERE id = ?').get(r.message_id));
+  } catch {}
+  let priorReports = 0;
+  if (r.author_id) {
+    try { priorReports = (await db.prepare('SELECT COUNT(*) c FROM message_reports WHERE author_id = ? AND id != ?').get(r.author_id, r.id)).c; } catch {}
+  }
+  let snapshot = {};
+  try { snapshot = JSON.parse(r.snapshot || '{}'); } catch {}
+  const authorName = r.author_display || r.author_name || '';
+  return {
+    id: r.id, kind: r.kind, status: r.status, reason: r.reason, reasonLabel: reportReasonLabel(r.reason),
+    details: r.details || '', content: r.content || '', created_at: r.created_at,
+    message_id: r.message_id, server_id: r.server_id || null, channel_id: r.channel_id || null, thread_id: r.thread_id || null,
+    messageExists, priorReports, snapshot,
+    author: (r.author_id || authorName) ? {
+      id: r.author_id || null,
+      display_name: authorName || 'Deleted user',
+      username: r.author_user || r.author_username || '',
+      avatar_color: r.author_color || null, avatar_url: r.author_avatar || null,
+      gone: !r.author_id,
+    } : null,
+    reporter: r.reporter_id ? {
+      id: r.reporter_id,
+      display_name: r.reporter_display_name || 'Former member',
+      username: r.reporter_username || '',
+      avatar_color: r.reporter_color || null, avatar_url: r.reporter_avatar || null,
+    } : null,
+    resolved: r.resolved_at ? { at: r.resolved_at, by: r.resolver_display || 'admin', action: r.action || '', note: r.note || '' } : null,
+  };
+}
+app.get('/api/admin/reports', authRequired, requireSiteAdmin, async (req, res) => {
+  const q = String(req.query.q || '').trim().slice(0, 80);
+  const st = String(req.query.status || 'open');
+  const status = REPORT_STATES.has(st) ? st : (st === 'all' ? 'all' : 'open');
+  const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10) || 25, 1), 100);
+  const offset = Math.max(parseInt(req.query.offset || '0', 10) || 0, 0);
+  const conds = [], params = [];
+  if (status !== 'all') { conds.push('r.status = ?'); params.push(status); }
+  if (q) {
+    const pat = '%' + q.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
+    const parts = [
+      "r.content ILIKE ? ESCAPE '\\'", "r.details ILIKE ? ESCAPE '\\'",
+      "r.author_name ILIKE ? ESCAPE '\\'", "r.author_username ILIKE ? ESCAPE '\\'",
+      "ru.username ILIKE ? ESCAPE '\\'", "ru.display_name ILIKE ? ESCAPE '\\'",
+    ];
+    params.push(pat, pat, pat, pat, pat, pat);
+    // Searching a reason ("illegal", "Illegal content") matches every report with
+    // that reason, not just ones whose text happens to repeat the word. Short
+    // queries skip this so a stray "s" doesn't match half the reasons.
+    const ql = q.toLowerCase();
+    const reasons = ql.length >= 3 ? Object.keys(REPORT_REASON_LABEL).filter((k) =>
+      k.includes(ql) || REPORT_REASON_LABEL[k].toLowerCase().includes(ql) || ql.includes(REPORT_REASON_LABEL[k].toLowerCase())) : [];
+    if (reasons.length) {
+      parts.push(`r.reason IN (${reasons.map(() => '?').join(',')})`);
+      params.push(...reasons);
+    }
+    conds.push('(' + parts.join(' OR ') + ')');
+  }
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  const base = `FROM message_reports r
+    LEFT JOIN users ru ON ru.id = r.reporter_id
+    LEFT JOIN users au ON au.id = r.author_id
+    LEFT JOIN users su ON su.id = r.resolved_by`;
+  const total = (await db.prepare(`SELECT COUNT(*) c ${base} ${where}`).get(...params)).c;
+  const rows = await db.prepare(`SELECT r.*,
+      ru.username AS reporter_username, ru.display_name AS reporter_display_name,
+      ru.avatar_color AS reporter_color, ru.avatar_url AS reporter_avatar,
+      au.display_name AS author_display, au.username AS author_user,
+      au.avatar_color AS author_color, au.avatar_url AS author_avatar,
+      su.display_name AS resolver_display
+    ${base} ${where} ORDER BY r.created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
+  const counts = { open: 0, resolved: 0, dismissed: 0 };
+  for (const s of Object.keys(counts)) counts[s] = (await db.prepare('SELECT COUNT(*) c FROM message_reports WHERE status = ?').get(s)).c;
+  res.json({ reports: await Promise.all(rows.map(adminReportView)), total, counts });
+});
+app.get('/api/admin/reports/count', authRequired, requireSiteAdmin, async (req, res) => {
+  res.json({ open: await openReportCount() });
+});
+// Work one report. Acting on the message closes every other open report about
+// it with the same outcome, and clears the matching inbox entries.
+app.post('/api/admin/reports/:id/resolve', authRequired, requireSiteAdmin, async (req, res) => {
+  const r = await db.prepare('SELECT * FROM message_reports WHERE id = ?').get(req.params.id);
+  if (!r) return res.status(404).json({ error: 'no_report' });
+  const action = String(req.body?.action || '');
+  if (!REPORT_ACTIONS.has(action)) return res.status(400).json({ error: 'bad_action' });
+  const note = squashBreaks(String(req.body?.note || '')).trim().slice(0, 500);
+  let messageDeleted = false;
+  try {
+    if (action === 'delete' || action === 'delete_disable') {
+      if (r.kind === 'dm') messageDeleted = await deleteDmMessage(await dmMsg(r.message_id));
+      else messageDeleted = await deleteServerMessage(await db.prepare('SELECT * FROM messages WHERE id = ?').get(r.message_id));
+    }
+    if ((action === 'disable' || action === 'delete_disable') && r.author_id) {
+      await adminDisableAccount(r.author_id);
+    }
+    if (action === 'ban' && r.kind === 'server' && r.server_id && r.author_id) {
+      const s = await getServer(r.server_id);
+      if (!s) return res.status(404).json({ error: 'no_server' });
+      if (s.owner_id === r.author_id) return res.status(400).json({ error: 'cannot_ban_owner' });
+      const author = await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(r.author_id);
+      await db.transaction(async () => {
+        await db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(s.id, r.author_id);
+        await db.prepare('INSERT INTO server_bans (server_id,user_id,reason,created_at) VALUES (?,?,?,?) ON CONFLICT DO NOTHING').run(s.id, r.author_id, note || 'Reported by a member', now());
+      });
+      await clearTagSelection(r.author_id, s.id);
+      try { const fu = await freshUser(r.author_id); await broadcastUserUpdate(fu); notifyUser(r.author_id, { t: 'user-updated', user: fu }); } catch {}
+      await postServerSys(s.id, `${displayOf(author)} was banned`);
+      broadcastToServer(s.id, { t: 'member-left', serverId: s.id, userId: r.author_id });
+      evictFromServer(s.id, r.author_id);
+      notifyUser(r.author_id, { t: 'removed-from-server', serverId: s.id, reason: 'banned' });
+    }
+  } catch (e) {
+    console.error('[reports] action failed:', (e && e.message) || e);
+    return res.status(500).json({ error: 'action_failed' });
+  }
+  const siblings = await db.prepare("SELECT id FROM message_reports WHERE message_id = ? AND status = 'open'").all(r.message_id);
+  const status = action === 'dismiss' ? 'dismissed' : 'resolved';
+  await db.prepare("UPDATE message_reports SET status = ?, action = ?, note = ?, resolved_by = ?, resolved_at = ? WHERE message_id = ? AND status = 'open'")
+    .run(status, action, note, req.user.id, now(), r.message_id);
+  const ids = siblings.map((x) => x.id);
+  if (ids.length) {
+    try { await db.prepare(`DELETE FROM notifications WHERE report_id IN (${ids.map(() => '?').join(',')})`).run(...ids); } catch {}
+  }
+  const open = await openReportCount();
+  const payload = { t: 'report-updated', openReports: open, reportIds: ids };
+  for (const c of clients) if (c.meta && c.meta.is_admin) safeSend(c, payload);
+  res.json({ ok: true, openReports: open, resolved: ids.length, messageDeleted });
+});
+
 app.get('/api/admin/users', authRequired, requireSiteAdmin, async (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase();
   const filter = String(req.query.filter || 'all');
@@ -3744,8 +4041,8 @@ async function unreadNotifs(uid) {
 }
 async function pushInbox(userId, n) {
   try {
-    await db.prepare('INSERT INTO notifications (id,user_id,kind,title,body,server_id,channel_id,message_id,thread_id,created_at,read_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-      .run(uid(), userId, n.kind || 'mention', String(n.title || '').slice(0, 120), String(n.body || '').slice(0, 300), n.server_id || null, n.channel_id || null, n.message_id || null, n.thread_id || null, now(), null);
+    await db.prepare('INSERT INTO notifications (id,user_id,kind,title,body,server_id,channel_id,message_id,thread_id,report_id,created_at,read_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(uid(), userId, n.kind || 'mention', String(n.title || '').slice(0, 120), String(n.body || '').slice(0, 300), n.server_id || null, n.channel_id || null, n.message_id || null, n.thread_id || null, n.report_id || null, now(), null);
     await db.prepare('DELETE FROM notifications WHERE user_id = ? AND id NOT IN (SELECT id FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 200)').run(userId, userId);
     notifyUser(userId, { t: 'notif-new', unread: await unreadNotifs(userId) });
   } catch {}
@@ -4355,10 +4652,10 @@ app.patch('/api/dms/messages/:mid', authRequired, async (req, res) => {
   await dmNotify(m.thread_id, { t: 'dm-updated', message: full });
   res.json({ message: full });
 });
-app.delete('/api/dms/messages/:mid', authRequired, async (req, res) => {
-  const m = await dmMsg(req.params.mid);
-  if (!m || !(await dmThreadFor(req.user.id, m.thread_id))) return res.status(404).json({ error: 'no_message' });
-  if (m.user_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
+// Same idea for a DM message: bytes, row, poll, pin, and a fan-out to the
+// thread. Used by the sender's own delete and by a site-admin report action.
+async function deleteDmMessage(m) {
+  if (!m) return false;
   await deleteMessageFiles('dm_attachments', [m.id]);
   await db.prepare('DELETE FROM dm_messages WHERE id = ?').run(m.id);
   await deletePollsFor('dm', [m.id]);
@@ -4366,6 +4663,13 @@ app.delete('/api/dms/messages/:mid', authRequired, async (req, res) => {
     await dmNotify(m.thread_id, { t: 'dm-pins-changed', threadId: m.thread_id });
   }
   await dmNotify(m.thread_id, { t: 'dm-deleted', threadId: m.thread_id, messageId: m.id });
+  return true;
+}
+app.delete('/api/dms/messages/:mid', authRequired, async (req, res) => {
+  const m = await dmMsg(req.params.mid);
+  if (!m || !(await dmThreadFor(req.user.id, m.thread_id))) return res.status(404).json({ error: 'no_message' });
+  if (m.user_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
+  await deleteDmMessage(m);
   res.json({ ok: true });
 });
 

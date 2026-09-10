@@ -216,6 +216,12 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   against a throwaway database: distinct-user Online count vs sessions (two
   tabs are one person), invisible users excluded, and the live
   `admin-presence` WS push that keeps the panel current without a refresh.
+  `node scripts/test-reports.js` covers message reports end-to-end against a
+  throwaway database: members-only reporting (never your own message, once
+  while open), the snapshot surviving the message's deletion, admin-only
+  access, search/counts, the live `report-new`/`report-updated` pushes and the
+  inbox entry, one decision closing every open report on the same message, and
+  the delete / delete+disable / disable / ban / dismiss actions.
 - **Upload pipeline E2E:** `node scripts/test-upload-pipeline.js` (needs ffmpeg
   + the dev Postgres, skips otherwise) boots a real server against a throwaway
   database with a fake clamd and asserts the single-transition compression flow
@@ -298,7 +304,13 @@ one replay, per-friend DMs, media gated until opened and deleted after use).
 A story sent to an individual friend is delivered as a view-once DM instead of
 a tray entry (`POST /api/dm/viewonce` with `storyId` re-files the story's bytes
 under the gated `viewonce/` prefix), and picks alongside a broadcast audience
-get both.
+get both. Message reports: right-click / long-press → **Report message** (red,
+last item; never your own) files it with a snapshot of the text, media
+references and where it happened, pushes every site admin live, drops an inbox
+entry, and puts a badge on the console's Reports tab + rail shield; admins
+search/filter the queue and dismiss, delete the message, disable the author,
+delete + disable, or ban from the server (one decision closes every open report
+on that message).
 Detail per change lives in `git log` — don't duplicate it here.
 
 ## Deployment (owner directive)

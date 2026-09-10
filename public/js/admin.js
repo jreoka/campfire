@@ -8,6 +8,8 @@ const Admin = {
   tab: 'overview',
   uq: '', uf: 'all', uoff: 0, utotal: 0,
   sq: '', soff: 0, stotal: 0,
+  rq: '', rst: 'open', roff: 0, rtotal: 0, rcounts: null, rcache: [],
+  openReports: 0,
   membersOpen: null,
   stats: null, statsAt: 0, statsErr: false, poll: null, refreshSoon: null,
 };
@@ -22,6 +24,7 @@ function fmtDate(ts) {
 
 function isSiteAdmin() { return !!(S.me && S.me.is_admin); }
 function adminConsoleOpen() { return !!($('#admin-backdrop') && !$('#admin-backdrop').classList.contains('hidden')); }
+function adminTabIs(t) { return Admin.tab === t; }
 
 function openAdminConsole(tab) {
   if (!isSiteAdmin()) { toast('Site admins only'); return; }
@@ -44,11 +47,12 @@ function setAdminTab(t) {
   if (!isSiteAdmin()) return;
   Admin.tab = t;
   document.querySelectorAll('#admin-backdrop .set-tab').forEach((b) => b.classList.toggle('active', b.dataset.atab === t));
-  for (const key of ['overview', 'media', 'users', 'servers']) {
+  for (const key of ['overview', 'reports', 'media', 'users', 'servers']) {
     const pane = document.getElementById('adm-' + key);
     if (pane) pane.classList.toggle('hidden', key !== t);
   }
   if (t === 'overview') { ensureAdminOverviewPane(); loadAdminStats(); startAdminStatsLive(); }
+  else if (t === 'reports') { ensureAdminReportsPane(); loadAdminReports(); }
   else if (t === 'media') loadAdminMedia();
   else if (t === 'users') { ensureAdminUsersPane(); loadAdminUsers(); }
   else if (t === 'servers') { ensureAdminServersPane(); loadAdminServers(); }
@@ -87,6 +91,195 @@ function ensureAdminUsersPane() {
   $('#adm-uq').addEventListener('keydown', (e) => { if (e.key === 'Enter') uSearch(); });
   $('#adm-uprev').onclick = () => { Admin.uoff = Math.max(0, Admin.uoff - ADMIN_PAGE); loadAdminUsers(); };
   $('#adm-unext').onclick = () => { if (Admin.uoff + ADMIN_PAGE < Admin.utotal) { Admin.uoff += ADMIN_PAGE; loadAdminUsers(); } };
+}
+
+// ---------- reports ----------
+// The queue behind the chat's Report action. One card per report: status,
+// reason, where it happened, who wrote it and who flagged it, a snapshot of
+// the message (survives deletion), how many times this author has been
+// reported before, and the actions. Searching and the status filter cover
+// reason, details, message text, author and reporter names.
+function ensureAdminReportsPane() {
+  const pane = $('#adm-reports');
+  if (!pane || pane.dataset.built) return;
+  pane.dataset.built = '1';
+  pane.innerHTML = `
+    <div class="row" style="gap:.4rem">
+      <input id="adm-rq" placeholder="Search reports, authors, reporters…" style="flex:1" autocomplete="off" />
+      <select id="adm-rst" style="max-width:130px">
+        <option value="open">Open</option>
+        <option value="all">All</option>
+        <option value="resolved">Resolved</option>
+        <option value="dismissed">Dismissed</option>
+      </select>
+      <button id="adm-rsearch" class="btn small">Search</button>
+    </div>
+    <div id="adm-reports-counts" class="adm-badges"></div>
+    <div id="adm-reports-list"></div>
+    <div class="row end" style="gap:.5rem;align-items:center">
+      <button id="adm-rprev" class="btn small">Prev</button>
+      <span id="adm-rcount" class="muted small"></span>
+      <button id="adm-rnext" class="btn small">Next</button>
+      <button id="adm-rrefresh" class="btn small">Refresh</button>
+    </div>`;
+  const sel = $('#adm-rst');
+  if (sel) sel.value = Admin.rst;
+  const rSearch = () => { Admin.rq = $('#adm-rq').value.trim(); Admin.rst = $('#adm-rst').value; Admin.roff = 0; loadAdminReports(); };
+  $('#adm-rsearch').onclick = rSearch;
+  $('#adm-rq').addEventListener('keydown', (e) => { if (e.key === 'Enter') rSearch(); });
+  $('#adm-rst').onchange = rSearch;
+  $('#adm-rprev').onclick = () => { Admin.roff = Math.max(0, Admin.roff - ADMIN_PAGE); loadAdminReports(); };
+  $('#adm-rnext').onclick = () => { if (Admin.roff + ADMIN_PAGE < Admin.rtotal) { Admin.roff += ADMIN_PAGE; loadAdminReports(); } };
+  $('#adm-rrefresh').onclick = () => loadAdminReports();
+}
+
+// Badge on the tab (and a dot on the rail shield) so new reports are visible
+// without the panel being open. Fed by /api/admin/reports*, the Overview stats
+// payload and the live 'report-new' / 'report-updated' pushes.
+function paintAdminReportBadge(n) {
+  Admin.openReports = Number(n) || 0;
+  const b = $('#adm-reports-badge');
+  if (b) {
+    b.textContent = Admin.openReports > 99 ? '99+' : String(Admin.openReports);
+    b.classList.toggle('hidden', !Admin.openReports);
+  }
+  try { $('#btn-admin')?.classList.toggle('has-reports', !!Admin.openReports); } catch {}
+}
+async function refreshAdminReportBadge() {
+  if (!isSiteAdmin()) return;
+  try { const { open } = await api('/api/admin/reports/count'); paintAdminReportBadge(open); } catch {}
+}
+function renderAdminReportCounts() {
+  const box = $('#adm-reports-counts');
+  if (!box) return;
+  const c = Admin.rcounts || {};
+  const chip = (n, l, cls) => `<span class="adm-badge${cls ? ' ' + cls : ''}">${n} ${l}</span>`;
+  box.innerHTML = chip(c.open || 0, 'open') + chip(c.resolved || 0, 'resolved', 'ok') + chip(c.dismissed || 0, 'dismissed', 'me')
+    + '<span class="spacer"></span><span class="muted small" style="margin-left:auto">Newest first</span>';
+}
+function admReportMediaChips(r) {
+  const media = (r.snapshot && r.snapshot.message && r.snapshot.message.media) || [];
+  if (!media.length) return '';
+  return `<div class="adm-rep-media">${media.map((a) => a.gated
+    ? `<span class="adm-rep-chip">${esc(a.name || a.kind || 'media')} · view-once</span>`
+    : `<a class="adm-rep-chip" href="${esc(a.url || '#')}" target="_blank" rel="noopener noreferrer">${esc(a.name || a.kind || 'file')}</a>`).join('')}</div>`;
+}
+function admReportRow(r) {
+  const st = { open: ['OPEN', 'admin'], resolved: ['RESOLVED', 'ok'], dismissed: ['DISMISSED', 'me'] }[r.status] || ['OPEN', 'admin'];
+  const w = (r.snapshot && r.snapshot.where) || {};
+  const where = r.kind === 'dm'
+    ? ('Direct message' + (w.thread && w.thread.isGroup && w.thread.name ? ' · ' + esc(w.thread.name) : ''))
+    : ('#' + esc((w.channel && w.channel.name) || 'chat') + ' · ' + esc((w.server && w.server.name) || 'server'));
+  const author = r.author ? `<span style="${nameStyleFor(r.author)}">${esc(r.author.display_name)}</span>${r.author.username ? ' <span class="muted small">@' + esc(r.author.username) + '</span>' : ''}${r.author.gone ? ' <span class="adm-badge off">GONE</span>' : ''}` : '<span class="muted">unknown author</span>';
+  const reporter = r.reporter ? `<span class="muted">reported by</span> <span style="${nameStyleFor(r.reporter)}">${esc(r.reporter.display_name)}</span>${r.reporter.username ? ' <span class="muted small">@' + esc(r.reporter.username) + '</span>' : ''}` : '<span class="muted">reporter account deleted</span>';
+  const prior = r.priorReports ? ` <span class="adm-badge off">${r.priorReports} prior report${r.priorReports === 1 ? '' : 's'}</span>` : '';
+  const peers = r.kind === 'dm'
+    ? ((w.thread && w.thread.members) || []).map((u) => '@' + u.username).filter((x) => x !== '@').join(', ')
+    : '';
+  const mediaCount = ((r.snapshot && r.snapshot.message && r.snapshot.message.media) || []).length;
+  const body = r.content ? esc(r.content) : (mediaCount ? `<span class="muted">[${mediaCount} attachment${mediaCount === 1 ? '' : 's'}]</span>` : '<span class="muted">[no text]</span>');
+  const open = r.status === 'open';
+  const res = r.resolved
+    ? `<div class="adm-rep-res"><b>${esc(admActionLabel(r.resolved.action))}</b> · ${esc(r.resolved.by)} · ${esc(agoStr(r.resolved.at))}${r.resolved.note ? ' — ' + esc(r.resolved.note) : ''}</div>`
+    : '';
+  const actions = open
+    ? `<div class="adm-actions">
+        ${r.messageExists ? '<button class="mini" data-act="rep-jump">Open in chat</button>' : '<span class="muted small" style="align-self:center">message deleted</span>'}
+        ${r.messageExists ? '<button class="mini danger" data-act="rep-del">Delete message</button>' : ''}
+        ${r.messageExists && r.author && !r.author.gone ? '<button class="mini danger" data-act="rep-del-disable">Delete + disable</button>' : ''}
+        ${r.author && !r.author.gone ? '<button class="mini danger" data-act="rep-disable">Disable author</button>' : ''}
+        ${r.author && !r.author.gone && r.kind === 'server' && r.server_id ? '<button class="mini danger" data-act="rep-ban">Ban from server</button>' : ''}
+        <button class="mini" data-act="rep-dismiss">Dismiss</button>
+      </div>
+      <input class="adm-rep-note" maxlength="500" placeholder="Note (optional) — saved with the outcome" />`
+    : `<div class="adm-actions">${r.messageExists ? '<button class="mini" data-act="rep-jump">Open in chat</button>' : ''}${r.messageExists ? '<button class="mini danger" data-act="rep-del">Delete message</button>' : ''}</div>`;
+  return `<div class="adm-report" data-rid="${esc(r.id)}">
+    <div class="adm-rep-top">
+      <span class="adm-badge ${st[1]}">${st[0]}</span>
+      <span class="adm-badge">${esc(r.reasonLabel || 'Report')}</span>
+      <span class="adm-badge">${r.kind === 'dm' ? 'DM' : 'SERVER'}</span>
+      <span class="spacer"></span>
+      <span class="muted small" title="${esc(fmtFull(r.created_at))}">${esc(agoStr(r.created_at))}</span>
+    </div>
+    <div class="adm-rep-where">${where}</div>
+    <div class="adm-rep-meta">${author}${prior} · ${reporter}${peers ? ' · in DM with <span class="muted">' + esc(peers) + '</span>' : ''}</div>
+    <div class="adm-rep-msg">
+      <span class="avatar adm-rep-av"></span>
+      <div class="adm-rep-mbody">
+        <div class="adm-rep-text">${body}</div>
+        ${admReportMediaChips(r)}
+      </div>
+    </div>
+    ${r.details ? `<div class="adm-rep-details"><b>Reporter note:</b> ${esc(r.details)}</div>` : ''}
+    ${res}
+    ${actions}
+  </div>`;
+}
+function admActionLabel(a) {
+  return ({ dismiss: 'Dismissed', delete: 'Message deleted', delete_disable: 'Message deleted · author disabled', disable: 'Author disabled', ban: 'Author banned' })[a] || 'Resolved';
+}
+async function loadAdminReports() {
+  const box = $('#adm-reports-list');
+  if (!box) return;
+  box.innerHTML = '<p class="muted small">Loading…</p>';
+  try {
+    const { reports, total, counts } = await api(
+      `/api/admin/reports?q=${encodeURIComponent(Admin.rq)}&status=${encodeURIComponent(Admin.rst)}&limit=${ADMIN_PAGE}&offset=${Admin.roff}`);
+    Admin.rtotal = total; Admin.rcounts = counts; Admin.rcache = reports;
+    paintAdminReportBadge(counts.open || 0);
+    renderAdminReportCounts();
+    box.innerHTML = reports.length ? reports.map(admReportRow).join('')
+      : `<p class="muted small">${Admin.rq ? 'No reports match that search.' : (Admin.rst === 'open' ? 'Nothing open — all clear.' : 'No reports here.')}</p>`;
+    box.querySelectorAll('.adm-rep-av').forEach((el) => {
+      const rid = el.closest('.adm-report')?.dataset.rid;
+      const rep = reports.find((x) => x.id === rid);
+      if (rep && rep.author) paintAvatar(el, rep.author);
+      else if (rep) { el.textContent = '?'; el.style.background = 'var(--panel-3)'; }
+    });
+    const c = $('#adm-rcount');
+    if (c) c.textContent = total ? `${Admin.roff + 1}–${Math.min(Admin.roff + reports.length, total)} of ${total}` : '';
+  } catch { box.innerHTML = '<p class="muted small">Could not load reports.</p>'; }
+}
+// Work a report. The server closes every other open report about the same
+// message with the same outcome, so this is a single call per decision.
+async function admReportAction(act, rid) {
+  const card = document.querySelector(`.adm-report[data-rid="${CSS.escape(rid)}"]`);
+  const note = (card?.querySelector('.adm-rep-note')?.value || '').trim();
+  const r = (Admin.rcache || []).find((x) => x.id === rid);
+  const conf = {
+    dismiss: { title: 'Dismiss this report?', message: 'No action is taken. Other open reports about the same message close too.', ok: 'Dismiss', danger: false },
+    delete: { title: 'Delete this message?', message: 'It disappears from chat for everyone. Other open reports about it close too.', ok: 'Delete', danger: true },
+    disable: { title: `Disable ${r && r.author ? '@' + r.author.username : 'this account'}?`, message: 'They are logged out immediately and cannot log in until re-enabled. The message stays in chat.', ok: 'Disable', danger: true },
+    delete_disable: { title: 'Delete the message and disable the author?', message: 'The message is removed from chat and the account is disabled and logged out everywhere.', ok: 'Do both', danger: true },
+    ban: { title: 'Ban the author from this server?', message: 'They are removed from the server and cannot rejoin with invites. The message stays in chat.', ok: 'Ban', danger: true },
+  }[act];
+  if (!conf) return;
+  const ok = await openConfirmModal({ title: conf.title, message: conf.message, okLabel: conf.ok, danger: conf.danger });
+  if (!ok) return;
+  try {
+    const out = await api(`/api/admin/reports/${rid}/resolve`, { method: 'POST', body: JSON.stringify({ action: act, note }) });
+    paintAdminReportBadge(out.openReports || 0);
+    toast(act === 'dismiss' ? 'Report dismissed' : (out.resolved > 1 ? `Action taken · ${out.resolved} reports closed` : 'Report resolved'));
+    loadAdminReports();
+    if (act !== 'dismiss' && act !== 'delete') loadAdminUsers();
+  } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+}
+async function adminJumpToReport(rid) {
+  const r = (Admin.rcache || []).find((x) => x.id === rid);
+  if (!r) return;
+  closeAdminConsole();
+  try {
+    if (r.kind === 'dm') {
+      if (!(S.dms || []).some((t) => t.id === r.thread_id)) { toast('You are not in that DM — the snapshot above is what was reported'); return; }
+      await openHome();
+      await selectDmThread(r.thread_id);
+      jumpToMessage(r.message_id);
+    } else {
+      if (r.server_id !== S.serverId) await selectServer(r.server_id);
+      if (r.channel_id) await selectChannel(r.channel_id);
+      jumpToMessage(r.message_id);
+    }
+  } catch { toast('Could not open that message'); }
 }
 
 function ensureAdminServersPane() {
@@ -132,6 +325,7 @@ function renderAdminStats() {
     card(s.channels, 'Channels') + card(s.messages, 'Messages') +
     card(s.online, 'Online', sessions ? `${sessions} session${sessions === 1 ? '' : 's'}` : '') +
     card(s.newWeek, 'New this week') +
+    card(s.openReports || 0, 'Open reports') +
     `<div class="adm-note muted small">Live · ${esc(when)}</div>`;
 }
 
@@ -141,6 +335,7 @@ async function loadAdminStats() {
   try {
     const s = await api('/api/admin/stats');
     Admin.stats = s; Admin.statsAt = Date.now(); Admin.statsErr = false;
+    if (s.openReports !== undefined) paintAdminReportBadge(s.openReports);
     renderAdminStats();
   } catch {
     // A background refresh that fails (server restart, lost network) keeps the
@@ -463,7 +658,14 @@ async function adminClick(e) {
   const urow = b.closest('.adm-row[data-uid]');
   const srow = b.closest('.adm-row[data-sid]');
   const sub = b.closest('.adm-subrow[data-uid]');
+  const rrow = b.closest('.adm-report[data-rid]');
   try {
+    if (act === 'rep-jump' && rrow) { await adminJumpToReport(rrow.dataset.rid); return; }
+    if (act === 'rep-dismiss' && rrow) { await admReportAction('dismiss', rrow.dataset.rid); return; }
+    if (act === 'rep-del' && rrow) { await admReportAction('delete', rrow.dataset.rid); return; }
+    if (act === 'rep-disable' && rrow) { await admReportAction('disable', rrow.dataset.rid); return; }
+    if (act === 'rep-del-disable' && rrow) { await admReportAction('delete_disable', rrow.dataset.rid); return; }
+    if (act === 'rep-ban' && rrow) { await admReportAction('ban', rrow.dataset.rid); return; }
     if (act === 'u-edit' && urow) {
       let { user: u } = await api(`/api/admin/users/${urow.dataset.uid}`);
       if (!u) return toast('User not found');

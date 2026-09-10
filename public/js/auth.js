@@ -355,6 +355,9 @@ async function boot() {
   pollVersion();
   pushSetup();
   refreshNotifBadge();
+  // Site admins: keep the Reports badge (tab + rail dot) warm without
+  // opening the console, so a new report is visible on any page.
+  try { refreshAdminReportBadge(); } catch {}
   // Prefetch DMs + friends so the home button badge (unread DMs, incoming
   // requests) is live even before Home is opened this session.
   refreshDms().catch(() => {});
@@ -374,12 +377,13 @@ async function boot() {
     const pending = takeInvite();
     if (pending) showInviteLanding(pending);
   }
-  // deep links from push notifications (?server=ID&channel=ID, ?dm=ID, ?friends=1)
+  // deep links from push notifications (?server=ID&channel=ID, ?dm=ID, ?friends=1, ?admin=reports)
   try {
     const qs = new URLSearchParams(location.search);
-    const qdm = qs.get('dm'), qserv = qs.get('server'), qchan = qs.get('channel'), qfriends = qs.get('friends');
-    if (qdm || qserv || qfriends) history.replaceState(null, '', location.pathname);
-    if (qdm) {
+    const qdm = qs.get('dm'), qserv = qs.get('server'), qchan = qs.get('channel'), qfriends = qs.get('friends'), qadmin = qs.get('admin');
+    if (qdm || qserv || qfriends || qadmin) history.replaceState(null, '', location.pathname);
+    if (qadmin === 'reports' && isSiteAdmin()) openAdminConsole('reports');
+    else if (qdm) {
       await openHome();
       if (S.dms.some((t) => t.id === qdm)) selectDmThread(qdm);
       else {

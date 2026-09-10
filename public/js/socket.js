@@ -475,6 +475,19 @@ function onWS(m) {
       if (typeof adminPresence === 'function') adminPresence(m.online, m.sessions);
       break;
     }
+    // Message reports: move the badge (tab + rail dot), and keep an open
+    // Reports pane current without a manual refresh.
+    case 'report-new': {
+      if (typeof paintAdminReportBadge === 'function') paintAdminReportBadge(m.openReports || 0);
+      if (typeof adminTabIs === 'function' && adminConsoleOpen() && adminTabIs('reports')) loadAdminReports();
+      if (m.report) toast('New report · ' + (m.report.reasonLabel || 'Report'));
+      break;
+    }
+    case 'report-updated': {
+      if (typeof paintAdminReportBadge === 'function') paintAdminReportBadge(m.openReports || 0);
+      if (typeof adminTabIs === 'function' && adminConsoleOpen() && adminTabIs('reports')) loadAdminReports();
+      break;
+    }
     case 'user-updated': {
       const u = m.user;
       // Message rows render live identity (name / avatar / name colors) via
