@@ -451,7 +451,11 @@ $('#set-profile-save').onclick = async () => {
     const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify(body) });
     S.me = { ...S.me, ...user };
     paintMe(); renderMembers();
-    try { renderMessages(); } catch {}
+    // renderMessages() paints the server-channel cache — in a DM view that
+    // cache is empty and would wipe the open conversation with a
+    // "No messages yet" placeholder. Refresh whichever list is showing.
+    if (S.view === 'home') { try { renderDmMessages(); } catch {} }
+    else { try { renderMessages(); } catch {} }
     try { renderFriendLists(); } catch {}
     try { renderDmMembers(); } catch {}
     updatePresenceNote();
