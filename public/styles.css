@@ -116,6 +116,9 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .hidden{display:none!important}
 #boot-splash{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg);z-index:200}
 #boot-splash.hidden{display:none!important}
+/* Reusable live-campfire wrapper: halo glow + flickering flames + rising
+   embers (classes shared with the offline overlay, incl. reduced-motion). */
+.cf-wrap{position:relative;width:112px;height:112px;display:flex;align-items:center;justify-content:center}
 .muted{color:var(--muted)} .small{font-size:.85rem} .error{color:var(--red);font-size:.9rem}
 .spacer{flex:1}
 .row{display:flex;gap:.5rem;align-items:center} .row.end{justify-content:flex-end;margin-top:1rem} .row-between{display:flex;justify-content:space-between;align-items:center}
@@ -1063,15 +1066,12 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .home-btn.active::before{display:none}
 #home-wrap{position:relative;width:48px;height:48px;flex-shrink:0}
 #home-wrap:has(> .active)::before{content:'';position:absolute;left:-10px;top:50%;transform:translateY(-50%);width:8px;height:28px;border-radius:0 999px 999px 0;background:var(--text);z-index:2}
-.home-btn img{width:42px;height:42px;object-fit:cover;display:block}
-.home-btn:hover img,.home-btn:active img{animation:campfire-flicker .9s ease-in-out infinite}
-@keyframes campfire-flicker{
-  0%,100%{transform:scale(1) rotate(0deg)}
-  25%{transform:scale(1.08) rotate(-4deg)}
-  50%{transform:scale(1.12) rotate(3deg)}
-  75%{transform:scale(1.06) rotate(-2deg)}
+.home-btn img{width:42px;height:42px;object-fit:cover;display:block;transition:opacity var(--t-fast),transform var(--t-fast)}
+.home-btn .home-fire{position:absolute;inset:0;margin:auto;width:42px;height:42px;opacity:0;transform:scale(.8);transition:opacity var(--t-fast),transform var(--t-fast);pointer-events:none}
+@media (hover:hover){
+  .home-btn:hover img{opacity:0;transform:scale(.8)}
+  .home-btn:hover .home-fire{opacity:1;transform:scale(1)}
 }
-@media (prefers-reduced-motion:reduce){.home-btn:hover img,.home-btn:active img{animation:none}}
 .server-btn,.chan,.dmrow,.member{-webkit-touch-callout:none}
 #home-badge{position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;font-size:.62rem;font-weight:800;border-radius:999px;padding:.1rem .38rem;min-width:19px;text-align:center;line-height:1.3;pointer-events:none}
 #home-badge.hidden{display:none}
@@ -1217,6 +1217,7 @@ body{touch-action:manipulation}
   #left .fc,#left .fg1 .fc{width:15px;height:15px}
   #home-wrap{width:44px;height:44px}
   #home-wrap .home-btn img{width:38px;height:38px}
+  #home-wrap .home-btn .home-fire{width:38px;height:38px}
   #home-wrap:has(> .active)::before{left:-8px;width:4px;height:22px}
   #server-list{align-items:center;padding:.4rem 0;gap:.5rem}
   #dm-rail{gap:.45rem}
