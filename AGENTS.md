@@ -84,7 +84,10 @@ declared in the manifest); no tray/watcher on mobile — that Rust code is
 `#[cfg(desktop)]`-gated, entry via `campfire_lib::run()` (`src/lib.rs`, thin
 `src/main.rs` shim for desktop).
 
-- **Icons:** `src-tauri/icons/` generated via `npx tauri icon
+- **Icons:** `public/icons/campfire-logo.png` is the single source of truth,
+  rendered from the in-app animated fire's vectors via `node
+  scripts/render-logo.js` (also writes `favicon-32.png` + `favicon.ico`).
+  `src-tauri/icons/` generated via `npx tauri icon
   public/icons/campfire-logo.png`, then `node scripts/gen-ico.js` so
   `icon.ico` stays identical to the web favicon (`public/favicon.ico`) —
   one source of truth. Then `node scripts/gen-android-icons.js` to re-derive

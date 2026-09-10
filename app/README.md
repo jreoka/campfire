@@ -85,7 +85,9 @@ versionCode derives from it); `main` keeps a placeholder version.
 (`public/favicon.ico`) — one source of truth — and re-run
 `node scripts/gen-android-icons.js` from the repo root so the APK launcher
 icons are re-derived zoomed out to the adaptive-icon safe zone (`tauri icon`
-emits the foregrounds full-bleed, which the launcher circle clips).
+emits the foregrounds full-bleed, which the launcher circle clips). `tauri icon`
+also resets `gen/android/.../values/ic_launcher_background.xml` to white —
+restore `#1a1d29` there so the adaptive background stays theme-colored.
 
 ## Notes
 
