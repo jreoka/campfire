@@ -550,7 +550,6 @@ function channelMenuItems(cid, ctype) {
   const items = ctype === 'voice'
     ? [{ label: 'Join voice', icon: '→', fn: () => openVoiceChannel(S.serverId, cid) }]
     : [{ label: 'Open channel', icon: '→', fn: () => selectChannel(cid) }];
-  items.push({ label: 'Copy name', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(c.name); toast('Copied'); } catch {} } });
   if (ctype === 'text') {
     const own = notifPrefsCache['c:' + cid] || '';
     items.push({ sep: true });
