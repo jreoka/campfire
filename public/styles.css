@@ -928,6 +928,11 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .me-icobtn svg{display:block}
 .me-icobtn.off{background:#a83226;color:#fff}
 .me-icobtn.off:hover{background:#c03a2c}
+@keyframes me-pop{0%{transform:scale(1)}35%{transform:scale(.78)}100%{transform:scale(1)}}
+.me-icobtn.pop{animation:me-pop .28s ease}
+#btn-settings-me svg{transition:transform .6s cubic-bezier(.34,1.3,.64,1)}
+#btn-settings-me:hover svg{transform:rotate(360deg)}
+@media (prefers-reduced-motion:reduce){.me-icobtn.pop{animation:none}#btn-settings-me svg{transition:none}#btn-settings-me:hover svg{transform:none}}
 [data-theme="light"] .me-icobtn{color:var(--text)}
 [data-theme="light"] .me-icobtn:hover{background:rgba(0,0,0,.08)}
 #me-card .gbadge{background:transparent}

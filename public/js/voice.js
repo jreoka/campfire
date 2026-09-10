@@ -36,9 +36,23 @@ for (const [id, svg] of [['#btn-mute', VB_SVG.mic], ['#vf-mute', VB_SVG.mic], ['
   const b = $(id); if (b && !b.innerHTML.trim()) b.innerHTML = svg;
 }
 if ($('#btn-voice-leave') && !$('#btn-voice-leave').innerHTML.trim()) $('#btn-voice-leave').innerHTML = '✕';
+// Self mic/speaker prefs: mutable from the me bar even outside a call
+// (Discord-style), and applied as the initial state on every join.
+function selfVoicePrefs() {
+  try { return JSON.parse(localStorage.getItem('cf_self_voice') || '{}') || {}; } catch { return {}; }
+}
+function saveSelfVoicePrefs(p) { try { localStorage.setItem('cf_self_voice', JSON.stringify({ muted: !!p.muted, deafened: !!p.deafened })); } catch {} }
+// Me-bar icons (17px to match the gear) with slashed off-variants.
+const ME_SVG = {
+  mic: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/></svg>',
+  micOff: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/><line x1="3" y1="3" x2="21" y2="21"/></svg>',
+  deaf: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>',
+  deafOff: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/><line x1="3" y1="3" x2="21" y2="21"/></svg>',
+};
+function popMeBtn(sel) { try { const b = $(sel); if (!b) return; b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); } catch {} }
 $('#btn-voice-leave').onclick = () => leaveVoice();
-$('#me-mute').onclick = (e) => { if (e) e.stopPropagation(); if (!S.voice) { toast('Join a voice room to use the mic'); return; } toggleMute(); };
-$('#me-deafen').onclick = (e) => { if (e) e.stopPropagation(); if (!S.voice) { toast('Join a voice room first'); return; } toggleDeafen(); };
+$('#me-mute').onclick = (e) => { if (e) e.stopPropagation(); toggleMute(); popMeBtn('#me-mute'); };
+$('#me-deafen').onclick = (e) => { if (e) e.stopPropagation(); toggleDeafen(); popMeBtn('#me-deafen'); };
 $('#vf-leave').onclick = () => leaveVoice();
 $('#vf-mute').onclick = () => toggleMute();
 $('#btn-mute').onclick = () => toggleMute();
@@ -223,6 +237,7 @@ async function joinVoice(serverId, channelId) {
   const mic = await acquireMic();
   if (!mic) return;
   S.voice = { kind: 'server', serverId, channelId, stream: mic.sendStream, micStream: mic.stream, noise: mic.noise, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, serverMuted: false, cameraOn: false, sharing: false, streamName: null, quality: mediaPrefs().quality, fps: mediaPrefs().fps, speaking: false, audioEls: new Map(), screenAudioEls: new Map(), remoteAudio: new Map(), remoteScreenAudio: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
+  { const svp = selfVoicePrefs(); S.voice.muted = !!svp.muted; S.voice.deafened = !!svp.deafened; applyMicState(); }
   $('#voice-bar').classList.remove('hidden');
   $('#voice-fab').classList.remove('hidden');
   $('#voice-chan-name').textContent = voiceLabel();
@@ -230,6 +245,7 @@ async function joinVoice(serverId, channelId) {
   paintVoiceControls();
   renderStage();
   S.ws?.send(JSON.stringify({ t: 'voice-join', serverId, channelId }));
+  sendVoiceState();
   renderChannels();
   startSpeakingMonitor();
   sfx.join();
@@ -241,6 +257,7 @@ async function joinDmCall(threadId, withVideo = false) {
   const mic = await acquireMic();
   if (!mic) return;
   S.voice = { kind: 'dm', threadId, stream: mic.sendStream, micStream: mic.stream, noise: mic.noise, camStream: null, screenStream: null, pcs: new Map(), senders: new Map(), muted: false, deafened: false, serverMuted: false, cameraOn: false, sharing: false, streamName: null, quality: mediaPrefs().quality, fps: mediaPrefs().fps, speaking: false, audioEls: new Map(), screenAudioEls: new Map(), remoteAudio: new Map(), remoteScreenAudio: new Map(), remoteVideo: new Map(), trackMeta: new Map(), tiles: new Map() };
+  { const svp = selfVoicePrefs(); S.voice.muted = !!svp.muted; S.voice.deafened = !!svp.deafened; applyMicState(); }
   $('#voice-bar').classList.remove('hidden');
   $('#voice-fab').classList.remove('hidden');
   $('#voice-chan-name').textContent = voiceLabel();
@@ -248,6 +265,7 @@ async function joinDmCall(threadId, withVideo = false) {
   paintVoiceControls();
   renderStage();
   S.ws?.send(JSON.stringify({ t: 'voice-join', threadId, video: !!withVideo }));
+  sendVoiceState();
   startSpeakingMonitor();
   sfx.join();
   paintDmCallButtons();
@@ -358,24 +376,32 @@ async function desktopGame(force) {
 }
 function paintVoiceControls() {
   const v = S.voice;
+  const pref = selfVoicePrefs();
   const set = (id, off, label) => { const b = $(id); if (!b) return; b.classList.toggle('off', !!off); b.title = label; };
   // Deafening also mutes the mic, so the mic button stays red while deafened.
-  const micOff = v?.muted || v?.deafened;
-  const micLabel = v?.deafened ? 'Deafened — undeafen to unmute' : (v?.muted ? 'Unmute mic' : 'Mute mic');
+  // Outside a call the me-bar buttons reflect the persisted self prefs.
+  const dOff = v ? !!v.deafened : !!pref.deafened;
+  const mOff = v ? !!v.muted : !!pref.muted;
+  const micOff = mOff || dOff;
+  const micLabel = dOff ? 'Deafened — undeafen to unmute' : (mOff ? 'Unmute mic' : 'Mute mic');
+  const deafLabel = dOff ? 'Undeafen' : 'Deafen';
   set('#btn-mute', micOff, micLabel);
   set('#me-mute', micOff, micLabel);
   set('#vf-mute', micOff, micLabel);
   set('#cv-mute', micOff, micLabel);
-  set('#btn-deafen', v?.deafened, v?.deafened ? 'Undeafen' : 'Deafen');
-  set('#me-deafen', v?.deafened, v?.deafened ? 'Undeafen' : 'Deafen');
-  set('#vf-deafen', v?.deafened, v?.deafened ? 'Undeafen' : 'Deafen');
-  set('#cv-deafen', v?.deafened, v?.deafened ? 'Undeafen' : 'Deafen');
+  set('#btn-deafen', dOff, deafLabel);
+  set('#me-deafen', dOff, deafLabel);
+  set('#vf-deafen', dOff, deafLabel);
+  set('#cv-deafen', dOff, deafLabel);
   set('#btn-camera', !v?.cameraOn, v?.cameraOn ? 'Turn camera off' : 'Turn camera on');
   set('#vf-camera', !v?.cameraOn, v?.cameraOn ? 'Turn camera off' : 'Turn camera on');
   set('#cv-camera', !v?.cameraOn, v?.cameraOn ? 'Turn camera off' : 'Turn camera on');
   set('#btn-share', v?.sharing, v?.sharing ? 'Stop streaming' : 'Go Live — stream a game or screen');
   set('#vf-share', v?.sharing, v?.sharing ? 'Stop streaming' : 'Go Live — stream a game or screen');
   set('#cv-share', v?.sharing, v?.sharing ? 'Stop streaming' : 'Go Live — stream a game or screen');
+  // Me-bar icons swap to slashed variants while off.
+  const mm = $('#me-mute'); if (mm) mm.innerHTML = micOff ? ME_SVG.micOff : ME_SVG.mic;
+  const md = $('#me-deafen'); if (md) md.innerHTML = dOff ? ME_SVG.deafOff : ME_SVG.deaf;
 }
 function applyMicState() {
   if (!S.voice) return;
@@ -384,11 +410,19 @@ function applyMicState() {
   if (off) { S.voice.speaking = false; setSpeakingUI(S.me.id, false); }
 }
 function toggleMute() {
-  if (!S.voice) return;
+  if (!S.voice) {
+    const p = selfVoicePrefs();
+    p.muted = !p.muted;
+    saveSelfVoicePrefs(p);
+    sfx[p.muted ? 'mute' : 'unmute']();
+    paintVoiceControls();
+    return;
+  }
   if (S.voice.serverMuted) { toast('An admin muted you — ask them to unmute'); return; }
   if (S.voice.deafened) { toast('Undeafen to change your mic'); return; }
   S.voice.muted = !S.voice.muted;
   sfx[S.voice.muted ? 'mute' : 'unmute']();
+  saveSelfVoicePrefs(S.voice);
   applyMicState();
   $('#vf-name').textContent = voiceLabel();
   sendVoiceState();
@@ -397,9 +431,17 @@ function toggleMute() {
   renderStage();
 }
 function toggleDeafen() {
-  if (!S.voice) return;
+  if (!S.voice) {
+    const p = selfVoicePrefs();
+    p.deafened = !p.deafened;
+    saveSelfVoicePrefs(p);
+    sfx[p.deafened ? 'deaf' : 'undeaf']();
+    paintVoiceControls();
+    return;
+  }
   S.voice.deafened = !S.voice.deafened;
   sfx[S.voice.deafened ? 'deaf' : 'undeaf']();
+  saveSelfVoicePrefs(S.voice);
   applyMicState();
   for (const [, el] of S.voice.audioEls) el.muted = S.voice.deafened;
   for (const [, el] of S.voice.screenAudioEls) el.muted = S.voice.deafened;
