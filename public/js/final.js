@@ -204,6 +204,10 @@ $('#in-thread').addEventListener('input', (e) => draftSoon(e.target, draftThread
 // scrollHeight excludes the border but the height we set is border-box,
 // so add the border back or an empty box gets a tiny (2px) scroll range.
 function composerAutoGrow(inp) {
+  // A box with no layout (hidden thread panel, hidden view) reports a
+  // scrollHeight of 0; measuring it would shrink the textarea to its border,
+  // so leave the height alone until it is actually on screen.
+  if (!inp || inp.scrollHeight <= 0) return;
   const cs = getComputedStyle(inp);
   const border = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
   inp.style.height = 'auto';

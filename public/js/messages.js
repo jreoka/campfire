@@ -1404,13 +1404,21 @@ $('#composer').addEventListener('submit', (e) => {
   const ctx = draftCtx();
   inp.value = '';
   hideMentionPop();
-  if (S.view === 'home') {
-    if ((!content && !S.pendingAtts.length) || !S.dmThreadId) { inp.value = content; return; }
-    sendDm(content, { attachments: S.pendingAtts, replyTo: S.replyTo?.id || null });
-  } else {
-    if ((!content && !S.pendingAtts.length) || !S.serverId || !S.channelId) { inp.value = content; return; }
-    sendChat(content, { attachments: S.pendingAtts, replyTo: S.replyTo?.id || null });
+  const noChat = S.view === 'home' ? !S.dmThreadId : (!S.serverId || !S.channelId);
+  // Nothing to send (Enter on an empty box — including one grown tall with
+  // stray line breaks) or no conversation open: the box is empty either way,
+  // so drop the height with the text and forget the (now empty) draft. The
+  // height style lives on the shared composer element, so leaving it behind
+  // makes every other chat open with a super-tall box until a reload.
+  if ((!content && !S.pendingAtts.length) || noChat) {
+    inp.value = content;
+    syncComposerRender();
+    composerAutoGrow(inp);
+    if (!content) draftClear(ctx); // nothing left to restore — kill the phantom draft
+    return;
   }
+  if (S.view === 'home') sendDm(content, { attachments: S.pendingAtts, replyTo: S.replyTo?.id || null });
+  else sendChat(content, { attachments: S.pendingAtts, replyTo: S.replyTo?.id || null });
   draftClear(ctx); // sent: the draft goes with it
   S.pendingAtts = []; S.replyTo = null;
   renderComposerMeta();

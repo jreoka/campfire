@@ -456,14 +456,18 @@ function applyComposerDraft() {
     if (ta.value !== t) {
       ta.value = t;
       try { syncComposerRender(); } catch {}
-      try { composerAutoGrow(ta); } catch {}
     }
+    // Re-fit on every switch, not just when the text changed: the box's
+    // height has to track what is in it, or a stale height (a stray tall box)
+    // rides along into the next chat until a reload.
+    try { composerAutoGrow(ta); } catch {}
   }
   const ti = $('#in-thread');
   const tctx = draftThreadCtx();
   if (ti && tctx) {
     const t = draftGet(tctx);
-    if (ti.value !== t) { ti.value = t; try { composerAutoGrow(ti); } catch {} }
+    if (ti.value !== t) ti.value = t;
+    try { composerAutoGrow(ti); } catch {}
   }
 }
 

@@ -934,8 +934,16 @@ $('#thread-composer').addEventListener('submit', (e) => {
   if (!S.thread) return;
   const inp = $('#in-thread');
   const content = inp.value.trim();
-  if (!content) return;
   const ctx = draftThreadCtx();
+  // Enter on a newline-only reply box: nothing to send, so clear the stray
+  // line breaks and re-fit — the same shape as the main composer's empty
+  // submit. Otherwise the tall box (and its phantom draft) just sits there.
+  if (!content) {
+    inp.value = '';
+    draftClear(ctx);
+    composerAutoGrow(inp);
+    return;
+  }
   inp.value = '';
   draftClear(ctx); // sent: the reply draft goes with it
   sendChat(content, { threadRoot: S.thread.rootId, replyTo: S.threadReplyTo?.id || null });

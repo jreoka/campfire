@@ -237,6 +237,54 @@ async function main() {
     const dmAfter = await waitFor(`document.querySelector('#in-message').value || null`, 8000);
     check(dmAfter === 'dm half text', 'the DM draft comes back too', { dmAfter });
 
+    console.log('\n[6] stray line breaks cannot leave a tall composer');
+    // The bug: Shift+Enter growing the box, then Enter on the (visually empty)
+    // box cleared the text but kept the height — and the height style rides on
+    // the shared composer element, so every other chat opened super-tall until
+    // a reload. The phantom whitespace draft could resurrect it later too.
+    const ch3 = await evaluate(`(async () => {
+      await selectServer(${JSON.stringify(srv.sid)});
+      const c = await api(${JSON.stringify('/api/servers/' + srv.sid + '/channels')}, { method: 'POST', body: JSON.stringify({ name: 'tall', type: 'text' }) });
+      await selectServer(${JSON.stringify(srv.sid)});
+      await selectChannel(c.channel.id);
+      return c.channel.id;
+    })()`);
+    const baseH = await waitFor(`document.querySelector('#in-message').getBoundingClientRect().height || null`, 8000);
+    const grownH = await evaluate(`(() => { const i = document.querySelector('#in-message');
+      i.value = Array.from({ length: 12 }, () => '').join(String.fromCharCode(10));
+      i.dispatchEvent(new Event('input', { bubbles: true }));
+      return i.getBoundingClientRect().height; })()`);
+    check(grownH > baseH + 100, 'line breaks grow the box', { baseH, grownH });
+    await sleep(400); // let the 300ms draft debounce store the whitespace first
+    const afterEmptySubmit = await evaluate(`(() => {
+      const i = document.querySelector('#in-message');
+      i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      return { h: i.getBoundingClientRect().height, value: i.value }; })()`);
+    check(afterEmptySubmit.value === '' && Math.abs(afterEmptySubmit.h - baseH) < 2,
+      'Enter on a newline-only box re-fits it', { baseH, afterEmptySubmit });
+    const tallDraft = await evaluate(`localStorage.getItem('cf_drafts_' + S.me.id) || '{}'`);
+    check(!JSON.parse(tallDraft)[`s:${srv.sid}:${ch3}`], 'no whitespace-only draft is kept', tallDraft);
+    const switched = await evaluate(`(async () => {
+      await selectChannel(${JSON.stringify(srv.cid)});
+      const a = document.querySelector('#in-message').getBoundingClientRect().height;
+      await selectChannel(${JSON.stringify(ch3)});
+      return { a, b: document.querySelector('#in-message').getBoundingClientRect().height }; })()`);
+    check(Math.abs(switched.a - baseH) < 2 && Math.abs(switched.b - baseH) < 2,
+      'the height does not follow you into other chats', { baseH, switched });
+    await evaluate(`sendChat('thread root')`);
+    const rootId = await waitFor(`(() => { const els = [...document.querySelectorAll('#messages .msg[data-mid]')]; return els.length ? els[els.length - 1].dataset.mid : null })()`, 8000);
+    const threadFit = await evaluate(`(async () => {
+      await openThread(${JSON.stringify(rootId)});
+      const i = document.querySelector('#in-thread');
+      const base = i.getBoundingClientRect().height;
+      i.value = Array.from({ length: 10 }, () => '').join(String.fromCharCode(10));
+      i.dispatchEvent(new Event('input', { bubbles: true }));
+      const grown = i.getBoundingClientRect().height;
+      i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      return { base, grown, after: i.getBoundingClientRect().height, value: i.value }; })()`);
+    check(threadFit.grown > threadFit.base + 100 && threadFit.value === '' && Math.abs(threadFit.after - threadFit.base) < 2,
+      'the thread reply box re-fits the same way', threadFit);
+
     check(pageErrors.length === 0, 'no uncaught page errors', pageErrors.slice(0, 3));
     if (pageErrors.length) console.log('  page errors: ' + JSON.stringify(pageErrors.slice(0, 5)));
   } finally {
