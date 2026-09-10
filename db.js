@@ -107,6 +107,13 @@ CREATE TABLE IF NOT EXISTS custom_emoji (
 CREATE INDEX IF NOT EXISTS idx_reactions_msg ON message_reactions(message_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_msg ON attachments(message_id);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_root_id);
+CREATE TABLE IF NOT EXISTS thread_unfollows (
+  thread_root_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (thread_root_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_thread_unfollows_user ON thread_unfollows(user_id);
 CREATE TABLE IF NOT EXISTS media_history (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -2514,6 +2514,8 @@ app.get('/api/servers/:id/channels/:chId/threads/:rootId', authRequired, (req, r
 app.get('/api/threads/active', authRequired, (req, res) => {
   const me = req.user.id;
   const cutoff = now() - 4 * 86400 * 1000;
+  const q = String(req.query.q || '').trim().slice(0, 80);
+  const pat = '%' + q.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
   let nsfwOk = 0;
   try { nsfwOk = db.prepare('SELECT nsfw_ok FROM users WHERE id = ?').get(me)?.nsfw_ok ? 1 : 0; } catch {}
   let rows = [];
@@ -2523,13 +2525,17 @@ app.get('/api/threads/active', authRequired, (req, res) => {
       FROM messages r
       JOIN messages a ON a.thread_root_id = r.id
       JOIN server_members sm ON sm.server_id = r.server_id AND sm.user_id = ?
+      JOIN channels ch ON ch.id = r.channel_id
+      JOIN servers s ON s.id = r.server_id
       WHERE r.thread_root_id IS NULL
         AND (r.user_id = ? OR EXISTS (SELECT 1 FROM messages m2 WHERE m2.thread_root_id = r.id AND m2.user_id = ?))
+        AND NOT EXISTS (SELECT 1 FROM thread_unfollows u WHERE u.thread_root_id = r.id AND u.user_id = ?)
+        ${q ? `AND (r.content LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM messages m3 WHERE m3.thread_root_id = r.id AND m3.content LIKE ? ESCAPE '\\') OR ch.name LIKE ? ESCAPE '\\' OR s.name LIKE ? ESCAPE '\\')` : ''}
       GROUP BY r.id
       HAVING MAX(a.created_at) >= ?
       ORDER BY last_activity DESC
       LIMIT 50
-    `).all(me, me, me, cutoff);
+    `).all(...(q ? [me, me, me, me, pat, pat, pat, pat, cutoff] : [me, me, me, me, cutoff]));
   } catch { rows = []; }
   const snip = (m) => {
     const t = String(m?.content || '').trim();
@@ -2580,6 +2586,19 @@ app.get('/api/threads/active', authRequired, (req, res) => {
     });
   }
   res.json({ threads: out });
+});
+
+// Unfollow a thread: hides it from your Active threads list.
+// Posting in the thread again re-follows it automatically.
+app.post('/api/threads/:rootId/unfollow', authRequired, (req, res) => {
+  const root = db.prepare('SELECT server_id FROM messages WHERE id = ? AND thread_root_id IS NULL').get(req.params.rootId);
+  if (!root || !isMember(root.server_id, req.user.id)) return res.status(404).json({ error: 'no_thread' });
+  db.prepare('INSERT OR IGNORE INTO thread_unfollows (thread_root_id, user_id, created_at) VALUES (?,?,?)').run(req.params.rootId, req.user.id, now());
+  res.json({ ok: true });
+});
+app.delete('/api/threads/:rootId/unfollow', authRequired, (req, res) => {
+  db.prepare('DELETE FROM thread_unfollows WHERE thread_root_id = ? AND user_id = ?').run(req.params.rootId, req.user.id);
+  res.json({ ok: true });
 });
 
 // ---------- friends + DMs ----------
@@ -3682,6 +3701,8 @@ wss.on('connection', (ws, req) => {
       const fwdFrom = String(msg.fwdFrom || '').trim().slice(0, 64) || null;
       db.prepare('INSERT INTO messages (id,server_id,channel_id,user_id,content,reply_to_id,thread_root_id,fwd_from,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
         .run(mid, serverId, channelId, me.userId, content, replyTo, threadRoot, fwdFrom, now());
+      // Posting in a thread re-follows it (undoes an unfollow from the Threads panel).
+      if (threadRoot) { try { db.prepare('DELETE FROM thread_unfollows WHERE thread_root_id = ? AND user_id = ?').run(threadRoot, me.userId); } catch {} }
       const insAtt = db.prepare('INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,spoiler,created_at) VALUES (?,?,?,?,?,?,?,?,?)');
       for (const a of cleanAtts) insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, now());
       if (pollOpts) {

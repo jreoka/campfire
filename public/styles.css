@@ -1125,6 +1125,10 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .thread-item .t-last b{color:var(--text)}
 .thread-item .t-avs{display:flex;flex-shrink:0;padding-left:8px}
 .thread-item .t-av{width:26px;height:26px;font-size:.65rem;margin-left:-8px;border:2px solid var(--panel-2)}
+#m-threads-search{margin-bottom:.5rem}
+.thread-item .thread-x{flex-shrink:0;border:0;background:transparent;color:var(--faint);width:24px;height:24px;border-radius:50%;padding:0;font-size:.85rem;line-height:1;cursor:pointer}
+.thread-item:hover .thread-x{color:var(--text)}
+.thread-item .thread-x:hover{background:var(--panel-4);color:var(--text)}
 .sec-row{display:flex;align-items:center;gap:.65rem;padding:.65rem .8rem;background:var(--panel);border:0;border-radius:10px;margin-top:.45rem;font-size:.9rem}
 .sec-row .grow{flex:1;min-width:0}
 .sec-row .sub{display:block;font-size:.74rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:.1rem}

@@ -701,13 +701,32 @@ function threadAgo(ts) {
   if (h < 24) return h + 'h ago';
   return Math.floor(h / 24) + 'd ago';
 }
+let threadsSearchT = null, threadsSearchSeq = 0;
 async function openActiveThreads() {
-  openModal('Active threads', '<div id="m-threads-list"><p class="muted" style="text-align:center;padding:1rem">Loading…</p></div>', 'Close', null, { wide: true });
+  openModal('Active threads', '<input id="m-threads-search" placeholder="Search threads" autocomplete="off" /><div id="m-threads-list"><p class="muted" style="text-align:center;padding:1rem">Loading…</p></div>', 'Close', null, { wide: true });
+  const input = $('#m-threads-search');
+  if (!$('#m-threads-list')) return;
+  await loadThreadsList('');
+  if (input) input.addEventListener('input', () => {
+    clearTimeout(threadsSearchT);
+    threadsSearchT = setTimeout(() => loadThreadsList(input.value.trim()), 300);
+  });
+}
+function threadsEmptyHTML(q) {
+  return q
+    ? `<p class="muted" style="text-align:center;padding:1rem">No threads match “${esc(q)}”.</p>`
+    : '<p class="muted" style="text-align:center;padding:1rem">Nothing active — threads you start or reply to stay here for 4 days after the last message.</p>';
+}
+async function loadThreadsList(q) {
   const list = $('#m-threads-list');
   if (!list) return;
+  const my = ++threadsSearchSeq;
+  list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">Loading…</p>';
   let threads = [];
-  try { ({ threads } = await api('/api/threads/active')); } catch { list.innerHTML = '<p class="error" style="text-align:center;padding:1rem">Could not load threads.</p>'; return; }
-  if (!threads || !threads.length) { list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">Nothing active — threads you start or reply to stay here for 4 days after the last message.</p>'; return; }
+  try { ({ threads } = await api('/api/threads/active' + (q ? '?q=' + encodeURIComponent(q) : ''))); }
+  catch { if (my === threadsSearchSeq && document.contains(list)) list.innerHTML = '<p class="error" style="text-align:center;padding:1rem">Could not load threads.</p>'; return; }
+  if (my !== threadsSearchSeq || !document.contains(list)) return; // stale response
+  if (!threads || !threads.length) { list.innerHTML = threadsEmptyHTML(q); return; }
   list.innerHTML = '';
   for (const t of threads) {
     const b = document.createElement('div');
@@ -722,6 +741,16 @@ async function openActiveThreads() {
       try { paintAvatar(s, { display_name: p.name, avatar_color: p.color, avatar_url: p.avatar }); } catch {}
       avBox.appendChild(s);
     }
+    b.insertAdjacentHTML('beforeend', '<button type="button" class="thread-x" title="Unfollow thread">×</button>');
+    b.querySelector('.thread-x').onclick = async (e) => {
+      e.stopPropagation();
+      try { await api('/api/threads/' + encodeURIComponent(t.rootId) + '/unfollow', { method: 'POST' }); }
+      catch { toast('Could not unfollow thread'); return; }
+      b.remove();
+      toast('Thread unfollowed — reply to rejoin it');
+      const qv = $('#m-threads-search') ? $('#m-threads-search').value.trim() : '';
+      if (list && !list.children.length) list.innerHTML = threadsEmptyHTML(qv);
+    };
     const go = () => openActiveThread(t);
     b.onclick = go;
     b.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } };
