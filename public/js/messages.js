@@ -626,6 +626,89 @@ function pinAnchorWhileSettling(box, anchor) {
     }
   } catch {}
 }
+// Surgical single-message removal for the delete path (socket.js
+// message-deleted / dm-deleted, thread replies in pickers.js). A full list
+// rebuild recreates EVERY image/avatar node at 0 height and then chases
+// the resulting growth with scroll holds — deleting the latest
+// (often image-bearing) message that way intermittently stranded the
+// reader scrolled up at earlier messages. Removing just the one node
+// leaves every other node — and the reader's place — exactly where it
+// was: no image reloads, no growth, no chase. Neighbor fixups (the next
+// message's grouping, orphaned day dividers, reply-quote placeholders)
+// are patched in place. Returns false when the node isn't displayed (or
+// nothing would remain — the caller then falls back to a full render,
+// which also paints the correct empty placeholder).
+function patchDeletedQuotes(box, mid) {
+  try {
+    if (!box) return;
+    const sel = '.reply-quote[data-jump="' + CSS.escape(mid) + '"]';
+    box.querySelectorAll(sel).forEach((q) => {
+      q.className = 'reply-quote deleted';
+      try { q.removeAttribute('data-jump'); } catch {}
+      q.innerHTML = '<span class="rq-text">Original message was deleted</span>';
+    });
+  } catch {}
+}
+function captureListAnchorExcept(box, skipMid) {
+  try {
+    const btop = box.getBoundingClientRect().top;
+    for (const el of box.querySelectorAll('.msg')) {
+      if (skipMid && el.dataset.mid === skipMid) continue;
+      const r = el.getBoundingClientRect();
+      if (r.bottom > btop + 1) return { mid: el.dataset.mid || null, off: r.top - btop };
+    }
+  } catch {}
+  return null;
+}
+function removeMessageNode(box, arr, mid) {
+  try {
+    if (!box || !box.isConnected) return false;
+    const selMid = (id) => '.msg[data-mid="' + CSS.escape(id) + '"]';
+    const node = box.querySelector(selMid(mid));
+    if (!node) return false;
+    if (S.editing === mid) {
+      S.editing = null;
+      try { if (S.editRemovals) S.editRemovals.clear(); } catch {}
+    }
+    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+    // Anchor on a message that SURVIVES (never the deleted one) so the
+    // restore below is exact no matter what shrank above it — and content
+    // removed below the viewport correctly compensates to zero.
+    const anchor = nearBottom ? null : captureListAnchorExcept(box, mid);
+    const keepDist = box.scrollHeight - box.scrollTop; // fallback (no anchor)
+    const sib = node.nextElementSibling;
+    const nextMid = sib && sib.classList && sib.classList.contains('msg') ? (sib.dataset.mid || null) : null;
+    node.remove();
+    patchDeletedQuotes(box, mid);
+    if (nextMid) {
+      const ni = arr.findIndex((x) => x.id === nextMid);
+      const nextNode = box.querySelector(selMid(nextMid));
+      if (ni >= 0 && nextNode) {
+        const psib = nextNode.previousElementSibling;
+        const pMid = psib && psib.classList && psib.classList.contains('msg') ? (psib.dataset.mid || null) : null;
+        const pMsg = pMid ? arr.find((x) => x.id === pMid) || null : null;
+        let wantGrouped = false;
+        try { wantGrouped = !!(pMsg && shouldGroup(pMsg, arr[ni])); } catch { wantGrouped = false; }
+        let hasGrouped = false;
+        try { hasGrouped = !!nextNode.querySelector('.avatar.ghost'); } catch {}
+        if (wantGrouped !== hasGrouped) {
+          try { nextNode.replaceWith(messageEl(arr[ni], { grouped: wantGrouped })); } catch {}
+        }
+      }
+    }
+    try {
+      for (const d of [...box.querySelectorAll('.day')]) {
+        const nx = d.nextElementSibling;
+        if (!nx || (nx.classList && nx.classList.contains('day'))) d.remove();
+      }
+    } catch {}
+    if (!box.querySelector('.msg')) return false; // caller renders the empty placeholder
+    if (nearBottom) { try { box.scrollTop = box.scrollHeight; } catch {} }
+    else restoreListAnchor(box, anchor, keepDist);
+    try { if (typeof updatePill === 'function') updatePill(); } catch {}
+    return true;
+  } catch { return false; }
+}
 // A thread reply changes only its root's reply-count link — patch that one
 // button in place instead of rebuilding the whole list (a full rebuild
 // re-creates every avatar/media node and used to visibly jump the scroll).

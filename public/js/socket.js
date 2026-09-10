@@ -275,23 +275,33 @@ function onWS(m) {
       const prev = S.messages.get(m.channelId) || [];
       const arr = prev.filter((x) => x.id !== m.messageId);
       S.messages.set(m.channelId, arr);
-      const removed = arr.length !== prev.length;
-      // A deleted thread reply isn't in the channel list at all — unless
-      // something quoted it (quote previews need the deleted placeholder),
-      // only its root's count changes: patch in place, skip the rebuild.
-      const quoted = prev.some((x) => x.replyTo && x.replyTo.id === m.messageId);
       scrubReplyPreview(m.messageId);
       // A deleted reply drops the root's live reply count (drives the N-replies link).
       if (m.threadRoot) updateMsgInCaches(m.threadRoot, (r) => { r.threadCount = Math.max(0, (r.threadCount || 1) - 1); });
       if (S.thread) {
         if (S.thread.rootId === m.messageId) closeThread();
-        else S.thread.replies = S.thread.replies.filter((x) => x.id !== m.messageId);
-        renderThread();
+        else if (S.thread.replies.some((x) => x.id === m.messageId)) {
+          S.thread.replies = S.thread.replies.filter((x) => x.id !== m.messageId);
+          // Surgical panel removal (same no-jump rationale as the channel
+          // list below); the panel is tiny so a fallback rebuild is harmless.
+          if (!removeMessageNode($('#thread-replies'), S.thread.replies, m.messageId)) renderThread();
+        }
+        // Else: unrelated to the open thread — leave the panel alone
+        // (it used to rebuild here on every channel delete).
       }
       const inHistDel = S.histMode && S.histMode.kind === 'server' && S.histMode.id === m.channelId;
       if (m.channelId === S.channelId && !inHistDel) {
-        if (!removed && m.threadRoot && !quoted) paintThreadCount(m.threadRoot);
-        else renderMessages();
+        const box = $('#messages');
+        if (m.threadRoot) paintThreadCount(m.threadRoot);
+        // Surgical single-node removal keeps every image/avatar node (and
+        // the reader's scroll place) intact. A full rebuild here recreates
+        // every image at 0 height and can strand the reader scrolled up at
+        // earlier messages — most visibly when deleting the latest message
+        // with an image. Rebuild only as fallback.
+        let patched = false;
+        try { patched = removeMessageNode(box, arr, m.messageId); } catch { patched = false; }
+        if (!patched && !m.threadRoot) renderMessages();
+        else if (!patched) { try { updatePill(); } catch {} }
       }
       break;
     }
@@ -347,7 +357,12 @@ function onWS(m) {
       S.dmMessages.set(m.threadId, darr);
       scrubReplyPreview(m.messageId);
       const inHistDd = S.histMode && S.histMode.kind === 'dm' && S.histMode.id === m.threadId;
-      if (S.view === 'home' && S.dmThreadId === m.threadId && !inHistDd) renderDmMessages();
+      if (S.view === 'home' && S.dmThreadId === m.threadId && !inHistDd) {
+        // Surgical removal (see message-deleted above); rebuild only as fallback.
+        let dpatched = false;
+        try { dpatched = removeMessageNode($('#messages'), darr, m.messageId); } catch { dpatched = false; }
+        if (!dpatched) renderDmMessages();
+      }
       break;
     }
     case 'dm-reaction': {
