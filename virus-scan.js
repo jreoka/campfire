@@ -447,7 +447,11 @@ async function reapStuckClaims() {
 
 // Returns 'done' (slot refills immediately) or 'later' (back off: engine
 // unavailable, nothing to do until ensureChain finishes).
+// NOTE: every return path below runs through the outer finally — early
+// returns must never bypass claim release (that wedged rows at
+// attempts=0 with an idle box: claimed but no live slot).
 async function processRow(row) {
+  try {
   // Fail-open paths: no engine (local dev) marks clean; a broken engine
   // marks `error` (served, but visible in admin) — never wedge uploads.
   if (noEngine) {
@@ -518,6 +522,7 @@ async function processRow(row) {
     }
     if (/ECONNREFUSED|clamd_closed|clamd_timeout/.test(err)) { clamdReady = false; ensureChain().catch(() => {}); }
     return 'done';
+  }
   } finally {
     claimed.delete(row.key);
     claimAt.delete(row.key);
