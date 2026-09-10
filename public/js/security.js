@@ -505,9 +505,10 @@ function renderServerTab() {
     renderInviteLinks(xlist, d);
     const form = document.createElement('div');
     form.innerHTML = `<div class="row" style="margin-top:.55rem;flex-wrap:wrap">`
-      + `<input id="srv-inv-label" maxlength="32" placeholder="Nickname (e.g. Friday game night)" style="flex:2;min-width:140px" />`
-      + `<input id="srv-inv-max" type="number" min="1" max="100000" placeholder="Max uses" style="flex:1;min-width:90px" />`
-      + `<select id="srv-inv-exp" style="flex:1;min-width:110px"><option value="">Never expires</option><option value="3600">1 hour</option><option value="86400">24 hours</option><option value="604800">7 days</option><option value="2592000">30 days</option></select>`
+      + `<input id="srv-inv-label" maxlength="32" placeholder="Nickname (e.g. Friday game night)" style="flex:1 1 100%;width:auto" />`
+      + `</div><div class="row" style="margin-top:.4rem;flex-wrap:wrap">`
+      + `<input id="srv-inv-max" type="number" min="1" max="100000" placeholder="Max uses" style="flex:1;width:auto;min-width:90px" />`
+      + `<select id="srv-inv-exp" style="flex:1;width:auto;min-width:150px"><option value="">Never expires</option><option value="3600">1 hour</option><option value="86400">24 hours</option><option value="604800">7 days</option><option value="2592000">30 days</option></select>`
       + `<button class="btn small primary" id="srv-inv-create">Create link</button></div>`;
     cur.appendChild(form);
     form.querySelector('#srv-inv-create').onclick = async () => {

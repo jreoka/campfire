@@ -127,7 +127,7 @@ async function showInviteLanding(code) {
   $('#invite-view').classList.remove('hidden');
 }
 $('#btn-invite').onclick = () => {
-  if (canManage()) { S.serverSubTab = 'general'; openServerSettings(); }
+  if (canManage()) { S.serverSubTab = 'invites'; openServerSettings(); }
   else toast('Only admins can create invite links');
 };
 function showInvite(srv, invite) {
