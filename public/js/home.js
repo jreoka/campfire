@@ -194,9 +194,12 @@ async function renderActiveNow() {
     const streaming = cards.filter((c) => c.stream).sort((a, b) => a.f.display_name.localeCompare(b.f.display_name));
     const playing = cards.filter((c) => c.live).sort((a, b) => a.f.display_name.localeCompare(b.f.display_name));
     const online = cards.filter((c) => !c.live && !c.stream && !c.off).sort((a, b) => a.f.display_name.localeCompare(b.f.display_name));
-    const offline = cards.filter((c) => c.off).sort((a, b) => ((b.recent?.last_seen_ms || 0) - (a.recent?.last_seen_ms || 0)) || a.f.display_name.localeCompare(b.f.display_name));
     $('#members-title').textContent = 'ACTIVE NOW';
     $('#online-count').textContent = String(streaming.length + playing.length);
+    if (!streaming.length && !playing.length && !online.length) {
+      box.innerHTML = '<p class="muted small anow-empty">No friends are online right now.</p>';
+      return;
+    }
     const sec = (t, n) => {
       const e = document.createElement('div');
       e.className = 'role-head';
@@ -206,7 +209,6 @@ async function renderActiveNow() {
     if (streaming.length) { sec('STREAMING', streaming.length); for (const c of streaming) box.appendChild(activeCard(c)); }
     if (playing.length) { sec('NOW PLAYING', playing.length); for (const c of playing) box.appendChild(activeCard(c)); }
     if (online.length) { sec('ONLINE', online.length); for (const c of online) box.appendChild(activeCard(c)); }
-    if (offline.length) { sec('OFFLINE', offline.length); for (const c of offline) box.appendChild(activeCard(c)); }
   };
   paint();
   const stale = friends.filter((f) => !activeGamingFresh(f.username));
