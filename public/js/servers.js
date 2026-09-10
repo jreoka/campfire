@@ -116,6 +116,10 @@ function folderBtn(f) {
 }
 function renderServerList() {
   const box = $('#server-list');
+  // The create/join button lives at the end of the scrollable rail (below
+  // the last server), so detach it before clearing and re-append it after.
+  const addBtn = document.getElementById('btn-add-server');
+  if (addBtn) addBtn.remove();
   box.innerHTML = '';
   const byId = new Map(S.servers.map((s) => [s.id, s]));
   const inFolder = new Set([...S.layoutFolders].flatMap((f) => f.servers || []));
@@ -134,6 +138,7 @@ function renderServerList() {
   for (const s of S.servers) {
     if (!S.rootOrder.some((it) => it.kind === 'server' && it.id === s.id) && !inFolder.has(s.id)) box.appendChild(serverBtn(s));
   }
+  if (addBtn) box.appendChild(addBtn);
 }
 function toggleFolder(id) {
   S.openFolderId = (S.openFolderId === id) ? null : id;

@@ -229,7 +229,7 @@ function renderThemesTab() {
   box.appendChild(grid);
 }
 document.querySelectorAll('.set-tab').forEach((b) => (b.onclick = () => { setSettingsTab(b.dataset.tab); if (b.dataset.tab === 'account') { renderSecurityTab(); renderDesktopApp(); } }));
-$('#btn-settings-rail').onclick = () => openSettings('profile');
+$('#btn-settings-me').onclick = (e) => { if (e) e.stopPropagation(); openSettings('profile'); };
 $('#btn-home').onclick = openHome;
 $('#btn-friends').onclick = showFriendsPanel;
 $('#btn-pins').onclick = openPins;
