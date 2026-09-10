@@ -40,7 +40,7 @@ function attachmentHTML(a) {
   // animated scanning card and infected files a greyed-out warning —
   // never the bytes, no preview, no download link anywhere.
   if (a.scan === 'infected') return `<div class="scan-block infected"><span class="scan-ic">${SCAN_SHIELD_SVG}</span><span class="scan-tx"><b>${esc(a.name)}</b><span>Virus detected — this file was removed and can't be downloaded.</span></span></div>`;
-  if (a.scan === 'pending') return `<div class="scan-block scanning"><span class="scan-ic">${SCAN_SHIELD_SVG}</span><span class="scan-tx"><b>${esc(a.name)} (${fmtSize(a.size)})</b><span>Making sure this file isn't malicious…</span><span class="scan-track"><span class="scan-fill"></span></span></span></div>`;
+  if (a.scan === 'pending') return `<div class="scan-block scanning"><span class="scan-ic">${SCAN_SHIELD_SVG}</span><span class="scan-tx"><b>${esc(a.name)} (${fmtSize(a.size)})</b><span>Processing file<span class="scan-dots"></span></span><span class="scan-track"><span class="scan-fill"></span></span></span></div>`;
   if (a.kind === 'image') return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'video') return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><video class="att-vid" src="${esc(a.url)}" controls preload="metadata" playsinline></video>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'audio') return audioPlayerHTML(a);
@@ -475,7 +475,7 @@ function messageEl(m, opts = {}) {
   if (S.editing === m.id) {
     const eatts = (m.attachments || []).filter((a) => a.id && !(S.editRemovals && S.editRemovals.has(a.id)));
     inner += `<div class="edit-box"><textarea id="edit-area" maxlength="5000">${esc(m.content)}</textarea>`
-      + (eatts.length ? `<div class="edit-atts">` + eatts.map((a) => `<span class="edit-att">${a.kind === 'image' && a.scan !== 'pending' && a.scan !== 'infected' ? `<img src="${esc(a.url)}" alt="" loading="lazy" />` : ''}<span class="edit-att-name">${esc(a.name)}${a.scan === 'pending' ? ' (scanning…)' : ''}${a.scan === 'infected' ? ' (removed: virus detected)' : ''}</span><button type="button" class="mini edit-att-x" data-act="edit-unattach" data-aid="${esc(a.id)}" title="Remove attachment">✕</button></span>`).join('') + `</div>` : '')
+      + (eatts.length ? `<div class="edit-atts">` + eatts.map((a) => `<span class="edit-att">${a.kind === 'image' && a.scan !== 'pending' && a.scan !== 'infected' ? `<img src="${esc(a.url)}" alt="" loading="lazy" />` : ''}<span class="edit-att-name">${esc(a.name)}${a.scan === 'pending' ? ' (processing…)' : ''}${a.scan === 'infected' ? ' (removed: virus detected)' : ''}</span><button type="button" class="mini edit-att-x" data-act="edit-unattach" data-aid="${esc(a.id)}" title="Remove attachment">✕</button></span>`).join('') + `</div>` : '')
       + `<div class="row"><button class="btn small primary" data-act="edit-save">Save</button><button class="btn small" data-act="edit-cancel">Cancel</button></div></div>`;
   } else if (m.content) {
     const big = isBigEmoji(m.content) && !m.attachments?.length;
@@ -873,7 +873,7 @@ function renderComposerMeta() {
     const chip = document.createElement('div');
     chip.className = 'att-chip' + (a.scan === 'pending' ? ' scanning' : '');
     const thumb = (a.kind === 'image' && a.scan !== 'pending') ? `<img src="${esc(a.url)}" alt="" />` : '';
-    chip.innerHTML = `${thumb}<span>${esc(a.name)} (${fmtSize(a.size)})${a.scan === 'pending' ? ' · Scanning…' : ''}</span>`;
+    chip.innerHTML = `${thumb}<span>${esc(a.name)} (${fmtSize(a.size)})${a.scan === 'pending' ? ' · Processing…' : ''}</span>`;
     const x = document.createElement('button'); x.className = 'mini'; x.textContent = '✕';
     x.onclick = () => { S.pendingAtts.splice(i, 1); renderComposerMeta(); };
     if (a.kind === 'image' || a.kind === 'video') {

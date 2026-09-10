@@ -569,10 +569,12 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 @keyframes scan-sweep{0%{margin-left:-32%}100%{margin-left:100%}}
 .scanning .scan-ic{animation:scan-pulse 1.6s ease-in-out infinite}
 @keyframes scan-pulse{0%,100%{box-shadow:0 0 0 0 rgba(91,108,255,.45)}50%{box-shadow:0 0 0 7px rgba(91,108,255,0)}}
+.scan-dots::after{content:'…';animation:scan-dots 1.2s steps(1) infinite}
+@keyframes scan-dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%,100%{content:'...'}}
 .scan-block.infected{border-color:var(--line-soft);background:var(--panel);opacity:.75}
 .scan-block.infected .scan-ic{color:var(--red);background:rgba(237,66,69,.1)}
 .scan-block.infected .scan-tx>span{color:var(--red)}
-@media (prefers-reduced-motion:reduce){.scan-fill,.scanning .scan-ic{animation:none}}
+@media (prefers-reduced-motion:reduce){.scan-fill,.scanning .scan-ic,.scan-dots::after{animation:none}}
 #mention-pop,#chan-pop{position:absolute;left:.9rem;bottom:calc(64px + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:230px;max-height:230px;overflow-y:auto;z-index:60;padding:.3rem}
 #emoji-pop{position:absolute;left:.9rem;bottom:calc(64px + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:270px;max-height:270px;overflow-y:auto;z-index:60;padding:.3rem}
 .emoji-item{display:flex;align-items:center;gap:.55rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);padding:.42rem .6rem;font-size:.88rem;cursor:pointer;border-radius:8px}
