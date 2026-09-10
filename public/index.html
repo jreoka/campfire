@@ -17,6 +17,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Campfire" />
 <link rel="stylesheet" href="/styles.css" />
+<script>try{var __t=localStorage.getItem('cf_theme');document.documentElement.setAttribute('data-theme',(__t==='light'||__t==='dracula')?__t:'dark');}catch(e){}</script>
 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=cfTurnstileReady&render=explicit" async defer></script>
 </head>
 <body>
@@ -156,11 +157,9 @@
           <button data-ftab="online" class="ftab">Online</button>
           <button data-ftab="all" class="ftab active">All</button>
           <button data-ftab="pending" class="ftab">Pending <span id="req-count"></span></button>
-          <button data-ftab="blocked" class="ftab">Blocked</button>
         </div>
         <div id="friend-reqs-wrap"><div class="chan-group-label">REQUESTS</div><div id="friend-reqs"></div></div>
         <div id="friend-list"></div>
-        <div id="blocked-list"></div>
       </div>
 
       <div id="stage" class="hidden">
@@ -328,6 +327,8 @@
       <button data-tab="games" class="set-tab">Games</button>
       <button data-tab="media" class="set-tab">Media</button>
       <button data-tab="notifs" class="set-tab">Notifications</button>
+      <button data-tab="blocked" class="set-tab">Blocked</button>
+      <button data-tab="themes" class="set-tab">Themes</button>
       <button data-tab="admin" class="set-tab hidden" id="set-tab-admin">Admin</button>
       <span class="spacer"></span>
       <button id="settings-close" class="mini">✕</button>
@@ -403,6 +404,8 @@
       <div id="set-games" class="set-pane hidden"></div>
       <div id="set-media" class="set-pane hidden"></div>
       <div id="set-notifs" class="set-pane hidden"></div>
+      <div id="set-blocked" class="set-pane hidden"></div>
+      <div id="set-themes" class="set-pane hidden"></div>
       <div id="set-admin" class="set-pane hidden"></div>
     </div>
   </div>

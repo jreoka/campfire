@@ -153,12 +153,79 @@ function setSettingsTab(t) {
   $('#set-games').classList.toggle('hidden', t !== 'games');
   $('#set-media').classList.toggle('hidden', t !== 'media');
   $('#set-notifs').classList.toggle('hidden', t !== 'notifs');
+  $('#set-blocked').classList.toggle('hidden', t !== 'blocked');
+  $('#set-themes').classList.toggle('hidden', t !== 'themes');
   $('#set-admin').classList.toggle('hidden', t !== 'admin');
   if (t === 'notifs') renderNotifsTab();
+  if (t === 'blocked') renderBlockedTab();
+  if (t === 'themes') renderThemesTab();
   if (t === 'games') renderGamesTab();
   if (t === 'media') renderMediaTab();
   else if (typeof stopMediaPreview === 'function') stopMediaPreview();
   if (t === 'admin' && typeof renderAdminTab === 'function') renderAdminTab();
+}
+// ---------- blocked users (moved here from the Home friends tabs) ----------
+async function renderBlockedTab() {
+  const box = $('#set-blocked');
+  if (!box) return;
+  try { await ensureFriends(); } catch {}
+  const blocked = (S.friends && S.friends.blocked) || [];
+  box.innerHTML = '';
+  const h = document.createElement('h4');
+  h.textContent = 'Blocked users';
+  h.style.margin = '1rem 0 .4rem';
+  box.appendChild(h);
+  const note = document.createElement('p');
+  note.className = 'muted small';
+  note.textContent = 'Blocked users are removed from your friends and cannot send you new friend requests.';
+  box.appendChild(note);
+  if (!blocked.length) {
+    box.insertAdjacentHTML('beforeend', '<p class="muted small">Nobody blocked.</p>');
+    return;
+  }
+  const list = document.createElement('div');
+  list.className = 'set-blocked-list';
+  for (const u of blocked) {
+    const row = friendRowEl(u);
+    row.appendChild(smallBtn('Unblock', async () => { await unblockUser(u.id); renderBlockedTab(); }));
+    list.appendChild(row);
+  }
+  box.appendChild(list);
+}
+// ---------- themes (dark = current skin, light, dracula) ----------
+const THEME_META = [
+  { id: 'dark', name: 'Dark', desc: 'The current Campfire look.' },
+  { id: 'light', name: 'Light', desc: 'Bright surfaces for daylight.' },
+  { id: 'dracula', name: 'Dracula', desc: 'Official Dracula palette.' },
+];
+function renderThemesTab() {
+  const box = $('#set-themes');
+  if (!box) return;
+  const cur = (typeof getTheme === 'function' ? getTheme() : 'dark');
+  box.innerHTML = '';
+  const h = document.createElement('h4');
+  h.textContent = 'Appearance';
+  h.style.margin = '1rem 0 .4rem';
+  box.appendChild(h);
+  const note = document.createElement('p');
+  note.className = 'muted small';
+  note.textContent = 'Applies instantly on this device.';
+  box.appendChild(note);
+  const grid = document.createElement('div');
+  grid.className = 'theme-grid';
+  for (const m of THEME_META) {
+    const b = document.createElement('button');
+    b.className = 'theme-card' + (m.id === cur ? ' sel' : '');
+    b.setAttribute('aria-pressed', m.id === cur ? 'true' : 'false');
+    b.innerHTML = `<span class="theme-prev prev-${m.id}" aria-hidden="true"><span class="tp-bar"></span><span class="tp-main"><span class="tp-dot"></span><span class="tp-line"></span><span class="tp-line short"></span></span></span><span class="theme-name">${m.name}${m.id === cur ? ' ✓' : ''}</span><span class="theme-desc">${m.desc}</span>`;
+    b.onclick = () => {
+      applyTheme(m.id);
+      toast(m.name + ' theme applied');
+      renderThemesTab();
+    };
+    grid.appendChild(b);
+  }
+  box.appendChild(grid);
 }
 document.querySelectorAll('.set-tab').forEach((b) => (b.onclick = () => { setSettingsTab(b.dataset.tab); if (b.dataset.tab === 'account') { renderSecurityTab(); renderDesktopApp(); } }));
 $('#btn-settings-rail').onclick = () => openSettings('profile');

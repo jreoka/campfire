@@ -286,6 +286,7 @@ async function unblockUser(id) {
 }
 function renderFriendLists() {
   const f = S.friends;
+  if (S.friendTab === 'blocked') S.friendTab = 'all'; // moved to Settings → Blocked
   document.querySelectorAll('#friend-tabs .ftab').forEach((b) => {
     b.classList.toggle('active', b.dataset.ftab === S.friendTab);
     b.onclick = () => { S.friendTab = b.dataset.ftab; renderFriendLists(); };
@@ -318,7 +319,7 @@ function renderFriendLists() {
       rq.appendChild(wrap);
     }
   }
-  // online / all friends tabs
+  // online / all friends tabs (hidden while viewing pending requests)
   const fl = $('#friend-list');
   fl.innerHTML = '';
   const showFriends = S.friendTab === 'online' || S.friendTab === 'all';
@@ -334,19 +335,6 @@ function renderFriendLists() {
       row.appendChild(smallBtn('Unfriend', () => unfriendUser(u.id, u.username), true));
       row.appendChild(smallBtn('Block', () => blockUser(u.id, u.username), true));
       fl.appendChild(row);
-    }
-  }
-  // blocked tab
-  const bl = $('#blocked-list');
-  bl.innerHTML = '';
-  bl.style.display = S.friendTab === 'blocked' ? '' : 'none';
-  if (S.friendTab === 'blocked') {
-    const blocked = f.blocked || [];
-    if (!blocked.length) bl.innerHTML = '<p class="muted small" style="padding:0 .7rem">Nobody blocked.</p>';
-    for (const u of blocked) {
-      const row = friendRowEl(u);
-      row.appendChild(smallBtn('Unblock', () => unblockUser(u.id)));
-      bl.appendChild(row);
     }
   }
   if (S.view === 'home' && !S.dmThreadId) renderActiveNow();

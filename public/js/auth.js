@@ -19,7 +19,7 @@ function renderTurnstile() {
     // user already pressed submit, re-submit automatically — no second click.
     S.tsWidget = turnstile.render(slot, {
       sitekey: S.turnstileKey,
-      theme: 'dark',
+      theme: (typeof getTheme === 'function' && getTheme() === 'light') ? 'light' : 'dark',
       callback: () => { if (tsNeeded && !submitting) doAuthSubmit(); },
       // Token sat unsent past its lifetime: re-arm the widget so the user
       // can solve again (the kept submit intent auto-submits on solve).

@@ -10,6 +10,25 @@ const store = {
   set sid(v) { v ? localStorage.setItem('cf_sid', v) : localStorage.removeItem('cf_sid'); },
 };
 const isCoarse = () => window.matchMedia && matchMedia('(hover: none)').matches;
+// ---------- themes (Settings → Themes): 'dark' (default Campfire skin) |
+// 'light' | 'dracula'. Stored globally in localStorage so the auth page and
+// the app shell match; applied via <html data-theme> before CSS paints
+// (see the inline head script in index.html — this keeps it live after).
+const THEME_IDS = ['dark', 'light', 'dracula'];
+function getTheme() {
+  try {
+    const t = localStorage.getItem('cf_theme');
+    return THEME_IDS.includes(t) ? t : 'dark';
+  } catch { return 'dark'; }
+}
+function applyTheme(t) {
+  if (!THEME_IDS.includes(t)) t = 'dark';
+  document.documentElement.setAttribute('data-theme', t);
+  try { localStorage.setItem('cf_theme', t); } catch {}
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = t === 'light' ? '#f2f4f8' : t === 'dracula' ? '#282a36' : '#07090e';
+}
+try { applyTheme(getTheme()); } catch {}
 // Tauri Android draws edge-to-edge; the CSS env() insets normally report the
 // status-bar/cutout size, but some WebViews report 0 — probe once and fall
 // back to a standard 30px status-bar pad so the header never sits under the
@@ -58,7 +77,7 @@ const S = {
   openFolderId: null, // id of the folder whose pop-out is expanded (null = none)
   view: 'server', // 'server' | 'home'
   dms: [], friends: { friends: [], pendingIn: [], pendingOut: [], blocked: [] },
-  friendTab: 'all', // friends sidebar tab: 'online' | 'all' | 'pending' | 'blocked'
+  friendTab: 'all', // friends page tab: 'online' | 'all' | 'pending' (blocked lives in Settings)
   dmThreadId: null, dmMessages: new Map(), // threadId -> [msgs]
   dmUnread: new Map(), // threadId -> unread DM count (drives DM row + home button badges)
   voiceOccupancy: new Map(), // channelId -> [peers]
