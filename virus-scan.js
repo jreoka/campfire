@@ -54,13 +54,19 @@ const MAX_FILE_BYTES = parseInt(process.env.MAX_FILE_MB || '100', 10) * 1024 * 1
 const KICK_MS = 500;
 const IDLE_MS = 10000;
 const MAX_ATTEMPTS = 3;
+// Parallel scan slots: clamd handles concurrent INSTREAM sessions fine, and
+// each scan streams (never buffers), so slots stay cheap. One slot per
+// file keeps slow/large files from head-of-line blocking small ones.
+const _conc = parseInt(process.env.VIRUS_SCAN_CONCURRENCY || '3', 10);
+const CONCURRENCY = Math.min(10, Math.max(1, Number.isFinite(_conc) ? _conc : 3));
 
 const log = (...a) => console.log('[virusscan]', ...a);
 const warn = (...a) => console.warn('[virusscan]', ...a);
 
 let started = false;
 let ready = false; // tables exist; worker loop may run
-let busy = false;
+let active = 0; // scans currently in flight (<= CONCURRENCY)
+const claimed = new Set(); // keys held by in-flight slots (single process)
 let timer = null;
 let noEngine = false; // binaries missing — fail open
 let engineFailed = false; // freshclam/clamd broken — fail open, loudly
@@ -357,15 +363,39 @@ async function markRow(key, status, error) {
 
 async function tick() {
   if (!ENABLED || !ready) return 'deferred';
-  if (busy) return 'busy';
-  let row = null;
+  if (active >= CONCURRENCY) return 'busy';
+  const row = await claimRow();
+  if (!row) return 'idle';
+  active++;
+  stats.ticks++;
+  stats.lastTickAt = now();
+  processRow(row).then(
+    (hint) => schedule(hint === 'later' ? 5000 : 400), // freed slot refills fast
+    (e) => { warn('scan failed: ' + String((e && e.message) || e).slice(0, 160)); schedule(1000); }
+  ).finally(() => { active--; });
+  return 'more';
+}
+
+// Oldest pending row no live slot holds. The single loop calls this
+// sequentially, so two slots can never claim the same key (and a crash
+// just leaves the row pending for the next boot).
+async function claimRow() {
+  let rows = [];
   try {
-    row = await db.prepare("SELECT key, attempts FROM file_scans WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1").get();
+    rows = await db.prepare("SELECT key, attempts FROM file_scans WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?").all(CONCURRENCY + active + 1);
   } catch (e) {
     warn('queue read failed: ' + String((e && e.message) || e).slice(0, 160));
-    return 'idle';
+    return null;
   }
-  if (!row) return 'idle';
+  for (const r of rows) {
+    if (r && r.key && !claimed.has(r.key)) { claimed.add(r.key); return r; }
+  }
+  return null;
+}
+
+// Returns 'done' (slot refills immediately) or 'later' (back off: engine
+// unavailable, nothing to do until ensureChain finishes).
+async function processRow(row) {
   // Fail-open paths: no engine (local dev) marks clean; a broken engine
   // marks `error` (served, but visible in admin) — never wedge uploads.
   if (noEngine) {
@@ -373,33 +403,30 @@ async function tick() {
     stats.scanned++; stats.clean++;
     stats.lastScan = { key: row.key, result: 'clean', at: now() };
     await emitChange(row.key, 'clean');
-    return 'more';
+    return 'done';
   }
   if (engineFailed) {
     await markRow(row.key, 'error', 'engine_unavailable');
     stats.scanned++; stats.errors++;
     stats.lastError = { key: row.key, error: 'engine_unavailable', at: now() };
     await emitChange(row.key, 'error');
-    return 'more';
+    return 'done';
   }
   if (!clamdReady) {
     ensureChain().catch(() => {});
-    return 'deferred';
+    return 'later';
   }
   if (!(await pingClamd(3000))) {
     clamdReady = false;
     ensureChain().catch(() => {});
-    return 'deferred';
+    return 'later';
   }
-  busy = true;
-  stats.ticks++;
-  stats.lastTickAt = now();
   try {
     const opened = await openFileStream(row.key);
     if (!opened) {
       // Bytes already gone (deleted message, sweep) — nothing to gate.
       try { await db.prepare('DELETE FROM file_scans WHERE key = ?').run(row.key); } catch {}
-      return 'more';
+      return 'done';
     }
     const timeoutMs = Math.min(600000, 120000 + (Number(opened.size) || 0));
     let verdict;
@@ -425,7 +452,7 @@ async function tick() {
       warn('INFECTED (' + virus + '): deleted bytes for ' + row.key);
       await emitChange(row.key, 'infected');
     }
-    return 'more';
+    return 'done';
   } catch (e) {
     const err = String((e && e.message) || e).slice(0, 160);
     stats.errors++;
@@ -438,9 +465,9 @@ async function tick() {
       try { await db.prepare('UPDATE file_scans SET attempts = attempts + 1, error = ? WHERE key = ?').run(err, row.key); } catch {}
     }
     if (/ECONNREFUSED|clamd_closed|clamd_timeout/.test(err)) { clamdReady = false; ensureChain().catch(() => {}); }
-    return 'more';
+    return 'done';
   } finally {
-    busy = false;
+    claimed.delete(row.key);
   }
 }
 
@@ -453,13 +480,19 @@ function schedule(ms) {
 async function loop() {
   timer = null;
   let st = 'idle';
-  try { st = await tick(); }
+  try {
+    // Fill every free slot (each 'more' claimed one row into a slot).
+    for (let i = 0; i < CONCURRENCY; i++) {
+      st = await tick();
+      if (st !== 'more') break;
+    }
+  }
   catch (e) { warn('tick failed: ' + String((e && e.message) || e).slice(0, 200)); st = 'idle'; }
   schedule(st === 'more' ? 500 : st === 'busy' || st === 'deferred' ? 5000 : IDLE_MS);
 }
 
 function kickVirusScan() {
-  if (!started || !ENABLED || !ready || busy) return;
+  if (!started || !ENABLED || !ready || active >= CONCURRENCY) return;
   schedule(KICK_MS);
 }
 
@@ -487,6 +520,7 @@ async function getScanStats() {
   return {
     enabled: ENABLED, engine: !ENABLED ? 'off' : noEngine ? 'none' : engineFailed ? 'failed' : clamdReady ? 'ready' : 'starting',
     clamdReady, dbPresent, dbAgeMs, counts,
+    concurrency: CONCURRENCY, active, busy: active > 0,
     startedAt: stats.startedAt, ticks: stats.ticks,
     scanned: stats.scanned, clean: stats.clean, infected: stats.infected, errors: stats.errors,
     lastTickAt: stats.lastTickAt, lastScan: stats.lastScan, lastError: stats.lastError,
