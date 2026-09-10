@@ -5,7 +5,7 @@
 //   /uploads/<sub>/<file>?v=<cachekey>
 // so switching backends needs no DB or frontend changes — only where the
 // bytes live and how /uploads/* is served (see server.js).
-const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 
 const BUCKET = process.env.S3_BUCKET || '';
 const ENDPOINT = process.env.S3_ENDPOINT || '';
@@ -39,6 +39,8 @@ function s3KeyFromUrl(url) {
   const key = clean.slice('/uploads/'.length);
   if (!key || key.includes('..') || key.startsWith('/') || /[\0]/.test(key)) return null;
   if (!/^[A-Za-z0-9._\/-]+$/.test(key)) return null;
+  // Internal prefixes are never servable over HTTP (no guessing URLs).
+  if (key === 'backups' || key.startsWith('backups/')) return null;
   return key;
 }
 
@@ -66,6 +68,25 @@ async function s3Head(key) {
   return s3().send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }));
 }
 
+// List every object under a prefix (paginated). Used by the DB backup
+// rotation in backup.js.
+async function s3List(prefix) {
+  const out = [];
+  let token = undefined;
+  do {
+    const r = await s3().send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix, ContinuationToken: token }));
+    for (const o of r.Contents || []) out.push({ key: o.Key, size: o.Size || 0, modified: o.LastModified || null });
+    token = r.IsTruncated ? r.NextContinuationToken : undefined;
+  } while (token);
+  return out;
+}
+
+// Awaited single-key delete (s3Delete above stays fire-and-forget for
+// request-path callers that must stay synchronous).
+async function s3DeleteNow(key) {
+  await s3().send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+}
+
 const MIME_BY_EXT = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.gif': 'image/gif', '.webp': 'image/webp', '.avif': 'image/avif',
@@ -81,4 +102,4 @@ function mimeForFilename(name) {
   return MIME_BY_EXT[ext] || 'application/octet-stream';
 }
 
-module.exports = { s3Enabled, s3KeyFromUrl, s3Put, s3Get, s3Delete, s3Head, mimeForFilename, S3_BUCKET: BUCKET };
+module.exports = { s3Enabled, s3KeyFromUrl, s3Put, s3Get, s3Delete, s3DeleteNow, s3Head, s3List, mimeForFilename, S3_BUCKET: BUCKET };

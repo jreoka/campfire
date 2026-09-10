@@ -30,7 +30,7 @@ const APP_VERSION = (() => {
       const p = path.join(dir, e.name);
       return e.isDirectory() ? walk(p) : [p];
     });
-    for (const f of [path.join(__dirname, 'server.js'), path.join(__dirname, 'db.js'), path.join(__dirname, 'package.json'), ...walk(path.join(__dirname, 'public'))]) {
+    for (const f of [path.join(__dirname, 'server.js'), path.join(__dirname, 'db.js'), path.join(__dirname, 'backup.js'), path.join(__dirname, 'storage.js'), path.join(__dirname, 'package.json'), ...walk(path.join(__dirname, 'public'))]) {
       try { h.update(fs.readFileSync(f)); } catch {}
     }
     return h.digest('hex').slice(0, 12);
@@ -4228,4 +4228,5 @@ setInterval(() => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[campfire] listening on :${PORT}  db=${process.env.DB_PATH || 'data/campfire.db'}`);
+  try { require('./backup').startBackups(); } catch (e) { console.error('[backup] scheduler failed to start:', (e && e.message) || e); }
 });

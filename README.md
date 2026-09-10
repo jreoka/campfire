@@ -115,6 +115,19 @@ docker compose stop && cp -r data data-backup && docker compose start
 
 To reset: `docker compose down && rm -rf data && docker compose up -d`.
 
+When `S3_*` is configured, the database additionally backs itself up to
+the top-level `backups/` folder in the bucket: a gzipped snapshot at
+00:00 and 12:00 server-local time every day (plus a catch-up run after
+boot when the newest backup is stale), keeping the newest 10 dumps
+(`BACKUP_KEEP` overrides). Snapshots are taken online — no restart or
+downtime. The `backups/` prefix is never served over HTTP, so dump URLs
+can't be guessed or fetched; restore one with any S3 client, e.g.:
+
+```bash
+aws --endpoint-url https://<account-id>.r2.cloudflarestorage.com \
+  s3 cp s3://campfire/backups/campfire-<stamp>.db.gz - | gunzip > campfire.db
+```
+
 ## 7. Windows desktop app
 
 `app/` is a small Tauri (WebView2) wrapper of the web app — tray icon, start-on-login, and automatic game detection. While a game is running it shows "Playing …" next to your name (separate from your custom status) and logs playtime, which drives per-game levels and day-streaks shown on profile cards. Builds ship via GitHub Releases (`.github/workflows/app-windows.yml`). See `app/README.md`.
