@@ -54,6 +54,16 @@ const MAX_FILE_BYTES = parseInt(process.env.MAX_FILE_MB || '100', 10) * 1024 * 1
 const KICK_MS = 500;
 const IDLE_MS = 10000;
 const MAX_ATTEMPTS = 3;
+// I/O timeouts: every awaited network call below is bounded. An unbounded
+// S3 stall once wedged a slot forever (claim held, row at attempts=0,
+// small image "stuck on scanning" on an otherwise idle box).
+const S3_HEAD_TIMEOUT_MS = 30000;
+const S3_GET_TIMEOUT_MS = 30000;
+const S3_DELETE_TIMEOUT_MS = 30000;
+// Watchdog: a slot holding a claim longer than this (max scan timeout +
+// headroom) is presumed wedged — release the claim + count an attempt so
+// another slot retries. The dangling op, if it ever lands, is idempotent.
+const SLOT_TIMEOUT_MS = 12 * 60 * 1000;
 // Parallel scan slots: clamd handles concurrent INSTREAM sessions fine, and
 // each scan streams (never buffers), so slots stay cheap. One slot per
 // file keeps slow/large files from head-of-line blocking small ones.
@@ -67,6 +77,7 @@ let started = false;
 let ready = false; // tables exist; worker loop may run
 let active = 0; // scans currently in flight (<= CONCURRENCY)
 const claimed = new Set(); // keys held by in-flight slots (single process)
+const claimAt = new Map(); // key -> claim timestamp (watchdog)
 let timer = null;
 let noEngine = false; // binaries missing — fail open
 let engineFailed = false; // freshclam/clamd broken — fail open, loudly
@@ -319,18 +330,45 @@ async function ensureChain() {
 
 // ---------- file access ----------
 
+function withTimeout(p, ms, label) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(label || 'io_timeout')), ms);
+    try { t.unref(); } catch {}
+    Promise.resolve(p).then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); }
+    );
+  });
+}
+
 async function openFileStream(key) {
   // Returns {stream, size} or null when the bytes are already gone.
+  // Genuinely-missing objects (NoSuchKey) fall through to null (the row
+  // is dropped); any other storage failure THROWS so the row retries with
+  // attempts++ instead of being mistaken for gone (an error is fail-open
+  // but stays visible, a wrong null would silently skip the scan).
+  const isGone = (e) => {
+    const code = e?.$metadata?.httpStatusCode;
+    return code === 404 || code === 403 || e?.name === 'NoSuchKey' || e?.name === 'NotFound';
+  };
   if (storage.s3Enabled()) {
+    let head = null;
     try {
-      const head = await storage.s3Head(key).catch(() => null);
-      if (!head) {
-        // Fall through to disk: covers files still local from before an S3 migration.
-      } else {
-        const data = await storage.s3Get(key);
-        if (data && data.Body) return { stream: data.Body, size: Number(head.ContentLength) || 0 };
+      head = await withTimeout(storage.s3Head(key), S3_HEAD_TIMEOUT_MS, 's3head_timeout');
+    } catch (e) {
+      if (!isGone(e)) throw e;
+    }
+    if (head) {
+      let data = null;
+      try {
+        data = await withTimeout(storage.s3Get(key), S3_GET_TIMEOUT_MS, 's3get_timeout');
+      } catch (e) {
+        if (!isGone(e)) throw e;
       }
-    } catch { /* try disk below */ }
+      if (data && data.Body) return { stream: data.Body, size: Number(head.ContentLength) || 0 };
+      if (data && !data.Body) return null;
+      // head ok but get failed-gone: fall through to disk before giving up.
+    }
   }
   const p = path.join(UPLOAD_DIR, key);
   if (!path.resolve(p).startsWith(path.resolve(UPLOAD_DIR))) return null;
@@ -344,7 +382,7 @@ async function openFileStream(key) {
 async function deleteBytes(key) {
   if (!key) return;
   if (storage.s3Enabled()) {
-    try { await storage.s3DeleteNow(key); } catch {}
+    try { await withTimeout(storage.s3DeleteNow(key), S3_DELETE_TIMEOUT_MS, 's3delete_timeout'); } catch {}
   }
   const p = path.join(UPLOAD_DIR, key);
   if (path.resolve(p).startsWith(path.resolve(UPLOAD_DIR))) {
@@ -388,9 +426,22 @@ async function claimRow() {
     return null;
   }
   for (const r of rows) {
-    if (r && r.key && !claimed.has(r.key)) { claimed.add(r.key); return r; }
+    if (r && r.key && !claimed.has(r.key)) { claimed.add(r.key); claimAt.set(r.key, now()); return r; }
   }
   return null;
+}
+
+// Release claims stuck longer than SLOT_TIMEOUT_MS (wedged I/O the
+// per-call timeouts somehow missed). The row stays pending for retry.
+async function reapStuckClaims() {
+  const cutoff = now() - SLOT_TIMEOUT_MS;
+  for (const [key, at] of claimAt) {
+    if (at > cutoff) continue;
+    claimAt.delete(key);
+    claimed.delete(key);
+    warn('slot watchdog: released stuck claim on ' + key);
+    try { await db.prepare('UPDATE file_scans SET attempts = attempts + 1 WHERE key = ?').run(key); } catch {}
+  }
 }
 
 // Returns 'done' (slot refills immediately) or 'later' (back off: engine
@@ -468,6 +519,7 @@ async function processRow(row) {
     return 'done';
   } finally {
     claimed.delete(row.key);
+    claimAt.delete(row.key);
   }
 }
 
@@ -481,6 +533,7 @@ async function loop() {
   timer = null;
   let st = 'idle';
   try {
+    try { await reapStuckClaims(); } catch {}
     // Fill every free slot (each 'more' claimed one row into a slot).
     for (let i = 0; i < CONCURRENCY; i++) {
       st = await tick();
@@ -521,6 +574,7 @@ async function getScanStats() {
     enabled: ENABLED, engine: !ENABLED ? 'off' : noEngine ? 'none' : engineFailed ? 'failed' : clamdReady ? 'ready' : 'starting',
     clamdReady, dbPresent, dbAgeMs, counts,
     concurrency: CONCURRENCY, active, busy: active > 0,
+    stuck: [...claimAt].map(([key, at]) => ({ key, ageMs: now() - at })).filter((x) => x.ageMs > 60000),
     startedAt: stats.startedAt, ticks: stats.ticks,
     scanned: stats.scanned, clean: stats.clean, infected: stats.infected, errors: stats.errors,
     lastTickAt: stats.lastTickAt, lastScan: stats.lastScan, lastError: stats.lastError,
