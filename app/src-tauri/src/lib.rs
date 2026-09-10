@@ -274,11 +274,17 @@ fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-// Single left-click toggles the window (open/close), like Discord/Steam.
+// Single left-click toggles the window, like Discord/Steam — but a click may
+// never *lose* a visible window: only an already-focused (frontmost) window
+// gets tucked away to the tray. Clicking the tray with the window visible but
+// sitting behind something else raises it instead.
 #[cfg(desktop)]
 fn toggle_main_window<R: Runtime>(app: &AppHandle<R>) {
     if let Some(w) = app.get_webview_window("main") {
-        if w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false) {
+        let visible = w.is_visible().unwrap_or(false);
+        let minimized = w.is_minimized().unwrap_or(false);
+        let focused = w.is_focused().unwrap_or(false);
+        if visible && !minimized && focused {
             let _ = w.hide();
         } else {
             show_main_window(app);
