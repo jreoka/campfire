@@ -910,7 +910,7 @@ function attChipHTML(a) {
     : src ? `<img class="chip-thumb" src="${esc(src)}" alt="" />`
       : `<span class="chip-thumb ph">${a.kind === 'video' ? CHIP_VID_ICON : CHIP_IMG_ICON}</span>`;
   return `${thumb}<span class="chip-info"><span class="chip-name">${esc(a.name)}</span>`
-    + `<span class="chip-sub">${fmtSize(a.size)}${a.spoiler ? ' · Spoiler' : ''}${a.scan === 'pending' ? ' · Processing…' : ''}</span></span>`;
+    + `<span class="chip-sub">${fmtSize(a.size)}${a.spoiler ? ' · Spoiler' : ''}</span></span>`;
 }
 function renderComposerMeta() {
   const box = $('#attach-preview');
