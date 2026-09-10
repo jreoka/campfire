@@ -73,12 +73,27 @@ function storyServerTray(serverId) { return (storyData.servers || []).find((t) =
 function serverTrayUnseen(t) {
   return storyLive(t && t.items).filter((i) => !i.seen && !(i.author && S.me && i.author.id === S.me.id)).length;
 }
-// Unseen count across everything I can watch (drives the Home dot/rows).
-function storyUnseenTotal() {
-  let n = 0;
-  for (const t of storyUserTrays()) n += t.unseen;
-  for (const t of storyData.servers || []) n += serverTrayUnseen(t);
-  return n;
+// Home counts people and stories, not trays (drives the Stories row label and
+// the unseen badge/dot). One story is delivered in several trays — a
+// friends/everyone tray per person plus a tray per server it was posted to —
+// so one account posting once to friends *and* to a server we share would
+// otherwise read as "2 people with stories" / "2 new". My own posts count as a
+// person (the row's avatar is usually mine) but never as unseen.
+function storyHomeCounts() {
+  const byStory = new Map();
+  const add = (list) => {
+    for (const t of list || []) for (const it of storyLive(t.items)) byStory.set(it.id, it);
+  };
+  add(storyUserTrays());
+  add(storyData.servers);
+  const people = new Set();
+  let unseen = 0;
+  for (const it of byStory.values()) {
+    const uid = it.author && it.author.id;
+    if (uid) people.add(uid);
+    if (!it.seen && (!S.me || uid !== S.me.id)) unseen++;
+  }
+  return { people: people.size, unseen };
 }
 function storyAgo(ts) {
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
@@ -302,9 +317,8 @@ function renderHomeStories() {
   const btn = $('#btn-stories');
   if (!btn) return;
   const trays = storyUserTrays();
-  const mineItems = storyLive(storyData.mine && storyData.mine.items);
   const srvTrays = (storyData.servers || []).filter((t) => storyLive(t.items).length);
-  const unseen = storyUnseenTotal();
+  const { people: n, unseen } = storyHomeCounts();
   const av = $('#stories-nav-av');
   if (av) {
     av.innerHTML = '';
@@ -327,7 +341,6 @@ function renderHomeStories() {
   if (homeDot) homeDot.classList.toggle('hidden', !unseen);
   const sub = $('#stories-nav-sub');
   if (sub) {
-    const n = trays.length + srvTrays.length;
     sub.textContent = unseen ? `${unseen} new from ${n} ${n === 1 ? 'person' : 'people'}`
       : (n ? `${n} ${n === 1 ? 'person' : 'people'} with stories` : 'No stories yet — be the first');
   }
