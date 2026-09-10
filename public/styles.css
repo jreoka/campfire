@@ -1402,6 +1402,7 @@ body{touch-action:manipulation}
 .theme-prev .tp-line.short{width:55%}
 .theme-prev.prev-dark{background:#07090e}.theme-prev.prev-dark .tp-bar{background:#04070c}.theme-prev.prev-dark .tp-dot{background:#5b6cff}.theme-prev.prev-dark .tp-line{background:#1d2536}
 .theme-prev.prev-light{background:#eef1f6}.theme-prev.prev-light .tp-bar{background:#e2e7f0}.theme-prev.prev-light .tp-dot{background:#5b6cff}.theme-prev.prev-light .tp-line{background:#cbd3e3}
+.theme-prev.prev-dracula{background:#282a36}.theme-prev.prev-dracula .tp-bar{background:#1e1f29}.theme-prev.prev-dracula .tp-dot{background:#bd93f9}.theme-prev.prev-dracula .tp-line{background:#44475a}
 .theme-prev.prev-oled{background:#000}.theme-prev.prev-oled .tp-bar{background:#0a0a0c}.theme-prev.prev-oled .tp-dot{background:#5b6cff}.theme-prev.prev-oled .tp-line{background:#1e1e23}
 .theme-name{font-weight:750;font-size:.9rem}
 .theme-desc{font-size:.76rem;color:var(--muted)}
