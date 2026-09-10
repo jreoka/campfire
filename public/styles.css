@@ -427,8 +427,12 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .msg:hover{background:rgba(255,255,255,.05)}
 .msg .avatar{width:38px;height:38px}
 .msg.grouped{padding-top:.1rem;padding-bottom:.1rem}
-.msg.grouped .avatar.ghost{background:none;box-shadow:none;cursor:default;font-weight:400;overflow:visible}
-.msg.grouped .avatar .gts{display:none;font-size:.62rem;color:var(--muted);white-space:nowrap}
+/* Grouped rows have no avatar, but the gutter still shows the hover timestamp.
+   The ghost keeps its 38px width and rides the row's content height instead of
+   a fixed 38px box — that box was inflating every one-line follow-up by ~16px
+   (measured: 21.3px of air between grouped lines, now 5.6px). */
+.msg.grouped .avatar.ghost{background:none;box-shadow:none;cursor:default;font-weight:400;overflow:visible;height:auto;align-self:stretch;position:relative}
+.msg.grouped .avatar .gts{display:none;position:absolute;left:0;right:0;top:.12rem;text-align:center;font-size:.62rem;color:var(--muted);white-space:nowrap}
 .msg.grouped:hover .avatar .gts{display:block}
 .msg .body{min-width:0;flex:1}
 .msg .head{display:flex;gap:.5rem;align-items:baseline}
