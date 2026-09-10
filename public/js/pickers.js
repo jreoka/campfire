@@ -182,6 +182,9 @@ function insertAtCursor(input, text) {
   input.value = input.value.slice(0, s) + text + input.value.slice(e);
   input.selectionStart = input.selectionEnd = s + text.length;
   syncComposerRender();
+  // Programmatic insert (emoji / mention pickers) fires no 'input' event, so
+  // the composer draft has to be told about it explicitly.
+  try { draftSoon(input, draftCtxForEl(input)); } catch {}
 }
 let gifSearchT = null;
 function applyPickerSearch(q) {
@@ -759,15 +762,18 @@ function renderHistRow(box, items, kind, wide) {
     box.appendChild(b);
   }
 }
-async function openThread(rootId) {
+async function openThread(rootId, opts = {}) {
+  flushDrafts();
   try {
     const { root, replies } = await api(`/api/servers/${S.serverId}/channels/${S.channelId}/threads/${rootId}`);
     S.thread = { rootId, channelId: S.channelId, root, replies };
     S.threadReplyTo = null; renderThreadComposerMeta();
     $('#thread-sub').textContent = '#' + chanName(S.channelId);
     $('#thread-panel').classList.remove('hidden');
+    rememberView(); // a reload lands you back in the thread you had open
     renderThread(true);
-  } catch { toast('Could not open thread'); }
+    applyComposerDraft(); // the reply you were typing in this thread, if any
+  } catch { if (!opts.silent) toast('Could not open thread'); }
 }
 function renderThread(scroll = false) {
   if (!S.thread) return;
@@ -786,10 +792,12 @@ function renderThread(scroll = false) {
   else restoreListAnchor(repBox, anchor, keepDist);
 }
 function closeThread(silent) {
+  flushDrafts();
   S.thread = null;
   S.threadReplyTo = null; renderThreadComposerMeta();
   const p = $('#thread-panel');
   if (p) p.classList.add('hidden');
+  if (!silent) rememberView();
 }
 // Active threads panel: threads you're part of with a message in the last
 // 4 days (header Threads button). Rows jump straight into the thread.
@@ -927,7 +935,9 @@ $('#thread-composer').addEventListener('submit', (e) => {
   const inp = $('#in-thread');
   const content = inp.value.trim();
   if (!content) return;
+  const ctx = draftThreadCtx();
   inp.value = '';
+  draftClear(ctx); // sent: the reply draft goes with it
   sendChat(content, { threadRoot: S.thread.rootId, replyTo: S.threadReplyTo?.id || null });
   S.threadReplyTo = null;
   renderThreadComposerMeta();

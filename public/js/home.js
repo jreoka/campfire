@@ -17,6 +17,7 @@ function openServerView() {
   paintDmCallButtons();
 }
 async function openHome() {
+  flushDrafts(); // file the outgoing conversation's text before its context changes
   saveScrollPos();
   closeServerSettings();
   S.view = 'home';
@@ -42,6 +43,7 @@ async function openHome() {
 // Sidebar Friends button → back to the friends menu in the main panel.
 function showFriendsPanel() {
   if (S.view !== 'home') { openHome(); return; }
+  flushDrafts(); // leaving a DM — its text must be in the store before the context clears
   saveScrollPos();
   S.dmThreadId = null;
   renderDmBlank();

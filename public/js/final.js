@@ -196,6 +196,10 @@ function syncComposerRender() {
 $('#in-message').addEventListener('input', syncComposerRender);
 $('#in-message').addEventListener('input', (e) => composerAutoGrow(e.target));
 $('#in-thread').addEventListener('input', (e) => composerAutoGrow(e.target));
+// Drafts: keep what you're typing for the conversation you're typing it in, so
+// a reload (auto-update, deploy, F5) brings it back with the chat.
+$('#in-message').addEventListener('input', (e) => draftSoon(e.target, draftCtx()));
+$('#in-thread').addEventListener('input', (e) => draftSoon(e.target, draftThreadCtx()));
 // Composer auto-grows with content (Discord-style); caps at 40% of the viewport.
 // scrollHeight excludes the border but the height we set is border-box,
 // so add the border back or an empty box gets a tiny (2px) scroll range.
@@ -314,7 +318,7 @@ function pollVersion() {
   }
 }
 window.addEventListener('beforeunload', () => {
-  try { sessionStorage.setItem('cf_draft', JSON.stringify({ s: S.serverId, c: S.channelId, t: document.querySelector('#in-message') ? document.querySelector('#in-message').value : '' })); } catch {}
+  flushDrafts(); // synchronous localStorage write — the last keystrokes survive a reload
   rememberView();
 });
 

@@ -183,6 +183,7 @@ function folderOpenBox(f) {
 
 
 async function selectServer(id) {
+  flushDrafts(); // the outgoing conversation's text is filed before its context changes
   openServerView();
   S.serverId = id;
   S.channelId = null;
@@ -355,6 +356,7 @@ function confirmDeleteChannel(c) {
   }, { danger: true });
 }
 async function selectChannel(id, opts = {}) {
+  flushDrafts(); // file the previous channel's text before its context changes
   saveScrollPos();
   S.channelId = id;
   rememberView();
@@ -378,6 +380,7 @@ async function selectChannel(id, opts = {}) {
   }
   $('#composer').classList.remove('hidden');
   $('#in-message').placeholder = ch ? `Message #${ch.name}` : 'Message…';
+  applyComposerDraft(); // this channel's own unfinished text, if any
   $('#messages').classList.remove('hidden');
   renderTopic();
   paintSlowmodeHint();

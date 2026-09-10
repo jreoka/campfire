@@ -1401,6 +1401,7 @@ $('#composer').addEventListener('submit', (e) => {
   e.preventDefault();
   const inp = $('#in-message');
   const content = inp.value.trim();
+  const ctx = draftCtx();
   inp.value = '';
   hideMentionPop();
   if (S.view === 'home') {
@@ -1410,6 +1411,7 @@ $('#composer').addEventListener('submit', (e) => {
     if ((!content && !S.pendingAtts.length) || !S.serverId || !S.channelId) { inp.value = content; return; }
     sendChat(content, { attachments: S.pendingAtts, replyTo: S.replyTo?.id || null });
   }
+  draftClear(ctx); // sent: the draft goes with it
   S.pendingAtts = []; S.replyTo = null;
   renderComposerMeta();
   syncComposerRender();

@@ -366,7 +366,104 @@ function rememberView() {
     s: S.view === 'server' ? S.serverId : null,
     c: S.view === 'server' ? S.channelId : null,
     dm: S.view === 'home' ? S.dmThreadId : null,
+    // Only a thread that belongs to the channel we're remembering: a panel
+    // left open across a channel switch must not come back in the wrong one.
+    th: S.view === 'server' && S.thread && S.thread.channelId === S.channelId ? S.thread.rootId : null,
   };
   try { localStorage.setItem('cf_view_' + S.me.id, JSON.stringify(v)); } catch {}
+}
+
+/* ---------- composer drafts ----------
+ * Text in the message box (and the thread reply box) is saved as you type,
+ * per conversation, so a reload — the auto-updater, a deploy, an accidental
+ * F5, a crash — never eats what was being written. Per account, in
+ * localStorage, so signing in as someone else never surfaces leftover text.
+ * Contexts: 's:<serverId>:<channelId>', 'd:<threadId>', 't:<rootMessageId>'. */
+const DRAFTS_MAX = 40;
+const DRAFTS_TTL = 30 * 864e5;
+function draftsKey() { return S.me ? 'cf_drafts_' + S.me.id : null; }
+function draftCtx() {
+  if (S.view === 'home') return S.dmThreadId ? 'd:' + S.dmThreadId : null;
+  return S.serverId && S.channelId ? 's:' + S.serverId + ':' + S.channelId : null;
+}
+function draftThreadCtx() { return S.thread && S.thread.rootId ? 't:' + S.thread.rootId : null; }
+// Which draft key a composer element belongs to.
+function draftCtxForEl(el) { return el && el.id === 'in-thread' ? draftThreadCtx() : draftCtx(); }
+function draftGet(ctx) {
+  if (!ctx) return '';
+  let all = {};
+  const k = draftsKey();
+  if (!k) return '';
+  try { all = JSON.parse(localStorage.getItem(k) || '{}') || {}; } catch { return ''; }
+  const d = all[ctx];
+  if (!d || typeof d.t !== 'string') return '';
+  return Date.now() - (d.at || 0) > DRAFTS_TTL ? '' : d.t;
+}
+function draftSet(ctx, text) {
+  const k = draftsKey();
+  if (!k || !ctx) return;
+  let all = {};
+  try { all = JSON.parse(localStorage.getItem(k) || '{}') || {}; } catch { all = {}; }
+  // Deleting first puts the key at the end when it is re-added, so the stored
+  // order is write order (same-millisecond writes still prune deterministically).
+  delete all[ctx];
+  if (text) all[ctx] = { t: text, at: Date.now() };
+  // Keep the store small: oldest writes fall off the front, anything past the
+  // TTL is dropped.
+  const cut = Date.now() - DRAFTS_TTL;
+  const keys = Object.keys(all).filter((x) => all[x] && (all[x].at || 0) >= cut);
+  const out = {};
+  for (const x of keys.slice(-DRAFTS_MAX)) out[x] = all[x];
+  try { localStorage.setItem(k, JSON.stringify(out)); } catch {}
+}
+// Clearing has to kill the debounced write too: sending a message clears the
+// draft, and a pending keystroke from a moment earlier would otherwise land in
+// the store 300ms later as a phantom draft of the message just sent.
+function draftClear(ctx) {
+  if (draftPending && (!ctx || draftPending.ctx === ctx)) {
+    clearTimeout(draftTimer);
+    draftTimer = null;
+    draftPending = null;
+  }
+  draftSet(ctx, '');
+}
+// Typing is debounced, and the pending write remembers the context it was
+// typed in — so switching chats right after typing still files the text under
+// the conversation it belongs to. flushDrafts() writes it out synchronously
+// (beforeunload, or right before a context switch).
+let draftTimer = null, draftPending = null;
+function draftSoon(el, ctx) {
+  if (!el || !ctx) return;
+  draftPending = { ctx, text: el.value };
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(flushDrafts, 300);
+}
+function flushDrafts() {
+  clearTimeout(draftTimer);
+  draftTimer = null;
+  const p = draftPending;
+  draftPending = null;
+  if (p) draftSet(p.ctx, p.text);
+}
+// Put the right drafts back into whatever conversation is open now: the main
+// box from its channel/DM key, the thread box from its root message. Called at
+// boot and on every channel / DM / thread switch.
+function applyComposerDraft() {
+  const ta = $('#in-message');
+  const ctx = draftCtx();
+  if (ta && ctx) {
+    const t = draftGet(ctx);
+    if (ta.value !== t) {
+      ta.value = t;
+      try { syncComposerRender(); } catch {}
+      try { composerAutoGrow(ta); } catch {}
+    }
+  }
+  const ti = $('#in-thread');
+  const tctx = draftThreadCtx();
+  if (ti && tctx) {
+    const t = draftGet(tctx);
+    if (ti.value !== t) { ti.value = t; try { composerAutoGrow(ti); } catch {} }
+  }
 }
 

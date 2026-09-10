@@ -363,6 +363,7 @@ $('#chan-topic').onclick = () => {
   if (desc) openModal(`#${ch.name}`, `<p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(desc)}</p>`, 'Close', null);
 };
 async function selectDmThread(id) {
+  flushDrafts(); // file the previous conversation's text before its context changes
   saveScrollPos();
   S.dmThreadId = id;
   rememberView();
@@ -389,6 +390,7 @@ async function selectDmThread(id) {
   paintDmCallButtons();
   try { clearTyping(); } catch {}
   $('#in-message').placeholder = t.isGroup ? `Message ${t.name || 'group'}` : `Message @${(peer || {}).username || ''}`;
+  applyComposerDraft(); // this DM's own unfinished text, if any
   S.replyTo = null; S.pendingAtts = []; S.editing = null;
   renderComposerMeta();
   // Instant: paint the cached tail (if any) at the remembered anchor so

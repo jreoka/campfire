@@ -226,6 +226,15 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   throwaway database: a second site admin gets `owner_protected` from every
   account route and from the account-level report actions, the owner still
   manages their own account and other users, and ordinary users are unaffected.
+  `node scripts/test-composer-drafts.js` covers the composer draft store
+  offline (it runs the real functions pulled out of `core.js`): per-conversation
+  keys, filing a keystroke under the conversation it was typed in, sends
+  clearing the draft even mid-debounce, TTL/cap pruning and per-account
+  isolation. `node scripts/test-drafts-browser.js` drives the real page in
+  headless Chrome over CDP against a throwaway database and proves typing
+  survives a reload (the auto-updater's exact path) in channels and DMs, that
+  conversations keep their own drafts, and that a sent message leaves none.
+  Skips when Postgres or Chrome is missing.
 - **Upload pipeline E2E:** `node scripts/test-upload-pipeline.js` (needs ffmpeg
   + the dev Postgres, skips otherwise) boots a real server against a throwaway
   database with a fake clamd and asserts the single-transition compression flow
@@ -355,7 +364,12 @@ individual friend is copied into `viewonce/` for the same gate), so nothing can
 fetch it before the recipient opens the message. Async discipline:
 never pass an async callback to map/filter/forEach when results are used
 synchronously (use for..of or Promise.all); background timers go through
-safeInterval so rejections log instead of crashing. The typing strip above the
+safeInterval so rejections log instead of crashing. Composer text is never
+lost to a reload: every conversation's half-written message lives in a
+per-account draft store (`core.js`: `draftSoon`/`flushDrafts`/
+`applyComposerDraft`), so any new composer or chat switch must call
+`flushDrafts()` before the context changes and `applyComposerDraft()` after it,
+and clear the draft when the message actually goes out. The typing strip above the
 composer always keeps its slot (`--strip-h`, one text line, transparent, text
 fades) — hiding it resizes `#messages` and shoves the conversation up/down.
 `#messages` pays for that slot by giving up its bottom padding, and anything

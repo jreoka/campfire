@@ -318,13 +318,11 @@ async function boot() {
     return;
   }
   showMain();
-  let draft = null;
-  try { draft = JSON.parse(sessionStorage.getItem('cf_draft') || 'null'); sessionStorage.removeItem('cf_draft'); } catch {}
-  // Persistent per-user last-view (localStorage, survives browser restarts);
-  // the sessionStorage draft only covers same-tab reloads and composer text.
+  // Persistent per-user last-view (localStorage, survives browser restarts),
+  // so a reload reopens the conversation you were in; the composer text for
+  // that conversation comes from the per-account draft store (see core.js).
   const mem = readMemView();
   if (mem && mem.s) S.serverId = mem.s;
-  else if (draft && draft.s) S.serverId = draft.s;
   await warmStdEmoji().catch(() => {});
   await refreshAllEmojis().catch(() => {});
   // Only auto-open a server when restoring a server view; a remembered Home
@@ -347,10 +345,15 @@ async function boot() {
     }
   } else if (mem && mem.view === 'server' && mem.s && S.servers.some((x) => x.id === mem.s)) {
     if (S.serverId !== mem.s) await selectServer(mem.s);
-    const wantC = mem.c || (draft && draft.s === mem.s ? draft.c : null);
+    const wantC = mem.c;
     if (wantC && S.serverDetail?.channels.some((c) => c.id === wantC && c.type === 'text')) await selectChannel(wantC);
   }
-  if (draft && draft.t && S.view === 'server') $('#in-message').value = draft.t;
+  // Reload while a thread was open (and typing in it): put you back there with
+  // the reply draft, then paint every composer draft for the restored context.
+  if (S.view === 'server' && S.channelId && mem && mem.th && mem.c === S.channelId) {
+    try { await openThread(mem.th, { silent: true }); } catch {}
+  }
+  try { applyComposerDraft(); } catch {}
   connectWS();
   pollVersion();
   pushSetup();
