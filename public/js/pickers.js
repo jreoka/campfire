@@ -541,6 +541,27 @@ function startEdit(mid) {
   if (S.thread) renderThread();
   setTimeout(() => { const t = $('#edit-area'); if (t) { t.focus(); t.selectionStart = t.value.length; } }, 0);
 }
+// Abandon an in-progress edit (Cancel button, Escape). `focus` hands the caret
+// back to the composer — used for Escape, where the keyboard is already up and
+// the reader expects to keep typing; the button leaves focus alone.
+function cancelEdit(opts = {}) {
+  if (!S.editing) return;
+  S.editing = null;
+  S.editRemovals = new Set();
+  if (S.channelId) renderMessages();
+  if (S.view === 'home' && S.dmThreadId) renderDmMessages();
+  if (S.thread) renderThread();
+  if (opts.focus) { try { $('#in-message')?.focus(); } catch {} }
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !S.editing) return;
+  const t = e.target;
+  const inBox = !!(t && t.id === 'edit-area');
+  // Escape inside some other field (a modal's input, the composer) belongs to
+  // that field — only the edit box, or the page at large, cancels the edit.
+  if (!inBox && t && t.closest && t.closest('input, textarea, select, [contenteditable="true"]')) return;
+  cancelEdit({ focus: true });
+});
 // Up arrow in an empty composer edits your last message in this conversation
 // (Discord's shortcut). Nothing else may own the key when it fires: an open
 // autocomplete popup, an in-flight attach, or an edit already in progress.
@@ -680,7 +701,7 @@ document.addEventListener('keydown', (e) => {
       }
     }
     else if (act === 'edit-save' && mid) saveEdit(mid);
-    else if (act === 'edit-cancel') { S.editing = null; S.editRemovals = new Set(); if (S.channelId) renderMessages(); if (S.view === 'home' && S.dmThreadId) renderDmMessages(); if (S.thread) renderThread(); }
+    else if (act === 'edit-cancel') cancelEdit();
     else if (act === 'del' && mid) {
       const base = msgById(mid)?._dm ? '/api/dms/messages/' : '/api/messages/';
       api(base + mid, { method: 'DELETE' }).catch(() => toast('Delete failed'));
