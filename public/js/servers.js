@@ -203,7 +203,13 @@ async function selectServer(id) {
     // pick first text channel
     const texts = server.channels.filter((c) => c.type === 'text');
     const voices = server.channels.filter((c) => c.type === 'voice');
-    if (texts.length && !texts.find((c) => c.id === S.channelId)) S.channelId = texts[0].id;
+    // S.channelId deliberately stays null until selectChannel() takes it:
+    // selectChannel snapshots the PREVIOUS conversation's scroll position
+    // before switching, and #messages still shows that conversation. Keying
+    // the old list under the channel being opened made the server open
+    // scrolled a few messages up (the saved anchor belongs to another
+    // channel, so the restore falls back to its distance-from-bottom).
+    const firstText = texts.length ? texts[0].id : null;
     renderChannels();
     renderMembers();
     // This server may have stories this client hasn't snapshotted yet (a
@@ -213,7 +219,7 @@ async function selectServer(id) {
     try { loadStories().then(renderStorySurfaces); } catch {}
     if (S.srvSetId) { if (server.id === S.srvSetId) renderServerTab(); else closeServerSettings(); }
     if (S.chanSet) { if (server.id === S.chanSet.sid) renderChanSettings(); else closeChannelSettings(); }
-    if (S.channelId) selectChannel(S.channelId, { keepNav: true });
+    if (firstText) selectChannel(firstText, { keepNav: true });
     else { $('#chan-name').textContent = '—'; $('#messages').innerHTML = ''; }
   } catch (err) {
     toast('Could not load server');

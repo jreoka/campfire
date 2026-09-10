@@ -77,6 +77,40 @@ const PNG=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAI0lEQVR4n
   r=await req('POST','/api/upload/viewonce',{token:ta,form:fd2});
   ok(r.status===400,'non-media rejected for view-once',r.data);
 
+  console.log('\n[6] story → private view-once DM (individual recipients)');
+  const fs3=new FormData(); fs3.append('file',new Blob([PNG],{type:'image/png'}),'story.png');
+  const stUp=(await req('POST','/api/upload',{token:ta,form:fs3})).data;
+  ok(/^\/uploads\/files\//.test(stUp.url||''),'story media goes to files/',stUp.url);
+  const st=((await req('POST','/api/stories',{token:ta,body:{url:stUp.url,mime:stUp.mime,kind:'image',caption:'sunset',friends:true,durationMs:5000}})).data||{}).story;
+  ok(!!(st&&st.id),'story posted',!!st);
+  r=await req('POST','/api/dm/viewonce',{token:ta,body:{storyId:st.id,userIds:[B.data.user.id]}});
+  ok(r.status===200&&r.data.sent===1,'author sends their live story to a friend as a view-once DM',r.data);
+  const stThread=r.data.threadIds[0];
+  const stMsgs=(await req('GET','/api/dms/'+stThread+'/messages?limit=20',{token:tb})).data.messages;
+  // The DM thread is reused across sends, so pick THIS story's card by caption.
+  const voStory=[...stMsgs].reverse().find(m=>m.viewOnce&&m.content==='sunset');
+  ok(!!voStory&&voStory.viewOnce.state==='unopened'&&voStory.viewOnce.kind==='image','recipient gets an unopened view-once card',voStory&&voStory.viewOnce);
+  ok(voStory.attachments.length===0&&JSON.stringify(voStory).indexOf('viewonce/')===-1,'the gated copy is never exposed in the payload',voStory.attachments);
+  const stStatus=(await fetch(BASE+stUp.url)).status;
+  ok(stStatus===200||stStatus===423,'the story itself is untouched (files/ copy still there)',stStatus);
+  r=await req('POST','/api/dm/'+voStory.id+'/viewonce/open',{token:tb});
+  const copyUrl=String(r.data&&r.data.url||'');
+  ok(r.status===200&&/^\/uploads\/viewonce\//.test(copyUrl),'opens through the viewonce/ gate (bytes copied per recipient)',copyUrl.slice(0,64));
+  ok((await fetch(BASE+copyUrl)).status===200,'the copy serves with its ticket');
+  ok((await fetch(BASE+copyUrl.split('?')[0])).status===403,'and is locked without one');
+  await req('POST','/api/dm/'+voStory.id+'/viewonce/consume',{token:tb});
+  const stGone=await req('POST','/api/dm/'+voStory.id+'/viewonce/consume',{token:tb});
+  ok(stGone.status===200&&stGone.data.state==='consumed'&&stGone.data.deleted===true,'replay spent → media deleted, story unaffected',stGone.data);
+  const copyKey=copyUrl.split('?')[0];
+  const copyStatus=(await fetch(BASE+copyKey+'?t='+copyUrl.split('?t=')[1])).status;
+  ok(copyStatus!==200,'the consumed copy no longer serves',copyStatus);
+  r=await req('POST','/api/dm/viewonce',{token:tb,body:{storyId:st.id,userIds:[C.data.user.id]}});
+  ok(r.status===404,'only the author can send a story privately',r.data);
+  r=await req('POST','/api/dm/viewonce',{token:ta,body:{storyId:'nope',userIds:[B.data.user.id]}});
+  ok(r.status===404,'unknown story refused',r.data);
+  r=await req('POST','/api/dm/viewonce',{token:ta,body:{storyId:st.id,userIds:[D.data.user.id]}});
+  ok(r.status===403,'non-friends are still skipped for story sends',r.data);
+
   console.log(fails?`\nFAILURES: ${fails}\n`:'\nVIEW-ONCE API TESTS PASSED\n');
   process.exit(fails?1:0);
 })().catch(e=>{console.error(e);process.exit(1);});

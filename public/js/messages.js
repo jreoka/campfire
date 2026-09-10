@@ -780,6 +780,9 @@ function paintThreadCount(rootId) {
 function renderMessages(force = false) {
   const box = $('#messages');
   const msgs = S.messages.get(S.channelId) || [];
+  // Stamp the box with the conversation it now shows: saveScrollPos() refuses
+  // to key a list under a different one (see there).
+  box.dataset.ctx = 'server:' + (S.channelId || '');
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
   // Rebuilding the list resets scrollTop to 0 — anchor on the topmost
   // visible message so scrolled-up readers keep their exact place through

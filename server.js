@@ -1994,15 +1994,18 @@ async function notifyStoryAudience(s, msg) {
 async function announceStoryNew(s, author) {
   await notifyStoryAudience(s, { t: 'story-new', story: storyView(s, author, true, 0, s.shared || null) });
 }
-// Copy an uploaded story file so a DM answering a story keeps a durable preview
-// after the story itself expires (24h) and its bytes are reaped.
-async function copyUpload(url) {
+// Copy a stored story file so a copy can live under another prefix: a DM that
+// answers a story keeps a durable files/ preview after the story itself expires
+// (24h) and its bytes are reaped, and a story sent to individual friends is
+// re-filed under the gated viewonce/ prefix (files/ is served to anyone with
+// the URL, which would not be view-once at all).
+async function copyUploadTo(url, sub) {
   const clean = String(url || '').split('?')[0];
   if (!clean.startsWith('/uploads/files/')) return null;
   const srcKey = clean.slice('/uploads/'.length);
   const rawExt = path.extname(srcKey).slice(1);
   const ext = /^[a-z0-9]{1,10}$/i.test(rawExt) ? '.' + rawExt : '.bin';
-  const dstKey = 'files/' + crypto.randomBytes(16).toString('hex') + ext;
+  const dstKey = sub + '/' + crypto.randomBytes(16).toString('hex') + ext;
   try {
     if (storage.s3Enabled()) {
       const data = await storage.s3Get(srcKey);
@@ -2016,6 +2019,7 @@ async function copyUpload(url) {
   } catch { return null; }
   return `/uploads/${dstKey}?v=${Date.now().toString(36)}`;
 }
+const copyUpload = (url) => copyUploadTo(url, 'files');
 const storyKindForMime = (mime) => (String(mime || '').startsWith('video/') ? 'video' : String(mime || '').startsWith('image/') ? 'image' : '');
 // Byte size of a stored upload (used for the copied story preview).
 async function uploadSize(url) {
@@ -2282,20 +2286,44 @@ app.post('/api/upload/viewonce', authRequired, (req, res, next) => {
 
 app.post('/api/dm/viewonce', authRequired, async (req, res) => {
   const me = req.user;
-  const url = String(req.body?.url || '');
+  let url = String(req.body?.url || '');
+  let mime = String(req.body?.mime || '').slice(0, 80);
+  let kind = storyKindForMime(mime);
+  let caption = squashBreaks(String(req.body?.caption || '')).trim().slice(0, 200);
+  const ids = [...new Set((Array.isArray(req.body?.userIds) ? req.body.userIds : []).map(String).filter((x) => x && x !== me.id))].slice(0, 25);
+  if (!ids.length) return res.status(400).json({ error: 'pick_friends' });
+  if (!rateOk(me.id)) return res.status(429).json({ error: 'slow_down' });
+  // Story → private DMs (the story composer's individual recipients): the
+  // media is copied into the gated viewonce/ prefix so it really is view-once.
+  // Only the author may do this, and only while their story is still live.
+  const storyId = String(req.body?.storyId || '');
+  let copied = false;
+  let pushed = 'Sent a view-once';
+  if (!url && storyId) {
+    const s = await db.prepare('SELECT * FROM stories WHERE id = ?').get(storyId);
+    if (!s || s.user_id !== me.id || s.expires_at <= now()) return res.status(404).json({ error: 'not_found' });
+    try {
+      const srcKey = 'files/' + String(s.url).split('?')[0].split('/').pop();
+      if ((await require('./virus-scan').scanStatus(srcKey)) === 'infected') return res.status(400).json({ error: 'media_blocked' });
+    } catch {}
+    const copy = await copyUploadTo(s.url, 'viewonce');
+    if (!copy) return res.status(500).json({ error: 'storage_failed' });
+    url = copy;
+    copied = true;
+    mime = String(s.mime || '').slice(0, 80) || (s.kind === 'video' ? 'video/mp4' : 'image/jpeg');
+    kind = storyKindForMime(mime) || (s.kind === 'video' ? 'video' : 'image');
+    if (!caption) caption = squashBreaks(String(s.caption || '')).trim().slice(0, 200);
+    pushed = 'Sent a story';
+    // The copy is new bytes: give the scanner its own verdict (same as upload).
+    try { await require('./virus-scan').queueFileScan('viewonce/' + url.split('?')[0].split('/').pop()); } catch {}
+  }
   if (!/^\/uploads\/viewonce\/[A-Za-z0-9._-]+(?:\?v=[a-z0-9]+)?$/.test(url)) return res.status(400).json({ error: 'bad_media' });
-  const mime = String(req.body?.mime || '').slice(0, 80);
-  const kind = storyKindForMime(mime);
   if (!kind) return res.status(400).json({ error: 'bad_media (photos and videos only)' });
   try {
     const key = 'viewonce/' + url.split('?')[0].split('/').pop();
     if ((await require('./virus-scan').scanStatus(key)) === 'infected') return res.status(400).json({ error: 'media_blocked' });
   } catch {}
-  const caption = squashBreaks(String(req.body?.caption || '')).trim().slice(0, 200);
-  const ids = [...new Set((Array.isArray(req.body?.userIds) ? req.body.userIds : []).map(String).filter((x) => x && x !== me.id))].slice(0, 25);
-  if (!ids.length) return res.status(400).json({ error: 'pick_friends' });
-  if (!rateOk(me.id)) return res.status(429).json({ error: 'slow_down' });
-  const size = await uploadSize('/uploads/' + 'viewonce/' + url.split('?')[0].split('/').pop());
+  const size = await uploadSize(url);
   const sent = [];
   for (const otherId of ids) {
     if (!(await areFriends(me.id, otherId))) continue;
@@ -2309,10 +2337,14 @@ app.post('/api/dm/viewonce', authRequired, async (req, res) => {
       .run(uid(), mid, url, caption || (kind === 'video' ? 'View-once video' : 'View-once photo'), mime, size, kind, 0, now());
     const full = await fullDm(mid, null);
     await dmNotify(t.id, { t: 'dm-new', message: full });
-    try { await notifyDmMessage(t, me, caption || 'Sent a view-once', mid); } catch {}
+    try { await notifyDmMessage(t, me, caption || pushed, mid); } catch {}
     sent.push(t.id);
   }
-  if (!sent.length) return res.status(403).json({ error: 'not_friends' });
+  if (!sent.length) {
+    // Nobody could receive it: don't leave the made-for-them copy behind.
+    if (copied) { try { deleteUploaded(url); } catch {} }
+    return res.status(403).json({ error: 'not_friends' });
+  }
   res.json({ ok: true, sent: sent.length, threadIds: sent });
 });
 

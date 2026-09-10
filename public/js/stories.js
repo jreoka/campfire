@@ -1349,6 +1349,21 @@ function storyAudCount() {
   if (sc.vo) return (sc.voIds || []).length;
   return (sc.audFriends ? 1 : 0) + (sc.audEveryone ? 1 : 0) + (sc.audServers || []).length + (sc.audUsers || []).length;
 }
+// Broadcast audiences post a story (tray). Individually picked friends are a
+// private delivery instead: each one gets a view-once DM (one view, one
+// replay), never a tray entry.
+function scBroadcast() {
+  return !!(sc && (sc.audFriends || sc.audEveryone || (sc.audServers || []).length));
+}
+function scPostLabel() {
+  if (!sc) return 'Post story';
+  const n = storyAudCount();
+  if (sc.vo) return n ? `Send (${n})` : 'Send';
+  const priv = (sc.audUsers || []).length;
+  if (!scBroadcast() && priv) return n === 1 ? 'Send view-once' : `Send view-once (${n})`;
+  if (scBroadcast() && priv) return priv === 1 ? 'Post + DM' : `Post + ${priv} DMs`;
+  return 'Post story';
+}
 // Step 2: the audience menu. Everything is a toggle row — all friends,
 // everyone on this Campfire, whole servers, or individual friends.
 function renderStoryAudience() {
@@ -1439,7 +1454,13 @@ function renderStoryAudience() {
         });
       }
     }
-    section(shown.length ? 'SEND TO FRIENDS' : 'FRIENDS');
+    section(shown.length ? 'SEND PRIVATELY' : 'FRIENDS');
+    if (shown.length) {
+      const note = document.createElement('p');
+      note.className = 'sc-vo-note';
+      note.textContent = 'Friends you pick here get it in their DMs as a view-once — one view, one replay.';
+      list.appendChild(note);
+    }
     for (const f of shown) {
       row({
         user: f, name: f.display_name || f.username, sub: '@' + f.username,
@@ -1465,11 +1486,11 @@ function renderStoryAudience() {
   const count = $('#sc-pick-count');
   if (count) count.textContent = n ? `${n} selected` : 'None selected';
   const title = $('#sc-pick-title');
-  if (title) title.textContent = sc.vo ? 'Who gets this?' : 'Who can see this?';
+  if (title) title.textContent = 'Who gets this?';
   const post = $('#sc-post');
   if (post) {
     post.disabled = !n || !!sc.busy;
-    if (!sc.busy) post.textContent = sc.vo ? (n ? `Send (${n})` : 'Send') : 'Post story';
+    if (!sc.busy) post.textContent = scPostLabel();
   }
 }
 
@@ -1574,13 +1595,20 @@ async function storyPostNow() {
   btn.disabled = true;
   btn.textContent = 'Uploading…';
   const caption = ($('#sc-caption').value || '').trim().slice(0, 200);
+  const dmIds = st.vo ? (st.voIds || []).slice() : (st.audUsers || []).slice();
+  const broadcast = !st.vo && scBroadcast();
+  const privateOnly = !st.vo && !broadcast && dmIds.length > 0;
+  // A private-only send uploads straight into the gated viewonce/ prefix: a
+  // files/ upload is served to anyone holding the URL, so it would not be
+  // view-once at all (the story path below copies its bytes over instead).
+  const voUpload = st.vo || privateOnly;
   const fd = new FormData();
   const type = st.blob.type || (st.kind === 'video' ? 'video/webm' : 'image/jpeg');
-  fd.append('file', new File([st.blob], (st.vo ? 'viewonce-' : 'story-') + Date.now() + '.' + storyExtFor(type), { type }));
+  fd.append('file', new File([st.blob], (voUpload ? 'viewonce-' : 'story-') + Date.now() + '.' + storyExtFor(type), { type }));
   const up = await new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     st.xhr = xhr;
-    xhr.open('POST', st.vo ? '/api/upload/viewonce' : '/api/upload');
+    xhr.open('POST', voUpload ? '/api/upload/viewonce' : '/api/upload');
     if (store.token) xhr.setRequestHeader('Authorization', 'Bearer ' + store.token);
     xhr.upload.onprogress = (e) => {
       if (!sc) return;
@@ -1598,45 +1626,63 @@ async function storyPostNow() {
   });
   if (!sc) return;
   st.xhr = null;
-  if (up.error) { st.busy = false; btn.disabled = false; btn.textContent = 'Post story'; storyProgress(null); toast('Upload failed: ' + prettyError(up.error)); return; }
-  if (up.scan === 'infected') { st.busy = false; btn.disabled = false; btn.textContent = st.vo ? 'Send' : 'Post story'; storyProgress(null); toast('That file was blocked by the scanner'); return; }
-  if (st.vo) {
+  if (up.error) { st.busy = false; btn.disabled = false; btn.textContent = scPostLabel(); storyProgress(null); toast('Upload failed: ' + prettyError(up.error)); return; }
+  if (up.scan === 'infected') { st.busy = false; btn.disabled = false; btn.textContent = scPostLabel(); storyProgress(null); toast('That file was blocked by the scanner'); return; }
+  if (st.vo || privateOnly) {
     btn.textContent = 'Sending…';
     try {
-      const r = await sendViewOnce({ url: up.url, mime: up.mime, kind: up.kind || st.kind, caption, userIds: st.voIds });
+      const r = await sendViewOnce({ url: up.url, mime: up.mime, kind: up.kind || st.kind, caption, userIds: dmIds });
       storyProgress(null);
       closeStoryComposer();
-      toast(r.sent === 1 ? 'View-once sent' : `View-once sent to ${r.sent} friends`);
+      toast(r.sent === 1 ? 'Sent to their DMs — view-once' : `Sent to ${r.sent} friends as view-once DMs`);
       refreshDms().catch(() => {});
     } catch (err) {
-      st.busy = false; btn.disabled = false; btn.textContent = 'Send'; storyProgress(null);
+      st.busy = false; btn.disabled = false; btn.textContent = scPostLabel(); storyProgress(null);
       toast('Could not send: ' + prettyError(err.message));
     }
     return;
   }
   btn.textContent = 'Posting…';
+  let story = null;
   try {
-    await api('/api/stories', {
+    const r = await api('/api/stories', {
       method: 'POST',
       body: JSON.stringify({
         url: up.url, mime: up.mime, kind: st.kind, caption,
         friends: !!st.audFriends, everyone: !!st.audEveryone,
-        servers: st.audServers || [], users: st.audUsers || [],
+        servers: st.audServers || [],
         durationMs: st.durationMs || undefined,
       }),
     });
+    story = r.story || null;
   } catch (err) {
-    st.busy = false; btn.disabled = false; btn.textContent = 'Post story'; storyProgress(null);
+    st.busy = false; btn.disabled = false; btn.textContent = scPostLabel(); storyProgress(null);
     toast('Could not post: ' + prettyError(err.message));
     return;
   }
+  // Individually picked friends get a private view-once copy: the server
+  // re-files the story's bytes under the gated prefix (no second upload), so
+  // each DM still views once, replays once, and dies after use.
+  let dmSent = 0;
+  if (dmIds.length && story) {
+    try {
+      const r = await sendViewOnce({ storyId: story.id, userIds: dmIds, caption });
+      dmSent = Number(r.sent) || 0;
+    } catch (err) { toast('Story posted, but the DMs failed: ' + prettyError(err.message)); }
+  }
   storyProgress(null);
   closeStoryComposer();
-  toast('Story posted — live for 24 hours');
+  if (dmSent) {
+    toast('Story posted — ' + (dmSent === 1 ? 'and sent as a view-once DM' : `and sent to ${dmSent} friends as view-once DMs`));
+    refreshDms().catch(() => {});
+  } else {
+    toast('Story posted — live for 24 hours');
+  }
   await loadStories();
   renderStorySurfaces();
-  // Straight into the viewer so it can be checked (and deleted) at once.
-  setTimeout(() => { if (!sv) openStoryViewer({ kind: 'mine' }); }, 120);
+  // Straight into the viewer so it can be checked (and deleted) at once — not
+  // when the send was private, where the DM list is the interesting surface.
+  if (!dmSent) setTimeout(() => { if (!sv) openStoryViewer({ kind: 'mine' }); }, 120);
 }
 
 // ================= wiring =================

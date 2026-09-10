@@ -19,6 +19,14 @@ function saveScrollPos() {
     // Only real message lists count — the Loading…/error placeholders and
     // the NSFW gate have no .msg nodes and must never clobber the memory.
     if (!key || !box || !box.querySelector('.msg')) return;
+    // #messages is shared by every conversation and is only repainted after
+    // the switch, so a caller that moves S.channelId/S.dmThreadId *before*
+    // switching (selectServer's first channel, a deleted channel, a server
+    // update) would otherwise key the still-displayed conversation's position
+    // under the one being opened. The saved anchor then belongs to another
+    // channel, the restore falls back to its distance-from-bottom against a
+    // fresh layout, and the channel opens scrolled several messages up.
+    if (box.dataset.ctx && box.dataset.ctx !== key) return;
     // Anchor on the topmost visible message (id + viewport offset, which is
     // negative when the message straddles the top edge — keep it raw, exact).
     // Distance-from-bottom stays as the fallback (anchor scrolled away).
@@ -347,6 +355,7 @@ function renderDmBlank() {
 function renderDmMessages(force = false) {
   const box = $('#messages');
   const msgs = S.dmMessages.get(S.dmThreadId) || [];
+  box.dataset.ctx = 'dm:' + (S.dmThreadId || ''); // see renderMessages/saveScrollPos
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
   // Same anchor preservation as renderMessages: rebuilding resets scrollTop
   // to 0, which used to yank scrolled-up readers upward on updates.

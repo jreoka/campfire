@@ -271,6 +271,10 @@ OpenGraph/oEmbed unfurl → cached card with thumbnail, SSRF-guarded), stories
 (24h photo/video posts with an in-app camera, friend + server + everyone
 audiences, thumbnails cropped into the rings), view-once messages (one view +
 one replay, per-friend DMs, media gated until opened and deleted after use).
+A story sent to an individual friend is delivered as a view-once DM instead of
+a tray entry (`POST /api/dm/viewonce` with `storyId` re-files the story's bytes
+under the gated `viewonce/` prefix), and picks alongside a broadcast audience
+get both.
 Detail per change lives in `git log` — don't duplicate it here.
 
 ## Deployment (owner directive)
@@ -292,8 +296,9 @@ server-scoped **and** friend-scoped: a friend with no shared server would
 otherwise look permanently offline (see `notifyFriends`/`presenceForUsers` in
 `server.js`) — any new presence surface must respect both. View-once media
 lives under `viewonce/` (never `files/`): that prefix is served only with a
-signed ticket from `POST /api/dm/:mid/viewonce/open`, so nothing can fetch it
-before the recipient opens the message. Async discipline:
+signed ticket from `POST /api/dm/:mid/viewonce/open` (a story sent to an
+individual friend is copied into `viewonce/` for the same gate), so nothing can
+fetch it before the recipient opens the message. Async discipline:
 never pass an async callback to map/filter/forEach when results are used
 synchronously (use for..of or Promise.all); background timers go through
 safeInterval so rejections log instead of crashing.
