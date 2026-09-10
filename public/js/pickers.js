@@ -690,6 +690,53 @@ function closeThread(silent) {
   const p = $('#thread-panel');
   if (p) p.classList.add('hidden');
 }
+// Active threads panel: threads you're part of with a message in the last
+// 4 days (header Threads button). Rows jump straight into the thread.
+function threadAgo(ts) {
+  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.floor(h / 24) + 'd ago';
+}
+async function openActiveThreads() {
+  openModal('Active threads', '<div id="m-threads-list"><p class="muted" style="text-align:center;padding:1rem">Loading…</p></div>', 'Close', null, { wide: true });
+  const list = $('#m-threads-list');
+  if (!list) return;
+  let threads = [];
+  try { ({ threads } = await api('/api/threads/active')); } catch { list.innerHTML = '<p class="error" style="text-align:center;padding:1rem">Could not load threads.</p>'; return; }
+  if (!threads || !threads.length) { list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">Nothing active — threads you start or reply to stay here for 4 days after the last message.</p>'; return; }
+  list.innerHTML = '';
+  for (const t of threads) {
+    const b = document.createElement('div');
+    b.className = 'thread-item';
+    b.tabIndex = 0;
+    b.innerHTML = `<span class="t-main"><span class="t-ctx">${esc(t.serverName || '')} <span class="t-hash">#</span>${esc(t.channelName || '')} · ${esc(threadAgo(t.lastActivity))}</span><span class="t-root"><b>${esc((t.root && t.root.author) || '?')}</b> ${esc((t.root && t.root.snippet) || '')}</span><span class="t-meta"><span class="t-count">${t.replyCount} ${t.replyCount === 1 ? 'reply' : 'replies'}</span>${t.last ? `<span class="t-last">last by <b>${esc(t.last.author || '?')}</b> — ${esc(t.last.snippet || '')}</span>` : ''}</span></span><span class="t-avs"></span>`;
+    const avBox = b.querySelector('.t-avs');
+    for (const p of (t.participants || []).slice(0, 4)) {
+      const s = document.createElement('span');
+      s.className = 'avatar t-av';
+      s.title = p.name || '?';
+      try { paintAvatar(s, { display_name: p.name, avatar_color: p.color, avatar_url: p.avatar }); } catch {}
+      avBox.appendChild(s);
+    }
+    const go = () => openActiveThread(t);
+    b.onclick = go;
+    b.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } };
+    list.appendChild(b);
+  }
+}
+async function openActiveThread(t) {
+  try { $('#modal-backdrop').classList.add('hidden'); } catch {}
+  try {
+    if (t.serverId !== S.serverId) await selectServer(t.serverId);
+    if (t.channelId && t.channelId !== S.channelId) await selectChannel(t.channelId);
+    openThread(t.rootId);
+  } catch {}
+}
+$('#btn-threads').onclick = openActiveThreads;
 // Keep the hover quick-action bar usable near the top of a scroll list: when
 // a message sits within the bar's clearance (~36px) of the scrollport top
 // (e.g. the first thread reply right under the root section), pin the bar

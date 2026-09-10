@@ -2508,6 +2508,80 @@ app.get('/api/servers/:id/channels/:chId/threads/:rootId', authRequired, (req, r
   res.json({ root: hydRoot, replies: hydrateMessages(rows, req.user.id) });
 });
 
+// Active threads: threads the caller is part of (wrote the root or a reply)
+// with reply activity in the last 4 days — quieter threads drop off.
+// Powers the header Threads panel. Capped at 50, newest activity first.
+app.get('/api/threads/active', authRequired, (req, res) => {
+  const me = req.user.id;
+  const cutoff = now() - 4 * 86400 * 1000;
+  let nsfwOk = 0;
+  try { nsfwOk = db.prepare('SELECT nsfw_ok FROM users WHERE id = ?').get(me)?.nsfw_ok ? 1 : 0; } catch {}
+  let rows = [];
+  try {
+    rows = db.prepare(`
+      SELECT r.id AS root_id, MAX(a.created_at) AS last_activity, COUNT(a.id) AS reply_count
+      FROM messages r
+      JOIN messages a ON a.thread_root_id = r.id
+      JOIN server_members sm ON sm.server_id = r.server_id AND sm.user_id = ?
+      WHERE r.thread_root_id IS NULL
+        AND (r.user_id = ? OR EXISTS (SELECT 1 FROM messages m2 WHERE m2.thread_root_id = r.id AND m2.user_id = ?))
+      GROUP BY r.id
+      HAVING MAX(a.created_at) >= ?
+      ORDER BY last_activity DESC
+      LIMIT 50
+    `).all(me, me, me, cutoff);
+  } catch { rows = []; }
+  const snip = (m) => {
+    const t = String(m?.content || '').trim();
+    if (t) return t.slice(0, 140);
+    const n = (m?.attachments || []).length;
+    if (n) return n === 1 ? 'sent an attachment' : `sent ${n} attachments`;
+    if (m?.poll) return 'sent a poll';
+    return '';
+  };
+  const out = [];
+  for (const row of rows) {
+    const root = fullMessage(row.root_id, me);
+    if (!root) continue;
+    try {
+      const ch = db.prepare('SELECT nsfw FROM channels WHERE id = ?').get(root.channelId);
+      if (ch && ch.nsfw && !nsfwOk) continue; // same 18+ rule as history/search
+    } catch {}
+    let serverName = '', channelName = '';
+    try { serverName = db.prepare('SELECT name FROM servers WHERE id = ?').get(root.serverId)?.name || ''; } catch {}
+    try { channelName = db.prepare('SELECT name FROM channels WHERE id = ?').get(root.channelId)?.name || ''; } catch {}
+    let lastRow = null;
+    try {
+      lastRow = db.prepare(`
+        SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,
+               p.content AS p_content, pu.display_name AS p_name
+        FROM messages m LEFT JOIN users u ON u.id = m.user_id
+        LEFT JOIN messages p ON p.id = m.reply_to_id
+        LEFT JOIN users pu ON pu.id = p.user_id
+        WHERE m.thread_root_id = ? ORDER BY m.created_at DESC LIMIT 1
+      `).get(row.root_id);
+    } catch {}
+    const last = lastRow ? hydrateMessages([lastRow], me)[0] : null;
+    let parts = [];
+    try {
+      parts = db.prepare(`
+        SELECT u.display_name d, u.username u, u.avatar_color c, u.avatar_url a, MAX(m.created_at) t
+        FROM messages m JOIN users u ON u.id = m.user_id
+        WHERE (m.id = ? OR m.thread_root_id = ?) AND m.user_id IS NOT NULL
+        GROUP BY m.user_id ORDER BY t DESC LIMIT 4
+      `).all(row.root_id, row.root_id).map((p) => ({ name: p.d || p.u || '?', color: p.c || null, avatar: p.a || null }));
+    } catch {}
+    out.push({
+      rootId: row.root_id, serverId: root.serverId, serverName, channelId: root.channelId, channelName,
+      replyCount: row.reply_count, lastActivity: row.last_activity,
+      root: { author: root.user ? (root.user.display_name || root.user.username) : '?', snippet: snip(root), createdAt: root.created_at },
+      last: last ? { author: last.user ? (last.user.display_name || last.user.username) : '?', snippet: snip(last), createdAt: last.created_at } : null,
+      participants: parts,
+    });
+  }
+  res.json({ threads: out });
+});
+
 // ---------- friends + DMs ----------
 function friendRow(a, b) {
   const [x, y] = a < b ? [a, b] : [b, a];
