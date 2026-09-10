@@ -25,7 +25,16 @@ function paintConn() {
   }
 }
 function showConn() {
-  if (connVisible || !store.token || !inMainView()) { paintConn(); return; }
+  if (connVisible) { paintConn(); return; }
+  if (!navigator.onLine) {
+    // Genuinely offline: the whole app is dead, including sign-in — say so
+    // full-screen on whatever view is showing.
+    connVisible = true;
+    paintConn();
+    connEl()?.classList.remove('hidden');
+    return;
+  }
+  if (!store.token || !inMainView()) { paintConn(); return; }
   connVisible = true;
   paintConn();
   connEl()?.classList.remove('hidden');
@@ -80,11 +89,22 @@ function connectWS() {
     setTimeout(() => { if (store.token && S.ws === ws) connectWS(); }, 2500);
   };
 }
-window.addEventListener('online', () => { paintConn(); if (store.token && inMainView() && (!S.ws || S.ws.readyState !== 1)) connectWS(); });
+window.addEventListener('online', () => {
+  paintConn();
+  if (store.token && inMainView() && (!S.ws || S.ws.readyState !== 1)) connectWS();
+  else if (!store.token || !inMainView()) hideConn(); // offline-only overlay (e.g. sign-in) lifts
+});
 window.addEventListener('offline', () => { showConn(); });
 document.getElementById('conn-retry')?.addEventListener('click', () => {
-  if (!store.token) return;
-  paintConn(); showConn();
+  paintConn();
+  if (!store.token || !inMainView()) {
+    // Nothing socketed to reconnect (e.g. the sign-in screen): just re-check,
+    // and reload the captcha key if we're back (it only loads at page load).
+    if (navigator.onLine) hideConn(); else showConn();
+    try { if (typeof initTurnstile === 'function') initTurnstile(); } catch {}
+    return;
+  }
+  showConn();
   if (!S.me) { try { boot(); } catch {} return; } // boot failed while offline — retry the whole boot
   connAttempts++;
   connectWS();
@@ -115,8 +135,8 @@ function probeServer() {
 //   onclose runs the reconnect flow. Worst case ~15s, no refresh needed.
 setInterval(() => {
   try {
-    if (!store.token || !inMainView()) return;
     if (!navigator.onLine) { showConn(); return; }
+    if (!store.token || !inMainView()) return;
     const ws = S.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) { armConnSoon(); return; }
     if (connPingSent && Date.now() - connPingSent > 6000) {
