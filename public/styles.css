@@ -756,6 +756,10 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .uc-banner{height:88px;background:var(--panel-3);background-size:cover;background-position:center}
 .uc-body{padding:0 1rem 1rem}
 .uc-body .avatar.big{width:66px;height:66px;font-size:1.4rem;margin-top:-33px;border:4px solid var(--panel-2)}
+/* A decoration IS the ring: with one applied, drop the flat banner-cutout
+   border so no grey circle sits between the photo and the decoration.
+   Status still reads off the dot in the status row below. */
+.uc-body .avatar.big[class*="deco-"],.pf-head .avatar.big[class*="deco-"]{border:0}
 .uc-name{font-weight:750;font-size:1.02rem;margin-top:.4rem;letter-spacing:-.01em}
 .uc-sub{font-size:.8rem;color:var(--muted)}
 .uc-status{display:flex;align-items:center;gap:.45rem;font-size:.82rem;font-weight:600;margin-top:.5rem}
