@@ -983,8 +983,10 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .ftab.active{background:var(--panel-3);color:var(--text)}
 .ftab #req-count{color:var(--accent-hover)}
 /* sidebar Friends nav button (full-width row, icon right) */
-.friends-btn{margin-top:.3rem;padding:1.35rem 1rem}
-.friends-btn .dmname{font-size:1rem}
+.friends-btn{margin-top:.3rem}
+/* ID specificity: must beat .dmrow's padding which is defined later */
+#btn-friends{padding:.7rem 1rem}
+#btn-friends .dmname{font-size:.95rem}
 .friends-btn svg{flex-shrink:0;color:var(--muted)}
 .friends-btn:hover svg{color:var(--text)}
 /* friends page header + add-friend row */
