@@ -274,10 +274,15 @@ async function ensureChain() {
   engineStarting = true;
   try {
     writeConfs();
+    // freshclam/clamd drop to the clamav user (UID 100:GID 101) — a
+    // root-owned DB dir fails their writability check, so hand it over.
+    // Best-effort: dev machines without that user just skip this.
+    try { spawnSync('chown', ['-R', '100:101', dbDir()], { stdio: 'ignore', timeout: 15000 }); } catch {}
     if (!(await hasDbFiles())) {
       log('downloading ClamAV signature databases (one-time, a few minutes)…');
       const ok = await runFreshclam();
       if (!ok) warn('freshclam failed (network?) — will retry on next upload; uploads stay usable');
+      try { spawnSync('chown', ['-R', '100:101', dbDir()], { stdio: 'ignore', timeout: 15000 }); } catch {}
     }
     if (!(await hasDbFiles())) throw new Error('no_signature_dbs');
     await new Promise((resolve) => {
