@@ -2092,12 +2092,16 @@ function levelForMs(ms) {
 async function creditPlay(userId, game, ms, ts, tzMin) {
   if (ms <= 0) return;
   const day = localDay(ts, tzMin);
+  // Postgres, unlike SQLite, treats a bare column name in DO UPDATE as
+  // ambiguous between the target table and `excluded` — it must be qualified.
+  // And the scalar two-argument MIN() is a SQLite-ism; Postgres wants LEAST().
+  // (Both were silently erroring on every playtime credit.)
   await db.prepare(`INSERT INTO game_days (user_id, game, day, ms) VALUES (?,?,?,?)
-    ON CONFLICT(user_id, game, day) DO UPDATE SET ms = ms + excluded.ms`).run(userId, game, day, ms);
+    ON CONFLICT(user_id, game, day) DO UPDATE SET ms = game_days.ms + excluded.ms`).run(userId, game, day, ms);
   await db.prepare(`INSERT INTO user_games (user_id, game, total_ms, first_seen_ms, last_seen_ms) VALUES (?,?,?,?,?)
-    ON CONFLICT(user_id, game) DO UPDATE SET total_ms = total_ms + excluded.total_ms,
+    ON CONFLICT(user_id, game) DO UPDATE SET total_ms = user_games.total_ms + excluded.total_ms,
     last_seen_ms = excluded.last_seen_ms,
-    first_seen_ms = MIN(first_seen_ms, excluded.first_seen_ms)`).run(userId, game, ms, ts, ts);
+    first_seen_ms = LEAST(user_games.first_seen_ms, excluded.first_seen_ms)`).run(userId, game, ms, ts, ts);
 }
 // Streaks from the day log (player-local calendar days). Current streak
 // only counts if the most recent play day is today or yesterday; best is
