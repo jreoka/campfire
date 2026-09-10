@@ -79,6 +79,7 @@ let active = 0; // scans currently in flight (<= CONCURRENCY)
 const claimed = new Set(); // keys held by in-flight slots (single process)
 const claimAt = new Map(); // key -> claim timestamp (watchdog)
 let timer = null;
+let lastStuckWarn = 0;
 let noEngine = false; // binaries missing — fail open
 let engineFailed = false; // freshclam/clamd broken — fail open, loudly
 let engineStarting = false;
@@ -535,9 +536,22 @@ async function loop() {
   try {
     try { await reapStuckClaims(); } catch {}
     // Fill every free slot (each 'more' claimed one row into a slot).
+    let claimedAny = false;
     for (let i = 0; i < CONCURRENCY; i++) {
       st = await tick();
-      if (st !== 'more') break;
+      if (st === 'more') claimedAny = true;
+      else break;
+    }
+    // Audible when work sits unclaimed: pending rows with zero progress
+    // used to fail completely silently (throttled so the log stays clean).
+    if (!claimedAny && active === 0 && now() - lastStuckWarn > 60000) {
+      try {
+        const r = await db.prepare("SELECT COUNT(*) c FROM file_scans WHERE status = 'pending'").get();
+        if (Number(r && r.c) > 0) {
+          lastStuckWarn = now();
+          warn(`stalled? pending=${r.c} ready=${ready} engineFailed=${engineFailed} noEngine=${noEngine} clamdReady=${clamdReady} active=${active} claimed=${claimed.size}`);
+        }
+      } catch {}
     }
   }
   catch (e) { warn('tick failed: ' + String((e && e.message) || e).slice(0, 200)); st = 'idle'; }
