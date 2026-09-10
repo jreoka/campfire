@@ -185,6 +185,11 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
 - **Tests:** `node scripts/test-unfurl.js [--live]` covers the link-preview parser
   and the SSRF guard (offline by default; `--live` also fetches real pages and
   proves a 302 to a link-local address is refused).
+  `node scripts/test-friends-voice.js` covers the Active Now IN VOICE rail
+  against a throwaway database: the friend-scoped `friends-voice` push, joinable
+  rooms carrying server/channel vs nameless unreachable ones, invisible friends
+  hidden, DM calls visible only to thread members, and the map following
+  join/leave/mod-disconnect/channel-delete/server-eviction.
   `node scripts/test-stories.js` covers stories end-to-end against the dev
   server (audiences, view receipts, delete, 24h reaper) and restarts the dev
   server for the boot-reaper check. It expects the dev Postgres and a
@@ -298,7 +303,10 @@ missing `/uploads/*` must 404 (never SPA fallback); bump the SW `CACHE` version
 on every `public/` change; navigations are network-first. Presence is
 server-scoped **and** friend-scoped: a friend with no shared server would
 otherwise look permanently offline (see `notifyFriends`/`presenceForUsers` in
-`server.js`) — any new presence surface must respect both. View-once media
+`server.js`) — any new presence surface must respect both. Friends' voice
+activity (`friends-voice`, the Active Now IN VOICE rail) is friend-scoped too:
+it is derived from `voiceRooms`, so any path that adds/removes a socket there
+must go through `leaveVoice`/`pushFriendsVoice` or the rail shows ghosts. View-once media
 lives under `viewonce/` (never `files/`): that prefix is served only with a
 signed ticket from `POST /api/dm/:mid/viewonce/open` (a story sent to an
 individual friend is copied into `viewonce/` for the same gate), so nothing can

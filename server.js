@@ -1071,12 +1071,14 @@ app.delete('/api/servers/:id/channels/:chId', authRequired, async (req, res) => 
   await db.prepare('DELETE FROM channels WHERE id = ?').run(ch.id);
   // kick voice occupants out
   const key = s.id + ':' + ch.id;
+  const displaced = new Set();
   for (const c of voiceRooms.get(key) || []) {
-    if (c.meta) c.meta.voice = null;
+    if (c.meta) { c.meta.voice = null; displaced.add(c.meta.userId); }
     await syncStreaming(c);
     safeSend(c, { t: 'voice-kicked', serverId: s.id, channelId: ch.id });
   }
   voiceRooms.delete(key);
+  for (const uid of displaced) { try { await pushFriendsVoice(uid); } catch {} }
   broadcastToServer(s.id, { t: 'channel-deleted', channelId: ch.id, serverId: s.id });
   res.json({ ok: true });
 });
@@ -1336,6 +1338,11 @@ app.post('/api/servers/:id/leave', authRequired, async (req, res) => {
   try { const fu = await freshUser(req.user.id); await broadcastUserUpdate(fu); notifyUser(req.user.id, { t: 'user-updated', user: fu }); } catch {}
   await postServerSys(s.id, `${displayOf(req.user)} left the server`);
   broadcastToServer(s.id, { t: 'member-left', serverId: s.id, userId: req.user.id });
+  // Same teardown as a kick: drop the server from this user's live sockets and
+  // pull them out of its voice rooms. Without it a self-leaver stayed listed
+  // as a voice occupant for everyone else (and kept receiving broadcasts)
+  // until their socket happened to reconnect.
+  evictFromServer(s.id, req.user.id);
   res.json({ ok: true });
 });
 
@@ -2596,6 +2603,9 @@ app.patch('/api/me', authRequired, async (req, res) => {
   else notifyFriends(u.id, { t: 'user-status', userId: u.id, status: u.status });
   // sync live sockets' presence state
   for (const c of clients) if (c.meta && c.meta.userId === u.id) c.meta.status = u.status;
+  // Voice visibility follows status: going invisible drops the IN VOICE row
+  // from every friend's rail, coming back restores it.
+  if (userInVoice(u.id)) { try { await pushFriendsVoice(u.id); } catch {} }
   // An invisible<->visible flip moves the admin panel's Online number.
   if ((u.status || 'online') !== (req.user.status || 'online')) pushAdminPresence();
   }
@@ -3907,18 +3917,25 @@ function evictFromServer(serverId, userId) {
     if (!c.meta || c.meta.userId !== userId) continue;
     c.meta.servers?.delete(serverId);
   }
+  let leftVoice = false;
   for (const [key, set] of voiceRooms) {
     const [srv, ch] = key.split(':');
     if (srv !== serverId) continue;
     for (const c of [...set]) {
       if (c.meta && c.meta.userId === userId) {
         set.delete(c);
-        c.voice = null;
+        // meta.voice is the authoritative flag (leaveVoice, syncStreaming and
+        // the peers payload all read it) — clearing ws.voice left the socket
+        // believing it was still in a room it had been evicted from.
+        c.meta.voice = null;
+        leftVoice = true;
+        syncStreaming(c).catch(() => {});
         safeSend(c, { t: 'voice-kicked', serverId, channelId: ch });
       }
     }
     if (set.size === 0) voiceRooms.delete(key);
   }
+  if (leftVoice) pushFriendsVoice(userId).catch(() => {});
 }
 const DM_JOIN = `SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,
   p.content AS p_content, pu.display_name AS p_name
@@ -4594,6 +4611,8 @@ async function syncSocketFriends(userId) {
     c.meta.friends = ids;
     safeSend(c, { t: 'presence', online: presenceForUsers(ids, userId) });
   }
+  // A brand-new friend may already be sitting in a voice room.
+  try { await sendFriendsVoice(userId); } catch {}
   return ids;
 }
 function fmtMsg(r) {
@@ -4766,6 +4785,83 @@ function findWsInVoice(key, userId) {
   }
   return null;
 }
+// ---------- friends' voice presence (Active Now "IN VOICE") ----------
+// Who is sitting in a voice room, seen through the viewer's friend list. This
+// is friend-scoped like presence (a friend you share no server with still
+// shows up), and invisible friends are hidden exactly like everywhere else.
+// A room the viewer cannot reach is reported with no server/channel names, so
+// nobody can enumerate servers they are not in.
+const voiceNameCache = new Map(); // channelId -> { at, serverId, serverName, channelName, nsfw }
+async function voiceRoomNames(channelId) {
+  const hit = voiceNameCache.get(channelId);
+  if (hit && Date.now() - hit.at < 30000) return hit;
+  let info = { at: Date.now(), serverId: null, serverName: null, channelName: null, nsfw: false };
+  try {
+    const ch = await db.prepare('SELECT id, name, server_id, nsfw FROM channels WHERE id = ?').get(channelId);
+    if (ch) {
+      const srv = await db.prepare('SELECT id, name FROM servers WHERE id = ?').get(ch.server_id);
+      info = { at: Date.now(), serverId: ch.server_id, serverName: srv ? srv.name : null, channelName: ch.name, nsfw: !!ch.nsfw };
+    }
+  } catch {}
+  voiceNameCache.set(channelId, info);
+  return info;
+}
+// One row per user currently in a voice room, independent of the viewer. A
+// user is only ever in one room (joining elsewhere leaves first), so the map
+// keyed by user id is stable even with a stray second socket.
+function voiceOccupantRows() {
+  const rows = new Map();
+  for (const set of voiceRooms.values()) {
+    for (const ws of set) {
+      const m = ws.meta;
+      if (!m || !m.voice) continue;
+      rows.set(m.userId, {
+        userId: m.userId, kind: m.voice.kind,
+        serverId: m.voice.serverId || null, channelId: m.voice.channelId || null, threadId: m.voice.threadId || null,
+        count: set.size, invisible: (m.status || 'online') === 'invisible',
+      });
+    }
+  }
+  return rows;
+}
+function userInVoice(userId) {
+  for (const set of voiceRooms.values()) for (const ws of set) if (ws.meta && ws.meta.userId === userId) return true;
+  return false;
+}
+async function friendsVoiceFor(sockets, viewerId) {
+  const friendIds = (sockets[0] && sockets[0].meta.friends) || new Set();
+  const myServers = (sockets[0] && sockets[0].meta.servers) || new Set();
+  const out = {};
+  for (const row of voiceOccupantRows().values()) {
+    if (row.userId === viewerId || row.invisible || !friendIds.has(row.userId)) continue;
+    if (row.kind === 'dm') {
+      // Only calls the viewer is part of: a 1:1 call between two other people
+      // is none of anyone else's business.
+      if (!(await dmThreadFor(viewerId, row.threadId))) continue;
+      out[row.userId] = { kind: 'dm', threadId: row.threadId, count: row.count, joinable: true };
+    } else if (myServers.has(row.serverId)) {
+      const n = await voiceRoomNames(row.channelId);
+      out[row.userId] = { kind: 'server', serverId: row.serverId, channelId: row.channelId, serverName: n.serverName, channelName: n.channelName, nsfw: n.nsfw, count: row.count, joinable: true };
+    } else {
+      out[row.userId] = { kind: 'server', count: row.count, joinable: false };
+    }
+  }
+  return out;
+}
+// Full-map replace, so a dropped frame can never strand a stale IN VOICE row.
+async function sendFriendsVoice(userId) {
+  const sockets = [...clients].filter((c) => c.meta && c.meta.userId === userId);
+  if (!sockets.length) return;
+  const voice = await friendsVoiceFor(sockets, userId);
+  for (const c of sockets) safeSend(c, { t: 'friends-voice', voice });
+}
+// Someone's voice membership changed: only their friends can see it, and only
+// while they are not invisible.
+async function pushFriendsVoice(userId) {
+  const friends = await friendIdsOf(userId);
+  if (!friends.size) return;
+  await Promise.all([...friends].map((fid) => sendFriendsVoice(fid).catch(() => {})));
+}
 // Streaming presence: while a user shares (Go Live), their profile carries
 // streaming_game so friends see a purple Streaming status + Active Now entry.
 // Only writes + broadcasts on actual change (voice-state fires constantly).
@@ -4793,6 +4889,7 @@ async function leaveVoice(ws, notify = true) {
   }
   ws.meta.voice = null;
   await syncStreaming(ws);
+  try { await pushFriendsVoice(ws.meta.userId); } catch {}
   if (!notify) return;
   if (v.kind === 'dm') {
     await dmNotify(v.threadId, { t: 'voice-peer-left', threadId: v.threadId, userId: ws.meta.userId });
@@ -4836,6 +4933,7 @@ async function evictFromDmCall(threadId, userId) {
       safeSend(c, { t: 'voice-kicked', threadId });
     }
   }
+  await pushFriendsVoice(userId);
   await afterDmVoiceChange(threadId);
 }
 
@@ -4919,6 +5017,8 @@ wss.on('connection', async (ws, req) => {
         const tid = key.slice(3);
         if (await dmThreadFor(me.userId, tid)) safeSend(ws, { t: 'voice-peers', threadId: tid, peers: voicePeersPayload(key) });
       }
+      // …and who among my friends is in voice (Active Now rail).
+      safeSend(ws, { t: 'friends-voice', voice: await friendsVoiceFor([ws], me.userId) });
       return;
     }
 
@@ -5051,6 +5151,7 @@ wss.on('connection', async (ws, req) => {
             caller: { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, active_tag: me.active_tag || null, avatar_url: me.avatar_url || null } });
         }
       }
+      await pushFriendsVoice(me.userId);
       return;
     }
 
@@ -5074,6 +5175,7 @@ wss.on('connection', async (ws, req) => {
       }, ws);
       // also broadcast updated occupancy to whole server (for channel user counts)
       broadcastToServer(serverId, { t: 'voice-peers', serverId, channelId, peers: voicePeersPayload(key) }, ws);
+      await pushFriendsVoice(me.userId);
       return;
     }
 
@@ -5138,6 +5240,7 @@ wss.on('connection', async (ws, req) => {
             await syncStreaming(c);
             safeSend(c, { t: 'voice-kicked', threadId, reason: 'mod' });
           }
+          await pushFriendsVoice(targetId);
           await afterDmVoiceChange(threadId);
           return;
         }
@@ -5165,6 +5268,7 @@ wss.on('connection', async (ws, req) => {
         broadcastToServer(serverId, { t: 'voice-peer-left', serverId, channelId, userId: targetId });
         const peers = voicePeersPayload(key);
         broadcastToServer(serverId, { t: 'voice-peers', serverId, channelId, peers });
+        await pushFriendsVoice(targetId);
         return;
       }
       for (const c of targets) {

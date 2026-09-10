@@ -191,21 +191,63 @@ function activeGamingFresh(un) {
   const c = activeGaming.get(un);
   return c && Date.now() - c.at < 90000 ? c.data : null;
 }
+// Voice activity line + a Join affordance for friends who are in a room the
+// viewer can actually reach (shared server, or a DM call of a thread they are
+// in). Rooms outside the viewer's reach stay deliberately nameless.
+const ANOW_VOICE_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M14.5 9.5a4 4 0 0 1 0 5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M17 7a8 8 0 0 1 0 10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>';
+function anowVoiceHTML(v) {
+  if (v.kind === 'dm') {
+    const t = (S.dms || []).find((x) => x.id === v.threadId);
+    const where = t && t.isGroup ? ` — <b>${esc(t.name || 'group chat')}</b>` : (t ? ' with you' : '');
+    return `<div class="anow-voice">${ANOW_VOICE_ICON}<span>In a call${where}</span></div>`;
+  }
+  const where = (v.joinable && v.channelName) ? ` — ${v.serverName ? esc(v.serverName) + ' / ' : ''}<b>${esc(v.channelName)}</b>` : '';
+  return `<div class="anow-voice">${ANOW_VOICE_ICON}<span>In voice${where}</span></div>`;
+}
+function anowInThisRoom(v) {
+  if (!S.voice) return false;
+  return v.kind === 'dm'
+    ? (S.voice.kind === 'dm' && S.voice.threadId === v.threadId)
+    : (S.voice.kind !== 'dm' && S.voice.serverId === v.serverId && S.voice.channelId === v.channelId);
+}
+function anowJoinBtn(v) {
+  if (!v || !v.joinable) return null;
+  const inThis = anowInThisRoom(v);
+  const b = document.createElement('button');
+  b.className = 'mini anow-join';
+  b.textContent = inThis ? 'Open' : 'Join';
+  b.title = inThis ? 'Open the call' : (v.kind === 'dm' ? 'Join this call' : 'Join this voice channel');
+  b.onclick = async (e) => {
+    e.stopPropagation();
+    try {
+      if (inThis) { openCallView(); return; }
+      if (v.kind === 'dm') { joinDmCall(v.threadId, false); return; }
+      if (v.nsfw && !S.me?.nsfw_ok && !(await openNsfwVoiceModal({ name: v.channelName || 'voice' }))) return;
+      joinVoice(v.serverId, v.channelId);
+    } catch (err) { toast('Could not join: ' + prettyError(err.message)); }
+  };
+  return b;
+}
 function activeCard(c) {
   const dot = dotOf(c.st, c.stream);
   const el = document.createElement('div');
   el.className = 'anow-card' + (c.off ? ' anow-off' : '');
   let act = '';
   if (c.stream) {
-    act = `<div class="anow-stream"><span class="vlive">LIVE</span><span>Streaming <b>${esc(c.stream)}</b></span></div>`;
-  } else if (c.live) {
-    act = `<div class="anow-game">Playing ${c.hit?.icon_url ? `<img class="anow-gicon" src="${esc(c.hit.icon_url)}" alt="" loading="lazy" onerror="this.remove()" />` : ''}<b>${esc(c.live)}</b>${c.hit ? `<span> · Lv ${c.hit.level} · ${fmtPlay(c.hit.total_ms)}</span>` : ''}</div>`;
-  } else if (c.recent && c.recent.last_seen_ms) {
-    act = `<div class="anow-recent">Last played <b>${esc(c.recent.game)}</b> · ${agoStr(c.recent.last_seen_ms)}</div>`;
+    act += `<div class="anow-stream"><span class="vlive">LIVE</span><span>Streaming <b>${esc(c.stream)}</b></span></div>`;
+  }
+  if (c.voice) act += anowVoiceHTML(c.voice);
+  if (!c.stream && c.live) {
+    act += `<div class="anow-game">Playing ${c.hit?.icon_url ? `<img class="anow-gicon" src="${esc(c.hit.icon_url)}" alt="" loading="lazy" onerror="this.remove()" />` : ''}<b>${esc(c.live)}</b>${c.hit ? `<span> · Lv ${c.hit.level} · ${fmtPlay(c.hit.total_ms)}</span>` : ''}</div>`;
+  }
+  if (!c.stream && !c.voice && !c.live && c.recent && c.recent.last_seen_ms) {
+    act += `<div class="anow-recent">Last played <b>${esc(c.recent.game)}</b> · ${agoStr(c.recent.last_seen_ms)}</div>`;
   }
   const stLine = (!c.off && c.f.status_text) ? `<span class="anow-sub">${esc(c.f.status_text)}</span>` : '';
   el.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="anow-main"><span class="mname-row"><span class="anow-name" style="${nameStyleFor(c.f)}">${esc(c.f.display_name)}</span>${tagHTML(c.f)}</span><span class="anow-sub">@${esc(c.f.username)}</span>${stLine}${act}</span>`;
   paintAvatar(el.querySelector('.avatar'), c.f);
+  const join = anowJoinBtn(c.voice);
+  if (join) el.appendChild(join);
   el.onclick = (e) => openMemberCard(c.f.id, el);
   return el;
 }
@@ -230,19 +272,24 @@ async function renderActiveNow() {
       const st = statusOf(f.id);
       const off = isOff(st);
       const stream = !off && (f.streaming_game || null);
+      const voice = off ? null : (S.friendsVoice.get(f.id) || null);
       const g = activeGamingFresh(f.username);
       const live = !off && !stream ? (g?.now_playing || (!off && f.playing_game)) : null;
       const games = g?.games || [];
       const recent = games.length ? games.reduce((a, b) => ((a.last_seen_ms || 0) > (b.last_seen_ms || 0) ? a : b)) : null;
       const hit = live ? games.find((x) => x.game === live) : null;
-      return { f, st, off, stream, live, hit, recent };
+      return { f, st, off, stream, voice, live, hit, recent };
     });
-    const streaming = cards.filter((c) => c.stream).sort((a, b) => a.f.display_name.localeCompare(b.f.display_name));
-    const playing = cards.filter((c) => c.live).sort((a, b) => a.f.display_name.localeCompare(b.f.display_name));
-    const online = cards.filter((c) => !c.live && !c.stream && !c.off).sort((a, b) => a.f.display_name.localeCompare(b.f.display_name));
+    // A friend lands in exactly one section: streaming beats voice, voice beats
+    // now-playing, and everyone else online is just online.
+    const byName = (a, b) => a.f.display_name.localeCompare(b.f.display_name);
+    const streaming = cards.filter((c) => c.stream).sort(byName);
+    const voiced = cards.filter((c) => !c.stream && c.voice).sort(byName);
+    const playing = cards.filter((c) => !c.stream && !c.voice && c.live).sort(byName);
+    const online = cards.filter((c) => !c.stream && !c.voice && !c.live && !c.off).sort(byName);
     $('#members-title').textContent = 'ACTIVE NOW';
-    $('#online-count').textContent = String(streaming.length + playing.length);
-    if (!streaming.length && !playing.length && !online.length) {
+    $('#online-count').textContent = String(streaming.length + voiced.length + playing.length);
+    if (!streaming.length && !voiced.length && !playing.length && !online.length) {
       box.innerHTML = '<p class="muted small anow-empty">No friends are online right now.</p>';
       return;
     }
@@ -253,6 +300,7 @@ async function renderActiveNow() {
       box.appendChild(e);
     };
     if (streaming.length) { sec('STREAMING', streaming.length); for (const c of streaming) box.appendChild(activeCard(c)); }
+    if (voiced.length) { sec('IN VOICE', voiced.length); for (const c of voiced) box.appendChild(activeCard(c)); }
     if (playing.length) { sec('NOW PLAYING', playing.length); for (const c of playing) box.appendChild(activeCard(c)); }
     if (online.length) { sec('ONLINE', online.length); for (const c of online) box.appendChild(activeCard(c)); }
   };

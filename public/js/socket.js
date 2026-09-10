@@ -441,6 +441,12 @@ function onWS(m) {
       if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
       repaintFriendsIfVisible();
       break;
+    // Friends' voice rooms (Active Now rail). Friend-scoped + full-map replace,
+    // so a dropped frame can never strand a stale IN VOICE row.
+    case 'friends-voice':
+      S.friendsVoice = new Map(Object.entries(m.voice || {}));
+      if (S.view === 'home') { try { renderActiveNow(); } catch {} }
+      break;
     case 'user-online':
       S.presenceAll[m.userId] = m.status || 'online';
       if (m.serverId === S.serverId) S.online[m.userId] = m.status || 'online';

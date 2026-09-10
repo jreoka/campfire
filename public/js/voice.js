@@ -247,6 +247,7 @@ async function joinVoice(serverId, channelId) {
   S.ws?.send(JSON.stringify({ t: 'voice-join', serverId, channelId }));
   sendVoiceState();
   renderChannels();
+  if (S.view === 'home') { try { renderDmMembers(); } catch {} } // Active Now flips Join → Open
   startSpeakingMonitor();
   sfx.join();
 }
@@ -270,6 +271,7 @@ async function joinDmCall(threadId, withVideo = false) {
   sfx.join();
   paintDmCallButtons();
   try { renderDmLists(); } catch {}
+  if (S.view === 'home') { try { renderDmMembers(); } catch {} } // Active Now flips Join → Open
   if (withVideo) { try { await toggleCamera(); } catch {} }
 }
 function leaveVoice(silent) {
@@ -305,7 +307,7 @@ function leaveVoice(silent) {
   if (!silent) { sfx.leave(); S.ws?.send(JSON.stringify({ t: 'voice-leave' })); }
   renderChannels();
   try { renderDmLists(); } catch {}
-  if (S.view === 'home' && S.dmThreadId) { try { renderDmMembers(); } catch {} }
+  if (S.view === 'home') { try { renderDmMembers(); } catch {} } // Active Now flips Open → Join
   if (S.updateReady && !silent) location.reload();
 }
 function sendVoiceState() {

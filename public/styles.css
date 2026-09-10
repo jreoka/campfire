@@ -1038,6 +1038,10 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .uc-statustext.ustream{color:var(--purple);background:rgba(160,107,255,.12);display:flex;align-items:center;gap:.4rem}
 .pf-playing.ustream{color:var(--purple)}
 .anow-stream{display:flex;align-items:center;gap:.4rem;font-size:.8rem;color:var(--purple);font-weight:600;margin-top:.15rem}
+.anow-voice{display:flex;align-items:center;gap:.4rem;font-size:.8rem;color:var(--green);font-weight:600;margin-top:.15rem}
+.anow-voice svg{flex:0 0 auto}
+.anow-voice>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.anow-voice b{color:var(--text)}
 
 /* ---------- lightbox ---------- */
 #lightbox{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:200;display:flex;align-items:center;justify-content:center;padding:1.5rem;cursor:zoom-out}
@@ -1503,6 +1507,7 @@ body.view-home:not(.dm-open) #members{width:300px}
 .anow-gicon{width:20px;height:20px;border-radius:6px;object-fit:contain;background:#000;vertical-align:-5px;margin-right:.3rem}
 .anow-off{opacity:.62}
 .anow-empty{padding:.4rem .6rem}
+.anow-join{flex:0 0 auto;align-self:center;padding:.32rem .7rem}
 .gmem-list{display:flex;flex-direction:column;gap:2px;max-height:260px;overflow-y:auto;margin-top:.5rem}
 .modal .gmem{font-size:.85rem;font-weight:550;color:var(--text);letter-spacing:normal;margin:0}
 .gmem .dmmain{flex:1;min-width:0;line-height:1.25}
