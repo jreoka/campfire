@@ -128,6 +128,12 @@ function esc(s) {
  * palette the backend uses at signup; keyed on stable account id so a user
  * keeps the same fallback color on every device. */
 const AV_COLORS = ['#5865f2', '#3ba55d', '#ed4245', '#faa81a', '#9b59b6', '#1abc9c', '#e91e63', '#00b0f4'];
+/* Early-user badge: account created within the last year. */
+const EARLY_USER_MS = 365 * 864e5;
+function isEarlyUser(u) {
+  const t = Number(u && u.created_at);
+  return Number.isFinite(t) && t > 0 && (Date.now() - t) <= EARLY_USER_MS;
+}
 function avatarColorFor(user) {
   const key = String((user && (user.id || user.username || user.display_name)) || '');
   if (!key) return AV_COLORS[0]; let h = 2166136261;
