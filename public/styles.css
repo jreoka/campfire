@@ -848,6 +848,10 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .sysadmin-badge{display:inline-flex;align-items:center;font-size:.68rem;font-weight:700;letter-spacing:.02em;color:var(--danger-tx);background:var(--danger-bg);border-radius:999px;padding:.18rem .6rem}
 /* Server tags (guild tags): tiny tonal pill after display names, uppercase. */
 .usertag{display:inline-flex;align-items:center;font-size:.62rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);background:var(--panel-3);border-radius:6px;padding:.12rem .38rem;margin-left:.35rem;white-space:nowrap;vertical-align:1px}
+/* Chat author line: the head's flex gap already separates the tag from the
+   name — cancel the pill's own margin so it sits .35rem after the name (the
+   same tag gap the sidebar lists use). */
+.msg .head .usertag{margin-left:-.15rem}
 .usertag.clickable{cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
 .usertag.clickable:hover{background:var(--panel-4);color:var(--text)}
 /* Server tag mini-panel (banner + icon + name + description). */
@@ -871,9 +875,13 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .member .mstatus.ugame,.dmrow .dmlast.ugame{color:var(--accent-hover)}
 /* name + game badge row (badge never wraps, name ellipsizes) */
 .mname-row{display:flex;align-items:center;gap:.35rem;min-width:0}
-.mname-row .mname,.mname-row .dmname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Names hug their text (flex:0 1 auto). A stretched name box smears gradient /
+   coloured names across the empty space — the last colour stop lands beyond the
+   text — and pushes the server tag out to the right edge of the row. */
+.mname-row .mname,.mname-row .dmname,.mname-row .anow-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mname-row .usertag{margin-left:0}
 #me-card .mname-row{min-width:0}
-#me-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#me-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gbadge{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:6px;background:var(--panel-3);color:var(--muted);flex-shrink:0;overflow:hidden}
 .gbadge svg{width:12px;height:12px;display:block}
 .gbadge img{width:100%;height:100%;object-fit:contain;display:block}

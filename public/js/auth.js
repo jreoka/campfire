@@ -371,11 +371,11 @@ async function boot() {
     const pending = takeInvite();
     if (pending) showInviteLanding(pending);
   }
-  // deep links from push notifications (?server=ID&channel=ID, ?dm=ID)
+  // deep links from push notifications (?server=ID&channel=ID, ?dm=ID, ?friends=1)
   try {
     const qs = new URLSearchParams(location.search);
-    const qdm = qs.get('dm'), qserv = qs.get('server'), qchan = qs.get('channel');
-    if (qdm || qserv) history.replaceState(null, '', location.pathname);
+    const qdm = qs.get('dm'), qserv = qs.get('server'), qchan = qs.get('channel'), qfriends = qs.get('friends');
+    if (qdm || qserv || qfriends) history.replaceState(null, '', location.pathname);
     if (qdm) {
       await openHome();
       if (S.dms.some((t) => t.id === qdm)) selectDmThread(qdm);
@@ -390,6 +390,9 @@ async function boot() {
     } else if (qserv && S.servers.some((s) => s.id === qserv)) {
       await selectServer(qserv);
       if (S.serverDetail?.channels.some((c) => c.id === qchan && c.type === 'text')) await selectChannel(qchan);
+    } else if (qfriends) {
+      await openHome();
+      showFriendsPanel();
     }
   } catch {}
   // shared from the Android system share sheet (/share?title=&text=&url=)

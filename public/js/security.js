@@ -255,12 +255,12 @@ async function openInbox() {
   try { ({ items } = await api('/api/notifs/inbox')); } catch { toast('Could not load notifications'); return; }
   openModal('Notifications', `<div class="row end" style="margin:0 0 .4rem"><button class="btn small" id="m-notif-readall">Mark all read</button></div><div id="m-inbox-list"></div>`, 'Close', null, { wide: true });
   const list = $('#m-inbox-list');
-  if (!items.length) list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">All caught up — mentions and friend requests land here.</p>';
+  if (!items.length) list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">All caught up — mentions, reactions and friend updates land here.</p>';
   for (const n of items) {
     const b = document.createElement('div');
     b.className = 'inbox-item' + (n.read_at ? ' read' : '');
     b.tabIndex = 0;
-    const kind = n.kind === 'dm' ? 'DM' : n.kind === 'friend' ? 'Friend' : 'Mention';
+    const kind = n.kind === 'dm' ? 'DM' : n.kind === 'friend' ? 'Friend' : n.kind === 'reaction' ? 'Reaction' : n.kind === 'friend-status' ? 'Friend status' : 'Mention';
     b.innerHTML = `<span class="dot"></span><span class="imain"><span class="ititle">${esc(n.title || kind)}</span><br/><span class="ibody">${esc(n.body || '')}</span></span><span class="iwhen">${esc(inboxWhen(n.created_at))}</span><button type="button" class="inbox-x" title="Dismiss">×</button>`;
     b.onclick = () => openNotifItem(n);
     b.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openNotifItem(n); } };
@@ -278,8 +278,9 @@ async function openNotifItem(n) {
   refreshNotifBadge();
   $('#modal-backdrop').classList.add('hidden');
   try {
-    if (n.kind === 'dm' && n.thread_id) { await openHome(); selectDmThread(n.thread_id); }
+    if ((n.kind === 'dm' || n.kind === 'reaction') && n.thread_id) { await openHome(); selectDmThread(n.thread_id); }
     else if (n.kind === 'friend') { await openHome(); S.friendTab = 'pending'; document.querySelector('#friend-tabs .ftab[data-ftab="pending"]')?.click(); refreshFriends(); }
+    else if (n.kind === 'friend-status') { await openHome(); showFriendsPanel(); }
     else if (n.server_id) {
       if (n.server_id !== S.serverId) await selectServer(n.server_id);
       if (n.channel_id) await selectChannel(n.channel_id);
@@ -291,7 +292,7 @@ async function dismissNotif(n, el) {
   try { const { unread } = await api('/api/notifs/' + n.id, { method: 'DELETE' }); paintNotifBadge(unread || 0); } catch {}
   el.remove();
   const list = $('#m-inbox-list');
-  if (list && !list.children.length) list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">All caught up — mentions and friend requests land here.</p>';
+  if (list && !list.children.length) list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">All caught up — mentions, reactions and friend updates land here.</p>';
 }
 $('#btn-notifs').onclick = openInbox;
 $('#me-card').style.cursor = 'pointer';

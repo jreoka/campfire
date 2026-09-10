@@ -129,8 +129,9 @@ async function renderPinsList() {
     const atts = Array.isArray(p.attachments) ? p.attachments : [];
     row.innerHTML = '<span class="avatar"></span><div class="pin-main"><div class="pin-head"><span class="who"></span><span class="when"></span></div><div class="pin-text"></div><div class="pin-atts"></div><div class="pin-meta"></div></div>';
     const who = row.querySelector('.who');
-    who.innerHTML = esc(p.user ? p.user.display_name : 'deleted') + (p.user ? tagHTML(p.user) : '');
-    if (p.user) who.style.cssText = nameStyleFor(p.user);
+    who.innerHTML = p.user
+      ? `<span style="${nameStyleFor(p.user)}">${esc(p.user.display_name)}</span>${tagHTML(p.user)}`
+      : 'deleted';
     row.querySelector('.when').textContent = fmtTime(p.created_at);
     row.querySelector('.when').title = fmtFull(p.created_at);
     const textEl = row.querySelector('.pin-text');

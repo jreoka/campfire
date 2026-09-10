@@ -494,9 +494,16 @@ function paintMe() {
   const dot = dotOf(st, streaming);
   $('#me-avwrap').className = 'avwrap st-' + dot;
   $('#me-dot').className = 'status-dot ' + dot;
+  // Tag sits beside #me-name, never inside it: a gradient name clips its
+  // background to the whole element box, so an inline tag would push the far
+  // colour stop past the end of the name (and hide half the gradient).
   const name = $('#me-name');
-  name.innerHTML = esc(S.me.display_name) + tagHTML(S.me);
+  name.textContent = S.me.display_name;
   name.style.cssText = nameStyleFor(S.me);
+  const meRow = name.parentElement;
+  meRow.querySelectorAll(':scope > .usertag').forEach((n) => n.remove());
+  const meTag = tagHTML(S.me);
+  if (meTag) name.insertAdjacentHTML('afterend', meTag);
   const card = $('#me-card');
   if (S.me.sidebar_banner_url && !off) {
     card.style.backgroundImage = `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, var(--panel-2) 5%, rgba(0,0,0,0) 78%), url("${S.me.sidebar_banner_url}")`;

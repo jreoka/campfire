@@ -186,7 +186,7 @@ function activeCard(c) {
     act = `<div class="anow-recent">Last played <b>${esc(c.recent.game)}</b> · ${agoStr(c.recent.last_seen_ms)}</div>`;
   }
   const stLine = (!c.off && c.f.status_text) ? `<span class="anow-sub">${esc(c.f.status_text)}</span>` : '';
-  el.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="anow-main"><span class="anow-name" style="${nameStyleFor(c.f)}">${esc(c.f.display_name)}${tagHTML(c.f)}</span><span class="anow-sub">@${esc(c.f.username)}</span>${stLine}${act}</span>`;
+  el.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="anow-main"><span class="mname-row"><span class="anow-name" style="${nameStyleFor(c.f)}">${esc(c.f.display_name)}</span>${tagHTML(c.f)}</span><span class="anow-sub">@${esc(c.f.username)}</span>${stLine}${act}</span>`;
   paintAvatar(el.querySelector('.avatar'), c.f);
   el.onclick = (e) => openMemberCard(c.f.id, el);
   return el;
@@ -375,18 +375,35 @@ function dmRowEl(t) {
   b.className = 'dmrow' + (t.id === S.dmThreadId ? ' active' : '') + (t.pinned ? ' pinned' : '');
   b.dataset.dmthread = t.id;
   const av = t.isGroup ? null : dmPeer(t);
+  // Presence light on direct DMs: same corner dot the friends list uses.
+  const avSt = av ? statusOf(av.id) : '';
+  const avDot = av ? dotOf(avSt, !isOff(avSt) && av.streaming_game ? av.streaming_game : null) : '';
   const callN = dmCallPeers(t.id).length || t.callCount || 0;
   const inThis = S.voice && S.voice.kind === 'dm' && S.voice.threadId === t.id;
   if (callN > 0 || inThis) b.classList.add('in-call');
+  // Attachment-only messages still read as a sentence in the preview
+  // ("Cross: Sent an attachment") instead of trailing off after the colon.
+  const lastText = t.last
+    ? (String(t.last.content || '').trim() || ((t.last.attachments || 0) > 0 ? 'Sent an attachment' : ''))
+    : '';
   const sub = inThis ? '<span class="dm-incall">In call — you</span>'
     : callN > 0 ? `<span class="dm-incall">${callN} in call — open to join</span>`
-    : esc(t.last ? `${t.last.author}: ${t.last.content}`.slice(0, 60) : 'No messages yet');
-  b.innerHTML = `<span class="avatar">${t.isGroup ? '#' : ''}</span><span class="dmmain"><span class="dmname" style="${!t.isGroup && av ? nameStyleFor(av) : ''}">${esc(dmTitle(t))}${!t.isGroup && av ? tagHTML(av) : ''}</span><span class="dmlast">${sub}</span></span>`;
+    : esc(t.last ? `${t.last.author}: ${lastText}`.slice(0, 60) : 'No messages yet');
+  // Name span holds only the text: the gradient style clips its background to
+  // the element box, so a tag inside would eat the far colour stop. The
+  // mname-row keeps name + tag on one line with the tag right after the name.
+  const avHTML = av
+    ? `<span class="avwrap st-${avDot}"><span class="avatar"></span><span class="status-dot ${avDot}"></span></span>`
+    : `<span class="avatar">${t.isGroup ? '#' : ''}</span>`;
+  b.innerHTML = `${avHTML}<span class="dmmain"><span class="mname-row"><span class="dmname" style="${!t.isGroup && av ? nameStyleFor(av) : ''}">${esc(dmTitle(t))}</span>${!t.isGroup && av ? tagHTML(av) : ''}</span><span class="dmlast">${sub}</span></span>`;
   const avSpan = b.querySelector('.avatar');
   if (av) paintAvatar(avSpan, av);
   else avSpan.style.background = 'var(--panel-3)';
   avSpan.style.boxShadow = 'none'; // no grey ring on sidebar DM pfps (matches the DM rail)
-  if (av && av.sidebar_banner_url && !isOff(statusOf(av.id))) {
+  // Sidebar banner: the DM list is a people roster, not a presence view (rows
+  // aren't dimmed), so the peer's banner shows even while they're offline —
+  // same picture the member sidebar paints next to their name.
+  if (av && av.sidebar_banner_url) {
     b.classList.add('has-banner');
     b.style.backgroundImage = `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${av.sidebar_banner_url}")`;
     b.style.backgroundSize = 'cover';
@@ -465,7 +482,7 @@ function gmemRowEl(u) {
   lab.dataset.search = `${u.display_name || ''} ${u.username || ''}`.toLowerCase();
   lab.title = `Add ${u.display_name || u.username}`;
   lab.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span>`
-    + `<span class="dmmain"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}${tagHTML(u)}</span>`
+    + `<span class="dmmain"><span class="mname-row"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u)}</span>`
     + `<span class="dmlast">@${esc(u.username)}${streaming ? ` · <span class="ustream-t">Streaming ${esc(streaming)}</span>` : (u.status_text ? ' · ' + esc(u.status_text) : (playing ? ` · Playing ${esc(playing)}` : ''))}</span></span>`
     + `<input type="checkbox" class="gcheck" value="${u.id}" />`;
   paintAvatar(lab.querySelector('.avatar'), u);

@@ -477,8 +477,7 @@ async function openReactionsModal(mid) {
       row.innerHTML = '<span class="avatar"></span><span class="rx-main"><span class="rx-name"></span><span class="rx-sub"></span></span>';
       paintAvatar(row.querySelector('.avatar'), u);
       const nm = row.querySelector('.rx-name');
-      nm.innerHTML = esc(u.display_name || u.username || 'deleted user') + (isMe ? ' (you)' : '') + tagHTML(u);
-      try { nm.style.cssText = nameStyleFor(u); } catch {}
+      nm.innerHTML = `<span class="mname-row"><span class="mname" style="${nameStyleFor(u)}">${esc(u.display_name || u.username || 'deleted user')}</span>${isMe ? ' (you)' : ''}${tagHTML(u)}</span>`;
       row.querySelector('.rx-sub').textContent = u.username ? '@' + u.username : '';
       list.appendChild(row);
     }
@@ -927,7 +926,7 @@ async function openUserCard(uid, x, y) {
     <div class="uc-banner"${ban ? ` style="background-image:url('${esc(ban)}')"` : ''}></div>
     <div class="uc-body">
       <span class="avatar big"></span>
-      <div class="uc-name" style="${nameStyleFor(u)}">${esc(u.display_name)}${tagHTML(u)}</div>
+      <div class="uc-name"><span style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u)}</div>
       <div class="uc-sub">@${esc(u.username)}${u.role === 'owner' ? ' · server owner' : ''}</div>
       ${isSysAdmin(u) || isEarlyUser(u) ? `<div class="uc-badges">${isSysAdmin(u) ? '<span class="sysadmin-badge">System admin</span>' : ''}${isEarlyUser(u) ? '<span class="early-badge">Early user</span>' : ''}</div>` : ''}
       <div class="uc-status"><span class="status-dot ${dotOf(st, streaming)}"></span><span>${stLabel}</span></div>
@@ -1312,8 +1311,7 @@ function openProfileScreen(uid) {
   const stLabel = pstreaming ? 'Streaming' : ({ online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' }[st] || 'Offline');
   $('#pf-banner').style.backgroundImage = u.banner_url ? `url('${esc(u.banner_url)}')` : '';
   paintAvatar($('#pf-avatar'), u);
-  $('#pf-name').style.cssText = nameStyleFor(u);
-  $('#pf-name').innerHTML = esc(u.display_name) + tagHTML(u);
+  $('#pf-name').innerHTML = `<span class="mname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u)}`;
   $('#pf-sub').textContent = '@' + u.username + (u.role === 'owner' ? ' · server owner' : '');
   const body = $('#pf-body');
   let actions = '';

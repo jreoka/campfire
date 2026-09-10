@@ -2034,6 +2034,11 @@ app.patch('/api/me', authRequired, async (req, res) => {
   // sync live sockets' presence state
   for (const c of clients) if (c.meta && c.meta.userId === u.id) c.meta.status = u.status;
   }
+  // Friends hear about a custom-status change (falls through to no-op when
+  // the text didn't actually change).
+  if (statusText !== undefined && String(statusText).slice(0, 64) !== (req.user.status_text || '')) {
+    await notifyFriendStatus(u, u.status_text);
+  }
   res.json({ user: u });
 });
 // ---------- game activity watcher (Windows desktop app beacon) ----------
@@ -2818,7 +2823,10 @@ app.post('/api/messages/:mid/reactions', authRequired, async (req, res) => {
   if (!validReaction(emoji, names)) return res.status(400).json({ error: 'bad_emoji' });
   const ex = await db.prepare('SELECT 1 FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').get(m.id, req.user.id, emoji);
   if (ex) await db.prepare('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').run(m.id, req.user.id, emoji);
-  else await db.prepare('INSERT INTO message_reactions (message_id, user_id, emoji, created_at) VALUES (?,?,?,?)').run(m.id, req.user.id, emoji, now());
+  else {
+    await db.prepare('INSERT INTO message_reactions (message_id, user_id, emoji, created_at) VALUES (?,?,?,?)').run(m.id, req.user.id, emoji, now());
+    await notifyReaction(m.user_id, req.user, emoji, { serverId: m.server_id, channelId: m.channel_id, messageId: m.id });
+  }
   broadcastToServer(m.server_id, { t: 'reaction-update', serverId: m.server_id, channelId: m.channel_id, messageId: m.id, reactions: await reactionTally(m.id, null) });
   res.json({ reactions: await reactionTally(m.id, req.user.id) });
 });
@@ -3041,7 +3049,10 @@ async function dmThreadFor(userId, threadId) {
 }
 async function dmThreadView(t, userId) {
   const members = (await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id IN (SELECT user_id FROM dm_members WHERE thread_id = ?)`).all(t.id)).map(publicUser);
-  const last = await db.prepare('SELECT m.content, m.created_at, u.display_name AS dname FROM dm_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.thread_id = ? ORDER BY m.created_at DESC LIMIT 1').get(t.id);
+  const last = await db.prepare(`SELECT m.content, m.created_at, u.display_name AS dname,
+      (SELECT COUNT(*) FROM dm_attachments a WHERE a.message_id = m.id) AS atts
+    FROM dm_messages m LEFT JOIN users u ON u.id = m.user_id
+    WHERE m.thread_id = ? ORDER BY m.created_at DESC LIMIT 1`).get(t.id);
   let pinned = false;
   if (userId) {
     try { pinned = !!(await db.prepare('SELECT pinned FROM dm_members WHERE thread_id = ? AND user_id = ?').get(t.id, userId))?.pinned; } catch {}
@@ -3049,7 +3060,7 @@ async function dmThreadView(t, userId) {
   return {
     id: t.id, name: t.name, isGroup: !!t.is_group, created_by: t.created_by || null, created_at: t.created_at, members,
     pinned,
-    last: last ? { content: last.content, created_at: last.created_at, author: last.dname || '?' } : null,
+    last: last ? { content: last.content, attachments: last.atts || 0, created_at: last.created_at, author: last.dname || '?' } : null,
   };
 }
 async function dmNotify(threadId, obj) {
@@ -3242,6 +3253,73 @@ async function notifyDmMessage(thread, author, content, messageId) {
       tag: `dm:${thread.id}`,
       url: `/?dm=${thread.id}`,
     });
+  }
+}
+// reactions ----------
+async function notifyReaction(authorId, reactor, emoji, target) {
+  if (!authorId || !reactor || authorId === reactor.id) return;
+  // Mute prefs use the same scopes as messages (channel > server > global).
+  const scopes = target.threadId ? [`dm:${target.threadId}`, 'global'] : [`c:${target.channelId}`, `s:${target.serverId}`, 'global'];
+  if ((await notifMode(authorId, scopes)) === 'muted') return;
+  try {
+    if (await db.prepare('SELECT 1 FROM blocks WHERE user_id = ? AND blocked_id = ?').get(authorId, reactor.id)) return;
+  } catch {}
+  const who = displayOf(reactor);
+  let title, body, url;
+  if (target.threadId) {
+    const t = await db.prepare('SELECT is_group, name FROM dm_threads WHERE id = ?').get(target.threadId);
+    const group = !!(t && t.is_group);
+    title = group ? (t.name || 'Group chat') : `${who} (DM)`;
+    body = group ? `${who}: reacted ${emoji} to your message` : `Reacted ${emoji} to your message`;
+    url = `/?dm=${target.threadId}`;
+  } else {
+    const ch = await db.prepare('SELECT name FROM channels WHERE id = ?').get(target.channelId);
+    const s = await getServer(target.serverId);
+    title = `#${(ch && ch.name) || 'chat'} · ${s ? s.name : ''}`;
+    body = `${who} reacted ${emoji} to your message`;
+    url = `/?server=${target.serverId}&channel=${target.channelId}`;
+  }
+  // Toggling the same reaction off/on shouldn't re-ping.
+  try {
+    const dup = await db.prepare("SELECT 1 FROM notifications WHERE user_id = ? AND kind = 'reaction' AND message_id = ? AND body = ? AND created_at > ?")
+      .get(authorId, target.messageId || '', body, now() - 5 * 60000);
+    if (dup) return;
+  } catch {}
+  await pushInbox(authorId, {
+    kind: 'reaction', title, body,
+    server_id: target.serverId || null, channel_id: target.channelId || null,
+    message_id: target.messageId || null, thread_id: target.threadId || null,
+  });
+  if (userVisible(authorId)) return;
+  await pushToUser(authorId, {
+    title,
+    body,
+    icon: reactor.avatar_url || '/icons/icon-192.png',
+    tag: target.threadId ? `dm:${target.threadId}` : `ch:${target.channelId}`,
+    url,
+  });
+}
+// A friend's custom status changed: "Your friend Cross" / "Updated their
+// status to: In a meeting". Only the status text pings — presence flips
+// (online/away/dnd) would be a storm.
+async function notifyFriendStatus(user, statusText) {
+  const text = String(statusText || '').trim();
+  if (!text) return;
+  let uids = [];
+  try {
+    uids = (await db.prepare("SELECT CASE WHEN user_a = ? THEN user_b ELSE user_a END AS uid FROM friendships WHERE (user_a = ? OR user_b = ?) AND status = 'accepted'")
+      .all(user.id, user.id, user.id)).map((r) => r.uid);
+  } catch { return; }
+  if (!uids.length) return;
+  const title = `Your friend ${displayOf(user)}`;
+  const body = `Updated their status to: ${text}`.slice(0, 160);
+  for (const uid of uids) {
+    if (uid === user.id) continue;
+    try { if ((await notifMode(uid, ['global'])) === 'muted') continue; } catch {}
+    try { if (await db.prepare('SELECT 1 FROM blocks WHERE user_id = ? AND blocked_id = ?').get(uid, user.id)) continue; } catch {}
+    await pushInbox(uid, { kind: 'friend-status', title, body });
+    if (userVisible(uid)) continue;
+    await pushToUser(uid, { title, body, icon: user.avatar_url || '/icons/icon-192.png', tag: `status:${user.id}`, url: '/?friends=1' });
   }
 }
 // drop a user's live sockets from a server (membership gone): stop server
@@ -3723,7 +3801,10 @@ app.post('/api/dms/messages/:mid/reactions', authRequired, async (req, res) => {
   if (!validReaction(emoji, await userCustomEmojiNames(req.user.id))) return res.status(400).json({ error: 'bad_emoji' });
   const ex = await db.prepare('SELECT 1 FROM dm_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').get(m.id, req.user.id, emoji);
   if (ex) await db.prepare('DELETE FROM dm_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').run(m.id, req.user.id, emoji);
-  else await db.prepare('INSERT INTO dm_reactions (message_id, user_id, emoji, created_at) VALUES (?,?,?,?)').run(m.id, req.user.id, emoji, now());
+  else {
+    await db.prepare('INSERT INTO dm_reactions (message_id, user_id, emoji, created_at) VALUES (?,?,?,?)').run(m.id, req.user.id, emoji, now());
+    await notifyReaction(m.user_id, req.user, emoji, { threadId: m.thread_id, messageId: m.id });
+  }
   const tally = await db.prepare('SELECT emoji, user_id FROM dm_reactions WHERE message_id = ?').all(m.id);
   const t = {};
   for (const r of tally) { const e = (t[r.emoji] = t[r.emoji] || { emoji: r.emoji, count: 0, users: [] }); e.count++; e.users.push(r.user_id); }
@@ -4112,6 +4193,12 @@ wss.on('connection', async (ws, req) => {
   try {
   ws.isAlive = true; // protocol-level heartbeat (see interval below)
   ws.on('pong', () => { ws.isAlive = true; });
+  // Frames can arrive while the auth/DB lookups below are still awaiting (fast
+  // links beat the queries). Attaching the real handler later silently dropped
+  // them — including the client's very first 'subscribe', which left that
+  // session with an empty presence roster. Queue instead, flush after auth.
+  const earlyFrames = [];
+  ws.on('message', (raw) => { if (!ws.meta) { earlyFrames.push(raw); return; } onMessage(raw); });
   const url = new URL(req.url, 'http://x');
   const token = url.searchParams.get('token') || '';
   let p;
@@ -4137,7 +4224,7 @@ wss.on('connection', async (ws, req) => {
   clients.add(ws);
   safeSend(ws, { t: 'hello', user: publicUser(u), version: APP_VERSION });
 
-  ws.on('message', async raw => {
+  const onMessage = async raw => {
     try {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
@@ -4443,7 +4530,10 @@ wss.on('connection', async (ws, req) => {
       return;
     }
     } catch (e) { console.error('[ws] message handler failed:', (e && e.message) || e); }
-  });
+  };
+
+  // Frames that raced the handshake are handled now that meta + handler exist.
+  for (const raw of earlyFrames.splice(0)) onMessage(raw);
 
   ws.on('close', async () => {
     try {
