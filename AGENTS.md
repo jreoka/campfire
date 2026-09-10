@@ -50,8 +50,9 @@ campfire/
   db.js              # Postgres wrapper + schema (initDb: CREATE TABLE IF NOT EXISTS + guarded migrations)
   unfurl.js          # link previews: server-side OpenGraph/oEmbed unfurl, SSRF-guarded fetch,
                      # Postgres cache, signed thumbnail proxy (/api/unfurl, /api/unfurl/img)
-  virus-scan.js      # ClamAV scanning + gated serving
-  media-compress.js  # background ffmpeg re-encode of over-large media
+  virus-scan.js      # ClamAV scanning + gated serving (+ inline media compression per upload)
+  media-compress.js  # ffmpeg re-encode of over-large media: single-pass in the scan slot,
+                     # plus the sweeper that drains anything the pipeline missed
   package.json       # deps (express, ws, jsonwebtoken, bcryptjs, cookie-parser)
   Dockerfile         # node:22-alpine, no build tools needed
   docker-compose.yml # one service, ./data volume, requires JWT_SECRET in .env
@@ -183,6 +184,11 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
 - **Tests:** `node scripts/test-unfurl.js [--live]` covers the link-preview parser
   and the SSRF guard (offline by default; `--live` also fetches real pages and
   proves a 302 to a link-local address is refused).
+- **Upload pipeline E2E:** `node scripts/test-upload-pipeline.js` (needs ffmpeg
+  + the dev Postgres, skips otherwise) boots a real server against a throwaway
+  database with a fake clamd and asserts the single-transition compression flow
+  for both the scan-integrated path and the sweeper fallback. Re-run it after
+  touching `virus-scan.js`, `media-compress.js`, or the upload routes.
 - Smoke test API: `curl localhost:3000/api/config`, register/login flow.
 - E2E (register → create server → invite-join → WS live message → history →
   channel create/delete → voice-join signaling) was verified passing; re-run an
@@ -204,9 +210,21 @@ are load-bearing:
 - **Never rewrite an upload in place.** `media-compress.replaceBytes` writes a
   sibling temp file and `rename()`s over the target. `copyFile()` exposes a torn
   file to clamd and to HTTP at the same time.
-- **Compression runs after the virus verdict, never before.** Re-encoding must
-  not race the scanner on the same bytes; `media-compress` only touches rows the
-  scanner has already ruled clean and re-queues `virus-scan` after rewriting.
+- **Compression is scan -> compress -> scan, and only the last verdict gets
+  published.** On a clean verdict the `virus-scan` slot compresses the file
+  itself (`processMedia` -> `media-compress.processUpload`), streams the
+  candidate output into clamd (a local temp file — never re-downloaded), and
+  only commits it once that verdict is clean. So clients see exactly one
+  `pending -> final` transition and a playing file is never swapped out from
+  under a running player. `media-compress`'s sweeper is the fallback for
+  anything the pipeline missed (scanning off/unavailable, the pre-existing
+  backlog, a failed candidate scan) and still re-queues `virus-scan` after
+  rewriting. Never hand unscanned bytes to ffmpeg or publish unscanned output.
+- **One ffmpeg at a time, process-wide.** The sweeper and the scan pipeline
+  share `withCompressLock`/the `inflight` key set; the sweeper skips keys with a
+  pass in flight and `virus-scan`'s `reapStuckClaims` leaves a claim alone while
+  `media-compress.isCompressing(key)` is true (a slot parked in a long encode is
+  not a stuck slot).
 - Scan keys are the storage key (`files/<hex>.png`), derived from the URL — NOT
   the `attachments.id` uid. They are not interchangeable.
 - The virus serving gate only covers `files/` (chat attachments); profile media

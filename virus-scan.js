@@ -16,6 +16,10 @@
 //   infected state instead of the file (see attachmentHTML).
 // - `infected` deletes the bytes immediately (S3 + local) but keeps the
 //   message + attachment row so the chat shows a greyed-out warning.
+// - On a clean verdict for a chat upload the slot ALSO compresses the file
+//   (scan -> compress -> scan the smaller bytes -> publish, see
+//   processMedia) so clients only ever see one transition. Files the
+//   pipeline misses are picked up by the media sweeper.
 // - On every verdict change the server re-broadcasts the affected
 //   messages (hooked via setScanHooks) so scanning cards flip to the
 //   real file without a refresh.
@@ -434,15 +438,66 @@ async function claimRow() {
 
 // Release claims stuck longer than SLOT_TIMEOUT_MS (wedged I/O the
 // per-call timeouts somehow missed). The row stays pending for retry.
+// Exception: a slot parked in an inline ffmpeg pass is NOT stuck (media
+// compression runs inside the slot now) — leave it be, the encode has its
+// own timeout.
 async function reapStuckClaims() {
   const cutoff = now() - SLOT_TIMEOUT_MS;
   for (const [key, at] of claimAt) {
     if (at > cutoff) continue;
+    let compressing = false;
+    try { compressing = require('./media-compress').isCompressing(key); } catch {}
+    if (compressing) continue;
     claimAt.delete(key);
     claimed.delete(key);
     warn('slot watchdog: released stuck claim on ' + key);
     try { await db.prepare('UPDATE file_scans SET attempts = attempts + 1 WHERE key = ?').run(key); } catch {}
   }
+}
+
+// Scan a candidate file the compressor produced (a local temp path) BEFORE
+// anything is published: true = publish the smaller bytes, false = the
+// candidate is dropped and the original (already verified) file stays.
+// A scanner failure throws — media-compress leaves the original bytes and the
+// row queued (compressed = 0, the sweeper retries) while the caller falls
+// back to publishing the verdict for the original bytes.
+async function scanCandidate(cand) {
+  if (!cand || !cand.path) return true;
+  if (!clamdReady && !(await pingClamd(3000))) throw new Error('clamd_unavailable');
+  const timeoutMs = Math.min(600000, 120000 + (Number(cand.size) || 0));
+  const verdict = await clamdScanStream(fs.createReadStream(cand.path), timeoutMs);
+  if (verdict.clean) return true;
+  warn('compressed output flagged (' + String(verdict.virus || 'malware').slice(0, 80) + ') — keeping the original bytes');
+  return false;
+}
+
+// Single-pass media processing, run inside the scan slot right after the
+// upload's own clean verdict: compress now, verify the smaller bytes, and
+// publish them — so clients get ONE pending -> final transition instead of
+// the file appearing, being played, then swapping under the player when a
+// background compression lands (see media-compress.js processUpload).
+// Returns the storage key whose verdict should be published (the format
+// change on wav->mp3 / mov->mp4 mints a new key; the verdict follows it).
+async function processMedia(key) {
+  let out = null;
+  try {
+    out = await require('./media-compress').processUpload(key, scanCandidate);
+  } catch (e) {
+    // Compression or candidate-scan hiccup: publish the verdict for the
+    // original, already-verified bytes. The sweeper retries the encode.
+    warn('inline compression failed for ' + key + ': ' + String((e && e.message) || e).slice(0, 160));
+    return key;
+  }
+  if (!out || !out.key || out.key === key) return key;
+  // Bytes moved to a fresh key: carry the verdict over, drop the row for the
+  // old (deleted) key so nothing lingers behind the sweep.
+  try { await db.prepare('DELETE FROM file_scans WHERE key = ?').run(key); } catch {}
+  try {
+    await db.prepare(`INSERT INTO file_scans (key,status,attempts,error,created_at,scanned_at)
+      VALUES (?,'clean',0,'',?,?) ON CONFLICT(key) DO UPDATE SET status = 'clean', error = '', scanned_at = ?`)
+      .run(out.key, now(), now(), now());
+  } catch {}
+  return out.key;
 }
 
 // Returns 'done' (slot refills immediately) or 'later' (back off: engine
@@ -494,11 +549,14 @@ async function processRow(row) {
     }
     stats.scanned++;
     if (verdict.clean) {
-      await markRow(row.key, 'clean', '');
+      // The bytes the client will actually get are verified before this
+      // verdict is published (see processMedia): scan -> compress -> scan.
+      const finalKey = await processMedia(row.key);
+      await markRow(finalKey, 'clean', '');
       stats.clean++;
-      stats.lastScan = { key: row.key, result: 'clean', at: now() };
-      await emitChange(row.key, 'clean');
-      log('clean: ' + row.key);
+      stats.lastScan = { key: finalKey, result: 'clean', at: now() };
+      await emitChange(finalKey, 'clean');
+      log('clean: ' + finalKey);
     } else {
       const virus = String(verdict.virus || 'malware').slice(0, 120);
       await markRow(row.key, 'infected', virus);

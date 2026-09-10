@@ -10,7 +10,8 @@
 //   (MEDIA_COMPRESS_EVERY_MS, default 30s) once the queue drains. New
 //   uploads also wake it via kickMediaCompress, so files typically compress
 //   within seconds instead of waiting for the next idle poll.
-// - Low CPU by construction: ONE file at a time (busy guard), `nice -n 19`
+// - Low CPU by construction: ONE file at a time (process-wide lock across the
+//   sweeper and the scan pipeline), `nice -n 19`
 //   on POSIX, ffmpeg `-threads 1`, small per-tick batch, short breather
 //   between hot ticks, and a load-average check that defers ticks when
 //   the box is busy.
@@ -21,6 +22,12 @@
 // - Idempotent + resumable: attachments/dm_attachments carry a `compressed`
 //   flag (0 = pending, 1 = done). Every upload is queued automatically via
 //   the column default; the backlog of pre-existing media drains gradually.
+// - Single pass with the scanner: virus-scan.js calls processUpload() after a
+//   clean verdict, scans the candidate output too, and only then publishes
+//   the file. Clients see ONE pending -> final transition, so a player that
+//   just appeared is never swapped out from under itself. This sweeper stays
+//   as the fallback for anything the pipeline missed (scanning off or
+//   unavailable, the pre-existing backlog, a failed candidate scan).
 // - Same URL shape always (/uploads/<sub>/<file>?v=<cachekey>). Same-format
 //   results overwrite in place with a fresh ?v cache-buster; format changes
 //   (wav/flac -> mp3, mov/webm video -> mp4) mint a new random filename and
@@ -346,26 +353,79 @@ const MIME_BY_OUT = { '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image
 
 // ---------- job ----------
 
+// One ffmpeg at a time, process-wide: this sweeper and the single-pass
+// virus-scan pipeline (processUpload below) both compress, and the low-CPU
+// promise is "one file at a time" no matter which path got there first.
+let lockTail = Promise.resolve();
+function withCompressLock(fn) {
+  const run = lockTail.then(fn, fn);
+  lockTail = run.then(() => {}, () => {});
+  return run;
+}
+
+// Keys with a compression pass in flight (either path). Stops a scan slot and
+// the sweeper from chewing through the same upload at the same time — and the
+// scan watchdog (virus-scan.js) from reaping a slot parked in a long encode.
+const inflight = new Set();
+function isCompressing(key) { return inflight.has(key); }
+
 async function markDone(table, id) {
   await db.prepare(`UPDATE ${table} SET compressed = 1 WHERE id = ?`).run(id);
 }
 
-// Returns 'compressed' | 'skipped' (both mean: never look at this row again).
-async function processRow(row) {
-  const table = row.tbl === 'dm' ? 'dm_attachments' : 'attachments';
-  const done = async () => { stats.skipped++; await markDone(table, row.id); return 'skipped'; };
-  const key = cleanKey(row.url);
-  if (!key) return done(); // remote GIF URL etc.
+async function markRowsDone(rows) {
+  for (const r of rows) await markDone(r.tbl === 'dm' ? 'dm_attachments' : 'attachments', r.id);
+}
+
+// Every chat/DM attachment row still awaiting compression that points at this
+// key (the same upload can be attached to more than one message).
+async function pendingRowsForKey(key) {
+  const url = '/uploads/' + key;
+  const out = [];
+  for (const [tbl, table] of [['att', 'attachments'], ['dm', 'dm_attachments']]) {
+    let rows = [];
+    try {
+      rows = await db.prepare(`SELECT id, url, filename, mime, size, kind, '${tbl}' AS tbl FROM ${table}
+        WHERE compressed = 0 AND kind IN ('image','video','audio') AND split_part(url, '?', 1) = ?`).all(url);
+    } catch { continue; }
+    for (const r of rows) out.push(r);
+  }
+  return out;
+}
+
+// Single-pass upload processing, shared by both callers:
+//   - this sweeper (inspect = null): commit the smaller bytes, then re-queue a
+//     scan for them (the sweeper only ever touches scan-clean files);
+//   - virus-scan.js: hand each candidate output to `inspect({path,size})` and
+//     only commit when the scanner approves it, so the verdict that reaches
+//     clients describes the bytes they will actually play.
+// Returns null when there is nothing to do (rows are marked done), else
+// { key, url, size, origSize, mime, group, pipeline, renamed }.
+async function processUpload(key, inspect) {
+  if (!ENABLED || !key || inflight.has(key)) return null;
+  inflight.add(key);
+  try { return await withCompressLock(() => compressLocked(key, inspect)); }
+  finally { inflight.delete(key); }
+}
+
+async function compressLocked(key, inspect) {
+  const rows = await pendingRowsForKey(key);
+  if (!rows.length) return null; // not a pending chat upload (avatar, emoji, …)
+  const done = async () => { await markRowsDone(rows); return null; };
+  const row = rows[0];
   const plan = planFor(row.mime, key);
   if (!plan) return done();
   const minSize = MIN_BYTES[plan.group] || MIN_BYTES.image;
-  if ((row.size || 0) < minSize) return done();
+  let dbSize = 0;
+  for (const r of rows) dbSize = Math.max(dbSize, Number(r.size) || 0);
+  if (dbSize < minSize) return done();
   if (!(await keyExists(key))) return done();
 
   const rand = crypto.randomBytes(8).toString('hex');
   const tmpIn = path.join(os.tmpdir(), `cfc-in-${rand}${extOf(key) || '.bin'}`);
   const outExt = plan.outExt;
   const tmpOut = path.join(os.tmpdir(), `cfc-out-${rand}${outExt}`);
+  let inScan = !!inspect;
   try {
     await downloadToTemp(key, tmpIn);
     const inStat = await fs.promises.stat(tmpIn).catch(() => null);
@@ -378,55 +438,87 @@ async function processRow(row) {
       stats.lastError = { key, error: err, at: now() };
       warn('encode failed, keeping original:', key, err);
       await logJob({ tbl: row.tbl, url: row.url, filename: row.filename, kind: plan.group, pipeline: plan.pipeline, result: 'error', origSize: inStat.size, newSize: 0, error: err });
-      await markDone(table, row.id);
-      return 'skipped';
+      return done();
     }
     const outStat = await fs.promises.stat(tmpOut).catch(() => null);
     if (!outStat || !outStat.size) return done();
     if (outStat.size >= inStat.size * (1 - MIN_SAVING)) return done();
 
+    // Nothing is published until the caller's scanner approves the candidate.
+    // A rejected one leaves the original (already verified) file alone and
+    // marks the row done so the sweep doesn't re-encode it forever.
+    if (inspect) {
+      const publish = await inspect({ path: tmpOut, size: outStat.size });
+      inScan = false;
+      if (!publish) {
+        await logJob({ tbl: row.tbl, url: row.url, filename: row.filename, kind: plan.group, pipeline: plan.pipeline, result: 'error', origSize: inStat.size, newSize: 0, error: 'candidate_output_flagged' });
+        return done();
+      }
+    }
+
     const sameFormat = extOf(key) === outExt;
     const newMime = sameFormat ? String(row.mime) : (MIME_BY_OUT[outExt] || String(row.mime));
-    let newUrl;
-    let resultKey = key;
-    if (sameFormat) {
-      await replaceBytes(key, tmpOut, newMime);
-      newUrl = cacheBust('/uploads/' + key);
-      await db.prepare('UPDATE ' + table + ' SET size = ?, url = ?, compressed = 1 WHERE id = ?')
-        .run(outStat.size, newUrl, row.id);
-    } else {
+    let newKey = key;
+    if (!sameFormat) {
       // Format change (wav->mp3, mov/webm video->mp4): mint a fresh name.
       const dir = key.slice(0, key.lastIndexOf('/') + 1);
-      const newKey = dir + crypto.randomBytes(16).toString('hex') + outExt;
-      await replaceBytes(newKey, tmpOut, newMime);
-      newUrl = cacheBust('/uploads/' + newKey);
-      await db.prepare('UPDATE ' + table + ' SET size = ?, url = ?, mime = ?, compressed = 1 WHERE id = ?')
-        .run(outStat.size, newUrl, newMime, row.id);
+      newKey = dir + crypto.randomBytes(16).toString('hex') + outExt;
+    }
+    await replaceBytes(newKey, tmpOut, newMime);
+    const newUrl = cacheBust('/uploads/' + newKey);
+    for (const rr of rows) {
+      const table = rr.tbl === 'dm' ? 'dm_attachments' : 'attachments';
+      try {
+        if (sameFormat) await db.prepare('UPDATE ' + table + ' SET size = ?, url = ?, compressed = 1 WHERE id = ?').run(outStat.size, newUrl, rr.id);
+        else await db.prepare('UPDATE ' + table + ' SET size = ?, url = ?, mime = ?, compressed = 1 WHERE id = ?').run(outStat.size, newUrl, newMime, rr.id);
+      } catch (e) { warn('row update failed:', String((e && e.message) || e).slice(0, 120)); }
+    }
+    if (!sameFormat) {
       await removeKey(key);
       try { require('./virus-scan').dropScan(key); } catch {}
-      resultKey = newKey;
     }
-    // Rewritten bytes need a fresh virus verdict: the scan gate holds the file
-    // as pending until the rescan lands.
-    try { require('./virus-scan').queueFileScan(resultKey); } catch {}
     stats.processed++;
     stats.savedBytes += inStat.size - outStat.size;
     stats.lastJob = { key, group: plan.group, pipeline: plan.pipeline, origSize: inStat.size, newSize: outStat.size, at: now() };
     await logJob({ tbl: row.tbl, url: newUrl, filename: row.filename, kind: plan.group, pipeline: plan.pipeline, result: 'compressed', origSize: inStat.size, newSize: outStat.size });
     const pct = Math.round((1 - outStat.size / inStat.size) * 100);
     log(`${plan.group} ${key}: ${Math.round(inStat.size / 1024)}KB -> ${Math.round(outStat.size / 1024)}KB (-${pct}%)`);
-    return 'compressed';
+    return { key: newKey, url: newUrl, size: outStat.size, origSize: inStat.size, mime: newMime, group: plan.group, pipeline: plan.pipeline, renamed: !sameFormat };
   } catch (e) {
+    // A scanner failure on the candidate is NOT a reason to give up on the
+    // file: keep the original bytes in place, stay queued (compressed = 0) so
+    // the sweeper can retry, and let the caller publish the original verdict.
+    if (inScan) {
+      stats.errors++;
+      stats.lastError = { key, error: String((e && e.message) || e).slice(0, 160), at: now() };
+      warn('candidate scan failed, keeping original:', key, String((e && e.message) || e).slice(0, 160));
+      throw e;
+    }
     const err = String((e && e.message) || e).slice(0, 160);
     stats.errors++;
     stats.lastError = { key, error: err, at: now() };
     warn('job failed, keeping original:', key, err);
     try { await logJob({ tbl: row.tbl, url: row.url, filename: row.filename, kind: (plan && plan.group) || '', pipeline: (plan && plan.pipeline) || '', result: 'error', origSize: row.size || 0, newSize: 0, error: err }); } catch {}
-    try { await markDone(table, row.id); } catch {}
-    return 'skipped';
+    try { await markRowsDone(rows); } catch {}
+    return null;
   } finally {
     for (const f of [tmpIn, tmpOut]) { try { await fs.promises.unlink(f); } catch {} }
   }
+}
+
+// Sweeper path: returns 'compressed' | 'skipped' (both mean: never look at
+// this row again). The scan-integrated path is the primary one now; this is
+// the safety net for files it missed — scanning disabled/unavailable, the
+// backlog from before the single-pass change, a failed candidate scan.
+async function processRow(row) {
+  const key = cleanKey(row.url);
+  if (!key) { stats.skipped++; await markDone(row.tbl === 'dm' ? 'dm_attachments' : 'attachments', row.id); return 'skipped'; } // remote GIF URL etc.
+  const out = await processUpload(key, null);
+  if (!out) { stats.skipped++; return 'skipped'; }
+  // Rewritten bytes need a fresh virus verdict: the scan gate holds the file
+  // as pending until the rescan lands.
+  try { require('./virus-scan').queueFileScan(out.key); } catch {}
+  return 'compressed';
 }
 
 async function fetchCandidates(limit) {
@@ -476,10 +568,9 @@ async function tick() {
     let done = 0;
     for (const row of rows) {
       if (done >= BATCH) break;
-      if (scanMap) {
-        const k = cleanKey(row.url);
-        if (k && (scanMap.get(k) || 'clean') !== 'clean') continue;
-      }
+      const k = cleanKey(row.url);
+      if (k && isCompressing(k)) continue; // the scan pipeline is already on it
+      if (scanMap && k && (scanMap.get(k) || 'clean') !== 'clean') continue;
       let r;
       try { r = await processRow(row); }
       catch (e) { warn('row failed:', String((e && e.message) || e).slice(0, 160)); continue; }
@@ -602,4 +693,4 @@ function startMediaCompress() {
   }).catch((e) => warn('migration failed:', String((e && e.message) || e).slice(0, 200)));
 }
 
-module.exports = { startMediaCompress, tickMediaCompress: tick, kickMediaCompress, ensureColumns, planFor, buildArgs, cleanKey, MIN_BYTES, getMediaStats, mediaQueueCounts, mediaTotals, mediaRecentJobs };
+module.exports = { startMediaCompress, tickMediaCompress: tick, kickMediaCompress, ensureColumns, planFor, buildArgs, cleanKey, MIN_BYTES, getMediaStats, mediaQueueCounts, mediaTotals, mediaRecentJobs, processUpload, isCompressing };
