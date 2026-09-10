@@ -15,6 +15,28 @@ function openSettings(tab = 'profile') {
   };
   $('#set-statustext').value = S.me.status_text || '';
   updatePresenceNote();
+  // Server-tag picker: every joined server that has a tag set, plus None.
+  // S.servers carries full rows (SELECT s.*) so tags ride along for free.
+  try {
+    const sel = $('#set-tag');
+    sel.innerHTML = '';
+    const none = document.createElement('option');
+    none.value = ''; none.textContent = 'None';
+    sel.appendChild(none);
+    for (const s of (S.servers || []).filter((x) => x && x.tag)) {
+      const o = document.createElement('option');
+      o.value = s.id; o.textContent = `${s.tag} — ${s.name}`;
+      if (S.me.active_tag_server_id === s.id) o.selected = true;
+      sel.appendChild(o);
+    }
+    if (S.me.active_tag_server_id && ![...sel.options].some((o) => o.value === S.me.active_tag_server_id)) {
+      const o = document.createElement('option');
+      o.value = S.me.active_tag_server_id; o.selected = true;
+      o.textContent = S.me.active_tag ? `${S.me.active_tag} — unavailable` : 'Unavailable';
+      sel.appendChild(o);
+    }
+    if (!sel.value) sel.value = '';
+  } catch {}
   $('#set-bio').value = S.me.bio || '';
   updateBioCount();
   $('#set-username').value = S.me.username || '';
@@ -368,15 +390,23 @@ $('#set-bio').addEventListener('input', updateBioCount);
 $('#set-profile-save').onclick = async () => {
   try {
     if ($('#set-namecustom').checked) { try { localStorage.setItem('cf_namecolors', JSON.stringify({ c: $('#set-namecolor').value, g: $('#set-namegrad').value })); } catch {} }
-    const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify({
+    const body = {
       displayName: $('#set-display').value.trim(),
       statusText: $('#set-statustext').value.trim(),
       bio: $('#set-bio').value,
       nameColor: $('#set-namecustom').checked ? $('#set-namecolor').value : '',
       nameGradient: $('#set-namecustom').checked ? $('#set-namegrad').value : '',
-    }) });
+    };
+    // Only send the tag when it changed: a stale selection (server removed
+    // its tag) must never block the rest of the profile save.
+    const wantTag = $('#set-tag').value || null;
+    if (wantTag !== (S.me.active_tag_server_id || null)) body.tagServerId = wantTag;
+    const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify(body) });
     S.me = { ...S.me, ...user };
     paintMe(); renderMembers();
+    try { renderMessages(); } catch {}
+    try { renderFriendLists(); } catch {}
+    try { renderDmMembers(); } catch {}
     updatePresenceNote();
     toast('Profile saved');
   } catch (err) { toast('Save failed: ' + prettyError(err.message)); }

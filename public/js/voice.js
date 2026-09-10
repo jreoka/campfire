@@ -857,7 +857,7 @@ function voicePeerInfo(id) {
   if (id === 'me' || (S.me && id === S.me.id)) {
     return {
       id: S.me.id, display_name: S.me.display_name, username: S.me.username,
-      avatar_color: S.me.avatar_color, avatar_url: S.me.avatar_url || null,
+      avatar_color: S.me.avatar_color, active_tag: S.me.active_tag || null, avatar_url: S.me.avatar_url || null,
       muted: !!S.voice?.muted, deafened: !!S.voice?.deafened,
       camera: !!S.voice?.cameraOn, sharing: !!S.voice?.sharing,
       streamName: S.voice?.streamName || null,
@@ -927,9 +927,9 @@ function paintTile(key, el) {
     }
     fb.style.display = '';
   }
-  el.querySelector('.vname').textContent = isScreen
-    ? (u.streamName ? `${u.display_name} — ${u.streamName}` : `${u.display_name}’s screen`)
-    : (u.me ? `${u.display_name} (you)` : u.display_name);
+  el.querySelector('.vname').innerHTML = isScreen
+    ? esc(u.streamName ? `${u.display_name} — ${u.streamName}` : `${u.display_name}’s screen`)
+    : (esc(u.display_name) + tagHTML(u) + (u.me ? ' (you)' : ''));
   const icons = el.querySelector('.vicons');
   icons.innerHTML = '';
   const badge = (svg, cls, title) => { const s = document.createElement('span'); if (cls) s.className = cls; s.title = title; s.innerHTML = svg; icons.appendChild(s); };
@@ -1080,7 +1080,7 @@ function renderVoiceUsers() {
         if (p.sharing) subs.push('<span class="on" title="Streaming' + (p.streamName ? ' ' + esc(p.streamName) : '') + '">' + VB_SVG.share + '</span>');
         if (subs.length) stat = '<span class="vstat">' + subs.join('') + '</span>';
       }
-      u.innerHTML = `<span class="avatar"></span><span class="vname">${esc(p.display_name)}${p.id === S.me.id ? ' (you)' : ''}</span>${p.sharing ? `<span class="vlive" title="${esc(p.streamName || 'Live stream')}">LIVE</span>` : ''}${stat || (p.muted ? '<span class="vmic">' + MIC_OFF_SVG + '</span>' : '')}`;
+      u.innerHTML = `<span class="avatar"></span><span class="vname">${esc(p.display_name)}${tagHTML(p)}${p.id === S.me.id ? ' (you)' : ''}</span>${p.sharing ? `<span class="vlive" title="${esc(p.streamName || 'Live stream')}">LIVE</span>` : ''}${stat || (p.muted ? '<span class="vmic">' + MIC_OFF_SVG + '</span>' : '')}`;
       paintAvatar(u.querySelector('.avatar'), p);
       box.appendChild(u);
     }

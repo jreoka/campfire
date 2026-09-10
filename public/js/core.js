@@ -137,6 +137,17 @@ function isEarlyUser(u) {
   return Number.isFinite(t) && t > 0 && t <= EARLY_USER_CUTOFF;
 }
 function isSysAdmin(u) { return !!(u && u.is_admin); }
+/* Server tags: guild admins may set a ≤4-char tag members can show after
+ * their name everywhere. The snapshot lives on the user (active_tag) so
+ * every surface renders it with zero lookups. */
+function activeTagFor(u) {
+  const t = u && u.active_tag ? String(u.active_tag).replace(/\s/g, '') : '';
+  return t ? Array.from(t).slice(0, 4).join('') : '';
+}
+function tagHTML(u) {
+  const t = activeTagFor(u);
+  return t ? '<span class="usertag">' + esc(t) + '</span>' : '';
+}
 function avatarColorFor(user) {
   const key = String((user && (user.id || user.username || user.display_name)) || '');
   if (!key) return AV_COLORS[0]; let h = 2166136261;

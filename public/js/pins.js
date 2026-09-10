@@ -129,7 +129,7 @@ async function renderPinsList() {
       : (p.attachments?.length ? `[${p.attachments.length} attachment${p.attachments.length === 1 ? '' : 's'}]` : '[no text]');
     row.innerHTML = '<span class="avatar"></span><div class="pin-main"><div class="pin-head"><span class="who"></span><span class="when"></span></div><div class="pin-text"></div><div class="pin-meta"></div></div>';
     const who = row.querySelector('.who');
-    who.textContent = p.user ? p.user.display_name : 'deleted';
+    who.innerHTML = esc(p.user ? p.user.display_name : 'deleted') + (p.user ? tagHTML(p.user) : '');
     if (p.user) who.style.cssText = nameStyleFor(p.user);
     row.querySelector('.when').textContent = fmtTime(p.created_at);
     row.querySelector('.when').title = fmtFull(p.created_at);

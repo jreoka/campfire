@@ -426,7 +426,7 @@ function onWS(m) {
       // path every ~15s per gaming user and must NOT rebuild the whole list
       // (each rebuild risks nudging scrolled-up readers). Member list, DM
       // rows and cards below still update every time.
-      const rowKeys = ['display_name', 'avatar_url', 'avatar_color', 'name_color', 'name_gradient'];
+      const rowKeys = ['display_name', 'avatar_url', 'avatar_color', 'name_color', 'name_gradient', 'active_tag', 'active_tag_server_id'];
       const snapRow = (o) => (o ? rowKeys.map((k) => String(o[k] ?? '')) : []);
       const snapRows = () => [
         u.id === S.me?.id ? snapRow(S.me) : [],
@@ -445,6 +445,14 @@ function onWS(m) {
         const fr = (S.friends[k] || []).find((x) => x.id === u.id);
         if (fr) Object.assign(fr, u);
       }
+      // Voice occupants are separate ephemeral objects — sync the tag so
+      // call tiles update without rejoining.
+      try {
+        for (const list of (S.voiceOccupancy || new Map()).values()) {
+          const p = (list || []).find((x) => x && x.id === u.id);
+          if (p) { p.display_name = u.display_name; p.avatar_url = u.avatar_url || null; p.active_tag = u.active_tag || null; }
+        }
+      } catch {}
       if (u.username) activeGaming.delete(u.username);
       renderMembers();
       if (S.view === 'home') {

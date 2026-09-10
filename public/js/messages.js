@@ -438,7 +438,7 @@ function messageEl(m, opts = {}) {
     ? `<span class="avatar ghost" title="${esc(fmtFull(m.created_at))}"><span class="gts">${esc(fmtTime(m.created_at))}</span></span><div class="body">`
     : '<span class="avatar" data-uid="' + (m.user ? m.user.id : '') + '"></span><div class="body">';
   if (!grouped) {
-    inner += `<div class="head"><span class="who" data-uid="${m.user ? m.user.id : ''}" style="${nameStyleFor(lu)}">${esc(lu ? lu.display_name : 'deleted')}</span><span class="when" title="${esc(fmtFull(m.created_at))}">${fmtTime(m.created_at)}</span>${m.edited ? '<span class="edited">(edited)</span>' : ''}</div>`;
+    inner += `<div class="head"><span class="who" data-uid="${m.user ? m.user.id : ''}" style="${nameStyleFor(lu)}">${esc(lu ? lu.display_name : 'deleted')}</span>${tagHTML(lu)}<span class="when" title="${esc(fmtFull(m.created_at))}">${fmtTime(m.created_at)}</span>${m.edited ? '<span class="edited">(edited)</span>' : ''}</div>`;
   }
   if (m.fwdFrom) {
     inner += `<div class="fwd-tag">Forwarded from <b>${esc(m.fwdFrom)}</b></div>`;
@@ -999,11 +999,12 @@ function paintTyping() {
   const el = $('#typing');
   const bar = $('#typing-bar');
   if (!el) return;
-  const names = [...S.typingNames.values()].filter(Boolean);
-  if (!names.length) { el.textContent = ''; if (bar) bar.classList.remove('show'); return; }
-  if (names.length === 1) el.textContent = `${names[0]} is typing…`;
-  else if (names.length === 2) el.textContent = `${names[0]} and ${names[1]} are typing…`;
-  else el.textContent = `${names[0]}, ${names[1]} and ${names.length - 2} other${names.length - 2 === 1 ? '' : 's'} are typing…`;
+  const entries = [...S.typingNames.entries()].filter(([, n]) => n);
+  if (!entries.length) { el.textContent = ''; if (bar) bar.classList.remove('show'); return; }
+  const bit = ([id, nm]) => esc(nm) + tagHTML(memberById(id));
+  if (entries.length === 1) el.innerHTML = `${bit(entries[0])} is typing…`;
+  else if (entries.length === 2) el.innerHTML = `${bit(entries[0])} and ${bit(entries[1])} are typing…`;
+  else el.innerHTML = `${bit(entries[0])}, ${bit(entries[1])} and ${entries.length - 2} other${entries.length - 2 === 1 ? '' : 's'} are typing…`;
   if (bar) bar.classList.add('show');
 }
 function clearTyping() {

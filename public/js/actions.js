@@ -108,7 +108,7 @@ function openMsgSheet(mid) {
   } else {
     const lu = liveUserFor(m.user);
     paintAvatar(head.querySelector('.avatar'), lu);
-    head.querySelector('.sheet-who').innerHTML = `<span style="${nameStyleFor(lu)}">${esc(lu ? lu.display_name : 'deleted')}</span><span class="when" title="${esc(fmtFull(m.created_at))}">${fmtTime(m.created_at)}</span>`;
+    head.querySelector('.sheet-who').innerHTML = `<span style="${nameStyleFor(lu)}">${esc(lu ? lu.display_name : 'deleted')}</span>${tagHTML(lu)}<span class="when" title="${esc(fmtFull(m.created_at))}">${fmtTime(m.created_at)}</span>`;
     head.querySelector('.sheet-snip').textContent = m.content
       ? (m.content.length > 120 ? m.content.slice(0, 120) + '…' : m.content)
       : (m.attachments?.length ? `[${m.attachments.length} attachment${m.attachments.length === 1 ? '' : 's'}]` : '');
@@ -532,7 +532,7 @@ function serverMenuItems(sid) {
   const own = notifPrefsCache['s:' + sid] || '';
   return [
     { label: 'Open', icon: '→', fn: () => selectServer(sid) },
-    { label: 'Invite links', icon: '⧉', fn: async () => { if (sid !== S.serverId) await selectServer(sid); S.serverSubTab = 'general'; openServerSettings(); } },
+    { label: 'Invite links', icon: '⧉', fn: async () => { if (sid !== S.serverId) await selectServer(sid); S.serverSubTab = 'invites'; openServerSettings(); } },
     { label: 'Server settings', icon: '⚙', fn: async () => { if (sid !== S.serverId) await selectServer(sid); openServerSettings(); } },
     { sep: true },
     ...(typeof serverMoveItems === 'function' ? serverMoveItems(sid) : []),

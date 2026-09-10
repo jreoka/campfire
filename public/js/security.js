@@ -407,10 +407,17 @@ function renderServerTab() {
   box.innerHTML = '';
   let sub = S.serverSubTab || 'general';
   if ((sub === 'roles' || sub === 'bans') && !mgr) sub = 'general';
+  if (!['general', 'invites', 'channels', 'emoji', 'roles', 'bans'].includes(sub)) sub = 'general';
+  const wrap = document.createElement('div');
+  wrap.className = 'srvset-wrap';
+  box.appendChild(wrap);
   const subTabs = document.createElement('div');
-  subTabs.className = 'srv-subtabs';
-  box.appendChild(subTabs);
-  for (const [sid, slabel] of [['general', 'General'], ['channels', 'Channels'], ['emoji', 'Emoji'], ['roles', 'Roles'], ['bans', 'Bans']]) {
+  subTabs.className = 'srv-subtabs vertical';
+  wrap.appendChild(subTabs);
+  const content = document.createElement('div');
+  content.className = 'srvset-content';
+  wrap.appendChild(content);
+  for (const [sid, slabel] of [['general', 'General'], ['invites', 'Invites'], ['channels', 'Channels'], ['emoji', 'Emoji'], ['roles', 'Roles'], ['bans', 'Bans']]) {
     if ((sid === 'roles' || sid === 'bans') && !mgr) continue;
     const b = document.createElement('button');
     b.className = 'ftab' + (sub === sid ? ' active' : '');
@@ -418,11 +425,11 @@ function renderServerTab() {
     b.onclick = () => {
       S.serverSubTab = sid;
       subTabs.querySelectorAll('.ftab').forEach((x) => x.classList.toggle('active', x === b));
-      box.querySelectorAll('[data-ssub]').forEach((x) => (x.style.display = x.dataset.ssub === sid ? '' : 'none'));
+      content.querySelectorAll('[data-ssub]').forEach((x) => (x.style.display = x.dataset.ssub === sid ? '' : 'none'));
     };
     subTabs.appendChild(b);
   }
-  const sec = (id) => { const el = document.createElement('div'); el.dataset.ssub = id; el.style.display = sub === id ? '' : 'none'; box.appendChild(el); return el; };
+  const sec = (id) => { const el = document.createElement('div'); el.dataset.ssub = id; el.style.display = sub === id ? '' : 'none'; content.appendChild(el); return el; };
   let cur = sec('general');
   const h = (t) => { const e = document.createElement('h4'); e.textContent = t; e.style.margin = '1rem 0 .4rem'; cur.appendChild(e); };
   // general
@@ -433,6 +440,9 @@ function renderServerTab() {
   const descRow = document.createElement('div');
   descRow.innerHTML = `<label style="flex:1">Description (shown on invites)<input id="srv-desc" maxlength="200" placeholder="What is this server about?" value="${esc(d.description || '')}" ${mgr ? '' : 'disabled'} /></label>`;
   cur.appendChild(descRow);
+  const tagRow = document.createElement('div');
+  tagRow.innerHTML = `<label style="flex:1">Server tag (max 4 characters, members can show it after their name)<input id="srv-tag" maxlength="4" placeholder="e.g. NOOB" value="${esc(d.tag || '')}" ${mgr ? '' : 'disabled'} /></label>`;
+  cur.appendChild(tagRow);
   const iconRow = document.createElement('div');
   iconRow.className = 'row';
   iconRow.style.margin = '.5rem 0';
@@ -459,7 +469,7 @@ function renderServerTab() {
     fi.onchange = async () => { if (!fi.files[0]) return; try { await uploadImage(`/api/servers/${d.id}/icon`, fi.files[0]); renderServerTab(); } catch (err) { toast('Icon failed: ' + prettyError(err.message)); } };
     rm.onclick = async () => { try { await api(`/api/servers/${d.id}/icon`, { method: 'DELETE' }); renderServerTab(); } catch {} };
     const sv = document.createElement('button'); sv.className = 'btn small primary'; sv.textContent = 'Save name';
-    sv.onclick = async () => { try { await api(`/api/servers/${d.id}`, { method: 'PATCH', body: JSON.stringify({ name: box.querySelector('#srv-name').value, description: box.querySelector('#srv-desc').value }) }); toast('Server saved'); } catch (err) { toast('Save failed: ' + prettyError(err.message)); } };
+    sv.onclick = async () => { try { await api(`/api/servers/${d.id}`, { method: 'PATCH', body: JSON.stringify({ name: box.querySelector('#srv-name').value, description: box.querySelector('#srv-desc').value, tag: box.querySelector('#srv-tag').value }) }); toast('Server saved'); } catch (err) { toast('Save failed: ' + prettyError(err.message)); } };
     iconRow.append(ch, rm, sv);
   }
   cur.appendChild(iconRow);
@@ -479,8 +489,10 @@ function renderServerTab() {
     brm.onclick = async () => { try { await api(`/api/servers/${d.id}/banner`, { method: 'DELETE' }); refreshServerTab(); if (d.id === S.serverId) selectServer(d.id); } catch {} };
     brow.append(bch, brm); cur.appendChild(brow);
   }
-  // invites (every link is a named, revocable row — there is no permanent code)
-  h('Invite');
+  // invites live on their own tab (every link is a named, revocable row —
+  // there is no permanent code)
+  cur = sec('invites');
+  h('Invite links');
   if (!mgr) {
     const note = document.createElement('p'); note.className = 'muted small';
     note.textContent = 'Only admins can create invite links — ask one for a link.';

@@ -230,6 +230,15 @@ const colorForId = (id) => {
   return COLORS[(h >>> 0) % COLORS.length];
 };
 const pickColor = () => COLORS[Math.floor(Math.random() * COLORS.length)];
+// Server tags: short (max 4 chars) labels guild admins can offer; members may
+// show one after their name everywhere. Whitespace is stripped; '' clears.
+function cleanTag(t) {
+  return Array.from(String(t ?? '').replace(/\s/g, '')).slice(0, 4).join('');
+}
+// Push a user's fresh profile to every connected client that can see them.
+function clearTagSelection(userId, serverId) {
+  db.prepare('UPDATE users SET active_tag_server_id = NULL, active_tag = NULL WHERE id = ? AND active_tag_server_id = ?').run(userId, serverId);
+}
 
 function makeInvite() {
   return crypto.randomBytes(6).toString('base64url').slice(0, 8);
@@ -353,7 +362,7 @@ function serverView(serverId) {
   const members = db.prepare(`
     SELECT u.id, u.username, u.display_name, u.avatar_color, u.avatar_url, u.banner_url, u.sidebar_banner_url,
            u.status, u.status_text, u.status_expires_at, u.playing_game, u.streaming_game, u.bio, u.name_color, u.name_gradient,
-           u.created_at, u.is_admin,
+           u.created_at, u.is_admin, u.active_tag, u.active_tag_server_id,
            CASE WHEN u.id = s.owner_id THEN 'owner' ELSE 'member' END as role
     FROM server_members m JOIN users u ON u.id = m.user_id JOIN servers s ON s.id = m.server_id
     WHERE m.server_id = ? ORDER BY u.display_name COLLATE NOCASE ASC
@@ -421,6 +430,7 @@ function publicUser(u) {
     sidebar_banner_url: u.sidebar_banner_url || null,
     status: u.status || 'online', status_text: statusTextVisible(u), status_expires_at: statusExpiryVisible(u), presence_expires_at: presenceExpiryVisible(u), playing_game: u.playing_game || null, streaming_game: u.streaming_game || null, bio: u.bio || '',
     name_color: u.name_color || '', name_gradient: u.name_gradient || '',
+    active_tag: u.active_tag || null, active_tag_server_id: u.active_tag_server_id || null,
     created_at: u.created_at || null,
     game_enabled: u.game_enabled === undefined ? 1 : u.game_enabled,
     nsfw_ok: !!u.nsfw_ok,
@@ -436,7 +446,7 @@ function requireSiteAdmin(req, res, next) {
   if (!req.user.is_admin) return res.status(403).json({ error: 'admin_only' });
   next();
 }
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, playing_game, streaming_game, bio, name_color, name_gradient, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset, nsfw_ok, theme';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, playing_game, streaming_game, bio, name_color, name_gradient, active_tag_server_id, active_tag, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset, nsfw_ok, theme';
 
 // simple in-memory rate limit for posting messages: 10 msgs / 10s per user
 const rl = new Map();
@@ -959,6 +969,8 @@ app.post('/api/servers/:id/leave', authRequired, (req, res) => {
   if (!s) return res.status(404).json({ error: 'no_server' });
   if (s.owner_id === req.user.id) return res.status(400).json({ error: 'owner_cannot_leave_delete_instead' });
   db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(s.id, req.user.id);
+  clearTagSelection(req.user.id, s.id);
+  try { const fu = freshUser(req.user.id); broadcastUserUpdate(fu); notifyUser(req.user.id, { t: 'user-updated', user: fu }); } catch {}
   postServerSys(s.id, `${displayOf(req.user)} left the server`);
   broadcastToServer(s.id, { t: 'member-left', serverId: s.id, userId: req.user.id });
   res.json({ ok: true });
@@ -968,7 +980,11 @@ app.delete('/api/servers/:id', authRequired, (req, res) => {
   const s = getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });
   if (s.owner_id !== req.user.id) return res.status(403).json({ error: 'owner_only' });
+  let affected = [];
+  try { affected = db.prepare('SELECT id FROM users WHERE active_tag_server_id = ?').all(s.id).map((r) => r.id); } catch {}
+  db.prepare('UPDATE users SET active_tag_server_id = NULL, active_tag = NULL WHERE active_tag_server_id = ?').run(s.id);
   db.prepare('DELETE FROM servers WHERE id = ?').run(s.id);
+  for (const uid of affected) { try { const fu = freshUser(uid); broadcastUserUpdate(fu); notifyUser(uid, { t: 'user-updated', user: fu }); } catch {} }
   broadcastToServer(s.id, { t: 'server-deleted', serverId: s.id });
   res.json({ ok: true });
 });
@@ -1092,6 +1108,8 @@ app.post('/api/servers/:id/members/:uid/kick', authRequired, (req, res) => {
   if (!isMember(s.id, target)) return res.status(404).json({ error: 'not_member' });
   const u = publicUser(db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(target));
   db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(s.id, target);
+  clearTagSelection(target, s.id);
+  try { const fu = freshUser(target); broadcastUserUpdate(fu); notifyUser(target, { t: 'user-updated', user: fu }); } catch {}
   postServerSys(s.id, `${displayOf(u)} was kicked`);
   broadcastToServer(s.id, { t: 'member-left', serverId: s.id, userId: target });
   evictFromServer(s.id, target);
@@ -1113,6 +1131,8 @@ app.post('/api/servers/:id/members/:uid/ban', authRequired, (req, res) => {
     db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(s.id, target);
     db.prepare('INSERT OR IGNORE INTO server_bans (server_id,user_id,reason,created_at) VALUES (?,?,?,?)').run(s.id, target, reason, now());
   })();
+  clearTagSelection(target, s.id);
+  try { const fu = freshUser(target); broadcastUserUpdate(fu); notifyUser(target, { t: 'user-updated', user: fu }); } catch {}
   postServerSys(s.id, `${displayOf(u)} was banned`);
   broadcastToServer(s.id, { t: 'member-left', serverId: s.id, userId: target });
   evictFromServer(s.id, target);
@@ -1585,6 +1605,18 @@ app.patch('/api/me', authRequired, (req, res) => {
     const c = String(req.body.nameGradient);
     if (c && !/^#[0-9a-fA-F]{6}$/.test(c)) return res.status(400).json({ error: 'bad_color' });
     sets.push('name_gradient = ?'); vals.push(c || '');
+  }
+  if (req.body?.tagServerId !== undefined) {
+    const tid = req.body.tagServerId === null || req.body.tagServerId === '' ? null : String(req.body.tagServerId);
+    if (!tid) { sets.push('active_tag_server_id = NULL'); sets.push('active_tag = NULL'); }
+    else {
+      const srv = getServer(tid);
+      if (!srv) return res.status(404).json({ error: 'no_server' });
+      if (!isMember(srv.id, req.user.id)) return res.status(403).json({ error: 'not_member' });
+      if (!srv.tag) return res.status(400).json({ error: 'no_tag' });
+      sets.push('active_tag_server_id = ?'); vals.push(srv.id);
+      sets.push('active_tag = ?'); vals.push(srv.tag);
+    }
   }
   if (req.body?.gameEnabled !== undefined) {
     sets.push('game_enabled = ?'); vals.push(req.body.gameEnabled ? 1 : 0);
@@ -2233,6 +2265,18 @@ app.patch('/api/servers/:id', authRequired, (req, res) => {
   if (!name) return res.status(400).json({ error: 'name_required' });
   const sets = ['name = ?'], params = [name];
   if (req.body?.description !== undefined) { sets.push('description = ?'); params.push(String(req.body.description).slice(0, 200)); }
+  if (req.body?.tag !== undefined) {
+    const tag = cleanTag(req.body.tag);
+    sets.push('tag = ?'); params.push(tag || null);
+    // Keep every displayed tag in sync: members showing this server's tag
+    // follow renames, and lose it when the tag is cleared (their selection
+    // is kept, so it comes back if a new tag is set).
+    db.prepare('UPDATE users SET active_tag = ? WHERE active_tag_server_id = ?').run(tag || null, s.id);
+    try {
+      const affected = db.prepare('SELECT id FROM users WHERE active_tag_server_id = ?').all(s.id);
+      for (const r of affected) { try { broadcastUserUpdate(freshUser(r.id)); } catch {} }
+    } catch {}
+  }
   params.push(s.id);
   db.prepare(`UPDATE servers SET ${sets.join(', ')} WHERE id = ?`).run(...params);
   broadcastToServer(s.id, { t: 'server-updated', server: serverView(s.id) });
@@ -3342,6 +3386,7 @@ function voicePeersPayload(key) {
     username: ws.meta.username,
     display_name: ws.meta.display_name,
     avatar_color: ws.meta.avatar_color,
+    active_tag: ws.meta.active_tag || null,
     avatar_url: ws.meta.avatar_url || null,
     muted: !!(ws.meta.voice && ws.meta.voice.muted),
     speaking: !!(ws.meta.voice && ws.meta.voice.speaking),
@@ -3447,6 +3492,7 @@ wss.on('connection', (ws, req) => {
   const memberRows = db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(u.id);
   ws.meta = {
     userId: u.id, username: u.username, display_name: u.display_name, avatar_color: u.avatar_color,
+    active_tag: u.active_tag || null,
     avatar_url: u.avatar_url || null, status: u.status || 'online', sid: p.sid || null,
     servers: new Set(memberRows.map((r) => r.server_id)),
     voice: null,
@@ -3608,7 +3654,7 @@ wss.on('connection', (ws, req) => {
       const peers = voicePeersPayload(key);
       safeSend(ws, { t: 'voice-peers', threadId, peers });
       const others = db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ? AND user_id != ?').all(threadId, me.userId).map((r) => r.user_id);
-      const mePeer = { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, avatar_url: me.avatar_url || null, muted: false, speaking: false, deafened: false, camera: false, sharing: false, serverMuted: false, streamName: null };
+      const mePeer = { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, active_tag: me.active_tag || null, avatar_url: me.avatar_url || null, muted: false, speaking: false, deafened: false, camera: false, sharing: false, serverMuted: false, streamName: null };
       for (const uid of others) {
         notifyUser(uid, { t: 'voice-peer-joined', threadId, peer: mePeer });
         notifyUser(uid, { t: 'voice-peers', threadId, peers });
@@ -3617,7 +3663,7 @@ wss.on('connection', (ws, req) => {
       if (wasEmpty) {
         for (const uid of others) {
           notifyUser(uid, { t: 'dm-call-incoming', threadId, video: !!msg.video,
-            caller: { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, avatar_url: me.avatar_url || null } });
+            caller: { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, active_tag: me.active_tag || null, avatar_url: me.avatar_url || null } });
         }
       }
       return;
@@ -3639,7 +3685,7 @@ wss.on('connection', (ws, req) => {
       // tell others someone joined
       broadcastToServer(serverId, {
         t: 'voice-peer-joined', serverId, channelId,
-        peer: { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, avatar_url: me.avatar_url || null, muted: false, speaking: false, deafened: false, camera: false, sharing: false, serverMuted: false, streamName: null },
+        peer: { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, active_tag: me.active_tag || null, avatar_url: me.avatar_url || null, muted: false, speaking: false, deafened: false, camera: false, sharing: false, serverMuted: false, streamName: null },
       }, ws);
       // also broadcast updated occupancy to whole server (for channel user counts)
       broadcastToServer(serverId, { t: 'voice-peers', serverId, channelId, peers: voicePeersPayload(key) }, ws);

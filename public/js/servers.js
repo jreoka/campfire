@@ -475,7 +475,7 @@ function paintMe() {
   $('#me-avwrap').className = 'avwrap st-' + dot;
   $('#me-dot').className = 'status-dot ' + dot;
   const name = $('#me-name');
-  name.textContent = S.me.display_name;
+  name.innerHTML = esc(S.me.display_name) + tagHTML(S.me);
   name.style.cssText = nameStyleFor(S.me);
   const card = $('#me-card');
   if (S.me.sidebar_banner_url && !off) {
@@ -520,7 +520,7 @@ function memberRowEl(m) {
     div.style.backgroundSize = 'cover';
     div.style.backgroundPosition = 'right center';
   }
-  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="mnames"><span class="mname-row"><span class="mname" style="${nameStyleFor(m)}">${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${!off && m.playing_game ? gameBadgeHTML(m.playing_game) : ''}</span>${streaming ? `<span class="mstatus ustream" title="Streaming ${esc(streaming)}">Streaming ${esc(streaming)}</span>` : ((!off && m.status_text) ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ((!off && m.playing_game) ? `<span class="mstatus ugame" title="Playing ${esc(m.playing_game)}">Playing ${esc(m.playing_game)}</span>` : ''))}</span>`;
+  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="mnames"><span class="mname-row"><span class="mname" style="${nameStyleFor(m)}">${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${tagHTML(m)}${!off && m.playing_game ? gameBadgeHTML(m.playing_game) : ''}</span>${streaming ? `<span class="mstatus ustream" title="Streaming ${esc(streaming)}">Streaming ${esc(streaming)}</span>` : ((!off && m.status_text) ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ((!off && m.playing_game) ? `<span class="mstatus ugame" title="Playing ${esc(m.playing_game)}">Playing ${esc(m.playing_game)}</span>` : ''))}</span>`;
   paintAvatar(div.querySelector('.avatar'), m);
   paintGameBadge(div.querySelector('.gbadge'));
   return div;
