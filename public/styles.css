@@ -1233,6 +1233,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .call-strip .live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0;margin:0}
 #notifs-count{position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;font-size:.62rem;font-weight:800;border-radius:999px;padding:.1rem .38rem;min-width:19px;text-align:center;line-height:1.3}
 #notifs-count.hidden{display:none}
+#m-inbox-list{display:flex;flex-direction:column;gap:.1rem;max-height:58dvh;overflow-y:auto;overscroll-behavior:contain;margin:0 -.2rem;padding:0 .2rem}
 .inbox-item{display:flex;gap:.65rem;align-items:flex-start;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:12px;padding:.6rem .65rem;cursor:pointer;transition:background var(--t-fast)}
 .inbox-item:hover{background:var(--panel-2)}
 .inbox-item .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex-shrink:0;margin-top:.4rem}

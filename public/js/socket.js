@@ -269,7 +269,12 @@ function onWS(m) {
       });
       try { if (typeof reactionDetailCache !== 'undefined') reactionDetailCache.delete(m.messageId); } catch {}
       const inHistRx = S.histMode && S.histMode.kind === 'server' && S.histMode.id === m.channelId;
-      if (m.channelId === S.channelId && !inHistRx) renderMessages();
+      // Patch the one reaction bar in place — a full list rebuild jumps the
+      // scroll on Safari for a change that touches a single element.
+      if (m.channelId === S.channelId && !inHistRx && !patchMessageReactions(m.messageId, $('#messages'))) renderMessages();
+      if (S.thread && (S.thread.rootId === m.messageId || S.thread.replies.some((r) => r.id === m.messageId))) {
+        if (!patchMessageReactions(m.messageId, $('#thread-replies'))) renderThread();
+      }
       break;
     }
     case 'message-deleted': {
@@ -372,7 +377,8 @@ function onWS(m) {
       });
       try { if (typeof reactionDetailCache !== 'undefined') reactionDetailCache.delete(m.messageId); } catch {}
       const inHistDr = S.histMode && S.histMode.kind === 'dm' && S.histMode.id === m.threadId;
-      if (S.view === 'home' && S.dmThreadId === m.threadId && !inHistDr) renderDmMessages();
+      // Same in-place patch as channel reactions (see reaction-update).
+      if (S.view === 'home' && S.dmThreadId === m.threadId && !inHistDr && !patchMessageReactions(m.messageId, $('#messages'))) renderDmMessages();
       break;
     }
     case 'pins-changed':

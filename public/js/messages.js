@@ -777,6 +777,42 @@ function paintThreadCount(rootId) {
     } else if (el && n > 0) renderMessages();
   } catch { try { renderMessages(); } catch {} }
 }
+// A reaction change touches exactly one message's reaction bar. Patch that
+// node in place instead of rebuilding the whole list: a full rebuild recreates
+// every avatar/media node and (on Safari especially) visibly jumps the scroll
+// and flashes avatars. Returns false when the message isn't on screen, so the
+// caller falls back to a full render.
+function patchMessageReactions(mid, box) {
+  if (!box || !box.isConnected || !mid) return false;
+  let node = null;
+  try { node = box.querySelector('.msg[data-mid="' + CSS.escape(mid) + '"]'); } catch { return false; }
+  if (!node) return false;
+  const m = msgById(mid);
+  if (!m || m.sys) return false;
+  const body = node.querySelector('.body');
+  if (!body) return false;
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+  const html = reactionsHTML(m);
+  const cur = body.querySelector(':scope > .reactions');
+  if (!html) {
+    if (cur) cur.remove();
+  } else {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const next = tmp.firstElementChild;
+    if (cur) cur.replaceWith(next);
+    else {
+      // Reactions sit after attachments/poll and before the thread link.
+      const after = body.querySelector(':scope > .thread-link');
+      body.insertBefore(next, after || null);
+    }
+  }
+  // A bar added/removed changes the column height: keep bottom-pinned readers
+  // pinned (a scrolled-up reader's place is untouched — no rebuild, no jump).
+  if (nearBottom) { try { box.scrollTop = box.scrollHeight; } catch {} }
+  try { if (typeof updatePill === 'function') updatePill(); } catch {}
+  return true;
+}
 function renderMessages(force = false) {
   const box = $('#messages');
   const msgs = S.messages.get(S.channelId) || [];

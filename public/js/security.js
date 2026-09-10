@@ -253,9 +253,9 @@ function inboxWhen(ts) {
 async function openInbox() {
   let items = [];
   try { ({ items } = await api('/api/notifs/inbox')); } catch { toast('Could not load notifications'); return; }
-  openModal('Notifications', `<div class="row end" style="margin:0 0 .4rem"><button class="btn small" id="m-notif-readall">Mark all read</button></div><div id="m-inbox-list"></div>`, 'Close', null, { wide: true });
+  openModal('Notifications', `<div class="row end" style="margin:0 0 .4rem"><button class="btn small" id="m-notif-readall">Mark all read</button><button class="btn small" id="m-notif-clear">Dismiss all</button></div><div id="m-inbox-list"></div>`, 'Close', null, { wide: true });
   const list = $('#m-inbox-list');
-  if (!items.length) list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">All caught up — mentions, reactions and friend updates land here.</p>';
+  if (!items.length) list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">All caught up — mentions and friend updates land here.</p>';
   for (const n of items) {
     const b = document.createElement('div');
     b.className = 'inbox-item' + (n.read_at ? ' read' : '');
@@ -269,6 +269,11 @@ async function openInbox() {
   }
   $('#m-notif-readall').onclick = async () => {
     try { await api('/api/notifs/read', { method: 'PUT', body: JSON.stringify({ all: true }) }); } catch {}
+    paintNotifBadge(0);
+    openInbox();
+  };
+  $('#m-notif-clear').onclick = async () => {
+    try { await api('/api/notifs', { method: 'DELETE' }); } catch {}
     paintNotifBadge(0);
     openInbox();
   };
@@ -292,7 +297,7 @@ async function dismissNotif(n, el) {
   try { const { unread } = await api('/api/notifs/' + n.id, { method: 'DELETE' }); paintNotifBadge(unread || 0); } catch {}
   el.remove();
   const list = $('#m-inbox-list');
-  if (list && !list.children.length) list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">All caught up — mentions, reactions and friend updates land here.</p>';
+  if (list && !list.children.length) list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">All caught up — mentions and friend updates land here.</p>';
 }
 $('#btn-notifs').onclick = openInbox;
 $('#me-card').style.cursor = 'pointer';

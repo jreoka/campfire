@@ -343,9 +343,13 @@ async function toggleReaction(mid, emoji) {
     bumpFreq(emoji);
     updateMsgInCaches(mid, (m) => { m.reactions = reactions.map((r) => ({ emoji: r.emoji, count: r.count, me: r.me, users: r.users || [] })); });
     reactionDetailCache.delete(mid); // counts changed — refetch on next view
-    if (S.view === 'home') { if (S.dmThreadId) renderDmMessages(); }
-    else if (S.channelId) renderMessages();
-    if (S.thread) renderThread();
+    // Patch the one reaction bar in place; a full rebuild would jump the
+    // scroll (and flash every avatar) for a change that touches one element.
+    if (S.view === 'home') { if (S.dmThreadId && !patchMessageReactions(mid, $('#messages'))) renderDmMessages(); }
+    else if (S.channelId && !patchMessageReactions(mid, $('#messages'))) renderMessages();
+    if (S.thread && (S.thread.rootId === mid || S.thread.replies.some((r) => r.id === mid))) {
+      if (!patchMessageReactions(mid, $('#thread-replies'))) renderThread();
+    }
   } catch (err) { toast('Reaction failed: ' + prettyError(err.message)); }
 }
 /* ---------- reaction details: hover tooltip + View-reactions modal ---------- */

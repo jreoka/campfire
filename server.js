@@ -2093,7 +2093,10 @@ app.get('/api/stories', authRequired, async (req, res) => {
   };
   for (const { row: s, shares } of rows) {
     const labels = shareLabels(shares);
-    const item = storyView(s, byId.get(s.user_id) || publicUser(null), seen.has(s.id), viewCount.get(s.id) || 0, labels);
+    // My own posts are always "seen" — there is nothing to watch, and a
+    // missing story_views row would otherwise keep an unseen dot/badge on
+    // Home and in the server's Stories row until the story expires.
+    const item = storyView(s, byId.get(s.user_id) || publicUser(null), s.user_id === me || seen.has(s.id), viewCount.get(s.id) || 0, labels);
     if (s.user_id === me) {
       if (!mine) mine = { items: [], latest: 0, viewers: 0 };
       mine.items.push(item);
@@ -3743,6 +3746,11 @@ app.delete('/api/notifs/:id', authRequired, async (req, res) => {
   try { await db.prepare('DELETE FROM notifications WHERE user_id = ? AND id = ?').run(req.user.id, id); } catch {}
   res.json({ unread: await unreadNotifs(req.user.id) });
 });
+// Dismiss the whole inbox at once (the bell's "Dismiss all").
+app.delete('/api/notifs', authRequired, async (req, res) => {
+  try { await db.prepare('DELETE FROM notifications WHERE user_id = ?').run(req.user.id); } catch {}
+  res.json({ unread: 0 });
+});
 async function notifyServerMessage(serverId, channelId, author, content, messageId) {
   const text = String(content || '').trim();
   if (!text) return;
@@ -3814,6 +3822,12 @@ async function notifyDmMessage(thread, author, content, messageId) {
   }
 }
 // reactions ----------
+// Reactions never land in the notification inbox — the message itself carries
+// the record (bar + hover list), so the inbox is for mentions/friend events.
+// Only the OS push fires, and only when the author isn't looking; toggling
+// the same reaction off/on re-fires the endpoint, so a small in-memory dedupe
+// keeps the push from repeating.
+const reactionPingAt = new Map();
 async function notifyReaction(authorId, reactor, emoji, target) {
   if (!authorId || !reactor || authorId === reactor.id) return;
   // Mute prefs use the same scopes as messages (channel > server > global).
@@ -3837,17 +3851,12 @@ async function notifyReaction(authorId, reactor, emoji, target) {
     body = `${who} reacted ${emoji} to your message`;
     url = `/?server=${target.serverId}&channel=${target.channelId}`;
   }
-  // Toggling the same reaction off/on shouldn't re-ping.
-  try {
-    const dup = await db.prepare("SELECT 1 FROM notifications WHERE user_id = ? AND kind = 'reaction' AND message_id = ? AND body = ? AND created_at > ?")
-      .get(authorId, target.messageId || '', body, now() - 5 * 60000);
-    if (dup) return;
-  } catch {}
-  await pushInbox(authorId, {
-    kind: 'reaction', title, body,
-    server_id: target.serverId || null, channel_id: target.channelId || null,
-    message_id: target.messageId || null, thread_id: target.threadId || null,
-  });
+  // Toggling the same reaction off/on shouldn't re-ping (in-memory: no inbox
+  // row exists to check against anymore).
+  const pingKey = authorId + ':' + (target.messageId || '') + ':' + body;
+  if (now() - (reactionPingAt.get(pingKey) || 0) < 5 * 60000) return;
+  reactionPingAt.set(pingKey, now());
+  if (reactionPingAt.size > 5000) reactionPingAt.clear(); // bound the dedupe map
   if (userVisible(authorId)) return;
   await pushToUser(authorId, {
     title,

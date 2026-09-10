@@ -66,11 +66,18 @@ function storyUserTrays() {
 }
 function storyTrayFor(userId) { return storyUserTrays().find((t) => t.id === userId) || null; }
 function storyServerTray(serverId) { return (storyData.servers || []).find((t) => t.server && t.server.id === serverId) || null; }
+// A server tray's unseen count, computed from its items (never the server's
+// cached number): marking a story seen in the viewer clears the badge right
+// away, and my own posts never count — I can't watch my own story, so they
+// would otherwise leave a dot on Home and a "1 new" in the server forever.
+function serverTrayUnseen(t) {
+  return storyLive(t && t.items).filter((i) => !i.seen && !(i.author && S.me && i.author.id === S.me.id)).length;
+}
 // Unseen count across everything I can watch (drives the Home dot/rows).
 function storyUnseenTotal() {
   let n = 0;
   for (const t of storyUserTrays()) n += t.unseen;
-  for (const t of storyData.servers || []) n += (t.unseen || 0);
+  for (const t of storyData.servers || []) n += serverTrayUnseen(t);
   return n;
 }
 function storyAgo(ts) {
@@ -233,6 +240,7 @@ function renderServerStories() {
   if (!S.serverId || !S.serverDetail) { box.classList.add('hidden'); box.innerHTML = ''; return; }
   const tray = storyServerTray(S.serverId);
   const items = tray ? storyLive(tray.items) : [];
+  const unseen = tray ? serverTrayUnseen(tray) : 0;
   const others = items.filter((i) => i.author && i.author.id !== S.me.id);
   box.classList.remove('hidden');
   box.innerHTML = '';
@@ -265,10 +273,10 @@ function renderServerStories() {
     hint.className = 'ss-hint';
     hint.textContent = 'Be the first';
     row.appendChild(hint);
-  } else if (tray.unseen) {
+  } else if (unseen) {
     const n = document.createElement('span');
     n.className = 'ss-count';
-    n.textContent = tray.unseen + ' new';
+    n.textContent = unseen + ' new';
     row.appendChild(n);
   } else {
     const n = document.createElement('span');
@@ -531,7 +539,7 @@ function openStoriesSheet(scope = 'home') {
         const author = (t.items.find((i) => i.author && i.author.id !== S.me.id) || {}).author || S.me;
         body.appendChild(storySheetRow(
           { id: t.server.id, display_name: t.server.name, username: 'server' },
-          t.items, t.unseen,
+          t.items, serverTrayUnseen(t),
           () => { $('#modal-backdrop').classList.add('hidden'); openStoryViewer({ kind: 'server', serverId: t.server.id }); },
         ));
         void author;

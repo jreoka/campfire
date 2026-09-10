@@ -105,6 +105,11 @@ async function uploadAndStory(token, extra = {}) {
   const st = (r.data.servers || []).find((t) => t.server.id === srv.id);
   ok(!!st && st.items.length === 1 && st.unseen === 1, 'B sees the server tray', r.data.servers);
   ok(st && st.items[0].caption === 'server only', 'server caption');
+  // The author's own post must never count as unseen (no dot / "1 new" that
+  // watching can't clear).
+  r = await req('GET', '/api/stories', { token: ta });
+  const stA = (r.data.servers || []).find((t) => t.server.id === srv.id);
+  ok(stA && stA.items[0].seen === true && stA.unseen === 0, 'author\'s own server story is seen', r.data.servers);
   // non-member cannot see it
   r = await req('POST', '/api/register', { body: { username: 'sc' + tag, displayName: 'StoryC', password: 'passw0rd!x' } });
   const tc = r.data.token;
