@@ -527,11 +527,18 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .tool-btn{border:0;background:transparent;color:var(--muted);border-radius:50%;padding:.5rem;cursor:pointer;display:inline-flex;align-items:center;transition:background var(--t-fast),color var(--t-fast)}
 .tool-btn:hover{background:var(--panel-3);color:var(--text)}
 #attach-preview{display:flex;gap:.5rem;flex-wrap:wrap;padding:.55rem .9rem;background:var(--panel)}
-.att-chip{display:flex;align-items:center;gap:.45rem;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:10px;padding:.32rem .45rem;font-size:.78rem;max-width:230px;min-height:34px}
+.att-chip{display:flex;align-items:center;gap:.5rem;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:.35rem .45rem;font-size:.78rem;max-width:290px;min-height:34px}
 .att-chip>span{flex:1;min-width:0;line-height:1.35;align-self:center}
 .att-chip .mini{align-self:center;flex-shrink:0;line-height:1;padding:.35rem .6rem}
 .att-chip img{width:28px;height:28px;object-fit:cover;border-radius:8px}
 .att-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* media chips: thumbnail + name/size stack, so a waiting image or video reads
+   as the media it is instead of a bare filename */
+.att-chip .chip-thumb{width:40px;height:40px;flex:0 0 40px;border-radius:10px;object-fit:cover;background:var(--panel-3)}
+.att-chip .chip-thumb.ph{display:flex;align-items:center;justify-content:center;color:var(--faint)}
+.att-chip .chip-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:.1rem;align-self:center;text-align:left}
+.att-chip .chip-name{font-weight:650}
+.att-chip .chip-sub{font-size:.72rem;color:var(--muted);font-variant-numeric:tabular-nums}
 /* ---------- composer upload progress ---------- */
 #upload-list{display:flex;flex-direction:column;gap:.45rem;padding:.55rem .9rem;background:var(--panel)}
 .up-card{display:flex;align-items:center;gap:.65rem;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:.55rem .7rem;max-width:430px;animation:up-in .18s ease}

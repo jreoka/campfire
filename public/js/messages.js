@@ -53,7 +53,7 @@ function attachmentHTML(a) {
 // poster thumbnail so every platform previews the same. Same-origin
 // uploads, so the canvas is never tainted.
 const videoPosterCache = new Map(); // url -> dataURL thumbnail
-const videoPosterWaiters = new Map(); // url -> [video els awaiting capture]
+const videoPosterWaiters = new Map(); // url -> [callback(shot|null)]
 // Poster must be at least as large as the rendered box: the poster defines the
 // element's intrinsic size while paused, so a smaller poster shrinks the box
 // and playback grows it again. 640px covers the 420px wrap with no upscale.
@@ -64,13 +64,16 @@ function applyVideoPoster(v, img) {
   try { v.poster = img; } catch {}
   v.dataset.posterOk = '1';
 }
-function ensureVideoPoster(v) {
-  if (!v || v.dataset.posterOk) return;
-  const url = v.currentSrc || v.src;
-  if (!url) return;
-  const hit = videoPosterCache.get(url);
-  if (hit) { applyVideoPoster(v, hit); return; }  if (videoPosterWaiters.has(url)) { videoPosterWaiters.get(url).push(v); return; }
-  videoPosterWaiters.set(url, [v]);
+// One frame per URL, captured once and shared by every caller — the chat
+// poster, the composer chip thumbnail, the upload card. cb(shot|null).
+function whenVideoPoster(url, cb) {
+  if (!url) { if (cb) cb(null); return; }
+  if (videoPosterCache.has(url)) { if (cb) cb(videoPosterCache.get(url)); return; }
+  let list = videoPosterWaiters.get(url);
+  if (!list) { list = []; videoPosterWaiters.set(url, list); startVideoPosterCapture(url); }
+  if (cb) list.push(cb);
+}
+function startVideoPosterCapture(url) {
   const tmp = document.createElement('video');
   tmp.muted = true; tmp.playsInline = true; tmp.preload = 'auto'; tmp.src = url;
   let done = false;
@@ -82,11 +85,10 @@ function ensureVideoPoster(v) {
     if (shot) {
       if (videoPosterCache.size > 30) { try { videoPosterCache.delete(videoPosterCache.keys().next().value); } catch {} }
       videoPosterCache.set(url, shot);
-      waiters.forEach((el) => applyVideoPoster(el, shot));
-    } else {
-      waiters.forEach((el) => { el.dataset.posterOk = '1'; });
     }
-  };  tmp.addEventListener('loadeddata', () => {
+    waiters.forEach((fn) => { try { fn(shot || null); } catch {} });
+  };
+  tmp.addEventListener('loadeddata', () => {
     try { tmp.currentTime = Math.min(0.5, (tmp.duration || 1) / 3) || 0.1; }
     catch { finish(null); }
   }, { once: true });
@@ -101,6 +103,15 @@ function ensureVideoPoster(v) {
   }, { once: true });
   tmp.addEventListener('error', () => finish(null), { once: true });
   setTimeout(() => finish(null), 8000);
+}
+function ensureVideoPoster(v) {
+  if (!v || v.dataset.posterOk) return;
+  const url = v.currentSrc || v.src;
+  if (!url) return;
+  whenVideoPoster(url, (shot) => {
+    if (shot) applyVideoPoster(v, shot);
+    else v.dataset.posterOk = '1';
+  });
 }
 // ---------- stick-to-bottom on media resize ----------
 // A video can change size more than once: no intrinsic size until metadata
@@ -855,6 +866,52 @@ function replyPreviewOf(m) {
   if (m?.poll) return 'a poll';
   return '';
 }
+// ---------- composer chip thumbnails ----------
+// A chat file stays unservable behind /uploads until the scan verdict lands,
+// so the picked bytes themselves are the only preview available while an
+// attachment waits in the composer: a blob: URL of the File for images, a
+// frame grabbed off it for videos (kept as a small JPEG data URL). Entries
+// are keyed by the attachment URL and pruned on every composer render, so a
+// sent/removed/cleared attachment can never leak its blob.
+const attPreviews = new Map(); // att.url -> { src, blob }
+function attPreviewSrc(a) {
+  if (!a || !a.url) return '';
+  const hit = attPreviews.get(a.url);
+  if (hit) return hit.src;
+  return (a.kind === 'image' && a.scan !== 'pending' && a.scan !== 'infected') ? a.url : '';
+}
+function setAttPreview(url, src, blob) {
+  if (!url || !src) return false;
+  const old = attPreviews.get(url);
+  if (old && old.blob && old.src !== src) { try { URL.revokeObjectURL(old.src); } catch {} }
+  attPreviews.set(url, { src, blob: !!blob });
+  return true;
+}
+function releaseAttPreview(url) {
+  const hit = attPreviews.get(url);
+  if (!hit) return;
+  attPreviews.delete(url);
+  if (hit.blob) { try { URL.revokeObjectURL(hit.src); } catch {} }
+}
+function pruneAttPreviews() {
+  if (!attPreviews.size) return;
+  const live = new Set((S.pendingAtts || []).map((a) => a.url));
+  for (const url of [...attPreviews.keys()]) if (!live.has(url)) releaseAttPreview(url);
+}
+const CHIP_IMG_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
+const CHIP_VID_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="14" height="16" rx="3"/><path d="M16 10l6-3v10l-6-3z"/></svg>';
+// Thumbnail + name/size stack: media chips get a preview tile (or a
+// placeholder icon while a video frame is still being grabbed), other
+// attachments just get the two-line name/size layout.
+function attChipHTML(a) {
+  const media = a.kind === 'image' || a.kind === 'video';
+  const src = media ? attPreviewSrc(a) : '';
+  const thumb = !media ? ''
+    : src ? `<img class="chip-thumb" src="${esc(src)}" alt="" />`
+      : `<span class="chip-thumb ph">${a.kind === 'video' ? CHIP_VID_ICON : CHIP_IMG_ICON}</span>`;
+  return `${thumb}<span class="chip-info"><span class="chip-name">${esc(a.name)}</span>`
+    + `<span class="chip-sub">${fmtSize(a.size)}${a.spoiler ? ' · Spoiler' : ''}${a.scan === 'pending' ? ' · Processing…' : ''}</span></span>`;
+}
 function renderComposerMeta() {
   const box = $('#attach-preview');
   box.innerHTML = '';
@@ -869,12 +926,12 @@ function renderComposerMeta() {
     x.onclick = () => { S.replyTo = null; renderComposerMeta(); };
     chip.appendChild(x); box.appendChild(chip);
   }
+  pruneAttPreviews();
   S.pendingAtts.forEach((a, i) => {
     const chip = document.createElement('div');
     chip.className = 'att-chip' + (a.scan === 'pending' ? ' scanning' : '');
-    const thumb = (a.kind === 'image' && a.scan !== 'pending') ? `<img src="${esc(a.url)}" alt="" />` : '';
-    chip.innerHTML = `${thumb}<span>${esc(a.name)} (${fmtSize(a.size)})${a.scan === 'pending' ? ' · Processing…' : ''}</span>`;
-    const x = document.createElement('button'); x.className = 'mini'; x.textContent = '✕';
+    chip.innerHTML = attChipHTML(a);
+    const x = document.createElement('button'); x.className = 'mini'; x.type = 'button'; x.textContent = '✕';
     x.onclick = () => { S.pendingAtts.splice(i, 1); renderComposerMeta(); };
     if (a.kind === 'image' || a.kind === 'video') {
       const sp = document.createElement('button');
@@ -977,6 +1034,17 @@ function paintUploadCard(el, u) {
   }
 }
 function patchUploadProgress(u) { const el = uploadCardEl(u.id); if (el) paintUploadCard(el, u); }
+// A card's icon is built once at creation; the poster for a video arrives
+// later, so patch it into the existing card instead of rebuilding the list.
+function paintUploadIcon(u) {
+  const el = uploadCardEl(u.id);
+  if (!el || !u.thumb) return;
+  const ic = el.querySelector('.up-ic');
+  if (!ic) return;
+  const img = ic.querySelector('img');
+  if (img) img.src = u.thumb;
+  else try { ic.insertAdjacentHTML('afterbegin', '<img src="' + esc(u.thumb) + '" alt="" />'); } catch {}
+}
 function uploadAndAttach(file) {
   if (!file) return;
   if (file.size > 100 * 1024 * 1024) { toast('File too big (max 100MB)'); return; }
@@ -985,10 +1053,29 @@ function uploadAndAttach(file) {
   const entry = {
     id: ++uploadSeq, file, name: file.name || 'file',
     size: file.size || 0, loaded: 0, total: file.size || 0,
-    indet: false, state: 'uploading', err: '', xhr: null, thumb: '',
+    indet: false, state: 'uploading', err: '', xhr: null, thumb: '', att: null,
   };
-  if (String(file.type || '').startsWith('image/')) {
+  const mime = String(file.type || '');
+  if (mime.startsWith('image/')) {
     try { entry.thumb = URL.createObjectURL(file); } catch {}
+  } else if (mime.startsWith('video/')) {
+    // Videos have no <img>-able bytes: grab a frame for both the upload card
+    // and the composer chip, then drop the blob before it holds a 100MB file.
+    let src = '';
+    try { src = URL.createObjectURL(file); } catch {}
+    if (src) {
+      entry.vthumbSrc = src;
+      whenVideoPoster(src, (shot) => {
+        try {
+          if (shot) { entry.thumb = shot; paintUploadIcon(entry); }
+          if ((S.uploads || []).includes(entry)) renderUploads();
+          if (shot && entry.att) { setAttPreview(entry.att.url, shot, false); renderComposerMeta(); }
+        } finally {
+          try { URL.revokeObjectURL(src); } catch {}
+          entry.vthumbSrc = '';
+        }
+      });
+    }
   }
   S.uploads.push(entry);
   renderUploads();
@@ -1014,6 +1101,15 @@ function startUpload(u) {
     if (xhr.status >= 200 && xhr.status < 300 && data) {
       u.state = 'done'; u.loaded = u.total || u.size;
       S.pendingAtts.push(data);
+      u.att = data;
+      // Thumbnail for the composer chip (see attPreviews). The image's own
+      // object URL is a fresh registration, independent of the upload card's
+      // `u.thumb` so either side can revoke without breaking the other.
+      if (data.kind === 'image' && u.file && !attPreviews.has(data.url)) {
+        try { setAttPreview(data.url, URL.createObjectURL(u.file), true); } catch {}
+      } else if (data.kind === 'video' && u.thumb && !attPreviews.has(data.url)) {
+        setAttPreview(data.url, u.thumb, false);
+      }
       renderComposerMeta();
       patchUploadProgress(u);
       setTimeout(() => removeUpload(u.id), 650);
@@ -1044,7 +1140,8 @@ function removeUpload(id) {
   const i = (S.uploads || []).findIndex((x) => x.id === id);
   if (i < 0) return;
   const [u] = S.uploads.splice(i, 1);
-  if (u && u.thumb) { try { URL.revokeObjectURL(u.thumb); } catch {} }
+  if (u && u.thumb && u.thumb.startsWith('blob:')) { try { URL.revokeObjectURL(u.thumb); } catch {} }
+  if (u && u.vthumbSrc) { try { URL.revokeObjectURL(u.vthumbSrc); } catch {} }
   renderUploads();
 }
 
