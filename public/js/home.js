@@ -140,6 +140,7 @@ function friendIconBtn(label, svg, fn) {
 function friendMoreMenu(u, anchor) {
   const r = anchor.getBoundingClientRect();
   openCtx(r.left, r.bottom + 6, [
+    { label: 'View profile', icon: '@', fn: () => openUserCard(u.id, r.left + r.width / 2, r.bottom + 6) },
     { label: 'Unfriend', icon: '\u2212', fn: () => unfriendUser(u.id, u.username) },
     { label: 'Block', icon: '\u2298', danger: true, fn: () => blockUser(u.id, u.username) },
   ]);
@@ -349,6 +350,8 @@ function renderFriendLists() {
       : '<p class="muted small" style="padding:0 .7rem">No friends yet — add someone above.</p>';
     for (const u of list) {
       const row = friendRowEl(u);
+      row.title = `Message @${u.username}`;
+      row.onclick = (e) => { if (e.target.closest('button')) return; openDmWith(u.id); };
       row.appendChild(friendIconBtn('Message', MAIL_SVG, () => openDmWith(u.id)));
       row.appendChild(friendIconBtn('More actions', DOTS_SVG, (e) => friendMoreMenu(u, e.currentTarget)));
       fl.appendChild(row);
