@@ -508,7 +508,7 @@ function shouldGroup(prev, m) {
   return true;
 }
 function anchorBottom(box) {
-  // Snap to the live bottom, then HOLD it while late media settles.
+  // Snap to the live bottom, then HOLD it while late content settles.
   // Images, video and link embeds render at 0 height on a cold start
   // (e.g. right after a refresh) and each one popping in above the
   // viewport shoves the view upward as it grows. Without this guard the
@@ -532,6 +532,7 @@ function anchorBottom(box) {
   const stillHere = () => S.view === v && S.channelId === c && S.dmThreadId === d && !box.classList.contains('hidden');
   const stop = () => {
     if (!live) return; live = false;
+    try { if (mo) mo.disconnect(); } catch {}
     box.removeEventListener('wheel', take);
     box.removeEventListener('touchmove', take);
     box.removeEventListener('scroll', onScroll);
@@ -559,6 +560,16 @@ function anchorBottom(box) {
     if (!current()) { stop(); return; }
     if (e.target && e.target.matches && e.target.matches('img, video')) snap();
   };
+  // Mutation watch: not all late growth fires a media event. Scan-card →
+  // file flips, link-embed fetches resolving into text, waveform/text
+  // previews popping in, and full-list rebuilds all rearrange the DOM
+  // silently — re-pin through all of it the same way. Our own snaps only
+  // move scrollTop (never the DOM), so this can't self-trigger.
+  let mo = null;
+  try {
+    mo = new MutationObserver(() => snap());
+    mo.observe(box, { childList: true, subtree: true, characterData: true });
+  } catch { mo = null; }
   box.addEventListener('wheel', take, { passive: true });
   box.addEventListener('touchmove', take, { passive: true });
   box.addEventListener('scroll', onScroll, { passive: true });
@@ -1117,9 +1128,10 @@ function sendChat(content, opts = {}) {
       attachments: opts.attachments || [], replyTo: opts.replyTo || null, threadRoot: opts.threadRoot || null,
     }));
     // Optimistic: the echo arrives via WS in ms and appends incrementally
-    // (see appendLiveMessage) — just jump to the bottom now. A full render
-    // here would rebuild every avatar and flash them in Safari.
-    if (!opts.threadRoot) { try { const _b = $('#messages'); _b.scrollTop = _b.scrollHeight; updatePill(); } catch {} }
+    // (see appendLiveMessage) — pin to the bottom now, with the hold, so
+    // late image growth between send and echo can't strand the view.
+    // A full render here would rebuild every avatar and flash them in Safari.
+    if (!opts.threadRoot) { try { const _b = $('#messages'); anchorBottom(_b); updatePill(); } catch {} }
   } else {
     toast('Reconnecting… try again in a second');
   }
