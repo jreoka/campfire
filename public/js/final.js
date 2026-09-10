@@ -205,11 +205,14 @@ function composerAutoGrow(inp) {
   inp.style.height = 'auto';
   inp.style.height = Math.min(inp.scrollHeight + border, Math.round(window.innerHeight * 0.4)) + 'px';
 }
-// Enter sends, Shift+Enter inserts a line break. Skipped while the @mention
-// popup is open — its own keydown handler owns Enter in that case.
+// Enter sends, Shift+Enter inserts a line break. Skipped while an @mention /
+// #channel / :emoji popup is open — its own keydown handler owns Enter in that
+// case. Those handlers run first (pickers.js loads before this file) and mark
+// the event, because they also hide the popup before this handler sees it.
 function composerSendKey(inp, formId) {
   inp.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+    if (e.cfAutocomplete) return;
     if ($('#mention-pop') && !$('#mention-pop').classList.contains('hidden')) return;
     if ($('#emoji-pop') && !$('#emoji-pop').classList.contains('hidden')) return;
     if ($('#chan-pop') && !$('#chan-pop').classList.contains('hidden')) return;

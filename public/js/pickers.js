@@ -1354,6 +1354,12 @@ $('#profile-close').onclick = closeProfileScreen;
 $('#profile-backdrop').addEventListener('click', (e) => { if (e.target.id === 'profile-backdrop') closeProfileScreen(); });
 
 // ---------- @mention autocomplete ----------
+// Enter/Tab is owned by an open popup: it completes the name, it never sends.
+// Registering order matters here — this file loads before final.js, so the
+// pop handler runs first and hides the popup while the same keydown event is
+// still being dispatched; the send handler (composerSendKey in final.js) would
+// then see a hidden popup and submit. Marking the event tells it to stand down.
+function popupTookKey(e) { e.cfAutocomplete = true; }
 let mentionIdx = 0;
 function hideMentionPop() { $('#mention-pop').classList.add('hidden'); }
 $('#in-message').addEventListener('input', () => {
@@ -1391,6 +1397,7 @@ $('#in-message').addEventListener('keydown', (e) => {
     items.forEach((b, i) => b.classList.toggle('sel', i === mentionIdx));
   } else if ((e.key === 'Enter' || e.key === 'Tab') && items[mentionIdx]) {
     e.preventDefault();
+    popupTookKey(e);
     applyMention(items[mentionIdx].querySelector('.muted').textContent.slice(1));
   } else if (e.key === 'Escape') hideMentionPop();
 });
@@ -1441,6 +1448,7 @@ $('#in-message').addEventListener('keydown', (e) => {
     items.forEach((b, i) => b.classList.toggle('sel', i === chanIdx));
   } else if ((e.key === 'Enter' || e.key === 'Tab') && items[chanIdx]) {
     e.preventDefault();
+    popupTookKey(e);
     applyChannel(items[chanIdx].dataset.name);
   } else if (e.key === 'Escape') hideChanPop();
 });
@@ -1507,6 +1515,7 @@ $('#in-message').addEventListener('keydown', (e) => {
     items.forEach((b, i) => b.classList.toggle('sel', i === emojiIdx));
   } else if ((e.key === 'Enter' || e.key === 'Tab') && items[emojiIdx]) {
     e.preventDefault();
+    popupTookKey(e);
     applyEmoji(items[emojiIdx].dataset.name);
   } else if (e.key === 'Escape') hideEmojiPop();
 });
