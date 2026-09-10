@@ -334,3 +334,35 @@ document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); findOpen() ? closeFind() : openFind(); }
 });
 
+// channel sidebar resize (drag right edge, clamped + remembered)
+const SIDEBAR_W_MIN = 200, SIDEBAR_W_MAX = 400;
+const sidebarWMax = () => Math.max(SIDEBAR_W_MIN + 40, Math.min(SIDEBAR_W_MAX, Math.floor(innerWidth * 0.55)));
+const clampSidebarW = (w) => Math.min(sidebarWMax(), Math.max(SIDEBAR_W_MIN, Math.round(w)));
+try {
+  if (!matchMedia('(max-width: 700px)').matches) {
+    const w = parseInt(localStorage.getItem('cf_sidebar_w') || '', 10);
+    if (w >= SIDEBAR_W_MIN) $('#sidebar').style.width = clampSidebarW(w) + 'px';
+  }
+} catch {}
+$('#sidebar-resizer').addEventListener('pointerdown', (e) => {
+  if (matchMedia('(max-width: 700px)').matches) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  e.preventDefault();
+  const bar = $('#sidebar');
+  const rz = e.currentTarget;
+  const startX = e.clientX, startW = bar.getBoundingClientRect().width;
+  document.body.classList.add('sidebar-resizing');
+  try { rz.setPointerCapture(e.pointerId); } catch {}
+  const move = (ev) => { bar.style.width = clampSidebarW(startW + (ev.clientX - startX)) + 'px'; };
+  const done = (ev) => {
+    bar.style.width = clampSidebarW(startW + (ev.clientX - startX)) + 'px';
+    try { localStorage.setItem('cf_sidebar_w', bar.style.width.replace('px', '')); } catch {}
+    document.body.classList.remove('sidebar-resizing');
+    rz.removeEventListener('pointermove', move);
+    rz.removeEventListener('pointerup', done);
+    rz.removeEventListener('pointercancel', done);
+  };
+  rz.addEventListener('pointermove', move);
+  rz.addEventListener('pointerup', done);
+  rz.addEventListener('pointercancel', done);
+});
