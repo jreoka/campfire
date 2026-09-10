@@ -183,6 +183,36 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 #form-auth input{width:100%;margin-top:.4rem;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:.7rem .85rem;font-size:.95rem;outline:none;transition:border-color var(--t-fast),box-shadow var(--t-fast)}
 #form-auth input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
 #form-auth input::placeholder{color:var(--faint)}
+/* Signup username check: one flat mark beside the field (spinner → green check
+   or red cross) plus a one-line status, so the answer arrives while typing
+   instead of from the submit round-trip. Semantic colors carry real meaning
+   here: green = that name is free, red = taken or unusable. */
+#form-auth .uname-field{display:block;position:relative}
+#form-auth .uname-field input{padding-right:2.7rem}
+.uname-mark{position:absolute;right:.55rem;top:.4rem;bottom:0;display:flex;align-items:center;pointer-events:none}
+.uname-mark svg{display:block}
+.uname-mark .ring{fill:none;stroke:currentColor;opacity:.5;stroke-width:1.7}
+.uname-mark .mark{fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:100;stroke-dashoffset:100}
+.uname-mark.ok{color:var(--green)}
+.uname-mark.ok .mark{animation:uname-draw .3s cubic-bezier(.2,.9,.2,1) forwards}
+.uname-mark.ok svg{animation:uname-pop .32s cubic-bezier(.2,.9,.2,1)}
+.uname-mark.bad{color:var(--red)}
+.uname-mark.bad .mark{animation:uname-draw .22s ease-out forwards}
+.uname-mark.bad svg{animation:uname-shake .26s ease-in-out}
+.uname-mark.checking{color:var(--faint)}
+.uname-mark.checking .ring{opacity:.35;stroke-dasharray:12 50}
+.uname-mark.checking svg{animation:uname-spin .9s linear infinite}
+.uname-msg{margin:-.45rem 0 .1rem;font-size:.82rem;min-height:1.05rem;color:var(--muted)}
+.uname-msg.ok{color:var(--green)}
+.uname-msg.bad{color:var(--red)}
+@keyframes uname-draw{to{stroke-dashoffset:0}}
+@keyframes uname-pop{0%{transform:scale(.7);opacity:0}60%{transform:scale(1.07)}100%{transform:scale(1);opacity:1}}
+@keyframes uname-shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-2px)}65%{transform:translateX(2px)}}
+@keyframes uname-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){
+  .uname-mark,.uname-mark svg,.uname-mark .mark,.uname-mark .ring{animation:none!important}
+  .uname-mark .mark{stroke-dashoffset:0!important}
+}
 #form-2fa{background:var(--panel-2);border-radius:var(--r-lg);padding:1.25rem 1.2rem 1.1rem;text-align:center}
 #form-2fa .step-title{margin:0 0 .4rem;font-size:1rem;font-weight:800}
 #form-2fa .step-sub{margin:0 0 1rem;font-size:.82rem}

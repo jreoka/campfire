@@ -370,6 +370,15 @@ async function main() {
     }
 
     console.log('');
+    console.log('-- signup username availability --');
+    const avail = await api('GET', '/api/username-available?u=PipeTest');
+    check('existing username reports taken (and normalized)', avail.username === 'pipetest' && avail.available === false, JSON.stringify(avail));
+    const freshName = 'zzq' + Date.now().toString(36);
+    const free = await api('GET', '/api/username-available?u=' + freshName);
+    check('fresh username reports available', free.username === freshName && free.available === true, JSON.stringify(free));
+    const short = await api('GET', '/api/username-available?u=a');
+    check('too-short username rejected', short.available === false && short.reason === 'too_short', JSON.stringify(short));
+
     console.log('-- admin storage stats + orphan sweep --');
     await db.query('UPDATE users SET is_admin = 1 WHERE id = $1', [reg.user.id]);
     const st = await api('GET', '/api/admin/media/storage', undefined, token);

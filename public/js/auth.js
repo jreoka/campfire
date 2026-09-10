@@ -74,6 +74,78 @@ function authError(msg) {
   el.textContent = '⚠️ ' + msg;
   el.classList.remove('hidden');
 }
+// ---------- signup username availability ----------
+// Typing a name asks the server (debounced, cached per normalized name) and
+// answers with a spinner → green check / red cross plus a line of copy. The
+// check is advisory: /api/register stays authoritative, and a name we KNOW is
+// taken never gets submitted (that would burn a single-use captcha token).
+const UNAME_MIN = 2;
+const unameCache = new Map(); // normalized name -> available
+let unameTimer = null;
+let unameSeq = 0; // stale-response guard
+let unameState = { name: '', status: 'idle' }; // idle | checking | ok | bad
+const unameNorm = (v) => String(v || '').trim().toLowerCase().replace(/[^a-z0-9_.]/g, '').slice(0, 24);
+function unameMarkHTML(status) {
+  if (status === 'ok') return '<svg width="20" height="20" viewBox="0 0 24 24"><circle class="ring" cx="12" cy="12" r="10"/><path class="mark" pathLength="100" d="M7.4 12.5l3.1 3.1 6.1-6.8"/></svg>';
+  if (status === 'bad') return '<svg width="20" height="20" viewBox="0 0 24 24"><circle class="ring" cx="12" cy="12" r="10"/><path class="mark" pathLength="100" d="M9 9l6 6M15 9l-6 6"/></svg>';
+  return '<svg width="20" height="20" viewBox="0 0 24 24"><circle class="ring" cx="12" cy="12" r="10"/></svg>';
+}
+function unameMessages(name, status, reason) {
+  if (status === 'checking') return { text: 'Checking…', cls: '' };
+  if (status === 'ok') return { text: '@' + name + ' is available', cls: 'ok' };
+  if (reason === 'too_short') return { text: 'At least 2 characters — a-z, 0-9, _ or .', cls: 'bad' };
+  return { text: '@' + name + ' is already taken', cls: 'bad' };
+}
+// Repaint from unameState. Never paints for a name that is no longer in the
+// field (a slow response for an older keystroke must not overwrite the state).
+function renderUname() {
+  const mark = $('#uname-mark'), msg = $('#uname-msg'), input = $('#in-username');
+  if (!mark || !msg || !input) return;
+  if (mode !== 'register' || !unameState.name || unameState.name !== unameNorm(input.value)) {
+    mark.className = 'uname-mark';
+    mark.innerHTML = '';
+    msg.className = 'uname-msg';
+    msg.textContent = '';
+    input.removeAttribute('aria-invalid');
+    return;
+  }
+  const { text, cls } = unameMessages(unameState.name, unameState.status, unameState.reason);
+  mark.className = 'uname-mark ' + unameState.status;
+  mark.innerHTML = unameMarkHTML(unameState.status);
+  msg.className = 'uname-msg' + (cls ? ' ' + cls : '');
+  msg.textContent = text;
+  if (unameState.status === 'bad') input.setAttribute('aria-invalid', 'true');
+  else input.removeAttribute('aria-invalid');
+}
+function scheduleUnameCheck() {
+  if (unameTimer) { clearTimeout(unameTimer); unameTimer = null; }
+  const name = unameNorm($('#in-username').value);
+  if (mode !== 'register' || !name) { unameState = { name: '', status: 'idle' }; renderUname(); return; }
+  if (name.length < UNAME_MIN) { unameState = { name, status: 'bad', reason: 'too_short' }; renderUname(); return; }
+  if (unameCache.has(name)) {
+    const free = unameCache.get(name);
+    unameState = { name, status: free ? 'ok' : 'bad', reason: free ? '' : 'taken' };
+    renderUname();
+    return;
+  }
+  unameState = { name, status: 'checking' };
+  renderUname();
+  unameTimer = setTimeout(() => runUnameCheck(name), 350);
+}
+async function runUnameCheck(name) {
+  const seq = ++unameSeq;
+  try {
+    const r = await api('/api/username-available?u=' + encodeURIComponent(name));
+    if (seq !== unameSeq) return;
+    const norm = r.username || name;
+    unameCache.set(norm, !!r.available);
+    unameState = { name: norm, status: r.available ? 'ok' : 'bad', reason: r.available ? '' : (r.reason || 'taken') };
+  } catch (e) {
+    if (seq !== unameSeq) return;
+    unameState = { name: '', status: 'idle' }; // offline/rate-limited: stay quiet, submit still validates
+  }
+  renderUname();
+}
 function setMode(m) {
   mode = m;
   $('#tab-login').classList.toggle('active', m === 'login');
@@ -82,9 +154,11 @@ function setMode(m) {
   $('#wrap-confirm').classList.toggle('hidden', m === 'login');
   $('#btn-auth').textContent = m === 'login' ? 'Log in' : 'Create account';
   $('#auth-error').classList.add('hidden');
+  scheduleUnameCheck(); // switching tabs re-answers for whatever is in the field
 }
 $('#tab-login').onclick = () => setMode('login');
 $('#tab-register').onclick = () => setMode('register');
+$('#in-username').addEventListener('input', scheduleUnameCheck);
 $('#form-auth').addEventListener('submit', (e) => {
   e.preventDefault();
   doAuthSubmit();
@@ -100,6 +174,12 @@ async function doAuthSubmit() {
     const password = $('#in-password').value;
     const displayName = $('#in-display').value.trim();
     $('#auth-error').classList.add('hidden');
+    if (mode === 'register') {
+      // Block known-bad names before consuming a captcha token (single use).
+      const name = unameNorm(username);
+      if (name.length < UNAME_MIN) { authError('Usernames need at least 2 characters (a-z, 0-9, _ or .).'); return; }
+      if (unameCache.get(name) === false) { authError('That username is taken — pick another.'); return; }
+    }
     if (mode === 'register' && password !== $('#in-confirm').value) {
       authError('Passwords do not match.');
       return;

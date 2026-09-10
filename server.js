@@ -592,6 +592,28 @@ async function verifyTurnstile(token, ip) {
   } catch { return false; }
 }
 
+// Live username check for the signup form (green check / red cross as you
+// type). Public on purpose — the captcha only shows up on submit — so it is
+// rate-limited per IP, and it normalizes EXACTLY like /api/register so the
+// answer is about the name that would actually be created.
+const unameHits = new Map(); // ip -> { n, reset }
+function unameAllow(ip) {
+  const t = Date.now();
+  let b = unameHits.get(ip);
+  if (!b || b.reset < t) { b = { n: 0, reset: t + 60 * 1000 }; unameHits.set(ip, b); }
+  b.n++;
+  if (unameHits.size > 4000) for (const [k, v] of unameHits) if (v.reset < t) unameHits.delete(k);
+  return b.n <= 60;
+}
+app.get('/api/username-available', async (req, res) => {
+  if (!unameAllow(req.ip || '')) return res.status(429).json({ error: 'slow_down' });
+  const username = String(req.query.u || '').trim().toLowerCase().replace(/[^a-z0-9_.]/g, '').slice(0, 24);
+  if (!username) return res.json({ username, available: false, reason: 'empty' });
+  if (username.length < 2) return res.json({ username, available: false, reason: 'too_short' });
+  let taken = false;
+  try { taken = !!(await db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)); } catch {}
+  res.json({ username, available: !taken, reason: taken ? 'taken' : '' });
+});
 app.post('/api/register', async (req, res) => {
   const tsToken = req.body?.turnstile;
   if (!(await verifyTurnstile(tsToken, req.ip))) return res.status(403).json({ error: tsToken ? 'captcha_failed' : 'captcha_required' });

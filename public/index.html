@@ -35,8 +35,12 @@
       </div>
       <form id="form-auth">
         <label>Username
-          <input id="in-username" name="username" autocomplete="username" maxlength="24" placeholder="e.g. nova" required />
+          <span class="uname-field">
+            <input id="in-username" name="username" autocomplete="username" maxlength="24" placeholder="e.g. nova" required aria-describedby="uname-msg" />
+            <span id="uname-mark" class="uname-mark" aria-hidden="true"></span>
+          </span>
         </label>
+        <p id="uname-msg" class="uname-msg" role="status" aria-live="polite"></p>
         <label id="wrap-display" class="hidden">Display name
           <input id="in-display" name="display" autocomplete="nickname" maxlength="32" placeholder="Nova" />
         </label>
