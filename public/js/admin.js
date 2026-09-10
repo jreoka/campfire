@@ -1,6 +1,6 @@
 'use strict';
 // ---------- site admin panel (Settings → Admin, is_admin users only) ----------
-// Controls: stats, broadcast, user management (edit / disable / admin role /
+// Controls: stats, media compression monitor, broadcast, user management (edit / disable / admin role /
 // password reset / forced logout / delete) and server management (rename /
 // transfer owner / reset invite / members + kick / delete) plus recent-message
 // moderation. All data comes from /api/admin/* (server-enforced admin_only).
@@ -37,6 +37,8 @@ async function renderAdminTab() {
     box.dataset.built = '1';
     box.innerHTML = `
       <div id="adm-stats" class="adm-stats"><p class="muted small">Loading…</p></div>
+      <div class="pf-sec-label">Media compression</div>
+      <div id="adm-media"><p class="muted small">Loading…</p></div>
       <div class="pf-sec-label">Users</div>
       <div class="row" style="gap:.4rem">
         <input id="adm-uq" placeholder="Search username or display name…" style="flex:1" autocomplete="off" />
@@ -77,6 +79,7 @@ async function renderAdminTab() {
     box.addEventListener('click', adminClick);
   }
   loadAdminStats();
+  loadAdminMedia();
   loadAdminUsers();
   loadAdminServers();
 }
@@ -92,6 +95,64 @@ async function loadAdminStats() {
       card(s.channels, 'Channels') + card(s.messages, 'Messages') +
       card(s.online, 'Online') + card(s.newWeek, 'New this week');
   } catch { box.innerHTML = '<p class="muted small">Could not load stats.</p>'; }
+}
+
+// ---------- media compression monitor ----------
+async function loadAdminMedia() {
+  const box = $('#adm-media');
+  if (!box) return;
+  try {
+    const [m, r] = await Promise.all([api('/api/admin/media'), api('/api/admin/media/recent?limit=25')]);
+    const w = m.worker || {};
+    const enc = w.encoders || {};
+    const missing = Object.keys(enc).filter((k) => !enc[k]);
+    const badge = (txt, cls) => `<span class="adm-badge${cls ? ' ' + cls : ''}">${esc(txt)}</span>`;
+    const pend = m.queue?.pending || {};
+    const pendKinds = ['image', 'video', 'audio']
+      .map((k) => ({ k, n: pend[k]?.n || 0, bytes: pend[k]?.bytes || 0 }))
+      .filter((x) => x.n > 0);
+    const pendN = Object.values(pend).reduce((a, x) => a + (x?.n || 0), 0);
+    const pendB = Object.values(pend).reduce((a, x) => a + (x?.bytes || 0), 0);
+    const card = (n, l) => `<div class="adm-stat"><b>${n}</b><span>${l}</span></div>`;
+    const lastJob = w.lastJob
+      ? `${esc(String(w.lastJob.key || '').split('/').pop())} · ${fmtSize(w.lastJob.origSize)} → ${fmtSize(w.lastJob.newSize)} · ${agoStr(w.lastJob.at)}`
+      : 'none yet';
+    const jobRow = (j) => {
+      const ok = j.result === 'compressed';
+      const pct = ok && j.orig_size > 0 ? ` (-${Math.round((1 - j.new_size / j.orig_size) * 100)}%)` : '';
+      const sizes = ok ? `${fmtSize(j.orig_size)} → ${fmtSize(j.new_size)}${pct}` : fmtSize(j.orig_size);
+      return `<div class="adm-subrow">
+        <span class="adm-subname" title="${esc(j.filename || '')}">${esc(j.filename || 'file')}</span>
+        ${badge(j.kind || '?', '')}
+        ${ok ? '' : badge('FAILED', 'off')}
+        <span class="spacer"></span>
+        <span class="muted small">${esc(sizes)} · ${esc(j.pipeline || '')} · ${agoStr(j.created_at)}</span>
+      </div>`;
+    };
+    box.innerHTML = `
+      <div class="adm-badges" style="margin:0 0 .55rem">
+        ${badge(w.enabled ? (w.ffmpeg ? 'WORKER ON' : 'ON — NO FFMPEG') : 'WORKER OFF', w.enabled && w.ffmpeg ? 'admin' : 'off')}
+        ${badge(w.s3 ? 'S3 STORAGE' : 'LOCAL DISK', 'me')}
+        ${w.busy ? badge('WORKING NOW', 'admin') : ''}
+      </div>
+      <div class="adm-stats" style="grid-template-columns:repeat(4,1fr)">
+        ${card(pendN, 'Queued')}
+        ${card(fmtSize(pendB), 'Queued size')}
+        ${card(m.totals?.compressed || 0, 'Compressed')}
+        ${card(fmtSize(m.totals?.savedBytes || 0), 'Saved total')}
+      </div>
+      <div class="muted small" style="margin-top:.55rem">${
+        pendKinds.length ? 'Queued: ' + pendKinds.map((x) => `${x.k} ${x.n} (${fmtSize(x.bytes)})`).join(' · ') : 'Queue empty — everything is compressed.'
+      }</div>
+      <div class="muted small">Schedule: every ${Math.round((w.everyMs || 30000) / 1000)}s · ${w.batch || 1} file/tick · 1 thread${missing.length ? '' : ' · low priority'} · load ${w.load != null ? Number(w.load).toFixed(2) : '?'} / ${w.cpus || '?'} cores${missing.length ? ` · encoders missing: ${esc(missing.join(', '))}` : ''}</div>
+      ${!w.ffmpeg ? '<div class="muted small">ffmpeg is not on PATH — uploads work, they just stay uncompressed.</div>' : ''}
+      <div class="muted small">Last file: ${lastJob}${w.lastError ? ` · last error: ${esc(w.lastError.key || '')} (${esc((w.lastError.error || '').slice(0, 80))})` : ''}</div>
+      <div class="pf-sec-label" style="margin-top:1rem">Recent files</div>
+      <div>${(r.jobs || []).length ? r.jobs.map(jobRow).join('') : '<p class="muted small">Nothing compressed yet.</p>'}</div>
+      <div class="adm-actions"><button class="mini" id="adm-media-refresh">Refresh</button></div>`;
+    const rb = $('#adm-media-refresh');
+    if (rb) rb.onclick = () => { box.innerHTML = '<p class="muted small">Loading…</p>'; loadAdminMedia(); };
+  } catch { box.innerHTML = '<p class="muted small">Could not load media info.</p>'; }
 }
 
 function admUserRow(u) {

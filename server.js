@@ -2285,6 +2285,16 @@ app.get('/api/admin/stats', authRequired, requireSiteAdmin, async (req, res) => 
     online: clients.size,
   });
 });
+// ---------- site admin: media compression ----------
+app.get('/api/admin/media', authRequired, requireSiteAdmin, async (req, res) => {
+  const mc = require('./media-compress');
+  const [queue, totals] = await Promise.all([mc.mediaQueueCounts(), mc.mediaTotals()]);
+  res.json({ worker: mc.getMediaStats(), queue, totals });
+});
+app.get('/api/admin/media/recent', authRequired, requireSiteAdmin, async (req, res) => {
+  const mc = require('./media-compress');
+  res.json({ jobs: await mc.mediaRecentJobs(req.query.limit) });
+});
 app.get('/api/admin/users', authRequired, requireSiteAdmin, async (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase();
   const filter = String(req.query.filter || 'all');

@@ -38,6 +38,9 @@ const { pipeline } = require('stream/promises');
 const db = require('./db');
 const storage = require('./storage');
 
+const uid = () => crypto.randomUUID();
+const now = () => Date.now();
+
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'data', 'uploads');
 const ENABLED = process.env.MEDIA_COMPRESS !== '0';
 const EVERY_MS = Math.max(5000, parseInt(process.env.MEDIA_COMPRESS_EVERY_MS || '30000', 10) || 30000);
@@ -57,6 +60,12 @@ let ffmpegOK = null; // null = unprobed
 let encCache = null; // {x264, mp3, opus, webp}
 let niceOK = null;
 let loggedIdle = false;
+// In-memory worker stats (this boot; lifetime totals live in media_compress_log).
+const stats = {
+  startedAt: 0, ticks: 0, processed: 0, skipped: 0, errors: 0,
+  savedBytes: 0, lastTickAt: 0, lastJob: null, lastError: null,
+};
+const LOG_KEEP = 300; // recent job rows kept for the admin panel
 
 // ---------- intake ----------
 
@@ -64,6 +73,33 @@ let loggedIdle = false;
 async function ensureColumns() {
   await db.exec('ALTER TABLE attachments ADD COLUMN IF NOT EXISTS compressed BIGINT NOT NULL DEFAULT 0');
   await db.exec('ALTER TABLE dm_attachments ADD COLUMN IF NOT EXISTS compressed BIGINT NOT NULL DEFAULT 0');
+  await db.exec(`CREATE TABLE IF NOT EXISTS media_compress_log (
+  id TEXT PRIMARY KEY,
+  tbl TEXT NOT NULL DEFAULT '',
+  url TEXT NOT NULL DEFAULT '',
+  filename TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL DEFAULT '',
+  pipeline TEXT NOT NULL DEFAULT '',
+  result TEXT NOT NULL DEFAULT '',
+  orig_size BIGINT NOT NULL DEFAULT 0,
+  new_size BIGINT NOT NULL DEFAULT 0,
+  error TEXT NOT NULL DEFAULT '',
+  created_at BIGINT NOT NULL
+)`);
+  await db.exec('CREATE INDEX IF NOT EXISTS idx_media_compress_log_created ON media_compress_log(created_at DESC)');
+}
+
+// One row per finished file (compressed or failed). Skips are too noisy to
+// log — they are visible as aggregate counters instead.
+async function logJob({ tbl, url, filename, kind, pipeline, result, origSize, newSize, error }) {
+  try {
+    await db.prepare('INSERT INTO media_compress_log (id,tbl,url,filename,kind,pipeline,result,orig_size,new_size,error,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+      .run(uid(), tbl || '', String(url || '').slice(0, 300), String(filename || 'file').slice(0, 120),
+        kind || '', pipeline || '', result || '', Math.max(0, Math.floor(Number(origSize) || 0)), Math.max(0, Math.floor(Number(newSize) || 0)),
+        String(error || '').slice(0, 200), now());
+    await db.prepare(`DELETE FROM media_compress_log WHERE id NOT IN
+      (SELECT id FROM media_compress_log ORDER BY created_at DESC LIMIT ?)`).run(LOG_KEEP);
+  } catch {}
 }
 
 function checkFfmpeg() {
@@ -287,13 +323,14 @@ async function markDone(table, id) {
 // Returns 'compressed' | 'skipped' (both mean: never look at this row again).
 async function processRow(row) {
   const table = row.tbl === 'dm' ? 'dm_attachments' : 'attachments';
+  const done = async () => { stats.skipped++; await markDone(table, row.id); return 'skipped'; };
   const key = cleanKey(row.url);
-  if (!key) { await markDone(table, row.id); return 'skipped'; } // remote GIF URL etc.
+  if (!key) return done(); // remote GIF URL etc.
   const plan = planFor(row.mime, key);
-  if (!plan) { await markDone(table, row.id); return 'skipped'; }
+  if (!plan) return done();
   const minSize = MIN_BYTES[plan.group] || MIN_BYTES.image;
-  if ((row.size || 0) < minSize) { await markDone(table, row.id); return 'skipped'; }
-  if (!(await keyExists(key))) { await markDone(table, row.id); return 'skipped'; }
+  if ((row.size || 0) < minSize) return done();
+  if (!(await keyExists(key))) return done();
 
   const rand = crypto.randomBytes(8).toString('hex');
   const tmpIn = path.join(os.tmpdir(), `cfc-in-${rand}${extOf(key) || '.bin'}`);
@@ -302,34 +339,53 @@ async function processRow(row) {
   try {
     await downloadToTemp(key, tmpIn);
     const inStat = await fs.promises.stat(tmpIn).catch(() => null);
-    if (!inStat || !inStat.size) { await markDone(table, row.id); return 'skipped'; }
+    if (!inStat || !inStat.size) return done();
 
     const r = await runFfmpeg(buildArgs(plan.pipeline, tmpIn, tmpOut));
-    if (!r.ok) { warn('encode failed, keeping original:', key, String(r.error || '').slice(0, 160)); await markDone(table, row.id); return 'skipped'; }
+    if (!r.ok) {
+      const err = String(r.error || 'encode_failed').slice(0, 160);
+      stats.errors++;
+      stats.lastError = { key, error: err, at: now() };
+      warn('encode failed, keeping original:', key, err);
+      await logJob({ tbl: row.tbl, url: row.url, filename: row.filename, kind: plan.group, pipeline: plan.pipeline, result: 'error', origSize: inStat.size, newSize: 0, error: err });
+      await markDone(table, row.id);
+      return 'skipped';
+    }
     const outStat = await fs.promises.stat(tmpOut).catch(() => null);
-    if (!outStat || !outStat.size) { await markDone(table, row.id); return 'skipped'; }
-    if (outStat.size >= inStat.size * (1 - MIN_SAVING)) { await markDone(table, row.id); return 'skipped'; }
+    if (!outStat || !outStat.size) return done();
+    if (outStat.size >= inStat.size * (1 - MIN_SAVING)) return done();
 
     const sameFormat = extOf(key) === outExt;
     const newMime = sameFormat ? String(row.mime) : (MIME_BY_OUT[outExt] || String(row.mime));
+    let newUrl;
     if (sameFormat) {
       await replaceBytes(key, tmpOut, newMime);
+      newUrl = cacheBust('/uploads/' + key);
       await db.prepare('UPDATE ' + table + ' SET size = ?, url = ?, compressed = 1 WHERE id = ?')
-        .run(outStat.size, cacheBust('/uploads/' + key), row.id);
+        .run(outStat.size, newUrl, row.id);
     } else {
       // Format change (wav->mp3, mov/webm video->mp4): mint a fresh name.
       const dir = key.slice(0, key.lastIndexOf('/') + 1);
       const newKey = dir + crypto.randomBytes(16).toString('hex') + outExt;
       await replaceBytes(newKey, tmpOut, newMime);
+      newUrl = cacheBust('/uploads/' + newKey);
       await db.prepare('UPDATE ' + table + ' SET size = ?, url = ?, mime = ?, compressed = 1 WHERE id = ?')
-        .run(outStat.size, cacheBust('/uploads/' + newKey), newMime, row.id);
+        .run(outStat.size, newUrl, newMime, row.id);
       await removeKey(key);
     }
+    stats.processed++;
+    stats.savedBytes += inStat.size - outStat.size;
+    stats.lastJob = { key, group: plan.group, pipeline: plan.pipeline, origSize: inStat.size, newSize: outStat.size, at: now() };
+    await logJob({ tbl: row.tbl, url: newUrl, filename: row.filename, kind: plan.group, pipeline: plan.pipeline, result: 'compressed', origSize: inStat.size, newSize: outStat.size });
     const pct = Math.round((1 - outStat.size / inStat.size) * 100);
     log(`${plan.group} ${key}: ${Math.round(inStat.size / 1024)}KB -> ${Math.round(outStat.size / 1024)}KB (-${pct}%)`);
     return 'compressed';
   } catch (e) {
-    warn('job failed, keeping original:', key, String((e && e.message) || e).slice(0, 160));
+    const err = String((e && e.message) || e).slice(0, 160);
+    stats.errors++;
+    stats.lastError = { key, error: err, at: now() };
+    warn('job failed, keeping original:', key, err);
+    try { await logJob({ tbl: row.tbl, url: row.url, filename: row.filename, kind: (plan && plan.group) || '', pipeline: (plan && plan.pipeline) || '', result: 'error', origSize: row.size || 0, newSize: 0, error: err }); } catch {}
     try { await markDone(table, row.id); } catch {}
     return 'skipped';
   } finally {
@@ -360,6 +416,8 @@ async function tick() {
     if (os.loadavg()[0] > cpus) return;
   } catch {}
   busy = true;
+  stats.ticks++;
+  stats.lastTickAt = now();
   try {
     // Skips (tiny/foreign/missing files) are cheap: burn through a few per
     // tick looking for real work, but cap compressions at BATCH.
@@ -380,6 +438,67 @@ async function tick() {
   }
 }
 
+// ---------- admin introspection ----------
+// Snapshot of worker config + this boot's counters (lifetime totals come
+// from media_compress_log via mediaTotals below).
+function getMediaStats() {
+  let load = null, cpus = 1;
+  try { cpus = (os.cpus() || []).length || 1; load = os.loadavg()[0]; } catch {}
+  return {
+    enabled: ENABLED, everyMs: EVERY_MS, batch: BATCH,
+    ffmpeg: checkFfmpeg(), encoders: { ...probeEncoders() },
+    busy, s3: storage.s3Enabled(), cpus, load,
+    startedAt: stats.startedAt, ticks: stats.ticks,
+    processed: stats.processed, skipped: stats.skipped, errors: stats.errors,
+    savedBytes: stats.savedBytes, lastTickAt: stats.lastTickAt,
+    lastJob: stats.lastJob, lastError: stats.lastError,
+  };
+}
+
+// Pending vs finished files (both attachment tables), with byte totals.
+// COUNT/SUM come back as numeric strings from Postgres — coerce them.
+async function mediaQueueCounts() {
+  const out = { pending: {}, done: {} };
+  for (const table of ['attachments', 'dm_attachments']) {
+    let rows = [];
+    try {
+      rows = await db.prepare(`SELECT kind, compressed, COUNT(*) c, COALESCE(SUM(size),0) bytes FROM ${table} WHERE kind IN ('image','video','audio') GROUP BY kind, compressed`).all();
+    } catch { continue; }
+    for (const r of rows) {
+      const bucket = r.compressed ? out.done : out.pending;
+      const k = bucket[r.kind] || (bucket[r.kind] = { n: 0, bytes: 0 });
+      k.n += Number(r.c) || 0;
+      k.bytes += Number(r.bytes) || 0;
+    }
+  }
+  return out;
+}
+
+// Lifetime totals from the job log (survives restarts).
+async function mediaTotals() {
+  const out = { compressed: 0, errors: 0, savedBytes: 0 };
+  let rows = [];
+  try {
+    rows = await db.prepare('SELECT result, COUNT(*) c, COALESCE(SUM(orig_size),0) orig, COALESCE(SUM(new_size),0) cur FROM media_compress_log GROUP BY result').all();
+  } catch { return out; }
+  for (const r of rows) {
+    if (r.result === 'compressed') {
+      out.compressed = Number(r.c) || 0;
+      out.savedBytes = Math.max(0, (Number(r.orig) || 0) - (Number(r.cur) || 0));
+    } else if (r.result === 'error') {
+      out.errors = Number(r.c) || 0;
+    }
+  }
+  return out;
+}
+
+async function mediaRecentJobs(limit) {
+  const n = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
+  try {
+    return await db.prepare('SELECT tbl,url,filename,kind,pipeline,result,orig_size,new_size,error,created_at FROM media_compress_log ORDER BY created_at DESC LIMIT ?').all(n);
+  } catch { return []; }
+}
+
 function startMediaCompress() {
   if (started) return;
   started = true;
@@ -392,6 +511,7 @@ function startMediaCompress() {
     }
     const enc = probeEncoders();
     const missing = Object.entries(enc).filter(([, v]) => !v).map(([k]) => k);
+    stats.startedAt = now();
     log(`worker on: every ${Math.round(EVERY_MS / 1000)}s, ${BATCH}/tick, 1 thread${checkNice() ? ', nice 19' : ''}` +
       (missing.length ? ` (encoders missing, related types skipped: ${missing.join(', ')})` : ' (all encoders present)'));
     const t = setInterval(() => { tick().catch((e) => warn('tick failed:', String((e && e.message) || e).slice(0, 200))); }, EVERY_MS);
@@ -400,4 +520,4 @@ function startMediaCompress() {
   }).catch((e) => warn('migration failed:', String((e && e.message) || e).slice(0, 200)));
 }
 
-module.exports = { startMediaCompress, tickMediaCompress: tick, ensureColumns, planFor, buildArgs, cleanKey, MIN_BYTES };
+module.exports = { startMediaCompress, tickMediaCompress: tick, ensureColumns, planFor, buildArgs, cleanKey, MIN_BYTES, getMediaStats, mediaQueueCounts, mediaTotals, mediaRecentJobs };
