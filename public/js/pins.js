@@ -125,15 +125,21 @@ async function renderPinsList() {
   for (const p of pins) {
     const row = document.createElement('div');
     row.className = 'pin-row';
-    const text = p.content ? (p.content.length > 220 ? p.content.slice(0, 220) + '…' : p.content)
-      : (p.attachments?.length ? `[${p.attachments.length} attachment${p.attachments.length === 1 ? '' : 's'}]` : '[no text]');
-    row.innerHTML = '<span class="avatar"></span><div class="pin-main"><div class="pin-head"><span class="who"></span><span class="when"></span></div><div class="pin-text"></div><div class="pin-meta"></div></div>';
+    const text = p.content ? (p.content.length > 220 ? p.content.slice(0, 220) + '…' : p.content) : '';
+    const atts = Array.isArray(p.attachments) ? p.attachments : [];
+    row.innerHTML = '<span class="avatar"></span><div class="pin-main"><div class="pin-head"><span class="who"></span><span class="when"></span></div><div class="pin-text"></div><div class="pin-atts"></div><div class="pin-meta"></div></div>';
     const who = row.querySelector('.who');
     who.innerHTML = esc(p.user ? p.user.display_name : 'deleted') + (p.user ? tagHTML(p.user) : '');
     if (p.user) who.style.cssText = nameStyleFor(p.user);
     row.querySelector('.when').textContent = fmtTime(p.created_at);
     row.querySelector('.when').title = fmtFull(p.created_at);
-    row.querySelector('.pin-text').textContent = text;
+    const textEl = row.querySelector('.pin-text');
+    if (text) textEl.textContent = text;
+    else if (!atts.length) textEl.textContent = '[no text]';
+    else textEl.remove();
+    const attsEl = row.querySelector('.pin-atts');
+    if (atts.length && typeof attachmentHTML === 'function') attsEl.innerHTML = atts.map(attachmentHTML).join('');
+    else attsEl.remove();
     row.querySelector('.pin-meta').textContent = 'Pinned by ' + (p.pinned_by ? p.pinned_by.display_name : '?');
     paintAvatar(row.querySelector('.avatar'), p.user);
     const btns = document.createElement('div');
@@ -155,6 +161,7 @@ async function renderPinsList() {
     row.appendChild(btns);
     box.appendChild(row);
   }
+  try { box.querySelectorAll('video.att-vid').forEach((v) => ensureVideoPoster(v)); } catch {}
 }
 function flashMsgEl(el) {
   el.scrollIntoView({ block: 'center', behavior: 'smooth' });

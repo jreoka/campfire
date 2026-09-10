@@ -1182,6 +1182,12 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .pin-head .who{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pin-head .when{color:var(--faint);font-size:.72rem;flex-shrink:0}
 .pin-text{font-size:.87rem;overflow-wrap:anywhere;white-space:pre-wrap;margin-top:.15rem;color:var(--text)}
+.pin-atts{display:flex;flex-direction:column;align-items:flex-start;gap:.4rem;margin-top:.4rem;min-width:0}
+.pin-atts:empty{display:none}
+.pin-atts .att-wrap{max-width:100%}
+.pin-atts img.att-img{max-width:100%;max-height:200px;border-radius:10px;cursor:zoom-in;object-fit:contain;background:#000}
+.pin-atts video.att-vid{max-width:100%;max-height:200px;border-radius:10px;background:#000}
+.pin-atts audio{max-width:100%}
 .pin-meta{font-size:.72rem;color:var(--faint);margin-top:.25rem}
 .pin-btns{display:flex;gap:.3rem;flex-shrink:0}
 /* ---------- forwarded messages ---------- */
