@@ -2268,7 +2268,7 @@ async function adminUserView(u) {
     messageCount = (await db.prepare('SELECT COUNT(*) c FROM messages WHERE user_id = ?').get(u.id)).c;
     dmCount = (await db.prepare('SELECT COUNT(*) c FROM dm_messages WHERE user_id = ?').get(u.id)).c;
   } catch {}
-  return { ...base, is_admin: !!u.is_admin, disabled: !!u.disabled, has2fa: !!u.totp_enabled, serverCount, messageCount, dmCount };
+  return { ...base, is_admin: !!u.is_admin, disabled: !!u.disabled, has2fa: !!u.totp_enabled, serverCount, messageCount, dmCount, ...(u.role ? { role: u.role } : {}) };
 }
 app.get('/api/admin/stats', authRequired, requireSiteAdmin, async (req, res) => {
   const count = async (sql, ...a) => { try { return (await db.prepare(sql).get(...a)).c; } catch { return 0; } };
@@ -2307,7 +2307,7 @@ app.get('/api/admin/users', authRequired, requireSiteAdmin, async (req, res) => 
   const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
   const total = (await db.prepare(`SELECT COUNT(*) c FROM users ${where}`).get(...params)).c;
   const rows = await db.prepare(`SELECT * FROM users ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
-  res.json({ users: rows.map(adminUserView), total });
+  res.json({ users: await Promise.all(rows.map(adminUserView)), total });
 });
 app.get('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, res) => {
   const u = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
@@ -2487,7 +2487,7 @@ app.get('/api/admin/servers', authRequired, requireSiteAdmin, async (req, res) =
   const params = q ? [`%${q}%`] : [];
   const total = (await db.prepare(`SELECT COUNT(*) c FROM servers s ${where}`).get(...params)).c;
   const rows = await db.prepare(`SELECT s.*, u.username AS owner_username FROM servers s LEFT JOIN users u ON u.id = s.owner_id ${where} ORDER BY s.created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
-  res.json({ servers: rows.map(adminServerSummary), total });
+  res.json({ servers: await Promise.all(rows.map(adminServerSummary)), total });
 });
 app.patch('/api/admin/servers/:id', authRequired, requireSiteAdmin, async (req, res) => {
   const s = await getServer(req.params.id);
@@ -2523,11 +2523,12 @@ app.post('/api/admin/servers/:id/invite/reset', authRequired, requireSiteAdmin, 
 app.get('/api/admin/servers/:id/members', authRequired, requireSiteAdmin, async (req, res) => {
   const s = await getServer(req.params.id);
   if (!s) return res.status(404).json({ error: 'no_server' });
-  const members = (await db.prepare(`
+  const rows0 = (await db.prepare(`
     SELECT u.*, CASE WHEN u.id = s.owner_id THEN 'owner' ELSE 'member' END as role
     FROM server_members m JOIN users u ON u.id = m.user_id JOIN servers s ON s.id = m.server_id
     WHERE m.server_id = ? ORDER BY lower(u.display_name) ASC
-  `).all(s.id)).map(adminUserView);
+  `).all(s.id));
+  const members = await Promise.all(rows0.map(adminUserView));
   res.json({ members });
 });
 app.delete('/api/admin/servers/:id/members/:uid', authRequired, requireSiteAdmin, async (req, res) => {
