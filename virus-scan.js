@@ -249,7 +249,7 @@ function clamdScanStream(source, timeoutMs) {
       resp += d.toString('utf8');
       // clamd z-commands terminate the verdict with NUL (no newline).
       if (!resp.includes('\n') && !resp.includes('\0')) return;
-      const line = resp.trim();
+      const line = resp.replace(/\0/g, '').trim();
       const found = line.match(/^stream:\s*(.+?)\s+FOUND$/);
       if (/OK$/.test(line)) finish(resolve, { clean: true });
       else if (found) finish(resolve, { clean: false, virus: found[1].slice(0, 120) });
