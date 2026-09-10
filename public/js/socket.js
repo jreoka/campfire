@@ -313,6 +313,20 @@ function onWS(m) {
       break;
     case 'user-updated': {
       const u = m.user;
+      // Message rows render live identity (name / avatar / name colors) via
+      // liveUserFor — snapshot those BEFORE merging so a rebuild happens only
+      // when something chat-visible actually changed. Game beacons hit this
+      // path every ~15s per gaming user and must NOT rebuild the whole list
+      // (each rebuild risks nudging scrolled-up readers). Member list, DM
+      // rows and cards below still update every time.
+      const rowKeys = ['display_name', 'avatar_url', 'avatar_color', 'name_color', 'name_gradient'];
+      const snapRow = (o) => (o ? rowKeys.map((k) => String(o[k] ?? '')) : []);
+      const snapRows = () => [
+        u.id === S.me?.id ? snapRow(S.me) : [],
+        snapRow((S.serverDetail?.members || []).find((x) => x.id === u.id)),
+        ...(S.dms || []).map((t) => snapRow((t.members || []).find((x) => x.id === u.id))),
+      ].join('￾');
+      const rowsBefore = snapRows();
       if (u.id === S.me.id) { S.me = { ...S.me, ...u }; paintMe(); }
       const mem = (S.serverDetail?.members || []).find((x) => x.id === u.id);
       if (mem) Object.assign(mem, u);
@@ -333,7 +347,7 @@ function onWS(m) {
         try { renderFriendLists(); } catch {}
         try { renderActiveNow(); } catch {}
       }
-      if (S.channelId) renderMessages();
+      if (S.channelId && snapRows() !== rowsBefore) renderMessages();
       break;
     }
     case 'server-updated': {

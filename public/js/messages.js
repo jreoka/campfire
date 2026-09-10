@@ -183,9 +183,27 @@ function paintTextPreviews(url) {
   const c = txtCache.get(url);
   document.querySelectorAll('.txtfile').forEach((card) => {
     if (card.dataset.turl !== url) return;
+    // The fetch lands whenever it lands — possibly long after the render.
+    // Swapping one line ("Loading preview…") for up to 12 lines grows the
+    // card; when that happens at/above the viewport it would shove the
+    // reader upward, so hold the view steady across the swap.
+    let box = null, hBefore = 0, pin = false;
+    try {
+      box = card.closest ? card.closest('#messages,#thread-replies') : null;
+      if (box && !box.classList.contains('hidden')) {
+        const btop = box.getBoundingClientRect().top;
+        if (card.getBoundingClientRect().top < btop + 1) { hBefore = card.offsetHeight; pin = true; }
+      }
+    } catch { box = null; }
     const el = card.querySelector('.txt-prev');
     if (!el) return;
     el.textContent = !c || c.status === 'loading' ? 'Loading preview…' : c.status === 'ready' ? (c.preview || '(empty file)') : 'Preview unavailable — download to view.';
+    try {
+      if (pin && box) {
+        const dh = card.offsetHeight - hBefore;
+        if (dh) box.scrollTop += dh;
+      }
+    } catch {}
   });
 }
 async function expandTextFile(el) {
@@ -530,11 +548,49 @@ function restoreListAnchor(box, anchor, keepDist) {
       const el = box.querySelector('[data-mid="' + CSS.escape(anchor.mid) + '"]');
       if (el) {
         box.scrollTop += (el.getBoundingClientRect().top - box.getBoundingClientRect().top) - anchor.off;
-        return;
+        return anchor;
       }
     }
   } catch {}
   box.scrollTop = Math.max(0, box.scrollHeight - keepDist);
+  return null;
+}
+// Hold a restored anchor steady while late media settles. A fresh rebuild
+// renders lazy images/videos at 0 height; as they pop in (often ms later,
+// from cache) content above the viewport grows and would shove the reader
+// upward. Re-pin the anchor as each one lands — stops the moment the user
+// scrolls themselves, when everything settles, or after ~2.5s.
+function pinAnchorWhileSettling(box, anchor) {
+  try {
+    const mid = anchor && anchor.mid;
+    if (!box || !mid || typeof anchor.off !== 'number') return;
+    const sel = '[data-mid="' + CSS.escape(mid) + '"]';
+    const media = [...box.querySelectorAll('img, video')].filter((m) =>
+      m.tagName === 'VIDEO' ? m.readyState < 1 : !m.complete);
+    if (!media.length) return;
+    const t0 = Date.now();
+    let expected = box.scrollTop, done = 0;
+    const realign = () => {
+      if (done >= media.length || Date.now() - t0 > 2500) return;
+      if (Math.abs(box.scrollTop - expected) > 2) { done = media.length; return; } // user took over
+      const el = box.querySelector(sel);
+      if (!el || !el.isConnected) return;
+      const want = expected + ((el.getBoundingClientRect().top - box.getBoundingClientRect().top) - anchor.off);
+      if (Math.abs(want - box.scrollTop) > 0.5) box.scrollTop = want;
+      expected = box.scrollTop;
+    };
+    setTimeout(() => { done = media.length; }, 2600);
+    for (const m of media) {
+      const once = () => {
+        m.removeEventListener('load', once); m.removeEventListener('error', once);
+        m.removeEventListener('loadedmetadata', once); m.removeEventListener('loadeddata', once);
+        done++;
+        realign();
+      };
+      m.addEventListener('load', once); m.addEventListener('error', once);
+      if (m.tagName === 'VIDEO') { m.addEventListener('loadedmetadata', once); m.addEventListener('loadeddata', once); }
+    }
+  } catch {}
 }
 // A thread reply changes only its root's reply-count link — patch that one
 // button in place instead of rebuilding the whole list (a full rebuild
@@ -570,7 +626,7 @@ function renderMessages(force = false) {
   }
   if (!msgs.length) box.innerHTML += '<p class="muted" style="text-align:center">No messages yet — say hello.</p>';
   if (force || nearBottom) anchorBottom(box);
-  else restoreListAnchor(box, anchor, keepDist);
+  else pinAnchorWhileSettling(box, restoreListAnchor(box, anchor, keepDist));
   updatePill();
 }
 // Incremental live append: add ONE arriving message without rebuilding the

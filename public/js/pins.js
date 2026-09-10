@@ -58,34 +58,7 @@ function restoreScrollPos(ctx) {
 function stickRestoredAnchor(box, key) {
   try {
     const mem = S.scrollMem.get(key);
-    const mid = mem && mem.anchor && mem.anchor.mid;
-    if (!mid || typeof mem.anchor.off !== 'number') return;
-    const sel = '[data-mid="' + CSS.escape(mid) + '"]';
-    const media = [...box.querySelectorAll('img, video')].filter((m) =>
-      m.tagName === 'VIDEO' ? m.readyState < 1 : !m.complete);
-    if (!media.length) return;
-    const t0 = Date.now();
-    let expected = box.scrollTop, done = 0;
-    const realign = () => {
-      if (done >= media.length || Date.now() - t0 > 2500) return;
-      if (Math.abs(box.scrollTop - expected) > 2) { done = media.length; return; } // user took over
-      const el = box.querySelector(sel);
-      if (!el || !el.isConnected) return;
-      const want = expected + ((el.getBoundingClientRect().top - box.getBoundingClientRect().top) - mem.anchor.off);
-      if (Math.abs(want - box.scrollTop) > 0.5) box.scrollTop = want;
-      expected = box.scrollTop;
-    };
-    setTimeout(() => { done = media.length; }, 2600);
-    for (const m of media) {
-      const once = () => {
-        m.removeEventListener('load', once); m.removeEventListener('error', once);
-        m.removeEventListener('loadedmetadata', once); m.removeEventListener('loadeddata', once);
-        done++;
-        realign();
-      };
-      m.addEventListener('load', once); m.addEventListener('error', once);
-      if (m.tagName === 'VIDEO') { m.addEventListener('loadedmetadata', once); m.addEventListener('loadeddata', once); }
-    }
+    if (mem && mem.anchor && typeof pinAnchorWhileSettling === 'function') pinAnchorWhileSettling(box, mem.anchor);
   } catch {}
 }
 async function refreshPinsCount() {
@@ -364,6 +337,7 @@ function renderDmMessages(force = false) {
   }
   if (!msgs.length) box.innerHTML += '<p class="muted" style="text-align:center">No messages yet — say hello.</p>';
   if (force || nearBottom) anchorBottom(box);
+  else if (typeof pinAnchorWhileSettling === 'function') pinAnchorWhileSettling(box, restoreListAnchor(box, anchor, keepDist));
   else restoreListAnchor(box, anchor, keepDist);
   updatePill();
 }

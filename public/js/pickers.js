@@ -662,6 +662,7 @@ function renderThread(scroll = false) {
   for (const r of S.thread.replies) { repBox.appendChild(messageEl(r, { inThread: true, grouped: shouldGroup(tprev, r) })); tprev = r; }
   if (!S.thread.replies.length) repBox.innerHTML = '<p class="muted small" style="text-align:center">No replies yet.</p>';
   if (scroll || nearBottom) anchorBottom(repBox);
+  else if (typeof pinAnchorWhileSettling === 'function') pinAnchorWhileSettling(repBox, restoreListAnchor(repBox, anchor, keepDist));
   else restoreListAnchor(repBox, anchor, keepDist);
 }
 function closeThread(silent) {
