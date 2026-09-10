@@ -50,6 +50,8 @@ campfire/
   db.js              # Postgres wrapper + schema (initDb: CREATE TABLE IF NOT EXISTS + guarded migrations)
   pdq.js             # PDQ perceptual image hashing (port of Meta/Thorn's reference impl; see below)
   csam-scan.js       # known-CSAM hash matching: hash list, quarantine, account lock, review queue
+  unfurl.js          # link previews: server-side OpenGraph/oEmbed unfurl, SSRF-guarded fetch,
+                     # Postgres cache, signed thumbnail proxy (/api/unfurl, /api/unfurl/img)
   virus-scan.js      # ClamAV scanning + gated serving
   media-compress.js  # background ffmpeg re-encode of over-large media
   package.json       # deps (express, ws, jsonwebtoken, bcryptjs, cookie-parser)
@@ -63,6 +65,7 @@ campfire/
   public/
     index.html       # SPA shell (auth view + main view + modals)
     styles.css       # flat professional dark UI (see design rules below)
+    embeds.js        # link embeds: known providers client-side, generic link cards via /api/unfurl
     js/              # SPA modules (ordered classic scripts): core, auth, noise,
                      # servers, messages, socket, ui, voice, actions, rail, home,
                      # pins, compose, pickers, settings, security, final
@@ -183,7 +186,9 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   correctness: unit + property + reference regression images) and
   `BASE=http://localhost:3000 node scripts/test-csam.js` (end-to-end illegal-
   content flow). Both must pass after touching hashing, uploads or the scan
-  pipeline.
+  pipeline. `node scripts/test-unfurl.js [--live]` covers the link-preview
+  parser and the SSRF guard (offline by default; `--live` also fetches real
+  pages and proves a 302 to a link-local address is refused).
 - Smoke test API: `curl localhost:3000/api/config`, register/login flow.
 - E2E (register → create server → invite-join → WS live message → history →
   channel create/delete → voice-join signaling) was verified passing; re-run an
@@ -235,7 +240,8 @@ Shipped: auth, servers/invites, text channels, voice rooms (mesh WebRTC, sidebar
 occupants + VAD rings), uploads, emoji (Emojibase set + custom + Klipy GIFs),
 replies/threads/reactions/edits/mentions/markdown, presence + statuses, user
 cards, tabbed settings, rail folders + DnD, B&W theme, ctx menus, auto-update,
-TOTP 2FA + passkeys + sessions, notification inbox,
+TOTP 2FA + passkeys + sessions, notification inbox, link previews (server-side
+OpenGraph/oEmbed unfurl → cached card with thumbnail, SSRF-guarded),
 known-CSAM hash matching (local, admin review + account lock).
 Detail per change lives in `git log` — don't duplicate it here.
 

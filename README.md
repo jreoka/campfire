@@ -6,6 +6,7 @@ A tiny **Mattermost / Steam-chat alternative** you can host in one Docker contai
 - 💬 **Text channels** with live chat, history, typing indicators, presence
 - 🔊 **Voice rooms** — click to join, talk in-browser (WebRTC, no app needed)
 - 🤖 **Channel webhooks** — per-channel bot URLs with their own name + avatar (channel menu → Webhooks)
+- 🔗 **Link previews** — paste a link and it becomes a card (thumbnail, title, description): HuggingFace model pages, articles, docs, shops. YouTube, Spotify, X, Twitch, TikTok, Instagram, Vimeo, SoundCloud and Streamable embed as real players
 - 📲 **PWA installable** — friends can "Add to Home Screen" on iPhone/Android and use it like a native app
 - 🗄️ **Postgres 18** — data lives in a `pgdata` Docker volume
 
@@ -204,5 +205,29 @@ All options are documented in `.env.example`.
 ## 7. Windows desktop app
 
 `app/` is a small Tauri (WebView2) wrapper of the web app — tray icon, start-on-login, and automatic game detection. While a game is running it shows "Playing …" next to your name (separate from your custom status) and logs playtime, which drives per-game levels and day-streaks shown on profile cards. Builds ship via GitHub Releases (`.github/workflows/app-windows.yml`). See `app/README.md`.
+
+## 8. Link previews and what they send
+
+Paste a link and Campfire shows a preview card under the message. Videos,
+music and posts from the big platforms embed as real players in your browser
+(nothing ever touches the server). For **every other site** the *server* asks
+the page for its OpenGraph / Twitter-card / oEmbed metadata and draws a small
+card from it — site, title, description, thumbnail — exactly like Discord.
+
+That means pasting a link asks the linked site for its public preview info:
+
+* Only that metadata is read. Nothing about the page, the message or the chat
+  is ever sent anywhere, and no other party is involved.
+* Each URL is fetched **once**, then cached in Postgres for a week, so a link
+  posted in ten channels is fetched one time.
+* The viewer's IP is never exposed — thumbnails are re-served from your own
+  instance (`/api/unfurl/img`) instead of hotlinked.
+* Private, loopback and link-local addresses (including cloud metadata
+  endpoints) are refused on every hop, so a link can't be used to probe your
+  LAN or the server itself. Only real image bytes are ever served back.
+* Set `UNFURL=0` in `.env` to switch previews off entirely (clients stop
+  asking for them too). Tuning knobs: `UNFURL_TIMEOUT_MS`,
+  `UNFURL_MAX_HTML`, `UNFURL_MAX_IMAGE`, `UNFURL_CONCURRENCY`,
+  `UNFURL_IMG_CACHE_MB` — all documented in `.env.example`.
 
 Enjoy the campfire. 🔥

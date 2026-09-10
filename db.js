@@ -546,6 +546,17 @@ CREATE TABLE IF NOT EXISTS webhooks (
   created_at BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_webhooks_channel ON webhooks(channel_id);
+-- Link previews (unfurl.js): one row per linked URL. id is a truncated
+-- sha256 of url so long URLs can't overflow a btree key; ok is 0 for a
+-- fetch that found nothing (negative-cached briefly, not forever).
+CREATE TABLE IF NOT EXISTS link_embeds (
+  id TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  ok BIGINT NOT NULL DEFAULT 0,
+  data TEXT NOT NULL,
+  fetched_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_link_embeds_fetched ON link_embeds(fetched_at);
 `);
   await addColumn('messages', 'webhook_id', 'TEXT');
   await addColumn('messages', 'webhook_name', 'TEXT');

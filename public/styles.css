@@ -632,6 +632,25 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .embed-img{max-width:100%;max-height:320px;border-radius:12px;cursor:zoom-in;display:block;object-fit:contain;background:#000}
 .embed-vid{max-width:100%;max-height:320px;border-radius:12px;background:#000;display:block}
 .embed-media audio{max-width:100%}
+/* Generic link cards (server-side unfurl): favicon + site, title, description, thumbnail */
+.embed-link{display:block;padding:.7rem .85rem;color:var(--text);text-decoration:none;border-left:3px solid var(--accent);transition:background var(--t-fast)}
+.embed-link:hover{background:var(--panel-3)}
+.el-top{display:flex;align-items:center;gap:.4rem;margin-bottom:.35rem}
+.el-fav{width:16px;height:16px;flex:none;border-radius:4px;object-fit:contain}
+.el-site{font-size:.72rem;font-weight:700;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.el-body{display:block;min-width:0}
+.el-title{display:block;font-size:.92rem;font-weight:650;line-height:1.35;overflow-wrap:anywhere}
+.el-desc{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin-top:.25rem;font-size:.82rem;line-height:1.45;color:var(--muted);overflow-wrap:anywhere}
+.el-media{display:block;margin:.6rem -.85rem -.7rem}
+.el-img{display:block;width:100%;max-height:280px;object-fit:cover;background:var(--panel-3)}
+/* Second and third cards collapse to a compact row (Discord-style) */
+.embed-link.compact{display:flex;align-items:flex-start;gap:.75rem;padding:.6rem .7rem}
+.embed-link.compact .el-body{flex:1 1 auto;min-width:0}
+.embed-link.compact .el-site{font-size:.68rem}
+.embed-link.compact .el-title{font-size:.87rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.embed-link.compact .el-desc{-webkit-line-clamp:1;margin-top:.15rem;font-size:.78rem}
+.embed-link.compact .el-media{order:2;flex:none;margin:0}
+.embed-link.compact .el-img{width:72px;height:72px;border-radius:8px}
 @media (max-width:700px){.embeds{max-width:100%}}
 .file-card{display:flex;align-items:center;gap:.65rem;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:.65rem .85rem;max-width:330px;text-decoration:none;color:var(--text);transition:background var(--t-fast)}
 .file-card:hover{background:var(--panel-3)}

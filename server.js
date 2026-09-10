@@ -33,7 +33,7 @@ const APP_VERSION = (() => {
       const p = path.join(dir, e.name);
       return e.isDirectory() ? walk(p) : [p];
     });
-    for (const f of [path.join(__dirname, 'server.js'), path.join(__dirname, 'db.js'), path.join(__dirname, 'backup.js'), path.join(__dirname, 'storage.js'), path.join(__dirname, 'media-compress.js'), path.join(__dirname, 'package.json'), ...walk(path.join(__dirname, 'public'))]) {
+    for (const f of [path.join(__dirname, 'server.js'), path.join(__dirname, 'db.js'), path.join(__dirname, 'backup.js'), path.join(__dirname, 'storage.js'), path.join(__dirname, 'media-compress.js'), path.join(__dirname, 'unfurl.js'), path.join(__dirname, 'package.json'), ...walk(path.join(__dirname, 'public'))]) {
       try { h.update(fs.readFileSync(f)); } catch {}
     }
     return h.digest('hex').slice(0, 12);
@@ -580,7 +580,7 @@ app.get('/api/config', (req, res) => {
       credential: process.env.TURN_PASS || undefined,
     });
   }
-  res.json({ iceServers, origin: ORIGIN, turnstileSiteKey: process.env.TURNSTILE_SITEKEY || null });
+  res.json({ iceServers, origin: ORIGIN, turnstileSiteKey: process.env.TURNSTILE_SITEKEY || null, linkPreviews: String(process.env.UNFURL === undefined ? '1' : process.env.UNFURL) !== '0' });
 });
 
 // ---------- Cloudflare Turnstile (login/signup captcha) ----------
@@ -3976,6 +3976,49 @@ app.delete('/api/me/gif-favorites/:slug', authRequired, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- link previews (server-side unfurl; see unfurl.js) ----------
+// The client renders the sites it can embed itself and asks here only for
+// unknown links (HuggingFace model pages, articles, docs, ...). Previews are
+// cached in Postgres, so only the first viewer of a URL costs a fetch — cache
+// hits aren't rate-limited, live fetches are.
+const unfurl = require('./unfurl');
+const unfurlHits = new Map(); // userId -> { n, reset }
+function unfurlAllow(userId) {
+  const t = Date.now();
+  let b = unfurlHits.get(userId);
+  if (!b || b.reset < t) { b = { n: 0, reset: t + 5 * 60 * 1000 }; unfurlHits.set(userId, b); }
+  b.n++;
+  if (unfurlHits.size > 2000) for (const [k, v] of unfurlHits) if (v.reset < t) unfurlHits.delete(k);
+  return b.n <= 60;
+}
+
+app.get('/api/unfurl', authRequired, async (req, res) => {
+  const url = String(req.query.url || '');
+  if (!url) return res.status(400).json({ error: 'url_required' });
+  if (!unfurl.enabled()) return res.json({ embed: null });
+  const { embed, cached } = await unfurl.getEmbed(url);
+  if (!cached && !unfurlAllow(req.user.id)) return res.status(429).json({ error: 'too_many_requests', embed: null });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ embed: unfurl.publicEmbed(embed) });
+});
+
+// Thumbnails are re-served from our origin (hotlink protection, http-on-https,
+// no viewer IP leak). No Authorization header is possible from an <img>, so
+// the URL itself is HMAC-signed by /api/unfurl. Only sniffed image bytes are
+// ever returned — never the remote Content-Type.
+app.get('/api/unfurl/img', async (req, res) => {
+  const url = String(req.query.u || '');
+  if (!unfurl.verifySig(url, String(req.query.s || ''))) return res.status(403).json({ error: 'bad_signature' });
+  const img = await unfurl.fetchImage(url);
+  if (!img) return res.status(404).json({ error: 'no_image' });
+  res.setHeader('Content-Type', img.type);
+  res.setHeader('Content-Length', String(img.buf.length));
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.end(img.buf);
+});
+
 async function fullMessage(id, meId) {
   const row = await db.prepare(`
     SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,
@@ -4635,6 +4678,9 @@ async function boot() {
     });
     cs.startCsamScan();
   } catch (e) { console.error('[csam] scheduler failed to start:', (e && e.message) || e); }
+  // Link previews: one fetch per URL (cached in link_embeds), swept monthly.
+  try { require('./unfurl').prune(); } catch (e) { console.error('[unfurl] prune failed:', (e && e.message) || e); }
+  safeInterval(() => require('./unfurl').prune(), 6 * 3600 * 1000);
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`[campfire] listening on :${PORT}  pg=${process.env.PGHOST || 'localhost'}:${process.env.PGPORT || '5432'}/${process.env.PGDATABASE || 'campfire'}`);
     try { require('./backup').startBackups(); } catch (e) { console.error('[backup] scheduler failed to start:', (e && e.message) || e); }
