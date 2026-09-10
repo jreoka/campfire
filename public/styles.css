@@ -921,10 +921,17 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 /* ---------- composer GIF button ---------- */
 .gif-btn{font-weight:800;font-size:.7rem;letter-spacing:.05em;border:0;border-radius:8px;padding:.4rem .55rem;color:var(--muted);background:transparent;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
 .gif-btn:hover{background:var(--panel-3);color:var(--text)}
-/* settings gear on the me-card */
-#btn-settings-me{flex-shrink:0;border:0;background:var(--panel-3);color:var(--text);border-radius:8px;width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
-#btn-settings-me:hover{background:var(--panel-4);color:var(--text)}
-#btn-settings-me svg{display:block}
+/* borderless white icon buttons on the me-card (mute / deafen / gear) */
+.me-icobtn{flex-shrink:0;border:0;background:transparent;color:#fff;border-radius:8px;width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:background var(--t-fast),color var(--t-fast),transform .1s ease}
+.me-icobtn:hover{background:rgba(255,255,255,.12)}
+.me-icobtn:active{transform:scale(.94)}
+.me-icobtn svg{display:block}
+.me-icobtn.off{background:#a83226;color:#fff}
+.me-icobtn.off:hover{background:#c03a2c}
+[data-theme="light"] .me-icobtn{color:var(--text)}
+[data-theme="light"] .me-icobtn:hover{background:rgba(0,0,0,.08)}
+#me-card .gbadge{background:transparent}
+#me-card #me-name{flex:0 1 auto}
 #drop-marker{position:fixed;height:3px;background:var(--accent);border-radius:2px;z-index:300;pointer-events:none;display:none}
 
 /* ---------- server folders (Discord-style) ---------- */

@@ -37,6 +37,8 @@ for (const [id, svg] of [['#btn-mute', VB_SVG.mic], ['#vf-mute', VB_SVG.mic], ['
 }
 if ($('#btn-voice-leave') && !$('#btn-voice-leave').innerHTML.trim()) $('#btn-voice-leave').innerHTML = '✕';
 $('#btn-voice-leave').onclick = () => leaveVoice();
+$('#me-mute').onclick = (e) => { if (e) e.stopPropagation(); if (!S.voice) { toast('Join a voice room to use the mic'); return; } toggleMute(); };
+$('#me-deafen').onclick = (e) => { if (e) e.stopPropagation(); if (!S.voice) { toast('Join a voice room first'); return; } toggleDeafen(); };
 $('#vf-leave').onclick = () => leaveVoice();
 $('#vf-mute').onclick = () => toggleMute();
 $('#btn-mute').onclick = () => toggleMute();
@@ -361,9 +363,11 @@ function paintVoiceControls() {
   const micOff = v?.muted || v?.deafened;
   const micLabel = v?.deafened ? 'Deafened — undeafen to unmute' : (v?.muted ? 'Unmute mic' : 'Mute mic');
   set('#btn-mute', micOff, micLabel);
+  set('#me-mute', micOff, micLabel);
   set('#vf-mute', micOff, micLabel);
   set('#cv-mute', micOff, micLabel);
   set('#btn-deafen', v?.deafened, v?.deafened ? 'Undeafen' : 'Deafen');
+  set('#me-deafen', v?.deafened, v?.deafened ? 'Undeafen' : 'Deafen');
   set('#vf-deafen', v?.deafened, v?.deafened ? 'Undeafen' : 'Deafen');
   set('#cv-deafen', v?.deafened, v?.deafened ? 'Undeafen' : 'Deafen');
   set('#btn-camera', !v?.cameraOn, v?.cameraOn ? 'Turn camera off' : 'Turn camera on');
