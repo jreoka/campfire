@@ -3289,11 +3289,12 @@ app.post('/api/admin/reports/:id/resolve', authRequired, requireSiteAdmin, async
   if (!r) return res.status(404).json({ error: 'no_report' });
   const action = String(req.body?.action || '');
   if (!REPORT_ACTIONS.has(action)) return res.status(400).json({ error: 'bad_action' });
-  // Account-level actions are refused on the owner's account (moderating the
-  // reported message itself still works).
-  if ((action === 'disable' || action === 'delete_disable' || action === 'ban') && r.author_id && r.author_id !== req.user.id) {
+  // Account-level actions are refused on the owner's account — by everyone,
+  // including the owner's own session (self-disabling through the queue would
+  // brick the instance). Moderating the reported message itself still works.
+  if ((action === 'disable' || action === 'delete_disable' || action === 'ban') && r.author_id) {
     const authorUser = await db.prepare('SELECT id, username FROM users WHERE id = ?').get(r.author_id);
-    if (blockedByOwnerLock(req, res, authorUser)) return;
+    if (isOwnerAccount(authorUser)) return res.status(403).json({ error: 'owner_protected' });
   }
   const note = squashBreaks(String(req.body?.note || '')).trim().slice(0, 500);
   let messageDeleted = false;

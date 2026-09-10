@@ -337,8 +337,12 @@ other site admin: `blockedByOwnerLock()` 403s `owner_protected` on each
 account route (edit, password, disable, demote, delete, forced logout, 2FA
 reset, profile media, server kick) and on the account-level report actions
 (disable / delete+disable / ban — moderating the message itself stays allowed).
-The panel just mirrors it off `ownerAccount` in the admin payloads, so any new
-admin route that changes an account must call the same guard. Presence is
+The panel just mirrors it off `ownerAccount` in the admin payloads: that row is
+greyed out with its buttons disabled **for everyone, the owner included** (the
+owner manages their account from Settings → Profile / Account), and the same
+flag hides Kick/Make-owner in the member lists and Disable/Ban on a report
+card for that author. Any new admin route that changes an account must call the
+same guard. Presence is
 server-scoped **and** friend-scoped: a friend with no shared server would
 otherwise look permanently offline (see `notifyFriends`/`presenceForUsers` in
 `server.js`) — any new presence surface must respect both. Friends' voice

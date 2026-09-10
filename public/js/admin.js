@@ -174,9 +174,9 @@ function admReportRow(r) {
   const reporter = r.reporter ? `<span class="muted">reported by</span> <span style="${nameStyleFor(r.reporter)}">${esc(r.reporter.display_name)}</span>${r.reporter.username ? ' <span class="muted small">@' + esc(r.reporter.username) + '</span>' : ''}` : '<span class="muted">reporter account deleted</span>';
   const prior = r.priorReports ? ` <span class="adm-badge off">${r.priorReports} prior report${r.priorReports === 1 ? '' : 's'}</span>` : '';
   // Account actions are off the table when the reported message came from the
-  // protected owner account (the server refuses them); moderating the message
-  // itself is still allowed.
-  const lockedAuthor = !!(r.author && r.author.ownerAccount && r.author.id !== S.me.id);
+  // protected owner account (the server refuses them for everyone, the owner
+  // included); moderating the message itself is still allowed.
+  const lockedAuthor = !!(r.author && r.author.ownerAccount);
   const peers = r.kind === 'dm'
     ? ((w.thread && w.thread.members) || []).map((u) => '@' + u.username).filter((x) => x !== '@').join(', ')
     : '';
@@ -531,13 +531,15 @@ async function adminSweepCheck() {
 }
 
 function admUserRow(u) {
-  // The instance owner's account is untouchable by every other admin (the
-  // server refuses with 'owner_protected'): grey the row out and disable its
-  // buttons. The owner themselves still sees it as a normal row.
-  const locked = !!u.ownerAccount && u.id !== S.me.id;
+  // The instance owner's account is locked for every admin — including the
+  // owner's own session here, so the row reads the same to everyone. The
+  // server refuses these routes for anyone but that account's own session
+  // (blockedByOwnerLock); the owner manages their account from
+  // Settings → Profile / Account instead.
+  const locked = !!u.ownerAccount;
   const dis = locked ? ' disabled' : '';
   const badges =
-    (u.ownerAccount ? '<span class="adm-badge owner" title="Instance owner account — other admins cannot change it">PROTECTED</span>' : '') +
+    (u.ownerAccount ? '<span class="adm-badge owner" title="Instance owner account — protected from the admin panel">PROTECTED</span>' : '') +
     (u.is_admin ? '<span class="adm-badge admin">ADMIN</span>' : '') +
     (u.disabled ? '<span class="adm-badge off">DISABLED</span>' : '') +
     (u.has2fa ? '<span class="adm-badge me">2FA</span>' : '') +
@@ -557,7 +559,9 @@ function admUserRow(u) {
         <button class="mini" data-act="u-2fa"${dis}>Reset 2FA</button>
         <button class="mini danger" data-act="u-del"${dis}>Delete</button>
       </div>
-      ${locked ? `<div class="muted small" style="margin-top:.4rem">Only @${esc(u.username)} can manage this account — no other admin can edit, disable, delete, log it out or reset its 2FA.</div>` : ''}
+      ${locked ? `<div class="muted small" style="margin-top:.4rem">${u.id === S.me.id
+        ? 'Protected account — read-only here for every admin, including you. Manage it from Settings → Profile / Account.'
+        : `Only @${esc(u.username)} can manage this account — no other admin can edit, disable, delete, log it out or reset its 2FA.`}</div>` : ''}
     </div>
   </div>`;
 }
@@ -651,12 +655,12 @@ async function loadAdminMembers(sid, slot) {
   try {
     const { members } = await api(`/api/admin/servers/${sid}/members`);
     slot.innerHTML = members.length ? members.map((m) =>
-      `<div class="adm-subrow${m.ownerAccount && m.id !== S.me.id ? ' protected' : ''}" data-uid="${esc(m.id)}">
+      `<div class="adm-subrow${m.ownerAccount ? ' protected' : ''}" data-uid="${esc(m.id)}">
         <span class="adm-subname" style="${nameStyleFor(m)}">${esc(m.display_name)}</span>
         <span class="muted small">@${esc(m.username)}${m.role === 'owner' ? ' · owner' : ''}${m.disabled ? ' · disabled' : ''}</span>
-        ${m.ownerAccount ? '<span class="adm-badge owner" title="Instance owner account — other admins cannot kick or change it">PROTECTED</span>' : ''}
+        ${m.ownerAccount ? '<span class="adm-badge owner" title="Instance owner account — protected from the admin panel">PROTECTED</span>' : ''}
         <span class="spacer"></span>
-        ${m.role === 'owner' || (m.ownerAccount && m.id !== S.me.id) ? '' : `<button class="mini" data-act="s-owner">Make owner</button>
+        ${m.role === 'owner' || m.ownerAccount ? '' : `<button class="mini" data-act="s-owner">Make owner</button>
         <button class="mini danger" data-act="s-kick">Kick</button>`}
       </div>`).join('') : '<p class="muted small">No members.</p>';
   } catch { slot.innerHTML = '<p class="muted small">Could not load members.</p>'; }

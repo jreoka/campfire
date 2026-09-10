@@ -250,6 +250,10 @@ async function main() {
       const res = await api('POST', `/api/admin/reports/${rep.data.id}/resolve`, { token: tAlice, body: { action } });
       check(res.status === 403 && res.data.error === 'owner_protected', `report action ${label} → owner_protected`, { status: res.status, error: res.data && res.data.error });
     }
+    // ...and not even the owner's own session may disable/ban their account
+    // through the reports queue.
+    const selfAction = await api('POST', `/api/admin/reports/${rep.data.id}/resolve`, { token: tOwner, body: { action: 'disable' } });
+    check(selfAction.status === 403 && selfAction.data.error === 'owner_protected', 'the owner cannot disable themselves via a report', selfAction.data);
     r = await api('POST', `/api/admin/reports/${rep.data.id}/resolve`, { token: tAlice, body: { action: 'delete' } });
     check(r.status === 200 && r.data.messageDeleted === true, 'deleting the reported message is still allowed', r.data);
     const ownerAfter = await api('GET', `/api/admin/users/${ownerId}`, { token: tOwner });
