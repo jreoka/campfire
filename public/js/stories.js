@@ -156,29 +156,90 @@ function storyThumbItem(items) {
   const pool = unseen.length ? unseen : live;
   return pool[pool.length - 1];
 }
-function storyThumbEl(it, cls) {
-  if (!it) return null;
-  let el;
+// A story's bytes are not servable the instant the upload finishes: the
+// /uploads gate answers 423 until the scanner's verdict lands, which an <img>
+// (or <video>) reads as an error. Give a thumbnail a couple of tries before
+// falling back, or a story posted a second ago shows up as a bare ring.
+function storyThumbRetry(media, giveUp) {
+  let tries = 0;
+  media.addEventListener('error', () => {
+    if (!media.isConnected) return;
+    if (tries >= 2) { giveUp(); return; }
+    tries++;
+    setTimeout(() => {
+      if (!media.isConnected) return;
+      const src = media.getAttribute('src') || '';
+      if (!src) return;
+      // A fresh cache key, or the browser may hand back the same 423 it cached.
+      media.setAttribute('src', src.split('?')[0] + '?v=' + Date.now().toString(36));
+    }, 900 * tries);
+  });
+}
+function storyThumbMedia(it) {
   if (it.kind === 'video') {
-    el = document.createElement('video');
+    const el = document.createElement('video');
     el.muted = true;
     el.defaultMuted = true;
     el.playsInline = true;
     el.setAttribute('playsinline', '');
     el.preload = 'metadata';
-    el.onerror = () => { try { el.remove(); } catch {} };
     el.onloadeddata = () => { try { el.currentTime = 0.06; } catch {} };
     el.src = it.url;
-  } else {
-    el = document.createElement('img');
-    el.alt = '';
-    el.loading = 'lazy';
-    el.decoding = 'async';
-    el.onerror = () => { try { el.remove(); } catch {} };
-    el.src = it.url;
+    return el;
   }
-  el.className = (cls || 'st-thumb');
+  const el = document.createElement('img');
+  el.alt = '';
+  // No loading=lazy: this is a 49px preview that is on screen the moment it is
+  // built, and a deferred image that never gets its turn reads as a bare ring.
+  el.decoding = 'async';
+  el.src = it.url;
   return el;
+}
+function storyThumbEl(it, cls) {
+  if (!it) return null;
+  const ovs = ovParse(it.overlays);
+  const media = storyThumbMedia(it);
+  if (!ovs.length) {
+    media.className = cls || 'st-thumb';
+    storyThumbRetry(media, () => { try { media.remove(); } catch {} });
+    return media;
+  }
+  return storyThumbWithMarkup(media, cls, ovs);
+}
+/* A ring thumbnail is the story's MEDIA, and the markup rides beside the bytes
+ * (see story-edit.js) — so without this a text-only story previewed as a bare
+ * gradient, and every other shot lost its text. The wrapper is the
+ * cookie-cutter circle; the layer is fitted to the photo with the fit the ring
+ * uses (cover), so an item near the edge is cropped exactly where the picture
+ * is. Fitting has to wait for layout (and for the media's intrinsic size), and
+ * it is a no-op if the ring was rebuilt and dropped this element. */
+function storyThumbWithMarkup(media, cls, ovs) {
+  const wrap = document.createElement('span');
+  wrap.className = (cls || 'st-thumb') + ' st-thumb-ov';
+  // The media gets its OWN class inside the wrapper: it must not inherit the
+  // cookie-cutter positioning (.st-thumb is inset into its parent), which left
+  // it offset and clipped a second time.
+  media.className = 'st-thumb-media';
+  wrap.appendChild(media);
+  const layer = document.createElement('span');
+  layer.className = 'ov-layer';
+  wrap.appendChild(layer);
+  // If the media never loads, the whole thumbnail goes, so the ring falls back
+  // to the avatar exactly like the plain path — leaving the wrapper behind
+  // would strand a ring with no picture under its markup.
+  storyThumbRetry(media, () => { try { wrap.remove(); } catch {} });
+  const fit = () => {
+    if (!wrap.isConnected) return;
+    try {
+      if (!ovFitLayer(layer, wrap, media, 'cover')) return;
+      ovPaintLayer(layer, ovs, { editable: false });
+    } catch {}
+  };
+  const refit = () => requestAnimationFrame(fit);
+  requestAnimationFrame(fit);
+  if (media.tagName === 'IMG') media.addEventListener('load', refit, { once: true });
+  else media.addEventListener('loadeddata', refit, { once: true });
+  return wrap;
 }
 function storyRing(user, unseen, items) {
   const mine = !!(typeof S !== 'undefined' && S && S.me && user && user.id === S.me.id);
@@ -1787,7 +1848,9 @@ function storyPaintTools() {
 // A tool sheet covers the bottom of the composer, so anything pinned down there
 // (the colour row, the tool rail) pays for it through --sheet-h. Without this
 // the background swatches sat *behind* the text sheet: you had to tap Done
-// before you could pick a background at all.
+// before you could pick a background at all. `.sheet-open` is what tells the CSS
+// to dock the colour row on the sheet instead of on the caption slot it owns
+// when no sheet is up (see .sc-colors).
 function storySheetHeight() {
   let h = 0;
   for (const sel of ['#sc-textedit', '#sc-emoji']) {
@@ -1795,7 +1858,10 @@ function storySheetHeight() {
     if (el && !el.classList.contains('hidden')) h = Math.max(h, el.getBoundingClientRect().height || 0);
   }
   const root = $('#story-compose');
-  if (root) root.style.setProperty('--sheet-h', Math.round(h) + 'px');
+  if (root) {
+    root.style.setProperty('--sheet-h', Math.round(h) + 'px');
+    root.classList.toggle('sheet-open', h > 0);
+  }
   return h;
 }
 const SC_TEXT_BGS = [
@@ -2577,6 +2643,14 @@ function closeStoryComposer() {
   $('#sc-file').value = '';
   const ov = $('#sc-ov');
   if (ov) { ov.textContent = ''; ov.classList.add('hidden'); }
+  // The tool sheets and the rows docked on them must not survive into the next
+  // open (sc is already null here, so this is done directly rather than through
+  // the editor/closer helpers, which bail without it).
+  const te = $('#sc-textedit');
+  if (te) te.classList.add('hidden');
+  const em = $('#sc-emoji');
+  if (em) em.classList.add('hidden');
+  storySheetHeight();
   storyProgress(null);
   $('#story-compose').classList.add('hidden');
   if (!$('#story-view') || $('#story-view').classList.contains('hidden')) document.body.classList.remove('story-open');

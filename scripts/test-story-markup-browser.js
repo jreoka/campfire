@@ -483,6 +483,22 @@ async function main() {
       const kb = sc.blob ? Math.round(sc.blob.size / 1024) : 0;
       const textSheet = !document.querySelector('#sc-textedit').classList.contains('hidden');
       const firstUrl = sc.previewUrl;
+      // The selected text colour scales past its own box, and a horizontally
+      // scrollable row clips vertically too (overflow-x:auto drags overflow-y
+      // with it): the white highlight ring used to be sliced off along the top.
+      const colorRow = document.querySelector('#sc-te-colors');
+      const colorSw = [...colorRow.querySelectorAll('.sc-swatch')];
+      colorSw[3].click();
+      const cOn = colorRow.querySelector('.sc-swatch.on');
+      const cr = colorRow.getBoundingClientRect();
+      const co = cOn.getBoundingClientRect();
+      const clip = {
+        idx: [...colorRow.querySelectorAll('.sc-swatch')].indexOf(cOn),
+        aboveTop: +(cr.top - co.top).toFixed(2),
+        belowBottom: +(co.bottom - cr.bottom).toFixed(2),
+        overflowY: getComputedStyle(colorRow).overflowY,
+        ring: getComputedStyle(cOn).borderTopColor,
+      };
       // With the text sheet up, the background row has to still be reachable:
       // it used to sit *behind* the sheet, so you had to tap Done before a
       // background could be picked at all.
@@ -505,6 +521,11 @@ async function main() {
           sheetOpen: !document.querySelector('#sc-textedit').classList.contains('hidden'),
         };
       })();
+      const inp = document.querySelector('#sc-te-input');
+      inp.value = 'purple vibes';
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('#sc-te-done').click();
+      const textItems = sc.ovs.filter((o) => o.t === 'text').length;
       const firstImg = new Image();
       firstImg.src = firstUrl;
       await new Promise((res) => { firstImg.onload = res; firstImg.onerror = res; });
@@ -516,7 +537,7 @@ async function main() {
       img.src = sc.previewUrl;
       await new Promise((res) => { img.onload = res; img.onerror = res; });
       return {
-        textOnly: sc.textOnly, kind: sc.kind, kb, type: sc.blob.type, textSheet, swatches, reach,
+        textOnly: sc.textOnly, kind: sc.kind, kb, type: sc.blob.type, textSheet, swatches, reach, clip, textItems,
         bg: sc.textBg, changed: sc.previewUrl !== firstUrl, sawShot: !shot.classList.contains('hidden'),
         w: img.naturalWidth, h: img.naturalHeight, first: beforeImage,
         stageW: before.w, stageH: before.h,
@@ -530,14 +551,80 @@ async function main() {
     check(textOnly.reach.radius !== '50%', 'so they are not circles', textOnly.reach);
     check(textOnly.reach.overSheet === 0 && textOnly.reach.firstHittable && textOnly.reach.lastHittable,
       'and the row is not buried under the text sheet', textOnly.reach);
+    check(textOnly.clip.idx === 3 && textOnly.clip.aboveTop <= 0 && textOnly.clip.belowBottom <= 0,
+      'a picked colour keeps its whole highlight ring', textOnly.clip);
     check(textOnly.changed && textOnly.bg === 2, 'picking one repaints the background', textOnly);
     check(textOnly.textSheet && textOnly.sawShot, 'and the text editor opens on it', textOnly);
     check(textOnly.w === textOnly.first.w && textOnly.h === textOnly.first.h,
       'and the picture keeps its shape, so the markup does not slide', { first: textOnly.first, after: { w: textOnly.w, h: textOnly.h } });
-    await evaluate(`closeStoryComposer(); true`);
+    check(textOnly.textItems === 1, 'the typed text is a markup item on the story', textOnly);
+    await shot('campfire-story-text.png');
 
-    console.log('\n[11] a story sent privately keeps its markup in the one-shot player');
+    console.log('\n[11] the rail ring previews what a text-only story actually says');
+    // The server refuses a second story inside STORY_MIN_GAP_MS (3 s); the
+    // sections above can easily finish inside that.
+    await sleep(3400);
+    const textOnlyPosted = await evaluate(`(async () => {
+      document.querySelector('#sc-next').click();
+      document.querySelector('#sc-post').click();
+      const t0 = performance.now();
+      let sawLabel = '';
+      while (performance.now() - t0 < 30000 && sc) { await new Promise((r) => setTimeout(r, 100)); if (!sawLabel) sawLabel = document.querySelector('#sc-post').textContent; }
+      return { closed: sc === null, label: sawLabel, postLabel: document.querySelector('#sc-post').textContent,
+               disabled: document.querySelector('#sc-post').disabled, step: sc && sc.step,
+               toast: (document.querySelector('#toast') || {}).textContent || '',
+               overlayKinds: sc ? sc.ovs.map((o) => o.t) : null };
+    })()`, true);
+    check(textOnlyPosted.closed, 'the text-only story posts', textOnlyPosted);
+    const ringShot = await evaluate(`(async () => {
+      const d = await api('/api/stories');
+      const items = (d.mine && d.mine.items) || [];
+      const it = items.find((i) => (i.overlays || []).some((o) => o.t === 'text' && o.text === 'purple vibes'));
+      if (!it) return { error: 'no_text_only_story', seen: items.map((i) => (i.overlays || []).map((o) => o.text)) };
+      // A story posted seconds ago may still be unservable: the /uploads gate
+      // answers 423 until the scan verdict lands, which an <img> reads as an
+      // error. That is exactly what the thumbnail retry is for, so note what
+      // the first request saw and give the retry time to come back.
+      const firstStatus = await (await fetch(it.url)).status;
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;left:4px;top:4px;width:58px;height:58px;z-index:9999';
+      document.body.appendChild(host);
+      host.appendChild(storyRing(S.me, false, [it]));
+      await new Promise((r) => setTimeout(r, 2600));
+      const wrap = host.querySelector('.st-thumb-ov');
+      const layer = wrap && wrap.querySelector('.ov-layer');
+      const media = wrap && wrap.querySelector('.st-thumb-media');
+      const txt = host.querySelector('.ov-text');
+      const lr = layer && layer.getBoundingClientRect();
+      const mr = media && media.getBoundingClientRect();
+      const out = {
+        firstStatus,
+        wrapper: !!wrap,
+        loaded: !!media && media.naturalWidth > 0,
+        text: txt ? txt.textContent : '',
+        items: host.querySelectorAll('.ov-item').length,
+        textPx: txt ? Math.round(parseFloat(getComputedStyle(txt).fontSize)) : 0,
+        thumbPx: wrap ? Math.round(wrap.getBoundingClientRect().width) : 0,
+        // cover: the layer covers the whole circle and overhangs on one axis,
+        // staying centred on the photo.
+        covers: !!lr && !!mr && lr.width >= mr.width - 0.5 && lr.height >= mr.height - 0.5,
+        overflows: !!lr && !!mr && (lr.width > mr.width + 1 || lr.height > mr.height + 1),
+        centred: !!lr && !!mr
+          && Math.abs((lr.left + lr.width / 2) - (mr.left + mr.width / 2)) <= 1
+          && Math.abs((lr.top + lr.height / 2) - (mr.top + mr.height / 2)) <= 1,
+      };
+      host.remove();
+      return out;
+    })()`, true);
+    check(ringShot.wrapper && ringShot.loaded, 'a story with markup gets the composited ring thumbnail', ringShot);
+    check(ringShot.text === 'purple vibes', 'the ring shows the text, not just the background', ringShot);
+    check(ringShot.items === 1 && ringShot.textPx >= 3 && ringShot.thumbPx > 40, 'sized to the ring', ringShot);
+    check(ringShot.covers && ringShot.overflows && ringShot.centred,
+      'laid over the background the way the ring crops it (cover, centred)', ringShot);
+
+    console.log('\n[12] a story sent privately keeps its markup in the one-shot player');
     const vonce = await evaluate(`(async () => {
+      if (sc) closeStoryComposer(); // never inherit a composer from a failure above
       // A second account, befriended, so the story can be delivered as the
       // gated view-once copy the server re-files under viewonce/.
       const b = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'pal', displayName: 'Pal', password: 'passw0rd!y' }) });

@@ -123,27 +123,27 @@ function ovIsEmpty(list) {
 }
 
 /* ---------- geometry: where the picture actually paints ---------- */
-// The content box of an <img>/<video> that is object-fit:contain inside its own
-// element box. The composer's shot fills the stage (box = stage, picture
-// letterboxed inside it), while the viewer's media is clamped by max-width /
-// max-height (box ≈ picture). Both give the rectangle the pixels really cover,
-// which is the one the overlay coordinates are normalised to.
-function ovContentRect(el) {
+// The content box of an <img>/<video> inside its own element box. `fit` is the
+// object-fit the element is painted with: 'contain' (the composer's shot and
+// the viewer's media letterbox inside their box) or 'cover' (the rail's ring
+// thumbnails crop). Both give the rectangle the pixels really cover — the box
+// the overlay coordinates are normalised to — only 'cover' can hang outside it.
+function ovContentRect(el, fit = 'contain') {
   const r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
   if (!r) return null;
   const nw = Number(el.naturalWidth || el.videoWidth || 0);
   const nh = Number(el.naturalHeight || el.videoHeight || 0);
   if (!nw || !nh || !r.width || !r.height) return { left: r.left, top: r.top, width: r.width, height: r.height };
-  const k = Math.min(r.width / nw, r.height / nh);
+  const k = fit === 'cover' ? Math.max(r.width / nw, r.height / nh) : Math.min(r.width / nw, r.height / nh);
   const w = nw * k, h = nh * k;
   return { left: r.left + (r.width - w) / 2, top: r.top + (r.height - h) / 2, width: w, height: h };
 }
 // Lay `layer` exactly over the media's content box inside `stage`, and hand it
 // the pixel size as CSS vars so items can size themselves in em/percent.
-function ovFitLayer(layer, stage, mediaEl) {
+function ovFitLayer(layer, stage, mediaEl, fit) {
   if (!layer || !stage) return null;
   const sr = stage.getBoundingClientRect();
-  const cr = ovContentRect(mediaEl);
+  const cr = ovContentRect(mediaEl, fit);
   if (!cr || !cr.width || !cr.height) { layer.classList.add('hidden'); return null; }
   const x = cr.left - sr.left, y = cr.top - sr.top;
   layer.style.left = x + 'px';

@@ -405,24 +405,28 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   the server (which caps/drops what a hostile client sends) and the viewer
   re-renders it over the picture, a text-only story generates a background that
   does not re-shape when the swatch changes, and a story sent to one friend
-  keeps its markup in the one-shot player. Writes
-  campfire-story-edit.png / campfire-story-view.png to the temp dir. Skips when
-  Postgres, Chrome or the fake camera is missing. Re-run it after touching the
-  composer, the markup renderer or the story routes.
+  keeps its markup in the one-shot player, and that the rail's ring thumbnail
+  composites a story's markup (a text-only story used to preview as a bare
+  gradient) — including the 423 retry a just-uploaded story needs. Writes
+  campfire-story-edit.png / campfire-story-view.png / campfire-story-text.png to
+  the temp dir. Skips when Postgres, Chrome or the fake camera is missing.
+  Re-run it after touching the composer, the markup renderer or the story
+  routes.
   `node scripts/test-story-ring.js` covers the rail ring's cookie-cutter
-  thumbnail (offline; runs the real `storyRing()` extracted from `stories.js`
-  against the real `styles.css` in headless Chrome, skipping when Chrome is
-  missing). It screenshots the ring at four device scale factors, at both ring
-  sizes (the rail's 58px, the stories sheet's 44px) and in all three states
-  (unwatched / watched / your own), asserting no pixel of the avatar behind it
-  survives around the photo's edge, that the ring stroke and its gap are still
-  there (so "cover the whole ring" can't pass), that the photo is centred, and
-  which states are desaturated: only a watched story that isn't yours is muted,
-  because greying your own post made a flat-coloured (text-only) story read as a
-  broken thumbnail. Re-run it after touching `.st-ring`/`.st-thumb`; Blink
-  flooring the avatar's 2.5px border to whole device pixels, and the seen
-  thumbnail's filtered layer edge, are what makes the old face peek through — do
-  not reintroduce the face behind a live thumbnail.
+  thumbnail (offline; runs the real `storyRing()` extracted from `stories.js`,
+  plus the overlay model inlined from `story-edit.js`, against the real
+  `styles.css` in headless Chrome, skipping when Chrome is missing). It
+  screenshots the ring at four device scale factors, at both ring sizes (the
+  rail's 58px, the stories sheet's 44px) and in all three states (unwatched /
+  watched / your own), asserting no pixel of the avatar behind it survives
+  around the photo's edge, that the ring stroke and its gap are still there (so
+  "cover the whole ring" can't pass), that the photo is centred, and which
+  states are desaturated: only a watched story that isn't yours is muted, because
+  greying your own post made a flat-coloured (text-only) story read as a broken
+  thumbnail. Re-run it after touching `.st-ring`/`.st-thumb`; Blink flooring the
+  avatar's 2.5px border to whole device pixels, and the seen thumbnail's filtered
+  layer edge, are what makes the old face peek through — do not reintroduce the
+  face behind a live thumbnail.
   `node scripts/test-story-swipe.js` covers swipe-down-to-close in the story
   viewer (offline; runs the real tap-zone + swipe wiring sliced out of
   `stories.js` against the real `#story-view` markup and `styles.css` in headless
@@ -748,10 +752,19 @@ once it has been watched) and applies to everyone including your own tile, while
 watched someone else's story". Your own story is never muted — you cannot watch
 your own post, and greying it turned a flat-coloured text-only story into a dead
 grey disc in the rail. Anything pinned above a tool sheet (the colour row, the
-tool rail) pays for the sheet's height through `--sheet-h`; without it the
-background swatches sat behind the text sheet and could not be tapped at all.
+tool rail) pays for the sheet's height through `--sheet-h`, and the colour row
+switches its dock with `.sheet-open` — stacking the caption slot on top of the
+sheet is what shoved the background swatches up near the middle of the screen.
 Background swatches are gradient TILES, not circles: the same ramp clipped to a
-disk reads as a tilted square shoved inside it.
+disk reads as a tilted square shoved inside it. A horizontally scrollable row
+clips vertically too (overflow-x:auto drags overflow-y with it), so a swatch row
+needs vertical padding or the selected swatch's highlight ring is sliced off.
+Ring thumbnails carry the post's markup (`storyThumbWithMarkup` composites the
+same overlay list over the media, fitted with `cover` because that is how the
+ring crops) — without it a text-only story previews as a bare gradient. A story
+posted seconds ago is not servable yet (the /uploads gate answers 423 until the
+scan verdict lands), which an `<img>` reads as an error: `storyThumbRetry` gives
+it two tries before falling back to the avatar.
 
 NEXT: iterate per owner feedback on the live site.
 

@@ -75,6 +75,15 @@ function ringSource() {
   return src.slice(a, b);
 }
 
+// The overlay model + renderer (public/js/story-edit.js). The ring code now
+// depends on it: a thumbnail with markup composites the same list the viewer
+// does, and even the plain path asks ovParse whether there is any.
+function overlaySource() {
+  const src = fs.readFileSync(path.join(ROOT, 'public/js/story-edit.js'), 'utf8');
+  // Drop the directive: this is inlined into a page, not a module.
+  return src.split("'use strict';").join('');
+}
+
 function solidPx(color) {
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect width="100%" height="100%" fill="' + color + '"/></svg>';
   return 'data:image/svg+xml;base64,' + Buffer.from(svg).toString('base64');
@@ -98,6 +107,7 @@ function paintAvatar(el, user) {
   img.alt = '';
   el.appendChild(img);
 }
+${overlaySource()}
 ${ringSource()}
 window.S = { me: { id: 'me' } };
 const AVATAR_PX = ${JSON.stringify(avatarSrc)};

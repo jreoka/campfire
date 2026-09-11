@@ -1903,6 +1903,11 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
    else's story — your own ring is never muted (storyRing() decides; greying
    your own post made a flat-coloured text story read as a broken thumbnail). */
 .st-ring.muted .st-thumb{filter:grayscale(.85) brightness(.72)}
+/* A ring thumbnail that carries the post's markup (storyThumbWithMarkup):
+   the wrapper IS the circle, the media fills it and the overlay layer is
+   fitted on top of the photo with the same cover crop the ring uses. */
+.st-thumb-ov{display:block;overflow:hidden}
+.st-thumb-ov>.st-thumb-media{width:100%;height:100%;object-fit:cover;border-radius:50%;display:block}
 /* While a thumbnail is in the ring the face behind it is only a fallback (it
    returns by itself if the media fails — storyThumbEl removes the element). It
    must not tint the photo's antialiased edge: whatever the device pixel ratio
@@ -2030,7 +2035,12 @@ body.story-open{overflow:hidden}
 .sc-tool:active{transform:scale(.94)}
 .sc-tool.active{background:#fff;color:#111}
 .sc-tool.danger{color:#ff8b98}
-.sc-colors{position:absolute;left:1rem;right:1rem;bottom:calc(var(--sheet-h, 0px) + 6.1rem + var(--safe-b));display:flex;align-items:center;justify-content:center;justify-content:safe center;gap:.45rem;overflow-x:auto;scrollbar-width:none;padding:.15rem 0;z-index:6}
+.sc-colors{position:absolute;left:1rem;right:1rem;bottom:calc(6.1rem + var(--safe-b));display:flex;align-items:center;justify-content:center;justify-content:safe center;gap:.45rem;overflow-x:auto;scrollbar-width:none;padding:.45rem 0;z-index:6}
+/* With a tool sheet up the row docks right on top of it — the sheet's own
+   height already carries the safe-area padding, so only a hair of gap is added.
+   (Adding the caption slot on top of the sheet is what shoved it up near the
+   middle of the screen.) */
+#story-compose.sheet-open .sc-colors{bottom:calc(var(--sheet-h, 0px) + .7rem)}
 .sc-colors::-webkit-scrollbar{display:none}
 .sc-swatch{flex:0 0 auto;width:28px;height:28px;border-radius:50%;border:2px solid rgba(255,255,255,.3);cursor:pointer;padding:0;transition:transform .1s,border-color var(--t-fast)}
 .sc-swatch.on{border-color:#fff;transform:scale(1.12)}
@@ -2047,7 +2057,10 @@ body.story-open{overflow:hidden}
 #sc-te-input{width:100%;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:14px;padding:.6rem .85rem;color:#fff;font:inherit;font-size:1rem;resize:none;max-height:30vh}
 #sc-te-input:focus{outline:none;border-color:rgba(255,255,255,.4)}
 #sc-te-input::placeholder{color:rgba(255,255,255,.45)}
-.sc-swatches{display:flex;align-items:center;justify-content:center;justify-content:safe center;gap:.5rem;overflow-x:auto;scrollbar-width:none;padding:.1rem 0}
+/* The selected swatch scales up, and a horizontally scrollable row clips
+   vertically too (overflow-x:auto forces overflow-y to auto) — the padding
+   is what keeps the white ring from being sliced off at the top. */
+.sc-swatches{display:flex;align-items:center;justify-content:center;justify-content:safe center;gap:.5rem;overflow-x:auto;scrollbar-width:none;padding:.45rem 0}
 .sc-swatches::-webkit-scrollbar{display:none}
 .sc-te-row{display:flex;align-items:center;gap:.5rem}
 .sc-emoji-head{display:flex;align-items:center;gap:.55rem}
@@ -2083,7 +2096,7 @@ body.story-open{overflow:hidden}
 @media (max-width:520px){
   .sc-edit{bottom:calc(92px + var(--safe-b))}
   .sc-tools{right:.8rem}
-  .sc-colors{bottom:calc(var(--sheet-h, 0px) + 5.9rem + var(--safe-b))}
+  .sc-colors{left:.7rem;right:.7rem}
   #sv-img,#sv-vid{border-radius:10px}
 }
 @media (max-width:400px){
