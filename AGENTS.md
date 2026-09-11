@@ -240,6 +240,14 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   survives a reload (the auto-updater's exact path) in channels and DMs, that
   conversations keep their own drafts, and that a sent message leaves none.
   Skips when Postgres or Chrome is missing.
+  `node scripts/test-friend-click.js` drives the same harness and counts
+  `openUserCard` calls: a friend row under All/Online opens the DM and nothing
+  else (the row carries `data-uid` for the story ring, and the global
+  `[data-uid]` click delegate in `pickers.js` used to stack the card on top),
+  the row's Message / More → View profile affordances still work, and a
+  pending request row or voice occupant opens exactly one card. Rows that own
+  their click declare it with `data-ownclick` — give that attribute to any new
+  `data-uid` row with its own click handler, or the delegate will fire too.
 - **Upload pipeline E2E:** `node scripts/test-upload-pipeline.js` (needs ffmpeg
   + the dev Postgres, skips otherwise) boots a real server against a throwaway
   database with a fake clamd and asserts the single-transition compression flow

@@ -1079,6 +1079,7 @@ function renderVoiceUsers() {
       u.className = 'vuser' + (p.speaking && !p.muted && !p.deafened ? ' speaking' : '');
       u.dataset.vuser = p.id;
       u.dataset.uid = p.id;
+      u.dataset.ownclick = '1'; // onclick below opens the card; keep the global [data-uid] delegate off it
       u.title = p.sharing && p.streamName ? `Streaming ${p.streamName} — click for options` : 'Click for options';
       u.onclick = (e) => { try { openUserCard(p.id, e.clientX, e.clientY); } catch {} };
       let stat = '';

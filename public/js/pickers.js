@@ -717,7 +717,10 @@ document.addEventListener('keydown', (e) => {
   // (whose own container carries data-uid) must not rebuild it either.
   if (e.target.closest && e.target.closest('.usertag[data-tag-sid]')) return;
   if (memberEl?.dataset.uid) { openMemberCard(memberEl.dataset.uid, memberEl); return; }
-  if (uidEl?.dataset.uid && uidEl.id !== 'usercard') { openUserCard(uidEl.dataset.uid, e.clientX, e.clientY); return; }
+  // data-ownclick rows (friends list, voice occupants) already handled the click
+  // themselves — opening the card here too would put it on top of the DM (or
+  // re-anchor it) the moment they clicked.
+  if (uidEl?.dataset.uid && uidEl.id !== 'usercard' && !uidEl.dataset.ownclick) { openUserCard(uidEl.dataset.uid, e.clientX, e.clientY); return; }
 });
 
 // ---------- threads ----------

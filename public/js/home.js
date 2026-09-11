@@ -128,6 +128,9 @@ function friendRowEl(u, extra) {
   // data-uid lets the story ring painter find this row again after a rebuild
   // (friends with an unseen story get an accent ring on their avatar).
   div.dataset.uid = u.id;
+  // ...but the row owns its click below (friends list → DM, pending/settings →
+  // card), so the global [data-uid] delegate must not stack a second card on it.
+  div.dataset.ownclick = '1';
   div.dataset.uname = u.display_name || '';
   const fPlaying = !off && !streaming && u.playing_game;
   div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="dmmain"><span class="mname-row"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u)}${fPlaying ? gameBadgeHTML(u.playing_game) : ''}</span><span class="dmlast">@${esc(u.username)}${streaming ? ` · <span class="ustream-t">Streaming ${esc(streaming)}</span>` : (u.status_text ? ' · ' + esc(u.status_text) : (fPlaying ? ` · Playing ${esc(u.playing_game)}` : ''))}</span></span>`;
