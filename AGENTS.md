@@ -214,6 +214,11 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   a person's row opens that person's first item instead of the tray's oldest
   post, a server row opens its first unseen item, and friend trays keep
   starting at the top.
+  `node scripts/test-server-story-chip.js` covers the server sidebar Stories
+  row's trailing chip, offline (it runs the real `serverStoryChip` pulled out of
+  `stories.js`): an accent "N new" (unseen items) while something waits, a muted
+  "SEEN" once everything is watched — never the bare grey author count that read
+  as "1 unread" — and no chip at all when the only live post is mine.
   `node scripts/test-viewonce.js` covers view-once messages against the same
 dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   one-replay lifecycle, and that unopened items never expire.

@@ -254,6 +254,19 @@ function storyStackHTML(users) {
   }
   return stack;
 }
+// The server row's trailing chip — the ambiguity trap.
+// It used to print a bare grey number of the server's authors once everything
+// was watched, so "1" read as "1 unread" and people went hunting for a story
+// that did not exist (worst of all when the only live post was their own, which
+// they cannot watch). Only two states are honest: an accent "N new" while
+// something is waiting, and a muted "Seen" once the reader has watched it all.
+// Nothing to watch from anyone else (no stories, or mine only) → no chip; the
+// label and the avatar stack already carry that.
+function serverStoryChip(unseen, otherAuthors) {
+  if (unseen > 0) return { text: unseen + ' new', seen: false };
+  if (otherAuthors > 0) return { text: 'Seen', seen: true };
+  return null;
+}
 function renderServerStories() {
   const box = $('#srv-stories');
   if (!box) return;
@@ -293,16 +306,14 @@ function renderServerStories() {
     hint.className = 'ss-hint';
     hint.textContent = 'Be the first';
     row.appendChild(hint);
-  } else if (unseen) {
-    const n = document.createElement('span');
-    n.className = 'ss-count';
-    n.textContent = unseen + ' new';
-    row.appendChild(n);
   } else {
-    const n = document.createElement('span');
-    n.className = 'ss-count seen';
-    n.textContent = String(others.length || items.length);
-    row.appendChild(n);
+    const chip = serverStoryChip(unseen, others.length);
+    if (chip) {
+      const n = document.createElement('span');
+      n.className = 'ss-count' + (chip.seen ? ' seen' : '');
+      n.textContent = chip.text;
+      row.appendChild(n);
+    }
   }
   const add = document.createElement('button');
   add.type = 'button';

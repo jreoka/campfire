@@ -1777,7 +1777,9 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 .ss-hint{margin-left:auto;font-size:.7rem;font-weight:650;color:var(--faint)}
 .ss-add{margin-left:.1rem;width:24px;height:24px;border-radius:50%;border:0;background:var(--accent);color:var(--on-accent);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;padding:0}
 .ss-add:hover{background:var(--accent-hover)}
-.ss-count.seen{color:var(--muted);background:var(--panel-3)}
+/* All-watched status, not a count: uppercase + tracking so it never reads as a
+   grey unread number again (see serverStoryChip in stories.js). */
+.ss-count.seen{color:var(--muted);background:var(--panel-3);text-transform:uppercase;letter-spacing:.06em;font-size:.64rem}
 .ss-stack{display:flex;flex-shrink:0;padding-left:8px}
 .ss-stack .avatar{width:22px;height:22px;font-size:.6rem;margin-left:-8px;border:2px solid var(--panel-2)}
 .ss-label{font-size:.86rem;font-weight:700}
