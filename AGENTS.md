@@ -257,6 +257,14 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   pending request row or voice occupant opens exactly one card. Rows that own
   their click declare it with `data-ownclick` — give that attribute to any new
   `data-uid` row with its own click handler, or the delegate will fire too.
+  `node scripts/test-story-camera.js` drives the same harness with Chrome's
+  fake camera (`--use-fake-device-for-media-stream`) and proves the story
+  shutter answers the tap instead of the JPEG encoder: the captured frame is on
+  screen in the same frame as the click (`.sc-freeze` = the capture canvas,
+  Next held at "Saving…", camera released), a real `image/jpeg` blob takes
+  over once Blink calls back, and Retake during an in-flight encode discards
+  the stale shot instead of resurrecting it. Skips when Chrome has no fake
+  video device. Re-run it after touching the story composer's capture path.
 - **Upload pipeline E2E:** `node scripts/test-upload-pipeline.js` (needs ffmpeg
   + the dev Postgres, skips otherwise) boots a real server against a throwaway
   database with a fake clamd and asserts the single-transition compression flow
@@ -312,6 +320,14 @@ are load-bearing:
   the `attachments.id` uid. They are not interchangeable.
 - The virus serving gate only covers `files/` (chat attachments); profile media
   (avatars, banners, emoji, icons) is scanned but not gated.
+- **`canvas.toBlob` is not background work on Android.** Blink's
+  `canvas_async_blob_creator` encodes on the main thread during idle slices
+  whenever `IS_ANDROID`, so any shutter that waits for the callback looks hung
+  for seconds — the camera keeps painting, the UI doesn't move. Show the result
+  before the encode: the story composer freezes the captured canvas over the
+  camera slot (`.sc-freeze`), holds Next at "Saving…", releases the camera, and
+  hands over to the blob when it lands. Stamp each shot with a sequence
+  (`sc.shotSeq`) so a slow callback can't resurrect a retaken shot.
 
 ## Environment notes (this dev machine)
 

@@ -17,8 +17,9 @@ const STORY_IMG_MS = 5000;        // how long a photo shows before advancing
 const STORY_VIDEO_MAX_MS = 60000; // recording cap (matches the server hint)
 const STORY_MAX_EDGE = 1920;      // picked photos are downscaled to this long edge
 // Camera grabs are capped lower on touch devices: a 1920px frame is 2.25x the
-// pixels of a 1280px one, and on Android WebView the readback + JPEG encode
-// inside the shutter tap is what made it feel dead for seconds.
+// pixels of a 1280px one. (The old multi-second shutter lag was never the
+// readback — see storyShowPendingShot: Android encodes canvas.toBlob on the
+// main thread during idle time, so the shutter no longer waits for it.)
 const storyCamMaxEdge = () => (isCoarse() ? 1280 : STORY_MAX_EDGE);
 
 // Icon set (inline SVG, no emoji — see the design language in AGENTS.md).
@@ -1085,6 +1086,10 @@ async function openStoryComposer(opts = {}) {
     rec: null, chunks: [], recT0: 0, recTimer: null, blob: null, kind: null,
     previewUrl: null, durationMs: 0, busy: false, camFailed: false, xhr: null,
     step: 'capture', camSeq: 0, camReady: false,
+    // A shot whose bytes are still encoding (Android encodes toBlob on the
+    // main thread during idle time — seconds). pendingShownUrl: the stand-in
+    // on screen is that URL, not the frozen camera frame.
+    shotSeq: 0, pendingShot: false, pendingUrl: null, pendingShownUrl: false,
     // audiences: friends / everyone / servers (multi-select)
     audFriends: true, audEveryone: false, audServers: [], audUsers: [],
     // view-once mode: pick friends instead of audiences, sends one DM each
@@ -1095,6 +1100,8 @@ async function openStoryComposer(opts = {}) {
   if (opts.everyone) sc.audEveryone = true;
   if (opts.viewOnce) { try { await ensureFriends(); } catch {} }
   scCapBusy = false; // a toBlob from a previous session must not block this one
+  storyClearFreeze(); // a stale shot must not sit over the fresh camera
+  storyResetShotUi();
   storySetStep('capture');
   renderStoryAudience();
   paintScMic();
@@ -1371,12 +1378,24 @@ function captureStoryPhoto() {
   const { c, ctx } = storyCaptureCanvas(Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale)));
   try {
     ctx.drawImage(vid, 0, 0, c.width, c.height);
-    c.toBlob((blob) => {
-      scCapBusy = false;
-      if (!blob || !sc) return;
-      storyShowPreview(blob, 'image', 0);
-    }, 'image/jpeg', 0.86);
-  } catch { scCapBusy = false; toast('Could not capture that frame'); }
+  } catch { scCapBusy = false; toast('Could not capture that frame'); return; }
+  // The frame is in the canvas; the JPEG encode is the slow half, and on
+  // Android it is not background work at all — Blink encodes canvas.toBlob
+  // during main-thread idle slices there, so waiting for the callback left the
+  // user staring at a live camera for seconds after the flash. Answer the tap
+  // now instead: the captured pixels go up as the stand-in photo (see
+  // storyFreeze), the camera is released, and the blob lands behind it.
+  storyFreeze();
+  const seq = storyShowPendingShot(null);
+  c.toBlob((blob) => {
+    // Retaken or closed while the encoder ran — the shot is stale, drop it (and
+    // leave scCapBusy alone: a newer frame owns the flag now).
+    if (!sc || sc.shotSeq !== seq) return;
+    scCapBusy = false;
+    if (!sc.pendingShot) return;
+    if (!blob || !blob.size) { toast('Could not save that photo'); storyRetake(); return; }
+    storyShowPreview(blob, 'image', 0);
+  }, 'image/jpeg', 0.86);
 }
 function storyStartRec() {
   if (!sc || sc.rec) return;
@@ -1439,10 +1458,61 @@ function storySetMode(mode) {
   if (sc.mode === 'video') storyEnsureMic();
 }
 // ---------- preview (after capture / pick) ----------
+// Show the captured pixels as the stand-in photo. Putting the very canvas the
+// encoder reads from into the stage costs no copy and no decode, and — unlike
+// pausing a MediaStream <video>, which some Android WebViews blank — it cannot
+// go black while the JPEG encodes.
+function storyFreeze() {
+  storyClearFreeze();
+  const stage = $('#story-compose .sc-stage');
+  if (!stage || !scCapCanvas) return;
+  scCapCanvas.classList.add('sc-freeze');
+  stage.appendChild(scCapCanvas);
+}
+function storyClearFreeze() {
+  try { if (scCapCanvas) scCapCanvas.remove(); } catch {}
+}
+// The shutter/pick landed but the bytes are still encoding. Put something real
+// on screen immediately and finish behind it:
+//   url === null → the frozen captured frame (storyFreeze)
+//   url          → the picked file's own object URL (the gallery path shows the
+//                  photo it was handed while it re-encodes the downscale)
+// Next stays disabled until a blob exists to carry into the audience step.
+// Returns the shot sequence the caller must present to check against.
+function storyShowPendingShot(url) {
+  if (!sc) return 0;
+  const seq = (sc.shotSeq || 0) + 1;
+  sc.shotSeq = seq;
+  sc.pendingShot = true;
+  if (sc.pendingUrl) { try { URL.revokeObjectURL(sc.pendingUrl); } catch {} }
+  sc.pendingUrl = url || null;
+  sc.pendingShownUrl = !!url;
+  const img = $('#sc-shot'), vid = $('#sc-play');
+  vid.classList.add('hidden');
+  vid.removeAttribute('src');
+  img.classList.add('hidden');
+  storyStopCamTracks(); // either path is done with the camera now
+  if (url) {
+    storyClearFreeze();
+    img.src = url;
+    img.classList.remove('hidden');
+  }
+  const next = $('#sc-next');
+  if (next) { next.disabled = true; next.textContent = 'Saving…'; }
+  storySetStep('preview');
+  storyProgress(null);
+  // The audience list is a lot of DOM; it has no business delaying the paint
+  // of the shot the user just took.
+  setTimeout(() => { if (sc && sc.pendingShot) renderStoryAudience(); }, 0);
+  return seq;
+}
+function storyResetShotUi() {
+  const next = $('#sc-next');
+  if (next) { next.disabled = false; next.textContent = 'Next'; }
+}
 function storyShowPreview(blob, kind, durationMs) {
   if (!sc) return;
   storyStopRec();
-  storyStopCamTracks();
   if (sc.previewUrl) { try { URL.revokeObjectURL(sc.previewUrl); } catch {} }
   sc.blob = blob;
   sc.kind = kind;
@@ -1455,22 +1525,59 @@ function storyShowPreview(blob, kind, durationMs) {
     vid.src = sc.previewUrl;
     vid.muted = false;
     vid.play().catch(() => { vid.muted = true; vid.play().catch(() => {}); });
+    storyRevealPreview('video', true);
+  } else if (sc.pendingShownUrl) {
+    // The <img> is already showing this picture (the picked file). Swapping in
+    // the re-encoded downscale would blank it for the length of an Android
+    // decode, for pixels nobody will see again — the upload uses sc.blob.
+    storyRevealPreview('image', false);
   } else {
     vid.classList.add('hidden');
     vid.removeAttribute('src');
-    img.classList.remove('hidden');
+    // Hand over to the encoded shot only once it can paint, so the frozen
+    // frame never blanks out in between. The guard matters: clearing or
+    // replacing the <img> below (a retake clears its src) can fire load/error
+    // on this element, and a stale handler must not reveal a shot that no
+    // longer exists — Next would go live with no blob behind it.
+    const seq = sc.shotSeq;
+    let done = false, bail = 0;
+    const once = () => {
+      if (done || !sc || sc.shotSeq !== seq || !sc.pendingShot) return;
+      done = true;
+      clearTimeout(bail);
+      img.onload = null;
+      img.onerror = null;
+      storyRevealPreview('image', true);
+    };
+    bail = setTimeout(once, 1500); // a stalled decode must not strand the user
+    img.onload = once;
+    img.onerror = once;
     img.src = sc.previewUrl;
+    if (img.decode) { try { img.decode().then(once).catch(() => {}); } catch {} }
   }
+}
+function storyRevealPreview(kind, showImg) {
+  if (!sc) return;
+  sc.pendingShot = false;
+  storyStopCamTracks();
+  storyClearFreeze();
+  const img = $('#sc-shot');
+  if (kind === 'image' && showImg) img.classList.remove('hidden');
+  storyResetShotUi();
   storySetStep('preview');
   renderStoryAudience();
   storyProgress(null);
-  const next = $('#sc-next');
-  if (next) next.textContent = 'Next';
 }
 function storyRetake() {
   if (!sc) return;
   if (sc.previewUrl) { try { URL.revokeObjectURL(sc.previewUrl); } catch {} }
+  if (sc.pendingUrl) { try { URL.revokeObjectURL(sc.pendingUrl); } catch {} }
   sc.previewUrl = null; sc.blob = null; sc.kind = null; sc.durationMs = 0;
+  sc.pendingShot = false; sc.pendingUrl = null; sc.pendingShownUrl = false;
+  sc.shotSeq = (sc.shotSeq || 0) + 1; // an in-flight encode must not resurrect this shot
+  scCapBusy = false;                  // …nor may its callback keep the shutter locked
+  storyResetShotUi();
+  storyClearFreeze();
   const vid = $('#sc-play');
   try { vid.pause(); } catch {}
   vid.removeAttribute('src');
@@ -1651,12 +1758,14 @@ function closeStoryComposer() {
   try { if (st.stream) st.stream.getTracks().forEach((t) => t.stop()); } catch {}
   try { if (st.audio) st.audio.getTracks().forEach((t) => t.stop()); } catch {}
   try { if (st.previewUrl) URL.revokeObjectURL(st.previewUrl); } catch {}
+  try { if (st.pendingUrl) URL.revokeObjectURL(st.pendingUrl); } catch {}
   const cam = $('#sc-cam');
   if (cam) cam.srcObject = null;
   const play = $('#sc-play');
   if (play) { try { play.pause(); } catch {} play.removeAttribute('src'); }
   const shot = $('#sc-shot');
   if (shot) shot.removeAttribute('src');
+  storyClearFreeze();
   const cap = $('#sc-caption');
   if (cap) cap.value = '';
   $('#sc-file').value = '';
@@ -1714,7 +1823,13 @@ function storyVideoDuration(file) {
 async function storyPickFile(file) {
   if (!sc || !file) return;
   if (file.type.startsWith('image/')) {
+    // Show the picked file at once (its own bytes, no encode) and re-encode
+    // behind it — the downscale/JPEG is the same main-thread idle work that
+    // made the shutter look broken on Android.
+    const quick = URL.createObjectURL(file);
+    const seq = storyShowPendingShot(quick);
     const img = await storyDownscaleImage(file);
+    if (!sc || sc.shotSeq !== seq) { try { URL.revokeObjectURL(quick); } catch {} return; }
     storyShowPreview(img, 'image', 0);
   } else if (file.type.startsWith('video/')) {
     if (file.size > S.maxUploadMb * 1024 * 1024) { toast(`Videos are limited to ${S.maxUploadMb}MB`); return; }

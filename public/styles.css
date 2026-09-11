@@ -1822,6 +1822,9 @@ body.story-open{overflow:hidden}
 .sc-stage{position:relative;flex:1;min-height:0;border-radius:16px;overflow:hidden;background:#000;display:flex;align-items:center;justify-content:center}
 #sc-cam,#sc-shot,#sc-play{width:100%;height:100%;object-fit:contain;background:#000;display:block}
 #sc-cam.is-front{transform:scaleX(-1)}
+/* Stand-in for a shot whose JPEG is still encoding: the capture canvas itself,
+   laid exactly over the camera slot (object-fit keeps it identical to #sc-shot). */
+.sc-freeze{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;display:block;z-index:1}
 .sc-top{position:absolute;top:calc(.55rem + var(--safe-t));left:.8rem;right:.8rem;display:flex;align-items:center;gap:.3rem;z-index:3}
 .sc-hint{position:absolute;left:50%;bottom:1rem;transform:translateX(-50%);background:rgba(0,0,0,.62);border-radius:10px;padding:.4rem .85rem;font-size:.82rem;max-width:90%;text-align:center;z-index:2}
 .sc-prog{position:absolute;left:0;right:0;top:0;height:3px;background:rgba(255,255,255,.18);z-index:4}
