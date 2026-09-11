@@ -111,6 +111,7 @@ const S = {
   histNew: 0, // live arrivals while viewing history (drives the jump pill)
   scrollMem: new Map(), // convo key -> distance-from-bottom px (restores reading pos on return)
   pinIds: new Set(), // pinned message ids in the current channel/thread
+  pinIdsCtx: null, // which conversation pinIds was fetched for (guards stale badges)
   pinCount: 0,
   pinsCtx: null, // context the pins popup is open for
   editing: null, // message id being edited

@@ -219,6 +219,18 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   `stories.js`): an accent "N new" (unseen items) while something waits, a muted
   "SEEN" once everything is watched — never the bare grey author count that read
   as "1 unread" — and no chip at all when the only live post is mine.
+  `node scripts/test-pin-badge.js` covers the pin button's badge offline (it
+  runs the real helpers pulled out of `pins.js` against stub globals): a pin is
+  "new" until this account opens the panel in that conversation, pinning
+  something yourself is never news, the memory is per account / per channel / per
+  DM and survives a reload, an emptied pin list drops it, and the store is
+  capped (60 conversations, 90-day TTL).
+  `node scripts/test-pin-badge-browser.js` drives the real page the same way
+  (`test-drafts-browser.js`'s harness, second account joins by invite and pins
+  over plain HTTP) and proves the badge lifecycle end to end: no badge for a pin
+  I made, "1" for a pin someone else made (still there after a reload), gone
+  after opening the panel, still gone after another reload. Skips when Postgres
+  or Chrome is missing.
   `node scripts/test-viewonce.js` covers view-once messages against the same
 dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   one-replay lifecycle, and that unopened items never expire.

@@ -8,6 +8,76 @@ function pinsUrl(ctx, suffix = '') {
   return ctx.kind === 'dm' ? `/api/dms/${ctx.id}/pins${suffix}` : `/api/servers/${ctx.serverId}/channels/${ctx.id}/pins${suffix}`;
 }
 function sameCtx(a, b) { return !!a && !!b && a.kind === b.kind && a.id === b.id; }
+/* ---------- "new pins" memory ----------
+ * The pin button's badge is a hint that this conversation has pins this account
+ * has not looked at, not a permanent count of them: a number that sits there
+ * however many times you open the panel reads as an unread badge that cannot be
+ * cleared. Opening the panel (or pinning something yourself) remembers what was
+ * in it, so the badge goes away and stays away across reloads.
+ * Per account in localStorage, like the composer drafts (nothing about pins is
+ * per-reader on the server, and this must survive a reload). Contexts match
+ * draftCtx: 's:<serverId>:<channelId>' / 'd:<threadId>'. */
+const PIN_SEEN_MAX = 60;          // conversations remembered (oldest fall off)
+const PIN_SEEN_TTL = 90 * 864e5;
+function pinSeenStoreKey() { return S.me ? 'cf_pinseen_' + S.me.id : null; }
+function pinSeenCtxKey(ctx) {
+  if (!ctx) return null;
+  return ctx.kind === 'dm' ? 'd:' + ctx.id : 's:' + ctx.serverId + ':' + ctx.id;
+}
+function pinSeenLoad() {
+  const k = pinSeenStoreKey();
+  if (!k) return {};
+  try { return JSON.parse(localStorage.getItem(k) || '{}') || {}; } catch { return {}; }
+}
+function pinSeenIds(ctx) {
+  const key = pinSeenCtxKey(ctx);
+  if (!key) return new Set();
+  const e = pinSeenLoad()[key];
+  return new Set(e && Array.isArray(e.ids) ? e.ids : []);
+}
+function pinSeenWrite(ctx, ids) {
+  const k = pinSeenStoreKey(), key = pinSeenCtxKey(ctx);
+  if (!k || !key) return;
+  const all = pinSeenLoad();
+  // Delete first so the key moves to the end: the stored order is write order,
+  // which is what the cap below prunes from.
+  delete all[key];
+  all[key] = { ids: [...new Set(ids)], at: Date.now() };
+  const cut = Date.now() - PIN_SEEN_TTL;
+  const out = {};
+  for (const x of Object.keys(all).filter((x) => all[x] && (all[x].at || 0) >= cut).slice(-PIN_SEEN_MAX)) out[x] = all[x];
+  try { localStorage.setItem(k, JSON.stringify(out)); } catch {}
+}
+// Pin something yourself → it is not news to you (the badge must not light for
+// an action you just took).
+function markPinsSeen(ctx, ids) {
+  if (!ctx) return;
+  const set = pinSeenIds(ctx);
+  for (const id of ids || []) if (id) set.add(id);
+  pinSeenWrite(ctx, set);
+}
+// The panel is open: what it lists IS what has been read, so the memory is
+// replaced with exactly those ids and unpinned ones cannot pile up in the store.
+function rememberPinsSeen(ctx, ids) {
+  if (!ctx) return;
+  pinSeenWrite(ctx, ids || []);
+}
+function pinsPanelOpen(ctx) {
+  try {
+    return sameCtx(S.pinsCtx, ctx) && !!document.querySelector('#modal-body .pins-list')
+      && !$('#modal-backdrop').classList.contains('hidden');
+  } catch { return false; }
+}
+function unseenPinCount(ctx) {
+  const key = pinSeenCtxKey(ctx);
+  // S.pinIds is only meaningful for the conversation it was fetched for: a
+  // channel switch repaints the header before the new fetch lands.
+  if (!key || S.pinIdsCtx !== key) return 0;
+  const seen = pinSeenIds(ctx);
+  let n = 0;
+  for (const id of S.pinIds) if (!seen.has(id)) n++;
+  return n;
+}
 // Per-conversation scroll memory: leaving a channel/DM mid-read and coming
 // back restores where you were instead of forcing the bottom. Saved as the
 // distance from the bottom so newly arrived messages don't shift the view.
@@ -84,20 +154,28 @@ function stickRestoredAnchor(box, key) {
 }
 async function refreshPinsCount() {
   const ctx = pinsCtx();
-  if (!ctx) { S.pinCount = 0; S.pinIds = new Set(); paintPinsBtn(); return; }
+  if (!ctx) { S.pinCount = 0; S.pinIds = new Set(); S.pinIdsCtx = null; paintPinsBtn(); return; }
   try {
     const { pins } = await api(pinsUrl(ctx));
     if (!sameCtx(pinsCtx(), ctx)) return;
     S.pinCount = pins.length;
     S.pinIds = new Set(pins.map((p) => p.id));
-  } catch { S.pinCount = 0; S.pinIds = new Set(); }
+    S.pinIdsCtx = pinSeenCtxKey(ctx);
+    // Someone pinned while I had the panel open: those rows are on screen, so
+    // re-fetching must not light a badge for a list I am already reading.
+    if (pinsPanelOpen(ctx)) rememberPinsSeen(ctx, S.pinIds);
+  } catch { S.pinCount = 0; S.pinIds = new Set(); S.pinIdsCtx = null; }
   paintPinsBtn();
 }
 function paintPinsBtn() {
-  $('#btn-pins').classList.toggle('hidden', !pinsCtx());
+  const ctx = pinsCtx();
+  const btn = $('#btn-pins');
+  btn.classList.toggle('hidden', !ctx);
+  const unseen = unseenPinCount(ctx);
   const b = $('#pins-count');
-  b.textContent = S.pinCount > 0 ? String(S.pinCount) : '';
-  b.classList.toggle('hidden', !S.pinCount);
+  b.textContent = unseen > 99 ? '99+' : String(unseen);
+  b.classList.toggle('hidden', !unseen);
+  btn.title = unseen ? `Pinned messages · ${unseen} new` : 'Pinned messages';
 }
 async function togglePin(mid) {
   const ctx = pinsCtx();
@@ -107,6 +185,7 @@ async function togglePin(mid) {
     if (pinned) await api(pinsUrl(ctx, '/' + mid), { method: 'DELETE' });
     else await api(pinsUrl(ctx), { method: 'POST', body: JSON.stringify({ messageId: mid }) });
     toast(pinned ? 'Unpinned' : 'Pinned to this ' + (ctx.kind === 'dm' ? 'chat' : 'channel'));
+    if (!pinned) markPinsSeen(ctx, [mid]);
     refreshPinsCount();
   } catch (err) { toast(prettyError(err.message)); }
 }
@@ -127,6 +206,9 @@ async function renderPinsList() {
   if (!sameCtx(pinsCtx(), ctx)) return;
   S.pinCount = pins.length;
   S.pinIds = new Set(pins.map((p) => p.id));
+  S.pinIdsCtx = pinSeenCtxKey(ctx);
+  // The panel is open (or was just asked to open): everything in it is read.
+  rememberPinsSeen(ctx, S.pinIds);
   paintPinsBtn();
   if (!pins.length) { box.innerHTML = '<p class="muted small" style="text-align:center;padding:1rem">No pinned messages yet — right-click (or long-press) a message to pin it.</p>'; return; }
   box.innerHTML = '';
@@ -269,6 +351,9 @@ function holdMsgCentered(box, mid, fallbackEl) {
   if (typeof updatePill === 'function') { try { updatePill(); } catch {} }
 }
 async function jumpToPin(ctx, mid) {
+  // Landing on a pinned message is viewing it, wherever the jump came from
+  // (the panel, a search hit) — clear its "new" mark for the conversation.
+  if (sameCtx(pinsCtx(), ctx)) { markPinsSeen(ctx, [mid]); paintPinsBtn(); }
   const sel = `#messages [data-mid="${CSS.escape(mid)}"]`;
   const el = document.querySelector(sel);
   if (el) { flashMsgEl(el); return; }
@@ -433,7 +518,7 @@ function renderDmBlank() {
   S.histNew = 0;
   // Friends screen has no conversation: clear any stale pins state so the
   // header pins icon from the previous channel/DM doesn't linger.
-  S.pinCount = 0; S.pinIds = new Set(); paintPinsBtn();
+  S.pinCount = 0; S.pinIds = new Set(); S.pinIdsCtx = null; paintPinsBtn();
   updatePill();
   document.body.classList.remove('dm-open');
   $('#composer').classList.add('hidden');
