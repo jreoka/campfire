@@ -1720,7 +1720,8 @@ body{touch-action:manipulation}
   /* The rail + chat list is a whole page, not a drawer hanging over the chat:
      nothing shows behind it, so there is no scrim to dim and no partial-width
      peek. It closes from its own ✕ (the chat's ☰ is behind the page), from
-     picking a channel or DM, and from the Home/Friends/Stories rows. */
+     picking a channel or DM, and from the Friends/Stories rows — the campfire
+     Home button keeps it open, since Home is where the picking happens. */
   #left{position:fixed;inset:var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l);z-index:30;display:flex;transform:translateX(-102%);transition:transform .22s;background:var(--rail)}
   body.nav-open #left{transform:none}
   #btn-nav-close{display:inline-flex;position:absolute;top:.5rem;right:.55rem;z-index:7}

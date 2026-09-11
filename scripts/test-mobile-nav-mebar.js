@@ -158,7 +158,7 @@ function main() {
   const security = fs.readFileSync(path.join(ROOT, 'public/js/security.js'), 'utf8');
   check(!index.includes('sidebar-scrim') && !css.includes('sidebar-scrim') && !ui.includes('sidebar-scrim'), 'the nav scrim is gone (element, CSS and handler)');
   check(/<button type="button" id="btn-nav-close" class="icon-btn"/.test(index), 'the nav page carries its own ✕');
-  check(/\$\('#btn-nav-close'\)\.onclick/.test(ui) && /#btn-home, #btn-friends, #btn-stories/.test(ui), 'the ✕ and the nav destinations close the page');
+  check(/\$\('#btn-nav-close'\)\.onclick/.test(ui) && /#btn-friends, #btn-stories/.test(ui) && !/#btn-home/.test(ui), 'the ✕ and the Friends/Stories rows close the page (the campfire Home button keeps it open — see test-mobile-home-nav.js)');
   check(/<button type="button" id="me-open" title="Your profile card">/.test(index), 'the me bar wraps the avatar + name in an explicit click target');
   check(!/\$\('#me-card'\)\.onclick/.test(security) && /\$\('#me-open'\)\.onclick = openOwnCard/.test(security), 'only that target opens the card');
   check(!/#me-card:hover\{background-color/.test(css), 'the whole bar no longer highlights as if it were clickable');

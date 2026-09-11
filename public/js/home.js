@@ -33,9 +33,13 @@ async function openHome() {
   document.querySelectorAll('#server-list .server-btn').forEach((b) => b.classList.remove('active'));
   rememberView();
   closeThread(true);
-  await Promise.all([refreshFriends(), refreshDms()]);
+  // Drop the open conversation NOW, before the roster refreshes: their network
+  // round-trips used to leave the previous DM (or channel) painted underneath
+  // the mobile nav page, so closing that page revealed a chat that had already
+  // been left. The blank is synchronous; the awaits below only fill it in.
   S.dmThreadId = null;
   renderDmBlank();
+  await Promise.all([refreshFriends(), refreshDms()]);
   // Stories live at the top of the Friends feed — refresh on every visit so
   // the 24h window and seen rings are current.
   try { loadStories().then(renderStorySurfaces); } catch {}

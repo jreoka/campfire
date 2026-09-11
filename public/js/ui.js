@@ -177,11 +177,14 @@ $('#btn-menu').onclick = () => document.body.classList.toggle('nav-open');
 // ☰ is behind the page while it is open).
 $('#btn-nav-close').onclick = (e) => { e.stopPropagation(); document.body.classList.remove('nav-open'); };
 // The nav page's destinations close it (channel and DM rows already do that in
-// their own selectors; a server tap deliberately keeps it open so a channel can
-// be picked).
+// their own selectors; Friends and Stories close it too). The campfire Home
+// button deliberately KEEPS it open: Home just swaps the chat list over to the
+// home lists (Friends / Stories / DMs), so the page has to stay up for a
+// conversation to be picked out of it — closing it there dropped the reader
+// into whatever conversation was open behind the page.
 $('#left').addEventListener('click', (e) => {
   if (!document.body.classList.contains('nav-open')) return;
-  if (e.target.closest && e.target.closest('#btn-home, #btn-friends, #btn-stories')) document.body.classList.remove('nav-open');
+  if (e.target.closest && e.target.closest('#btn-friends, #btn-stories')) document.body.classList.remove('nav-open');
 });
 $('#btn-members').onclick = (e) => { e.stopPropagation(); document.body.classList.toggle('members-open'); };
 // Mobile DM header overflow (⋯): voice/video call buttons stay on top; the

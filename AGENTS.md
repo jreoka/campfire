@@ -314,6 +314,15 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   but never the ignore list, and the state survives a reload. Writes
   `campfire-games-tab.png` to the temp dir. Skips when Postgres or Chrome is
   missing.
+  `node scripts/test-mobile-home-nav.js` drives the real page in headless Chrome
+  at a phone viewport against a throwaway database and pins that behavior: the
+  campfire Home button tapped with a real touch keeps the nav page up (still
+  slid in, chat behind it unreachable) while landing on Home with no
+  conversation selected, and the clear is synchronous so the DM that was open is
+  not left painted under the page while the roster refreshes are in flight —
+  plus Home from inside a server leaves the home lists, with a DM row in the
+  panel to pick, and picking it closes the page and opens that DM (the ✕ still
+  closes too). Skips when Postgres or Chrome is missing.
   `node scripts/test-anow-strip.js` covers the phone's Active Now strip in
   headless Chrome at a phone viewport with injected friends: the strip sits
   under Stories and above DIRECT MESSAGES, one tile per online friend (the one
@@ -613,8 +622,11 @@ tiling seam at the LEFT edge that lands on a whole device pixel at dpr 1: a
 light 1px line down the left of the slot. Keep the layers `no-repeat` and the
 two ramps at `100% 100%`. On mobile the server rail + chat list is a whole page
 (`body.nav-open`), not a drawer over the chat: it covers the viewport, has no
-scrim, and closes from its own ✕, a channel/DM row, or the Home/Friends/Stories
-nav rows — a server tap deliberately keeps it open so a channel can be picked.
+scrim, and closes from its own ✕, a channel/DM row, or the Friends/Stories nav
+rows — a server tap and the campfire Home button deliberately keep it open so a
+channel or conversation can be picked (`#btn-home` only swaps the chat list over
+to the home lists; closing it there dropped the reader into the DM that happened
+to be open behind the page).
 The me bar's only click target is `#me-open` (the avatar + name), which outlines
 itself on hover; the space around mute/deafen/settings is dead, and it never
 shows your own active server tag (`paintMe` used to insert one — other people's
