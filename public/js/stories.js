@@ -1952,10 +1952,12 @@ async function storyPostNow() {
   // waits for it, so this is where the wait belongs — at the last tap, with the
   // frozen frame still on screen. "Saving…" is honest about what is happening.
   if (!st.blob && st.encodePromise) {
+    st.busy = true; // a second tap must not queue a second post while we wait
     btn.disabled = true;
     btn.textContent = 'Saving…';
     try { await st.encodePromise; } catch {}
     if (sc !== st) return;
+    st.busy = false;
     btn.disabled = false;
     btn.textContent = scPostLabel();
     if (!st.blob) { toast('Could not save that photo — try another shot'); storyProgress(null); return; }
