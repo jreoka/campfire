@@ -201,13 +201,24 @@ async function main() {
     console.log('\n' + (failures.length ? failures.length + ' FAILED, ' + passed + ' passed' : 'all ' + passed + ' checks passed'));
     for (const c of conns) c.close();
     try { child.kill(); } catch {}
+    await dropTestDb(pg);
     process.exit(failures.length ? 1 : 0);
   } catch (err) {
     console.error('\n[test] ERROR: ' + ((err && err.message) || err));
     for (const c of conns) c.close();
     try { child && child.kill(); } catch {}
+    await dropTestDb(pg);
     process.exit(1);
   }
+}
+
+async function dropTestDb(pg) {
+  try {
+    const c = new Client({ ...pg, database: 'postgres' });
+    await c.connect();
+    await c.query(`DROP DATABASE IF EXISTS ${TEST_DB} WITH (FORCE)`);
+    await c.end();
+  } catch {}
 }
 
 main();
