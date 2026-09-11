@@ -949,9 +949,9 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .uc-bubble::after{left:-13px;bottom:0;width:4px;height:4px}
 .uc-bubble.edit{cursor:pointer;padding-right:1.5rem;transition:background var(--t-fast)}
 .uc-bubble.edit:hover{background:var(--panel-4)}
-.uc-bubble.empty{padding-right:.62rem;background:transparent;border:1px dashed var(--line);color:var(--muted)}
+.uc-bubble.empty{padding-right:.62rem;background:var(--panel-3);border:1px dashed var(--line);color:var(--muted)}
 .uc-bubble.empty::before,.uc-bubble.empty::after{display:none}
-.uc-bubble.empty:hover{border-color:var(--accent);color:var(--text)}
+.uc-bubble.empty:hover{background:var(--panel-4);border-color:var(--accent);color:var(--text)}
 .uc-bubble-x{position:absolute;top:-.4rem;right:-.3rem;width:20px;height:20px;padding:0;border:0;border-radius:50%;background:var(--panel-4);color:var(--muted);font:inherit;font-size:.9rem;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
 .uc-bubble-x:hover{background:var(--danger-bg);color:var(--danger-tx)}
 .uc-bubble-exp{font-size:.7rem;color:var(--faint);margin-top:.2rem}

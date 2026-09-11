@@ -61,6 +61,13 @@ const emptyMine = statusBubbleHTML(me());
 check(emptyMine.includes('Set a status'), 'unset → a "Set a status" placeholder, not a body section', emptyMine);
 check(emptyMine.includes('id="uc-status-edit"') && emptyMine.includes('empty'), 'the placeholder itself opens the editor');
 check(!emptyMine.includes('uc-bubble-x'), 'nothing to clear while unset');
+// The placeholder used to be a bare dashed outline, which vanished against the
+// card (and over a banner). It has to be filled to read at a glance, and keep
+// the dashed hairline so it still says "not set" rather than "this is my status".
+const emptyRule = /\.uc-bubble\.empty\{([^}]*)\}/.exec(fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8'));
+check(!!emptyRule, 'the empty placeholder has its own rule');
+check(/background:var\(--panel-3\)/.test(emptyRule[1]), 'the placeholder is tonally filled (visible at rest)', emptyRule[1]);
+check(/border:1px dashed/.test(emptyRule[1]), 'and keeps a dashed hairline so it reads as unset', emptyRule[1]);
 
 const setMine = statusBubbleHTML(me({ status_text: 'Heads down on the voice rewrite' }));
 check(setMine.includes('Heads down on the voice rewrite'), 'my status text is in the bubble');
