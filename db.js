@@ -635,6 +635,13 @@ WHERE (s.audience = 'server' OR s.audience = 'friends')
   // A DM that answers a story carries the story id so clients can label it
   // (the media itself is copied into the DM at reply time).
   await addColumn('dm_messages', 'story_id', 'TEXT');
+  // Story markup: the text/emoji/drawing overlay list, JSON, rendered over the
+  // media by every viewer (see public/js/story-edit.js). Nothing is baked into
+  // the bytes, so it stays crisp and works for videos too. The view-once copy
+  // of a story carries its own column: the bytes are re-filed to the gated
+  // prefix, and the markup has to travel with them.
+  await addColumn('stories', 'overlays', 'TEXT');
+  await addColumn('dm_messages', 'viewonce_overlays', 'TEXT');
   // View-once messages: media that stays gated until the recipient opens it
   // (state: 'unopened' | 'replayable' | 'consumed'), with one replay allowed.
   // Unopened items never expire; the bytes go when the view is used up.

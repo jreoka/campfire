@@ -673,6 +673,21 @@ function openStoryViewer(opt = {}) {
   $('#sv-reply').value = '';
   svShow(ti, ii);
 }
+// A story's text/emoji/drawing markup, laid over the media. Normalised
+// coordinates mean the viewer only has to find the picture's content box
+// (object-fit:contain inside the stage), which it can only do once the bytes
+// have decoded — hence the call from ready(), not from svShow.
+function svPaintOverlays() {
+  const layer = $('#sv-ov');
+  if (!layer) return;
+  if (!sv) { layer.classList.add('hidden'); return; }
+  const it = svCurrentItem();
+  const ovs = ovParse(it && it.overlays);
+  if (!ovs.length) { layer.textContent = ''; layer.classList.add('hidden'); return; }
+  const media = it.kind === 'video' ? $('#sv-vid') : $('#sv-img');
+  if (!ovFitLayer(layer, $('#sv-stage'), media)) return;
+  ovPaintLayer(layer, ovs, { editable: false });
+}
 function svTeardown() {
   if (!sv) return;
   cancelAnimationFrame(sv.raf);
@@ -682,6 +697,8 @@ function svTeardown() {
   try { $('#sv-vid').pause(); } catch {}
   $('#sv-vid').removeAttribute('src');
   $('#sv-img').removeAttribute('src');
+  const ov = $('#sv-ov');
+  if (ov) { ov.textContent = ''; ov.classList.add('hidden'); }
   // A half-finished swipe-down must not leave the overlay offset for the next
   // open (the gesture moves the whole #story-view, not just the media).
   const root = $('#story-view');
@@ -752,6 +769,8 @@ function svShow(ti, ii) {
   vid.onerror = null; vid.onloadeddata = null; vid.onloadedmetadata = null;
   $('#sv-wait').classList.add('hidden');
   $('#sv-wait').classList.remove('sv-wait-dead');
+  $('#sv-ov').classList.add('hidden');
+  $('#sv-ov').textContent = '';
   const waitTxt = $('#sv-wait-txt');
   if (waitTxt) waitTxt.textContent = 'Processing…';
   sv.retries = 0;
@@ -766,6 +785,7 @@ function svShow(ti, ii) {
     sv.t0 = performance.now();
     $('#sv-wait').classList.add('hidden');
     $('#sv-wait').classList.remove('sv-wait-dead');
+    svPaintOverlays(); // markup only lands once the picture has a real box
   };
   if (it.kind === 'video') {
     vid.muted = sv.muted;
@@ -1099,10 +1119,18 @@ async function openStoryComposer(opts = {}) {
   el.classList.remove('hidden');
   document.body.classList.add('story-open');
   sc = {
-    stream: null, audio: null, micDenied: false, facing: 'user', mode: 'photo',
+    stream: null, audio: null, outTrack: null, micDenied: false, facing: 'user',
     rec: null, chunks: [], recT0: 0, recTimer: null, blob: null, kind: null,
     previewUrl: null, durationMs: 0, busy: false, camFailed: false, xhr: null,
     step: 'capture', camSeq: 0, camReady: false,
+    // Framing: the live camera covers the stage, and pinch/pan is expressed as
+    // a transform on it (and on the captured frame — see storyDrawFrame) so
+    // the preview is never a lie about what gets recorded.
+    zoom: 1, ox: 0, oy: 0, comp: null,
+    // Markup: text/emoji/draw items, the selected one, the tool in hand.
+    ovs: [], sel: -1, draw: false, te: null, drawing: null,
+    drawColor: '#ff4d6d', drawWidth: 0.007,
+    textOnly: false, textBg: 0, textOnlyDims: null, bgSeq: 0,
     // A shot whose bytes are still encoding (Android encodes toBlob on the
     // main thread during idle time — seconds). pendingShownUrl: the stand-in
     // on screen is that URL, not the frozen camera frame.
@@ -1120,6 +1148,7 @@ async function openStoryComposer(opts = {}) {
   storyClearFreeze(); // a stale shot must not sit over the fresh camera
   storyResetShotUi();
   storySetStep('capture');
+  storyRenderColors();
   renderStoryAudience();
   paintScMic();
   await storyStartCam();
@@ -1134,14 +1163,21 @@ function storySetStep(step) {
   // media element storyShowPreview just revealed (hiding both here would
   // blank the freshly captured shot).
   if (capture) { $('#sc-shot').classList.add('hidden'); $('#sc-play').classList.add('hidden'); }
+  if (capture && sc) { sc.sel = -1; sc.draw = false; sc.te = null; sc.drawing = null; }
+  if (!preview) { storyCloseTextEditor(); storyCloseEmoji(); }
   $('#sc-edit').classList.toggle('hidden', !preview);
+  $('#sc-tools').classList.toggle('hidden', !preview);
   $('#sc-foot').classList.toggle('hidden', !capture);
   $('#sc-bar').classList.toggle('hidden', !preview);
   $('#sc-bar2').classList.toggle('hidden', !pick);
   $('#sc-pick').classList.toggle('hidden', !pick);
   $('#sc-flip').classList.toggle('hidden', !capture || sc.camFailed);
-  $('#sc-mic').classList.toggle('hidden', !capture || sc.camFailed || sc.mode !== 'video');
+  // The mic button is only meaningful for the thing it records: a hold.
+  $('#sc-mic').classList.toggle('hidden', !capture || sc.camFailed);
   if (capture) $('#sc-hint').classList.add('hidden');
+  if (preview) storyPaintOv();
+  else $('#sc-ov').classList.add('hidden');
+  storyRenderColors();
   if (pick) renderStoryAudience();
 }
 async function storyStartCam() {
@@ -1185,8 +1221,67 @@ async function storyStartCam() {
   await storyCamFrameReady(vid);
   if (!sc || gen !== sc.camSeq || sc.step !== 'capture') { stop(); return; }
   sc.camReady = true;
+  storyApplyZoom();
   storyWarmCapture(vid);
   storySetStep('capture');
+  // Warm the mic in the background: a hold-to-record then starts on the tap
+  // instead of waiting for a permission prompt mid-gesture.
+  if (!sc.audio && !sc.micDenied) storyEnsureMic().catch(() => {});
+}
+/* ---------- framing: cover-fit + pinch zoom, shared by preview and capture ---
+ * The live camera is object-fit:cover in the stage, so the picture always
+ * fills it. Zoom is a CSS transform on that element (translate then scale) and
+ * the captured frame replays the SAME numbers through storyDrawFrame — the
+ * shot is exactly the rectangle that was on screen, never a wider sensor
+ * frame the preview hid. */
+const SC_ZOOM_MAX = 5;
+function scStage() { return $('#sc-stage'); }
+function storyClampPan() {
+  const vid = $('#sc-cam'), stage = scStage();
+  if (!sc || !vid || !stage) return;
+  if (!vid.videoWidth || !vid.videoHeight || !stage.clientWidth) { sc.ox = 0; sc.oy = 0; return; }
+  const cs = Math.max(stage.clientWidth / vid.videoWidth, stage.clientHeight / vid.videoHeight);
+  const z = sc.zoom || 1;
+  const maxX = Math.max(0, (vid.videoWidth * cs * z - stage.clientWidth) / 2);
+  const maxY = Math.max(0, (vid.videoHeight * cs * z - stage.clientHeight) / 2);
+  sc.ox = Math.min(maxX, Math.max(-maxX, sc.ox || 0));
+  sc.oy = Math.min(maxY, Math.max(-maxY, sc.oy || 0));
+}
+function storyApplyZoom() {
+  const vid = $('#sc-cam');
+  if (!vid || !sc) return;
+  storyClampPan();
+  vid.style.transform = `translate(${(sc.ox || 0).toFixed(2)}px, ${(sc.oy || 0).toFixed(2)}px) scale(${(sc.zoom || 1).toFixed(4)})`;
+}
+function storyResetZoom() {
+  if (!sc) return;
+  sc.zoom = 1; sc.ox = 0; sc.oy = 0;
+  storyApplyZoom();
+}
+// Output size for one capture: the stage's aspect ratio (so the shot is the
+// frame that was on screen), long edge capped.
+function storyDestDims(stage, maxEdge) {
+  const sw = Math.max(1, stage.clientWidth || 1), sh = Math.max(1, stage.clientHeight || 1);
+  const ar = sw / sh;
+  let w, h;
+  if (ar >= 1) { w = maxEdge; h = Math.round(maxEdge / ar); }
+  else { h = maxEdge; w = Math.round(maxEdge * ar); }
+  return { w: Math.max(2, Math.round(w)), h: Math.max(2, Math.round(h)) };
+}
+// The one place the framing math lives: draw the live video into a (dw,dh)
+// canvas exactly as the stage shows it (cover + zoom + pan).
+function storyDrawFrame(ctx, vid, dw, dh, stage) {
+  const vw = vid && vid.videoWidth, vh = vid && vid.videoHeight;
+  if (!vw || !vh || !ctx) return false;
+  const sw = (stage && stage.clientWidth) || dw;
+  const sh = (stage && stage.clientHeight) || dh;
+  const cs = Math.max(sw / vw, sh / vh);
+  const z = (sc && sc.zoom) || 1;
+  const k = dw / sw;
+  const tw = vw * cs * z * k, th = vh * cs * z * k;
+  const ox = ((sc && sc.ox) || 0) * k, oy = ((sc && sc.oy) || 0) * k;
+  ctx.drawImage(vid, (dw - tw) / 2 + ox, (dh - th) / 2 + oy, tw, th);
+  return true;
 }
 // The camera element is kept out of the render until it has real frames. An
 // empty/loading <video> makes mobile browsers paint their own grey play-button
@@ -1237,13 +1332,53 @@ function storyCamFrameReady(vid) {
 function storyStopCamTracks() {
   if (!sc) return;
   sc.camSeq = (sc.camSeq || 0) + 1; // invalidate any in-flight start
+  storyStopComposite();
   try { if (sc.stream) sc.stream.getTracks().forEach((t) => t.stop()); } catch {}
   storyStopMic();
-  sc.stream = null; sc.audio = null;
+  sc.stream = null; sc.audio = null; sc.outTrack = null;
   sc.camReady = false;
   const vid = $('#sc-cam');
-  if (vid) vid.srcObject = null;
+  if (vid) { vid.srcObject = null; vid.style.transform = ''; }
   paintScCam();
+}
+// The recording source. When the preview is showing a crop or a zoom the raw
+// sensor stream is not what the user sees, so it is composited through a
+// canvas at the stage's aspect ratio and the processed mic track is mixed in.
+function storyNeedsComposite() {
+  const vid = $('#sc-cam'), stage = scStage();
+  if (!vid || !stage || !vid.videoWidth || !vid.videoHeight || !sc) return false;
+  if ((sc.zoom || 1) > 1.001) return true;
+  const sa = stage.clientWidth / Math.max(1, stage.clientHeight);
+  return Math.abs(vid.videoWidth / vid.videoHeight - sa) > 0.02;
+}
+function storyRecordStream() {
+  if (!sc || !sc.stream) return null;
+  if (!storyNeedsComposite()) {
+    if (sc.outTrack && !sc.stream.getAudioTracks().length) { try { sc.stream.addTrack(sc.outTrack); } catch {} }
+    return sc.stream;
+  }
+  const vid = $('#sc-cam'), stage = scStage();
+  const dim = storyDestDims(stage, Math.min(1280, storyCamMaxEdge()));
+  const c = document.createElement('canvas');
+  c.width = dim.w; c.height = dim.h;
+  const ctx = c.getContext('2d');
+  if (!ctx || !c.captureStream) return sc.stream;
+  const draw = () => { try { storyDrawFrame(ctx, vid, c.width, c.height, stage); } catch {} };
+  draw();
+  const timer = setInterval(draw, 33); // interval, not rAF: a hidden tab keeps recording
+  let cs = null;
+  try { cs = c.captureStream(30); } catch { cs = null; }
+  if (!cs) { clearInterval(timer); return sc.stream; }
+  sc.comp = { timer, cs };
+  const out = new MediaStream(cs.getVideoTracks());
+  if (sc.outTrack) { try { out.addTrack(sc.outTrack); } catch {} }
+  return out;
+}
+function storyStopComposite() {
+  if (!sc || !sc.comp) return;
+  clearInterval(sc.comp.timer);
+  try { sc.comp.cs.getTracks().forEach((t) => t.stop()); } catch {}
+  sc.comp = null;
 }
 function storyCamHint(text) {
   const h = $('#sc-hint');
@@ -1313,7 +1448,9 @@ async function storyEnsureMic() {
     } catch { /* fall back to the raw track */ }
   }
   sc.audio = raw;
-  try { if (sc.stream && outTrack) sc.stream.addTrack(outTrack); } catch {}
+  sc.outTrack = outTrack || null;
+  // storyRecordStream decides whether the mic rides the raw stream or the
+  // composited one, so the track is only parked here until a recording starts.
   paintScMic();
 }
 function storyStopMic() {
@@ -1343,6 +1480,7 @@ async function storyToggleMic() {
   const tracks = sc.audio.getAudioTracks();
   const on = tracks.some((t) => t.enabled);
   for (const t of tracks) t.enabled = !on;
+  if (sc.outTrack) sc.outTrack.enabled = !on;
   const b = $('#sc-mic');
   if (b) {
     b.innerHTML = on ? svSvg.micOff : svSvg.mic;
@@ -1351,8 +1489,9 @@ async function storyToggleMic() {
   }
 }
 function storyFlipCam() {
-  if (!sc) return;
+  if (!sc || sc.step !== 'capture') return;
   sc.facing = sc.facing === 'user' ? 'environment' : 'user';
+  storyResetZoom();
   storyStartCam();
 }
 // One reusable capture canvas for the whole session. A fresh 2MP canvas per
@@ -1470,16 +1609,15 @@ async function storyJpegBlob(source, quality = 0.86) {
   });
 }
 function captureStoryPhoto() {
-  const vid = $('#sc-cam');
-  if (!sc || !vid || !vid.videoWidth) { toast('Camera is still starting'); return; }
+  const vid = $('#sc-cam'), stage = scStage();
+  if (!sc || !vid || !stage || !vid.videoWidth) { toast('Camera is still starting'); return; }
   if (scCapBusy) return;
   scCapBusy = true;
   storyFlash();
-  const w = vid.videoWidth, h = vid.videoHeight;
-  const scale = Math.min(1, storyCamMaxEdge() / Math.max(w, h));
-  const { c, ctx } = storyCaptureCanvas(Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale)));
+  const dim = storyDestDims(stage, storyCamMaxEdge());
+  const { c, ctx } = storyCaptureCanvas(dim.w, dim.h);
   try {
-    ctx.drawImage(vid, 0, 0, c.width, c.height);
+    if (!storyDrawFrame(ctx, vid, c.width, c.height, stage)) throw new Error('no_frame');
   } catch { scCapBusy = false; toast('Could not capture that frame'); return; }
   // The frame is in the canvas; the JPEG encode is the slow half, and on
   // Android it is not background work at all — Blink encodes canvas.toBlob
@@ -1505,14 +1643,17 @@ function storyStartRec() {
   if (!sc || sc.rec) return;
   const mime = storyRecMime();
   if (mime === null) { toast('Recording is not supported here — pick a video instead'); return; }
+  const src = storyRecordStream();
+  if (!src) { toast('Camera is not ready yet'); return; }
   let rec;
-  try { rec = new MediaRecorder(sc.stream, mime ? { mimeType: mime } : undefined); }
-  catch { toast('Recording is not supported here — pick a video instead'); return; }
+  try { rec = new MediaRecorder(src, mime ? { mimeType: mime } : undefined); }
+  catch { storyStopComposite(); toast('Recording is not supported here — pick a video instead'); return; }
   sc.chunks = [];
   sc.recT0 = Date.now();
   rec.ondataavailable = (e) => { if (e.data && e.data.size) sc.chunks.push(e.data); };
   rec.onstop = () => {
     if (!sc) return;
+    storyStopComposite();
     const type = String(rec.mimeType || 'video/webm').split(';')[0] || 'video/webm';
     const blob = new Blob(sc.chunks, { type });
     sc.chunks = [];
@@ -1524,13 +1665,15 @@ function storyStartRec() {
   sc.rec = rec;
   try { rec.start(); } catch { sc.rec = null; toast('Could not start recording'); return; }
   storySetShutter(true);
-  sc.recTimer = setInterval(() => {
+  const tick = () => {
     if (!sc || !sc.rec) return;
     const ms = Date.now() - sc.recT0;
     const el = $('#sc-rec-time');
     if (el) { el.classList.remove('hidden'); el.textContent = fmtClock(ms / 1000); }
     if (ms >= STORY_VIDEO_MAX_MS) storyStopRec();
-  }, 250);
+  };
+  tick(); // the timer is up on the first frame of the recording, not 250 ms in
+  sc.recTimer = setInterval(tick, 250);
 }
 function storyStopRec() {
   if (!sc || !sc.rec) return;
@@ -1544,23 +1687,544 @@ function storySetShutter(recording) {
   const b = $('#sc-shutter');
   if (!b) return;
   b.classList.toggle('rec', !!recording);
-  b.title = recording ? 'Stop recording' : (sc && sc.mode === 'video' ? 'Record' : 'Take photo');
+  const wrap = b.closest('.sc-shutter-wrap');
+  if (wrap) wrap.classList.toggle('rec', !!recording);
+  b.title = recording ? 'Stop recording' : 'Tap for a photo, hold to record';
+  const hint = $('#sc-holdhint');
+  if (hint) hint.style.visibility = recording ? 'hidden' : '';
   if (!recording) $('#sc-rec-time').classList.add('hidden');
 }
-function storyShutter() {
-  if (!sc || sc.busy) return;
-  if (sc.mode === 'photo') { captureStoryPhoto(); return; }
-  if (sc.rec) storyStopRec();
-  else { storyEnsureMic().then(() => storyStartRec()); }
+/* ---------- shutter: tap for a photo, hold for a video -------------------
+ * One control, Snapchat-style. pointerdown arms a 220 ms timer; letting go
+ * before it fires is a photo, and still holding when it fires starts a
+ * recording that stops on release. The click path stays for keyboard
+ * activation (and is ignored right after a pointer gesture, since a real tap
+ * fires both). */
+let scHoldTimer = 0, scHoldArmed = false, scHoldRecording = false;
+function storyShutterDown() {
+  if (!sc || sc.busy || sc.step !== 'capture' || !sc.camReady) return;
+  scHoldArmed = true;
+  scHoldRecording = false;
+  clearTimeout(scHoldTimer);
+  scHoldTimer = setTimeout(() => {
+    if (!sc || !scHoldArmed || sc.step !== 'capture') return;
+    scHoldRecording = true;
+    storyBeginRecording();
+  }, 220);
 }
-function storySetMode(mode) {
+function storyShutterUp() {
+  clearTimeout(scHoldTimer);
+  if (!scHoldArmed) return; // the click path (keyboard) owns this one
+  scHoldArmed = false;
+  if (scHoldRecording) { scHoldRecording = false; storyStopRec(); return; }
+  captureStoryPhoto();
+}
+async function storyBeginRecording() {
+  if (!sc || sc.rec || sc.busy) return;
+  // The mic is usually already warm (see storyStartCam); if that prompt is
+  // still on screen this is the one await between the hold and the recording.
+  try { await storyEnsureMic(); } catch {}
+  if (!sc || !scHoldRecording || sc.step !== 'capture') return;
+  storyStartRec();
+}
+/* ---------- markup editor: text, emoji stickers, freehand drawing --------
+ * Everything here edits sc.ovs (see story-edit.js for the model) and paints it
+ * through ovPaintLayer, so what the composer shows is exactly what the viewer
+ * and the view-once player will show. Coordinates are normalised to the media
+ * content box, which is why a resize only has to re-fit the layer. */
+function storyOvLayer() { return $('#sc-ov'); }
+function storyOvMedia() {
+  if (!sc) return null;
+  if (sc.kind === 'video') return $('#sc-play');
+  const img = $('#sc-shot');
+  // While the JPEG is still encoding the <img> has no src (what is on screen is
+  // the freeze canvas): lay the markup over that, or the tools would be up and
+  // inert for as long as the encode takes.
+  if (img && img.getAttribute('src') && !img.classList.contains('hidden')) return img;
+  const stage = scStage();
+  const freeze = stage && stage.querySelector('canvas.sc-freeze');
+  return freeze || img;
+}
+function storyPaintOv() {
+  const layer = storyOvLayer(), stage = scStage();
+  if (!layer || !sc) return;
+  if (sc.step !== 'preview') { layer.classList.add('hidden'); storyPaintTools(); return; }
+  ovFitLayer(layer, stage, storyOvMedia());
+  ovPaintLayer(layer, sc.ovs, { editable: true, selected: sc.draw ? null : sc.sel });
+  layer.classList.toggle('ov-drawing', !!sc.draw);
+  const edit = $('#sc-edit');
+  // The colour row takes the caption's slot: a drawing is not a caption, and a
+  // text-only story IS the text (its caption would just repeat it below).
+  if (edit) edit.classList.toggle('hidden', !!sc.draw || !!sc.textOnly);
+  storyPaintTools();
+}
+// Just the pen layer, for the frame-by-frame redraw while a stroke is going.
+function storyPaintOvDraw() {
+  const layer = storyOvLayer();
+  if (!layer || !sc) return;
+  const c = layer.querySelector('canvas.ov-draw');
+  if (!c) return;
+  const strokes = sc.ovs.filter((o) => o.t === 'draw');
+  if (sc.drawing) strokes.push(sc.drawing);
+  ovPaintDraw(c, strokes, layer.clientWidth, layer.clientHeight);
+}
+function storyPaintTools() {
   if (!sc) return;
-  sc.mode = mode === 'video' ? 'video' : 'photo';
-  document.querySelectorAll('.sc-mode').forEach((b) => b.classList.toggle('active', b.dataset.smode === sc.mode));
-  storySetShutter(false);
-  storySetStep('capture');
-  if (sc.mode === 'video') storyEnsureMic();
+  const draw = $('#sc-tool-draw');
+  if (draw) draw.classList.toggle('active', !!sc.draw);
+  const undo = $('#sc-tool-undo');
+  if (undo) undo.classList.toggle('hidden', !sc.ovs.some((o) => o.t === 'draw'));
+  const del = $('#sc-tool-del');
+  if (del) del.classList.toggle('hidden', !(sc.sel >= 0 && sc.ovs[sc.sel]));
 }
+const SC_TEXT_BGS = [
+  { name: 'Midnight', stops: ['#1b2333', '#05070c'] },
+  { name: 'Violet', stops: ['#7c3aed', '#2e1065'] },
+  { name: 'Sunset', stops: ['#fb923c', '#be123c'] },
+  { name: 'Ocean', stops: ['#22d3ee', '#1e3a8a'] },
+  { name: 'Forest', stops: ['#34d399', '#14532d'] },
+  { name: 'Candy', stops: ['#f472b6', '#7c3aed'] },
+  { name: 'Gold', stops: ['#fde047', '#b45309'] },
+  { name: 'Paper', stops: ['#f8fafc', '#cbd5e1'] },
+];
+function storySwatch(box, cls, style, on, onclick) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = cls + (on ? ' on' : '');
+  if (style) b.setAttribute('style', style);
+  b.onclick = onclick;
+  box.appendChild(b);
+  return b;
+}
+// The colour row does double duty: pen colours in draw mode, background
+// gradients for a text-only story. Only one of them is ever up.
+function storyRenderColors() {
+  const box = $('#sc-colors');
+  if (!box || !sc) return;
+  const preview = sc.step === 'preview';
+  box.textContent = '';
+  if (!preview || (!sc.draw && !sc.textOnly)) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  if (sc.textOnly) {
+    SC_TEXT_BGS.forEach((bg, i) => {
+      storySwatch(box, 'sc-swatch', `background:linear-gradient(135deg,${bg.stops[0]},${bg.stops[1]})`, i === sc.textBg, () => storyTextOnlySetBg(i)).title = bg.name;
+    });
+    return;
+  }
+  for (const c of OV_COLORS) {
+    storySwatch(box, 'sc-swatch', 'background:' + c, c === sc.drawColor, () => { sc.drawColor = c; storyRenderColors(); });
+  }
+  for (const [label, w] of [['Thin', 0.003], ['Medium', 0.0075], ['Thick', 0.016]]) {
+    const b = storySwatch(box, 'sc-swatch wide', '', w === sc.drawWidth, () => { sc.drawWidth = w; storyRenderColors(); });
+    b.textContent = label;
+  }
+}
+function storyDeleteSelected() {
+  if (!sc || sc.sel < 0 || !sc.ovs[sc.sel]) return;
+  sc.ovs.splice(sc.sel, 1);
+  sc.sel = -1;
+  if (sc.te) sc.te.i = -1;
+  storyCloseTextEditor();
+  storyPaintOv();
+}
+function storyUndoStroke() {
+  if (!sc) return;
+  for (let i = sc.ovs.length - 1; i >= 0; i--) {
+    if (sc.ovs[i].t === 'draw') { sc.ovs.splice(i, 1); break; }
+  }
+  storyPaintOv();
+}
+function storySetDraw(on) {
+  if (!sc) return;
+  sc.draw = !!on;
+  sc.sel = -1;
+  if (sc.draw) storyCloseTextEditor();
+  storyNear('emoji', false);
+  storyRenderColors();
+  storyPaintOv();
+}
+function storyNear(what, on) {
+  if (what === 'emoji') $('#sc-emoji').classList.toggle('hidden', !on);
+}
+/* --- the text tool: type on the sheet, read it on the picture ------------- */
+function storyOpenTextEditor(i) {
+  if (!sc) return;
+  const editing = Number.isInteger(i) && i >= 0 && sc.ovs[i] && sc.ovs[i].t === 'text' ? i : -1;
+  const it = editing >= 0 ? sc.ovs[editing] : null;
+  sc.te = { i: editing, color: (it && it.color) || '#ffffff', pill: !!(it && it.bg === 'pill') };
+  const inp = $('#sc-te-input');
+  if (inp) inp.value = it ? it.text : '';
+  $('#sc-te-del').classList.toggle('hidden', editing < 0);
+  const bgBtn = $('#sc-te-bg');
+  if (bgBtn) bgBtn.textContent = sc.te.pill ? 'Fill: on' : 'Background';
+  $('#sc-textedit').classList.remove('hidden');
+  if (editing >= 0) { sc.sel = editing; storyPaintOv(); }
+  storyRenderTextColors();
+  setTimeout(() => { const s = $('#sc-te-input'); if (s) { s.focus(); try { s.setSelectionRange(s.value.length, s.value.length); } catch {} } }, 30);
+}
+function storyRenderTextColors() {
+  const box = $('#sc-te-colors');
+  if (!box || !sc || !sc.te) return;
+  box.textContent = '';
+  for (const c of OV_COLORS) {
+    storySwatch(box, 'sc-swatch', 'background:' + c, c === sc.te.color, () => {
+      sc.te.color = c;
+      const it = sc.te.i >= 0 ? sc.ovs[sc.te.i] : null;
+      if (it) it.color = c;
+      storyRenderTextColors();
+      storyPaintOv();
+    });
+  }
+  const pill = storySwatch(box, 'sc-swatch wide', '', !!sc.te.pill, () => {
+    sc.te.pill = !sc.te.pill;
+    const it = sc.te.i >= 0 ? sc.ovs[sc.te.i] : null;
+    if (it) it.bg = sc.te.pill ? 'pill' : 'none';
+    storyRenderTextColors();
+    storyPaintOv();
+  });
+  pill.textContent = 'Fill';
+}
+// Every keystroke paints: the first non-empty one creates the item, later ones
+// update it, so the text is always where it will be when it is posted.
+function storyTextTyped(v) {
+  if (!sc || !sc.te) return;
+  if (sc.te.i < 0) {
+    if (!String(v).trim()) return;
+    sc.ovs.push({ t: 'text', x: 0.5, y: 0.5, r: 0, s: 1, text: String(v).slice(0, OV_TEXT_MAX), color: sc.te.color, bg: sc.te.pill ? 'pill' : 'none' });
+    sc.te.i = sc.ovs.length - 1;
+    sc.sel = sc.te.i;
+  } else if (sc.ovs[sc.te.i]) {
+    sc.ovs[sc.te.i].text = String(v).slice(0, OV_TEXT_MAX);
+  }
+  storyPaintOv();
+}
+function storyCloseTextEditor() {
+  if (!sc || !sc.te) return;
+  const t = sc.te;
+  sc.te = null;
+  const it = t.i >= 0 ? sc.ovs[t.i] : null;
+  if (it && !String(it.text || '').trim()) { sc.ovs.splice(t.i, 1); if (sc.sel === t.i) sc.sel = -1; }
+  const box = $('#sc-textedit');
+  if (box) box.classList.add('hidden');
+  storyPaintOv();
+}
+/* --- the emoji tool ------------------------------------------------------- */
+async function storyOpenEmoji() {
+  if (!sc) return;
+  sc.sel = -1;
+  storySetDraw(false);
+  $('#sc-emoji').classList.remove('hidden');
+  storyRenderEmoji('');
+  setTimeout(() => { const s = $('#sc-emoji-search'); if (s) s.focus(); }, 30);
+  try { await ensureEmojiData(); } catch {}
+  const box = $('#sc-emoji');
+  if (box && !box.classList.contains('hidden')) storyRenderEmoji(($('#sc-emoji-search') || {}).value || '');
+}
+function storyCloseEmoji() {
+  const box = $('#sc-emoji');
+  if (box) box.classList.add('hidden');
+}
+function storyEmojiGridAdd(box, char, url, title) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.title = title || '';
+  if (url) { const img = document.createElement('img'); img.src = url; img.alt = title || ''; b.appendChild(img); }
+  else b.textContent = char;
+  b.onclick = () => storyAddSticker(char);
+  box.appendChild(b);
+}
+function storyRenderEmoji(q) {
+  const box = $('#sc-emoji-grid');
+  if (!box) return;
+  const f = String(q || '').trim().toLowerCase();
+  box.textContent = '';
+  const data = (typeof emojiData !== 'undefined') ? emojiData : null;
+  if (data && data.groups) {
+    for (const g of data.groups) {
+      const items = f ? g.items.filter((it) => String(it[1] || '').includes(f)).slice(0, 240) : g.items.slice(0, 64);
+      if (!items.length) continue;
+      const sec = document.createElement('div');
+      sec.className = 'sc-emoji-sec';
+      sec.textContent = g.name;
+      box.appendChild(sec);
+      for (const [ch] of items) storyEmojiGridAdd(box, ch, null, null);
+    }
+  } else {
+    for (const ch of OV_STICKERS) storyEmojiGridAdd(box, ch, null, null);
+  }
+  const custom = Object.entries((typeof S !== 'undefined' && S && S.emojiAll) || {});
+  if (custom.length) {
+    const sec = document.createElement('div');
+    sec.className = 'sc-emoji-sec';
+    sec.textContent = 'Custom';
+    box.appendChild(sec);
+    for (const [n, em] of custom.slice(0, 160)) storyEmojiGridAdd(box, ':' + n + ':', em.url, ':' + n + ':');
+  }
+  if (!box.children.length) {
+    const p = document.createElement('p');
+    p.className = 'sc-pick-sub';
+    p.textContent = 'No emoji matched that.';
+    box.appendChild(p);
+  }
+}
+// A new sticker lands where the last one did not, so tapping five emoji in a
+// row does not stack them into one.
+function storyAddSticker(char) {
+  if (!sc) return;
+  const n = sc.ovs.filter((o) => o.t === 'emoji').length;
+  const off = (n % 5) * 0.06;
+  sc.ovs.push({ t: 'emoji', x: 0.5 + off, y: 0.42 + off, r: 0, s: 1, e: String(char).slice(0, 32) });
+  sc.sel = sc.ovs.length - 1;
+  storyPaintOv();
+}
+/* --- text-only stories: a generated background, no camera ---------------- */
+async function storyTextOnlyBlob() {
+  const stage = scStage();
+  if (!stage || !stage.clientWidth) return null;
+  // Fixed for the life of the story: the composer's stage changes shape when
+  // the shutter foot is swapped for the action bar, and a background that
+  // re-shaped itself on every swatch would slide the picture under the markup.
+  if (!sc.textOnlyDims) sc.textOnlyDims = storyDestDims(stage, 1080);
+  const dim = sc.textOnlyDims;
+  const c = document.createElement('canvas');
+  c.width = dim.w; c.height = dim.h;
+  const ctx = c.getContext('2d');
+  if (!ctx) return null;
+  const bg = SC_TEXT_BGS[sc.textBg % SC_TEXT_BGS.length];
+  const g = ctx.createLinearGradient(0, 0, c.width, c.height);
+  g.addColorStop(0, bg.stops[0]);
+  g.addColorStop(1, bg.stops[1]);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, c.width, c.height);
+  return await storyJpegBlob(c, 0.9);
+}
+async function storyStartTextOnly() {
+  if (!sc || sc.step !== 'capture' || sc.busy) return;
+  storyStopCamTracks();
+  sc.textOnly = true;
+  sc.kind = 'image';
+  const blob = await storyTextOnlyBlob();
+  if (!sc || !sc.textOnly) return;
+  if (!blob || !blob.size) { sc.textOnly = false; toast('Could not start that story'); storyStartCam(); return; }
+  // Through the same pending-shot path the gallery uses: that is what puts the
+  // picture on screen (and the composer on the markup step) straight away,
+  // with the encode/URL bookkeeping the rest of the flow expects.
+  storyShowPendingShot(URL.createObjectURL(blob));
+  storyShowPreview(blob, 'image', 0);
+  storyRenderColors();
+  storyOpenTextEditor();
+}
+async function storyTextOnlySetBg(i) {
+  if (!sc || !sc.textOnly) return;
+  sc.textBg = ((i % SC_TEXT_BGS.length) + SC_TEXT_BGS.length) % SC_TEXT_BGS.length;
+  storyRenderColors();
+  const seq = (sc.bgSeq || 0) + 1;
+  sc.bgSeq = seq;
+  const blob = await storyTextOnlyBlob();
+  // Two quick swatch taps: only the newest background may land.
+  if (!sc || !sc.textOnly || sc.bgSeq !== seq || !blob || !blob.size) return;
+  const old = sc.previewUrl;
+  sc.blob = blob; sc.kind = 'image'; sc.durationMs = 0;
+  sc.previewUrl = URL.createObjectURL(blob);
+  const img = $('#sc-shot');
+  if (img) { img.src = sc.previewUrl; img.classList.remove('hidden'); }
+  if (old) { try { URL.revokeObjectURL(old); } catch {} }
+  storyPaintOv();
+}
+/* --- gestures on the picture: tap/hold shutter, pinch zoom, double-tap flip,
+ * drag/pinch/rotate a sticker, freehand drawing. All of it hangs off pointer
+ * events on the stage and the overlay layer, and nothing is armed outside the
+ * step it belongs to. ----------------------------------------------------- */
+function storyBindGestures() {
+  const stage = scStage(), layer = storyOvLayer();
+  if (!stage || !layer) return;
+  /* capture-side: pinch to zoom, drag to pan, double-tap to flip */
+  const ptrs = new Map();
+  let pin = null, pan = null, multi = false, lastTap = 0, lastTapX = 0, lastTapY = 0;
+  stage.addEventListener('pointerdown', (e) => {
+    if (!sc || sc.step !== 'capture') return;
+    if (e.target.closest('button')) return;
+    if (e.button && e.button !== 0) return;
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()];
+      const r = stage.getBoundingClientRect();
+      const c = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      pin = {
+        d: Math.hypot(a.x - b.x, a.y - b.y) || 1, z: (sc.zoom || 1), ox: (sc.ox || 0), oy: (sc.oy || 0),
+        mx: c.x - (r.left + r.width / 2), my: c.y - (r.top + r.height / 2),
+      };
+      pan = null; multi = true;
+    } else if (ptrs.size === 1 && (sc.zoom || 1) > 1.001) {
+      pan = { x: e.clientX, y: e.clientY, ox: (sc.ox || 0), oy: (sc.oy || 0), moved: false };
+    }
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (!sc || sc.step !== 'capture' || !ptrs.has(e.pointerId)) return;
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pin && ptrs.size >= 2) {
+      const [a, b] = [...ptrs.values()];
+      const r = stage.getBoundingClientRect();
+      const c = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      const z = Math.min(SC_ZOOM_MAX, Math.max(1, pin.z * (d / pin.d)));
+      const k = z / pin.z;
+      sc.zoom = z;
+      // The point under the fingers stays under the fingers: the content offset
+      // scales with z, and the midpoint's own travel is added on top.
+      sc.ox = (c.x - (r.left + r.width / 2)) - (pin.mx - pin.ox) * k;
+      sc.oy = (c.y - (r.top + r.height / 2)) - (pin.my - pin.oy) * k;
+      storyApplyZoom();
+      return;
+    }
+    if (pan) {
+      const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+      if (Math.abs(dx) > 6 || Math.abs(dy) > 6) pan.moved = true;
+      sc.ox = pan.ox + dx; sc.oy = pan.oy + dy;
+      storyApplyZoom();
+    }
+  });
+  const stageUp = (e) => {
+    if (!ptrs.has(e.pointerId)) return;
+    ptrs.delete(e.pointerId);
+    if (ptrs.size < 2) pin = null;
+    if (ptrs.size) return;
+    pan = null;
+    if (!sc || sc.step !== 'capture') { multi = false; return; }
+    // Double-tap flips the camera (the button stays for keyboard/mouse).
+    if (!multi) {
+      const t = Date.now();
+      const near = Math.hypot(e.clientX - lastTapX, e.clientY - lastTapY) < 60;
+      if (t - lastTap < 320 && near) { lastTap = 0; storyFlipCam(); }
+      else { lastTap = t; lastTapX = e.clientX; lastTapY = e.clientY; }
+    }
+    multi = false;
+  };
+  // Up/cancel on the window, not the stage: a finger that leaves the picture
+  // (or a pointer the browser cancels) must still retire its entry, or the
+  // next single-finger tap reads as a two-finger pinch.
+  window.addEventListener('pointerup', stageUp);
+  window.addEventListener('pointercancel', stageUp);
+  // Trackpad pinch arrives as ctrl+wheel on desktop.
+  stage.addEventListener('wheel', (e) => {
+    if (!sc || sc.step !== 'capture' || !e.ctrlKey) return;
+    e.preventDefault();
+    const r = stage.getBoundingClientRect();
+    const mx = e.clientX - (r.left + r.width / 2), my = e.clientY - (r.top + r.height / 2);
+    const z0 = sc.zoom || 1;
+    const z = Math.min(SC_ZOOM_MAX, Math.max(1, z0 * (1 - e.deltaY / 240)));
+    const k = z / z0;
+    sc.ox = mx - (mx - (sc.ox || 0)) * k;
+    sc.oy = my - (my - (sc.oy || 0)) * k;
+    sc.zoom = z;
+    storyApplyZoom();
+  }, { passive: false });
+  /* overlay-side: pen, then drag/pinch/rotate the selected sticker */
+  const oPtrs = new Map();
+  let gest = null, opinch = null;
+  const itemEl = (i) => layer.querySelector('.ov-item[data-i="' + i + '"]');
+  const place = (i) => {
+    const el = itemEl(i), o = sc && sc.ovs[i];
+    if (!el || !o) return;
+    el.style.left = (o.x * 100).toFixed(3) + '%';
+    el.style.top = (o.y * 100).toFixed(3) + '%';
+    el.style.transform = 'translate(-50%,-50%) rotate(' + o.r.toFixed(2) + 'deg) scale(' + o.s.toFixed(4) + ')';
+  };
+  const penPoint = (e) => {
+    const r = layer.getBoundingClientRect();
+    return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
+  };
+  layer.addEventListener('pointerdown', (e) => {
+    if (!sc || sc.step !== 'preview') return;
+    if (e.button && e.button !== 0) return;
+    e.preventDefault();
+    if (sc.draw) {
+      try { layer.setPointerCapture(e.pointerId); } catch {}
+      sc.drawing = { t: 'draw', color: sc.drawColor, w: sc.drawWidth, p: [penPoint(e)] };
+      storyPaintOvDraw();
+      return;
+    }
+    const i = ovHit(layer, e.clientX, e.clientY);
+    if (i < 0) {
+      if (sc.sel !== -1) { sc.sel = -1; storyPaintOv(); }
+      return;
+    }
+    const wasSel = sc.sel === i;
+    sc.sel = i;
+    storyPaintOv();
+    try { layer.setPointerCapture(e.pointerId); } catch {}
+    oPtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    gest = { i, x0: e.clientX, y0: e.clientY, o: Object.assign({}, sc.ovs[i]), moved: false, wasSel, pid: e.pointerId };
+    if (oPtrs.size === 2) {
+      const [a, b] = [...oPtrs.values()];
+      opinch = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, a0: Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI, s0: sc.ovs[i].s, r0: sc.ovs[i].r };
+    }
+  });
+  layer.addEventListener('pointermove', (e) => {
+    if (!sc || sc.step !== 'preview') return;
+    if (sc.drawing) {
+      const p = penPoint(e);
+      const last = sc.drawing.p[sc.drawing.p.length - 1];
+      if (last && Math.hypot(p[0] - last[0], p[1] - last[1]) < 0.006) return;
+      if (sc.drawing.p.length >= OV_POINTS_MAX) return;
+      sc.drawing.p.push(p);
+      storyPaintOvDraw();
+      return;
+    }
+    if (!gest || !oPtrs.has(e.pointerId)) return;
+    const o = sc.ovs[gest.i];
+    if (!o) return;
+    oPtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (opinch && oPtrs.size >= 2) {
+      const [a, b] = [...oPtrs.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      const ang = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
+      o.s = Math.min(8, Math.max(0.15, opinch.s0 * (d / opinch.d0)));
+      o.r = opinch.r0 + (ang - opinch.a0);
+      gest.moved = true;
+      place(gest.i);
+      return;
+    }
+    if (Math.abs(e.clientX - gest.x0) > 4 || Math.abs(e.clientY - gest.y0) > 4) gest.moved = true;
+    const r = layer.getBoundingClientRect();
+    o.x = Math.min(1.15, Math.max(-0.15, gest.o.x + (e.clientX - gest.x0) / r.width));
+    o.y = Math.min(1.15, Math.max(-0.15, gest.o.y + (e.clientY - gest.y0) / r.height));
+    place(gest.i);
+  });
+  const layerUp = (e) => {
+    if (sc && sc.drawing) {
+      const s = sc.drawing;
+      sc.drawing = null;
+      if (s.p.length) sc.ovs.push(s);
+      storyPaintOv();
+    }
+    oPtrs.delete(e.pointerId);
+    if (oPtrs.size < 2) opinch = null;
+    if (!gest || oPtrs.size) return;
+    const g = gest;
+    gest = null;
+    if (sc && sc.ovs[g.i]) sc.ovs[g.i].r = ((sc.ovs[g.i].r + 180) % 360 + 360) % 360 - 180;
+    storyPaintOv();
+    // A tap on an already-selected text sticker opens the editor; the first
+    // tap just selects it (that is also what shows the delete button).
+    if (!g.moved && g.wasSel && sc && sc.ovs[g.i] && sc.ovs[g.i].t === 'text') storyOpenTextEditor(g.i);
+  };
+  layer.addEventListener('pointerup', layerUp);
+  layer.addEventListener('pointercancel', layerUp);
+}
+// Overlays are normalised against the media's content box, so anything that
+// changes that box (a rotate, a window resize, the viewer's own layout) has to
+// re-lay them out: the numbers are resolution-free, the pixels are not.
+function ovRefit() {
+  try { if (sc && sc.step === 'capture') storyApplyZoom(); } catch {}
+  try { if (sc && sc.step === 'preview') storyPaintOv(); } catch {}
+  try { if (sv) svPaintOverlays(); } catch {}
+  try { if (typeof voState !== 'undefined' && voState) voRefitOverlays(); } catch {}
+}
+let ovRefitT = 0;
+window.addEventListener('resize', () => { clearTimeout(ovRefitT); ovRefitT = setTimeout(ovRefit, 90); });
+window.addEventListener('orientationchange', () => setTimeout(ovRefit, 180));
+
 // ---------- preview (after capture / pick) ----------
 // Show the captured pixels as the stand-in photo. Putting the very canvas the
 // encoder reads from into the stage costs no copy and no decode, and — unlike
@@ -1631,6 +2295,7 @@ function storyShowPreview(blob, kind, durationMs) {
     vid.classList.remove('hidden');
     vid.src = sc.previewUrl;
     vid.muted = false;
+    vid.addEventListener('loadedmetadata', () => storyPaintOv(), { once: true });
     vid.play().catch(() => { vid.muted = true; vid.play().catch(() => {}); });
     storyRevealPreview('video', true);
   } else if (sc.pendingShownUrl) {
@@ -1683,6 +2348,9 @@ function storyRetake() {
   if (sc.pendingUrl) { try { URL.revokeObjectURL(sc.pendingUrl); } catch {} }
   sc.previewUrl = null; sc.blob = null; sc.kind = null; sc.durationMs = 0;
   sc.pendingShot = false; sc.pendingUrl = null; sc.pendingShownUrl = false;
+  sc.textOnly = false;
+  sc.textOnlyDims = null;
+  sc.ovs = []; sc.sel = -1; sc.draw = false; sc.te = null; sc.drawing = null;
   sc.shotSeq = (sc.shotSeq || 0) + 1; // an in-flight encode must not resurrect this shot
   scCapBusy = false;                  // …nor may its callback keep the shutter locked
   storyResetShotUi();
@@ -1868,8 +2536,11 @@ function closeStoryComposer() {
   try { if (st.audio) st.audio.getTracks().forEach((t) => t.stop()); } catch {}
   try { if (st.previewUrl) URL.revokeObjectURL(st.previewUrl); } catch {}
   try { if (st.pendingUrl) URL.revokeObjectURL(st.pendingUrl); } catch {}
+  clearTimeout(scHoldTimer);
+  scHoldArmed = false; scHoldRecording = false;
+  storyStopComposite();
   const cam = $('#sc-cam');
-  if (cam) cam.srcObject = null;
+  if (cam) { cam.srcObject = null; cam.style.transform = ''; }
   const play = $('#sc-play');
   if (play) { try { play.pause(); } catch {} play.removeAttribute('src'); }
   const shot = $('#sc-shot');
@@ -1878,6 +2549,8 @@ function closeStoryComposer() {
   const cap = $('#sc-caption');
   if (cap) cap.value = '';
   $('#sc-file').value = '';
+  const ov = $('#sc-ov');
+  if (ov) { ov.textContent = ''; ov.classList.add('hidden'); }
   storyProgress(null);
   $('#story-compose').classList.add('hidden');
   if (!$('#story-view') || $('#story-view').classList.contains('hidden')) document.body.classList.remove('story-open');
@@ -1973,6 +2646,10 @@ async function storyPostNow() {
   btn.disabled = true;
   btn.textContent = 'Uploading…';
   const caption = ($('#sc-caption').value || '').trim().slice(0, 200);
+  // The markup rides with the post (see story-edit.js): the server validates
+  // it again, stores it as JSON, and every surface that shows the story — the
+  // viewer and a view-once DM made from it — renders it over the media.
+  const overlays = ovSanitize(st.ovs);
   const dmIds = st.vo ? (st.voIds || []).slice() : (st.audUsers || []).slice();
   const broadcast = !st.vo && scBroadcast();
   const privateOnly = !st.vo && !broadcast && dmIds.length > 0;
@@ -2009,7 +2686,7 @@ async function storyPostNow() {
   if (st.vo || privateOnly) {
     btn.textContent = 'Sending…';
     try {
-      const r = await sendViewOnce({ url: up.url, mime: up.mime, kind: up.kind || st.kind, caption, userIds: dmIds });
+      const r = await sendViewOnce({ url: up.url, mime: up.mime, kind: up.kind || st.kind, caption, overlays, userIds: dmIds });
       storyProgress(null);
       closeStoryComposer();
       toast(r.sent === 1 ? 'Sent to their DMs — view-once' : `Sent to ${r.sent} friends as view-once DMs`);
@@ -2026,7 +2703,7 @@ async function storyPostNow() {
     const r = await api('/api/stories', {
       method: 'POST',
       body: JSON.stringify({
-        url: up.url, mime: up.mime, kind: st.kind, caption,
+        url: up.url, mime: up.mime, kind: st.kind, caption, overlays,
         friends: !!st.audFriends, everyone: !!st.audEveryone,
         servers: st.audServers || [],
         durationMs: st.durationMs || undefined,
@@ -2044,7 +2721,7 @@ async function storyPostNow() {
   let dmSent = 0;
   if (dmIds.length && story) {
     try {
-      const r = await sendViewOnce({ storyId: story.id, userIds: dmIds, caption });
+      const r = await sendViewOnce({ storyId: story.id, userIds: dmIds, caption, overlays });
       dmSent = Number(r.sent) || 0;
     } catch (err) { toast('Story posted, but the DMs failed: ' + prettyError(err.message)); }
   }
@@ -2207,22 +2884,62 @@ document.addEventListener('pointerdown', (e) => {
 
 // composer wiring
 $('#sc-close').onclick = () => closeStoryComposer();
-// Shutter on pointerdown, not click: the WebView's click synthesis can add
-// real latency to the one control where a lag reads as "broken". The click
-// path stays for keyboard activation (and is ignored right after a tap).
+// The shutter answers on pointerdown, not click (the WebView's click synthesis
+// adds real latency to the one control where a lag reads as "broken"), and it
+// resolves on release: a tap is a photo, a hold is a recording. The click path
+// stays for keyboard activation and is ignored right after a pointer gesture,
+// since a real tap fires both.
 let scShutterTap = 0;
 $('#sc-shutter').addEventListener('pointerdown', (e) => {
   if (e.button && e.button !== 0) return;
   scShutterTap = Date.now();
-  storyShutter();
+  // Capture so a hold that drifts off the button still ends on release (and
+  // never leaves a recording running on a lost pointerup).
+  try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+  storyShutterDown();
 });
+$('#sc-shutter').addEventListener('pointerup', (e) => {
+  if (e.button && e.button !== 0) return;
+  storyShutterUp();
+});
+$('#sc-shutter').addEventListener('pointercancel', () => {
+  clearTimeout(scHoldTimer);
+  scHoldArmed = false;
+  // A cancelled hold (the browser took the gesture) must not leave a recorder
+  // running until the 60 s cap: stop it and keep whatever it captured.
+  if (scHoldRecording) { scHoldRecording = false; storyStopRec(); }
+});
+$('#sc-shutter').addEventListener('lostpointercapture', () => { if (scHoldArmed) storyShutterUp(); });
 $('#sc-shutter').addEventListener('click', () => {
   if (Date.now() - scShutterTap < 600) return;
-  storyShutter();
+  if (sc && sc.step === 'capture' && sc.camReady) captureStoryPhoto();
 });
 $('#sc-flip').onclick = () => storyFlipCam();
 $('#sc-mic').onclick = () => storyToggleMic();
 $('#sc-gallery').onclick = () => $('#sc-file').click();
+$('#sc-textonly').onclick = () => storyStartTextOnly();
+$('#sc-tool-text').onclick = () => storyOpenTextEditor(-1);
+$('#sc-tool-emoji').onclick = () => storyOpenEmoji();
+$('#sc-tool-draw').onclick = () => storySetDraw(!(sc && sc.draw));
+$('#sc-tool-undo').onclick = () => storyUndoStroke();
+$('#sc-tool-del').onclick = () => storyDeleteSelected();
+$('#sc-te-input').addEventListener('input', (e) => storyTextTyped(e.target.value));
+$('#sc-te-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); storyCloseTextEditor(); }
+});
+$('#sc-te-done').onclick = () => storyCloseTextEditor();
+$('#sc-te-del').onclick = () => storyDeleteSelected();
+$('#sc-te-bg').onclick = () => {
+  if (!sc || !sc.te) return;
+  sc.te.pill = !sc.te.pill;
+  const it = sc.te.i >= 0 ? sc.ovs[sc.te.i] : null;
+  if (it) it.bg = sc.te.pill ? 'pill' : 'none';
+  $('#sc-te-bg').textContent = sc.te.pill ? 'Fill: on' : 'Background';
+  storyRenderTextColors();
+  storyPaintOv();
+};
+$('#sc-emoji-close').onclick = () => storyCloseEmoji();
+$('#sc-emoji-search').addEventListener('input', (e) => storyRenderEmoji(e.target.value));
 $('#sc-retake').onclick = () => storyRetake();
 $('#sc-post').onclick = () => storyPostNow();
 $('#sc-next').onclick = () => { if (sc && !sc.busy) storySetStep('audience'); };
@@ -2237,11 +2954,17 @@ $('#sc-file').addEventListener('change', (e) => {
   if (f) storyPickFile(f);
   e.target.value = '';
 });
-document.querySelectorAll('.sc-mode').forEach((b) => { b.onclick = () => storySetMode(b.dataset.smode); });
 $('#sc-caption').addEventListener('input', (e) => {
   e.target.style.height = 'auto';
   e.target.style.height = Math.min(e.target.scrollHeight, 88) + 'px';
 });
+storyBindGestures();
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && sc) { e.preventDefault(); closeStoryComposer(); }
+  if (e.key === 'Escape' && sc) {
+    // A tool sheet closes first; the second Escape leaves the composer.
+    if (!$('#sc-textedit').classList.contains('hidden')) { e.preventDefault(); storyCloseTextEditor(); return; }
+    if (!$('#sc-emoji').classList.contains('hidden')) { e.preventDefault(); storyCloseEmoji(); return; }
+    e.preventDefault();
+    closeStoryComposer();
+  }
 });

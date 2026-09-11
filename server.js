@@ -2131,6 +2131,82 @@ const STORY_CAPTION_MAX = 200;
 const STORY_MIN_GAP_MS = 3000; // anti-flood: one post per few seconds
 const storyPostAt = new Map();
 
+// ---- story markup (text / emoji stickers / freehand drawing) ----
+// The composer sends a JSON array of overlay items; nothing about it is
+// trusted. Rendered by every viewer (public/js/story-edit.js) over the media —
+// never baked into the bytes, so it stays crisp and a video keeps its markup.
+//   { t:'text',  x,y,r,s, text, color, bg }   x/y are centres in 0..1 of the
+//   { t:'emoji', x,y,r,s, e }                 media content box, r degrees,
+//   { t:'draw',  color, w, p:[[x,y], ...] }   s scale, w fraction of width.
+const STORY_OVERLAY_MAX = 60;
+const STORY_OVERLAY_POINTS = 300;
+const STORY_OVERLAY_POINTS_TOTAL = 2400;
+const STORY_OVERLAY_BYTES = 24000;
+function ovNum(v, min, max, dflt) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : dflt;
+}
+function ovColor(v, dflt = '#ffffff') {
+  return /^#[0-9a-f]{3}(?:[0-9a-f]{3}(?:[0-9a-f]{2})?)?$/i.test(String(v || '')) ? String(v) : dflt;
+}
+function sanitizeOverlays(raw) {
+  const out = [];
+  let points = 0;
+  for (const o of (Array.isArray(raw) ? raw : [])) {
+    if (out.length >= STORY_OVERLAY_MAX) break;
+    if (!o || typeof o !== 'object') continue;
+    const x = ovNum(o.x, -0.5, 1.5, 0.5);
+    const y = ovNum(o.y, -0.5, 1.5, 0.5);
+    const r = ovNum(o.r, -360, 360, 0);
+    const s = ovNum(o.s, 0.05, 12, 1);
+    if (o.t === 'text') {
+      const text = String(o.text == null ? '' : o.text).replace(/[\u0000-\u0008\u000b-\u001f]/g, '').slice(0, 200);
+      if (!text.trim()) continue;
+      out.push({ t: 'text', x, y, r, s, text, color: ovColor(o.color), bg: o.bg === 'pill' ? 'pill' : 'none' });
+    } else if (o.t === 'emoji') {
+      const e = String(o.e == null ? '' : o.e).slice(0, 32);
+      if (!e.trim()) continue;
+      out.push({ t: 'emoji', x, y, r, s, e });
+    } else if (o.t === 'draw') {
+      const room = STORY_OVERLAY_POINTS_TOTAL - points;
+      if (room < 2) continue;
+      const p = [];
+      for (const pt of (Array.isArray(o.p) ? o.p : [])) {
+        if (p.length >= Math.min(STORY_OVERLAY_POINTS, room)) break;
+        if (!Array.isArray(pt) || pt.length < 2) continue;
+        p.push([+ovNum(pt[0], -1, 2, 0).toFixed(4), +ovNum(pt[1], -1, 2, 0).toFixed(4)]);
+      }
+      if (!p.length) continue;
+      points += p.length;
+      out.push({ t: 'draw', color: ovColor(o.color), w: ovNum(o.w, 0.0008, 0.2, 0.007), p });
+    }
+  }
+  // Drawing is the cheap-to-lose part of the payload: when the list is over
+  // budget the strokes go before the text and the stickers do.
+  const size = (a) => { try { return JSON.stringify(a).length; } catch { return 0; } };
+  if (size(out) > STORY_OVERLAY_BYTES) {
+    let trimmed = out.slice();
+    for (let i = 0; i < trimmed.length && size(trimmed) > STORY_OVERLAY_BYTES; i++) {
+      if (trimmed[i].t === 'draw') trimmed[i] = null;
+    }
+    trimmed = trimmed.filter(Boolean);
+    while (trimmed.length > 1 && size(trimmed) > STORY_OVERLAY_BYTES) trimmed.pop();
+    return trimmed;
+  }
+  return out;
+}
+function overlaysToJson(raw) {
+  const arr = sanitizeOverlays(raw);
+  if (!arr.length) return '';
+  let s = '';
+  try { s = JSON.stringify(arr); } catch { return ''; }
+  return s.length > STORY_OVERLAY_BYTES ? '' : s;
+}
+function overlaysFromJson(s) {
+  if (!s) return [];
+  try { return sanitizeOverlays(JSON.parse(s)); } catch { return []; }
+}
+
 async function acceptedFriendIds(userId) {
   const rows = await db.prepare('SELECT user_a, user_b FROM friendships WHERE status = ? AND (user_a = ? OR user_b = ?)').all('accepted', userId, userId);
   return rows.map((f) => (f.user_a === userId ? f.user_b : f.user_a));
@@ -2184,6 +2260,7 @@ function storyView(s, author, seen, views, shared) {
     duration_ms: Math.max(1000, Math.min(60000, Number(s.duration_ms) || 5000)),
     created_at: s.created_at, expires_at: s.expires_at,
     audience: s.audience, server_id: s.server_id || null,
+    overlays: overlaysFromJson(s.overlays),
     shared: shared || null,
     author: author || null, seen: !!seen, views: Number(views) || 0,
   };
@@ -2392,11 +2469,12 @@ app.post('/api/stories', authRequired, async (req, res) => {
   if (!aud.friends && !aud.everyone && !servers.length && !users.length) return res.status(400).json({ error: 'pick_audience' });
   const caption = squashBreaks(String(req.body?.caption || '')).trim().slice(0, STORY_CAPTION_MAX);
   const durationMs = Math.max(1000, Math.min(60000, parseInt(req.body?.durationMs || 0, 10) || 5000));
+  const overlays = overlaysToJson(req.body?.overlays);
   const id = uid();
   const created = now();
   // Legacy columns hold a coarse summary (audiences are read from the shares).
-  await db.prepare('INSERT INTO stories (id,user_id,audience,server_id,url,mime,kind,caption,duration_ms,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-    .run(id, me.id, aud.friends || aud.everyone ? 'friends' : 'server', servers.length === 1 && !aud.friends && !aud.everyone ? servers[0] : null, url, mime, kind, caption, durationMs, created, created + STORY_TTL_MS);
+  await db.prepare('INSERT INTO stories (id,user_id,audience,server_id,url,mime,kind,caption,duration_ms,created_at,expires_at,overlays) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(id, me.id, aud.friends || aud.everyone ? 'friends' : 'server', servers.length === 1 && !aud.friends && !aud.everyone ? servers[0] : null, url, mime, kind, caption, durationMs, created, created + STORY_TTL_MS, overlays);
   const insShare = db.prepare('INSERT INTO story_audiences (id,story_id,kind,server_id,created_at) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING');
   if (aud.friends) await insShare.run(uid(), id, 'friends', null, created);
   if (aud.everyone) await insShare.run(uid(), id, 'everyone', null, created);
@@ -2405,7 +2483,7 @@ app.post('/api/stories', authRequired, async (req, res) => {
   storyPostAt.set(me.id, created);
   if (storyPostAt.size > 5000) storyPostAt.clear(); // bound the flood map
   const shared = { friends: aud.friends, everyone: aud.everyone, servers, users };
-  const story = { id, user_id: me.id, audience: 'multi', server_id: null, url, mime, kind, caption, duration_ms: durationMs, created_at: created, expires_at: created + STORY_TTL_MS, shared };
+  const story = { id, user_id: me.id, audience: 'multi', server_id: null, url, mime, kind, caption, duration_ms: durationMs, created_at: created, expires_at: created + STORY_TTL_MS, overlays, shared };
   await announceStoryNew(story, publicUser(me));
   res.json({ story: storyView(story, publicUser(me), true, 0, shared) });
 });
@@ -2519,6 +2597,9 @@ app.post('/api/dm/viewonce', authRequired, async (req, res) => {
   let mime = String(req.body?.mime || '').slice(0, 80);
   let kind = storyKindForMime(mime);
   let caption = squashBreaks(String(req.body?.caption || '')).trim().slice(0, 200);
+  // A story sent to individual friends keeps its markup: the bytes are copied
+  // to the gated prefix, and the overlay list is copied into the DM row.
+  let overlays = overlaysToJson(req.body?.overlays);
   const ids = [...new Set((Array.isArray(req.body?.userIds) ? req.body.userIds : []).map(String).filter((x) => x && x !== me.id))].slice(0, 25);
   if (!ids.length) return res.status(400).json({ error: 'pick_friends' });
   if (!rateOk(me.id)) return res.status(429).json({ error: 'slow_down' });
@@ -2542,6 +2623,7 @@ app.post('/api/dm/viewonce', authRequired, async (req, res) => {
     mime = String(s.mime || '').slice(0, 80) || (s.kind === 'video' ? 'video/mp4' : 'image/jpeg');
     kind = storyKindForMime(mime) || (s.kind === 'video' ? 'video' : 'image');
     if (!caption) caption = squashBreaks(String(s.caption || '')).trim().slice(0, 200);
+    if (!overlays) overlays = overlaysToJson(overlaysFromJson(s.overlays));
     pushed = 'Sent a story';
     // The copy is new bytes: give the scanner its own verdict (same as upload).
     try { await require('./virus-scan').queueFileScan('viewonce/' + url.split('?')[0].split('/').pop()); } catch {}
@@ -2559,8 +2641,8 @@ app.post('/api/dm/viewonce', authRequired, async (req, res) => {
     if (await db.prepare('SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)').get(me.id, otherId, otherId, me.id)) continue;
     const t = await dmThreadWith(me.id, otherId);
     const mid = uid();
-    await db.prepare('INSERT INTO dm_messages (id,thread_id,user_id,content,reply_to_id,fwd_from,view_once,view_once_state,view_once_replays,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
-      .run(mid, t.id, me.id, caption, null, null, 1, 'unopened', 1, now());
+    await db.prepare('INSERT INTO dm_messages (id,thread_id,user_id,content,reply_to_id,fwd_from,view_once,view_once_state,view_once_replays,viewonce_overlays,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+      .run(mid, t.id, me.id, caption, null, null, 1, 'unopened', 1, overlays, now());
     await db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ?').run(t.id);
     await db.prepare('INSERT INTO dm_attachments (id,message_id,url,filename,mime,size,kind,spoiler,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
       .run(uid(), mid, url, caption || (kind === 'video' ? 'View-once video' : 'View-once photo'), mime, size, kind, 0, now());
@@ -2597,6 +2679,7 @@ app.post('/api/dm/:mid/viewonce/open', authRequired, async (req, res) => {
   res.json({
     url: String(att.url).split('?')[0] + '?t=' + ticket,
     kind: att.kind, mime: att.mime, caption: m.content || '', name: att.filename,
+    overlays: overlaysFromJson(m.viewonce_overlays),
     state: m.view_once_state, replaysLeft: Number(m.view_once_replays) || 0,
   });
 });

@@ -523,6 +523,7 @@
     <button id="vo-close" class="sv-ico" title="Close" aria-label="Close"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
   </div>
   <div class="vo-stage" id="vo-stage">
+    <div class="ov-layer ov-view" id="vo-ov" aria-hidden="true"></div>
     <div class="vo-cap hidden" id="vo-cap"></div>
   </div>
   <div class="vo-foot"><span id="vo-sub">One view · you can replay once</span><span class="vo-hint" id="vo-hint">Tap anywhere to close</span></div>
@@ -541,6 +542,7 @@
   <div class="sv-stage" id="sv-stage">
     <img id="sv-img" alt="" draggable="false" />
     <video id="sv-vid" playsinline webkit-playsinline loop muted class="hidden"></video>
+    <div class="ov-layer ov-view" id="sv-ov" aria-hidden="true"></div>
     <div class="sv-cap hidden" id="sv-cap"></div>
     <div class="sv-wait hidden" id="sv-wait"><span class="sv-spin"></span><span id="sv-wait-txt">Processing…</span></div>
     <button id="sv-prev" class="sv-zone prev" aria-label="Previous story"></button>
@@ -560,10 +562,11 @@
 
 <!-- stories: composer — shoot a photo/video or pick one from the gallery -->
 <div id="story-compose" class="hidden" role="dialog" aria-modal="true" aria-label="New story">
-  <div class="sc-stage">
+  <div class="sc-stage" id="sc-stage">
     <video id="sc-cam" playsinline webkit-playsinline autoplay muted></video>
     <img id="sc-shot" class="hidden" alt="" draggable="false" />
     <video id="sc-play" class="hidden" playsinline webkit-playsinline loop></video>
+    <div class="ov-layer" id="sc-ov"></div>
     <div class="sv-wait hidden" id="sc-wait"><span class="sv-spin"></span><span id="sc-wait-txt">Starting camera…</span></div>
     <div class="sc-hint hidden" id="sc-hint"></div>
     <div class="sc-prog hidden" id="sc-prog"><div class="sc-prog-fill" id="sc-prog-fill"></div></div>
@@ -572,11 +575,36 @@
   <div class="sc-top">
     <button id="sc-close" class="sv-ico" title="Cancel" aria-label="Cancel"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <span class="spacer"></span>
-    <button id="sc-flip" class="sv-ico" title="Flip camera" aria-label="Flip camera"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.7-5.7L20 8"/><path d="M20 4v4h-4"/><path d="M20 12a8 8 0 0 1-13.7 5.7L4 16"/><path d="M4 20v-4h4"/></svg></button>
+    <button id="sc-flip" class="sv-ico" title="Flip camera (or double-tap the picture)" aria-label="Flip camera"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.7-5.7L20 8"/><path d="M20 4v4h-4"/><path d="M20 12a8 8 0 0 1-13.7 5.7L4 16"/><path d="M4 20v-4h4"/></svg></button>
     <button id="sc-mic" class="sv-ico" title="Microphone" aria-label="Microphone" aria-pressed="false"></button>
   </div>
+  <div class="sc-tools hidden" id="sc-tools">
+    <button type="button" class="sc-tool" id="sc-tool-text" title="Add text" aria-label="Add text"><span class="sc-tool-aa">Aa</span></button>
+    <button type="button" class="sc-tool" id="sc-tool-emoji" title="Add an emoji" aria-label="Add an emoji"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0"/><circle cx="9" cy="10" r=".9" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r=".9" fill="currentColor" stroke="none"/></svg></button>
+    <button type="button" class="sc-tool" id="sc-tool-draw" title="Draw" aria-label="Draw"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l3.5-1 9.6-9.6a2.1 2.1 0 0 0 0-3l-.5-.5a2.1 2.1 0 0 0-3 0L4 15.5z"/><path d="M14 7.5l2.5 2.5"/></svg></button>
+    <button type="button" class="sc-tool hidden" id="sc-tool-undo" title="Undo stroke" aria-label="Undo stroke"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+    <button type="button" class="sc-tool danger hidden" id="sc-tool-del" title="Remove" aria-label="Remove"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+  </div>
+  <div class="sc-colors hidden" id="sc-colors"></div>
   <div class="sc-edit hidden" id="sc-edit">
     <textarea id="sc-caption" maxlength="200" rows="1" placeholder="Add a caption…"></textarea>
+  </div>
+  <div class="sc-textedit hidden" id="sc-textedit">
+    <textarea id="sc-te-input" rows="2" maxlength="200" placeholder="Type something…" autocomplete="off"></textarea>
+    <div class="sc-swatches" id="sc-te-colors"></div>
+    <div class="sc-te-row">
+      <button type="button" class="btn small" id="sc-te-bg">Background</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn small danger hidden" id="sc-te-del">Delete</button>
+      <button type="button" class="btn small primary" id="sc-te-done">Done</button>
+    </div>
+  </div>
+  <div class="sc-emoji hidden" id="sc-emoji">
+    <div class="sc-emoji-head">
+      <input id="sc-emoji-search" placeholder="Search emoji" autocomplete="off" />
+      <button type="button" class="sv-ico" id="sc-emoji-close" title="Done" aria-label="Done"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="sc-emoji-grid" id="sc-emoji-grid"></div>
   </div>
   <div class="sc-pick hidden" id="sc-pick">
     <div class="sc-pick-head">
@@ -590,14 +618,16 @@
     <div id="sc-pick-list" class="sc-pick-list"></div>
   </div>
   <div class="sc-foot" id="sc-foot">
-    <button id="sc-gallery" class="sc-ico" title="Pick a photo or video"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M21 16l-5-5-6 6"/></svg><span>Media</span></button>
+    <div class="sc-side">
+      <button id="sc-gallery" class="sc-ico" title="Pick a photo or video"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M21 16l-5-5-6 6"/></svg><span>Media</span></button>
+      <button id="sc-textonly" class="sc-ico" title="Text-only story — no camera"><span class="sc-ico-aa">Aa</span><span>Text</span></button>
+    </div>
     <div class="sc-shutter-wrap">
-      <button id="sc-shutter" class="sc-shutter" aria-label="Capture"></button>
+      <button id="sc-shutter" class="sc-shutter" aria-label="Tap for a photo, hold to record a video"></button>
       <span id="sc-rec-time" class="sc-rec-time hidden">0:00</span>
     </div>
-    <div class="sc-modes">
-      <button type="button" data-smode="photo" class="sc-mode active">Photo</button>
-      <button type="button" data-smode="video" class="sc-mode">Video</button>
+    <div class="sc-side right">
+      <span class="sc-holdhint" id="sc-holdhint">Tap for a photo<br />Hold for video</span>
     </div>
   </div>
   <div class="sc-bar hidden" id="sc-bar">
@@ -628,6 +658,7 @@
 <script src="/js/pins.js"></script>
 <script src="/js/share.js"></script>
 <script src="/js/compose.js"></script>
+<script src="/js/story-edit.js"></script>
 <script src="/js/stories.js"></script>
 <script src="/js/viewonce.js"></script>
 <script src="/js/pickers.js"></script>

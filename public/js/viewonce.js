@@ -58,9 +58,9 @@ async function openViewOnce(mid) {
   }
   const el = $('#vo-view');
   if (!el) return;
-  voState = { mid, replay: info.state === 'replayable', consumed: false };
   const stage = $('#vo-stage');
-  stage.querySelectorAll('img,video').forEach((n) => n.remove());
+  stage.querySelectorAll(':scope > img, :scope > video').forEach((n) => n.remove());
+  voState = { mid, replay: info.state === 'replayable', consumed: false, info };
   const cap = $('#vo-cap');
   cap.textContent = info.caption || '';
   cap.classList.toggle('hidden', !info.caption);
@@ -84,15 +84,37 @@ async function openViewOnce(mid) {
     const p = v.play();
     if (p && p.catch) p.catch(() => { v.muted = true; v.play().catch(() => {}); });
     voState.video = v;
+    v.addEventListener('loadeddata', () => voPaintOverlays(info), { once: true });
   } else {
     img.id = 'vo-img';
     img.alt = '';
     img.src = info.url;
     stage.appendChild(img);
+    if (img.complete && img.naturalWidth) voPaintOverlays(info);
+    else img.addEventListener('load', () => voPaintOverlays(info), { once: true });
   }
   clearTimeout(voState.timer);
   const closeHint = $('#vo-hint');
   closeHint.textContent = info.kind === 'video' ? 'The video plays once — tap anywhere to close' : 'Tap anywhere to close';
+}
+// Markup on a view-once copy: a story sent to an individual friend carries its
+// overlays too (the server copies them alongside the bytes), so the one-shot
+// player shows the same thing the tray did. Same normalised coordinates, same
+// renderer — it just has to wait for the media to have a box.
+function voPaintOverlays(info) {
+  const layer = $('#vo-ov');
+  const stage = $('#vo-stage');
+  if (!layer || !stage || !voState) return;
+  const ovs = ovParse(info && info.overlays);
+  if (!ovs.length) { layer.textContent = ''; layer.classList.add('hidden'); return; }
+  const media = stage.querySelector(':scope > video, :scope > img');
+  if (!media) return;
+  if (!ovFitLayer(layer, stage, media)) return;
+  ovPaintLayer(layer, ovs, { editable: false });
+}
+function voRefitOverlays() {
+  if (!voState || !voState.info) return;
+  voPaintOverlays(voState.info);
 }
 async function closeViewOnce() {
   if (!voState) return;
@@ -104,7 +126,9 @@ async function closeViewOnce() {
   if (el) el.classList.add('hidden');
   document.body.classList.remove('story-open');
   const stage = $('#vo-stage');
-  if (stage) stage.querySelectorAll('img,video').forEach((n) => n.remove());
+  if (stage) stage.querySelectorAll(':scope > img, :scope > video').forEach((n) => n.remove());
+  const ov = $('#vo-ov');
+  if (ov) { ov.textContent = ''; ov.classList.add('hidden'); }
   try {
     const r = await api('/api/dm/' + encodeURIComponent(st.mid) + '/viewonce/consume', { method: 'POST' });
     if (r.state === 'replayable') toast('You have one replay left');

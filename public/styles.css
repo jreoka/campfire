@@ -1977,51 +1977,114 @@ body.story-open{overflow:hidden}
 .sv-views{display:inline-flex;align-items:center;gap:.45rem;background:rgba(255,255,255,.1);border:0;border-radius:999px;color:#fff;padding:.5rem .95rem;font-size:.8rem;font-weight:700;cursor:pointer;font-family:inherit}
 .sv-views:hover{background:rgba(255,255,255,.17)}
 .sv-viewer{cursor:default}
-/* Composer: live camera + gallery, then a caption/audience step. */
+/* Composer: camera (tap = photo, hold = video, pinch = zoom) → free markup
+   (text / emoji / drawing) → audience. */
 #story-compose{position:fixed;inset:0;z-index:152;background:#05070c;color:#fff;display:flex;flex-direction:column;padding:calc(.55rem + var(--safe-t)) .8rem calc(.7rem + var(--safe-b))}
-.sc-stage{position:relative;flex:1;min-height:0;border-radius:16px;overflow:hidden;background:#000;display:flex;align-items:center;justify-content:center}
-#sc-cam,#sc-shot,#sc-play{width:100%;height:100%;object-fit:contain;background:#000;display:block}
-#sc-cam.is-front{transform:scaleX(-1)}
+.sc-stage{position:relative;flex:1;min-height:0;border-radius:16px;overflow:hidden;background:#000;display:flex;align-items:center;justify-content:center;touch-action:none}
+#sc-shot,#sc-play{width:100%;height:100%;object-fit:contain;background:#000;display:block}
+/* The live camera COVERS the stage rather than letterboxing inside it: the
+   preview, the pinch-zoom transform and the captured frame then all describe
+   the same rectangle (see storyDrawFrame). */
+#sc-cam{width:100%;height:100%;object-fit:cover;background:#000;display:block;transform-origin:50% 50%;will-change:transform}
 /* Stand-in for a shot whose JPEG is still encoding: the capture canvas itself,
    laid exactly over the camera slot (object-fit keeps it identical to #sc-shot). */
 .sc-freeze{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;display:block;z-index:1}
 .sc-top{position:absolute;top:calc(.55rem + var(--safe-t));left:.8rem;right:.8rem;display:flex;align-items:center;gap:.3rem;z-index:3}
-.sc-hint{position:absolute;left:50%;bottom:1rem;transform:translateX(-50%);background:rgba(0,0,0,.62);border-radius:10px;padding:.4rem .85rem;font-size:.82rem;max-width:90%;text-align:center;z-index:2}
+.sc-hint{position:absolute;left:50%;bottom:1rem;transform:translateX(-50%);background:rgba(0,0,0,.62);border-radius:10px;padding:.4rem .85rem;font-size:.82rem;max-width:90%;text-align:center;z-index:6}
 .sc-prog{position:absolute;left:0;right:0;top:0;height:3px;background:rgba(255,255,255,.18);z-index:4}
 .sc-prog-fill{height:100%;width:0;background:var(--accent)}
 /* Capture flash: the shutter answers instantly while the frame is encoded. */
 .sc-flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:5}
 .sc-flash.on{animation:sc-flash .26s ease-out}
 @keyframes sc-flash{0%{opacity:.92}100%{opacity:0}}
-.sc-foot{display:flex;align-items:center;justify-content:space-between;gap:.6rem;padding-top:.8rem;flex-shrink:0}
-.sc-shutter-wrap{position:relative;display:flex;align-items:center;justify-content:center;min-width:86px}
-.sc-shutter{width:72px;height:72px;border-radius:50%;background:#fff;border:5px solid rgba(255,255,255,.32);cursor:pointer;padding:0;transition:transform .1s,border-radius .14s,background var(--t-fast),width .14s,height .14s}
+.sc-foot{display:flex;align-items:center;gap:.5rem;padding-top:.8rem;flex-shrink:0}
+/* Equal sides keep the shutter optically centred whatever each side holds. */
+.sc-side{display:flex;align-items:center;gap:.15rem;flex:1 1 0;min-width:0}
+.sc-side.right{justify-content:flex-end}
+.sc-shutter-wrap{position:relative;display:flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:86px}
+.sc-shutter-wrap.rec::before{content:'';position:absolute;width:86px;height:86px;border-radius:50%;border:2px solid var(--red);opacity:.55;animation:sc-ring 1.4s ease-out infinite}
+@keyframes sc-ring{0%{transform:scale(.86);opacity:.6}70%{transform:scale(1.04);opacity:.15}100%{transform:scale(1.08);opacity:0}}
+.sc-shutter{width:72px;height:72px;border-radius:50%;background:#fff;border:5px solid rgba(255,255,255,.32);cursor:pointer;padding:0;touch-action:none;transition:transform .1s,border-radius .14s,background var(--t-fast),width .14s,height .14s}
 .sc-shutter:active{transform:scale(.94)}
 .sc-shutter:disabled{opacity:.45;cursor:default}
 .sc-shutter:disabled:active{transform:none}
-.sc-shutter.rec{background:var(--red);border-radius:18px;width:54px;height:54px}
+.sc-shutter.rec{background:var(--red);border-color:rgba(255,255,255,.5);border-radius:20px;width:56px;height:56px}
 .sc-rec-time{position:absolute;bottom:-1.35rem;left:50%;transform:translateX(-50%);font-size:.75rem;font-weight:700;color:rgba(255,255,255,.85);font-variant-numeric:tabular-nums}
-.sc-modes{display:flex;gap:.3rem;justify-content:flex-end;min-width:86px}
-.sc-mode{background:rgba(255,255,255,.1);border:0;color:rgba(255,255,255,.72);border-radius:999px;padding:.35rem .8rem;font-size:.75rem;font-weight:700;cursor:pointer;font-family:inherit}
-.sc-mode.active{background:#fff;color:#111}
-.sc-ico{display:flex;flex-direction:column;align-items:center;gap:.2rem;background:none;border:0;color:#fff;font-size:.68rem;font-weight:650;cursor:pointer;font-family:inherit;width:66px;padding:.2rem 0}
+.sc-holdhint{font-size:.62rem;line-height:1.4;text-align:right;color:rgba(255,255,255,.45);font-weight:650}
+.sc-ico{display:flex;flex-direction:column;align-items:center;gap:.2rem;background:none;border:0;color:#fff;font-size:.68rem;font-weight:650;cursor:pointer;font-family:inherit;width:auto;min-width:58px;flex:0 1 auto;padding:.2rem .3rem;border-radius:10px}
+.sc-ico:hover{background:rgba(255,255,255,.09)}
 .sc-ico svg{display:block}
+.sc-ico-aa,.sc-tool-aa{font-size:1.05rem;font-weight:800;line-height:1;letter-spacing:.01em}
 .sc-edit{position:absolute;left:0;right:0;bottom:calc(96px + var(--safe-b));padding:0 1rem;display:flex;flex-direction:column;align-items:center;gap:.55rem;z-index:3}
 #sc-caption{width:100%;max-width:640px;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:.55rem .85rem;color:#fff;font:inherit;font-size:.92rem;resize:none;max-height:88px;text-align:center}
 #sc-caption::placeholder{color:rgba(255,255,255,.5)}
 #sc-caption:focus{outline:none;border-color:rgba(255,255,255,.4)}
+/* Markup tools: a rail floating down the right of the picture, like every
+   camera app — and the colour row where the caption sits (the caption steps
+   aside for it: see storyPaintOv). */
+.sc-tools{position:absolute;right:1.3rem;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:.45rem;z-index:6}
+.sc-tool{width:42px;height:42px;border-radius:50%;border:0;background:rgba(10,13,22,.62);color:#fff;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-family:inherit;padding:0;transition:background var(--t-fast),transform .1s}
+.sc-tool:hover{background:rgba(10,13,22,.85)}
+.sc-tool:active{transform:scale(.94)}
+.sc-tool.active{background:#fff;color:#111}
+.sc-tool.danger{color:#ff8b98}
+.sc-colors{position:absolute;left:1rem;right:1rem;bottom:calc(6.1rem + var(--safe-b));display:flex;align-items:center;justify-content:center;gap:.45rem;overflow-x:auto;scrollbar-width:none;padding:.15rem 0;z-index:6}
+.sc-colors::-webkit-scrollbar{display:none}
+.sc-swatch{flex:0 0 auto;width:28px;height:28px;border-radius:50%;border:2px solid rgba(255,255,255,.3);cursor:pointer;padding:0;transition:transform .1s,border-color var(--t-fast)}
+.sc-swatch.on{border-color:#fff;transform:scale(1.12)}
+.sc-swatch.wide{width:auto;border-radius:999px;padding:0 .8rem;height:28px;color:#fff;font:inherit;font-size:.74rem;font-weight:700;background:rgba(10,13,22,.62);border-color:transparent}
+.sc-swatch.wide.on{background:#fff;color:#111}
+/* Text + emoji sheets slide over the composer from the bottom. */
+.sc-textedit,.sc-emoji{position:absolute;left:0;right:0;bottom:0;background:#0c1019;border-top:1px solid rgba(255,255,255,.09);border-radius:18px 18px 0 0;padding:.75rem .95rem calc(.85rem + var(--safe-b));display:flex;flex-direction:column;gap:.6rem;z-index:9}
+#sc-te-input{width:100%;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:14px;padding:.6rem .85rem;color:#fff;font:inherit;font-size:1rem;resize:none;max-height:30vh}
+#sc-te-input:focus{outline:none;border-color:rgba(255,255,255,.4)}
+#sc-te-input::placeholder{color:rgba(255,255,255,.45)}
+.sc-swatches{display:flex;align-items:center;gap:.5rem;overflow-x:auto;scrollbar-width:none;padding:.1rem 0}
+.sc-swatches::-webkit-scrollbar{display:none}
+.sc-te-row{display:flex;align-items:center;gap:.5rem}
+.sc-emoji-head{display:flex;align-items:center;gap:.55rem}
+#sc-emoji-search{flex:1;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:.5rem .95rem;color:#fff;font:inherit;font-size:.88rem}
+#sc-emoji-search::placeholder{color:rgba(255,255,255,.5)}
+#sc-emoji-search:focus{outline:none;border-color:rgba(255,255,255,.42)}
+.sc-emoji-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(46px,1fr));gap:.1rem;max-height:34vh;overflow-y:auto}
+.sc-emoji-grid button{background:none;border:0;font-size:1.6rem;line-height:1;padding:.35rem 0;border-radius:12px;cursor:pointer;font-family:inherit}
+.sc-emoji-grid button:hover{background:rgba(255,255,255,.1)}
+.sc-emoji-grid img{width:1.7rem;height:1.7rem;object-fit:contain;vertical-align:middle}
+.sc-emoji-sec{grid-column:1/-1;font-size:.68rem;letter-spacing:.09em;font-weight:800;color:rgba(255,255,255,.45);padding:.5rem .15rem .2rem}
 .sc-aud{display:flex;gap:.35rem;overflow-x:auto;max-width:100%;scrollbar-width:none;padding-bottom:.15rem}
 .sc-aud::-webkit-scrollbar{display:none}
 .sc-chip{flex:0 0 auto;background:rgba(255,255,255,.12);border:1px solid transparent;color:#fff;border-radius:999px;padding:.4rem .85rem;font-size:.78rem;font-weight:700;cursor:pointer;font-family:inherit;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sc-chip.sel{background:var(--accent);border-color:var(--accent)}
 .sc-bar{display:flex;align-items:center;gap:.6rem;padding-top:.9rem;flex-shrink:0}
+/* ---------- overlay layer: shared by composer, viewer and view-once ---------- */
+.ov-layer{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:1;
+  --ov-outline:-.055em -.055em 0 #000,.055em -.055em 0 #000,-.055em .055em 0 #000,.055em .055em 0 #000,0 -.062em 0 #000,0 .062em 0 #000,-.062em 0 0 #000,.062em 0 0 #000}
+.ov-layer.ov-empty{display:none}
+.ov-draw{position:absolute;left:0;top:0;pointer-events:none}
+.ov-item{position:absolute;transform-origin:50% 50%;white-space:pre-wrap;overflow-wrap:anywhere;text-align:center;line-height:1.14;font-weight:800;letter-spacing:.01em;text-shadow:var(--ov-outline);max-width:96%;will-change:transform}
+.ov-emchar{display:block;line-height:1}
+.ov-em{display:block;height:1em;width:auto;filter:drop-shadow(0 1px 3px rgba(0,0,0,.55))}
+.ov-pill{background:rgba(9,12,20,.8);padding:.14em .5em;border-radius:.42em;text-shadow:none}
+.ov-item.ov-sel{outline:2px dashed rgba(255,255,255,.9);outline-offset:.2em;border-radius:.18em}
+/* In the composer the layer has to swallow taps so a tap on empty space can
+   deselect; the viewer's copy stays transparent to its tap zones. */
+.ov-editable{pointer-events:auto}
+.ov-editable .ov-item{pointer-events:auto;cursor:grab;touch-action:none}
+.ov-editable.ov-drawing *{pointer-events:none}
+.ov-editable.ov-drawing .ov-draw{pointer-events:auto;cursor:crosshair}
 @media (max-width:520px){
   .sc-edit{bottom:calc(92px + var(--safe-b))}
+  .sc-tools{right:.8rem}
+  .sc-colors{bottom:calc(5.9rem + var(--safe-b))}
   #sv-img,#sv-vid{border-radius:10px}
 }
+@media (max-width:400px){
+  .sc-holdhint{display:none}
+}
 @media (prefers-reduced-motion:reduce){
-  .st-ring,.sc-shutter,.sv-ico{transition:none}
+  .st-ring,.sc-shutter,.sv-ico,.sc-tool{transition:none}
   .sc-flash.on{animation:none}
+  .sc-shutter-wrap.rec::before{animation:none}
 }
 
 /* ---------- connection overlay (full-page "reconnecting" state) ---------- */

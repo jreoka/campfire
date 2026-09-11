@@ -67,8 +67,8 @@ campfire/
     embeds.js        # link embeds: known providers client-side, generic link cards via /api/unfurl
     js/              # SPA modules (ordered classic scripts): core, auth, noise,
                      # servers, messages, socket, ui, voice, actions, rail, home,
-                     # pins, compose, stories, viewonce, pickers, settings,
-                     # security, final
+                     # pins, compose, story-edit, stories, viewonce, pickers,
+                     # settings, security, final
     vendor/rnnoise/  # RNNoise wasm + worklet (mic noise suppression) vendored
     manifest.webmanifest
     service-worker.js   # bump CACHE ('campfire-vN') on every frontend change
@@ -384,6 +384,31 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   waits for them (Post says "Saving…") and then posts. Skips when Chrome has no
   fake video device. Re-run it after touching the story composer's capture or
   encode path.
+  `node scripts/test-story-overlays.js` covers the story-markup model offline
+  (it runs the real `ovSanitize`/`ovParse`/`ovContentRect` out of
+  `public/js/story-edit.js` and the real `storyDestDims`/`storyDrawFrame` out of
+  `public/js/stories.js`, with a recording canvas for the framing math): junk
+  items dropped and every number clamped, the text/item/point caps, the payload
+  budget (a stroke is dropped before text is, so a post never 413s), the
+  normalized-coordinate round trip, and that the capture crops exactly the
+  rectangle the cover-fitted preview showed (cover + zoom + pan, pan included
+  in the crop). Plus static wiring checks (the four overlay layers, the tool
+  markup, `story-edit.js` in the SW shell, no leftover `.sc-mode`).
+  `node scripts/test-story-markup-browser.js` drives the real composer end to
+  end (same harness + fake camera) and pins the overhaul: the viewfinder covers
+  the stage, a two-finger pinch lands at ~2x with the preview transformed to
+  match (and `storyNeedsComposite()` true, so what is recorded is what was
+  seen), double-tap flips the camera, holding the shutter records and releasing
+  it finishes a real video, markup on an empty shot draws on the first stroke,
+  text paints as you type and stays centred, undo drops a stroke, a sticker
+  drags and a tap on empty space deselects, the post carries the markup through
+  the server (which caps/drops what a hostile client sends) and the viewer
+  re-renders it over the picture, a text-only story generates a background that
+  does not re-shape when the swatch changes, and a story sent to one friend
+  keeps its markup in the one-shot player. Writes
+  campfire-story-edit.png / campfire-story-view.png to the temp dir. Skips when
+  Postgres, Chrome or the fake camera is missing. Re-run it after touching the
+  composer, the markup renderer or the story routes.
   `node scripts/test-story-ring.js` covers the rail ring's cookie-cutter
   thumbnail (offline; runs the real `storyRing()` extracted from `stories.js`
   against the real `styles.css` in headless Chrome, skipping when Chrome is
@@ -545,6 +570,13 @@ OpenGraph/oEmbed unfurl → cached card with thumbnail, SSRF-guarded), stories
 (24h photo/video posts with an in-app camera, friend + server + everyone
 audiences, thumbnails cropped into the rings), view-once messages (one view +
 one replay, per-friend DMs, media gated until opened and deleted after use).
+The story camera is a Snapchat-style composer: tap the shutter for a photo, hold
+it to record (release to stop), pinch to zoom the viewfinder (the capture crops
+to what you saw, and a zoomed recording is composited so it matches), double-tap
+the picture to flip, text-only stories on a picked gradient, and markup over the
+shot — draggable/rotatable/scalable text and emoji stickers plus freehand
+drawing with colours and undo, all rendered over the media by the viewer and by
+the view-once player (the markup travels with the post, not in the pixels).
 A story sent to an individual friend is delivered as a view-once DM instead of
 a tray entry (`POST /api/dm/viewonce` with `storyId` re-files the story's bytes
 under the gated `viewonce/` prefix), and picks alongside a broadcast audience
@@ -682,6 +714,30 @@ and reading them as "the reader scrolled up" is what stranded pinned views
 mid-history after a refresh; the container must also be observed by the stick
 ResizeObserver, or a shrunken viewport silently leaves the reader short of the
 bottom.
+The story composer is one control, not a mode switch: the shutter takes a photo
+on a tap and records while held (220 ms arming; the click path stays for
+keyboard and is ignored right after a pointer gesture), a two-finger pinch
+zooms (ctrl+wheel on desktop), and a double-tap on the picture flips the
+camera. The viewfinder is `object-fit:cover` and zoom is a CSS transform on the
+`<video>`; `storyDrawFrame` replays the same numbers into the captured frame,
+and a recording that would not match what the preview shows is composited
+through a canvas (`storyRecordStream`/`storyNeedsComposite`) rather than
+recording the raw sensor stream. Never let those two drift: the shot must be the
+rectangle that was on screen.
+Story markup (text/emoji/drawing) is a JSON list on the post
+(`stories.overlays`, and `dm_messages.viewonce_overlays` for the private
+view-once copy a story makes) rendered by `public/js/story-edit.js` in the
+composer, the viewer and the view-once player — never baked into the bytes, so
+it stays crisp and a video keeps its markup across its whole play. Overlay
+coordinates are normalized to the MEDIA's content box (`ovFitLayer`/
+`ovContentRect`), so the same numbers land in the same place on a phone capture
+and a letterboxed desktop preview; anything that changes that box (rotate,
+resize, a tool sheet) must re-fit through `ovRefit`. The layer must stay laid
+out while it is editable (`ov-empty` is only for read-only layers) — a
+display:none layer measures 0 and the first pen stroke paints into a 1x1
+canvas. The client caps and trims the list before sending (`ovSanitize`, 24 KB)
+and the server validates it again; the post body is `express.json`, so an
+untrimmed stroke list is a 413, not a story.
 
 NEXT: iterate per owner feedback on the live site.
 
