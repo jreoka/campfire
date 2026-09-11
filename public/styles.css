@@ -956,13 +956,26 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .uc-bubble-x{position:absolute;top:-.4rem;right:-.3rem;width:20px;height:20px;padding:0;border:0;border-radius:50%;background:var(--panel-4);color:var(--muted);font:inherit;font-size:.9rem;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
 .uc-bubble-x:hover{background:var(--danger-bg);color:var(--danger-tx)}
 .uc-bubble-exp{font-size:.7rem;color:var(--faint);margin-top:.2rem}
-/* Presence switcher on your own card — the avatar menu's replacement. Two
-   columns of state chips (the active one is the filled accent pill), then the
-   "back to Online" timer row, which only exists while a state is set. */
-.uc-presence .preseg{display:grid;grid-template-columns:1fr 1fr;gap:.35rem;margin-top:.25rem}
-.uc-presence .mini{padding:.32rem .6rem;gap:.35rem;min-width:0}
-.uc-presence .status-dot{width:8px;height:8px}
-.uc-preseg-note{font-size:.7rem;color:var(--faint);margin-top:.3rem}
+/* Presence switcher on your own card: a vertical menu that starts as just your
+   current status and cascades (states → that state's timer). The collapsed row
+   doubles as the card's status readout. */
+.uc-presence{background:var(--panel-3);border-radius:12px;padding:.25rem;margin-top:.35rem}
+.prow{display:flex;align-items:center;gap:.5rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:9px;padding:.42rem .45rem;font:inherit;font-size:.82rem;font-weight:600;line-height:1.2;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
+.prow:hover{background:var(--panel-4)}
+.prow .status-dot{width:9px;height:9px}
+.prow .plabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcaret{display:inline-flex;flex-shrink:0;color:var(--faint);transition:transform var(--t-fast)}
+.prow:hover .pcaret{color:var(--muted)}
+.prow[aria-expanded="true"] .pcaret{transform:rotate(90deg)}
+.plist{margin-top:.15rem}
+.prow.sub{padding-left:.85rem}
+.prow.sel{background:var(--accent-dim)}
+.prow.sel .plabel{font-weight:750}
+/* The timer cascade hangs off the row it belongs to, behind a hairline guide. */
+.ptimes{margin:.1rem 0 .15rem 1.05rem;padding-left:.45rem;border-left:1px solid var(--line)}
+.prow.time{padding-left:.45rem;color:var(--muted);font-weight:600}
+.prow.time.on{background:var(--accent-container);color:var(--on-container);font-weight:700}
+.uc-preseg-note{font-size:.7rem;color:var(--faint);margin:.28rem .45rem .12rem}
 .exp-row{display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.25rem}
 .uc-gaming{margin-top:.6rem}
 .ugame-title{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin-bottom:.35rem}

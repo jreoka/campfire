@@ -245,16 +245,19 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   cover/repeat style. The harness keeps a "vintage" row with the old recipe so
   it proves it can still reproduce the light edge.
   `node scripts/test-presence-widget.js` covers the presence switcher that now
-  lives on your own user card (offline; it runs the real `presenceWidgetHTML`,
-  `statusLineHTML`, `presenceDurationSel` and `choosePresence` pulled out of
-  `pickers.js`): all four states get a chip and only the active one is lit, the
-  "Back to Online" timer row appears only while a state is set with the nearest
-  duration chip lit (and no timer row while online), tapping the state you are
-  already in never clears a live timer, switching state carries the pending
-  timer over, Online drops it and Never keeps the state, the chips are wired to
-  those semantics, the card repaints in place, and the avatar-menu code and CSS
-  are gone (`#status-pop`, `openStatusMenu`, the `#me-avatar` click and the
-  menu's `.stat-check`/`.stat-foot` rules).
+  lives on your own user card as a vertical menu (offline; it runs the real
+  `presenceWidgetHTML`, `statusLineHTML`, `presenceDurationSel`, `choosePresence`
+  and `wirePresenceWidget` pulled out of `pickers.js`): it opens as just your
+  current status (one collapsed row that doubles as the card's readout, and only
+  for your own card — everyone else keeps the plain status line), opening it
+  cascades the four states with the current one marked and Online offering no
+  timer cascade, picking a state cascades its timer ladder underneath that row
+  (with the live timer's nearest step marked and Forever when there is none, plus
+  the countdown note), each row is wired to those semantics (re-picking your
+  current state never clears a live timer, switching state carries it over,
+  Online drops it, Forever keeps the state), and the menu renders in place with
+  the card re-clamped after it grows. Note the timer labels are the full "For 15
+  Minutes … Forever" ladder, straight from Discord's menu.
   `node scripts/test-pin-badge.js` covers the pin button's badge offline (it
   runs the real helpers pulled out of `pins.js` against stub globals): a pin is
   "new" until this account opens the panel in that conversation, pinning
@@ -538,7 +541,14 @@ two ramps at `100% 100%`. On mobile the server rail + chat list is a whole page
 scrim, and closes from its own ✕, a channel/DM row, or the Home/Friends/Stories
 nav rows — a server tap deliberately keeps it open so a channel can be picked.
 The me bar's only click target is `#me-open` (the avatar + name), which outlines
-itself on hover; the space around mute/deafen/settings is dead.
+itself on hover; the space around mute/deafen/settings is dead. Your own card's
+status is a cascading vertical menu (`presenceWidgetHTML` in `pickers.js`): it
+starts as just your current status (that row IS the card's readout on your own
+card), opening it lists the states, and picking one cascades that state's timer
+underneath its row — the open/cascaded state lives in the module-level
+`presenceMenu` and is reset when the card opens, and `refreshOwnPresence`
+re-renders the menu in place (never the card) so the open menu survives a status
+change.
 The bottom-pin state (`#messages`/`#thread-replies` `dataset.atBottom`) flips
 only on real input (wheel/touch/drag/key) — never on a bare scroll event.
 Browsers fire those for their own reasons (reload scroll restore, layout

@@ -1,14 +1,16 @@
 // Presence switcher on your own user card (see AGENTS.md).
 //
 // The change: the online/away/DND/invisible quickswitch used to be a floating
-// menu hanging off your avatar, with a second menu for the timed revert. It is
-// now a widget on your own user card — one tap per state, the timed "back to
-// Online" one more tap away — so the avatar can just open the card like every
-// other avatar in the app does.
+// menu hanging off your avatar, then a 2×2 grid of chips on the card. It is now
+// a vertical menu in Discord's shape — it starts as just your current status,
+// opening it cascades the states (each with a chevron), and picking one cascades
+// that state's timer underneath it. The collapsed row doubles as the card's
+// status readout, and the avatar-menu code is gone so the avatar can just open
+// the card like every other avatar does.
 //
-// No bundler and no exports here, so this drives the REAL presenceWidgetHTML()
-// and choosePresence() by extracting them from public/js/pickers.js and running
-// them against stub globals.
+// No bundler and no exports here, so this drives the REAL presenceWidgetHTML(),
+// choosePresence() and wirePresenceWidget() by extracting them from
+// public/js/pickers.js and running them against stub globals.
 //
 // Offline (no database, no browser required).
 //
@@ -57,113 +59,125 @@ const code = slice(core, 'function esc(s) {', '// Layout size of a popup')
   + '\n' + slice(pickers, 'function fmtCountdown(ts) {', 'async function clearMyStatus() {');
 // Strict mode gives eval its own scope, so hand the functions back explicitly.
 const {
-  fmtCountdown, statusLineHTML, presenceWidgetHTML, presenceDurationSel, choosePresence, wirePresenceWidget,
-} = eval(code + '\n;({ fmtCountdown, statusLineHTML, presenceWidgetHTML, presenceDurationSel, choosePresence, wirePresenceWidget })');
+  fmtCountdown, statusLineHTML, presenceWidgetHTML, presenceDurationSel, choosePresence, wirePresenceWidget, presenceMenu,
+} = eval(code + '\n;({ fmtCountdown, statusLineHTML, presenceWidgetHTML, presenceDurationSel, choosePresence, wirePresenceWidget, presenceMenu })');
 
 const setMe = (status, exp) => { S.me = { id: 'me', username: 'jordan', status, presence_expires_at: exp || null }; };
-const NOW = Date.now();
-const chipOn = (html, id) => new RegExp('class="mini on" data-presence="' + id + '"').test(html);
+const setMenu = (open, cascade) => { presenceMenu.open = open; presenceMenu.cascade = cascade; };
 
 async function main() {
-  console.log('\n[1] the switcher replaces the avatar menu');
-  check(pickers.includes('<div class="uc-head"><span class="avatar big"></span>${statusBubbleHTML(u)}</div>'), 'the card still leads with the avatar');
-  check(pickers.includes("${uid === S.me.id ? presenceWidgetHTML() : ''}"), 'the card mounts the switcher for me (and only me)');
+  console.log('\n[1] the menu replaces the status readout on my own card');
+  check(/\$\{uid === S\.me\.id\n\s*\? presenceWidgetHTML\(\)\n\s*: `<div class="uc-status" id="uc-statusline">\$\{statusLineHTML\(uid, u\)\}<\/div>`\}/.test(pickers), 'the card shows the menu for me and the plain readout for everyone else');
+  check(/if \(uid === S\.me\.id\) presenceMenu = \{ open: false, cascade: null \};/.test(pickers), 'opening the card resets it to just your current status');
   check(pickers.includes('wirePresenceWidget(card)'), 'and wires it');
   check(!finalSrc.includes('status-pop') && !finalSrc.includes('openStatusMenu') && !finalSrc.includes('statusMenuEl'), 'the floating status menu is gone');
   check(!/me-avatar'\)\.onclick/.test(finalSrc), 'the avatar no longer owns a click handler');
-  check(!css.includes('#status-pop') && !css.includes('.stat-check'), 'and its CSS is gone with it');
+  check(!css.includes('#status-pop') && !css.includes('.preseg'), 'and its CSS (and the chip grid) is gone with it');
 
-  console.log('\n[2] four states, the active one lit');
-  setMe('online');
-  const online = presenceWidgetHTML();
-  for (const id of ['online', 'away', 'dnd', 'invisible']) check(online.includes('data-presence="' + id + '"'), 'has a ' + id + ' chip');
-  check(chipOn(online, 'online') && !chipOn(online, 'away') && !chipOn(online, 'dnd') && !chipOn(online, 'invisible'), 'Online is the lit chip while online');
-  check(!online.includes('uc-presence-dur'), 'no timer row while online');
-  check(online.includes('aria-pressed="true"'), 'the lit chip reports itself pressed');
-  setMe('dnd');
-  check(chipOn(presenceWidgetHTML(), 'dnd'), 'Do not disturb is lit while dnd');
+  console.log('\n[2] it starts as just your current status');
+  setMe('online'); setMenu(false, null);
+  const closed = presenceWidgetHTML();
+  check(closed.includes('id="presence-toggle"') && closed.includes('aria-expanded="false"'), 'a single collapsed toggle row');
+  check(closed.includes('<span class="plabel">Online</span>'), 'showing the current status label');
+  check(closed.includes('status-dot online'), 'and its dot');
+  check(!closed.includes('plist') && !closed.includes('data-presence=') && !closed.includes('data-presence-ms='), 'no states or timers until it is opened');
   setMe('invisible');
-  check(chipOn(presenceWidgetHTML(), 'invisible'), 'Invisible is lit while invisible');
+  const inv = presenceWidgetHTML();
+  check(inv.includes('<span class="plabel">Invisible</span>') && inv.includes('status-dot offline'), 'invisible reads grey-on-grey with an honest label');
 
-  console.log('\n[3] the timed revert is one tap away, and reflects the live timer');
-  setMe('away', NOW + 4 * 3600e3 - 1000); // ~4h left: the 4h chip is the nearest
+  console.log('\n[3] opening it cascades the states');
+  setMe('online'); setMenu(true, null);
+  const open = presenceWidgetHTML();
+  check(open.includes('aria-expanded="true"') && open.includes('class="plist"'), 'the toggle reports itself open and the list renders');
+  for (const id of ['online', 'away', 'dnd', 'invisible']) check(open.includes('data-presence="' + id + '"'), 'has a ' + id + ' row');
+  check((open.match(/class="prow sub sel"/g) || []).length === 1 && open.includes('class="prow sub sel" data-presence="online"'), 'the current state is the marked row');
+  check(!/data-presence="online"[^>]*aria-expanded/.test(open), 'Online has no timer cascade (no chevron)');
+  check(/data-presence="away"[^>]*aria-expanded="false"/.test(open), 'the other states offer a cascade');
+  check(!open.includes('ptimes'), 'and nothing is cascaded yet');
+  check(!open.includes('uc-preseg-note'), 'no timer note while online');
+
+  console.log('\n[4] picking a state cascades its timer underneath it');
+  const pending = Date.now() + 4 * 3600e3 - 1000; // ~4h left: the 4h row is the nearest
+  setMe('away', pending); setMenu(true, 'away');
   const away = presenceWidgetHTML();
-  check(away.includes('uc-presence-dur') && away.includes('data-presence-ms="14400000"'), 'a set state gets the Back to Online row');
-  check(chipOn(away, 'away'), 'the set state stays lit');
-  check(away.includes('class="mini on" data-presence-ms="14400000"'), 'the nearest duration chip is lit (4h)');
-  check(away.includes('Clears ' + fmtCountdown(NOW + 4 * 3600e3 - 1000)), 'the note counts down the live timer');
-  check(away.includes('data-presence-ms="never"'), 'Never is offered to drop the timer');
-  check(presenceDurationSel('away', 0) === 6, 'no timer → Never is the lit duration');
-  check(presenceDurationSel('away', NOW + 15 * 60e3) === 0, 'a 15m timer → the 15m chip');
+  const awayRow = away.indexOf('data-presence="away"');
+  const times = away.indexOf('<div class="ptimes">');
+  const dndRow = away.indexOf('data-presence="dnd"');
+  check(awayRow > -1 && times > awayRow && times < dndRow, 'the timer list hangs off the Away row it came from', { awayRow, times, dndRow });
+  check(away.includes('For 15 Minutes') && away.includes('For 1 Hour') && away.includes('For 4 Hours') && away.includes('For 8 Hours') && away.includes('For 24 Hours') && away.includes('For 3 Days') && away.includes('Forever'), 'with the full timer ladder');
+  check(away.includes('class="prow time on" data-presence-ms="14400000"'), 'the live timer\'s nearest option is marked (4h)', away.slice(times, times + 260));
+  check(away.includes('class="prow sub sel" data-presence="away"'), 'the picked state is the marked row');
+  check(presenceDurationSel('away', 0) === 6, 'no timer → Forever is the marked option');
+  check(away.includes('Clears ' + fmtCountdown(pending)), 'the live countdown is noted under the menu');
 
-  console.log('\n[4] chips keep a live timer; Online drops it');
-  statusCalls = [];
-  setMe('away', NOW + 3600e3);
-  await choosePresence('away'); // tapping the state you are already in
-  check(statusCalls.length === 0, 'tapping the current state does nothing (never clears a live timer)', statusCalls);
+  setMe('dnd'); setMenu(true, 'dnd');
+  const dnd = presenceWidgetHTML();
+  check(dnd.indexOf('<div class="ptimes">') > dnd.indexOf('data-presence="dnd"') && dnd.indexOf('<div class="ptimes">') < dnd.indexOf('data-presence="invisible"'), 'a different state cascades under its own row');
+  check(dnd.includes('class="prow time on" data-presence-ms="never"'), 'with no timer set, Forever is marked');
+  check(!dnd.includes('uc-preseg-note'), 'and there is no countdown note');
 
+  console.log('\n[5] the rows are wired to those semantics (DOM-less)');
+  const fake = () => {
+    const toggle = { onclick: null };
+    const subRows = [{ dataset: { presence: 'online' }, onclick: null }, { dataset: { presence: 'away' }, onclick: null }];
+    const timeRows = [{ dataset: { presenceMs: 'never' }, onclick: null }, { dataset: { presenceMs: '3600000' }, onclick: null }];
+    const box = { outerHTML: '', querySelector: (s) => (s === '#presence-toggle' ? toggle : null), querySelectorAll: (s) => (s === '[data-presence]' ? subRows : timeRows) };
+    return { card: { querySelector: (s) => (s === '#uc-presence' ? box : null) }, box, toggle, subRows, timeRows };
+  };
+  const f = fake();
+  wirePresenceWidget(f.card);
+  check(typeof f.toggle.onclick === 'function' && f.subRows.every((r) => typeof r.onclick === 'function') && f.timeRows.every((r) => typeof r.onclick === 'function'), 'every row gets an onclick');
+  setMe('online'); setMenu(false, null);
+  f.toggle.onclick();
+  check(presenceMenu.open === true && f.box.outerHTML.includes('plist'), 'the toggle opens the state list');
+  f.toggle.onclick();
+  check(presenceMenu.open === false && presenceMenu.cascade === null, 'the toggle again collapses it and drops the cascade');
+
+  setMe('online'); setMenu(true, null);
   statusCalls = [];
-  const pending = S.me.presence_expires_at;
+  f.subRows[1].onclick(); // Away
+  await null;
+  check(presenceMenu.open === true && presenceMenu.cascade === 'away' && statusCalls.length === 1 && statusCalls[0][0] === 'away', 'a state row applies the state and cascades its timer', { cascade: presenceMenu.cascade, statusCalls });
+  statusCalls = [];
+  f.timeRows[0].onclick(); // Forever
+  await null;
+  check(statusCalls.length === 1 && statusCalls[0][1] === null, 'Forever keeps the state and drops the timer', statusCalls);
+  statusCalls = [];
+  setMe('away', pending);
+  f.timeRows[1].onclick(); // For 1 Hour
+  await null;
+  check(statusCalls.length === 1 && statusCalls[0][1] === 3600e3, 'a timer row sends its own span', statusCalls);
+  check(wirePresenceWidget({ querySelector: () => null }) === undefined, 'no card element → a quiet no-op');
+
+  console.log('\n[6] chips keep a live timer; Online drops it');
+  statusCalls = [];
+  setMe('away', pending);
+  await choosePresence('away');
+  check(statusCalls.length === 0, 're-picking the state you are in does nothing (never clears a live timer)', statusCalls);
+  statusCalls = [];
   await choosePresence('dnd');
   check(statusCalls.length === 1 && statusCalls[0][0] === 'dnd' && statusCalls[0][1] === pending, 'switching state carries the pending timer over', statusCalls);
-
   statusCalls = [];
-  setMe('dnd', NOW + 3600e3);
+  setMe('dnd', pending);
   await choosePresence('online');
   check(statusCalls.length === 1 && statusCalls[0][0] === 'online' && statusCalls[0][1] === null, 'picking Online clears the timer for good', statusCalls);
 
-  statusCalls = [];
-  setMe('away', NOW + 3600e3);
-  await choosePresence('away', null);
-  check(statusCalls.length === 1 && statusCalls[0][1] === null, 'tapping Never keeps the state and drops the timer', statusCalls);
-
-  statusCalls = [];
-  setMe('invisible');
-  await choosePresence('invisible', 15 * 60e3);
-  check(statusCalls.length === 1 && statusCalls[0][1] === 15 * 60e3, 'a duration tap sends the chosen absolute expiry', statusCalls);
-
-  console.log('\n[4b] the chips are wired to the handler (DOM-less)');
-  const btn = (attrs) => ({ dataset: attrs, onclick: null });
-  const stateBtns = [btn({ presence: 'online' }), btn({ presence: 'away' })];
-  const durBtns = [btn({ presenceMs: 'never' }), btn({ presenceMs: '3600000' })];
-  const box = { querySelectorAll: (sel) => (sel === '[data-presence]' ? stateBtns : durBtns) };
-  wirePresenceWidget({ querySelector: (sel) => (sel === '#uc-presence' ? box : null) });
-  check(stateBtns.every((b) => typeof b.onclick === 'function') && durBtns.every((b) => typeof b.onclick === 'function'), 'every chip gets an onclick');
-  statusCalls = [];
-  setMe('online');
-  stateBtns[1].onclick();
-  await null;
-  check(statusCalls.length === 1 && statusCalls[0][0] === 'away', 'a state chip sends its own state', statusCalls);
-  statusCalls = [];
-  setMe('away');
-  durBtns[0].onclick();
-  await null;
-  check(statusCalls.length === 1 && statusCalls[0][0] === 'away' && statusCalls[0][1] === null, 'the Never chip drops the timer', statusCalls);
-  statusCalls = [];
-  setMe('away');
-  durBtns[1].onclick();
-  await null;
-  check(statusCalls.length === 1 && statusCalls[0][1] === 3600e3, 'a duration chip sends its own ms', statusCalls);
-  check(wirePresenceWidget({ querySelector: () => null }) === undefined, 'no card element → a quiet no-op');
-
-  console.log('\n[5] the card repaints itself after a change');
-  check(pickers.includes('function refreshOwnPresence()') && pickers.includes('line.innerHTML = statusLineHTML(S.me.id, S.me)'), 'the status line is repainted in place');
-  check(pickers.includes('box.outerHTML = presenceWidgetHTML(); wirePresenceWidget(card);'), 'and so is the switcher');
+  console.log('\n[7] the card repaints itself after a change');
+  check(pickers.includes('function renderPresenceWidget(card)') && pickers.includes('box.outerHTML = presenceWidgetHTML()'), 'the menu is re-rendered in place');
+  check(pickers.includes('try { clampUserCard(); } catch {}'), 'and a top-anchored card is pulled back on screen after it grows');
   check(finalSrc.includes('refreshOwnPresence()'), 'setStatus refreshes it for every path (idle auto-away included)');
   check((pickers.match(/function refreshOwnPresence\(/g) || []).length === 1, 'refresh exists once');
 
-  console.log('\n[6] the status line still reads for everyone else');
+  console.log('\n[8] the status line still reads for everyone else');
   S.online = { sam: 'dnd' };
   check(statusLineHTML('sam', { id: 'sam' }).includes('Do not disturb'), 'another user\u2019s card keeps its label');
   check(statusLineHTML('sam', { id: 'sam', streaming_game: 'Rocket League' }).includes('Streaming'), 'streaming wins the line');
   check(statusLineHTML('sam', { id: 'sam' }).includes('status-dot dnd'), 'and the dot matches');
-  setMe('invisible');
-  check(statusLineHTML('me', S.me).includes('status-dot offline') && statusLineHTML('me', S.me).includes('Invisible'), 'invisible stays grey-on-grey with an honest label');
 
   console.log('');
   if (failures.length) {
     console.log(`FAILED ${failures.length} of ${passed + failures.length} checks:`);
-    for (const f of failures) console.log('  - ' + f);
+    for (const f2 of failures) console.log('  - ' + f2);
     process.exit(1);
   }
   console.log(`All ${passed} checks passed.`);

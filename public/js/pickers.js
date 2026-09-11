@@ -1017,6 +1017,8 @@ async function openUserCard(uid, x, y) {
   const streaming = !isOff(st) && (u.streaming_game || null);
   const ban = u.banner_url || u.sidebar_banner_url;
   card.dataset.uid = uid;
+  // The status menu always opens as just your current status.
+  if (uid === S.me.id) presenceMenu = { open: false, cascade: null };
   card.style.background = cardBgFor(u);
   card.innerHTML = `
     <div class="uc-banner"${ban ? ` style="background-image:url('${esc(ban)}')"` : ''}></div>
@@ -1025,8 +1027,9 @@ async function openUserCard(uid, x, y) {
       <div class="uc-name"><span style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u)}</div>
       <div class="uc-sub">@${esc(u.username)}${u.role === 'owner' ? ' · server owner' : ''}</div>
       ${isSysAdmin(u) || isEarlyUser(u) ? `<div class="uc-badges">${isSysAdmin(u) ? '<span class="sysadmin-badge">System admin</span>' : ''}${isEarlyUser(u) ? '<span class="early-badge">Early user</span>' : ''}</div>` : ''}
-      <div class="uc-status" id="uc-statusline">${statusLineHTML(uid, u)}</div>
-      ${uid === S.me.id ? presenceWidgetHTML() : ''}
+      ${uid === S.me.id
+        ? presenceWidgetHTML()
+        : `<div class="uc-status" id="uc-statusline">${statusLineHTML(uid, u)}</div>`}
       ${streaming ? `<div class="uc-statustext ustream"><span class="vlive">LIVE</span><span>Streaming ${esc(streaming)}</span></div>` : ''}
       ${u.playing_game ? `<div class="uc-statustext ugame">${gameBadgeHTML(u.playing_game)}<span>Playing ${esc(u.playing_game)}</span></div>` : ''}
       ${u.bio ? `<div class="uc-bio">${renderRich(u.bio)}</div>` : ''}
@@ -1350,29 +1353,35 @@ function wireStatusBubble(card) {
   if (sc) sc.onclick = () => clearMyStatus();
 }
 // ---------- presence switcher (your own card) ----------
-// The states used to live in a menu hanging off the avatar. They live here now,
-// one tap each, with the timed "back to Online" one more tap away — so the
-// avatar can just open the card like every other avatar does.
+// A vertical menu, like Discord's status picker: it starts as just your current
+// status, opening it cascades the states (each with a chevron), and picking one
+// cascades that state's timer underneath it. It replaces the status readout line
+// on your own card (the collapsed row IS the readout), so the avatar can just
+// open the card like every other avatar does.
 const STATUS_TEXT = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' };
 const PRESENCE_STATES = [['online', 'Online'], ['away', 'Away'], ['dnd', 'Do not disturb'], ['invisible', 'Invisible']];
 // How long away/dnd/invisible lasts before lapsing back to Online.
 const PRESENCE_DURATIONS = [
-  { label: '15m', ms: 15 * 60e3 },
-  { label: '1h', ms: 3600e3 },
-  { label: '4h', ms: 4 * 3600e3 },
-  { label: '8h', ms: 8 * 3600e3 },
-  { label: '24h', ms: 24 * 3600e3 },
-  { label: '3d', ms: 3 * 864e5 },
-  { label: 'Never', ms: null },
+  { label: 'For 15 Minutes', ms: 15 * 60e3 },
+  { label: 'For 1 Hour', ms: 3600e3 },
+  { label: 'For 4 Hours', ms: 4 * 3600e3 },
+  { label: 'For 8 Hours', ms: 8 * 3600e3 },
+  { label: 'For 24 Hours', ms: 24 * 3600e3 },
+  { label: 'For 3 Days', ms: 3 * 864e5 },
+  { label: 'Forever', ms: null },
 ];
+const PRESENCE_CARET = '<span class="pcaret"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span>';
+// Open/cascaded state of the menu. Reset whenever the card opens, so it always
+// starts as just your current status.
+let presenceMenu = { open: false, cascade: null };
 function statusLineHTML(uid, u) {
   const st = statusOf(uid);
   const streaming = !isOff(st) && (u.streaming_game || null);
   const label = streaming ? 'Streaming' : (STATUS_TEXT[st] || 'Offline');
   return `<span class="status-dot ${dotOf(st, streaming)}"></span><span>${label}</span>`;
 }
-// Index of the pending duration nearest the live timer (so the chip stays lit
-// on a reopen), else the last one — "Never".
+// Index of the pending duration nearest the live timer (so the option stays lit
+// on a reopen), else the last one — "Forever".
 function presenceDurationSel(cur, exp) {
   if (cur === 'online' || !exp) return PRESENCE_DURATIONS.length - 1;
   let best = -1, bd = Infinity;
@@ -1383,39 +1392,70 @@ function presenceWidgetHTML() {
   if (!S.me) return '';
   const cur = S.me.status || 'online';
   const exp = presenceExpiry();
-  const chips = PRESENCE_STATES.map(([id, label]) =>
-    `<button type="button" class="mini${cur === id ? ' on' : ''}" data-presence="${id}" aria-pressed="${cur === id}"><span class="status-dot ${id}"></span>${label}</button>`).join('');
-  const timer = cur !== 'online' ? `
-      <div class="uc-sec-label">Back to Online</div>
-      <div class="exp-row" id="uc-presence-dur">${PRESENCE_DURATIONS.map((p, i) => `<button type="button" class="mini${i === presenceDurationSel(cur, exp) ? ' on' : ''}" data-presence-ms="${p.ms === null ? 'never' : p.ms}">${p.label}</button>`).join('')}</div>
-      ${exp ? `<div class="uc-preseg-note">Clears ${fmtCountdown(exp)}</div>` : ''}` : '';
-  return `<div class="uc-presence" id="uc-presence"><div class="uc-sec-label">Set status</div><div class="preseg">${chips}</div>${timer}</div>`;
+  const open = presenceMenu.open;
+  const cascade = open ? presenceMenu.cascade : null;
+  const toggle = `<button type="button" class="prow toggle" id="presence-toggle" aria-expanded="${open}" aria-controls="presence-list"><span class="status-dot ${dotOf(cur, false)}"></span><span class="plabel">${STATUS_TEXT[cur] || 'Online'}</span>${PRESENCE_CARET}</button>`;
+  let list = '';
+  if (open) {
+    list = '<div class="plist" id="presence-list">' + PRESENCE_STATES.map(([id, label]) => {
+      // Online has no timer, so no chevron and no cascade from it.
+      const chevron = id === 'online' ? '' : PRESENCE_CARET;
+      const willCascade = cascade === id;
+      const row = `<button type="button" class="prow sub${cur === id ? ' sel' : ''}" data-presence="${id}" aria-pressed="${cur === id}"${id === 'online' ? '' : ` aria-expanded="${willCascade}"`}><span class="status-dot ${id}"></span><span class="plabel">${label}</span>${chevron}</button>`;
+      if (!willCascade) return row;
+      const sel = cur === id ? presenceDurationSel(cur, exp) : -1;
+      const times = PRESENCE_DURATIONS.map((p, i) => `<button type="button" class="prow time${i === sel ? ' on' : ''}" data-presence-ms="${p.ms === null ? 'never' : p.ms}">${p.label}</button>`).join('');
+      return row + `<div class="ptimes">${times}</div>`;
+    }).join('') + '</div>';
+  }
+  const note = (cur !== 'online' && exp) ? `<div class="uc-preseg-note">Clears ${fmtCountdown(exp)}</div>` : '';
+  return `<div class="uc-presence" id="uc-presence">${toggle}${list}${note}</div>`;
+}
+function renderPresenceWidget(card) {
+  // Swap just the menu so the open card never moves, rescales, or loses its
+  // scroll position — then pull a top-anchored card back on screen if the
+  // menu's growth pushed it off.
+  const box = card && card.querySelector('#uc-presence');
+  if (!box) return;
+  box.outerHTML = presenceWidgetHTML();
+  wirePresenceWidget(card);
+  try { clampUserCard(); } catch {}
 }
 function wirePresenceWidget(card) {
   const box = card && card.querySelector('#uc-presence');
   if (!box) return;
-  box.querySelectorAll('[data-presence]').forEach((b) => (b.onclick = () => choosePresence(b.dataset.presence)));
+  const tog = box.querySelector('#presence-toggle');
+  if (tog) tog.onclick = () => {
+    presenceMenu.open = !presenceMenu.open;
+    if (!presenceMenu.open) presenceMenu.cascade = null;
+    renderPresenceWidget(card);
+  };
+  // Picking a state applies it and cascades its timer under the row it came
+  // from; Online has nothing to cascade.
+  box.querySelectorAll('[data-presence]').forEach((b) => (b.onclick = () => {
+    const id = b.dataset.presence;
+    presenceMenu.open = true;
+    presenceMenu.cascade = id === 'online' ? null : id;
+    choosePresence(id);
+  }));
   box.querySelectorAll('[data-presence-ms]').forEach((b) => (b.onclick = () => {
     const raw = b.dataset.presenceMs;
     choosePresence((S.me || {}).status || 'online', raw === 'never' ? null : +raw);
   }));
 }
-// State chips keep whatever timer is already counting; picking Online drops it.
+// State picks keep whatever timer is already counting; picking Online drops it.
 async function choosePresence(s, ms) {
   const cur = (S.me || {}).status || 'online';
-  if (ms === undefined && s === cur) return; // nothing changed: never clear a live timer
+  if (ms === undefined && s === cur) { renderPresenceWidget($('#usercard')); return; } // nothing changed: never clear a live timer
   const exp = ms === undefined ? (presenceExpiry() || null) : ms;
   try { await setStatus(s, s === 'online' ? null : exp); } catch {}
 }
 function refreshOwnPresence() {
-  // Repaint the dot/label and the switcher in place: the open card must not
-  // move, rescale, or lose its scroll position.
+  // Repaint the menu in place (setStatus calls this for every path, the idle
+  // auto-away flip included) with its open/cascaded state intact.
   const card = $('#usercard');
   if (!card || card.classList.contains('hidden') || card.dataset.uid !== S.me.id) return;
-  const line = card.querySelector('#uc-statusline');
-  if (line) line.innerHTML = statusLineHTML(S.me.id, S.me);
-  const box = card.querySelector('#uc-presence');
-  if (box) { box.outerHTML = presenceWidgetHTML(); wirePresenceWidget(card); }
+  renderPresenceWidget(card);
 }
 function refreshOwnStatusBubble() {
   // Swap just the bubble so the open card never moves, rescales, or loses
