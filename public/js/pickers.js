@@ -1774,7 +1774,7 @@ function openStatusEditor() {
   openModal('Custom status', `
     <label>Status<input id="m-status-text" maxlength="64" placeholder="What's up?" value="${esc(cur)}" /></label>
     <div class="uc-sec-label">Clear after</div>
-    <div class="exp-row" id="m-status-exp">${presets.map((p, i) => `<button type="button" class="mini${i === sel ? ' on' : ''}" data-exp="${i}">${p.label}</button>`).join('')}</div>
+    <select id="m-status-exp" aria-label="Clear custom status after">${presets.map((p, i) => `<option value="${i}"${i === sel ? ' selected' : ''}>${p.label}</option>`).join('')}</select>
     ${cur ? '<div class="row" style="margin-top:.7rem"><button type="button" class="btn small danger" id="m-status-clear">Clear status</button></div>' : ''}
   `, 'Save', async () => {
     const text = ((($('#m-status-text') || {}).value) || '').trim().slice(0, 64);
@@ -1788,10 +1788,8 @@ function openStatusEditor() {
   });
   const mclr = $('#m-status-clear');
   if (mclr) mclr.onclick = async () => { cancelModal(); await clearMyStatus(); };
-  document.querySelectorAll('#m-status-exp [data-exp]').forEach((b) => (b.onclick = () => {
-    sel = +b.dataset.exp;
-    document.querySelectorAll('#m-status-exp [data-exp]').forEach((x) => x.classList.toggle('on', +x.dataset.exp === sel));
-  }));
+  const expSel = $('#m-status-exp');
+  if (expSel) expSel.onchange = () => { sel = +expSel.value; };
 }
 // ---------- profile screen (full overlay) ----------
 function openProfileScreen(uid) {
