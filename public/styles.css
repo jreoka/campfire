@@ -665,7 +665,7 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .up-sub{font-size:.7rem;color:var(--faint);margin-top:.25rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .up-card.failed .up-sub{color:var(--red)}
 .up-x,.up-retry{flex-shrink:0}
-@media (prefers-reduced-motion:reduce){.up-card,.up-spin,.sv-spin,.up-fill.indet{animation:none}}
+@media (prefers-reduced-motion:reduce){.up-card,.up-spin,.sv-spin,.att-spin,.up-fill.indet{animation:none}}
 /* ---------- virus-scan states ---------- */
 .scan-block{display:flex;align-items:center;gap:.65rem;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:.6rem .75rem;max-width:420px}
 .scan-ic{width:38px;height:38px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--accent);background:var(--accent-dim);border:1px solid var(--line-soft)}
@@ -716,6 +716,13 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .spoiler-veil{position:absolute;inset:0;margin:auto;align-self:center;justify-self:center;width:max-content;max-width:80%;height:max-content;z-index:3;border:0;border-radius:999px;background:rgba(0,0,0,.7);color:#fff;font-size:.8rem;font-weight:700;padding:.45rem 1rem;cursor:pointer}
 .att-wrap.spoiler.shown .spoiler-veil{display:none}
 .att-wrap img.att-img,.att-wrap video.att-vid{display:block}
+/* Until the poster frame is captured the video is hidden behind a dark panel
+   with a spinner: the native "no frame yet" placeholder (grey box + big play
+   button on mobile) must never be what a just-loaded attachment looks like. */
+.att-wrap.loading video.att-vid{visibility:hidden}
+.att-vid-load{position:absolute;inset:0;display:none;align-items:center;justify-content:center;border:0;padding:0;border-radius:12px;background:#000;z-index:1;cursor:pointer}
+.att-wrap.loading .att-vid-load{display:flex}
+.att-spin{width:24px;height:24px;border-radius:50%;border:2.5px solid rgba(255,255,255,.18);border-top-color:rgba(255,255,255,.85);animation:up-spin .8s linear infinite}
 .att-dl{position:absolute;top:.45rem;right:.45rem;display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.65);color:#fff;opacity:0;transition:opacity .15s,background var(--t-fast);z-index:2}
 .att-dl:hover{background:rgba(0,0,0,.85);color:#fff}
 .att-wrap:hover .att-dl,.att-dl:focus-visible{opacity:1}

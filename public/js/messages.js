@@ -42,7 +42,7 @@ function attachmentHTML(a) {
   if (a.scan === 'infected') return `<div class="scan-block infected"><span class="scan-ic">${SCAN_SHIELD_SVG}</span><span class="scan-tx"><b>${esc(a.name)}</b><span>Virus detected — this file was removed and can't be downloaded.</span></span></div>`;
   if (a.scan === 'pending') return `<div class="scan-block scanning"><span class="scan-tx"><b>${esc(a.name)} (${fmtSize(a.size)})</b><span>Processing file<span class="scan-dots"></span></span><span class="scan-track"><span class="scan-fill"></span></span></span></div>`;
   if (a.kind === 'image') return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
-  if (a.kind === 'video') return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><video class="att-vid" src="${esc(a.url)}" controls preload="metadata" playsinline></video>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+  if (a.kind === 'video') return `<span class="att-wrap loading${a.spoiler ? ' spoiler' : ''}"><video class="att-vid" src="${esc(a.url)}" controls preload="metadata" playsinline></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'audio') return audioPlayerHTML(a);
   if (textPreviewable(a)) return textFileHTML(a);
   return `<a class="file-card" href="${esc(a.url)}" target="_blank" rel="noopener"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span><span class="fname">${esc(a.name)}</span><br/><span class="fsize">${fmtSize(a.size)}</span></span></a>`;
@@ -59,10 +59,33 @@ const videoPosterWaiters = new Map(); // url -> [callback(shot|null)]
 // and playback grows it again. 640px covers the 420px wrap with no upscale.
 // (Deliberately no width/height attributes: they clamp each axis independently
 // against the max-width/max-height caps and letterbox the frame.)
+// The wrap starts life with `.loading`: mobile browsers paint their own grey
+// play-button placeholder into an unstarted <video>, which reads as broken
+// until the poster frame lands. Hide the element behind a spinner instead and
+// reveal it with the poster (or the native preview if the capture fails).
+function revealVideoShell(v) {
+  try { const wrap = v && v.closest && v.closest('.att-wrap'); if (wrap) wrap.classList.remove('loading'); } catch {}
+}
+// Capture can outlast the reader's patience on a big file, so the overlay is a
+// button (and the play affordance it replaced): tapping or pressing it reveals
+// the element and starts playback.
+function wireVideoLoader(v) {
+  if (!v || v.dataset.loadWired) return;
+  const wrap = v.closest && v.closest('.att-wrap');
+  const load = wrap && wrap.querySelector('.att-vid-load');
+  if (!load) return;
+  v.dataset.loadWired = '1';
+  load.addEventListener('click', (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    revealVideoShell(v);
+    try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch {}
+  });
+}
 function applyVideoPoster(v, img) {
   if (!v || !img) return;
   try { v.poster = img; } catch {}
   v.dataset.posterOk = '1';
+  revealVideoShell(v);
 }
 // One frame per URL, captured once and shared by every caller — the chat
 // poster, the composer chip thumbnail, the upload card. cb(shot|null).
@@ -108,9 +131,10 @@ function ensureVideoPoster(v) {
   if (!v || v.dataset.posterOk) return;
   const url = v.currentSrc || v.src;
   if (!url) return;
+  wireVideoLoader(v);
   whenVideoPoster(url, (shot) => {
     if (shot) applyVideoPoster(v, shot);
-    else v.dataset.posterOk = '1';
+    else { v.dataset.posterOk = '1'; revealVideoShell(v); }
   });
 }
 // ---------- stick-to-bottom on media resize ----------

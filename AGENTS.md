@@ -478,6 +478,19 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   browser cancels. `closeProfileScreen`/`closeUserCard` must clear the inline
   `transform`/`transition`/`animation` the drag leaves behind, or the next open
   skips its entry animation.
+  `node scripts/test-video-placeholder.js` covers the video attachment's
+  loading state (headless Chrome + a generated mp4, skipping when Chrome or
+  ffmpeg is missing; it runs the real `attachmentHTML` video branch and the
+  real poster block pulled out of `messages.js` against the real
+  `styles.css`): until the captured poster frame lands the element is hidden
+  behind `.att-vid-load` (a dark panel with `.att-spin`), the overlay covers
+  the video's box exactly and a centre tap lands on it rather than the
+  browser's grey play-button placeholder, a captured frame reveals the video
+  with a `data:` poster, a failed capture (404) still reveals it instead of
+  leaving a stuck spinner, and tapping the overlay on a slow video reveals it
+  immediately — the spinner doubles as the play affordance it replaced. Keep
+  `revealVideoShell` on both exits of `ensureVideoPoster` or a failed capture
+  parks on the spinner forever.
   `node scripts/test-lightbox.js` covers the photo lightbox (headless Chrome,
   skipping without Chrome; it runs the real lightbox block pulled out of
   `pickers.js` against the real `#lightbox` markup and `styles.css`): the
