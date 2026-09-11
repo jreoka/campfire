@@ -284,6 +284,17 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   waits for them (Post says "Saving…") and then posts. Skips when Chrome has no
   fake video device. Re-run it after touching the story composer's capture or
   encode path.
+  `node scripts/test-story-ring.js` covers the rail ring's cookie-cutter
+  thumbnail (offline; runs the real `storyRing()` extracted from `stories.js`
+  against the real `styles.css` in headless Chrome, skipping when Chrome is
+  missing). It screenshots the ring at four device scale factors, at both ring
+  sizes (the rail's 58px, the stories sheet's 44px) and in both seen states, and
+  asserts no pixel of the avatar behind it survives around the photo's edge, that
+  the ring stroke and its gap are still there (so "cover the whole ring" can't
+  pass), and that the photo is centred. Re-run it after touching
+  `.st-ring`/`.st-thumb`; Blink flooring the avatar's 2.5px border to whole
+  device pixels, and the seen thumbnail's filtered layer edge, are what makes the
+  old face peek through — do not reintroduce the face behind a live thumbnail.
 - **Upload pipeline E2E:** `node scripts/test-upload-pipeline.js` (needs ffmpeg
   + the dev Postgres, skips otherwise) boots a real server against a throwaway
   database with a fake clamd and asserts the single-transition compression flow

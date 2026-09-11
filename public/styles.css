@@ -1746,11 +1746,26 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 .pf-story:empty{display:none}
 .st-tile:hover .st-ring{filter:brightness(1.1)}
 /* The story itself, cropped into the ring behind the avatar (cookie cutter). */
-/* The rail thumbnail sits inside the ring: 5px in = ring stroke (2.5px) + the
-   avatar's 2.5px border, so the edge blends into that gap instead of the
-   avatar's own colour. */
-.st-thumb{position:absolute;inset:5px;width:calc(100% - 10px);height:calc(100% - 10px);border-radius:50%;object-fit:cover;pointer-events:none}
+/* The gap between the photo and the ring stroke is painted by the avatar's own
+   background-coloured border (ring padding 2.5px + border 2.5px = 5px). The
+   thumbnail cannot sit exactly on that inner edge: Blink floors border widths
+   to whole device pixels, so the 2.5px border lays out as 2px at dpr 1/1.5
+   (2.4px at 1.25) while the thumbnail's inset stayed exact — the avatar's face
+   circle was a fraction wider than the photo covering it, leaving a hairline of
+   the old profile picture showing along the bottom of the ring. Overfill by
+   0.5px so the photo edge lands on the avatar's widest possible face (49px)
+   instead of inside it, and ~2px of the ring's gap stays visible. */
+.st-thumb{position:absolute;inset:4.5px;width:calc(100% - 9px);height:calc(100% - 9px);border-radius:50%;object-fit:cover;pointer-events:none}
 .st-ring.seen .st-thumb{filter:grayscale(.85) brightness(.72)}
+/* While a thumbnail is in the ring the face behind it is only a fallback (it
+   returns by itself if the media fails — storyThumbEl removes the element). It
+   must not tint the photo's antialiased edge: whatever the device pixel ratio
+   does to the border width, and however the seen filter's softer layer edge
+   composites, a hairline of the old avatar colour came through there. So the
+   avatar keeps only its background-coloured border — the thing that paints the
+   gap — and the rest becomes the same colour as that gap. */
+.st-ring:has(> .st-thumb) .avatar{background:var(--bg)!important;color:transparent}
+.st-ring:has(> .st-thumb) .avatar img{visibility:hidden}
 /* Row/card thumbs overfill the avatar by 2px and let its own overflow:hidden
    circle clip them: no hairline of avatar colour peeking at the rim.
    NOTE the `.avatar` prefix: `.avatar img{width:100%}` is more specific than a
