@@ -6,8 +6,11 @@
 // slide-up sheet (never the desktop right-click popup) carrying "Edit group
 // chat", the sheet's modal renames + describes the group and the open header
 // follows, a 1:1 row gets Close DM but no group settings, the row text cannot
-// be text-selected by the hold, and the server tag in a DM row is decorative
-// (clicking it opens the conversation, never the server mini-panel).
+// be text-selected by the hold, the server tag in a DM row is decorative
+// (clicking it opens the conversation, never the server mini-panel), and
+// removing a member is reachable from BOTH surfaces the group creator has —
+// the row's right-click / long-press menu and the user card's Remove tab —
+// with the card's click really dropping them from the group.
 //
 // Boots a real server against a throwaway database and drives headless Chrome
 // over CDP at a phone viewport with real touch events. Skips (exit 0) when
@@ -355,6 +358,54 @@ async function main() {
     const afterTag = await evaluate(`({ tagcard: !document.querySelector('#tagcard').classList.contains('hidden'), dm: S.dmThreadId })`);
     check(!afterTag.tagcard, 'clicking the tag does not open the server mini-panel', afterTag);
     check(afterTag.dm !== beforeDm, 'the click falls through to the DM row and opens it', afterTag);
+
+    console.log('\n[6] removing a member: creator-only, from the row menu and the card');
+    const pallyId = pally.user.id;
+    const pallySel = JSON.stringify('#member-list .member[data-uid="' + pallyId + '"]');
+    const pallyRow = `!!document.querySelector(${pallySel})`;
+    const pallyGone = `!document.querySelector(${pallySel})`;
+    await evaluate(`(async () => { await openHome(); await selectDmThread(${JSON.stringify(setup.gid)}); return 1; })()`);
+    check(await waitFor(pallyRow), 'pally is in the open group\'s member sidebar');
+    // 1. the row menu (right-click / long-press) still carries it
+    const menu = await evaluate(`(() => {
+      memberCtxMenu(${JSON.stringify(pallyId)}, 20, 20);
+      const m = document.querySelector('#ctx-menu');
+      return m ? [...m.querySelectorAll('.ctx-item')].map((b) => b.textContent.trim()) : [];
+    })()`);
+    check(menu.some((l) => l.includes('Remove @pally')), 'the member row\'s menu offers Remove', menu);
+    await evaluate(`closeCtx()`);
+    // 2. the user card — the same action, on the card, like a server's Kick
+    await evaluate(`(() => { openMemberCard(${JSON.stringify(pallyId)}, null, 200); return 1; })()`);
+    const cardState = await waitFor(`(() => {
+      const c = document.querySelector('#usercard');
+      if (!c || c.classList.contains('hidden')) return null;
+      const tabs = [...c.querySelectorAll('.uc-tab')].map((b) => b.id);
+      const rmv = c.querySelector('#uc-remove');
+      return { tabs, danger: !!rmv && rmv.classList.contains('danger'), label: rmv ? rmv.textContent.trim() : '' };
+    })()`);
+    check(!!cardState && cardState.danger, 'the card carries a danger Remove tab for the creator', cardState);
+    check(!!cardState && cardState.label === 'Remove', 'labelled Remove', cardState);
+    check(!!cardState && !cardState.tabs.includes('uc-kick') && !cardState.tabs.includes('uc-ban'),
+      'and offers no server Kick/Ban in a group chat', cardState && cardState.tabs);
+    console.log('  (wrote ' + (await screenshot('campfire-group-dm-card.png')) + ')');
+    await evaluate(`document.querySelector('#uc-remove').click()`);
+    await sleep(250);
+    const confirm = await evaluate(`(() => ({
+      open: !document.querySelector('#modal-backdrop').classList.contains('hidden'),
+      title: document.querySelector('#modal-title').textContent,
+      cardGone: document.querySelector('#usercard').classList.contains('hidden'),
+    }))()`);
+    check(confirm.open && /Remove @pally/.test(confirm.title), 'the tab asks for confirmation first', confirm);
+    check(confirm.cardGone, 'and closes the card behind it', confirm);
+    await evaluate(`document.querySelector('#modal-ok').click()`);
+    const dropped = await waitFor(`(() => {
+      const t = (S.dms || []).find((x) => x.id === ${JSON.stringify(setup.gid)});
+      return !!t && !(t.members || []).some((m) => m.id === ${JSON.stringify(pallyId)});
+    })()`);
+    check(!!dropped, 'confirming really drops them from the group');
+    check(await waitFor(pallyGone), 'and the member sidebar repaints without them');
+    const sysline = await waitFor(`[...document.querySelectorAll('#messages .msg')].some((m) => /was removed/.test(m.textContent))`);
+    check(!!sysline, 'a system line lands in the chat', await evaluate(`[...document.querySelectorAll('#messages .msg')].slice(-2).map((m) => m.textContent.trim())`));
   } catch (e) {
     console.error('[test] ' + (e && e.stack || e));
     process.exit(1);

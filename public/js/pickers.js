@@ -1199,6 +1199,14 @@ function ucIconHTML(name) {
 function ucTabHTML(id, icon, label, mod = '') {
   return `<button type="button" class="uc-tab${mod}" id="${id}">${ucIconHTML(icon)}<span>${label}</span></button>`;
 }
+// The user card's Remove tab. Groups have no mod roles, so removal is the group
+// creator's alone — the same predicate the member row's right-click / long-press
+// menu goes through (canRemoveGroupMember in actions.js), so the two paths can
+// never disagree about who may remove whom. '' when it is not on offer.
+function groupRemoveTabHTML(t, uid) {
+  if (!canRemoveGroupMember(t, uid)) return '';
+  return ucTabHTML('uc-remove', 'x-user', 'Remove', ' danger');
+}
 // ---------- user card ----------
 // Member-rail cards open to the LEFT of the sidebar, never over it.
 function openMemberCard(uid, rowEl, y) {
@@ -1213,6 +1221,10 @@ async function openUserCard(uid, x, y) {
   if (!u) return;
   const card = $('#usercard');
   const canMod = S.view === 'server' && S.serverDetail && canManage() && uid !== S.me.id && uid !== S.serverDetail.owner_id;
+  // Group chats have no mod roles, so removal is the group creator's alone and
+  // lives on the card exactly like a server's Kick/Ban: the same predicate the
+  // member row's right-click / long-press menu uses (groupRemoveTabHTML).
+  const dmThread = S.view === 'home' ? (S.dms || []).find((t) => t.id === S.dmThreadId) : null;
   // Voice: local volume for anyone in my current call, plus mod controls +
   // watch button when applicable.
   const inMyCall = !!(S.voice && S.me && uid !== S.me.id && occupantInMyRoom(uid));
@@ -1258,7 +1270,7 @@ async function openUserCard(uid, x, y) {
       ${voiceVolHTML}
       ${voiceModHTML}
       ${cardRolesHTML(uid)}
-      <div class="uc-tabs">${uid !== S.me.id ? ucTabHTML('uc-mention', 'mention', 'Mention') : ''}${uid !== S.me.id && !isBlocked(uid) ? ucTabHTML('uc-message', 'message', 'Message', ' primary') : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid, 'uc-friend', 'uc-tab', true) : ''}${canMod ? ucTabHTML('uc-kick', 'minus-user', 'Kick', ' danger') + ucTabHTML('uc-ban', 'x-user', 'Ban', ' danger') : ''}${uid !== S.me.id ? ucTabHTML('uc-block', isBlocked(uid) ? 'check' : 'slash', isBlocked(uid) ? 'Unblock' : 'Block', isBlocked(uid) ? '' : ' danger') : ''}${ucTabHTML('uc-profile', 'user', 'Profile')}${ucTabHTML('uc-close', 'close', 'Close')}</div>
+      <div class="uc-tabs">${uid !== S.me.id ? ucTabHTML('uc-mention', 'mention', 'Mention') : ''}${uid !== S.me.id && !isBlocked(uid) ? ucTabHTML('uc-message', 'message', 'Message', ' primary') : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid, 'uc-friend', 'uc-tab', true) : ''}${canMod ? ucTabHTML('uc-kick', 'minus-user', 'Kick', ' danger') + ucTabHTML('uc-ban', 'x-user', 'Ban', ' danger') : ''}${groupRemoveTabHTML(dmThread, uid)}${uid !== S.me.id ? ucTabHTML('uc-block', isBlocked(uid) ? 'check' : 'slash', isBlocked(uid) ? 'Unblock' : 'Block', isBlocked(uid) ? '' : ' danger') : ''}${ucTabHTML('uc-profile', 'user', 'Profile')}${ucTabHTML('uc-close', 'close', 'Close')}</div>
     </div>`;
   paintAvatar(card.querySelector('.avatar'), u);
   paintGameBadge(card.querySelector('.gbadge'));
@@ -1312,6 +1324,8 @@ async function openUserCard(uid, x, y) {
   };
   const bnn = $('#uc-ban');
   if (bnn) bnn.onclick = () => { closeUserCard(); modServerMember('ban', u); };
+  const rmv = $('#uc-remove');
+  if (rmv) rmv.onclick = () => { closeUserCard(); modGroupMember(dmThread, u); };
   card.querySelectorAll('[data-role-toggle]').forEach((b) => (b.onclick = async () => {
     const rid = b.dataset.roleToggle, has = b.dataset.has === '1';
     try {

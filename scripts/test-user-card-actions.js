@@ -177,7 +177,7 @@ function main() {
 
   console.log('\n[2] the card uses them (and keeps no pills)');
   check(/class="uc-tabs">/.test(pickers), 'the card action list is a .uc-tabs container');
-  for (const id of ['uc-mention', 'uc-message', 'uc-kick', 'uc-ban', 'uc-block', 'uc-profile', 'uc-close']) {
+  for (const id of ['uc-mention', 'uc-message', 'uc-kick', 'uc-ban', 'uc-remove', 'uc-block', 'uc-profile', 'uc-close']) {
     check(new RegExp("ucTabHTML\\('" + id + "'").test(pickers), id + ' is built as a tab row');
   }
   check(!/class="btn small" id="uc-mention"/.test(pickers) && !/class="btn small" id="uc-close"/.test(pickers), 'no .btn small pills left in the card actions');

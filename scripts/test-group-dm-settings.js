@@ -7,12 +7,17 @@
 //     the desktop right-click popup;
 //   - a long-press must never highlight the channel / DM name text;
 //   - the server tag inside a DM sidebar row must not steal the tap into its
-//     own server mini-panel (all platforms).
+//     own server mini-panel (all platforms);
+//   - removing someone from a group must be reachable from the member row's
+//     right-click / long-press menu AND from the user card, both gated to the
+//     group creator (groups are remove-only: no ban).
 //
 // Boots a real server against a throwaway database for the group settings API
 // (name/description, membership + auth, 1:1 refusal, cap/trim, the
-// dm-threads-changed push), then slices the real client functions offline for
-// the menu / tag / selection wiring. Skips (exit 0) when Postgres is down.
+// dm-threads-changed push) and the member-remove route (creator-only, the
+// removal push + system line), then slices the real client functions offline
+// for the menu / card / tag / selection wiring. Skips (exit 0) when Postgres is
+// down.
 //
 // Usage: node scripts/test-group-dm-settings.js
 'use strict';
@@ -90,6 +95,7 @@ function clientChecks() {
   const core = fs.readFileSync(path.join(ROOT, 'public/js/core.js'), 'utf8');
   const actions = fs.readFileSync(path.join(ROOT, 'public/js/actions.js'), 'utf8');
   const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
+  const pick = fs.readFileSync(path.join(ROOT, 'public/js/pickers.js'), 'utf8');
 
   console.log('\n[8] the row menu offers group settings (and only for groups)');
   const menuSrc = slice(home, 'function dmMenuItems(', '// Mobile long-press on a DM / group row');
@@ -130,6 +136,42 @@ function clientChecks() {
   check(/\.server-btn,\.chan,\.dmrow,\.member\{[^}]*user-select:none/.test(css),
     'sidebar rows opt out of text selection', (css.match(/\.server-btn,\.chan,\.dmrow,\.member\{[^}]*\}/) || [''])[0]);
   check(/\.server-btn,\.chan,\.dmrow,\.member\{[^}]*touch-callout:none/.test(css), 'and keep the callout suppression');
+
+  console.log('\n[12] group removal: the row menu and the user card share one rule');
+  const predSrc = slice(actions, 'function canRemoveGroupMember(', 'function modGroupItems(');
+  const tabSrc = slice(pick, 'function groupRemoveTabHTML(', '// ---------- user card ----------');
+  check(!!predSrc && !!tabSrc, 'sliced canRemoveGroupMember (actions.js) + groupRemoveTabHTML (pickers.js)');
+  if (predSrc && tabSrc) {
+    const tabs = [];
+    const ucTab = (id, icon, label, mod = '') => { tabs.push({ id, icon, label, mod }); return `<button class="uc-tab${mod}" id="${id}"><svg data-i="${icon}"></svg><span>${label}</span></button>`; };
+    const MS = { me: { id: 'me' } };
+    const { canRemoveGroupMember, groupRemoveTabHTML } = new Function('S', 'ucTabHTML',
+      predSrc + '\n' + tabSrc + '\nreturn { canRemoveGroupMember, groupRemoveTabHTML };')(MS, ucTab);
+    const group = { id: 'g1', isGroup: true, created_by: 'me' };
+    const tab = groupRemoveTabHTML(group, 'bob');
+    check(/id="uc-remove"/.test(tab) && /class="uc-tab danger"/.test(tab) && />Remove</.test(tab),
+      'the group creator gets a danger Remove tab on a member card', tab);
+    check(tabs.length && tabs[0].icon === 'x-user', 'with the x-user icon', tabs[0]);
+    check(groupRemoveTabHTML(group, 'me') === '', 'never on your own card');
+    check(groupRemoveTabHTML({ id: 'd1', isGroup: false, created_by: 'me' }, 'bob') === '', 'never in a 1:1 DM');
+    check(groupRemoveTabHTML(null, 'bob') === '', 'and never with no thread to remove from');
+    MS.me.id = 'bob';
+    check(groupRemoveTabHTML(group, 'carol') === '', 'a non-creator member gets no Remove tab', groupRemoveTabHTML(group, 'carol'));
+    check(canRemoveGroupMember(group, 'carol') === false, 'the predicate says the same');
+    MS.me.id = 'me';
+    check(canRemoveGroupMember(group, 'bob') === true, 'and clears the creator for a real member');
+    check(/canRemoveGroupMember\(t, u && u\.id\)/.test(actions),
+      'the row-menu item goes through the same predicate (no drifting rule)');
+    check(/ucTabHTML\('uc-remove', 'x-user', 'Remove', ' danger'\)/.test(tabSrc),
+      'the tab is a real danger tab row');
+    const tabsLine = (/<div class="uc-tabs">[\s\S]*?<\/div>/.exec(pick) || [''])[0];
+    check(/groupRemoveTabHTML\(dmThread, uid\)/.test(tabsLine),
+      'and the card renders it in its action list (next to Kick/Ban)', tabsLine.slice(0, 200));
+    check(/S\.view === 'home' \? \(S\.dms \|\| \[\]\)\.find\(\(t\) => t\.id === S\.dmThreadId\)/.test(pick),
+      'and only looks the group up in home view');
+    check(/const rmv = \$\('#uc-remove'\);\s*if \(rmv\) rmv\.onclick = \(\) => \{ closeUserCard\(\); modGroupMember\(dmThread, u\); \};/.test(pick),
+      'the tab closes the card and calls the same modGroupMember the menu does');
+  }
 }
 
 async function main() {
@@ -188,7 +230,7 @@ async function main() {
     };
     const A = await reg('gdma'), B = await reg('gdmb'), C = await reg('gdmc');
     const meId = async (t) => (await api('GET', '/api/me', { token: t })).data.user.id;
-    const idA = await meId(A.token), idB = await meId(B.token);
+    const idA = await meId(A.token), idB = await meId(B.token), idC = await meId(C.token);
     const f1 = await api('POST', '/api/friends', { token: A.token, body: { username: 'gdmb' } });
     const f2 = await api('POST', `/api/friends/${idA}/accept`, { token: B.token });
     check(f1.status === 200 && f2.status === 200, 'A and B are friends', { f1: f1.status, f2: f2.status });
@@ -245,6 +287,29 @@ async function main() {
     await api('PATCH', `/api/dms/${gid}`, { token: A.token, body: { name: 'Renamed live' } });
     const pushed = await waitFor(() => bsock.events.some((e) => e.t === 'dm-threads-changed'), 5000);
     check(!!pushed, 'B receives dm-threads-changed', bsock.events.map((e) => e.t));
+
+    console.log('\n[6] the creator removes a member (row menu + card action)');
+    r = await api('POST', `/api/dms/${gid}/members/${idB}/remove`, { body: {} });
+    check(r.status === 401, 'auth is required', r.status);
+    r = await api('POST', `/api/dms/${gid}/members/${idB}/remove`, { token: B.token });
+    check(r.status === 403 && r.data.error === 'creator_only', 'a non-creator member cannot remove anyone', { status: r.status, error: r.data && r.data.error });
+    r = await api('POST', `/api/dms/${gid}/members/${idA}/remove`, { token: A.token });
+    check(r.status === 400 && r.data.error === 'cannot_remove', 'the creator cannot remove themselves', { status: r.status, error: r.data && r.data.error });
+    r = await api('POST', `/api/dms/${gid}/members/${idC}/remove`, { token: A.token });
+    check(r.status === 404 && r.data.error === 'not_member', 'a stranger is not a member to remove', { status: r.status, error: r.data && r.data.error });
+    r = await api('POST', `/api/dms/${oneId}/members/${idB}/remove`, { token: A.token });
+    check(r.status === 400 && r.data.error === 'not_group', 'a 1:1 DM has nobody to remove', { status: r.status, error: r.data && r.data.error });
+
+    r = await api('POST', `/api/dms/${gid}/members/${idB}/remove`, { token: A.token });
+    check(r.status === 200, 'the creator removes a member', { status: r.status, error: r.data && r.data.error });
+    const told = await waitFor(() => bsock.events.find((e) => e.t === 'removed-from-dm'), 5000);
+    check(!!told && told.threadId === gid, 'the removed member is told live (removed-from-dm)', bsock.events.map((e) => e.t));
+    r = await api('GET', '/api/dms', { token: B.token });
+    check(!(r.data.threads || []).some((t) => t.id === gid), 'the group is gone from their list');
+    r = await api('GET', `/api/dms/${gid}/messages?limit=5`, { token: A.token });
+    check((r.data.messages || []).some((m) => /was removed/.test(m.content || '')), 'a system line records it in the chat', (r.data.messages || []).map((m) => m.content).slice(-3));
+    r = await api('POST', `/api/dms/${gid}/members/${idB}/remove`, { token: A.token });
+    check(r.status === 404 && r.data.error === 'not_member', 'removing them twice is a 404', { status: r.status, error: r.data && r.data.error });
   } catch (e) {
     console.error('[test] ' + (e && e.stack || e));
     process.exit(1);

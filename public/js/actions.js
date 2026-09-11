@@ -470,9 +470,18 @@ async function modServerMember(kind, u) {
     await api(`/api/servers/${d.id}/members/${u.id}/${kind}`, { method: 'POST' });
   } catch (err) { toast('Failed: ' + prettyError(err.message)); }
 }
+// Group chats have no moderator roles: the creator — and only the creator — may
+// remove someone, the same rule the server route re-checks (`creator_only`).
+// Shared by the member row's right-click / long-press menu and the user card's
+// Remove tab so the two can never disagree about who may do it.
+function canRemoveGroupMember(t, uid) {
+  return !!(t && t.isGroup && t.created_by && S.me && t.created_by === S.me.id
+    && uid && uid !== S.me.id && uid !== t.created_by);
+}
+// The user card's Remove tab (groupRemoveTabHTML in pickers.js, beside
+// ucTabHTML) goes through this same predicate.
 function modGroupItems(items, t, u) {
-  if (!t.created_by || t.created_by !== S.me.id) return;
-  if (u.id === t.created_by) return;
+  if (!canRemoveGroupMember(t, u && u.id)) return;
   items.push({ label: `Remove @${u.username}`, icon: '→', danger: true, fn: () => modGroupMember(t, u) });
 }
 /* ================= channel settings (General + Webhooks tabs) ============== */
