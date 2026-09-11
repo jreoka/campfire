@@ -257,6 +257,64 @@ async function main() {
     }
   }
 
+  console.log('\n[10] the timer ladder applies the state it hangs off, not the live status');
+  // Regression: the row read (S.me||{}).status. A picked Away carries no timer
+  // yet, activity used to clear it back to Online, and then "For 1 Hour" sent
+  // Online + a timer — which setStatus drops, so the click did nothing at all.
+  check(pickers.includes('data-presence-state="${id}"'), 'the rendered ladder stamps every row with its state');
+  check(/const state = b\.dataset\.presenceState \|\|/.test(pickers), 'and the handler reads that, not the live status');
+  const f2 = fake();
+  f2.timeRows.forEach((r) => { r.dataset.presenceState = 'away'; });
+  wirePresenceWidget(f2.card);
+  setMe('online'); setMenu(true, 'away');
+  statusCalls = [];
+  f2.timeRows[1].onclick(); // For 1 Hour, while the state has lapsed to Online
+  await null;
+  check(statusCalls.length === 1 && statusCalls[0][0] === 'away' && statusCalls[0][1] === 3600e3, 'picking a timer mid-lapse still applies Away + the span', statusCalls);
+
+  console.log('\n[11] activity reverts only the idle auto-away');
+  // The other half: poke() runs on every mousemove/keydown/click, and its old
+  // "untimed away → Online" rule undid a hand-picked Away on the next mouse
+  // move. Drive the real block out of final.js with captured timers.
+  const idlePrelude = `
+const S = { me: { id: 'me', status: 'online', presence_expires_at: null } };
+const api = async (p, o) => {
+  const body = JSON.parse(o.body);
+  return { user: { status: body.status, presence_expires_at: body.presenceExpiresAt ?? null } };
+};
+function paintMe() {}
+function renderMembers() {}
+function renderDmMembers() {}
+function refreshOwnPresence() {}
+const document = { addEventListener() {} };
+const __ls = new Map();
+const localStorage = { getItem: (k) => (__ls.has(k) ? __ls.get(k) : null), setItem: (k, v) => __ls.set(k, String(v)), removeItem: (k) => __ls.delete(k) };
+let __timers = [], __seq = 0;
+function setTimeout(fn, ms) { const id = ++__seq; __timers.push({ id, fn, ms }); return id; }
+function clearTimeout(id) { __timers = __timers.filter((t) => t.id !== id); }
+function __fireIdle() { const t = __timers.find((x) => x.ms === 5 * 60 * 1000); if (!t) return false; clearTimeout(t.id); t.fn(); return true; }
+`;
+  const idle = eval(idlePrelude + slice(finalSrc, 'function presenceExpiry() {', '// ---------- global closers')
+    + '\n;({ poke, markPresenceManual, __S: S, __fireIdle, __ls })');
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  idle.poke();
+  check(idle.__fireIdle() === true, 'the idle timer is armed on activity');
+  await tick();
+  check(idle.__S.me.status === 'away', 'and flips to Away on its own');
+  check(idle.__ls.get('cf_idle_away:me') === '1', 'an idle Away is marked (revertible across a reload), a picked one is not');
+  idle.poke(); await tick();
+  check(idle.__S.me.status === 'online', 'activity clears the idle Away');
+  idle.poke(); idle.__fireIdle(); await tick();
+  idle.markPresenceManual(); // e.g. the user picked a state on their card
+  check(idle.__ls.get('cf_idle_away:me') === undefined, 'a pick drops the idle marker');
+  idle.poke(); await tick();
+  check(idle.__S.me.status === 'away', 'a hand-picked Away survives the next mouse move');
+  idle.__S.me.status = 'away';
+  idle.__S.me.presence_expires_at = Date.now() + 3600e3;
+  idle.poke(); await tick();
+  check(idle.__S.me.status === 'away', 'a timed Away still keeps its own revert');
+  check(/if \(typeof markPresenceManual === 'function'\) markPresenceManual\(\)/.test(pickers), 'choosePresence marks a pick as not auto');
+
   console.log('');
   if (failures.length) {
     console.log(`FAILED ${failures.length} of ${passed + failures.length} checks:`);

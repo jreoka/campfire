@@ -1404,7 +1404,7 @@ function presenceWidgetHTML() {
       const row = `<button type="button" class="prow sub${cur === id ? ' sel' : ''}" data-presence="${id}" aria-pressed="${cur === id}"${id === 'online' ? '' : ` aria-expanded="${willCascade}"`}><span class="status-dot ${id}"></span><span class="plabel">${label}</span>${chevron}</button>`;
       if (!willCascade) return row;
       const sel = cur === id ? presenceDurationSel(cur, exp) : -1;
-      const times = PRESENCE_DURATIONS.map((p, i) => `<button type="button" class="prow time${i === sel ? ' on' : ''}" data-presence-ms="${p.ms === null ? 'never' : p.ms}">${p.label}</button>`).join('');
+      const times = PRESENCE_DURATIONS.map((p, i) => `<button type="button" class="prow time${i === sel ? ' on' : ''}" data-presence-ms="${p.ms === null ? 'never' : p.ms}" data-presence-state="${id}">${p.label}</button>`).join('');
       return row + `<div class="ptimes">${times}</div>`;
     }).join('') + '</div>';
   }
@@ -1440,12 +1440,20 @@ function wirePresenceWidget(card) {
   }));
   box.querySelectorAll('[data-presence-ms]').forEach((b) => (b.onclick = () => {
     const raw = b.dataset.presenceMs;
-    choosePresence((S.me || {}).status || 'online', raw === 'never' ? null : +raw);
+    // The ladder applies the state it belongs to, not whatever the live status
+    // happens to be: reading it here sent Online + a timer after the state had
+    // lapsed, and setStatus drops the timer for Online picks — the click did
+    // nothing at all.
+    const state = b.dataset.presenceState || (S.me || {}).status || 'online';
+    choosePresence(state, raw === 'never' ? null : +raw);
   }));
 }
 // State picks keep whatever timer is already counting; picking Online drops it.
 async function choosePresence(s, ms) {
   const cur = (S.me || {}).status || 'online';
+  // A hand-picked presence must survive the next mouse move (only the idle
+  // auto-away is revertible), including re-picking the state you are in.
+  if (typeof markPresenceManual === 'function') markPresenceManual();
   if (ms === undefined && s === cur) { renderPresenceWidget($('#usercard')); return; } // nothing changed: never clear a live timer
   const exp = ms === undefined ? (presenceExpiry() || null) : ms;
   try { await setStatus(s, s === 'online' ? null : exp); } catch {}

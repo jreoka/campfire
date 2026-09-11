@@ -31,6 +31,22 @@ document.addEventListener('auxclick', tauriExternalLink);
 // live on your own user card now (see presenceWidgetHTML in pickers.js), and
 // clicking the avatar opens that card like every other avatar does.
 function presenceExpiry() { const ts = +((S.me || {}).presence_expires_at || 0); return ts > Date.now() ? ts : 0; }
+// Was the current away set by the idle timer? That is the one presence activity
+// may silently undo. A state the user picked by hand (even a timerless Away,
+// which carries no expiry yet) is theirs to keep — the old blanket "untimed
+// away → online on activity" rule undid the pick on the very next mouse move, so
+// the status looked like it never changed. The flag lives in storage (keyed per
+// account) so a reload keeps an idle Away revertible without turning a picked
+// one sticky; the read only happens while the status is an untimed away.
+const IDLE_AWAY_KEY = 'cf_idle_away:';
+function setIdleAway(v) {
+  try { if (v) localStorage.setItem(IDLE_AWAY_KEY + S.me.id, '1'); else localStorage.removeItem(IDLE_AWAY_KEY + S.me.id); } catch {}
+}
+function idleAwayIsOurs() {
+  if (!S.me || S.me.status !== 'away' || presenceExpiry()) return false;
+  try { return localStorage.getItem(IDLE_AWAY_KEY + S.me.id) === '1'; } catch { return false; }
+}
+function markPresenceManual() { setIdleAway(false); }
 async function setStatus(s, presenceExpiresAt) {
   try {
     const body = { status: s };
@@ -48,9 +64,10 @@ let idleTimer = null;
 function poke() {
   if (!S.me) return;
   clearTimeout(idleTimer);
-  // A timed Away owns its own revert — activity must not clear it early.
-  if (S.me.status === 'away' && !(+((S.me || {}).presence_expires_at || 0) > Date.now())) setStatus('online');
-  idleTimer = setTimeout(() => { if (S.me && S.me.status === 'online') setStatus('away'); }, 5 * 60 * 1000);
+  // A timed Away owns its own revert, and so does a picked one — only the idle
+  // auto-away may be cleared by activity.
+  if (idleAwayIsOurs()) { markPresenceManual(); setStatus('online'); }
+  idleTimer = setTimeout(() => { if (S.me && S.me.status === 'online') { setIdleAway(true); setStatus('away'); } }, 5 * 60 * 1000);
 }
 ['mousemove', 'keydown', 'click'].forEach((ev) => document.addEventListener(ev, poke, { passive: true }));
 
