@@ -277,11 +277,13 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   `node scripts/test-story-camera.js` drives the same harness with Chrome's
   fake camera (`--use-fake-device-for-media-stream`) and proves the story
   shutter answers the tap instead of the JPEG encoder: the captured frame is on
-  screen in the same frame as the click (`.sc-freeze` = the capture canvas,
-  Next held at "Saving…", camera released), a real `image/jpeg` blob takes
-  over once Blink calls back, and Retake during an in-flight encode discards
-  the stale shot instead of resurrecting it. Skips when Chrome has no fake
-  video device. Re-run it after touching the story composer's capture path.
+  screen in the same frame as the click (`.sc-freeze` = the capture canvas, the
+  camera released, Next live immediately), a real `image/jpeg` blob takes over
+  once the encoder answers, Retake during an in-flight encode discards the
+  stale shot instead of resurrecting it, and posting before the bytes land
+  waits for them (Post says "Saving…") and then posts. Skips when Chrome has no
+  fake video device. Re-run it after touching the story composer's capture or
+  encode path.
 - **Upload pipeline E2E:** `node scripts/test-upload-pipeline.js` (needs ffmpeg
   + the dev Postgres, skips otherwise) boots a real server against a throwaway
   database with a fake clamd and asserts the single-transition compression flow
@@ -339,12 +341,20 @@ are load-bearing:
   (avatars, banners, emoji, icons) is scanned but not gated.
 - **`canvas.toBlob` is not background work on Android.** Blink's
   `canvas_async_blob_creator` encodes on the main thread during idle slices
-  whenever `IS_ANDROID`, so any shutter that waits for the callback looks hung
-  for seconds — the camera keeps painting, the UI doesn't move. Show the result
-  before the encode: the story composer freezes the captured canvas over the
-  camera slot (`.sc-freeze`), holds Next at "Saving…", releases the camera, and
-  hands over to the blob when it lands. Stamp each shot with a sequence
-  (`sc.shotSeq`) so a slow callback can't resurrect a retaken shot.
+  whenever `IS_ANDROID`, so a shutter that waits for that callback looks hung
+  for seconds — and a busy renderer (camera teardown, the audience list, an
+  animating spinner) can starve those slices for tens of seconds: the reported
+  "saving takes ~15s". Two rules follow. (1) Encode off the main thread —
+  `storyJpegBlob` hands the pixels to a worker with an `OffscreenCanvas`
+  (`convertToBlob`), which has no idle scheduling to wait for, and falls back to
+  `toBlob` — and the picked-file path falls back to the original file. (2)
+  Never gate the flow on the encode: the story composer paints the frozen
+  canvas (`.sc-freeze`) over the camera slot, releases the camera, and leaves
+  Next live; `storyPostNow` is the one place that waits for `sc.encodePromise`,
+  at the last tap, showing "Saving…" on the Post button. Stamp each shot with a
+  sequence (`sc.shotSeq`) so a slow encode can't resurrect a retaken shot, and
+  keep `storyRevealPreview` from yanking the reader back a step when the bytes
+  land mid-audience-pick.
 
 ## Environment notes (this dev machine)
 

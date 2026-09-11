@@ -225,6 +225,8 @@ async function main() {
         camReleased: sc.stream === null,
         step: sc.step,
         blobYet: !!sc.blob,
+        promise: !!sc.encodePromise,
+        encoderWorker: !!storyEncoder(),
       };
     })()`);
     check(shot.ms < 120, 'the tap is served inside one frame', { ms: Math.round(shot.ms) });
@@ -232,11 +234,14 @@ async function main() {
     check(shot.freezePainted, 'the stand-in is a real painted canvas', shot);
     check(shot.camReleased, 'the camera is released while the encode runs', shot);
     check(shot.step === 'preview', 'the preview step is up', shot);
-    check(shot.nextDisabled && /saving/i.test(shot.nextLabel), 'Next waits for the bytes', shot);
-    check(!shot.blobYet, 'and there is no blob behind it yet (the encode really is async)', shot);
+    // The reader is never parked on a disabled "Saving…": the frozen frame is
+    // the preview, and the encode is waited for once, at Post (storyPostNow).
+    check(!shot.nextDisabled && shot.nextLabel === 'Next', 'Next is live immediately', shot);
+    check(!shot.blobYet && shot.promise, 'and the bytes are still encoding behind it', shot);
+    check(shot.encoderWorker, 'the JPEG is encoded off the main thread (worker + OffscreenCanvas)', shot);
 
     console.log('\n[4] the encode lands behind it');
-    const done = await waitFor(`!document.querySelector('#sc-next').disabled ? {
+    const done = await waitFor(`!sc.pendingShot && sc.blob ? {
         label: document.querySelector('#sc-next').textContent,
         kind: sc.kind,
         type: (sc.blob && sc.blob.type) || '',
@@ -306,6 +311,33 @@ async function main() {
       return { ok: false, step: sc.step, pending: !!sc.pendingShot, blob: !!sc.blob };
     })()`);
     check(second.ok && second.type === 'image/jpeg' && second.size > 1000, 'back-to-back captures keep working', second);
+
+    console.log('\n[7] posting before the bytes land waits for them, then posts');
+    const posted = await evaluate(`(async () => {
+      const wait = (fn, ms) => new Promise((res) => {
+        const t0 = performance.now();
+        (function tick() {
+          if (fn()) return res(true);
+          if (performance.now() - t0 > ms) return res(false);
+          setTimeout(tick, 50);
+        })();
+      });
+      document.querySelector('#sc-retake').click();
+      if (!(await wait(() => sc && sc.camReady, 12000))) return { camReady: false };
+      document.querySelector('#sc-shutter').click();
+      const raced = { blobYet: !!sc.blob, step: sc.step, nextLabel: document.querySelector('#sc-next').textContent };
+      storySetStep('audience');                    // the reader moves on at once
+      const p = storyPostNow();                    // …and posts while encoding
+      const during = { label: document.querySelector('#sc-post').textContent };
+      await p;
+      return { camReady: true, raced, during, closed: sc === null, mine: storyLive(storyData.mine && storyData.mine.items).length };
+    })()`, 60000);
+    check(!!posted.camReady, 'the camera is back for one more shot', posted);
+    if (posted.camReady) {
+      check(!posted.raced.blobYet && posted.raced.nextLabel === 'Next', 'the shot was still encoding when Next was tapped', posted.raced);
+      check(posted.during.label === 'Saving…', 'Post says what it is waiting for', posted.during);
+      check(posted.closed && posted.mine > 0, 'the story posted once the bytes existed', posted);
+    }
 
     check(pageErrors.length === 0, 'no uncaught page errors', pageErrors.slice(0, 3));
     if (pageErrors.length) console.log('  page errors: ' + JSON.stringify(pageErrors.slice(0, 5)));

@@ -1378,6 +1378,91 @@ function storyFlash() {
   f.classList.add('on');
   setTimeout(() => f.classList.remove('on'), 280);
 }
+/* ---------- JPEG encode, off the main thread ----------
+ * canvas.toBlob is not background work on Android: Blink's async blob creator
+ * picks the idle-period implementation there, so the JPEG is encoded on the
+ * renderer's main thread between frames — and while anything else keeps that
+ * thread busy (the camera teardown, the audience list, a spinner, a flash
+ * animation) a 2MP shot can sit at "Saving…" for tens of seconds. The same
+ * pixels handed to a worker with an OffscreenCanvas land on the worker's own
+ * thread, which has no idle scheduling to wait for. Falls back to toBlob when
+ * OffscreenCanvas-in-a-worker is missing, and the picked-file path falls back
+ * to the original file on top of that. */
+let storyEnc = null, storyEncSeq = 0;
+const storyEncJobs = new Map();
+function storyEncoder() {
+  if (storyEnc !== null) return storyEnc;
+  storyEnc = false;
+  try {
+    if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined'
+      || typeof OffscreenCanvas.prototype.convertToBlob !== 'function') return storyEnc;
+    const src = 'self.onmessage = async (e) => {'
+      + 'const d = e.data;'
+      + 'try {'
+      + 'const c = new OffscreenCanvas(d.width, d.height);'
+      + 'c.getContext("2d").drawImage(d.bitmap, 0, 0);'
+      + 'd.bitmap.close();'
+      + 'const blob = await c.convertToBlob({ type: "image/jpeg", quality: d.quality });'
+      + 'self.postMessage({ id: d.id, blob });'
+      + '} catch (err) { self.postMessage({ id: d.id, error: String((err && err.message) || err) }); }'
+      + '};';
+    const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+    const w = new Worker(url);
+    w.onmessage = (e) => {
+      const d = e.data || {};
+      const job = storyEncJobs.get(d.id);
+      if (!job) return;
+      storyEncJobs.delete(d.id);
+      clearTimeout(job.timer);
+      if (d.blob && d.blob.size) job.resolve(d.blob);
+      else job.reject(new Error(d.error || 'encode_failed'));
+    };
+    w.onerror = () => {
+      // A dead worker only means the main-thread encoder: retire it (and let
+      // anything already posted to it time out into the same fallback).
+      storyEnc = false;
+      try { w.terminate(); } catch {}
+    };
+    storyEnc = w;
+  } catch { storyEnc = false; }
+  return storyEnc;
+}
+// One job on the worker. The timeout is a wedge guard, not the expected path:
+// an encode that has not answered in seconds is broken, and re-encoding on the
+// main thread beats leaving the reader on "Saving…" forever.
+function storyWorkerEncode(bitmap, width, height, quality) {
+  const worker = storyEncoder();
+  if (!worker) { try { bitmap.close(); } catch {} return null; }
+  return new Promise((resolve, reject) => {
+    const id = ++storyEncSeq;
+    const timer = setTimeout(() => {
+      if (storyEncJobs.delete(id)) reject(new Error('encode_timeout'));
+    }, 5000);
+    storyEncJobs.set(id, { resolve, reject, timer });
+    try { worker.postMessage({ id, bitmap, width, height, quality }, [bitmap]); }
+    catch (err) {
+      clearTimeout(timer);
+      storyEncJobs.delete(id);
+      try { bitmap.close(); } catch {}
+      reject(err);
+    }
+  });
+}
+// JPEG bytes for a canvas. Never throws and never returns the wrong pixels: the
+// worker runs first, toBlob is the net under it.
+async function storyJpegBlob(source, quality = 0.86) {
+  const w = Math.round(source.width || 0), h = Math.round(source.height || 0);
+  if (!w || !h) return null;
+  if (storyEncoder()) {
+    try {
+      const blob = await storyWorkerEncode(await createImageBitmap(source), w, h, quality);
+      if (blob && blob.size) return blob;
+    } catch { /* fall through to the main-thread encoder */ }
+  }
+  return await new Promise((resolve) => {
+    try { source.toBlob(resolve, 'image/jpeg', quality); } catch { resolve(null); }
+  });
+}
 function captureStoryPhoto() {
   const vid = $('#sc-cam');
   if (!sc || !vid || !vid.videoWidth) { toast('Camera is still starting'); return; }
@@ -1398,7 +1483,9 @@ function captureStoryPhoto() {
   // storyFreeze), the camera is released, and the blob lands behind it.
   storyFreeze();
   const seq = storyShowPendingShot(null);
-  c.toBlob((blob) => {
+  // The encode runs behind the frozen frame (see storyJpegBlob) and the reader
+  // may walk the audience step while it does; storyPostNow is what waits for it.
+  sc.encodePromise = storyJpegBlob(c, 0.86).then((blob) => {
     // Retaken or closed while the encoder ran — the shot is stale, drop it (and
     // leave scCapBusy alone: a newer frame owns the flag now).
     if (!sc || sc.shotSeq !== seq) return;
@@ -1406,7 +1493,7 @@ function captureStoryPhoto() {
     if (!sc.pendingShot) return;
     if (!blob || !blob.size) { toast('Could not save that photo'); storyRetake(); return; }
     storyShowPreview(blob, 'image', 0);
-  }, 'image/jpeg', 0.86);
+  });
 }
 function storyStartRec() {
   if (!sc || sc.rec) return;
@@ -1483,8 +1570,8 @@ function storyFreeze() {
 function storyClearFreeze() {
   try { if (scCapCanvas) scCapCanvas.remove(); } catch {}
 }
-// The shutter/pick landed but the bytes are still encoding. Put something real
-// on screen immediately and finish behind it:
+// The bytes are still encoding (see storyJpegBlob). Put something real on
+// screen immediately and finish behind it:
 //   url === null → the frozen captured frame (storyFreeze)
 //   url          → the picked file's own object URL (the gallery path shows the
 //                  photo it was handed while it re-encodes the downscale)
@@ -1508,8 +1595,11 @@ function storyShowPendingShot(url) {
     img.src = url;
     img.classList.remove('hidden');
   }
-  const next = $('#sc-next');
-  if (next) { next.disabled = true; next.textContent = 'Saving…'; }
+  // Next goes live with the frozen frame, not with the bytes. Making the reader
+  // stare at a disabled "Saving…" while the JPEG encodes is the whole "saving
+  // takes forever" complaint; the pixels they need to see are already up, and
+  // storyPostNow waits for the encode at the end, after the audience step.
+  storyResetShotUi();
   storySetStep('preview');
   storyProgress(null);
   // The audience list is a lot of DOM; it has no business delaying the paint
@@ -1575,7 +1665,9 @@ function storyRevealPreview(kind, showImg) {
   const img = $('#sc-shot');
   if (kind === 'image' && showImg) img.classList.remove('hidden');
   storyResetShotUi();
-  storySetStep('preview');
+  // The encode is allowed to land late, so by now the reader may be picking an
+  // audience — never yank them back a step when the bytes arrive.
+  if (sc.step !== 'audience') storySetStep('preview');
   renderStoryAudience();
   storyProgress(null);
 }
@@ -1804,7 +1896,7 @@ async function storyDownscaleImage(file) {
     c.height = Math.max(1, Math.round(bmp.height * scale));
     c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
     try { bmp.close(); } catch {}
-    const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.92));
+    const blob = await storyJpegBlob(c, 0.92);
     if (!blob || !blob.size) return file;
     return new File([blob], (file.name || 'story').replace(/\.[a-z0-9]+$/i, '') + '.jpg', { type: 'image/jpeg' });
   } catch { return file; }
@@ -1835,13 +1927,16 @@ async function storyPickFile(file) {
   if (!sc || !file) return;
   if (file.type.startsWith('image/')) {
     // Show the picked file at once (its own bytes, no encode) and re-encode
-    // behind it — the downscale/JPEG is the same main-thread idle work that
-    // made the shutter look broken on Android.
+    // behind it — the downscale/JPEG is the same slow main-thread idle work
+    // that made the shutter look broken on Android.
     const quick = URL.createObjectURL(file);
     const seq = storyShowPendingShot(quick);
-    const img = await storyDownscaleImage(file);
-    if (!sc || sc.shotSeq !== seq) { try { URL.revokeObjectURL(quick); } catch {} return; }
-    storyShowPreview(img, 'image', 0);
+    sc.encodePromise = (async () => {
+      const img = await storyDownscaleImage(file);
+      if (!sc || sc.shotSeq !== seq) { try { URL.revokeObjectURL(quick); } catch {} return; }
+      storyShowPreview(img, 'image', 0);
+    })();
+    await sc.encodePromise;
   } else if (file.type.startsWith('video/')) {
     if (file.size > S.maxUploadMb * 1024 * 1024) { toast(`Videos are limited to ${S.maxUploadMb}MB`); return; }
     storyShowPreview(file, 'video', await storyVideoDuration(file));
@@ -1850,10 +1945,23 @@ async function storyPickFile(file) {
   }
 }
 async function storyPostNow() {
-  if (!sc || sc.busy || !sc.blob) return;
+  if (!sc || sc.busy) return;
   const st = sc;
-  st.busy = true;
   const btn = $('#sc-post');
+  // The shot's JPEG may still be encoding (see storyJpegBlob): Next no longer
+  // waits for it, so this is where the wait belongs — at the last tap, with the
+  // frozen frame still on screen. "Saving…" is honest about what is happening.
+  if (!st.blob && st.encodePromise) {
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    try { await st.encodePromise; } catch {}
+    if (sc !== st) return;
+    btn.disabled = false;
+    btn.textContent = scPostLabel();
+    if (!st.blob) { toast('Could not save that photo — try another shot'); storyProgress(null); return; }
+  }
+  if (!st.blob) return;
+  st.busy = true;
   btn.disabled = true;
   btn.textContent = 'Uploading…';
   const caption = ($('#sc-caption').value || '').trim().slice(0, 200);
