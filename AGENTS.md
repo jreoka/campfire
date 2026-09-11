@@ -219,6 +219,15 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   `stories.js`): an accent "N new" (unseen items) while something waits, a muted
   "SEEN" once everything is watched — never the bare grey author count that read
   as "1 unread" — and no chip at all when the only live post is mine.
+  `node scripts/test-status-bubble.js` covers the custom status as a
+  thought bubble beside the avatar (offline; it runs the real
+  `statusBubbleHTML` pulled out of `pickers.js`): other people only get a bubble
+  once they set something (whitespace-only counts as unset), my own card always
+  keeps one ("Set a status" placeholder that opens the editor, plus a clear
+  button once set), the expiry note only ever shows on my card and never for a
+  lapsed timer, the text is escaped, and the old body section
+  (`statusEditHTML`/`uc-statusbox`) is gone while the bubble still renders in the
+  avatar row.
   `node scripts/test-pin-badge.js` covers the pin button's badge offline (it
   runs the real helpers pulled out of `pins.js` against stub globals): a pin is
   "new" until this account opens the panel in that conversation, pinning

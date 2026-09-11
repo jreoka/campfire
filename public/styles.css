@@ -937,10 +937,24 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .gbadge img{width:100%;height:100%;object-fit:contain;display:block}
 .uc-statustext.ugame{display:flex;align-items:center;gap:.35rem}
 .uc-sec-label{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin:.55rem 0 .3rem}
-.uc-statusbox{background:var(--panel-3);border:0;border-radius:10px;padding:.55rem .65rem;margin-top:.35rem}
-.uc-status-cur{font-size:.85rem;overflow-wrap:anywhere}
-.uc-status-exp{font-size:.74rem;color:var(--faint);margin-top:.15rem}
-.uc-statusbox .row{display:flex;gap:.4rem;margin-top:.45rem}
+/* Custom status: a thought bubble beside the avatar. The avatar straddles the
+   banner (margin-top:-33px), so the bubble wrap hangs itself -14px to sit on
+   the picture's lower half, with two tail dots trailing toward it. */
+.uc-head{display:flex;align-items:flex-start;gap:1.05rem}
+.uc-bubble-wrap{flex:1;min-width:0;margin-top:-14px}
+.uc-bubble-fit{position:relative;width:fit-content;max-width:100%}
+.uc-bubble{position:relative;display:block;max-width:100%;background:var(--panel-3);border:0;border-radius:14px 14px 14px 6px;padding:.42rem .62rem;font:inherit;font-size:.82rem;line-height:1.25;color:var(--text);text-align:left;overflow-wrap:anywhere}
+.uc-bubble::before,.uc-bubble::after{content:'';position:absolute;border-radius:50%;background:var(--panel-3)}
+.uc-bubble::before{left:-7px;bottom:6px;width:7px;height:7px}
+.uc-bubble::after{left:-13px;bottom:0;width:4px;height:4px}
+.uc-bubble.edit{cursor:pointer;padding-right:1.5rem;transition:background var(--t-fast)}
+.uc-bubble.edit:hover{background:var(--panel-4)}
+.uc-bubble.empty{padding-right:.62rem;background:transparent;border:1px dashed var(--line);color:var(--muted)}
+.uc-bubble.empty::before,.uc-bubble.empty::after{display:none}
+.uc-bubble.empty:hover{border-color:var(--accent);color:var(--text)}
+.uc-bubble-x{position:absolute;top:-.4rem;right:-.3rem;width:20px;height:20px;padding:0;border:0;border-radius:50%;background:var(--panel-4);color:var(--muted);font:inherit;font-size:.9rem;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
+.uc-bubble-x:hover{background:var(--danger-bg);color:var(--danger-tx)}
+.uc-bubble-exp{font-size:.7rem;color:var(--faint);margin-top:.2rem}
 .exp-row{display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.25rem}
 .uc-gaming{margin-top:.6rem}
 .ugame-title{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin-bottom:.35rem}

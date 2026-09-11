@@ -1022,13 +1022,11 @@ async function openUserCard(uid, x, y) {
   card.innerHTML = `
     <div class="uc-banner"${ban ? ` style="background-image:url('${esc(ban)}')"` : ''}></div>
     <div class="uc-body">
-      <span class="avatar big"></span>
+      <div class="uc-head"><span class="avatar big"></span>${statusBubbleHTML(u)}</div>
       <div class="uc-name"><span style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u)}</div>
       <div class="uc-sub">@${esc(u.username)}${u.role === 'owner' ? ' · server owner' : ''}</div>
       ${isSysAdmin(u) || isEarlyUser(u) ? `<div class="uc-badges">${isSysAdmin(u) ? '<span class="sysadmin-badge">System admin</span>' : ''}${isEarlyUser(u) ? '<span class="early-badge">Early user</span>' : ''}</div>` : ''}
       <div class="uc-status"><span class="status-dot ${dotOf(st, streaming)}"></span><span>${stLabel}</span></div>
-      ${uid !== S.me.id && u.status_text ? `<div class="uc-statustext">${esc(u.status_text)}</div>` : ''}
-      ${uid === S.me.id ? statusEditHTML() : ''}
       ${streaming ? `<div class="uc-statustext ustream"><span class="vlive">LIVE</span><span>Streaming ${esc(streaming)}</span></div>` : ''}
       ${u.playing_game ? `<div class="uc-statustext ugame">${gameBadgeHTML(u.playing_game)}<span>Playing ${esc(u.playing_game)}</span></div>` : ''}
       ${u.bio ? `<div class="uc-bio">${renderRich(u.bio)}</div>` : ''}
@@ -1042,10 +1040,7 @@ async function openUserCard(uid, x, y) {
   paintAvatar(card.querySelector('.avatar'), u);
   paintGameBadge(card.querySelector('.gbadge'));
   try { paintUserCardStory(card, u); } catch {}
-  const se = $('#uc-status-edit');
-  if (se) se.onclick = () => openStatusEditor();
-  const sc = $('#uc-status-clear');
-  if (sc) sc.onclick = () => clearMyStatus();
+  wireStatusBubble(card);
   loadUserGaming($('#uc-gaming'), u.username, { compact: true });
   card.style.bottom = ''; card.style.maxHeight = ''; card.style.overflowY = '';
   card.classList.remove('hidden');
@@ -1330,33 +1325,45 @@ function fmtCountdown(ts) {
   if (h < 24) return `in ${h}h`;
   return `in ${Math.floor(h / 24)}d`;
 }
-function statusEditHTML() {
-  const cur = S.me.status_text || '';
-  const exp = +S.me.status_expires_at || 0;
-  const expNote = cur && exp ? `<div class="uc-status-exp">Expires ${fmtCountdown(exp)}</div>` : '';
-  return `<div class="uc-statusbox" id="uc-statusbox"><div class="uc-sec-label">Custom status</div>
-    <div class="uc-status-cur">${cur ? esc(cur) : '<span class="muted">Not set</span>'}</div>${expNote}
-    <div class="row"><button class="btn small" id="uc-status-edit">${cur ? 'Edit' : 'Set status'}</button>${cur ? '<button class="btn small danger" id="uc-status-clear">Clear</button>' : ''}</div></div>`;
+// Custom status shown as a thought bubble beside the avatar (Discord-style).
+// Other people only get a bubble when they set something; my own card always
+// shows one so "set a status" lives up by the picture, not in the card body.
+function statusBubbleHTML(u) {
+  const mine = !!(S.me && u && u.id === S.me.id);
+  const cur = ((u && u.status_text) || '').trim();
+  if (!cur && !mine) return '';
+  const exp = +((u && u.status_expires_at) || 0);
+  const expNote = (mine && cur && exp > Date.now()) ? `<div class="uc-bubble-exp">Clears ${fmtCountdown(exp)}</div>` : '';
+  const bubble = mine
+    ? `<button type="button" class="uc-bubble edit${cur ? '' : ' empty'}" id="uc-status-edit" aria-label="${cur ? 'Edit custom status' : 'Set a custom status'}">${cur ? esc(cur) : 'Set a status'}</button>`
+    : `<div class="uc-bubble">${esc(cur)}</div>`;
+  const clear = (mine && cur)
+    ? '<button type="button" class="uc-bubble-x" id="uc-status-clear" aria-label="Clear custom status" title="Clear status">×</button>'
+    : '';
+  return `<div class="uc-bubble-wrap"><div class="uc-bubble-fit">${bubble}${clear}</div>${expNote}</div>`;
 }
-function refreshOwnStatusBox() {
-  // Update the status section in place so the open card never moves,
-  // rescales, or loses its scroll position.
+function wireStatusBubble(card) {
+  const se = card && card.querySelector('#uc-status-edit');
+  if (se) se.onclick = () => openStatusEditor();
+  const sc = card && card.querySelector('#uc-status-clear');
+  if (sc) sc.onclick = () => clearMyStatus();
+}
+function refreshOwnStatusBubble() {
+  // Swap just the bubble so the open card never moves, rescales, or loses
+  // its scroll position.
   const card = $('#usercard');
   if (!card || card.classList.contains('hidden') || card.dataset.uid !== S.me.id) return;
-  const box = $('#uc-statusbox');
-  if (!box) return;
-  box.outerHTML = statusEditHTML();
-  const se = $('#uc-status-edit');
-  if (se) se.onclick = () => openStatusEditor();
-  const sc = $('#uc-status-clear');
-  if (sc) sc.onclick = () => clearMyStatus();
+  const wrap = card.querySelector('.uc-bubble-wrap');
+  if (!wrap) return;
+  wrap.outerHTML = statusBubbleHTML(S.me);
+  wireStatusBubble(card);
 }
 async function clearMyStatus() {
   try {
     const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify({ statusText: '' }) });
     if (user) { S.me = { ...S.me, ...user }; paintMe(); }
     toast('Status cleared');
-    refreshOwnStatusBox();
+    refreshOwnStatusBubble();
   } catch (err) { toast(prettyError(err.message)); }
 }
 function openStatusEditor() {
@@ -1383,6 +1390,7 @@ function openStatusEditor() {
     <label>Status<input id="m-status-text" maxlength="64" placeholder="What's up?" value="${esc(cur)}" /></label>
     <div class="uc-sec-label">Clear after</div>
     <div class="exp-row" id="m-status-exp">${presets.map((p, i) => `<button type="button" class="mini${i === sel ? ' on' : ''}" data-exp="${i}">${p.label}</button>`).join('')}</div>
+    ${cur ? '<div class="row" style="margin-top:.7rem"><button type="button" class="btn small danger" id="m-status-clear">Clear status</button></div>' : ''}
   `, 'Save', async () => {
     const text = ((($('#m-status-text') || {}).value) || '').trim().slice(0, 64);
     const ts = presets[sel].ts;
@@ -1390,9 +1398,11 @@ function openStatusEditor() {
       const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify({ statusText: text, statusExpiresAt: text ? ts : null }) });
       if (user) { S.me = { ...S.me, ...user }; paintMe(); }
       toast(text ? 'Status updated' : 'Status cleared');
-      refreshOwnStatusBox();
+      refreshOwnStatusBubble();
     } catch (err) { toast(prettyError(err.message)); }
   });
+  const mclr = $('#m-status-clear');
+  if (mclr) mclr.onclick = async () => { cancelModal(); await clearMyStatus(); };
   document.querySelectorAll('#m-status-exp [data-exp]').forEach((b) => (b.onclick = () => {
     sel = +b.dataset.exp;
     document.querySelectorAll('#m-status-exp [data-exp]').forEach((x) => x.classList.toggle('on', +x.dataset.exp === sel));
