@@ -1139,12 +1139,20 @@ function lbPointerUp(e) {
     return;
   }
   if (wasPan && wasPan.moved) return;
-  // A tap: double-tap zooms, a tap on the backdrop closes.
-  const now = Date.now();
-  const near = Math.hypot(e.clientX - lb.tapX, e.clientY - lb.tapY) < 60;
-  if (now - lb.lastTap < 320 && near) { lb.lastTap = 0; lbToggleZoom(e.clientX, e.clientY); return; }
-  lb.lastTap = now; lb.tapX = e.clientX; lb.tapY = e.clientY;
-  if (target === lbImg()) return; // a single tap on the photo does nothing
+  // A tap on the photo toggles the zoom. Mouse and pen get it on the first
+  // click (click to zoom in, click again to zoom out); touch keeps double-tap
+  // so a stray single tap never jumps the zoom. A tap on the backdrop closes.
+  if (target === lbImg()) {
+    if (e.pointerType === 'touch') {
+      const now = Date.now();
+      const near = Math.hypot(e.clientX - lb.tapX, e.clientY - lb.tapY) < 60;
+      if (now - lb.lastTap < 320 && near) { lb.lastTap = 0; lbToggleZoom(e.clientX, e.clientY); }
+      else { lb.lastTap = now; lb.tapX = e.clientX; lb.tapY = e.clientY; }
+    } else {
+      lbToggleZoom(e.clientX, e.clientY);
+    }
+    return;
+  }
   closeLightbox();
 }
 window.addEventListener('pointerup', lbPointerUp);

@@ -86,11 +86,14 @@ window.__state = () => ({
   scale: lb.scale, tx: lb.tx, ty: lb.ty,
   img: document.getElementById('lightbox-img').getAttribute('src') || '',
 });
-const pev = (type, id, x, y, target) => {
+const pev = (type, id, x, y, target, pointerType) => {
   const el = target || document.elementFromPoint(x, y) || document.body;
-  el.dispatchEvent(new PointerEvent(type, { pointerId: id, clientX: x, clientY: y, bubbles: true, cancelable: true, pointerType: 'touch', isPrimary: true }));
+  el.dispatchEvent(new PointerEvent(type, { pointerId: id, clientX: x, clientY: y, bubbles: true, cancelable: true, pointerType: pointerType || 'touch', isPrimary: true }));
 };
 window.__tap = (x, y) => { pev('pointerdown', 1, x, y); pev('pointerup', 1, x, y); };
+// A real mouse click: pointerType 'mouse' so the lightbox takes the single-click
+// zoom path instead of touch's double-tap one.
+window.__mclick = (x, y) => { pev('pointerdown', 1, x, y, null, 'mouse'); pev('pointerup', 1, x, y, null, 'mouse'); };
 window.__swipe = (x, y, dy) => {
   pev('pointerdown', 1, x, y);
   for (let i = 1; i <= 6; i++) pev('pointermove', 1, x, y + dy * i / 6);
@@ -249,6 +252,16 @@ async function main() {
     await sleep(80);
     s = await state();
     check(s.scale === 1 && s.tx === 0 && s.ty === 0, 'double-tap again resets the zoom', s);
+    // A mouse zooms on a SINGLE click (click to zoom in, click again to zoom
+    // out) — the touch double-tap above is deliberately not required there.
+    await evaluate(`__mclick(${centerX}, ${centerY})`);
+    await sleep(60);
+    s = await state();
+    check(s.scale > 1.5, 'one mouse click zooms in', s);
+    await evaluate(`__mclick(${centerX}, ${centerY})`);
+    await sleep(60);
+    s = await state();
+    check(s.scale === 1 && s.tx === 0 && s.ty === 0, 'a second mouse click zooms back out', s);
     // Pinch out zooms.
     await evaluate(`__pinch(180, 420, 210, 420, 70)`);
     await sleep(60);

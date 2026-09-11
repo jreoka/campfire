@@ -479,8 +479,9 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   fully inside the viewport and hit-testable for tall/wide/square photos on
   phone portrait, phone landscape and desktop (the bug: an unsafetied corner
   anchor on a tall photo sat off the top of the screen); the photo never
-  overflows the stage; double-tap and pinch zoom (and pan on a zoomed photo does
-  not close it); a downward drag past the threshold dismisses the viewer while a
+  overflows the stage; a single mouse click toggles zoom while touch keeps
+  double-tap, and pinch also zooms (panning a zoomed photo does not close it); a
+  downward drag past the threshold dismisses the viewer while a
   short drag springs back; a tap on the backdrop or Close closes, a tap on the
   photo does not, and tapping Download does not; and closing/reopening resets the
   zoom.
