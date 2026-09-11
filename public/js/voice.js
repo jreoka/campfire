@@ -472,6 +472,7 @@ function mediaPrefs() {
     fps: V_FPS.includes(+p.fps) ? +p.fps : 30,
     ec: p.ec !== false,
     agc: p.agc !== false,
+    haptics: p.haptics !== false,
   };
 }
 function saveMediaPref(k, v) {

@@ -13,16 +13,11 @@ document.addEventListener('visibilitychange', sendVisibility);
 let connTimer = null, connAttempts = 0, connVisible = false, connPingSent = 0, connProbePending = false, connFadeT = null;
 function connEl() { return document.getElementById('conn-overlay'); }
 function inMainView() { return !document.getElementById('view-main')?.classList.contains('hidden'); }
+// The overlay is the animated campfire alone — no copy, no buttons. Only the
+// screen-reader label changes with the state.
 function paintConn() {
-  const sub = connEl()?.querySelector('.conn-sub');
-  const title = connEl()?.querySelector('.conn-title-text');
-  const offline = !navigator.onLine;
-  if (title) title.textContent = offline ? "You're offline" : 'Connecting';
-  if (sub) {
-    if (offline) sub.textContent = "No connection — check your wifi or data. We'll reconnect automatically.";
-    else if (connAttempts > 1) sub.textContent = `Trying to reach Campfire — retry ${connAttempts}…`;
-    else sub.textContent = 'Trying to reach Campfire — hang tight.';
-  }
+  const el = connEl();
+  if (el) el.setAttribute('aria-label', navigator.onLine ? 'Connecting' : 'No connection');
 }
 function connShow() {
   // Fade in: unhide at opacity 0, then rAF into opacity 1. Clears a
@@ -115,23 +110,14 @@ function connectWS() {
 window.addEventListener('online', () => {
   paintConn();
   if (store.token && inMainView() && (!S.ws || S.ws.readyState !== 1)) connectWS();
-  else if (!store.token || !inMainView()) hideConn(); // offline-only overlay (e.g. sign-in) lifts
+  else if (!store.token || !inMainView()) {
+    // offline-only overlay (e.g. sign-in) lifts; the captcha only loads at
+    // page load, so a reconnect must kick it off if it never ran
+    hideConn();
+    try { if (typeof initTurnstile === 'function') initTurnstile(); } catch {}
+  }
 });
 window.addEventListener('offline', () => { showConn(); });
-document.getElementById('conn-retry')?.addEventListener('click', () => {
-  paintConn();
-  if (!store.token || !inMainView()) {
-    // Nothing socketed to reconnect (e.g. the sign-in screen): just re-check,
-    // and reload the captcha key if we're back (it only loads at page load).
-    if (navigator.onLine) hideConn(); else showConn();
-    try { if (typeof initTurnstile === 'function') initTurnstile(); } catch {}
-    return;
-  }
-  showConn();
-  if (!S.me) { try { boot(); } catch {} return; } // boot failed while offline — retry the whole boot
-  connAttempts++;
-  connectWS();
-});
 // Cheap reachability probe: fails fast when truly offline, hangs to timeout
 // in a packet blackhole. Only used when the socket has gone suspiciously
 // quiet — never on a healthy, chatty connection.

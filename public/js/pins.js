@@ -475,6 +475,7 @@ function sendDm(content, opts = {}) {
   if (!S.dmThreadId) return;
   if (S.ws && S.ws.readyState === 1) {
     S.ws.send(JSON.stringify({ t: 'dm', threadId: S.dmThreadId, content, attachments: opts.attachments || [], replyTo: opts.replyTo || null }));
+    haptic(12); // the tap that actually sends gets a beat
     // Optimistic: echo appends incrementally — pin to the bottom now,
     // with the hold (a full render here flashes every avatar in Safari).
     try { const _b = $('#messages'); anchorBottom(_b); updatePill(); } catch {}

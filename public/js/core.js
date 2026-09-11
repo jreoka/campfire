@@ -10,6 +10,30 @@ const store = {
   set sid(v) { v ? localStorage.setItem('cf_sid', v) : localStorage.removeItem('cf_sid'); },
 };
 const isCoarse = () => window.matchMedia && matchMedia('(hover: none)').matches;
+// ---------- haptics ----------
+// Android WebView and Chrome expose navigator.vibrate (iOS never does, so this
+// is a silent no-op there). Patterns stay tiny — a tick, not a buzz — and a
+// short debounce keeps one gesture's several handlers from rattling the phone.
+// The on/off switch lives in Settings → Media (cf_media.haptics).
+let hapticAt = 0;
+function hapticsEnabled() {
+  try { return typeof mediaPrefs === 'function' ? mediaPrefs().haptics !== false : true; } catch { return true; }
+}
+function haptic(pattern = 9) {
+  if (!navigator.vibrate || !hapticsEnabled()) return;
+  const now = Date.now();
+  if (now - hapticAt < 40) return; // same gesture, one tick
+  hapticAt = now;
+  try { navigator.vibrate(pattern); } catch {}
+}
+// One delegated listener so every control ticks the same way without a call in
+// each handler. Key actions (send, story post, long-press) add their own,
+// slightly stronger beat.
+document.addEventListener('pointerdown', (e) => {
+  if (e.button && e.button !== 0) return;
+  const t = e.target && e.target.closest ? e.target.closest('button,[role="button"],.server-btn,.chan,.dm-row,.set-tab') : null;
+  if (t && !t.disabled) haptic();
+}, { passive: true, capture: true });
 // ---------- themes (Settings → Themes): 'dark' (default Campfire skin) |
 // 'light' | 'dracula' | 'oled'. Stored globally in localStorage so the auth page and
 // the app shell match; applied via <html data-theme> before CSS paints

@@ -15,7 +15,11 @@
 
 const STORY_IMG_MS = 5000;        // how long a photo shows before advancing
 const STORY_VIDEO_MAX_MS = 60000; // recording cap (matches the server hint)
-const STORY_MAX_EDGE = 1920;      // photos are downscaled to this long edge
+const STORY_MAX_EDGE = 1920;      // picked photos are downscaled to this long edge
+// Camera grabs are capped lower on touch devices: a 1920px frame is 2.25x the
+// pixels of a 1280px one, and on Android WebView the readback + JPEG encode
+// inside the shutter tap is what made it feel dead for seconds.
+const storyCamMaxEdge = () => (isCoarse() ? 1280 : STORY_MAX_EDGE);
 
 // Icon set (inline SVG, no emoji — see the design language in AGENTS.md).
 const svSvg = {
@@ -1090,6 +1094,7 @@ async function openStoryComposer(opts = {}) {
   if (opts.serverId) { sc.audServers = [opts.serverId]; sc.audFriends = true; }
   if (opts.everyone) sc.audEveryone = true;
   if (opts.viewOnce) { try { await ensureFriends(); } catch {} }
+  scCapBusy = false; // a toBlob from a previous session must not block this one
   storySetStep('capture');
   renderStoryAudience();
   paintScMic();
@@ -1131,9 +1136,10 @@ async function storyStartCam() {
     return;
   }
   let stream = null;
+  const vq = isCoarse() ? { w: 1280, h: 720 } : { w: 1920, h: 1080 };
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: sc.facing, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      video: { facingMode: sc.facing, width: { ideal: vq.w }, height: { ideal: vq.h } },
       audio: false,
     });
   } catch (err) {
@@ -1155,6 +1161,7 @@ async function storyStartCam() {
   await storyCamFrameReady(vid);
   if (!sc || gen !== sc.camSeq || sc.step !== 'capture') { stop(); return; }
   sc.camReady = true;
+  storyWarmCapture(vid);
   storySetStep('capture');
 }
 // The camera element is kept out of the render until it has real frames. An
@@ -1168,27 +1175,36 @@ function paintScCam() {
   const loading = capture && !sc.camReady && !sc.camFailed;
   if (cam) cam.classList.toggle('hidden', !ready);
   if (wait) wait.classList.toggle('hidden', !loading);
+  // A tap during startup must wait for a real frame, not fire into a dead
+  // pipeline (that silent no-op is what read as a multi-second shutter lag).
+  // No camera at all (blocked/unsupported): the shutter stays off too.
+  const btn = $('#sc-shutter');
+  if (btn) btn.disabled = loading || !!(sc && sc.camFailed);
 }
-// Resolves once the stream actually has frames (metadata is enough — the
-// element fires loadedmetadata for a MediaStream as soon as the track reports
-// its size). The 1.5s cap keeps a slow device from parking on the pill: after
-// that we reveal the element and let the stream paint its first frame.
+// Resolves once the stream has actually decoded a frame. MediaStream metadata
+// (videoWidth) can arrive well before the first frame is decodable on Android,
+// and drawing at that point is what made the shutter feel dead — the canvas
+// readback waits for a frame that isn't there yet. requestVideoFrameCallback
+// fires on a frame the user can see, so prefer it; loadeddata/canplay (a real
+// decoded frame, not just metadata) cover the rest. The cap keeps a stalled
+// camera from parking on the pill forever.
 function storyCamFrameReady(vid) {
-  if (!vid || vid.videoWidth) return Promise.resolve(true);
+  if (!vid) return Promise.resolve(false);
   return new Promise((resolve) => {
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
       clearTimeout(timer);
-      vid.removeEventListener('loadedmetadata', onMeta);
-      vid.removeEventListener('canplay', onMeta);
+      vid.removeEventListener('loadeddata', onData);
+      vid.removeEventListener('canplay', onData);
       resolve(true);
     };
-    const onMeta = () => { if (vid.videoWidth) finish(); };
-    const timer = setTimeout(finish, 1500);
-    vid.addEventListener('loadedmetadata', onMeta);
-    vid.addEventListener('canplay', onMeta);
+    const onData = () => { if (vid.readyState >= 2) finish(); };
+    const timer = setTimeout(finish, 3000);
+    vid.addEventListener('loadeddata', onData);
+    vid.addEventListener('canplay', onData);
+    if (vid.readyState >= 2) finish(); // already painting
     if (typeof vid.requestVideoFrameCallback === 'function') {
       try { vid.requestVideoFrameCallback(() => finish()); } catch {}
     }
@@ -1315,21 +1331,52 @@ function storyFlipCam() {
   sc.facing = sc.facing === 'user' ? 'environment' : 'user';
   storyStartCam();
 }
+// One reusable capture canvas for the whole session. A fresh 2MP canvas per
+// tap (plus its first GPU readback and JPEG encode) is what made the shutter
+// feel dead on Android WebView — the warm canvas plus willReadFrequently keeps
+// the pixels CPU-side and the pipeline already paid for.
+let scCapCanvas = null, scCapCtx = null, scCapBusy = false;
+function storyCaptureCanvas(w, h) {
+  if (!scCapCanvas) {
+    scCapCanvas = document.createElement('canvas');
+    try { scCapCtx = scCapCanvas.getContext('2d', { willReadFrequently: true }) || scCapCanvas.getContext('2d'); }
+    catch { scCapCtx = scCapCanvas.getContext('2d'); }
+  }
+  if (scCapCanvas.width !== w || scCapCanvas.height !== h) { scCapCanvas.width = w; scCapCanvas.height = h; }
+  return { c: scCapCanvas, ctx: scCapCtx };
+}
+// Draw one tiny frame the moment the camera is live so the renderer, canvas
+// surface and encoder are initialized before the shutter is ever tapped.
+function storyWarmCapture(vid) {
+  try { storyCaptureCanvas(32, 18).ctx.drawImage(vid, 0, 0, 32, 18); } catch {}
+}
+// White flash on tap: the capture itself is async, so the shutter must answer
+// immediately even when the JPEG encode takes a beat.
+function storyFlash() {
+  const f = $('#sc-flash');
+  if (!f) return;
+  f.classList.remove('on');
+  void f.offsetWidth;
+  f.classList.add('on');
+  setTimeout(() => f.classList.remove('on'), 280);
+}
 function captureStoryPhoto() {
   const vid = $('#sc-cam');
   if (!sc || !vid || !vid.videoWidth) { toast('Camera is still starting'); return; }
+  if (scCapBusy) return;
+  scCapBusy = true;
+  storyFlash();
   const w = vid.videoWidth, h = vid.videoHeight;
-  const scale = Math.min(1, STORY_MAX_EDGE / Math.max(w, h));
-  const c = document.createElement('canvas');
-  c.width = Math.max(1, Math.round(w * scale));
-  c.height = Math.max(1, Math.round(h * scale));
+  const scale = Math.min(1, storyCamMaxEdge() / Math.max(w, h));
+  const { c, ctx } = storyCaptureCanvas(Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale)));
   try {
-    c.getContext('2d').drawImage(vid, 0, 0, c.width, c.height);
+    ctx.drawImage(vid, 0, 0, c.width, c.height);
     c.toBlob((blob) => {
+      scCapBusy = false;
       if (!blob || !sc) return;
       storyShowPreview(blob, 'image', 0);
-    }, 'image/jpeg', 0.92);
-  } catch { toast('Could not capture that frame'); }
+    }, 'image/jpeg', 0.86);
+  } catch { scCapBusy = false; toast('Could not capture that frame'); }
 }
 function storyStartRec() {
   if (!sc || sc.rec) return;
@@ -1593,6 +1640,7 @@ function closeStoryComposer() {
   if (!sc) return;
   const st = sc;
   sc = null;
+  scCapBusy = false;
   if (st.xhr) { try { st.xhr.abort(); } catch {} }
   if (st.rec) { try { st.cancelled = true; st.rec.stop(); } catch {} }
   clearInterval(st.recTimer);
@@ -1760,17 +1808,18 @@ async function storyPostNow() {
   }
   storyProgress(null);
   closeStoryComposer();
+  haptic(14);
   if (dmSent) {
     toast('Story posted — ' + (dmSent === 1 ? 'and sent as a view-once DM' : `and sent to ${dmSent} friends as view-once DMs`));
     refreshDms().catch(() => {});
   } else {
     toast('Story posted — live for 24 hours');
   }
+  // Refresh the tray so the new post is there — but never force it open. The
+  // uploader knows what they just sent; auto-playing it back (and rendering
+  // their own story seen) is not what they asked for.
   await loadStories();
   renderStorySurfaces();
-  // Straight into the viewer so it can be checked (and deleted) at once — not
-  // when the send was private, where the DM list is the interesting surface.
-  if (!dmSent) setTimeout(() => { if (!sv) openStoryViewer({ kind: 'mine' }); }, 120);
 }
 
 // ================= wiring =================
@@ -1865,7 +1914,19 @@ document.addEventListener('pointerdown', (e) => {
 
 // composer wiring
 $('#sc-close').onclick = () => closeStoryComposer();
-$('#sc-shutter').onclick = () => storyShutter();
+// Shutter on pointerdown, not click: the WebView's click synthesis can add
+// real latency to the one control where a lag reads as "broken". The click
+// path stays for keyboard activation (and is ignored right after a tap).
+let scShutterTap = 0;
+$('#sc-shutter').addEventListener('pointerdown', (e) => {
+  if (e.button && e.button !== 0) return;
+  scShutterTap = Date.now();
+  storyShutter();
+});
+$('#sc-shutter').addEventListener('click', () => {
+  if (Date.now() - scShutterTap < 600) return;
+  storyShutter();
+});
 $('#sc-flip').onclick = () => storyFlipCam();
 $('#sc-mic').onclick = () => storyToggleMic();
 $('#sc-gallery').onclick = () => $('#sc-file').click();

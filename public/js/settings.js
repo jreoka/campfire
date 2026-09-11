@@ -790,6 +790,18 @@ async function renderMediaTab() {
   agInp.onchange = () => { saveMediaPref('agc', agInp.checked); toast(agInp.checked ? 'Auto gain control on' : 'Auto gain control off'); };
   ag.appendChild(agInp); ag.appendChild(document.createTextNode(' Automatic gain control — keeps your volume steady'));
   box.appendChild(ag);
+  if ('vibrate' in navigator) {
+    h('Feedback');
+    const hz = document.createElement('label'); hz.className = 'set-check';
+    const hzInp = document.createElement('input'); hzInp.type = 'checkbox'; hzInp.checked = mp.haptics;
+    hzInp.onchange = () => {
+      saveMediaPref('haptics', hzInp.checked);
+      toast(hzInp.checked ? 'Haptic feedback on' : 'Haptic feedback off');
+      if (hzInp.checked) haptic(16);
+    };
+    hz.appendChild(hzInp); hz.appendChild(document.createTextNode(' Haptic feedback — a short vibration on taps and key actions'));
+    box.appendChild(hz);
+  }
   h('Video quality');
   const qSel = mkSelect(Object.entries(V_QUALITY).map(([v, q]) => [v, q.label + (v === 'fhd' ? ' (best)' : '')]), mp.quality);
   mkLabel('Camera resolution').appendChild(qSel);
