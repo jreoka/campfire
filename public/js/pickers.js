@@ -1129,7 +1129,7 @@ async function openUserCard(uid, x, y) {
     } catch (err) { toast('Failed: ' + prettyError(err.message)); }
   }));
 }
-function closeUserCard() { $('#usercard').classList.add('hidden'); }
+function closeUserCard() { const c = $('#usercard'); c.classList.add('hidden'); c.classList.remove('sheet'); }
 // ---------- server tag mini-panel ----------
 function closeTagCard() { $('#tagcard').classList.add('hidden'); }
 async function tagServerInfo(sid) {
@@ -1334,6 +1334,7 @@ async function loadUserGaming(box, username, opts = {}) {
 function clampUserCard() {
   const card = $('#usercard');
   if (!card || card.classList.contains('hidden')) return;
+  if (card.classList.contains('sheet')) return; // the mobile sheet owns its geometry
   if (card.style.bottom && card.style.bottom !== 'auto') return; // grows upward, always safe
   const h = card.offsetHeight || 300; // see popupBox: never measure mid-animation
   let left = parseFloat(card.style.left);

@@ -314,6 +314,16 @@ function openOwnCard() {
   if (!card.classList.contains('hidden') && card.dataset.uid === S.me.id) { closeUserCard(); return; }
   const r = $('#me-card').getBoundingClientRect();
   openUserCard(S.me.id, r.left, r.top);
+  if (window.matchMedia && matchMedia('(max-width:700px)').matches) {
+    // Phone: a full-height sheet that slides up from the bottom. The sheet CSS
+    // owns the geometry, so drop the popup's inline positioning (the async
+    // clampUserCard() bails on a sheet for the same reason).
+    card.classList.add('sheet');
+    card.style.left = ''; card.style.top = ''; card.style.bottom = '';
+    card.style.maxHeight = ''; card.style.overflowY = '';
+    return;
+  }
+  card.classList.remove('sheet');
   // Bottom-anchored so the card grows upward as content (gaming, bio) loads
   // and can never slide down over the name/avatar area.
   card.style.left = Math.max(8, Math.min(r.left, innerWidth - Math.min(296, innerWidth - 16))) + 'px';

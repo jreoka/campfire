@@ -881,6 +881,13 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
   .msg-actions{display:none!important}
 }
 #usercard{position:fixed;z-index:120;width:300px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;overflow:hidden}
+/* Mobile me bar: your own card is a full-height sheet sliding up from the
+   bottom (see openOwnCard) — nothing to dim behind it, so no scrim. */
+@media (max-width:700px){
+  #usercard.sheet{left:0;right:0;top:auto;bottom:0;width:100%;height:100vh;height:100dvh;max-height:100vh;max-height:100dvh;border-radius:18px 18px 0 0;border-left:0;border-right:0;border-bottom:0;overflow-y:auto;overscroll-behavior:contain;padding-bottom:calc(.75rem + var(--safe-b));animation:cf-sheet-up .26s cubic-bezier(.2,.85,.25,1)}
+  #usercard.sheet .uc-banner{border-radius:18px 18px 0 0}
+}
+@keyframes cf-sheet-up{from{transform:translateY(100%)}to{transform:translateY(0)}}
 .uc-banner{height:88px;background:var(--panel-3);background-size:cover;background-position:center}
 .uc-body{padding:0 1rem 1rem}
 .uc-body .avatar.big{width:66px;height:66px;font-size:1.4rem;margin-top:-33px}
@@ -1157,6 +1164,26 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .set-tab:hover{background:var(--panel-2);color:var(--text)}
 .set-tab.active{background:var(--accent-dim);color:var(--on-container)}
 .set-body{flex:1;min-width:0;overflow-y:auto;overflow-anchor:none;padding:1.35rem 1.45rem 1.5rem}
+/* The mobile-only header rows: the section menu's title bar, and the detail
+   view's back (left) + close (right). Hidden on desktop, where the side rail
+   and its own close button are the whole story. */
+.set-mhead{display:none;align-items:center;gap:.5rem;flex-shrink:0;padding:.5rem .55rem .5rem .75rem;background:var(--panel);border-bottom:1px solid var(--line-soft)}
+.set-mhead-title,#settings-title{font-size:.95rem;font-weight:750;letter-spacing:-.01em;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.set-mhead .mini{width:34px;height:34px;min-height:34px;padding:0;flex-shrink:0}
+/* Mobile settings: the rail becomes the section menu and picking a row opens
+   that section alone, with the back button on the left and close on the right. */
+@media (max-width:700px){
+  #settings-backdrop .settings{flex-direction:column}
+  #settings-backdrop .set-mhead{display:flex}
+  #settings-backdrop .settings.menu .set-body,
+  #settings-backdrop .settings.menu .set-mhead-detail{display:none}
+  #settings-backdrop .settings.section .set-tabs{display:none}
+  #settings-backdrop .set-tabs{flex-direction:column;align-items:stretch;min-width:0;max-width:100%;flex:1;min-height:0;overflow-y:auto;padding:.5rem;border-right:0;border-bottom:0}
+  #settings-backdrop .set-tabs .spacer{display:none}
+  #settings-backdrop #settings-close{display:none}
+  #settings-backdrop .set-tab{flex:0 0 auto;white-space:nowrap;text-align:left;font-size:.95rem;padding:.8rem 1rem}
+  #settings-backdrop .set-body{flex:1;min-height:0;padding:1.1rem 1rem 1.5rem}
+}
 @media (max-width:520px){
   .settings{flex-direction:column}
   .set-tabs{flex-direction:row;align-items:center;min-width:0;max-width:100%;flex-shrink:0;overflow-x:auto;overflow-y:hidden;padding:.6rem;border-right:0;border-bottom:1px solid var(--line-soft);overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
@@ -1921,7 +1948,7 @@ body.story-open{overflow:hidden}
 .sv-ico{width:36px;height:36px;border-radius:50%;border:0;background:transparent;color:#fff;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;padding:0;transition:background var(--t-fast)}
 .sv-ico:hover{background:rgba(255,255,255,.13)}
 .sv-ico svg{display:block}
-.sv-stage{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center;margin:.55rem 0;touch-action:pan-y}
+.sv-stage{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center;margin:.55rem 0;touch-action:none}
 #sv-img,#sv-vid{max-width:100%;max-height:100%;border-radius:14px;object-fit:contain;background:#000;display:block}
 .sv-cap{position:absolute;left:50%;bottom:1rem;transform:translateX(-50%);max-width:min(680px,92%);background:rgba(0,0,0,.62);border-radius:12px;padding:.5rem .85rem;font-size:.92rem;text-align:center;white-space:pre-wrap;overflow-wrap:anywhere;z-index:2;pointer-events:none}
 /* Story wait pill: a plain flat ring stacked above the label. Shared by the
@@ -2030,7 +2057,7 @@ body.story-open{overflow:hidden}
 #thread-panel,#find-panel{animation:cf-rise .16s ease-out}
 .folder-open{animation:cf-fade .14s ease-out}
 @media (prefers-reduced-motion:reduce){
-  .modal,.settings,.profile,#modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#profile-backdrop,#lightbox,#ctx-menu,#folder-menu,#picker,#usercard,#mention-pop,#emoji-pop,#chan-pop,#composer-more,#lightbox img,#toast,#jump-present,.auth-card,#thread-panel,#find-panel,.folder-open{animation:none}
+  .modal,.settings,.profile,#modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#profile-backdrop,#lightbox,#ctx-menu,#folder-menu,#picker,#usercard,#usercard.sheet,#mention-pop,#emoji-pop,#chan-pop,#composer-more,#lightbox img,#toast,#jump-present,.auth-card,#thread-panel,#find-panel,.folder-open{animation:none}
   .msg-actions,.reaction,.send-btn svg{transition:none}
   .rc-old,.rc-new{animation:none}
   .reaction:active,.dm-close:active{transform:none}

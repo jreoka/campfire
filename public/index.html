@@ -358,10 +358,15 @@
 <!-- image lightbox -->
 <div id="lightbox" class="hidden"><img id="lightbox-img" alt="" /><a id="lightbox-dl" class="btn small hidden" href="" download="" target="_blank" rel="noopener" title="Download"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>Download</a></div>
 
-<!-- settings (tabbed) -->
+<!-- settings (side rail on desktop; on mobile a section menu that opens one at a time) -->
 <div id="settings-backdrop" class="hidden">
-  <div class="settings">
+  <div class="settings menu">
     <div class="set-tabs">
+      <div class="set-mhead">
+        <strong class="set-mhead-title">Settings</strong>
+        <span class="spacer"></span>
+        <button type="button" id="settings-close-menu" class="mini" title="Close settings" aria-label="Close settings">✕</button>
+      </div>
       <button data-tab="profile" class="set-tab active">Profile</button>
       <button data-tab="account" class="set-tab">Account</button>
       <button data-tab="games" class="set-tab">Games</button>
@@ -371,6 +376,12 @@
       <button data-tab="themes" class="set-tab">Themes</button>
       <span class="spacer"></span>
       <button id="settings-close" class="mini">✕</button>
+    </div>
+    <div class="set-mhead set-mhead-detail">
+      <button type="button" id="settings-back" class="mini" title="Back to settings" aria-label="Back to settings"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <strong id="settings-title">Settings</strong>
+      <span class="spacer"></span>
+      <button type="button" id="settings-close-detail" class="mini" title="Close settings" aria-label="Close settings">✕</button>
     </div>
     <div class="set-body">
       <div id="set-profile" class="set-pane">

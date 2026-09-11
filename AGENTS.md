@@ -386,6 +386,32 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   `.st-ring`/`.st-thumb`; Blink flooring the avatar's 2.5px border to whole
   device pixels, and the seen thumbnail's filtered layer edge, are what makes the
   old face peek through — do not reintroduce the face behind a live thumbnail.
+  `node scripts/test-story-swipe.js` covers swipe-down-to-close in the story
+  viewer (offline; runs the real tap-zone + swipe wiring sliced out of
+  `stories.js` against the real `#story-view` markup and `styles.css` in headless
+  Chrome, skipping without Chrome): `.sv-stage` must compute `touch-action:none`
+  (it was `pan-y`, which handed the drag to the scroller and cancelled the
+  pointer stream, so the swipe never landed), a downward drag closes whether it
+  starts on the picture or on a stage-covering tap zone, and that same drag must
+  not step the story (the zones fire on any pointerup unless movement is
+  treated as a swipe). It also pins the rest of the gesture set: short and
+  sideways drags neither close nor step (and spring back), plain taps still step
+  forward/back, press-and-hold pauses and resumes without stepping, and a quick
+  flick never pauses.
+  `node scripts/test-mobile-settings-sheet.js` covers the phone's settings
+  master/detail and the me-bar card sheet (offline static checks plus headless
+  Chrome at a phone and a desktop viewport, skipping without Chrome — note
+  headless clamps the layout viewport to 500px, so the phone case runs at 500).
+  It drives the real `openOwnCard` (`security.js`) and the real settings view
+  helpers (`settings.js`) against the real `index.html` markup + `styles.css`:
+  on a phone the open card carries `.sheet`, with the popup's inline geometry
+  cleared so the CSS wins, pinned bottom/full-height/edge-to-edge with a rounded
+  top; on desktop there is no sheet class and the 300px popup stays
+  bottom-anchored. Settings opens on the menu (rail rows visible, body and
+  detail header hidden, rail close hidden), a section row shows it alone with
+  back on the left half and close on the right half (and the header fits, so the
+  close is never clipped), back returns to the menu, the detail title comes off
+  the row label, and the view classes are inert on desktop.
 - **Upload pipeline E2E:** `node scripts/test-upload-pipeline.js` (needs ffmpeg
   + the dev Postgres, skips otherwise) boots a real server against a throwaway
   database with a fake clamd and asserts the single-transition compression flow
@@ -571,7 +597,19 @@ build new ones with `ucTabHTML(id, icon, label, ' primary'|' danger')` (`UC_ICON
 in `pickers.js`, inline SVG — no emoji), and the container is `.uc-tabs`; the
 voice-call controls keep the older `.uc-actions` pill row. `friendBtnHTML` takes a
 base class + icon flag so the same button serves both the tab list and the plain
-profile-screen pill. Your own card's
+profile-screen pill. On a phone tapping the me bar opens that card as a
+full-height `.sheet` that slides up from the bottom (`openOwnCard` adds the class
+and clears the popup's inline geometry, so `#usercard.sheet` owns it and
+`clampUserCard()` must keep bailing on a sheet); desktop keeps the
+bottom-anchored popup. `.sv-stage` must stay `touch-action:none` — the story
+viewer's swipe-down-to-close rides on raw pointer events, and `pan-y` let the
+browser claim the drag and cancel them. Settings is responsive in two shapes:
+desktop keeps the side rail, a phone (`max-width:700px`) gets a menu of section
+rows (`.settings.menu`) and picking one shows that section alone
+(`.settings.section`) with `#settings-back` + `#settings-close-detail` in a
+`.set-mhead-detail`; `setSettingsView()` drives those classes, `openSettings()`
+with no argument opens the menu (a caller-named tab goes straight to it), and the
+rail's own `#settings-close` is mobile-hidden. Your own card's
 status is a cascading vertical menu (`presenceWidgetHTML` in `pickers.js`): it
 starts as just your current status (that row IS the card's readout on your own
 card), opening it lists the states, and picking one cascades that state's timer

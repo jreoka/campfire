@@ -1,7 +1,26 @@
-'use strict';
-// ---------- settings (tabbed) ----------
-function openSettings(tab = 'profile') {
+// ---------- settings (side rail on desktop; section menu on mobile) ----------
+// On a phone the rail is the section menu and one section opens at a time, with
+// a back button; the classes below mean nothing on desktop (the CSS only reacts
+// to them under the mobile media query). Always open the menu unless a caller
+// asked for a specific section.
+function settingsPanelEl() { return document.querySelector('#settings-backdrop .settings'); }
+function setSettingsView(view) {
+  const p = settingsPanelEl();
+  if (!p) return;
+  p.classList.toggle('menu', view !== 'section');
+  p.classList.toggle('section', view === 'section');
+}
+function settingsIsPhone() { return !!(window.matchMedia && matchMedia('(max-width:700px)').matches); }
+function settingsTabLabel(t) {
+  const b = document.querySelector('#settings-backdrop .set-tab[data-tab="' + t + '"]');
+  return b ? b.textContent.trim() : 'Settings';
+}
+function openSettings(tab) {
+  const explicit = tab !== undefined;
+  if (!explicit) tab = 'profile';
   setSettingsTab(tab);
+  const title = $('#settings-title');
+  if (title) title.textContent = settingsTabLabel(tab);
   $('#set-display').value = S.me.display_name || '';
   S.pendingDeco = undefined;
   renderDecoPicker();
@@ -59,6 +78,7 @@ function openSettings(tab = 'profile') {
   const sb = $('#set-sidebar-prev');
   if (sb) sb.style.backgroundImage = S.me.sidebar_banner_url ? `url('${S.me.sidebar_banner_url}')` : '';
   loadMediaHist();
+  setSettingsView(settingsIsPhone() && !explicit ? 'menu' : 'section');
   $('#settings-backdrop').classList.remove('hidden');
 }
 function closeSettings() { closePicker(); try { stopMediaPreview(); } catch {} $('#settings-backdrop').classList.add('hidden'); }
@@ -260,8 +280,20 @@ function renderThemesTab() {
   }
   box.appendChild(grid);
 }
-document.querySelectorAll('.set-tab').forEach((b) => (b.onclick = () => { setSettingsTab(b.dataset.tab); if (b.dataset.tab === 'account') { renderSecurityTab(); renderDesktopApp(); } }));
-$('#btn-settings-me').onclick = (e) => { if (e) e.stopPropagation(); openSettings('profile'); };
+document.querySelectorAll('#settings-backdrop .set-tab').forEach((b) => (b.onclick = () => {
+  setSettingsTab(b.dataset.tab);
+  if (b.dataset.tab === 'account') { renderSecurityTab(); renderDesktopApp(); }
+  const title = $('#settings-title');
+  if (title) title.textContent = b.textContent.trim();
+  setSettingsView('section');
+}));
+$('#btn-settings-me').onclick = (e) => { if (e) e.stopPropagation(); openSettings(); };
+const settingsBack = $('#settings-back');
+if (settingsBack) settingsBack.onclick = () => setSettingsView('menu');
+for (const id of ['settings-close-menu', 'settings-close-detail']) {
+  const b = $('#' + id);
+  if (b) b.onclick = closeSettings;
+}
 $('#btn-home').onclick = openHome;
 $('#btn-friends').onclick = showFriendsPanel;
 $('#btn-pins').onclick = openPins;

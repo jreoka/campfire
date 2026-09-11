@@ -682,6 +682,9 @@ function svTeardown() {
   try { $('#sv-vid').pause(); } catch {}
   $('#sv-vid').removeAttribute('src');
   $('#sv-img').removeAttribute('src');
+  // A half-finished swipe-down must not leave the stage offset for the next open.
+  const st = $('#sv-stage');
+  if (st) { st.style.transform = ''; st.style.transition = ''; }
   const root = $('#story-view');
   root.classList.add('hidden');
   document.body.classList.remove('story-open');
@@ -2096,16 +2099,29 @@ $('#sv-reply').addEventListener('focus', () => svPause());
 $('#sv-reply').addEventListener('blur', () => { if (sv && !svReplyBusy()) svResume(); });
 // Tap zones with press-and-hold to pause (like Snapchat/Instagram).
 function storyZoneEl(el, fn) {
-  let held = false;
+  let held = false, sx = 0, sy = 0;
   el.addEventListener('pointerdown', (e) => {
     if (e.button && e.button !== 0) return;
     held = false;
+    sx = e.clientX; sy = e.clientY;
     clearTimeout(svHoldT);
     svHoldT = setTimeout(() => { held = true; svPause(); }, 200);
   });
-  const up = () => {
+  // Dragging is a swipe (the stage's own handler owns it), never a tap: drop the
+  // hold-to-pause timer so a quick flick doesn't leave the story paused.
+  el.addEventListener('pointermove', (e) => {
+    if (Math.hypot(e.clientX - sx, e.clientY - sy) > 12) clearTimeout(svHoldT);
+  });
+  const up = (e) => {
     clearTimeout(svHoldT);
-    if (held) { held = false; svResume(); return; }
+    const wasHeld = held;
+    held = false;
+    const dragged = Math.hypot(e.clientX - sx, e.clientY - sy) > 12;
+    if (wasHeld) svResume();
+    // The zones cover the whole stage, so without this a swipe-down closed the
+    // viewer *and* advanced it first; a drag must never step the story.
+    if (dragged) return;
+    if (wasHeld) return; // a hold is a pause, not a tap
     fn();
   };
   el.addEventListener('pointerup', up);
@@ -2115,18 +2131,42 @@ function storyZoneEl(el, fn) {
 let svHoldT = 0;
 storyZoneEl($('#sv-next'), () => sv && svNext());
 storyZoneEl($('#sv-prev'), () => sv && svPrev());
-// Swipe down on the stage closes the viewer.
+// Swipe down on the stage closes the viewer. The stage has nothing to scroll,
+// so touch-action:none (see .sv-stage) keeps the browser from claiming the drag
+// — under pan-y the pointer stream was cancelled and the swipe never landed.
+// The picture follows the finger, then closes past the threshold or springs back.
 (function () {
   const stage = $('#sv-stage');
-  let sx = 0, sy = 0, active = false;
-  stage.addEventListener('pointerdown', (e) => { active = true; sx = e.clientX; sy = e.clientY; });
-  stage.addEventListener('pointerup', (e) => {
-    if (!active) return;
-    active = false;
-    const dy = e.clientY - sy, dx = Math.abs(e.clientX - sx);
-    if (dy > 90 && dx < 80) svClose();
+  const LIMIT = 90;
+  let sx = 0, sy = 0, dy = 0, active = false;
+  const clearDrag = () => { active = false; dy = 0; stage.style.transform = ''; stage.style.transition = ''; };
+  stage.addEventListener('pointerdown', (e) => {
+    if (e.button && e.button !== 0) return;
+    active = true; sx = e.clientX; sy = e.clientY; dy = 0;
+    stage.style.transition = '';
   });
-  stage.addEventListener('pointercancel', () => { active = false; });
+  stage.addEventListener('pointermove', (e) => {
+    if (!active) return;
+    const dx = e.clientX - sx;
+    if (Math.abs(dx) > Math.abs(e.clientY - sy) * 1.5) return; // sideways: leave it to the zones
+    dy = e.clientY - sy;
+    if (dy <= 0) { stage.style.transform = ''; return; }
+    stage.style.transform = 'translateY(' + Math.round(Math.min(dy, 240) * 0.6) + 'px)';
+  });
+  const end = (e) => {
+    if (!active) return;
+    const d = e.clientY - sy, dx = Math.abs(e.clientX - sx);
+    active = false;
+    const close = d > LIMIT && dx < 80;
+    dy = 0;
+    if (close) { stage.style.transform = ''; svClose(); return; }
+    // Not far enough: spring back.
+    stage.style.transition = 'transform .18s ease-out';
+    stage.style.transform = '';
+    setTimeout(() => { if (!active) stage.style.transition = ''; }, 200);
+  };
+  stage.addEventListener('pointerup', end);
+  stage.addEventListener('pointercancel', clearDrag);
 })();
 document.addEventListener('keydown', (e) => {
   if (!sv) return;
