@@ -548,7 +548,11 @@ card), opening it lists the states, and picking one cascades that state's timer
 underneath its row — the open/cascaded state lives in the module-level
 `presenceMenu` and is reset when the card opens, and `refreshOwnPresence`
 re-renders the menu in place (never the card) so the open menu survives a status
-change.
+change. Anything inside the card that replaces its own DOM during a click is why
+the card closer decides with `clickInPath()` (composedPath, captured at dispatch)
+instead of `e.target.closest('#usercard')`: the in-place swap detaches the node
+that was clicked, and a plain `closest()` then reads that click as "outside" and
+closes the card the instant you tap your status.
 The bottom-pin state (`#messages`/`#thread-replies` `dataset.atBottom`) flips
 only on real input (wheel/touch/drag/key) — never on a bare scroll event.
 Browsers fire those for their own reasons (reload scroll restore, layout

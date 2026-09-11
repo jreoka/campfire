@@ -55,11 +55,22 @@ function poke() {
 ['mousemove', 'keydown', 'click'].forEach((ev) => document.addEventListener(ev, poke, { passive: true }));
 
 // ---------- global closers ----------
+// Was this click originally inside one of `sels`? composedPath() is captured
+// when the event is dispatched, so it keeps answering correctly even after a
+// handler has replaced — and thereby detached — the node that was clicked.
+// The card's status menu re-renders itself in place, and with a plain
+// `e.target.closest('#usercard')` that swap made the closer read the click as
+// "outside": the card closed the instant you tapped your status.
+function clickInPath(e, sels) {
+  const path = e.composedPath ? e.composedPath() : null;
+  if (path && path.length) return path.some((n) => n && n.nodeType === 1 && sels.some((s) => n.matches && n.matches(s)));
+  return !!(e.target && e.target.closest && sels.some((s) => e.target.closest(s)));
+}
  document.addEventListener('click', (e) => {
   // Clicks inside the bottom sheet are handled by the sheet's own rows (a row may
   // open the picker), so they must not close it again in the same click.
   if (!e.target.closest('#picker') && !e.target.closest('#btn-emoji') && !e.target.closest('#btn-gif') && !e.target.closest('#srv-tag-emoji') && !e.target.closest('.msg-actions') && !e.target.closest('#sheet')) closePicker();
-  if (!e.target.closest('#usercard') && !e.target.closest('#me-card') && !e.target.closest('[data-uid]') && !e.target.closest('.member') && !e.target.closest('.usertag[data-tag-sid]')) closeUserCard();
+  if (!clickInPath(e, ['#usercard', '#me-card', '[data-uid]', '.member', '.usertag[data-tag-sid]'])) closeUserCard();
   if (ctxEl && !e.target.closest('#ctx-menu') && !e.target.closest('.msg-actions')) closeCtx();
   if ($('#emoji-pop') && !e.target.closest('#emoji-pop') && !e.target.closest('#in-message')) hideEmojiPop();
   if (folderFlyoutEl && !e.target.closest('#folder-menu')) closeFolderFlyout();

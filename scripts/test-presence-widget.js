@@ -12,13 +12,21 @@
 // choosePresence() and wirePresenceWidget() by extracting them from
 // public/js/pickers.js and running them against stub globals.
 //
-// Offline (no database, no browser required).
+// The last section is the one thing that needs a real event loop: the menu
+// re-renders itself in place, and a click inside it must not be mistaken for a
+// click outside the card (which closes it). It drives real clicks in headless
+// Chrome against the REAL clickInPath() closer helper, and skips without
+// Chrome.
+//
+// Offline except that section (no database required).
 //
 // Usage: node scripts/test-presence-widget.js
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -65,6 +73,56 @@ const {
 const setMe = (status, exp) => { S.me = { id: 'me', username: 'jordan', status, presence_expires_at: exp || null }; };
 const setMenu = (open, cascade) => { presenceMenu.open = open; presenceMenu.cascade = cascade; };
 
+function findChrome() {
+  const candidates = [
+    process.env.CHROME_PATH,
+    'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+    '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  ].filter(Boolean);
+  return candidates.find((p) => { try { return fs.existsSync(p); } catch { return false; } }) || null;
+}
+// A live card with the real menu wired in, and the real closer condition
+// (clickInPath) watching document clicks. The menu swaps itself out mid-click,
+// which is exactly the trap this section exists for.
+function clickPageHtml() {
+  const escSrc = slice(core, 'function esc(s) {', '// Layout size of a popup');
+  const codeSrc = slice(pickers, 'function fmtCountdown(ts) {', 'async function clearMyStatus() {');
+  const closer = slice(finalSrc, 'function clickInPath(e, sels) {', " document.addEventListener('click'");
+  return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
+<link rel="stylesheet" href="file:///${ROOT.replace(/\\/g, '/')}/public/styles.css"></head><body>
+<div id="usercard"><div class="uc-body"><div id="presence-slot"></div></div></div>
+<div id="outside" style="height:40px">outside</div>
+<script>
+window.S = { me: { id: 'me', status: 'online' } };
+window.statusOf = () => S.me.status || 'online';
+window.isOff = (st) => st === 'offline' || st === 'invisible';
+window.dotOf = (st, t) => (t && !isOff(st)) ? 'streaming' : (st === 'invisible' ? 'offline' : st);
+window.presenceExpiry = () => 0;
+window.setStatus = async (s) => { S.me.status = s; };
+window.clampUserCard = () => {};
+${escSrc}
+${closer}
+${codeSrc}
+const card = document.getElementById('usercard');
+document.getElementById('presence-slot').outerHTML = presenceWidgetHTML();
+wirePresenceWidget(card);
+let wouldClose = false;
+document.addEventListener('click', (e) => {
+  if (!clickInPath(e, ['#usercard', '#me-card', '[data-uid]', '.member', '.usertag[data-tag-sid]'])) wouldClose = true;
+});
+const out = {};
+wouldClose = false; document.getElementById('presence-toggle').click();
+out.toggle = { wouldClose, open: presenceMenu.open, listRendered: !!document.querySelector('.plist') };
+wouldClose = false; document.querySelector('[data-presence="away"]').click();
+out.pickAway = { wouldClose, cascade: presenceMenu.cascade, status: S.me.status };
+wouldClose = false; document.getElementById('outside').click();
+out.realOutside = { wouldClose };
+setTimeout(() => { document.title = JSON.stringify(out); }, 80);
+</script></body></html>`;
+}
 async function main() {
   console.log('\n[1] the menu replaces the status readout on my own card');
   check(/\$\{uid === S\.me\.id\n\s*\? presenceWidgetHTML\(\)\n\s*: `<div class="uc-status" id="uc-statusline">\$\{statusLineHTML\(uid, u\)\}<\/div>`\}/.test(pickers), 'the card shows the menu for me and the plain readout for everyone else');
@@ -173,6 +231,31 @@ async function main() {
   check(statusLineHTML('sam', { id: 'sam' }).includes('Do not disturb'), 'another user\u2019s card keeps its label');
   check(statusLineHTML('sam', { id: 'sam', streaming_game: 'Rocket League' }).includes('Streaming'), 'streaming wins the line');
   check(statusLineHTML('sam', { id: 'sam' }).includes('status-dot dnd'), 'and the dot matches');
+
+  console.log('\n[9] a click inside the menu is never read as a click outside the card');
+  const chrome = findChrome();
+  if (!chrome) console.log('  (skipped: no Chrome/Edge found — set CHROME_PATH)');
+  else {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-presence-'));
+    try {
+      const htmlPath = path.join(dir, 'page.html');
+      fs.writeFileSync(htmlPath, clickPageHtml());
+      const r = spawnSync(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+        '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof'), '--window-size=520,420',
+        '--virtual-time-budget=2000', '--dump-dom', 'file:///' + htmlPath.replace(/\\/g, '/')],
+        { encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 });
+      const m = /<title>([\s\S]*?)<\/title>/.exec(r.stdout || '');
+      if (!m) check(false, 'the click harness ran', { status: r.status });
+      else {
+        const out = JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
+        check(out.toggle.wouldClose === false && out.toggle.open === true && out.toggle.listRendered === true, 'opening the menu leaves the card open', out.toggle);
+        check(out.pickAway.wouldClose === false && out.pickAway.cascade === 'away' && out.pickAway.status === 'away', 'picking a state cascades it and leaves the card open', out.pickAway);
+        check(out.realOutside.wouldClose === true, 'a click genuinely outside still closes the card', out.realOutside);
+      }
+    } finally {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+  }
 
   console.log('');
   if (failures.length) {
