@@ -498,8 +498,15 @@ function updatePill() {
 }
 function renderTopic() {
   const el = $('#chan-topic');
-  const ch = S.view === 'server' ? (S.serverDetail?.channels || []).find((c) => c.id === S.channelId) : null;
-  const desc = (ch?.description || '').trim();
+  let desc = '';
+  if (S.view === 'server') {
+    const ch = (S.serverDetail?.channels || []).find((c) => c.id === S.channelId);
+    desc = (ch?.description || '').trim();
+  } else {
+    // A group chat's description is its topic line; 1:1 DMs have none.
+    const t = (S.dms || []).find((x) => x.id === S.dmThreadId);
+    if (t && t.isGroup) desc = (t.description || '').trim();
+  }
   if (desc) {
     el.textContent = desc;
     el.title = desc;
@@ -511,6 +518,12 @@ function renderTopic() {
   }
 }
 $('#chan-topic').onclick = () => {
+  if (S.view !== 'server') {
+    const t = (S.dms || []).find((x) => x.id === S.dmThreadId);
+    const desc = (t && t.isGroup && (t.description || '').trim()) || '';
+    if (desc) openModal(t.name || 'Group chat', `<p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(desc)}</p>`, 'Close', null);
+    return;
+  }
   const ch = (S.serverDetail?.channels || []).find((c) => c.id === S.channelId);
   const desc = (ch?.description || '').trim();
   if (desc) openModal(`#${ch.name}`, `<p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(desc)}</p>`, 'Close', null);
@@ -535,14 +548,10 @@ async function selectDmThread(id) {
   $('#friends-page').classList.add('hidden');
   $('#messages').classList.remove('hidden');
   renderDmMembers();
-  renderTopic();
   paintSlowmodeHint();
-  $('#chan-hash').textContent = t.isGroup ? '' : '@';
-  const peer = dmPeer(t);
-  $('#chan-name').textContent = t.isGroup ? (t.name || 'Group chat') : ((peer || {}).display_name || 'DM');
+  paintDmHead(t);
   paintDmCallButtons();
   try { clearTyping(); } catch {}
-  $('#in-message').placeholder = t.isGroup ? `Message ${t.name || 'group'}` : `Message @${(peer || {}).username || ''}`;
   applyComposerDraft(); // this DM's own unfinished text, if any
   S.replyTo = null; S.pendingAtts = []; S.editing = null;
   renderComposerMeta();

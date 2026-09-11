@@ -199,10 +199,13 @@ function activeTagFor(u) {
     return segs.slice(0, 5).join('');
   } catch { return Array.from(t).slice(0, 5).join(''); }
 }
-function tagHTML(u) {
+function tagHTML(u, plain) {
   const t = activeTagFor(u);
   if (!t) return '';
-  const sid = u && u.active_tag_server_id ? String(u.active_tag_server_id) : '';
+  // `plain` renders it as a decorative pill (no click target). The DM sidebar
+  // uses it: those rows are buttons that open a conversation, so a server tag
+  // there must never steal the tap into its own mini-panel.
+  const sid = !plain && u && u.active_tag_server_id ? String(u.active_tag_server_id) : '';
   // Span (not button: tags render inside buttons/links elsewhere) with a
   // delegated click in final.js that opens the server mini-panel.
   return '<span class="usertag' + (sid ? ' clickable' : '') + '"' + (sid ? ' data-tag-sid="' + esc(sid) + '" role="button" tabindex="0" title="View server"' : '') + '>' + esc(t) + '</span>';

@@ -4183,7 +4183,7 @@ async function dmThreadView(t, userId) {
     try { pinned = !!(await db.prepare('SELECT pinned FROM dm_members WHERE thread_id = ? AND user_id = ?').get(t.id, userId))?.pinned; } catch {}
   }
   return {
-    id: t.id, name: t.name, isGroup: !!t.is_group, created_by: t.created_by || null, created_at: t.created_at, members,
+    id: t.id, name: t.name, description: t.description || '', isGroup: !!t.is_group, created_by: t.created_by || null, created_at: t.created_at, members,
     pinned,
     last: last ? { content: last.content, attachments: last.atts || 0, created_at: last.created_at, author: last.dname || '?' } : null,
   };
@@ -4824,6 +4824,27 @@ app.post('/api/dms/:tid/open', authRequired, async (req, res) => {
   await db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ? AND user_id = ?').run(t.id, req.user.id);
   notifyUser(req.user.id, { t: 'dm-threads-changed' });
   res.json({ thread: await dmThreadView(t, req.user.id) });
+});
+
+// Group chat settings: rename and/or re-describe a group DM. Any member may
+// edit (the same rule as "Add members…"); a 1:1 DM has no name or description
+// to change. dm-threads-changed repaints every member's list and open header.
+app.patch('/api/dms/:tid', authRequired, async (req, res) => {
+  const t = await dmThreadFor(req.user.id, req.params.tid);
+  if (!t) return res.status(404).json({ error: 'no_thread' });
+  if (!t.is_group) return res.status(400).json({ error: 'not_group' });
+  const sets = [], vals = [];
+  if (req.body && req.body.name !== undefined) {
+    sets.push('name = ?'); vals.push(String(req.body.name).trim().slice(0, 40) || 'Group chat');
+  }
+  if (req.body && req.body.description !== undefined) {
+    sets.push('description = ?'); vals.push(squashBreaks(String(req.body.description)).trim().slice(0, 300));
+  }
+  if (!sets.length) return res.status(400).json({ error: 'nothing_to_update' });
+  vals.push(t.id);
+  await db.prepare(`UPDATE dm_threads SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+  await dmNotify(t.id, { t: 'dm-threads-changed' });
+  res.json({ thread: await dmThreadView(await db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(t.id), req.user.id) });
 });
 
 // Pin a DM / group chat to the top of your list (per-user; syncs to all your

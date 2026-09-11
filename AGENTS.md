@@ -323,6 +323,30 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   plus Home from inside a server leaves the home lists, with a DM row in the
   panel to pick, and picking it closes the page and opens that DM (the ✕ still
   closes too). Skips when Postgres or Chrome is missing.
+  `node scripts/test-group-dm-settings.js` covers group chat settings. The
+  offline half slices the real `dmMenuItems` out of `home.js` (a group row
+  offers Edit group chat / Add members / Leave, a 1:1 row keeps Close DM and
+  nothing else), the real `tagHTML` out of `core.js` (`tagHTML(u, true)` renders
+  a decorative pill with no `data-tag-sid`/role/tabindex, which is what the DM
+  sidebar passes so the tag cannot steal the tap into its server mini-panel),
+  and that `actions.js` routes a coarse-pointer hold on `[data-dmthread]` to
+  `openDmSheet` and the stylesheet opts `.server-btn,.chan,.dmrow,.member` out
+  of text selection. Against a throwaway database the `PATCH /api/dms/:tid`
+  route is pinned: members rename/describe, a non-member gets 404, a 1:1 gets
+  `not_group`, a blank body gets `nothing_to_update`, a blank name falls back to
+  "Group chat", name caps at 40 and description at 300 after trim + newline
+  squash, and every member gets the live `dm-threads-changed`. Skips the API
+  half when Postgres is down.
+  `node scripts/test-group-dm-browser.js` drives the real page in headless
+  Chrome at a phone viewport with real touch events against a throwaway
+  database (skips without Postgres or Chrome): a long-press on a group row
+  opens the `.sheet` headed by the group name with Edit group chat and never
+  the desktop `#ctx-menu`, the row opens the settings modal prefilled, saving
+  repaints the sidebar row, the open header name and the description as the
+  topic line; a 1:1 row gets the sheet too (Close DM, no group settings); the
+  hold selects no text (`user-select:none` on the rows); and clicking the plain
+  tag in a DM row opens the conversation without opening `#tagcard`. Writes
+  `campfire-group-dm-sheet.png` to the temp dir.
   `node scripts/test-anow-strip.js` covers the phone's Active Now strip in
   headless Chrome at a phone viewport with injected friends: the strip sits
   under Stories and above DIRECT MESSAGES, one tile per online friend (the one
@@ -657,7 +681,13 @@ opens there. Settings → Games is a full game-activity manager — search,
 per-game Ignore / Track again / Remove playtime, an ignore list that outlives a
 game's stats (an ignored game with its record deleted used to vanish, which is
 exactly how a game "stopped being tracked" with no way back), and a
-track-by-name way back for anything not listed.
+track-by-name way back for anything not listed. Group chats carry settings
+(name + description, `PATCH /api/dms/:tid`, members-only) reached from the
+DM/group row's right-click or long-press menu; the description paints as the
+chat header's topic line. A mobile long-press on a DM/group row opens that
+slide-up sheet (never the desktop popup), and the row's server tag is rendered
+`tagHTML(u, true)` — decorative, so the tap always opens the conversation
+instead of the tag's server mini-panel.
 Detail per change lives in `git log` — don't duplicate it here.
 
 ## Deployment (owner directive)

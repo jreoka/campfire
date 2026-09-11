@@ -38,10 +38,14 @@ function check(cond, name, detail) {
   else { failures.push(name + (d ? ' — ' + d : '')); console.log('  FAIL ' + name + (d ? ' — ' + d : '')); }
 }
 
-const pickers = fs.readFileSync(path.join(ROOT, 'public/js/pickers.js'), 'utf8');
-const finalSrc = fs.readFileSync(path.join(ROOT, 'public/js/final.js'), 'utf8');
-const core = fs.readFileSync(path.join(ROOT, 'public/js/core.js'), 'utf8');
-const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
+// Normalise line endings: this suite matches source formatting with \n
+// regexes, and a Windows checkout (core.autocrlf) hands back CRLF, which made
+// the user-card menu check fail with no code change behind it.
+const readSrc = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
+const pickers = readSrc('public/js/pickers.js');
+const finalSrc = readSrc('public/js/final.js');
+const core = readSrc('public/js/core.js');
+const css = readSrc('public/styles.css');
 function slice(src, from, to) {
   const a = src.indexOf(from);
   const b = a < 0 ? -1 : src.indexOf(to, a + from.length);

@@ -271,6 +271,7 @@ CREATE TABLE IF NOT EXISTS friendships (
 CREATE TABLE IF NOT EXISTS dm_threads (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
   is_group BIGINT NOT NULL DEFAULT 0,
   created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at BIGINT NOT NULL
@@ -445,6 +446,7 @@ CREATE TABLE IF NOT EXISTS pin_seen (
   await addColumn('dm_messages', 'sys', 'TEXT');
   await addColumn('dm_members', 'hidden', 'BIGINT NOT NULL DEFAULT 0');
   await addColumn('dm_members', 'pinned', 'BIGINT NOT NULL DEFAULT 0');
+  await addColumn('dm_threads', 'description', "TEXT NOT NULL DEFAULT ''");
   await addColumn('messages', 'fwd_from', 'TEXT');
   await addColumn('dm_messages', 'fwd_from', 'TEXT');
   await addColumn('channels', 'slowmode', 'BIGINT NOT NULL DEFAULT 0');

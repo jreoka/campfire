@@ -534,7 +534,7 @@ function dmRowEl(t) {
   const avHTML = av
     ? `<span class="avwrap st-${avDot}"><span class="avatar"></span><span class="status-dot ${avDot}"></span></span>`
     : `<span class="avatar">${t.isGroup ? '#' : ''}</span>`;
-  b.innerHTML = `${avHTML}<span class="dmmain"><span class="mname-row"><span class="dmname" style="${!t.isGroup && av ? nameStyleFor(av) : ''}">${esc(dmTitle(t))}</span>${!t.isGroup && av ? tagHTML(av) : ''}</span><span class="dmlast">${sub}</span></span>`;
+  b.innerHTML = `${avHTML}<span class="dmmain"><span class="mname-row"><span class="dmname" style="${!t.isGroup && av ? nameStyleFor(av) : ''}">${esc(dmTitle(t))}</span>${!t.isGroup && av ? tagHTML(av, true) : ''}</span><span class="dmlast">${sub}</span></span>`;
   const avSpan = b.querySelector('.avatar');
   if (av) paintAvatar(avSpan, av);
   else avSpan.style.background = 'var(--panel-3)';
@@ -699,26 +699,77 @@ async function toggleDmPin(tid) {
   refreshDms();
 }
 function dmCtxMenu(tid, x, y) {
-  const t = S.dms.find((t) => t.id === tid);
+  const items = dmMenuItems(tid);
+  if (items.length) openCtx(x, y, items);
+}
+// Same item list for the desktop popup and the mobile slide-up sheet, so the
+// two can never drift apart.
+function dmMenuItems(tid) {
+  const t = S.dms.find((x) => x.id === tid);
+  if (!t) return [];
   const items = [
     { label: 'Open', icon: '→', fn: () => selectDmThread(tid) },
-    { label: t && t.pinned ? 'Unpin chat' : 'Pin chat', icon: (typeof PIN_SVG !== 'undefined' ? PIN_SVG : '📌'), fn: () => toggleDmPin(tid) },
+    { label: t.pinned ? 'Unpin chat' : 'Pin chat', icon: (typeof PIN_SVG !== 'undefined' ? PIN_SVG : '📌'), fn: () => toggleDmPin(tid) },
   ];
-  if (t && !t.isGroup) {
-    items.push({ label: 'Close DM', icon: '×', fn: () => closeDm(tid) });
-  }
-  if (t && t.isGroup) {
+  if (t.isGroup) {
+    items.push({ sep: true });
+    items.push({ label: 'Edit group chat', icon: '✎', fn: () => openGroupEdit(tid) });
     items.push({ label: 'Add members…', icon: '+', fn: () => openGroupAdd(tid) });
-  }
-  // Direct (1:1) DMs can be dismissed but never totally left — Leave only exists for groups.
-  if (t && t.isGroup) {
+    items.push({ sep: true });
     items.push({ label: 'Leave chat', icon: '🗑', danger: true, fn: async () => {
       try { await api(`/api/dms/${tid}/leave`, { method: 'POST' }); } catch {}
       if (S.dmThreadId === tid) { saveScrollPos(); S.dmThreadId = null; renderDmBlank(); rememberView(); }
       refreshDms();
     } });
+  } else {
+    // Direct (1:1) DMs can be dismissed but never totally left — Leave only exists for groups.
+    items.push({ sep: true });
+    items.push({ label: 'Close DM', icon: '×', fn: () => closeDm(tid) });
   }
-  openCtx(x, y, items);
+  return items;
+}
+// Mobile long-press on a DM / group row opens the slide-up sheet (same items
+// as the desktop right-click popup), headed by the conversation's avatar.
+function openDmSheet(tid) {
+  const t = S.dms.find((x) => x.id === tid);
+  if (!t) return;
+  const items = dmMenuItems(tid);
+  if (!items.length) return;
+  const peer = dmPeer(t);
+  const head = t.isGroup
+    ? { title: dmTitle(t), sub: (t.members || []).length + ' member' + ((t.members || []).length === 1 ? '' : 's'), glyph: '#', color: 'var(--panel-3)' }
+    : { title: (peer || {}).display_name || 'Direct message', sub: peer ? '@' + peer.username : '', serverUser: peer || undefined, glyph: '?' };
+  openCtxSheet(items, head);
+}
+// Group chat settings: name + description. The only surface is the DM row's
+// right-click / long-press menu; the server re-checks membership and is_group.
+async function openGroupEdit(tid) {
+  const t = S.dms.find((x) => x.id === tid);
+  if (!t || !t.isGroup) return;
+  openModal('Group chat settings', `
+    <label>Group name<input id="m-grp-name" maxlength="40" value="${esc(t.name || '')}" placeholder="Group chat" /></label>
+    <label style="margin-top:.6rem;display:block">Description<input id="m-grp-desc" maxlength="300" value="${esc(t.description || '')}" placeholder="What's this group about?" /></label>
+  `, 'Save', async () => {
+    const name = ($('#m-grp-name')?.value || '').trim();
+    const description = ($('#m-grp-desc')?.value || '').trim();
+    try {
+      await api(`/api/dms/${tid}`, { method: 'PATCH', body: JSON.stringify({ name, description }) });
+    } catch (err) { toast('Save failed: ' + prettyError(err.message)); return; }
+    await refreshDms();
+    if (S.view === 'home' && S.dmThreadId === tid) paintDmHead(S.dms.find((x) => x.id === tid));
+    toast('Group chat updated');
+  });
+}
+// The open conversation's header: hash + name + placeholder, plus the topic
+// line (a group's description). Shared by selectDmThread and the socket's
+// dm-threads-changed so a rename on another device reaches this header too.
+function paintDmHead(t) {
+  if (!t) return;
+  const peer = dmPeer(t);
+  $('#chan-hash').textContent = t.isGroup ? '' : '@';
+  $('#chan-name').textContent = t.isGroup ? (t.name || 'Group chat') : ((peer || {}).display_name || 'DM');
+  $('#in-message').placeholder = t.isGroup ? `Message ${t.name || 'group'}` : `Message @${(peer || {}).username || ''}`;
+  renderTopic();
 }
 async function openGroupAdd(tid) {
   const t = S.dms.find((x) => x.id === tid);

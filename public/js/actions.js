@@ -869,6 +869,11 @@ document.addEventListener('touchstart', (e) => {
     if (sb && isCoarse()) { holdSheet = true; openServerSheet(sb.dataset.sid); return; }
     const fb = t.closest('.folder-btn[data-fid]');
     if (fb && isCoarse()) { holdSheet = true; openFolderSheet(fb.dataset.fid); return; }
+    // DM / group rows get their own slide-up sheet (open, pin, group settings,
+    // add members, leave) — never the desktop popup the generic ctxFor path
+    // would open on a touch screen.
+    const dmr = t.closest('[data-dmthread]');
+    if (dmr && isCoarse()) { holdSheet = true; openDmSheet(dmr.dataset.dmthread); return; }
     if (ctxFor(t, x, y)) holdMenu = true;
   }, 550);
 }, { passive: true });

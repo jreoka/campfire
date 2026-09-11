@@ -400,7 +400,12 @@ function onWS(m) {
       refreshDms().then(() => {
         if (S.view !== 'home') { rememberView(); return; }
         if (S.dmThreadId && !S.dms.some((t) => t.id === S.dmThreadId)) { S.dmThreadId = null; renderDmBlank(); rememberView(); }
-        else renderDmMembers();
+        else {
+          // Repaint the header too: a rename / new description from another
+          // device (or our own group settings modal) must reach #chan-name.
+          if (S.dmThreadId) paintDmHead(S.dms.find((t) => t.id === S.dmThreadId));
+          renderDmMembers();
+        }
       });
       break;
     case 'friends-changed':
