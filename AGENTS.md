@@ -240,6 +240,15 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   survives a reload (the auto-updater's exact path) in channels and DMs, that
   conversations keep their own drafts, and that a sent message leaves none.
   Skips when Postgres or Chrome is missing.
+  `node scripts/test-composer-preview.js` covers the composer's markdown
+  backdrop offline (it runs the real `renderRich` out of `core.js`): in
+  `{plain:true}` mode stripping the tags off the preview gives back the
+  escaped source text character for character (that is what keeps the
+  textarea's caret sitting in the text it looks like it is in — the backdrop
+  used to drop `**`/`||`/backticks, which drifted the caret left), markdown
+  delimiters stay in the flow (dimmed), message rendering is unchanged, and
+  the `#in-render` rules stay metric-neutral (no padding/size/weight/font
+  changes — `.spoiler` and `<code>` have to override the generic rules).
   `node scripts/test-friend-click.js` drives the same harness and counts
   `openUserCard` calls: a friend row under All/Online opens the DM and nothing
   else (the row carries `data-uid` for the story ring, and the global

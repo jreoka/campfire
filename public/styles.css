@@ -29,6 +29,8 @@
   --danger-bg:rgba(248,113,113,.09);
   --danger-line:rgba(248,113,113,.38);
   --danger-tx:#ffa3a3;
+  /* Hidden-text spoiler bar; OLED overrides it below (black-on-black is invisible). */
+  --spoiler:#000;
   --radius:10px;
   --r-sm:8px;
   --r-md:10px;
@@ -77,6 +79,7 @@
   --danger-bg:rgba(220,38,38,.08);
   --danger-line:rgba(220,38,38,.35);
   --danger-tx:#b91c1c;
+  --spoiler:#141a26;
 }
 /* Dracula: official palette (https://draculatheme.com) mapped onto Campfire surfaces. */
 [data-theme="dracula"]{
@@ -141,6 +144,7 @@
   --danger-bg:rgba(248,113,113,.12);
   --danger-line:rgba(248,113,113,.4);
   --danger-tx:#ffa3a3;
+  --spoiler:#33343d;
 }
 /* OLED Black extras: chrome is true black, so hovers lift to --panel-3 and
    borderless rows/cards get a hairline edge to stay defined on black. */
@@ -490,8 +494,18 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #composer-box:focus-within #in-render{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
 #in-render{position:absolute;inset:0;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;background:var(--inset);border:1px solid var(--line);border-radius:14px;padding:.65rem 4.2rem .65rem 2.8rem;font:inherit;font-size:.93rem;color:var(--text);transition:border-color var(--t-fast),box-shadow var(--t-fast)}
 #in-render-inner{white-space:pre-wrap;overflow-wrap:anywhere}
-#in-render .spoiler{background:var(--panel-3);color:var(--muted);border-radius:6px;padding:0 .3rem}
-#in-render strong{font-weight:700}#in-render em{font-style:italic}#in-render del{text-decoration:line-through}#in-render code{background:var(--panel-3);border-radius:6px;padding:.05rem .3rem;font-size:.85em}
+/* The backdrop must not move a single glyph: markdown is shown by colour and
+   background only. No padding, no weight/size/font changes — any of those
+   shifts the text away from the transparent textarea's caret. Bold is faked
+   with a hairline text-shadow, which paints outside the glyph without
+   changing its advance width. */
+#in-render .spoiler{background:var(--panel-3);color:var(--muted);border-radius:6px;padding:0}
+#in-render strong{font-weight:inherit;text-shadow:.03em 0 0 currentColor,-.03em 0 0 currentColor}
+#in-render em{font-style:italic}
+#in-render del{text-decoration:line-through}
+#in-render code{background:var(--panel-3);border-radius:6px;font-family:inherit}
+#in-render .md-tok{color:var(--faint)}
+#in-render .md-quote{color:var(--muted)}
 #in-render a{color:var(--accent-hover)}
 #in-message::placeholder{color:var(--faint)}
 
@@ -672,7 +686,7 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .msg-atts video.att-vid{max-width:100%;max-height:320px;border-radius:12px;background:#000}
 .att-wrap{position:relative;display:inline-block;max-width:420px}
 .spoiler{border-radius:6px;padding:0 .3rem;cursor:pointer}
-.msg .text .spoiler:not(.shown),.uc-bio .spoiler:not(.shown){background:#000;color:transparent;user-select:none}
+.msg .text .spoiler:not(.shown),.uc-bio .spoiler:not(.shown){background:var(--spoiler);color:transparent;user-select:none}
 .msg .text .spoiler:not(.shown) a,.uc-bio .spoiler:not(.shown) a{color:transparent}
 .msg .text .spoiler:not(.shown) img,.uc-bio .spoiler:not(.shown) img{visibility:hidden}
 .msg .text .spoiler.shown,.uc-bio .spoiler.shown{background:var(--panel-3);color:inherit}
@@ -1662,7 +1676,6 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 [data-theme="light"] *{scrollbar-color:#b9c2d4 transparent}
 [data-theme="light"] #toast{background:#141a26;color:#f2f4f8}
 [data-theme="light"] #toast .btn.small.primary{background:#f2f4f8;border-color:transparent;color:#141a26}
-[data-theme="light"] .msg .text .spoiler:not(.shown),[data-theme="light"] .uc-bio .spoiler:not(.shown){background:#141a26}
 /* Sidebar-banner rows sit under a dark scrim in every theme: keep their
    text light (custom name colors still win via inline style). */
 [data-theme="light"] .member.has-banner .mname,

@@ -275,31 +275,42 @@ function memberById(id) {
 }
 // Escape + fenced code / quotes / inline code / bold / italic / strike +
 // spoilers + custom + standard emoji + @mentions + links.
+//
+// `opts.plain` is the composer's live-preview backdrop: the caret lives in the
+// transparent textarea above it, so the backdrop must lay out exactly the same
+// characters. Markdown delimiters are therefore kept in the flow (dimmed via
+// .md-tok) instead of dropped, and the composer CSS must never change glyph
+// metrics (weight, size, padding) — one dropped character and the caret drifts
+// off the text it is supposed to be sitting in.
 function renderRich(text, opts = {}) {
+  const plain = !!opts.plain;
+  const tok = (s) => (plain ? '<span class="md-tok">' + s + '</span>' : '');
   let h = esc(text);
   // Fenced code blocks first, so nothing inside them is formatted. A trailing
   // unclosed fence runs to end of message (Discord-style).
   const fences = [];
   h = h.replace(/^```([A-Za-z0-9_+-]*)\r?\n([\s\S]*?)\r?\n```/gm, (m, lang, code) => {
-    fences.push({ lang, code });
+    fences.push({ lang, code, closed: true });
     return '\u0001' + (fences.length - 1) + '\u0001';
   });
   h = h.replace(/^```([A-Za-z0-9_+-]*)\r?\n([\s\S]*)$/m, (m, lang, code) => {
-    fences.push({ lang, code });
+    fences.push({ lang, code, closed: false });
     return '\u0001' + (fences.length - 1) + '\u0001';
   });
-  // Quote runs: consecutive > lines merge into one blockquote.
+  // Quote runs: consecutive > lines merge into one blockquote. The backdrop
+  // keeps the > characters and just tones the run down.
   h = h.replace(/(?:^|\n)((?:&gt;[^\n]*(?:\n|$))+)/g, (m, run) => {
     const inner = run.split('\n').filter((l) => l.startsWith('&gt;')).map((l) => l.replace(/^&gt; ?/, ''));
     if (!inner.join('').trim()) return m;
+    if (plain) return '<span class="md-quote">' + m + '</span>';
     return '<blockquote>' + inner.join('<br>') + '</blockquote>';
   });
   const codes = [];
   h = h.replace(/`([^`\n]+)`/g, (m, c) => { codes.push(c); return '\u0000' + (codes.length - 1) + '\u0000'; });
-  h = h.replace(/\|\|(.+?)\|\|/gs, (m, inner) => '<span class="spoiler">' + inner + '</span>');
-  h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-       .replace(/(^|[\s(])\*([^\*\n]+)\*/g, '$1<em>$2</em>')
-       .replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  h = h.replace(/\|\|(.+?)\|\|/gs, (m, inner) => tok('||') + '<span class="spoiler">' + inner + '</span>' + tok('||'));
+  h = h.replace(/\*\*([^*]+)\*\*/g, (m, inner) => tok('**') + '<strong>' + inner + '</strong>' + tok('**'))
+       .replace(/(^|[\s(])\*([^\*\n]+)\*/g, (m, pre, inner) => pre + tok('*') + '<em>' + inner + '</em>' + tok('*'))
+       .replace(/~~([^~]+)~~/g, (m, inner) => tok('~~') + '<del>' + inner + '</del>' + tok('~~'));
   if (!opts.plain) {
   h = h.replace(/:([a-z0-9_+-]{2,32}):/g, (m, n) => {
     const em = S.emojiAll[n]; // cross-server: any emoji from a joined server
@@ -322,10 +333,13 @@ function renderRich(text, opts = {}) {
   });
   }
   h = h.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
-  h = h.replace(/\u0000(\d+)\u0000/g, (m, i) => '<code>' + codes[+i] + '</code>');
+  h = h.replace(/\u0000(\d+)\u0000/g, (m, i) => tok('`') + '<code>' + codes[+i] + '</code>' + tok('`'));
   h = h.replace(/\u0001(\d+)\u0001/g, (m, i) => {
     const f = fences[+i];
     if (!f) return m;
+    // Backdrop: the exact fence characters with the ``` lines dimmed, so the
+    // block still reads as code without moving a single glyph.
+    if (plain) return tok('```' + f.lang) + '\n' + f.code + (f.closed ? '\n' + tok('```') : '');
     const code = f.code.replace(/^\r?\n+|\r?\n+$/g, '');
     return '<pre class="codeblock">' + (f.lang ? '<span class="cb-lang">' + f.lang + '</span>' : '') + '<code>' + code + '</code></pre>';
   });
