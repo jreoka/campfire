@@ -209,6 +209,11 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   server (audiences, view receipts, delete, 24h reaper) and restarts the dev
   server for the boot-reaper check. It expects the dev Postgres and a
   `JWT_SECRET`-equivalent `.env` (see Running it).
+  `node scripts/test-story-start.js` covers where a story tap lands, offline
+  (it runs the real `storyStartIndex` pulled out of `stories.js`): in a server,
+  a person's row opens that person's first item instead of the tray's oldest
+  post, a server row opens its first unseen item, and friend trays keep
+  starting at the top.
   `node scripts/test-viewonce.js` covers view-once messages against the same
 dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   one-replay lifecycle, and that unopened items never expire.

@@ -514,7 +514,8 @@ function openStoriesSheet(scope = 'home') {
       for (const t of rows) {
         body.appendChild(storySheetRow(t.user, t.items, t.unseen, () => {
           $('#modal-backdrop').classList.add('hidden');
-          openStoryViewer({ kind: 'server', serverId });
+          // Open on THIS person's first item inside the server's playlist.
+          openStoryViewer({ kind: 'server', serverId, userId: t.user.id });
         }));
       }
     }
@@ -553,7 +554,7 @@ function openStoriesSheet(scope = 'home') {
         body.appendChild(storySheetRow(
           { id: t.server.id, display_name: t.server.name, username: 'server' },
           t.items, serverTrayUnseen(t),
-          () => { $('#modal-backdrop').classList.add('hidden'); openStoryViewer({ kind: 'server', serverId: t.server.id }); },
+          () => { $('#modal-backdrop').classList.add('hidden'); openStoryViewer({ kind: 'server', serverId: t.server.id, unseen: true }); },
         ));
         void author;
       }
@@ -616,6 +617,29 @@ function svReplyBusy() {
   return !!(inp && (document.activeElement === inp || String(inp.value || '').trim()));
 }
 
+// Which item in the tray a tap should land on.
+// A server tray is ONE playlist holding every author's items, so a tap on a
+// person's row there has to select that person's first item: always starting at
+// index 0 opened whichever member posted first, which is why tapping "my story"
+// right after a friend posted showed the friend's story instead. A server row
+// (the Home sheet's SERVERS list) advertises its unseen count, so it opens the
+// first new item. Personal trays are one person's own items and still start at
+// the top.
+function storyStartIndex(tray, opt = {}) {
+  if (!tray || tray.kind !== 'server') return 0;
+  const items = storyLive(tray.items);
+  if (!items.length) return 0;
+  if (opt.userId) {
+    const j = items.findIndex((it) => it.author && it.author.id === opt.userId);
+    return j > 0 ? j : 0;
+  }
+  if (opt.unseen) {
+    const j = items.findIndex((it) => !it.seen && !(S.me && it.author && it.author.id === S.me.id));
+    return j > 0 ? j : 0;
+  }
+  return 0;
+}
+
 function openStoryViewer(opt = {}) {
   const trays = storyViewerTrays(opt);
   if (!trays.length) return;
@@ -623,12 +647,13 @@ function openStoryViewer(opt = {}) {
   if (opt.kind === 'user') { const i = trays.findIndex((t) => t.kind === 'user' && t.id === opt.userId); ti = i < 0 ? 0 : i; }
   else if (opt.kind === 'server') { const i = trays.findIndex((t) => t.kind === 'server' && t.id === opt.serverId); ti = i < 0 ? 0 : i; }
   else if (opt.kind === 'mine') { const i = trays.findIndex((t) => t.kind === 'mine'); ti = i < 0 ? 0 : i; }
+  const ii = storyStartIndex(trays[ti], opt);
   if (sv) svTeardown();
   sv = { trays, ti: 0, ii: 0, dur: STORY_IMG_MS, t0: 0, elapsed: 0, paused: false, raf: 0, holdT: 0, swipe: null, muted: false, gen: 0, seenT: 0, retryT: 0, retries: 0, waiting: false, replyFor: null, opt: { kind: opt.kind, userId: opt.userId, serverId: opt.serverId } };
   $('#story-view').classList.remove('hidden');
   document.body.classList.add('story-open');
   $('#sv-reply').value = '';
-  svShow(ti, 0);
+  svShow(ti, ii);
 }
 function svTeardown() {
   if (!sv) return;
