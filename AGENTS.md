@@ -266,6 +266,18 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   a reload keeps an idle Away revertible), and a timed Away keeps its own revert.
   Note the timer labels are the full "For 15 Minutes … Forever" ladder, straight
   from Discord's menu.
+  `node scripts/test-user-card-actions.js` covers the card's action tabs, the
+  me bar's missing server tag and the avatar-as-story-button (offline for the tab
+  builders — it runs the real `ucTabHTML`/`UC_ICONS` out of `pickers.js` and
+  `friendBtnHTML` out of `home.js` — then headless Chrome for the real `paintMe`
+  and `paintUserCardStory`, skipping without Chrome): the tab rows are icon +
+  label, full width and computed `flex-direction: column`, danger/primary are
+  tinted, every action id is built through `ucTabHTML` (no `.btn small` pills
+  left), the friend button takes the tab shape while the profile screen keeps its
+  pill, the me bar renders the name with a tag-returning `tagHTML` stubbed (so a
+  regression shows up), clicking the story avatar opens that user's story and
+  closes the card (Enter too), a seen story is still labelled "(seen)", no story
+  leaves the pfp a plain picture, and your own card never becomes a button.
   `node scripts/test-pin-badge.js` covers the pin button's badge offline (it
   runs the real helpers pulled out of `pins.js` against stub globals): a pin is
   "new" until this account opens the panel in that conversation, pinning
@@ -549,7 +561,17 @@ two ramps at `100% 100%`. On mobile the server rail + chat list is a whole page
 scrim, and closes from its own ✕, a channel/DM row, or the Home/Friends/Stories
 nav rows — a server tap deliberately keeps it open so a channel can be picked.
 The me bar's only click target is `#me-open` (the avatar + name), which outlines
-itself on hover; the space around mute/deafen/settings is dead. Your own card's
+itself on hover; the space around mute/deafen/settings is dead, and it never
+shows your own active server tag (`paintMe` used to insert one — other people's
+rows still carry theirs). On someone else's card the picture IS the story button:
+`paintUserCardStory` rings it, drops the cropped thumb in and makes the avatar
+itself the click/Enter target — there is no separate "Watch story" button to
+re-add. That card's actions are a vertical tab list, not a wrapped row of pills:
+build new ones with `ucTabHTML(id, icon, label, ' primary'|' danger')` (`UC_ICONS`
+in `pickers.js`, inline SVG — no emoji), and the container is `.uc-tabs`; the
+voice-call controls keep the older `.uc-actions` pill row. `friendBtnHTML` takes a
+base class + icon flag so the same button serves both the tab list and the plain
+profile-screen pill. Your own card's
 status is a cascading vertical menu (`presenceWidgetHTML` in `pickers.js`): it
 starts as just your current status (that row IS the card's readout on your own
 card), opening it lists the states, and picking one cascades that state's timer

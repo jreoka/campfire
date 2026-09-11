@@ -375,12 +375,18 @@ async function renderActiveNow() {
   } catch {}
   paint();
 }
-function friendBtnHTML(uid, id = 'uc-friend') {
+// `base` is the button class and `icon` adds the card-tab SVG (the profile
+// screen keeps its plain pill). The label always sits in a span so both shapes
+// lay out the same.
+const FRIEND_TAB_ICONS = { friend: 'minus-user', 'pending-out': 'x-user', 'pending-in': 'check-user', none: 'plus' };
+function friendBtnHTML(uid, id = 'uc-friend', base = 'btn small', icon = false) {
   const st = friendState(uid);
-  if (st === 'friend') return `<button class="btn small danger" id="${id}">Unfriend</button>`;
-  if (st === 'pending-out') return `<button class="btn small" id="${id}">Cancel request</button>`;
-  if (st === 'pending-in') return `<button class="btn small primary" id="${id}">Accept request</button>`;
-  return `<button class="btn small" id="${id}">Add friend</button>`;
+  const ico = (icon && typeof ucIconHTML === 'function') ? ucIconHTML(FRIEND_TAB_ICONS[st] || 'plus') : '';
+  const mk = (mod, label) => `<button type="button" class="${base}${mod}" id="${id}" data-friend-state="${st}">${ico}<span>${label}</span></button>`;
+  if (st === 'friend') return mk(' danger', 'Unfriend');
+  if (st === 'pending-out') return mk('', 'Cancel request');
+  if (st === 'pending-in') return mk(' primary', 'Accept request');
+  return mk('', 'Add friend');
 }
 async function friendCardAction(uid, x, y) {
   const u = memberById(uid);

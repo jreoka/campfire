@@ -979,6 +979,31 @@ $('#lightbox-dl').addEventListener('click', (e) => {
 });
 $('#lightbox').onclick = () => { $('#lightbox').classList.add('hidden'); $('#lightbox-img').src = ''; $('#lightbox-dl')?.classList.add('hidden'); };
 
+// ---------- user card action tabs ----------
+// The card's actions are a vertical list of tab rows (icon + label), not a
+// wrapped row of pills: they read top-to-bottom like a menu and the destructive
+// ones sit last. No emoji in chrome, so every tab carries an inline SVG.
+const UC_ICONS = {
+  mention: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.9 7.9"/>',
+  message: '<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  plus: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/>',
+  'x-user': '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M17 8l5 5M22 8l-5 5"/>',
+  'check-user': '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M16 11l2 2 4-4"/>',
+  'minus-user': '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11h-6"/>',
+  slash: '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
+  check: '<circle cx="12" cy="12" r="9"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/>',
+  user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  close: '<path d="M18 6L6 18M6 6l12 12"/>',
+};
+function ucIconHTML(name) {
+  const d = UC_ICONS[name];
+  if (!d) return '';
+  return `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+}
+// `mod` is ' primary' | ' danger' | '' — one tab row.
+function ucTabHTML(id, icon, label, mod = '') {
+  return `<button type="button" class="uc-tab${mod}" id="${id}">${ucIconHTML(icon)}<span>${label}</span></button>`;
+}
 // ---------- user card ----------
 // Member-rail cards open to the LEFT of the sidebar, never over it.
 function openMemberCard(uid, rowEl, y) {
@@ -1038,7 +1063,7 @@ async function openUserCard(uid, x, y) {
       ${voiceVolHTML}
       ${voiceModHTML}
       ${cardRolesHTML(uid)}
-      <div class="uc-actions">${uid !== S.me.id ? '<button class="btn small" id="uc-mention">Mention</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? '<button class="btn small primary" id="uc-message">Message</button>' : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid) : ''}${canMod ? '<button class="btn small danger" id="uc-kick">Kick</button><button class="btn small danger" id="uc-ban">Ban</button>' : ''}${uid !== S.me.id ? `<button class="btn small${isBlocked(uid) ? '' : ' danger'}" id="uc-block">${isBlocked(uid) ? 'Unblock' : 'Block'}</button>` : ''}<button class="btn small" id="uc-profile">Profile</button><button class="btn small" id="uc-close">Close</button></div>
+      <div class="uc-tabs">${uid !== S.me.id ? ucTabHTML('uc-mention', 'mention', 'Mention') : ''}${uid !== S.me.id && !isBlocked(uid) ? ucTabHTML('uc-message', 'message', 'Message', ' primary') : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid, 'uc-friend', 'uc-tab', true) : ''}${canMod ? ucTabHTML('uc-kick', 'minus-user', 'Kick', ' danger') + ucTabHTML('uc-ban', 'x-user', 'Ban', ' danger') : ''}${uid !== S.me.id ? ucTabHTML('uc-block', isBlocked(uid) ? 'check' : 'slash', isBlocked(uid) ? 'Unblock' : 'Block', isBlocked(uid) ? '' : ' danger') : ''}${ucTabHTML('uc-profile', 'user', 'Profile')}${ucTabHTML('uc-close', 'close', 'Close')}</div>
     </div>`;
   paintAvatar(card.querySelector('.avatar'), u);
   paintGameBadge(card.querySelector('.gbadge'));

@@ -525,16 +525,11 @@ function paintMe() {
   const dot = dotOf(st, streaming);
   $('#me-avwrap').className = 'avwrap st-' + dot;
   $('#me-dot').className = 'status-dot ' + dot;
-  // Tag sits beside #me-name, never inside it: a gradient name clips its
-  // background to the whole element box, so an inline tag would push the far
-  // colour stop past the end of the name (and hide half the gradient).
+  // No server tag on the me bar: the tag beside your own name was noise (it is
+  // already the server you are looking at). Other people's rows still carry it.
   const name = $('#me-name');
   name.textContent = S.me.display_name;
   name.style.cssText = nameStyleFor(S.me);
-  const meRow = name.parentElement;
-  meRow.querySelectorAll(':scope > .usertag').forEach((n) => n.remove());
-  const meTag = tagHTML(S.me);
-  if (meTag) name.insertAdjacentHTML('afterend', meTag);
   const card = $('#me-card');
   if (S.me.sidebar_banner_url && !off) paintSidebarBanner(card, S.me.sidebar_banner_url, 'var(--panel-2)');
   else card.style.backgroundImage = '';

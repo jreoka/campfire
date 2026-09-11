@@ -398,34 +398,36 @@ function paintFriendStoryRing(row, u) { paintRowStoryRing(row, u); }
 function paintDMStoryRing(row, peer) { paintRowStoryRing(row, peer); }
 function paintMemberStoryRing(row, m) { paintRowStoryRing(row, m); }
 // ---------- user card / profile ----------
-// "Watch story" on the card (ring around the avatar too) — the affordance
-// people look for after clicking someone's name.
+// The card's picture IS the story affordance: the ring + cropped thumb already
+// say "there is a story here", so clicking the avatar opens it (and a stale
+// "Watch story" button next to the action tabs is gone). Keyboard-reachable too.
 function paintUserCardStory(card, u) {
   if (!card || !u || !S.me || u.id === S.me.id) return;
   const tray = storyTrayFor(u.id);
   const items = tray ? storyLive(tray.items) : [];
   if (!items.length) return;
   const unseen = items.some((i) => !i.seen);
-  const av = card.querySelector('.avatar');
-  if (av) {
-    av.style.boxShadow = '0 0 0 2.5px ' + (unseen ? 'var(--accent)' : 'var(--line)');
-    try {
-      if (getComputedStyle(av).position === 'static') av.style.position = 'relative';
-      const prev = av.querySelector('.st-thumb-inline');
-      if (prev) prev.remove();
-      const thumb = storyThumbEl(storyThumbItem(items), 'st-thumb-inline');
-      if (thumb) av.appendChild(thumb);
-    } catch {}
-  }
-  const actions = card.querySelector('.uc-actions');
-  if (!actions || card.querySelector('#uc-story')) return;
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = 'btn small' + (unseen ? ' primary' : '');
-  b.id = 'uc-story';
-  b.textContent = unseen ? 'Watch story' : 'Watch story (seen)';
-  b.onclick = () => { try { closeUserCard(); } catch {} openStoryViewer({ kind: 'user', userId: u.id }); };
-  actions.insertBefore(b, actions.firstChild);
+  const av = card.querySelector('.uc-head .avatar');
+  if (!av) return;
+  av.style.boxShadow = '0 0 0 2.5px ' + (unseen ? 'var(--accent)' : 'var(--line)');
+  try {
+    if (getComputedStyle(av).position === 'static') av.style.position = 'relative';
+    const prev = av.querySelector('.st-thumb-inline');
+    if (prev) prev.remove();
+    const thumb = storyThumbEl(storyThumbItem(items), 'st-thumb-inline');
+    if (thumb) av.appendChild(thumb);
+  } catch {}
+  av.classList.add('st-click');
+  av.setAttribute('role', 'button');
+  av.setAttribute('tabindex', '0');
+  const label = unseen ? 'Watch story' : 'Watch story (seen)';
+  av.title = label;
+  av.setAttribute('aria-label', label);
+  const open = () => { try { closeUserCard(); } catch {} openStoryViewer({ kind: 'user', userId: u.id }); };
+  av.onclick = open;
+  av.onkeydown = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+  };
 }
 // Same affordance inside the full profile screen.
 function paintProfileStory(u) {

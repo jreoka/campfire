@@ -984,6 +984,26 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .ugame-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ugame-meta{color:var(--muted);flex-shrink:0;font-variant-numeric:tabular-nums}
 .uc-actions{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.65rem}
+/* The card's actions are a vertical tab list: tonal container, hairline gaps
+   between rows (the container shows through), icon + label left-aligned. */
+.uc-tabs{display:flex;flex-direction:column;gap:1px;margin-top:.7rem;background:var(--panel-3);border-radius:12px;padding:.25rem}
+.uc-tab{display:flex;align-items:center;gap:.6rem;width:100%;min-height:34px;border:0;background:transparent;color:var(--text);border-radius:9px;padding:.42rem .55rem;font:inherit;font-size:.84rem;font-weight:650;line-height:1.2;text-align:left;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
+.uc-tab>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.uc-tab svg{flex-shrink:0;color:var(--muted);transition:color var(--t-fast)}
+.uc-tab:hover{background:var(--panel-4)}
+.uc-tab:hover svg{color:var(--text)}
+.uc-tab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.uc-tab.primary{background:var(--accent-container);color:var(--on-container)}
+.uc-tab.primary svg{color:var(--on-container)}
+.uc-tab.primary:hover{background:var(--accent);color:var(--on-accent)}
+.uc-tab.primary:hover svg{color:var(--on-accent)}
+.uc-tab.danger{color:var(--danger-tx)}
+.uc-tab.danger svg{color:var(--danger-tx)}
+.uc-tab.danger:hover{background:var(--danger-bg)}
+/* The picture is the story button on someone's card (see paintUserCardStory). */
+.avatar.st-click{cursor:pointer;transition:filter var(--t-fast)}
+.avatar.st-click:hover{filter:brightness(1.12)}
+.avatar.st-click:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #profile-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.68);display:flex;align-items:center;justify-content:center;z-index:100;padding:1rem}
 .profile{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-xl);width:100%;max-width:580px;max-height:88dvh;display:flex;flex-direction:column;overflow:hidden}
 .pf-banner{height:150px;background:var(--panel-3);background-size:cover;background-position:center;flex-shrink:0}
