@@ -799,7 +799,7 @@ async function renderMediaTab() {
       toast(hzInp.checked ? 'Haptic feedback on' : 'Haptic feedback off');
       if (hzInp.checked) haptic(16);
     };
-    hz.appendChild(hzInp); hz.appendChild(document.createTextNode(' Haptic feedback — a short vibration on taps and key actions'));
+    hz.appendChild(hzInp); hz.appendChild(document.createTextNode(' Haptic feedback — a short vibration on long-press menus, reactions and picks'));
     box.appendChild(hz);
   }
   h('Video quality');

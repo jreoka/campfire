@@ -15,6 +15,10 @@ const isCoarse = () => window.matchMedia && matchMedia('(hover: none)').matches;
 // is a silent no-op there). Patterns stay tiny — a tick, not a buzz — and a
 // short debounce keeps one gesture's several handlers from rattling the phone.
 // The on/off switch lives in Settings → Media (cf_media.haptics).
+//
+// Deliberately opt-in only: the sheet/ctx long-press, reacting, and picking an
+// option. No delegated listener on every button — ordinary taps stay silent so
+// the phone isn't buzzing constantly.
 let hapticAt = 0;
 function hapticsEnabled() {
   try { return typeof mediaPrefs === 'function' ? mediaPrefs().haptics !== false : true; } catch { return true; }
@@ -26,14 +30,6 @@ function haptic(pattern = 9) {
   hapticAt = now;
   try { navigator.vibrate(pattern); } catch {}
 }
-// One delegated listener so every control ticks the same way without a call in
-// each handler. Key actions (send, story post, long-press) add their own,
-// slightly stronger beat.
-document.addEventListener('pointerdown', (e) => {
-  if (e.button && e.button !== 0) return;
-  const t = e.target && e.target.closest ? e.target.closest('button,[role="button"],.server-btn,.chan,.dm-row,.set-tab') : null;
-  if (t && !t.disabled) haptic();
-}, { passive: true, capture: true });
 // ---------- themes (Settings → Themes): 'dark' (default Campfire skin) |
 // 'light' | 'dracula' | 'oled'. Stored globally in localStorage so the auth page and
 // the app shell match; applied via <html data-theme> before CSS paints

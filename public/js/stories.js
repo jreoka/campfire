@@ -1808,7 +1808,6 @@ async function storyPostNow() {
   }
   storyProgress(null);
   closeStoryComposer();
-  haptic(14);
   if (dmSent) {
     toast('Story posted — ' + (dmSent === 1 ? 'and sent as a view-once DM' : `and sent to ${dmSent} friends as view-once DMs`));
     refreshDms().catch(() => {});

@@ -1434,7 +1434,6 @@ function sendChat(content, opts = {}) {
       t: 'message', serverId: S.serverId, channelId: S.channelId, content,
       attachments: opts.attachments || [], replyTo: opts.replyTo || null, threadRoot: opts.threadRoot || null,
     }));
-    haptic(12); // the tap that actually sends gets a beat
     // Optimistic: the echo arrives via WS in ms and appends incrementally
     // (see appendLiveMessage) — pin to the bottom now, with the hold, so
     // late image growth between send and echo can't strand the view.

@@ -271,6 +271,7 @@ function openCtxSheet(items, head) {
       d.style.background = c;
       d.setAttribute('aria-label', c);
       d.onclick = () => {
+        haptic(10); // picking a swatch is a selection — keep the tick
         try { head.swatches.onPick && head.swatches.onPick(c); } catch {}
         head.swatches.selected = c;
         row.querySelectorAll('.sheet-sw').forEach((el) => el.classList.toggle('sel', el === d));
@@ -842,7 +843,7 @@ document.addEventListener('touchstart', (e) => {
   holdMenu = false;
   holdT = setTimeout(() => {
     holdT = null;
-    try { navigator.vibrate && navigator.vibrate(10); } catch {}
+    haptic(12); // the long-press that opens a menu is one of the few beats left
     const mt = t.closest('.msg[data-mid]');
     if (mt && isCoarse()) { holdSheet = true; openMsgSheet(mt.dataset.mid); return; }
     const ch = t.closest('.chan[data-cid]');

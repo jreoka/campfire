@@ -160,6 +160,7 @@ function renderEmojiGrid(filter) {
   if (!box.children.length) box.innerHTML = '<div class="pk-empty">No emoji match.</div>';
 }
 function pickEmoji(e) {
+  haptic(10); // picking an option ticks; merely opening the picker does not
   if (S.picker?.mode === 'tag') {
     // Server-tag emoji: standard unicode emoji only (no custom :shortcodes:).
     // Done (auto-save) runs only on a valid pick.
@@ -339,6 +340,7 @@ function sendGif(g) {
 
 // ---------- reactions / reply / edit / thread actions ----------
 async function toggleReaction(mid, emoji) {
+  haptic(10); // reacting is one of the few taps that still ticks
   const dm = msgById(mid)?._dm;
   const base = dm ? '/api/dms/messages/' : '/api/messages/';
   try {
@@ -1283,7 +1285,7 @@ async function loadUserGaming(box, username, opts = {}) {
             cancelHold();
             lt = setTimeout(() => {
               lt = null;
-              try { navigator.vibrate && navigator.vibrate(10); } catch {}
+              haptic(12);
               if (isCoarse()) openCtxSheet(menuItems(), { title: game, sub: meta });
               else openCtx(sx, sy, menuItems());
             }, 550);
