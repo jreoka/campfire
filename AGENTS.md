@@ -331,6 +331,21 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   way on desktop (where `#members` is the rail), and it stays fed while a DM is
   open. Writes phone/desktop screenshots to the temp dir. Skips when Postgres
   or Chrome is missing.
+  `node scripts/test-mobile-landscape.js` covers the phone held sideways, the
+  one gate on the whole landscape fix: every mobile @media block in styles.css
+  must carry `(max-width:700px), (max-height:560px) and (pointer:coarse)` (the
+  members drawer, the full-page nav, settings/profile sheets), no module may
+  decide layout on the raw 700px width query any more, and in headless Chrome
+  over CDP (touch emulation is what makes `pointer:coarse` true) the shell at
+  852x393 / 667x375 / 915x412 must stay one column — nav page off-screen until
+  opened (then covering the chat, edge to edge), the members panel an off-screen
+  drawer (never a static column), chat full width, header buttons unclipped and
+  non-overlapping, every bottom sheet/modal/profile fitting the short viewport,
+  and the story composer's tool rail clearing the caption slot and the
+  Retake/Next bar. It also pins that the auth screen scrolls to its Log in
+  button in landscape (it used to sit below a 393px viewport with nothing able
+  to scroll) and that portrait + a short *desktop* window (fine pointer) keep
+  today's layouts. Skips without Chrome.
   `node scripts/test-viewonce.js` covers view-once messages against the same
 dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   one-replay lifecycle, and that unopened items never expire.
@@ -659,7 +674,15 @@ rows are fractional-width, and `background-size: cover` with the default
 `background-repeat: repeat` on a right-anchored picture leaves a sub-pixel
 tiling seam at the LEFT edge that lands on a whole device pixel at dpr 1: a
 light 1px line down the left of the slot. Keep the layers `no-repeat` and the
-two ramps at `100% 100%`. On mobile the server rail + chat list is a whole page
+two ramps at `100% 100%`. The phone layout is not a width: it is
+`(max-width:700px), (max-height:560px) and (pointer:coarse)` — a phone held
+sideways is 850+px wide but only ~390px tall, and keying on width alone dropped
+landscape onto the desktop three-pane shell (static rail + chat list + members
+column, the chat crushed into ~320px). Every mobile @media block in
+styles.css spells that condition out and every JS layout decision goes through
+`phoneLayout()` in `core.js` (which is the same condition in one place) — use
+those, and re-run `scripts/test-mobile-landscape.js`. On mobile the server rail
++ chat list is a whole page
 (`body.nav-open`), not a drawer over the chat: it covers the viewport, has no
 scrim, and closes from its own ✕, a channel/DM row, or the Friends/Stories nav
 rows — a server tap and the campfire Home button deliberately keep it open so a

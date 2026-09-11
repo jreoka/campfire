@@ -45,7 +45,13 @@ function findChrome() {
 const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
 const security = fs.readFileSync(path.join(ROOT, 'public/js/security.js'), 'utf8');
 const settings = fs.readFileSync(path.join(ROOT, 'public/js/settings.js'), 'utf8');
+const core = fs.readFileSync(path.join(ROOT, 'public/js/core.js'), 'utf8');
 const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
+
+// openOwnCard / settingsIsPhone branch on the real phoneLayout() helper (the
+// same condition as the mobile @media blocks in styles.css — see
+// test-mobile-landscape.js), so run the real one here too.
+const phoneSrc = core.slice(core.indexOf('const PHONE_MQ'), core.indexOf('// ---------- haptics'));
 
 const settingsMarkup = index.slice(index.indexOf('<!-- settings'), index.indexOf('<!-- server settings'));
 const ownCardSrc = security.slice(security.indexOf('function openOwnCard() {'), security.indexOf('// Only the avatar + name opens it'));
@@ -76,6 +82,7 @@ window.closeUserCard = () => {
   c.classList.remove('sheet');
   __calls.push(['closeUserCard']);
 };
+${phoneSrc}
 ${ownCardSrc}
 ${viewSrc}
 const rect = (el) => { const r = el.getBoundingClientRect(); return { x: Math.round(r.x), w: Math.round(r.width), y: Math.round(r.y), h: Math.round(r.height), bottom: Math.round(r.bottom) }; };

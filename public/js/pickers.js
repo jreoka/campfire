@@ -13,7 +13,7 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null) {
   S.picker = { mode, mid };
   const pk = $('#picker');
   pk.classList.remove('hidden');
-  if (anchor && !matchMedia('(max-width: 700px)').matches) {
+  if (anchor && !phoneLayout()) {
     // reaction picker: float near the button that opened it (desktop only;
     // mobile keeps the bottom-sheet). Prefer above, fall back below, clamped.
     pk.classList.add('anchored');
@@ -913,7 +913,7 @@ try {
   if (w >= THREAD_W_MIN) $('#thread-panel').style.width = clampThreadW(w) + 'px';
 } catch {}
 $('#thread-resizer').addEventListener('pointerdown', (e) => {
-  if (matchMedia('(max-width: 700px)').matches) return;
+  if (phoneLayout()) return;
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   e.preventDefault();
   const panel = $('#thread-panel');

@@ -181,7 +181,14 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 #app{height:100vh;height:100dvh;height:var(--vvh,100dvh)}
 
 /* ---------- auth ---------- */
-#view-auth{min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:1.5rem;background:var(--bg);overflow-y:auto}
+/* A tall form has to scroll INSIDE the view. With only `min-height` the view
+   grew past #app (whose overflow the body clips) and the centring left the
+   overflow above the top edge unreachable: on a landscape phone the whole Log
+   in button sat below the 393px viewport with nothing able to scroll to it.
+   A real height plus safe centring keeps the card centred when it fits and
+   top-aligned (and scrollable) when it does not; the plain `center` declared
+   first is the fallback for engines without `safe`. */
+#view-auth{height:100vh;height:100dvh;display:flex;align-items:center;align-items:safe center;justify-content:center;justify-content:safe center;padding:1.5rem;background:var(--bg);overflow-y:auto;overscroll-behavior:contain}
 .auth-card{width:100%;max-width:420px;background:var(--panel);border:1px solid var(--line-soft);border-radius:var(--r-xl);padding:2rem;text-align:left}
 .auth-card .logo{display:flex;justify-content:flex-start;margin-bottom:.9rem}
 .auth-card h1{margin:.25rem 0 .3rem;font-size:1.55rem;font-weight:800}
@@ -411,7 +418,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .gol-game.sel{background:var(--accent);border-color:var(--accent);color:#fff}
 /* ---------- full call view ---------- */
 .vb-btn.big{width:50px;height:50px;border-radius:12px}
-@media (max-width:700px){
+@media (max-width:700px),(max-height:560px) and (pointer:coarse){
   .vb-btn.big{width:44px;height:44px}
 }
 /* ---------- voice stage (video grid) ---------- */
@@ -436,7 +443,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .vtile .vicons span.live{background:var(--green);color:#fff;border-radius:6px;width:auto;height:24px;padding:0 .5rem;font-size:.62rem;font-weight:800;letter-spacing:.05em}
 .vtile.focused{grid-column:1/-1;aspect-ratio:16/9}
 .vtile.speaking{outline:2px solid var(--green);outline-offset:-2px}
-@media (max-width:700px){
+@media (max-width:700px),(max-height:560px) and (pointer:coarse){
   #stage-grid{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
 }
 .muted-tag{font-size:.65rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--danger-tx);background:rgba(248,113,113,.14);border-radius:6px;padding:.18rem .45rem}
@@ -740,7 +747,7 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .embed-link.compact .el-desc{-webkit-line-clamp:1;margin-top:.15rem;font-size:.78rem}
 .embed-link.compact .el-media{order:2;flex:none;margin:0}
 .embed-link.compact .el-img{width:72px;height:72px;border-radius:8px}
-@media (max-width:700px){.embeds{max-width:100%}}
+@media (max-width:700px),(max-height:560px) and (pointer:coarse){.embeds{max-width:100%}}
 .file-card{display:flex;align-items:center;gap:.65rem;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:.65rem .85rem;max-width:330px;text-decoration:none;color:var(--text);transition:background var(--t-fast)}
 .file-card:hover{background:var(--panel-3)}
 .file-card .fname{font-size:.85rem;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -839,7 +846,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .pk-star.on svg{fill:var(--accent);stroke:var(--accent)}
 .pk-star:hover,.pk-gif:hover .pk-star{opacity:1}
 @media (hover:none){.pk-star{opacity:.85}}
-@media (max-width:700px){
+@media (max-width:700px),(max-height:560px) and (pointer:coarse){
   #picker .pk-body{flex-direction:column;gap:.35rem}
   #picker .pk-rail{width:100%;flex-direction:row;overflow-x:auto;overflow-y:hidden;padding:0}
   #picker .pk-rail-btn{flex-shrink:0;min-width:52px}
@@ -890,7 +897,7 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 #usercard{position:fixed;z-index:120;width:300px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;overflow:hidden}
 /* Mobile me bar: your own card is a full-height sheet sliding up from the
    bottom (see openOwnCard) — nothing to dim behind it, so no scrim. */
-@media (max-width:700px){
+@media (max-width:700px),(max-height:560px) and (pointer:coarse){
   #usercard.sheet{left:0;right:0;top:auto;bottom:0;width:100%;height:100vh;height:100dvh;max-height:100vh;max-height:100dvh;border-radius:18px 18px 0 0;border-left:0;border-right:0;border-bottom:0;overflow-y:auto;overscroll-behavior:contain;padding-bottom:calc(.75rem + var(--safe-b));animation:cf-sheet-up .26s cubic-bezier(.2,.85,.25,1)}
   #usercard.sheet .uc-banner{border-radius:18px 18px 0 0}
 }
@@ -1108,7 +1115,7 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
   .gsum-r{justify-content:flex-start}
   .gsum-last{text-align:left}
 }
-@media (max-width:820px){#profile-backdrop{padding:var(--safe-t) 0 0} .profile{max-width:none;max-height:none;height:100%;border-radius:0}}
+@media (max-width:820px),(max-height:560px) and (pointer:coarse){#profile-backdrop{padding:var(--safe-t) 0 0} .profile{max-width:none;max-height:none;height:100%;border-radius:0}}
 .avatar.big{width:56px;height:56px;font-size:1.3rem}
 .avatar img,.avatar-img{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block}
 .avatar{overflow:hidden}
@@ -1162,7 +1169,7 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 /* ---------- settings ---------- */
 #settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#admin-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.68);display:flex;align-items:center;justify-content:center;z-index:100;padding:1rem}
 .settings{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;width:100%;max-width:780px;max-height:88dvh;display:flex;flex-direction:row;overflow:hidden}
-@media (max-width:820px){
+@media (max-width:820px),(max-height:560px) and (pointer:coarse){
   .settings{max-width:620px}
 }
 .set-tabs{display:flex;flex-direction:column;gap:.3rem;align-items:stretch;padding:.9rem .7rem;min-width:158px;flex-shrink:0;min-height:0;overflow-y:auto;background:var(--panel);border-right:1px solid var(--line-soft)}
@@ -1179,7 +1186,7 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .set-mhead .mini{width:34px;height:34px;min-height:34px;padding:0;flex-shrink:0}
 /* Mobile settings: the rail becomes the section menu and picking a row opens
    that section alone, with the back button on the left and close on the right. */
-@media (max-width:700px){
+@media (max-width:700px),(max-height:560px) and (pointer:coarse){
   #settings-backdrop .settings{flex-direction:column}
   #settings-backdrop .set-mhead{display:flex}
   #settings-backdrop .settings.menu .set-body,
@@ -1613,7 +1620,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 body.view-home:not(.dm-open) #btn-members{display:none!important}
 /* Mobile DM header: call buttons stay on top, the rest move into the ⋯ sheet */
 #btn-chat-more{display:none}
-@media (max-width:700px){
+@media (max-width:700px),(max-height:560px) and (pointer:coarse){
   body.view-home.dm-open #btn-find,
   body.view-home.dm-open #btn-notifs,
   body.view-home.dm-open #btn-threads,
@@ -1663,7 +1670,7 @@ body.view-home:not(.dm-open) #members{width:300px}
 .anow-tile .anow-gicon{width:14px;height:14px;border-radius:4px;object-fit:contain;background:#000;margin-right:.22rem;vertical-align:-2px}
 .anow-tile.anow-off{opacity:.62}
 .anow-tile .anow-join{width:100%;margin-top:.18rem;padding:.3rem .25rem;min-height:26px;font-size:.72rem;border-radius:8px}
-@media (max-width:900px){#anow-strip{display:block}}
+@media (max-width:900px),(max-height:560px) and (pointer:coarse){#anow-strip{display:block}}
 .gmem-list{display:flex;flex-direction:column;gap:2px;max-height:260px;overflow-y:auto;margin-top:.5rem}
 .modal .gmem{font-size:.85rem;font-weight:550;color:var(--text);letter-spacing:normal;margin:0}
 .gmem .dmmain{flex:1;min-width:0;line-height:1.25}
@@ -1679,12 +1686,12 @@ body.view-home:not(.dm-open) #members{width:300px}
 body{touch-action:manipulation}
 .members-btn{display:none}
 #voice-fab{display:none}
-@media (max-width:900px){
+@media (max-width:900px),(max-height:560px) and (pointer:coarse){
   #members{display:flex;flex-direction:column;position:fixed;top:var(--safe-t);bottom:var(--safe-b);right:var(--safe-r);width:min(300px,84vw);z-index:45;transform:translateX(105%);transition:transform .22s;border-left:1px solid var(--line)}
   body.members-open #members{transform:none}
   .members-btn{display:inline-flex;align-items:center}
 }
-@media (max-width:700px){
+@media (max-width:700px),(max-height:560px) and (pointer:coarse){
   #sidebar{width:min(320px,86vw)}
   #chan-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #in-message,#in-thread{font-size:16px}
@@ -1716,7 +1723,7 @@ body{touch-action:manipulation}
   .msg .text{font-size:.95rem}
 }
 /* ---------- mobile (nav is a full-screen page) ---------- */
-@media (max-width:700px){
+@media (max-width:700px),(max-height:560px) and (pointer:coarse){
   /* The rail + chat list is a whole page, not a drawer hanging over the chat:
      nothing shows behind it, so there is no scrim to dim and no partial-width
      peek. It closes from its own ✕ (the chat's ☰ is behind the page), from
@@ -2098,6 +2105,13 @@ body.story-open{overflow:hidden}
   .sc-tools{right:.8rem}
   .sc-colors{left:.7rem;right:.7rem}
   #sv-img,#sv-vid{border-radius:10px}
+}
+/* Phone held sideways: the composer is ~390px tall, so the markup tool rail
+   (centred in the free space) and the caption slot share a line — the rail's
+   bottom tool sat on the caption's top-right corner. The caption pays for the
+   rail's lane on both sides so it stays centred in what is left. */
+@media (max-height:560px) and (pointer:coarse){
+  .sc-edit{padding-left:calc(1rem + 52px);padding-right:calc(1rem + 52px)}
 }
 @media (max-width:400px){
   .sc-holdhint{display:none}

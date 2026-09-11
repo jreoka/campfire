@@ -314,7 +314,7 @@ function openOwnCard() {
   if (!card.classList.contains('hidden') && card.dataset.uid === S.me.id) { closeUserCard(); return; }
   const r = $('#me-card').getBoundingClientRect();
   openUserCard(S.me.id, r.left, r.top);
-  if (window.matchMedia && matchMedia('(max-width:700px)').matches) {
+  if (phoneLayout()) {
     // Phone: a full-height sheet that slides up from the bottom. The sheet CSS
     // owns the geometry, so drop the popup's inline positioning (the async
     // clampUserCard() bails on a sheet for the same reason).

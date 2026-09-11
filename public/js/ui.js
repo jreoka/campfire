@@ -373,13 +373,13 @@ const SIDEBAR_W_MIN = 200, SIDEBAR_W_MAX = 400;
 const sidebarWMax = () => Math.max(SIDEBAR_W_MIN + 40, Math.min(SIDEBAR_W_MAX, Math.floor(innerWidth * 0.55)));
 const clampSidebarW = (w) => Math.min(sidebarWMax(), Math.max(SIDEBAR_W_MIN, Math.round(w)));
 try {
-  if (!matchMedia('(max-width: 700px)').matches) {
+  if (!phoneLayout()) {
     const w = parseInt(localStorage.getItem('cf_sidebar_w') || '', 10);
     if (w >= SIDEBAR_W_MIN) $('#sidebar').style.width = clampSidebarW(w) + 'px';
   }
 } catch {}
 $('#sidebar-resizer').addEventListener('pointerdown', (e) => {
-  if (matchMedia('(max-width: 700px)').matches) return;
+  if (phoneLayout()) return;
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   e.preventDefault();
   const bar = $('#sidebar');

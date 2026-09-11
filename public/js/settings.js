@@ -10,7 +10,7 @@ function setSettingsView(view) {
   p.classList.toggle('menu', view !== 'section');
   p.classList.toggle('section', view === 'section');
 }
-function settingsIsPhone() { return !!(window.matchMedia && matchMedia('(max-width:700px)').matches); }
+function settingsIsPhone() { return phoneLayout(); }
 function settingsTabLabel(t) {
   const b = document.querySelector('#settings-backdrop .set-tab[data-tab="' + t + '"]');
   return b ? b.textContent.trim() : 'Settings';

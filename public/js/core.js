@@ -10,6 +10,14 @@ const store = {
   set sid(v) { v ? localStorage.setItem('cf_sid', v) : localStorage.removeItem('cf_sid'); },
 };
 const isCoarse = () => window.matchMedia && matchMedia('(hover: none)').matches;
+// "Phone layout" = the single-column shell (nav page, drawers, bottom sheets).
+// Width alone is the wrong test: a phone held sideways is 850+px wide but only
+// ~390px tall, and the desktop three-pane shell (rail + chat list + members)
+// crushes the chat in a viewport that short. So a short touch viewport counts
+// too. This exact condition is spelled out in the mobile @media blocks in
+// styles.css — the two must be kept in sync.
+const PHONE_MQ = '(max-width:700px), (max-height:560px) and (pointer:coarse)';
+const phoneLayout = () => !!(window.matchMedia && matchMedia(PHONE_MQ).matches);
 // ---------- haptics ----------
 // Android WebView and Chrome expose navigator.vibrate (iOS never does, so this
 // is a silent no-op there). Patterns stay tiny — a tick, not a buzz — and a
