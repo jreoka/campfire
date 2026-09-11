@@ -1350,7 +1350,12 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 #folder-menu .fm-item.danger{color:var(--danger-tx)}
 
 /* ---------- home (friends + DMs) ---------- */
-#server-ui{display:contents}
+/* The server channel list is the one scroll region in the sidebar: without it
+   a server with more channels than the viewport is tall pushes the me bar off
+   the bottom (most visible on a short landscape phone). The header stays put
+   while the list scrolls under it. */
+#server-ui{display:flex;flex-direction:column;min-height:0;flex:1 1 auto;overflow-y:auto;overscroll-behavior:contain}
+#server-ui>#server-header{position:sticky;top:0;z-index:1;background:var(--panel)}
 #home-ui{display:flex;flex-direction:column;min-height:0;flex:1 1 auto;overflow-y:auto}
 .home-head{padding:.9rem .95rem;border-bottom:1px solid var(--line-soft)}
 .home-head strong{font-size:1rem;font-weight:750;letter-spacing:-.01em}

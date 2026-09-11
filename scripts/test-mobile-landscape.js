@@ -147,6 +147,20 @@ const box = (sel) => {
   const r = el.getBoundingClientRect();
   return { l: +r.left.toFixed(1), t: +r.top.toFixed(1), r: +r.right.toFixed(1), b: +r.bottom.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) };
 };
+// Populate the channel list so the sidebar-overflow case (the me bar pushed
+// below the fold) is under test, not just the empty shell.
+window.__fillChannels = (n) => {
+  const tc = $$('#text-channels');
+  tc.innerHTML = '';
+  for (let i = 0; i < n; i++) {
+    const b = document.createElement('button');
+    b.className = 'chan' + (i === 1 ? ' unread' : '');
+    b.innerHTML = '<span class="unread-dot"></span><span class="muted">#</span><span>channel-' + i + '</span>';
+    tc.appendChild(b);
+  }
+  const su = $$('#server-ui'); if (su) su.scrollTop = 0;
+};
+window.__scrollServerUi = (to) => { const e = $$('#server-ui'); if (e) e.scrollTop = to; return e ? e.scrollTop : -1; };
 // The auth screen is the one full page that is not the app shell: a tall form
 // must scroll inside it (a landscape viewport is shorter than the card).
 window.__auth = () => {
@@ -177,6 +191,8 @@ window.__dump = () => {
     phone: matchMedia(${JSON.stringify(PHONE_MQ)}).matches,
     leftPos: style('#left', 'position'), leftDisplay: style('#left', 'display'), membersPos: style('#members', 'position'),
     left: box('#left'), rail: box('#rail'), sidebar: box('#sidebar'), chat: box('#chat'), members: box('#members'),
+    meCard: box('#me-card'),
+    serverUi: (() => { const e = $$('#server-ui'); return e ? { scrollH: e.scrollHeight, clientH: e.clientHeight, scrollTop: e.scrollTop } : null; })(),
     menuVisible: (() => { const b = $$('#btn-menu'); return !!(b && b.offsetParent !== null); })(),
     membersBtnVisible: (() => { const b = $$('#btn-members'); return !!(b && b.offsetParent !== null); })(),
     navCloseVisible: (() => { const b = $$('#btn-nav-close'); return !!(b && b.offsetWidth); })(),
@@ -337,7 +353,7 @@ function headerChecks(tag, d) {
 async function main() {
   staticChecks();
 
-  await withChrome(async ({ device, state, dump, auth }) => {
+  await withChrome(async ({ device, state, dump, auth, evaluate }) => {
     console.log('\n[2] landscape: the rail + sidebar are columns, the chat takes the rest');
     for (const [w, h] of [[852, 393], [667, 375], [915, 412]]) {
       const tag = `${w}x${h}`;
@@ -347,6 +363,17 @@ async function main() {
       shellChecks(tag, closed, { columns: true, membersOpen: false });
       headerChecks(tag, closed);
       check(closed.centerOwner !== 'left' && closed.centerOwner !== 'members', `${tag}: the middle of the screen is the chat, not an open panel`, { owner: closed.centerOwner });
+      // A server with more channels than the viewport is tall must scroll the
+      // channel list, not push the me bar off the bottom (the reported bug).
+      await evaluate('__fillChannels(16)');
+      let full = await dump();
+      check(full.meCard && inside(full.meCard, full.vw, full.vh), `${tag}: the me bar stays on screen with a long channel list`, full.meCard);
+      check(!!full.serverUi && full.serverUi.scrollH > full.serverUi.clientH + 1, `${tag}: the channel list scrolls instead of overflowing the sidebar`, full.serverUi);
+      await evaluate('__scrollServerUi(99999)');
+      full = await dump();
+      check(full.meCard && inside(full.meCard, full.vw, full.vh), `${tag}: the me bar stays pinned after scrolling the list`, full.meCard);
+      check(!!full.serverUi && full.serverUi.scrollTop > 0, `${tag}: the channel list actually scrolled`, full.serverUi);
+      await evaluate('__fillChannels(0)');
       // The portrait nav page is inert in landscape: flipping body.nav-open must
       // move nothing (the sidebar is already on screen).
       const before = JSON.stringify({ rail: closed.rail, sidebar: closed.sidebar, chat: closed.chat });

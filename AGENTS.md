@@ -344,7 +344,10 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   the members panel an off-screen right drawer (never a static column), header
   buttons unclipped and non-overlapping, every bottom sheet/modal/profile
   fitting the short viewport, and the story composer's tool rail clearing the
-  caption slot and the Retake/Next bar. It also pins that the auth screen
+  caption slot and the Retake/Next bar. It also fills the sidebar with more
+  channels than fit and proves the list scrolls (with a sticky server header)
+  while the me bar stays pinned on screen — it used to be pushed off the bottom.
+  It also pins that the auth screen
   scrolls to its Log in button in landscape (it used to sit below a 393px
   viewport with nothing able to scroll) and that portrait keeps the full-page
   nav (chat full width) while a short *desktop* window (fine pointer) keeps the
@@ -722,6 +725,9 @@ persistent columns with the chat beside them — Discord's landscape shape. The
 members panel stays a right drawer, and `#btn-menu` / `#btn-nav-close` are hidden
 because there is nothing left to overlay; `body.nav-open` is inert there. Never
 re-add the full-page nav to landscape, and never key this on width alone.
+`#server-ui` is the sidebar's one scroll region (`#home-ui` already was): its
+list scrolls under a sticky `#server-header` so a server with more channels than
+fit never pushes the me bar off the bottom.
 The me bar's only click target is `#me-open` (the avatar + name), which outlines
 itself on hover; the space around mute/deafen/settings is dead, and it never
 shows your own active server tag (`paintMe` used to insert one — other people's
