@@ -149,7 +149,7 @@
 /* OLED Black extras: chrome is true black, so hovers lift to --panel-3 and
    borderless rows/cards get a hairline edge to stay defined on black. */
 [data-theme="oled"] .chan:hover,[data-theme="oled"] .vuser:hover,[data-theme="oled"] .member:hover,[data-theme="oled"] .rx-user:hover,[data-theme="oled"] .set-tab:hover,[data-theme="oled"] .ftab:hover,[data-theme="oled"] .dmrow:hover,[data-theme="oled"] .find-row:hover,[data-theme="oled"] .inbox-item:hover,[data-theme="oled"] .fwd-dest:hover,[data-theme="oled"] .theme-card:hover{background:var(--panel-3)}
-[data-theme="oled"] .set-row,[data-theme="oled"] .sec-row,[data-theme="oled"] .set-check,[data-theme="oled"] .set-game-row,[data-theme="oled"] .adm-row,[data-theme="oled"] .adm-stat,[data-theme="oled"] .pin-row,[data-theme="oled"] .fwd-preview,[data-theme="oled"] .rx-group,[data-theme="oled"] .nsfw-row,[data-theme="oled"] #form-2fa,[data-theme="oled"] .txt-prev,[data-theme="oled"] .txt-full,[data-theme="oled"] #friends-page .dmrow,[data-theme="oled"] #set-blocked .dmrow{border:1px solid var(--line-soft)}
+[data-theme="oled"] .set-row,[data-theme="oled"] .sec-row,[data-theme="oled"] .set-check,[data-theme="oled"] .set-game-row,[data-theme="oled"] .set-games-sum,[data-theme="oled"] .adm-row,[data-theme="oled"] .adm-stat,[data-theme="oled"] .pin-row,[data-theme="oled"] .fwd-preview,[data-theme="oled"] .rx-group,[data-theme="oled"] .nsfw-row,[data-theme="oled"] #form-2fa,[data-theme="oled"] .txt-prev,[data-theme="oled"] .txt-full,[data-theme="oled"] #friends-page .dmrow,[data-theme="oled"] #set-blocked .dmrow{border:1px solid var(--line-soft)}
 html.no-sys-insets{--safe-t:30px}
 *{box-sizing:border-box}
 html,body{height:100%;overflow:hidden;overscroll-behavior:none}
@@ -1014,6 +1014,31 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .set-game-icon img{width:100%;height:100%;object-fit:contain;display:block}
 .set-game-info{min-width:0;flex:1}
 .set-game-name{font-weight:650;font-size:.87rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* ---------- settings → games (game-activity manager) ---------- */
+.set-games-sum{display:flex;align-items:center;justify-content:space-between;gap:.75rem 1.25rem;flex-wrap:wrap;background:var(--panel);border-radius:var(--r-md);padding:.9rem 1rem}
+.gsum-time{font-size:1.5rem;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.15}
+.gsum-cap{font-size:.76rem;color:var(--muted);margin-top:.15rem}
+.gsum-r{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;justify-content:flex-end}
+.gsum-last{flex-basis:100%;text-align:right;font-size:.74rem;color:var(--faint)}
+.set-game-now{display:flex;align-items:center;gap:.5rem;margin:.45rem 0 0;padding:.55rem .8rem;border-radius:10px;background:var(--accent-dim);color:var(--accent-hover);font-size:.86rem;font-weight:600}
+.set-games-head{display:flex;align-items:center;justify-content:space-between;gap:.6rem .9rem;flex-wrap:wrap;margin:1.25rem 0 .55rem}
+.set-games-head h4{margin:0}
+#set-games input.set-games-search{width:auto;min-width:150px;max-width:210px;margin-top:0;padding:.45rem .7rem;font-size:.85rem}
+#set-games .set-games-add{display:flex;align-items:center;gap:.45rem;margin-top:.35rem}
+#set-games .set-games-add input{margin-top:0;flex:1;min-width:0}
+.set-games-empty{margin:.3rem 0 0}
+.set-game-namerow{display:flex;align-items:center;gap:.5rem;min-width:0}
+.set-game-chip{flex-shrink:0;font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;padding:.18rem .45rem;border-radius:999px;background:var(--panel-3);color:var(--muted)}
+.set-game-chip.live{background:rgba(52,211,153,.14);color:var(--green)}
+.set-game-meta{margin-top:.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.set-game-actions{display:flex;align-items:center;gap:.35rem;flex-shrink:0}
+.set-game-more{padding:.28rem .55rem;font-weight:800;letter-spacing:.06em;line-height:1}
+@media (max-width:520px){
+  .set-game-actions{flex-basis:100%;justify-content:flex-end}
+  #set-games input.set-games-search{width:100%;max-width:none}
+  .gsum-r{justify-content:flex-start}
+  .gsum-last{text-align:left}
+}
 @media (max-width:820px){#profile-backdrop{padding:var(--safe-t) 0 0} .profile{max-width:none;max-height:none;height:100%;border-radius:0}}
 .avatar.big{width:56px;height:56px;font-size:1.3rem}
 .avatar img,.avatar-img{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block}

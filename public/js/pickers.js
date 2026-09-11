@@ -1254,7 +1254,7 @@ async function loadUserGaming(box, username, opts = {}) {
         const doRemoveGame = async (game) => {
           const ok = await openConfirmModal({
             title: 'Remove ' + game + '?',
-            message: 'All playtime, levels and streaks for this game will be permanently deleted.',
+            message: 'Playtime, levels and streaks for this game are deleted for good. Detection keeps working — play it again and the record starts fresh.',
             okLabel: 'Remove',
             danger: true,
           });

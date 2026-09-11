@@ -240,6 +240,21 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   sockets get the `pin-seen` push, other accounts hear nothing, an emptied list
   deletes the row, ids are deduped/capped and contexts and auth are validated,
   and the table stays bounded (200 conversations per account).
+  `node scripts/test-games-manager.js` covers Settings → Games' server routes
+  against a throwaway database: the manager payload (totals, per-game level +
+  streak, live game), ignore / un-ignore one game by name, an ignored game that
+  has no stats staying listed and being recoverable, removing playtime leaving
+  detection and the ignore list alone, a watcher beacon re-tracking a game whose
+  record was wiped, "remove all playtime" keeping the ignore list, "track all
+  again" clearing it, and name validation + auth on every route.
+  `node scripts/test-games-tab-browser.js` drives the real tab in headless
+  Chrome (same harness as `test-drafts-browser.js`) and proves the UI offers
+  those controls: the summary/chips/rows render, the row menu toggles
+  Ignored → Track again, an ignored game with no playtime is listed, search
+  filters in place, tracking by name works, "Remove all playtime" wipes stats
+  but never the ignore list, and the state survives a reload. Writes
+  `campfire-games-tab.png` to the temp dir. Skips when Postgres or Chrome is
+  missing.
   `node scripts/test-anow-strip.js` covers the phone's Active Now strip in
   headless Chrome at a phone viewport with injected friends: the strip sits
   under Stories and above DIRECT MESSAGES, one tile per online friend (the one
@@ -421,7 +436,11 @@ on that message). The pin button's "N new" badge is a per-account memory
 conversation's pins on the phone clears the badge on the desktop too; the phone
 Home tab mirrors the Active Now rail as a horizontal tile scroller under
 Stories (`#anow-strip`, `home.js`), since `#members` is a drawer Home never
-opens there.
+opens there. Settings → Games is a full game-activity manager — search,
+per-game Ignore / Track again / Remove playtime, an ignore list that outlives a
+game's stats (an ignored game with its record deleted used to vanish, which is
+exactly how a game "stopped being tracked" with no way back), and a
+track-by-name way back for anything not listed.
 Detail per change lives in `git log` — don't duplicate it here.
 
 ## Deployment (owner directive)

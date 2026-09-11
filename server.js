@@ -2884,11 +2884,11 @@ async function creditPlay(userId, game, ms, ts, tzMin) {
 }
 // Streaks from the day log (player-local calendar days). Current streak
 // only counts if the most recent play day is today or yesterday; best is
-// the longest run in the log.
-async function dayStreak(userId, where, params, tzMin) {
-  const rows = await db.prepare(`SELECT day FROM game_days WHERE user_id = ? ${where} GROUP BY day ORDER BY day DESC LIMIT 400`).all(...params);
-  const days = rows.map((r) => r.day);
-  if (!days.length) return { streak: 0, best: 0 };
+// the longest run in the log. Takes a newest-first, de-duped list of day
+// keys, so the profile card (one game, queried on demand) and the games
+// manager (every game at once, from one grouped query) share the math.
+function streakFromDays(days, tzMin) {
+  if (!days || !days.length) return { streak: 0, best: 0 };
   const set = new Set(days);
   const prevDay = (d) => utcDay(Date.parse(d) - 86400000);
   let streak = 0;
@@ -2904,6 +2904,10 @@ async function dayStreak(userId, where, params, tzMin) {
     else run = 1;
   }
   return { streak, best };
+}
+async function dayStreak(userId, where, params, tzMin) {
+  const rows = await db.prepare(`SELECT day FROM game_days WHERE user_id = ? ${where} GROUP BY day ORDER BY day DESC LIMIT 400`).all(...params);
+  return streakFromDays(rows.map((r) => r.day), tzMin);
 }
 // ---------- game artwork (Steam capsule art, cached in game_icons) ----------
 // Non-Steam titles can't be found by search, so a small curated override map
@@ -2979,6 +2983,47 @@ async function gamingFor(userId) {
   await withGameIcons(top);
   return { total_ms, level: levelForMs(total_ms), streak: s.streak, best_streak: s.best, now_playing, games: top };
 }
+// Everything Settings → Games renders, in one response: totals, one row per
+// tracked game (level + streak), and the ignore list — including ignored
+// names that have no stats left. That last part matters: an ignored game
+// whose playtime was removed had no row anywhere, so it could never be
+// un-ignored and stayed silently untracked forever.
+async function gamesPayload(userId) {
+  const u = await db.prepare('SELECT game_enabled, game_exclusions, playing_game, tz_offset FROM users WHERE id = ?').get(userId);
+  const tz = userTz(u);
+  const exclusions = new Set(JSON.parse(u?.game_exclusions || '[]'));
+  const games = await db.prepare('SELECT game, total_ms, first_seen_ms, last_seen_ms FROM user_games WHERE user_id = ? ORDER BY total_ms DESC').all(userId);
+  // One grouped query instead of a streak query per game.
+  const dayRows = await db.prepare('SELECT game, day FROM game_days WHERE user_id = ? GROUP BY game, day ORDER BY game, day DESC').all(userId);
+  const daysByGame = new Map();
+  for (const r of dayRows) {
+    let arr = daysByGame.get(r.game);
+    if (!arr) { arr = []; daysByGame.set(r.game, arr); }
+    arr.push(r.day);
+  }
+  const rows = games.map((g) => {
+    const s = streakFromDays(daysByGame.get(g.game) || [], tz);
+    return { ...g, excluded: exclusions.has(g.game), level: levelForMs(g.total_ms), streak: s.streak, best_streak: s.best };
+  });
+  const ignored = [...exclusions].filter((g) => !rows.some((r) => r.game === g)).map((game) => ({ game }));
+  await withGameIcons(rows);
+  await withGameIcons(ignored.slice(0, 12));
+  const total_ms = games.reduce((a, g) => a + g.total_ms, 0);
+  const s = await dayStreak(userId, '', [userId], tz);
+  const now_playing = (u?.game_enabled !== 0 && u?.playing_game && !exclusions.has(u.playing_game)) ? u.playing_game : null;
+  return {
+    enabled: u?.game_enabled !== 0,
+    exclusions: [...exclusions],
+    games: rows,
+    ignored,
+    now_playing,
+    total_ms,
+    level: levelForMs(total_ms),
+    streak: s.streak,
+    best_streak: s.best,
+    last_seen_ms: rows.reduce((a, g) => Math.max(a, g.last_seen_ms || 0), 0),
+  };
+}
 app.post('/api/watcher/status', authRequired, async (req, res) => {
   const raw = req.body || {};
   const rawGame = raw.game == null ? null : String(raw.game).trim();
@@ -3031,16 +3076,43 @@ app.get('/api/users/:username/gaming', authRequired, async (req, res) => {
   res.json(await gamingFor(t.id));
 });
 app.get('/api/me/gaming', authRequired, async (req, res) => res.json(await gamingFor(req.user.id)));
-app.get('/api/me/games', authRequired, async (req, res) => {
-  const games = await db.prepare('SELECT game, total_ms, first_seen_ms, last_seen_ms FROM user_games WHERE user_id = ? ORDER BY total_ms DESC').all(req.user.id);
-  const exclusions = new Set(JSON.parse(req.user.game_exclusions || '[]'));
-  const rows = games.map((g) => ({ ...g, excluded: exclusions.has(g.game) }));
-  await withGameIcons(rows);
-  res.json({
-    enabled: req.user.game_enabled !== 0,
-    exclusions: [...exclusions],
-    games: rows,
+app.get('/api/me/games', authRequired, async (req, res) => res.json(await gamesPayload(req.user.id)));
+// Ignore / un-ignore one game by name (un-ignoring is the "track it again"
+// path). Both accept any valid name, so they work for games with no stats.
+// Ignoring the game you are playing drops the live status immediately;
+// un-ignoring it lets the next watcher beacon pick it back up.
+async function setGameExclusion(req, res, on) {
+  const game = String(req.params.game || '').trim();
+  if (!game || !GAME_RE.test(game)) return res.status(400).json({ error: 'bad_game' });
+  const cur = await db.prepare('SELECT game_exclusions FROM users WHERE id = ?').get(req.user.id);
+  const set = new Set(JSON.parse(cur?.game_exclusions || '[]'));
+  if (on) set.add(game); else set.delete(game);
+  const clean = [...set].filter((g) => GAME_RE.test(g)).slice(0, 200);
+  await db.prepare('UPDATE users SET game_exclusions = ? WHERE id = ?').run(JSON.stringify(clean), req.user.id);
+  let u = await freshUser(req.user.id);
+  if (on && u.playing_game === game) {
+    await db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(req.user.id);
+    u = await freshUser(req.user.id);
+  }
+  await broadcastUserUpdate(u);
+  res.json(await gamesPayload(req.user.id));
+}
+app.post('/api/me/games/:game/ignore', authRequired, async (req, res) => await setGameExclusion(req, res, true));
+app.post('/api/me/games/:game/track', authRequired, async (req, res) => await setGameExclusion(req, res, false));
+// One-tap way out of a messy ignore list ("track everything again").
+app.delete('/api/me/games/ignored', authRequired, async (req, res) => {
+  await db.prepare("UPDATE users SET game_exclusions = '[]' WHERE id = ?").run(req.user.id);
+  await broadcastUserUpdate(await freshUser(req.user.id));
+  res.json(await gamesPayload(req.user.id));
+});
+// Wipe every game's playtime and streaks. Detection and the ignore list are
+// untouched, so a running game simply starts collecting time again.
+app.delete('/api/me/games', authRequired, async (req, res) => {
+  await db.transaction(async () => {
+    await db.prepare('DELETE FROM game_days WHERE user_id = ?').run(req.user.id);
+    await db.prepare('DELETE FROM user_games WHERE user_id = ?').run(req.user.id);
   });
+  res.json(await gamesPayload(req.user.id));
 });
 // Resolved artwork for one game (memory + DB cached, strict Steam match).
 // Feeds the Discord-style game badges in member rows (controller icon
@@ -3051,17 +3123,22 @@ app.get('/api/games/icon', authRequired, async (req, res) => {
   try { res.json({ game, url: await resolveGameIcon(game) }); }
   catch { res.json({ game, url: null }); }
 });
+// Remove one game's playtime/streaks. The game stays detected (and keeps its
+// ignore state), so playing it again simply starts a fresh record.
 app.delete('/api/me/games/:game', authRequired, async (req, res) => {
   const game = String(req.params.game).trim();
   if (!game || !GAME_RE.test(game)) return res.status(400).json({ error: 'bad_game' });
-  await db.prepare('DELETE FROM user_games WHERE user_id = ? AND game = ?').run(req.user.id, game);
-  await db.prepare('DELETE FROM game_days WHERE user_id = ? AND game = ?').run(req.user.id, game);
+  await db.transaction(async () => {
+    await db.prepare('DELETE FROM user_games WHERE user_id = ? AND game = ?').run(req.user.id, game);
+    await db.prepare('DELETE FROM game_days WHERE user_id = ? AND game = ?').run(req.user.id, game);
+  });
   if ((await freshUser(req.user.id)).playing_game === game) {
+    // Cleared, and back within one watcher heartbeat if the game is genuinely
+    // still running (it re-beacons every ~30s while the process is up).
     await db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(req.user.id);
-    const u2 = await freshUser(req.user.id);
-    await broadcastUserUpdate(u2);
+    await broadcastUserUpdate(await freshUser(req.user.id));
   }
-  res.json({ ok: true });
+  res.json(await gamesPayload(req.user.id));
 });
 
 // set avatar/banner from a URL (e.g. a Klipy GIF) instead of an upload

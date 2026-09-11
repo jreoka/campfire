@@ -516,93 +516,250 @@ async function renderDesktopApp() {
   }
   if (inApp) box.appendChild(row);
 }
+// ---------- games tab (game-activity manager) ----------
+// Everything about one account's game tracking: totals, every tracked game,
+// the ignore list, and a way back from either. Deliberately not a single
+// "Tracking / Ignored" pill any more — that button flipped an invisible list,
+// and an ignored game whose playtime had been removed vanished from the tab
+// entirely, so it could never be un-ignored and stayed silently untracked.
+let gamesData = null;
+let gamesQuery = '';
+const GAMES_SVG = {
+  track: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
+  ignore: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/></svg>',
+};
+function gamesEl(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
 async function renderGamesTab() {
   const box = $('#set-games');
   if (!box) return;
-  box.innerHTML = '<p class="muted small">Loading…</p>';
+  if (!gamesData) box.innerHTML = '<p class="muted small">Loading…</p>';
   try {
-    const { enabled, exclusions, games } = await api('/api/me/games');
-    const excludedSet = new Set(exclusions || []);
-    box.innerHTML = '';
-    const h = (t) => { const e = document.createElement('h4'); e.textContent = t; e.style.margin = '1rem 0 .4rem'; box.appendChild(e); };
-    h('Game activity');
-    const glob = document.createElement('label'); glob.className = 'set-check';
-    const globInp = document.createElement('input'); globInp.type = 'checkbox';
-    globInp.checked = !!enabled;
-    glob.appendChild(globInp); glob.appendChild(document.createTextNode(' Show what game I am playing on my profile'));
-    box.appendChild(glob);
-    globInp.onchange = async () => {
-      try {
-        await api('/api/me', { method: 'PATCH', body: JSON.stringify({ gameEnabled: globInp.checked }) });
-        S.me.game_enabled = globInp.checked ? 1 : 0;
-        toast(globInp.checked ? 'Game activity enabled' : 'Game activity hidden');
-      } catch (err) { toast('Failed: ' + prettyError(err.message)); }
-    };
-    const note = document.createElement('p'); note.className = 'muted small';
-    note.textContent = 'When off, no game status is shown and no playtime is tracked.';
-    box.appendChild(note);
-    h('Detected games');
-    if (!games.length) {
-      box.insertAdjacentHTML('beforeend', '<p class="muted small">No games detected yet. Play something with the desktop app running to see it here.</p>');
-      return;
-    }
-    const list = document.createElement('div'); list.className = 'set-games-list';
-    for (const g of games) {
-      const row = document.createElement('div'); row.className = 'set-game-row';
-      const icon = document.createElement('span'); icon.className = 'set-game-icon';
-      if (g.icon_url) { const im = document.createElement('img'); im.src = g.icon_url; im.alt = ''; im.loading = 'lazy'; im.onerror = () => { im.remove(); icon.textContent = g.game.charAt(0).toUpperCase(); }; icon.appendChild(im); }
-      else icon.textContent = g.game.charAt(0).toUpperCase();
-      const info = document.createElement('div'); info.className = 'set-game-info';
-      const name = document.createElement('div'); name.className = 'set-game-name'; name.textContent = g.game;
-      const meta = document.createElement('div'); meta.className = 'muted small';
-      meta.textContent = fmtPlay(g.total_ms) + ' · Lv ' + levelForMs(g.total_ms);
-      info.appendChild(name); info.appendChild(meta);
-      const actions = document.createElement('div'); actions.className = 'row'; actions.style.gap = '.35rem';
-      const toggle = document.createElement('button');
-      toggle.className = 'btn small' + (excludedSet.has(g.game) ? '' : ' primary');
-      toggle.textContent = excludedSet.has(g.game) ? 'Ignored' : 'Tracking';
-      toggle.onclick = async () => {
-        const nowExcluded = !excludedSet.has(g.game);
-        if (nowExcluded) excludedSet.add(g.game); else excludedSet.delete(g.game);
-        try {
-          await api('/api/me', { method: 'PATCH', body: JSON.stringify({ gameExclusions: [...excludedSet] }) });
-          S.me.game_exclusions = JSON.stringify([...excludedSet]);
-          toggle.className = 'btn small' + (nowExcluded ? '' : ' primary');
-          toggle.textContent = nowExcluded ? 'Ignored' : 'Tracking';
-          toast(nowExcluded ? g.game + ' ignored' : g.game + ' tracked');
-        } catch (err) { toast('Failed: ' + prettyError(err.message)); }
-      };
-      const del = document.createElement('button'); del.className = 'btn small danger';
-      del.textContent = 'Delete';
-      del.onclick = async () => {
-        const ok = await openConfirmModal({
-          title: 'Remove ' + g.game + '?',
-          message: 'All playtime, levels and streaks for this game will be permanently deleted.',
-          okLabel: 'Remove',
-          danger: true,
-        });
-        if (!ok) return;
-        try {
-          await api('/api/me/games/' + encodeURIComponent(g.game), { method: 'DELETE' });
-          toast(g.game + ' removed from profile');
-          renderGamesTab();
-        } catch (err) { toast('Failed: ' + prettyError(err.message)); }
-      };
-      actions.appendChild(toggle); actions.appendChild(del);
-      row.appendChild(icon); row.appendChild(info); row.appendChild(actions);
-      list.appendChild(row);
-    }
-    box.appendChild(list);
+    gamesData = await api('/api/me/games');
   } catch {
     box.innerHTML = '<p class="muted small">Could not load game activity.</p>';
+    return;
   }
+  paintGamesTab();
 }
-function levelForMs(ms) {
-  const min = ms / 60000;
-  const LEVEL_MIN = [0, 60, 180, 480, 1200, 2400, 4800, 9600, 19200, 38400, 76800, 153600];
-  let l = 1;
-  for (let i = 1; i < LEVEL_MIN.length; i++) if (min >= LEVEL_MIN[i]) l = i + 1;
-  return l;
+// Every game route answers with the whole manager payload, so one round trip
+// re-renders the tab from server truth (no stale local exclusion lists).
+async function gamesRequest(url, opts, msg) {
+  try {
+    gamesData = await api(url, opts);
+    paintGamesTab();
+    if (msg) toast(msg);
+  } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+}
+function gameTrack(name) { return gamesRequest('/api/me/games/' + encodeURIComponent(name) + '/track', { method: 'POST' }, name + ' will be tracked again'); }
+function gameIgnore(name) { return gamesRequest('/api/me/games/' + encodeURIComponent(name) + '/ignore', { method: 'POST' }, name + ' ignored'); }
+async function gameRemove(name) {
+  const ok = await openConfirmModal({
+    title: 'Remove ' + name + '?',
+    message: 'Playtime, levels and streaks for this game are deleted for good. Detection keeps working — play it again and the record starts fresh.',
+    okLabel: 'Remove',
+    danger: true,
+  });
+  if (!ok) return;
+  await gamesRequest('/api/me/games/' + encodeURIComponent(name), { method: 'DELETE' }, name + ' playtime removed');
+}
+function openGameMenu(btn, g) {
+  const items = [];
+  if (g.excluded) items.push({ label: 'Track this game again', icon: GAMES_SVG.track, fn: () => gameTrack(g.game) });
+  else items.push({ label: 'Stop tracking this game', icon: GAMES_SVG.ignore, fn: () => gameIgnore(g.game) });
+  items.push({ label: 'Remove playtime', icon: GAMES_SVG.trash, danger: true, fn: () => gameRemove(g.game) });
+  if (isCoarse()) openCtxSheet(items, { title: g.game, sub: g.excluded ? 'Ignored — not tracked' : 'Lv ' + (g.level || 1) + ' · ' + fmtPlay(g.total_ms || 0) });
+  else { const r = btn.getBoundingClientRect(); openCtx(r.right, r.bottom + 4, items); }
+}
+function gamesRow(g, section) {
+  const row = gamesEl('div', 'set-game-row');
+  row.dataset.gname = g.game;
+  row.dataset.gsec = section;
+  const icon = gamesEl('span', 'set-game-icon');
+  if (g.icon_url) {
+    const im = gamesEl('img');
+    im.src = g.icon_url; im.alt = ''; im.loading = 'lazy';
+    im.onerror = () => { im.remove(); icon.textContent = g.game.charAt(0).toUpperCase(); };
+    icon.appendChild(im);
+  } else icon.textContent = g.game.charAt(0).toUpperCase();
+  const info = gamesEl('div', 'set-game-info');
+  const namerow = gamesEl('div', 'set-game-namerow');
+  namerow.appendChild(gamesEl('span', 'set-game-name', g.game));
+  if (section === 'ignored' || g.excluded) namerow.appendChild(gamesEl('span', 'set-game-chip ignored', 'Ignored'));
+  else if (gamesData && gamesData.now_playing === g.game) namerow.appendChild(gamesEl('span', 'set-game-chip live', 'Playing now'));
+  info.appendChild(namerow);
+  const bits = [];
+  if (section === 'ignored') bits.push('Ignored · no playtime recorded');
+  else {
+    bits.push('Lv ' + (g.level || 1));
+    bits.push(fmtPlay(g.total_ms || 0));
+    if (g.streak) bits.push(g.streak + '-day streak');
+    else if (g.best_streak) bits.push('best ' + g.best_streak + 'd');
+    if (g.last_seen_ms) bits.push('last played ' + fmtLastPlayed(g.last_seen_ms));
+  }
+  info.appendChild(gamesEl('div', 'set-game-meta muted small', bits.join(' · ')));
+  row.appendChild(icon); row.appendChild(info);
+  const actions = gamesEl('div', 'set-game-actions');
+  if (section === 'ignored' || g.excluded) {
+    const track = gamesEl('button', 'btn small primary', 'Track again');
+    track.type = 'button';
+    track.onclick = () => gameTrack(g.game);
+    actions.appendChild(track);
+  }
+  if (section !== 'ignored') {
+    const more = gamesEl('button', 'btn small set-game-more', '···');
+    more.type = 'button';
+    more.title = 'Game options';
+    more.setAttribute('aria-label', 'Options for ' + g.game);
+    more.onclick = (e) => { e.stopPropagation(); openGameMenu(more, g); };
+    actions.appendChild(more);
+  }
+  row.appendChild(actions);
+  return row;
+}
+function paintGamesTab() {
+  const box = $('#set-games');
+  if (!box || !gamesData) return;
+  const d = gamesData;
+  const games = d.games || [];
+  const ignored = d.ignored || [];
+  box.innerHTML = '';
+  // ---- at-a-glance totals ----
+  const sum = gamesEl('div', 'set-games-sum');
+  const left = gamesEl('div', 'gsum-l');
+  left.appendChild(gamesEl('div', 'gsum-time', d.total_ms ? fmtPlay(d.total_ms) : '0m'));
+  left.appendChild(gamesEl('div', 'gsum-cap', games.length ? 'across ' + games.length + ' game' + (games.length === 1 ? '' : 's') : 'no playtime recorded yet'));
+  const right = gamesEl('div', 'gsum-r');
+  right.appendChild(gamesEl('span', 'pf-badge lv', 'Lv ' + (d.level || 1)));
+  if (d.streak) right.appendChild(gamesEl('span', 'pf-badge streak', d.streak + '-day streak'));
+  if (d.last_seen_ms) right.appendChild(gamesEl('span', 'gsum-last', 'Last played ' + fmtLastPlayed(d.last_seen_ms)));
+  sum.appendChild(left); sum.appendChild(right);
+  box.appendChild(sum);
+  // ---- master switch ----
+  box.appendChild(gamesEl('div', 'pf-sec-label', 'Game activity'));
+  const glob = gamesEl('label', 'set-check');
+  const globInp = gamesEl('input'); globInp.type = 'checkbox'; globInp.checked = !!d.enabled;
+  glob.appendChild(globInp);
+  glob.appendChild(document.createTextNode(' Show what game I am playing on my profile'));
+  box.appendChild(glob);
+  globInp.onchange = async () => {
+    const on = globInp.checked;
+    globInp.disabled = true;
+    try {
+      await api('/api/me', { method: 'PATCH', body: JSON.stringify({ gameEnabled: on }) });
+      S.me.game_enabled = on ? 1 : 0;
+      d.enabled = on;
+      if (!on) d.now_playing = null;
+      toast(on ? 'Game activity enabled' : 'Game activity hidden');
+    } catch (err) { globInp.checked = !on; toast('Failed: ' + prettyError(err.message)); }
+    globInp.disabled = false;
+  };
+  box.appendChild(gamesEl('p', 'muted small', 'When off, no game status shows on your profile and no playtime is recorded. Turning it back on resumes tracking from that point.'));
+  if (d.now_playing) {
+    const now = gamesEl('div', 'set-game-now');
+    now.appendChild(gamesEl('span', 'live-dot'));
+    const t = gamesEl('span');
+    t.appendChild(document.createTextNode('Playing '));
+    t.appendChild(gamesEl('b', null, d.now_playing));
+    now.appendChild(t);
+    box.appendChild(now);
+  }
+  // ---- tracked games ----
+  const head = gamesEl('div', 'set-games-head');
+  head.appendChild(gamesEl('h4', null, 'Tracked games'));
+  const srch = gamesEl('input', 'set-games-search');
+  srch.type = 'search'; srch.placeholder = 'Search games'; srch.value = gamesQuery;
+  srch.setAttribute('aria-label', 'Search games');
+  head.appendChild(srch);
+  box.appendChild(head);
+  const list = gamesEl('div', 'set-games-list');
+  if (!games.length) {
+    list.appendChild(gamesEl('p', 'muted small', 'No games detected yet. Playtime is recorded by the Campfire desktop app — play something with it running and the game shows up here.'));
+  } else {
+    for (const g of games) list.appendChild(gamesRow(g, 'tracked'));
+  }
+  const noneTracked = gamesEl('p', 'muted small set-games-empty hidden', 'No tracked game matches that search.');
+  list.appendChild(noneTracked);
+  box.appendChild(list);
+  // ---- ignore list (shown even when the game has no stats left) ----
+  let noneIgnored = null;
+  if (ignored.length) {
+    const ihead = gamesEl('div', 'set-games-head');
+    ihead.appendChild(gamesEl('h4', null, 'Ignored games'));
+    const all = gamesEl('button', 'btn small', 'Track all again');
+    all.type = 'button';
+    all.onclick = async () => {
+      const ok = await openConfirmModal({ title: 'Track all ignored games again?', message: 'Every ignored game starts being tracked again.', okLabel: 'Track all', danger: false });
+      if (ok) await gamesRequest('/api/me/games/ignored', { method: 'DELETE' }, 'Ignored games tracked again');
+    };
+    ihead.appendChild(all);
+    box.appendChild(ihead);
+    box.appendChild(gamesEl('p', 'muted small', 'Ignored games record no playtime and stay off your profile, even while they are running.'));
+    const ilist = gamesEl('div', 'set-games-list');
+    for (const g of ignored) ilist.appendChild(gamesRow(g, 'ignored'));
+    noneIgnored = gamesEl('p', 'muted small set-games-empty hidden', 'No ignored game matches that search.');
+    ilist.appendChild(noneIgnored);
+    box.appendChild(ilist);
+  }
+  // ---- track by name (the way back for anything not listed) ----
+  box.appendChild(gamesEl('div', 'pf-sec-label', 'Track a game again'));
+  box.appendChild(gamesEl('p', 'muted small', 'Removed a game and want it back? Play it with the desktop app running and it reappears on its own. Anything stuck in the ignore list — or missing entirely — can be brought back by name.'));
+  const add = gamesEl('div', 'set-games-add');
+  const inp = gamesEl('input', 'set-games-name');
+  inp.placeholder = 'Game name'; inp.maxLength = 48;
+  inp.setAttribute('aria-label', 'Game name to track again');
+  const dl = gamesEl('datalist'); dl.id = 'set-games-names';
+  inp.setAttribute('list', dl.id);
+  const go = gamesEl('button', 'btn small primary', 'Track');
+  go.type = 'button';
+  const names = new Set([...games.map((g) => g.game), ...ignored.map((g) => g.game)]);
+  const fillNames = () => { dl.innerHTML = ''; for (const n of names) { const o = gamesEl('option'); o.value = n; dl.appendChild(o); } };
+  fillNames();
+  // The desktop app's running games make the best suggestions (no-op on web).
+  if (typeof desktopGames === 'function') {
+    Promise.resolve(desktopGames(false)).then((rs) => { for (const n of rs || []) names.add(n); fillNames(); }).catch(() => {});
+  }
+  const submitName = () => {
+    const n = inp.value.trim();
+    if (!n) { toast('Enter a game name'); return; }
+    inp.value = '';
+    gameTrack(n);
+  };
+  go.onclick = submitName;
+  inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); submitName(); } };
+  add.appendChild(inp); add.appendChild(go); add.appendChild(dl);
+  box.appendChild(add);
+  // ---- danger zone ----
+  const dz = gamesEl('div', 'danger-zone');
+  dz.appendChild(gamesEl('h4', null, 'Danger zone'));
+  dz.appendChild(gamesEl('p', 'muted small', 'Deletes playtime, levels and streaks for every game. Your ignore list and game detection are kept.'));
+  const wipe = gamesEl('button', 'btn small danger', 'Remove all playtime');
+  wipe.type = 'button';
+  wipe.onclick = async () => {
+    const ok = await openConfirmModal({ title: 'Remove all playtime?', message: 'Every game\u2019s playtime, level and streaks are deleted. Detection keeps running, so games start collecting time again.', okLabel: 'Remove all', danger: true });
+    if (ok) await gamesRequest('/api/me/games', { method: 'DELETE' }, 'All playtime removed');
+  };
+  dz.appendChild(wipe);
+  box.appendChild(dz);
+  // ---- search filter (hides rows in place, so the input keeps focus) ----
+  const applyFilter = () => {
+    const q = gamesQuery.trim().toLowerCase();
+    let shownT = 0, shownI = 0;
+    box.querySelectorAll('[data-gname]').forEach((r) => {
+      const on = !q || r.dataset.gname.toLowerCase().includes(q);
+      r.classList.toggle('hidden', !on);
+      if (on) { if (r.dataset.gsec === 'ignored') shownI++; else shownT++; }
+    });
+    noneTracked.classList.toggle('hidden', !q || shownT > 0 || !games.length);
+    if (noneIgnored) noneIgnored.classList.toggle('hidden', !q || shownI > 0);
+  };
+  srch.addEventListener('input', () => { gamesQuery = srch.value; applyFilter(); });
+  applyFilter();
 }
 // ---------- media tab (call devices + voice processing) ----------
 let mediaPrev = null; // { micStream, micCtx, micRaf, camStream }
