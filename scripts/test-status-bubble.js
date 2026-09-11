@@ -40,7 +40,7 @@ global.S = { me: { id: 'me', username: 'jordan' } };
 const code = slice(core, 'function esc(s) {', '// Layout size of a popup')
   + '\n' + slice(pickers, 'function fmtCountdown(ts) {', 'function wireStatusBubble(card) {');
 // Strict mode gives eval its own scope, so hand the functions back explicitly.
-const { esc, fmtCountdown, statusBubbleHTML } = eval(code + '\n;({ esc, fmtCountdown, statusBubbleHTML })');
+const { esc, fmtCountdown, fmtUntil, statusBubbleHTML } = eval(code + '\n;({ esc, fmtCountdown, fmtUntil, statusBubbleHTML })');
 
 const NOW = Date.now();
 const other = (extra = {}) => ({ id: 'friend', username: 'sam', display_name: 'Sam', ...extra });
@@ -54,7 +54,7 @@ check(o.includes('uc-bubble-wrap') && o.includes('uc-bubble-fit'), 'the bubble r
 check(o.includes('<div class="uc-bubble">') && o.includes('Out camping this weekend'), 'a plain read-only bubble');
 check(!o.includes('uc-bubble-x') && !o.includes('uc-status-edit'), 'no edit / clear affordances on someone else\'s card');
 check(!o.includes('uc-bubble-exp'), 'their expiry is never rendered here');
-check(!statusBubbleHTML(other({ status_text: 'hi', status_expires_at: NOW + 3600e3 })).includes('Clears'), 'expiry note is mine-only');
+check(!statusBubbleHTML(other({ status_text: 'hi', status_expires_at: NOW + 3600e3 })).includes('Until'), 'expiry note is mine-only');
 
 console.log('\n[2] my card always keeps the bubble, set or not');
 const emptyMine = statusBubbleHTML(me());
@@ -76,7 +76,7 @@ check(setMine.includes('id="uc-status-clear"'), 'and carries a clear button');
 
 console.log('\n[3] the expiry note rides under the bubble');
 const withExp = statusBubbleHTML(me({ status_text: 'Back later', status_expires_at: NOW + 3600e3 }));
-check(withExp.includes('uc-bubble-exp') && withExp.includes('Clears ' + fmtCountdown(NOW + 3600e3)), 'future expiry → "Clears in 1h"', withExp);
+check(withExp.includes('uc-bubble-exp') && withExp.includes('Until ' + fmtUntil(NOW + 3600e3)), 'future expiry → the clock time it clears at', withExp);
 check(!statusBubbleHTML(me({ status_text: 'Back later', status_expires_at: NOW - 1000 })).includes('uc-bubble-exp'), 'a lapsed expiry shows no note');
 check(!statusBubbleHTML(me({ status_text: 'Back later' })).includes('uc-bubble-exp'), 'no expiry → no note');
 check(fmtCountdown(NOW - 1) === 'soon', 'a lapsed timer reads "soon"');

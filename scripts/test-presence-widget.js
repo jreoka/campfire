@@ -67,11 +67,13 @@ const code = slice(core, 'function esc(s) {', '// Layout size of a popup')
   + '\n' + slice(pickers, 'function fmtCountdown(ts) {', 'async function clearMyStatus() {');
 // Strict mode gives eval its own scope, so hand the functions back explicitly.
 const {
-  fmtCountdown, statusLineHTML, presenceWidgetHTML, presenceDurationSel, choosePresence, wirePresenceWidget, presenceMenu,
-} = eval(code + '\n;({ fmtCountdown, statusLineHTML, presenceWidgetHTML, presenceDurationSel, choosePresence, wirePresenceWidget, presenceMenu })');
+  fmtCountdown, fmtUntil, statusLineHTML, presenceWidgetHTML, presenceDurationSel, choosePresence, wirePresenceWidget, presenceMenu,
+  getPresenceMenu, setPresenceMenu,
+} = eval(code + '\n;({ fmtCountdown, fmtUntil, statusLineHTML, presenceWidgetHTML, presenceDurationSel, choosePresence, wirePresenceWidget, presenceMenu, getPresenceMenu: () => presenceMenu, setPresenceMenu: (open, cascade) => { presenceMenu = { open, cascade }; } })');
 
 const setMe = (status, exp) => { S.me = { id: 'me', username: 'jordan', status, presence_expires_at: exp || null }; };
-const setMenu = (open, cascade) => { presenceMenu.open = open; presenceMenu.cascade = cascade; };
+// The menu is a `let` the code reassigns, so read/write it through accessors.
+const setMenu = (open, cascade) => setPresenceMenu(open, cascade);
 
 function findChrome() {
   const candidates = [
@@ -114,12 +116,18 @@ document.addEventListener('click', (e) => {
   if (!clickInPath(e, ['#usercard', '#me-card', '[data-uid]', '.member', '.usertag[data-tag-sid]'])) wouldClose = true;
 });
 const out = {};
+try {
 wouldClose = false; document.getElementById('presence-toggle').click();
 out.toggle = { wouldClose, open: presenceMenu.open, listRendered: !!document.querySelector('.plist') };
 wouldClose = false; document.querySelector('[data-presence="away"]').click();
 out.pickAway = { wouldClose, cascade: presenceMenu.cascade, status: S.me.status };
+// The real app re-renders the ladder from setStatus; setStatus is a stub here.
+renderPresenceWidget(card);
+wouldClose = false; document.querySelector('[data-presence-ms="3600000"]').click();
+out.pickTime = { wouldClose, open: presenceMenu.open, cascade: presenceMenu.cascade, listLeft: !!document.querySelector('.plist'), cardThere: !!document.getElementById('usercard') };
 wouldClose = false; document.getElementById('outside').click();
 out.realOutside = { wouldClose };
+} catch (e) { out.err = String(e && e.stack || e); }
 setTimeout(() => { document.title = JSON.stringify(out); }, 80);
 </script></body></html>`;
 }
@@ -166,13 +174,22 @@ async function main() {
   check(away.includes('class="prow time on" data-presence-ms="14400000"'), 'the live timer\'s nearest option is marked (4h)', away.slice(times, times + 260));
   check(away.includes('class="prow sub sel" data-presence="away"'), 'the picked state is the marked row');
   check(presenceDurationSel('away', 0) === 6, 'no timer → Forever is the marked option');
-  check(away.includes('Clears ' + fmtCountdown(pending)), 'the live countdown is noted under the menu');
+  check(away.includes('Until ' + fmtUntil(pending)), 'the live timer is noted as a wall-clock time under the menu');
 
   setMe('dnd'); setMenu(true, 'dnd');
   const dnd = presenceWidgetHTML();
   check(dnd.indexOf('<div class="ptimes">') > dnd.indexOf('data-presence="dnd"') && dnd.indexOf('<div class="ptimes">') < dnd.indexOf('data-presence="invisible"'), 'a different state cascades under its own row');
   check(dnd.includes('class="prow time on" data-presence-ms="never"'), 'with no timer set, Forever is marked');
   check(!dnd.includes('uc-preseg-note'), 'and there is no countdown note');
+
+  console.log('\n[4b] the note reads as a clock time, not a countdown');
+  check(fmtUntil(Date.now() + 3600e3).length > 0 && /\d/.test(fmtUntil(Date.now() + 3600e3)) && !/^in /.test(fmtUntil(Date.now() + 3600e3)), '"3:55 PM"-shaped, never an "in 45m" countdown', fmtUntil(Date.now() + 3600e3));
+  const sameDay = new Date(); sameDay.setHours(23, 59, 0, 0);
+  check(fmtUntil(sameDay.getTime()) === sameDay.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), 'same day → bare clock time', fmtUntil(sameDay.getTime()));
+  const tmr = new Date(); tmr.setDate(tmr.getDate() + 1); tmr.setHours(15, 55, 0, 0);
+  check(fmtUntil(tmr.getTime()).startsWith('tomorrow '), 'the next day is named', fmtUntil(tmr.getTime()));
+  const wk = new Date(); wk.setDate(wk.getDate() + 3); wk.setHours(15, 55, 0, 0);
+  check(/\d/.test(fmtUntil(wk.getTime())) && !fmtUntil(wk.getTime()).startsWith('tomorrow ') && !/^in /.test(fmtUntil(wk.getTime())), 'a few days out carries its day', fmtUntil(wk.getTime()));
 
   console.log('\n[5] the rows are wired to those semantics (DOM-less)');
   const fake = () => {
@@ -187,24 +204,27 @@ async function main() {
   check(typeof f.toggle.onclick === 'function' && f.subRows.every((r) => typeof r.onclick === 'function') && f.timeRows.every((r) => typeof r.onclick === 'function'), 'every row gets an onclick');
   setMe('online'); setMenu(false, null);
   f.toggle.onclick();
-  check(presenceMenu.open === true && f.box.outerHTML.includes('plist'), 'the toggle opens the state list');
+  check(getPresenceMenu().open === true && f.box.outerHTML.includes('plist'), 'the toggle opens the state list');
   f.toggle.onclick();
-  check(presenceMenu.open === false && presenceMenu.cascade === null, 'the toggle again collapses it and drops the cascade');
+  check(getPresenceMenu().open === false && getPresenceMenu().cascade === null, 'the toggle again collapses it and drops the cascade');
 
   setMe('online'); setMenu(true, null);
   statusCalls = [];
   f.subRows[1].onclick(); // Away
   await null;
-  check(presenceMenu.open === true && presenceMenu.cascade === 'away' && statusCalls.length === 1 && statusCalls[0][0] === 'away', 'a state row applies the state and cascades its timer', { cascade: presenceMenu.cascade, statusCalls });
+  check(getPresenceMenu().open === true && getPresenceMenu().cascade === 'away' && statusCalls.length === 1 && statusCalls[0][0] === 'away', 'a state row applies the state and cascades its timer', { cascade: getPresenceMenu().cascade, statusCalls });
   statusCalls = [];
   f.timeRows[0].onclick(); // Forever
   await null;
   check(statusCalls.length === 1 && statusCalls[0][1] === null, 'Forever keeps the state and drops the timer', statusCalls);
+  check(getPresenceMenu().open === false && getPresenceMenu().cascade === null, 'and collapses the menu (the card itself stays open)');
   statusCalls = [];
   setMe('away', pending);
+  setMenu(true, 'away');
   f.timeRows[1].onclick(); // For 1 Hour
   await null;
   check(statusCalls.length === 1 && statusCalls[0][1] === 3600e3, 'a timer row sends its own span', statusCalls);
+  check(getPresenceMenu().open === false && getPresenceMenu().cascade === null, 'picking a span is the end of the interaction — menu collapsed');
   check(wirePresenceWidget({ querySelector: () => null }) === undefined, 'no card element → a quiet no-op');
 
   console.log('\n[6] chips keep a live timer; Online drops it');
@@ -250,6 +270,8 @@ async function main() {
         const out = JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
         check(out.toggle.wouldClose === false && out.toggle.open === true && out.toggle.listRendered === true, 'opening the menu leaves the card open', out.toggle);
         check(out.pickAway.wouldClose === false && out.pickAway.cascade === 'away' && out.pickAway.status === 'away', 'picking a state cascades it and leaves the card open', out.pickAway);
+        check(out.pickTime.wouldClose === false && out.pickTime.open === false && out.pickTime.cascade === null, 'picking a span collapses the menu', out.pickTime);
+        check(out.pickTime.listLeft === false && out.pickTime.cardThere === true, 'and the card stays open, just without the open menu', out.pickTime);
         check(out.realOutside.wouldClose === true, 'a click genuinely outside still closes the card', out.realOutside);
       }
     } finally {

@@ -1329,6 +1329,20 @@ function fmtCountdown(ts) {
   if (h < 24) return `in ${h}h`;
   return `in ${Math.floor(h / 24)}d`;
 }
+// Wall-clock form of a pending timer — "3:55 PM" — for the "Until …" notes on
+// your own card. A countdown makes you do arithmetic; the clock time is what
+// you actually want to read. Longer spans pick up the day so the hour is never
+// ambiguous; same-day stays bare.
+function fmtUntil(ts) {
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return time;
+  const tmr = new Date(now.getTime() + 864e5);
+  if (d.toDateString() === tmr.toDateString()) return 'tomorrow ' + time;
+  if (d.getTime() - now.getTime() < 7 * 864e5) return d.toLocaleDateString([], { weekday: 'short' }) + ' ' + time;
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ', ' + time;
+}
 // Custom status shown as a thought bubble beside the avatar (Discord-style).
 // Other people only get a bubble when they set something; my own card always
 // shows one so "set a status" lives up by the picture, not in the card body.
@@ -1337,7 +1351,7 @@ function statusBubbleHTML(u) {
   const cur = ((u && u.status_text) || '').trim();
   if (!cur && !mine) return '';
   const exp = +((u && u.status_expires_at) || 0);
-  const expNote = (mine && cur && exp > Date.now()) ? `<div class="uc-bubble-exp">Clears ${fmtCountdown(exp)}</div>` : '';
+  const expNote = (mine && cur && exp > Date.now()) ? `<div class="uc-bubble-exp">Until ${fmtUntil(exp)}</div>` : '';
   const bubble = mine
     ? `<button type="button" class="uc-bubble edit${cur ? '' : ' empty'}" id="uc-status-edit" aria-label="${cur ? 'Edit custom status' : 'Set a custom status'}">${cur ? esc(cur) : 'Set a status'}</button>`
     : `<div class="uc-bubble">${esc(cur)}</div>`;
@@ -1408,7 +1422,7 @@ function presenceWidgetHTML() {
       return row + `<div class="ptimes">${times}</div>`;
     }).join('') + '</div>';
   }
-  const note = (cur !== 'online' && exp) ? `<div class="uc-preseg-note">Clears ${fmtCountdown(exp)}</div>` : '';
+  const note = (cur !== 'online' && exp) ? `<div class="uc-preseg-note">Until ${fmtUntil(exp)}</div>` : '';
   return `<div class="uc-presence" id="uc-presence">${toggle}${list}${note}</div>`;
 }
 function renderPresenceWidget(card) {
@@ -1445,6 +1459,10 @@ function wirePresenceWidget(card) {
     // lapsed, and setStatus drops the timer for Online picks — the click did
     // nothing at all.
     const state = b.dataset.presenceState || (S.me || {}).status || 'online';
+    // A picked span is the end of the interaction: collapse the menu back to the
+    // status readout (the user card itself stays open).
+    presenceMenu = { open: false, cascade: null };
+    renderPresenceWidget(card);
     choosePresence(state, raw === 'never' ? null : +raw);
   }));
 }

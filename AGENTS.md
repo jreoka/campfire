@@ -253,11 +253,17 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   cascades the four states with the current one marked and Online offering no
   timer cascade, picking a state cascades its timer ladder underneath that row
   (with the live timer's nearest step marked and Forever when there is none, plus
-  the countdown note), each row is wired to those semantics (re-picking your
-  current state never clears a live timer, switching state carries it over,
-  Online drops it, Forever keeps the state), and the menu renders in place with
-  the card re-clamped after it grows. Note the timer labels are the full "For 15
-  Minutes … Forever" ladder, straight from Discord's menu.
+  the "Until 3:55 PM" wall-clock note — `fmtUntil`, not a countdown), picking a
+  span collapses the menu back to the readout while the card stays open, each row
+  is wired to those semantics (a timer row applies the state it hangs off rather
+  than the live status, re-picking your current state never clears a live timer,
+  switching state carries it over, Online drops it, Forever keeps the state), and
+  the menu renders in place with the card re-clamped after it grows. It also
+  drives the real idle/`poke` block out of `final.js`: activity clears the idle
+  auto-away but never a hand-picked one (the marker is per account in storage, so
+  a reload keeps an idle Away revertible), and a timed Away keeps its own revert.
+  Note the timer labels are the full "For 15 Minutes … Forever" ladder, straight
+  from Discord's menu.
   `node scripts/test-pin-badge.js` covers the pin button's badge offline (it
   runs the real helpers pulled out of `pins.js` against stub globals): a pin is
   "new" until this account opens the panel in that conversation, pinning
