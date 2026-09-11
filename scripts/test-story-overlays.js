@@ -181,12 +181,15 @@ console.log('\n[6] the surfaces and the wiring are all present');
   check(!html.includes('data-smode'), 'the old photo/video mode toggle is gone (tap vs hold replaced it)', null);
   check(/story-edit\.js"><\/script>\s*<script src="\/js\/stories\.js"/.test(html), 'story-edit.js loads before stories.js', null);
   check(sw.includes("'/js/story-edit.js'"), 'the new module is in the app-shell cache', null);
-  check(/campfire-v\d+/.test(sw) && sw.includes('campfire-v416'), 'the service worker cache was bumped', null);
-  for (const rule of ['.ov-layer', '.ov-item', '.ov-draw', '.sc-tools', '.ov-editable', '.ov-pill', '.ov-sel']) {
+  check(/const CACHE = 'campfire-v\d+';/.test(sw), 'the service worker names a cache version (bump it on every public/ change)', null);
+  const js = fs.readFileSync(path.join(ROOT, 'public/js/stories.js'), 'utf8');
+  for (const rule of ['.ov-layer', '.ov-item', '.ov-draw', '.sc-tools', '.ov-editable', '.ov-pill', '.ov-sel', '.sc-swatch.tile']) {
     check(css.includes(rule), 'stylesheet has ' + rule, null);
   }
+  // Tool sheets sit over the bottom of the composer, so the row of background
+  // tiles has to pay for the sheet's height or it is buried behind it.
+  check(/--sheet-h/.test(css) && /--sheet-h/.test(js), 'the sheet height lifts the rows above it', null);
   check(/ov-layer[^}]*--ov-h/.test(css.replace(/\n/g, ' ')) || css.includes('.ov-layer{'), 'the layer owns the sizing vars items read', null);
-  const js = fs.readFileSync(path.join(ROOT, 'public/js/stories.js'), 'utf8');
   for (const fn of ['storyShutterDown', 'storyShutterUp', 'storyDrawFrame', 'storyNeedsComposite', 'storyRecordStream', 'storyPaintOv', 'storyOpenTextEditor', 'storyAddSticker', 'storyStartTextOnly', 'svPaintOverlays']) {
     check(js.includes('function ' + fn + '('), 'stories.js defines ' + fn, null);
   }

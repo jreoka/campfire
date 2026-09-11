@@ -413,13 +413,16 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   thumbnail (offline; runs the real `storyRing()` extracted from `stories.js`
   against the real `styles.css` in headless Chrome, skipping when Chrome is
   missing). It screenshots the ring at four device scale factors, at both ring
-  sizes (the rail's 58px, the stories sheet's 44px) and in both seen states, and
-  asserts no pixel of the avatar behind it survives around the photo's edge, that
-  the ring stroke and its gap are still there (so "cover the whole ring" can't
-  pass), and that the photo is centred. Re-run it after touching
-  `.st-ring`/`.st-thumb`; Blink flooring the avatar's 2.5px border to whole
-  device pixels, and the seen thumbnail's filtered layer edge, are what makes the
-  old face peek through — do not reintroduce the face behind a live thumbnail.
+  sizes (the rail's 58px, the stories sheet's 44px) and in all three states
+  (unwatched / watched / your own), asserting no pixel of the avatar behind it
+  survives around the photo's edge, that the ring stroke and its gap are still
+  there (so "cover the whole ring" can't pass), that the photo is centred, and
+  which states are desaturated: only a watched story that isn't yours is muted,
+  because greying your own post made a flat-coloured (text-only) story read as a
+  broken thumbnail. Re-run it after touching `.st-ring`/`.st-thumb`; Blink
+  flooring the avatar's 2.5px border to whole device pixels, and the seen
+  thumbnail's filtered layer edge, are what makes the old face peek through — do
+  not reintroduce the face behind a live thumbnail.
   `node scripts/test-story-swipe.js` covers swipe-down-to-close in the story
   viewer (offline; runs the real tap-zone + swipe wiring sliced out of
   `stories.js` against the real `#story-view` markup and `styles.css` in headless
@@ -738,6 +741,17 @@ display:none layer measures 0 and the first pen stroke paints into a 1x1
 canvas. The client caps and trims the list before sending (`ovSanitize`, 24 KB)
 and the server validates it again; the post body is `express.json`, so an
 untrimmed stroke list is a 413, not a story.
+The story ring has two independent states and they must not be conflated:
+`.st-ring.seen` is the ring's own colour (accent while something waits, hairline
+once it has been watched) and applies to everyone including your own tile, while
+`.st-ring.muted` desaturates the photo and only ever means "you have already
+watched someone else's story". Your own story is never muted — you cannot watch
+your own post, and greying it turned a flat-coloured text-only story into a dead
+grey disc in the rail. Anything pinned above a tool sheet (the colour row, the
+tool rail) pays for the sheet's height through `--sheet-h`; without it the
+background swatches sat behind the text sheet and could not be tapped at all.
+Background swatches are gradient TILES, not circles: the same ramp clipped to a
+disk reads as a tilted square shoved inside it.
 
 NEXT: iterate per owner feedback on the live site.
 

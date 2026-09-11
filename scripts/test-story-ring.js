@@ -99,14 +99,15 @@ function paintAvatar(el, user) {
   el.appendChild(img);
 }
 ${ringSource()}
+window.S = { me: { id: 'me' } };
 const AVATAR_PX = ${JSON.stringify(avatarSrc)};
 const STORY_PX = ${JSON.stringify(storySrc)};
-window.__buildRing = function (size, seen) {
+window.__buildRing = function (size, seen, mine) {
   const rail = document.getElementById('story-rail');
   rail.innerHTML = '';
   const tile = document.createElement('div');
   tile.className = 'st-tile';
-  const ring = storyRing({ id: 'me', display_name: 'Me' }, !seen, [{
+  const ring = storyRing({ id: mine ? 'me' : 'other', display_name: 'Me' }, !seen, [{
     id: 's1', kind: 'image', url: STORY_PX, seen: false,
     created_at: Date.now(), expires_at: Date.now() + 86400000,
   }]);
@@ -118,9 +119,7 @@ window.__buildRing = function (size, seen) {
 // Classify the screenshot around the photo. The avatar stand-in is pure red and
 // the story a saturated green, while the ring's own colours are the theme's
 // --bg (near black), --accent (indigo) and --line (grey): the photo and the face
-// are the only things outside that palette, and the seen variant's
-// grayscale/brightness filter on the thumbnail still leaves it far from all
-// three.
+// are the only things outside that palette.
 const PALETTE = { bg: [7, 9, 14], line: [38, 48, 70], accent: [91, 108, 255] };
 const NEAR = 24;
 const dist2 = (p, c) => (p[0] - c[0]) ** 2 + (p[1] - c[1]) ** 2 + (p[2] - c[2]) ** 2;
@@ -147,11 +146,20 @@ window.__scan = async function (png) {
   const isGap = (p) => near(p, PALETTE.bg);
   const isStroke = (p) => near(p, PALETTE.line) || near(p, PALETTE.accent);
   let face = 0, strokePx = 0;
+  // How much colour is left in the photo itself: the muted ("already watched
+  // someone else's") thumbnail is desaturated, and a full-colour one is not.
+  // A solid fill makes this a clean split (max-min channel spread 128 vs ~14).
+  let vivid = 0, muted = 0;
   const faceAngles = {};
   for (let y = y0; y < y0 + H; y++) for (let x = x0; x < x0 + W; x++) {
     const p = at(x, y); if (!p) continue;
     if (isStroke(p)) strokePx++;
     const dist = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
+    if (dist <= tr - 3) {
+      const spread = Math.max(p[0], p[1], p[2]) - Math.min(p[0], p[1], p[2]);
+      if (spread >= 60) vivid++;
+      else if (spread <= 40) muted++;
+    }
     // Just outside the photo's edge, where a too-small thumbnail let the face
     // show through.
     if (dist < tr - 0.5 || dist > tr + 3) continue;
@@ -201,7 +209,8 @@ window.__scan = async function (png) {
     }
   }
   return {
-    face, faceAngles, strokePx, rays, profiles, boxes, thumbR: Math.round(thumbR * 100) / 100,
+    face, faceAngles, strokePx, rays, profiles, boxes, vivid, muted,
+    thumbR: Math.round(thumbR * 100) / 100,
     ringR, offX: Math.round(((tb.x + tb.width / 2) - (rb.x + rb.width / 2)) * 100) / 100,
     offY: Math.round(((tb.y + tb.height / 2) - (rb.y + rb.height / 2)) * 100) / 100,
   };
@@ -267,9 +276,13 @@ async function main() {
     for (const dpr of DPFS) {
       await sess('Emulation.setDeviceMetricsOverride', { width: 420, height: 260, deviceScaleFactor: dpr, mobile: false });
       for (const size of [null, 44]) {
-        for (const seen of [false, true]) {
-          const built = await evaluate('window.__buildRing(' + (size || 0) + ',' + (seen ? 'true' : 'false') + ')');
-          const label = 'dpr ' + dpr + ' / ' + (size || 58) + 'px' + (seen ? ' seen' : '');
+        for (const v of [
+          { seen: false, mine: false, label: ' unseen' },
+          { seen: true, mine: false, label: ' seen' },
+          { seen: true, mine: true, label: ' seen / mine' },
+        ]) {
+          const built = await evaluate('window.__buildRing(' + (size || 0) + ',' + (v.seen ? 'true' : 'false') + ',' + (v.mine ? 'true' : 'false') + ')');
+          const label = 'dpr ' + dpr + ' / ' + (size || 58) + 'px' + v.label;
           if (!built) { check(false, 'ring built — ' + label, 'storyRing() produced no avatar+thumb'); continue; }
           await sleep(120);
           const shot = (await sess('Page.captureScreenshot', { format: 'png' })).data;
@@ -278,6 +291,12 @@ async function main() {
           check(s.strokePx > 40, 'ring stroke still visible — ' + label, { strokePixels: s.strokePx });
           const gaps = s.rays.filter((r) => r.gap >= 1 && r.stroke === 1).length;          check(gaps === 4, 'gap between photo and stroke on all four sides — ' + label, { rays: s.rays });
           check(Math.abs(s.offX) <= 0.05 && Math.abs(s.offY) <= 0.05, 'photo stays centred — ' + label, { offX: s.offX, offY: s.offY });
+          // Only someone else's watched story is muted. Your own tile keeps its
+          // colours: you cannot watch your own post, and greying it made a
+          // flat-coloured (text-only) story look like a broken thumbnail.
+          if (v.mine) check(s.vivid > 200 && s.muted === 0, 'your own story keeps its colours — ' + label, { vivid: s.vivid, muted: s.muted });
+          else if (v.seen) check(s.muted > 200 && s.vivid === 0, 'a watched story is muted — ' + label, { vivid: s.vivid, muted: s.muted });
+          else check(s.vivid > 200 && s.muted === 0, 'an unwatched story is in colour — ' + label, { vivid: s.vivid, muted: s.muted });
         }
       }
     }

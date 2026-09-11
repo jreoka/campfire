@@ -483,6 +483,28 @@ async function main() {
       const kb = sc.blob ? Math.round(sc.blob.size / 1024) : 0;
       const textSheet = !document.querySelector('#sc-textedit').classList.contains('hidden');
       const firstUrl = sc.previewUrl;
+      // With the text sheet up, the background row has to still be reachable:
+      // it used to sit *behind* the sheet, so you had to tap Done before a
+      // background could be picked at all.
+      const reach = (() => {
+        const row = document.querySelector('#sc-colors');
+        const sws = [...row.querySelectorAll('.sc-swatch')];
+        const sheetTop = document.querySelector('#sc-textedit').getBoundingClientRect().top;
+        const hit = (el) => {
+          const r = el.getBoundingClientRect();
+          const t = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          return t === el || (t && t.closest && t.closest('.sc-swatch') === el);
+        };
+        return {
+          count: sws.length,
+          tiles: row.querySelectorAll('.sc-swatch.tile').length,
+          radius: getComputedStyle(sws[0]).borderTopLeftRadius,
+          overSheet: sws.filter((s) => s.getBoundingClientRect().bottom > sheetTop).length,
+          firstHittable: hit(sws[0]),
+          lastHittable: hit(sws[sws.length - 1]),
+          sheetOpen: !document.querySelector('#sc-textedit').classList.contains('hidden'),
+        };
+      })();
       const firstImg = new Image();
       firstImg.src = firstUrl;
       await new Promise((res) => { firstImg.onload = res; firstImg.onerror = res; });
@@ -494,7 +516,7 @@ async function main() {
       img.src = sc.previewUrl;
       await new Promise((res) => { img.onload = res; img.onerror = res; });
       return {
-        textOnly: sc.textOnly, kind: sc.kind, kb, type: sc.blob.type, textSheet, swatches,
+        textOnly: sc.textOnly, kind: sc.kind, kb, type: sc.blob.type, textSheet, swatches, reach,
         bg: sc.textBg, changed: sc.previewUrl !== firstUrl, sawShot: !shot.classList.contains('hidden'),
         w: img.naturalWidth, h: img.naturalHeight, first: beforeImage,
         stageW: before.w, stageH: before.h,
@@ -503,6 +525,11 @@ async function main() {
     check(textOnly.textOnly && textOnly.kind === 'image', 'a text-only story needs no camera', textOnly);
     check(textOnly.type === 'image/jpeg' && textOnly.kb > 0, 'it has real bytes behind it', textOnly);
     check(textOnly.swatches >= 6, 'there are backgrounds to choose from', textOnly);
+    check(textOnly.reach.sheetOpen && textOnly.reach.tiles === textOnly.reach.count,
+      'the backgrounds are gradient tiles, not a ramp clipped into a circle', textOnly.reach);
+    check(textOnly.reach.radius !== '50%', 'so they are not circles', textOnly.reach);
+    check(textOnly.reach.overSheet === 0 && textOnly.reach.firstHittable && textOnly.reach.lastHittable,
+      'and the row is not buried under the text sheet', textOnly.reach);
     check(textOnly.changed && textOnly.bg === 2, 'picking one repaints the background', textOnly);
     check(textOnly.textSheet && textOnly.sawShot, 'and the text editor opens on it', textOnly);
     check(textOnly.w === textOnly.first.w && textOnly.h === textOnly.first.h,

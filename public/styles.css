@@ -1899,7 +1899,10 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
    0.5px so the photo edge lands on the avatar's widest possible face (49px)
    instead of inside it, and ~2px of the ring's gap stays visible. */
 .st-thumb{position:absolute;inset:4.5px;width:calc(100% - 9px);height:calc(100% - 9px);border-radius:50%;object-fit:cover;pointer-events:none}
-.st-ring.seen .st-thumb{filter:grayscale(.85) brightness(.72)}
+/* Already watched: the photo itself desaturates. Only ever for someone
+   else's story — your own ring is never muted (storyRing() decides; greying
+   your own post made a flat-coloured text story read as a broken thumbnail). */
+.st-ring.muted .st-thumb{filter:grayscale(.85) brightness(.72)}
 /* While a thumbnail is in the ring the face behind it is only a fallback (it
    returns by itself if the media fails — storyThumbEl removes the element). It
    must not tint the photo's antialiased edge: whatever the device pixel ratio
@@ -2020,18 +2023,23 @@ body.story-open{overflow:hidden}
 #sc-caption::placeholder{color:rgba(255,255,255,.5)}
 #sc-caption:focus{outline:none;border-color:rgba(255,255,255,.4)}
 /* Markup tools: a rail floating down the right of the picture, like every
-   camera app — and the colour row where the caption sits (the caption steps
-   aside for it: see storyPaintOv). */
-.sc-tools{position:absolute;right:1.3rem;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:.45rem;z-index:6}
+   camera app — centred in the space a tool sheet leaves free. */
+.sc-tools{position:absolute;right:1.3rem;top:calc(50% - var(--sheet-h, 0px) / 2);transform:translateY(-50%);display:flex;flex-direction:column;gap:.45rem;z-index:6}
 .sc-tool{width:42px;height:42px;border-radius:50%;border:0;background:rgba(10,13,22,.62);color:#fff;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-family:inherit;padding:0;transition:background var(--t-fast),transform .1s}
 .sc-tool:hover{background:rgba(10,13,22,.85)}
 .sc-tool:active{transform:scale(.94)}
 .sc-tool.active{background:#fff;color:#111}
 .sc-tool.danger{color:#ff8b98}
-.sc-colors{position:absolute;left:1rem;right:1rem;bottom:calc(6.1rem + var(--safe-b));display:flex;align-items:center;justify-content:center;gap:.45rem;overflow-x:auto;scrollbar-width:none;padding:.15rem 0;z-index:6}
+.sc-colors{position:absolute;left:1rem;right:1rem;bottom:calc(var(--sheet-h, 0px) + 6.1rem + var(--safe-b));display:flex;align-items:center;justify-content:center;justify-content:safe center;gap:.45rem;overflow-x:auto;scrollbar-width:none;padding:.15rem 0;z-index:6}
 .sc-colors::-webkit-scrollbar{display:none}
 .sc-swatch{flex:0 0 auto;width:28px;height:28px;border-radius:50%;border:2px solid rgba(255,255,255,.3);cursor:pointer;padding:0;transition:transform .1s,border-color var(--t-fast)}
 .sc-swatch.on{border-color:#fff;transform:scale(1.12)}
+/* A text-only story's backgrounds are full-bleed ramps, so they get a tile that
+   shows the real gradient: the same ramp clipped to a circle reads as a tilted
+   square shoved inside it (the colour at the top edge is not the colour at the
+   bottom, and the straight transition cuts across the disk). */
+.sc-swatch.tile{width:46px;height:32px;border-radius:10px}
+.sc-swatch.tile.on{transform:scale(1.06)}
 .sc-swatch.wide{width:auto;border-radius:999px;padding:0 .8rem;height:28px;color:#fff;font:inherit;font-size:.74rem;font-weight:700;background:rgba(10,13,22,.62);border-color:transparent}
 .sc-swatch.wide.on{background:#fff;color:#111}
 /* Text + emoji sheets slide over the composer from the bottom. */
@@ -2039,7 +2047,7 @@ body.story-open{overflow:hidden}
 #sc-te-input{width:100%;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:14px;padding:.6rem .85rem;color:#fff;font:inherit;font-size:1rem;resize:none;max-height:30vh}
 #sc-te-input:focus{outline:none;border-color:rgba(255,255,255,.4)}
 #sc-te-input::placeholder{color:rgba(255,255,255,.45)}
-.sc-swatches{display:flex;align-items:center;gap:.5rem;overflow-x:auto;scrollbar-width:none;padding:.1rem 0}
+.sc-swatches{display:flex;align-items:center;justify-content:center;justify-content:safe center;gap:.5rem;overflow-x:auto;scrollbar-width:none;padding:.1rem 0}
 .sc-swatches::-webkit-scrollbar{display:none}
 .sc-te-row{display:flex;align-items:center;gap:.5rem}
 .sc-emoji-head{display:flex;align-items:center;gap:.55rem}
@@ -2075,7 +2083,7 @@ body.story-open{overflow:hidden}
 @media (max-width:520px){
   .sc-edit{bottom:calc(92px + var(--safe-b))}
   .sc-tools{right:.8rem}
-  .sc-colors{bottom:calc(5.9rem + var(--safe-b))}
+  .sc-colors{bottom:calc(var(--sheet-h, 0px) + 5.9rem + var(--safe-b))}
   #sv-img,#sv-vid{border-radius:10px}
 }
 @media (max-width:400px){

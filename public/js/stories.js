@@ -181,8 +181,15 @@ function storyThumbEl(it, cls) {
   return el;
 }
 function storyRing(user, unseen, items) {
+  const mine = !!(typeof S !== 'undefined' && S && S.me && user && user.id === S.me.id);
   const ring = document.createElement('span');
-  ring.className = 'st-ring' + (unseen ? '' : ' seen');
+  // Two different things, two different classes. `seen` is the ring's own
+  // colour (accent while something waits, hairline once it is watched) and
+  // applies to everyone; `muted` desaturates the PHOTO and only ever means
+  // "you have already watched this". Your own story is never muted — you
+  // cannot watch your own post, and greying it turned a flat-coloured story
+  // (a text-only gradient, say) into a dead grey disc in the rail.
+  ring.className = 'st-ring' + (unseen ? '' : ' seen') + (!mine && !unseen ? ' muted' : '');
   const av = document.createElement('span');
   av.className = 'avatar';
   paintAvatar(av, user || { display_name: '?' });
@@ -1777,6 +1784,20 @@ function storyPaintTools() {
   const del = $('#sc-tool-del');
   if (del) del.classList.toggle('hidden', !(sc.sel >= 0 && sc.ovs[sc.sel]));
 }
+// A tool sheet covers the bottom of the composer, so anything pinned down there
+// (the colour row, the tool rail) pays for it through --sheet-h. Without this
+// the background swatches sat *behind* the text sheet: you had to tap Done
+// before you could pick a background at all.
+function storySheetHeight() {
+  let h = 0;
+  for (const sel of ['#sc-textedit', '#sc-emoji']) {
+    const el = $(sel);
+    if (el && !el.classList.contains('hidden')) h = Math.max(h, el.getBoundingClientRect().height || 0);
+  }
+  const root = $('#story-compose');
+  if (root) root.style.setProperty('--sheet-h', Math.round(h) + 'px');
+  return h;
+}
 const SC_TEXT_BGS = [
   { name: 'Midnight', stops: ['#1b2333', '#05070c'] },
   { name: 'Violet', stops: ['#7c3aed', '#2e1065'] },
@@ -1807,7 +1828,8 @@ function storyRenderColors() {
   box.classList.remove('hidden');
   if (sc.textOnly) {
     SC_TEXT_BGS.forEach((bg, i) => {
-      storySwatch(box, 'sc-swatch', `background:linear-gradient(135deg,${bg.stops[0]},${bg.stops[1]})`, i === sc.textBg, () => storyTextOnlySetBg(i)).title = bg.name;
+      const b = storySwatch(box, 'sc-swatch tile', `background:linear-gradient(135deg,${bg.stops[0]},${bg.stops[1]})`, i === sc.textBg, () => storyTextOnlySetBg(i));
+      b.title = bg.name;
     });
     return;
   }
@@ -1860,7 +1882,8 @@ function storyOpenTextEditor(i) {
   $('#sc-textedit').classList.remove('hidden');
   if (editing >= 0) { sc.sel = editing; storyPaintOv(); }
   storyRenderTextColors();
-  setTimeout(() => { const s = $('#sc-te-input'); if (s) { s.focus(); try { s.setSelectionRange(s.value.length, s.value.length); } catch {} } }, 30);
+  storySheetHeight();
+  setTimeout(() => { const s = $('#sc-te-input'); if (s) { s.focus(); try { s.setSelectionRange(s.value.length, s.value.length); } catch {} } storySheetHeight(); }, 30);
 }
 function storyRenderTextColors() {
   const box = $('#sc-te-colors');
@@ -1906,6 +1929,7 @@ function storyCloseTextEditor() {
   if (it && !String(it.text || '').trim()) { sc.ovs.splice(t.i, 1); if (sc.sel === t.i) sc.sel = -1; }
   const box = $('#sc-textedit');
   if (box) box.classList.add('hidden');
+  storySheetHeight();
   storyPaintOv();
 }
 /* --- the emoji tool ------------------------------------------------------- */
@@ -1914,6 +1938,7 @@ async function storyOpenEmoji() {
   sc.sel = -1;
   storySetDraw(false);
   $('#sc-emoji').classList.remove('hidden');
+  storySheetHeight();
   storyRenderEmoji('');
   setTimeout(() => { const s = $('#sc-emoji-search'); if (s) s.focus(); }, 30);
   try { await ensureEmojiData(); } catch {}
@@ -1923,6 +1948,7 @@ async function storyOpenEmoji() {
 function storyCloseEmoji() {
   const box = $('#sc-emoji');
   if (box) box.classList.add('hidden');
+  storySheetHeight();
 }
 function storyEmojiGridAdd(box, char, url, title) {
   const b = document.createElement('button');
@@ -2958,6 +2984,9 @@ $('#sc-caption').addEventListener('input', (e) => {
   e.target.style.height = 'auto';
   e.target.style.height = Math.min(e.target.scrollHeight, 88) + 'px';
 });
+// The text sheet grows with the text; the colour row and tool rail above it
+// have to move up with it.
+$('#sc-te-input').addEventListener('input', () => storySheetHeight());
 storyBindGestures();
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && sc) {
