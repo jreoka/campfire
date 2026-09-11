@@ -308,7 +308,6 @@ async function dismissNotif(n, el) {
   if (list && !list.children.length) list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">All caught up — mentions and friend updates land here.</p>';
 }
 $('#btn-notifs').onclick = openInbox;
-$('#me-card').style.cursor = 'pointer';
 function openOwnCard() {
   if (!S.me) return;
   const card = $('#usercard');
@@ -323,7 +322,10 @@ function openOwnCard() {
   card.style.maxHeight = Math.max(200, r.top - 16) + 'px';
   card.style.overflowY = 'auto';
 }
-$('#me-card').onclick = openOwnCard;
+// Only the avatar + name opens it — the rest of the bar (the space around
+// mute/deafen/settings) is dead, and the target outlines itself on hover so
+// that is obvious (see #me-open in styles.css).
+$('#me-open').onclick = openOwnCard;
 function renderServerHeader() {
   const d = S.serverDetail;
   const el = $('#srv-banner');

@@ -343,8 +343,16 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .mini:disabled:hover{background:var(--panel-3)}
 .mini.danger{background:var(--danger-bg);border:1px solid var(--danger-line);color:var(--danger-tx)}
 .mini.danger:hover{background:rgba(248,113,113,.17)}
-#me-card{display:flex;align-items:center;gap:.55rem;padding:.5rem .7rem;margin:.4rem .6rem .6rem -70px;border:0;border-radius:12px;background-color:var(--panel-2);font-size:.88rem;font-weight:600;cursor:pointer;overflow:hidden;transition:background-color .15s;position:relative;z-index:2}
-#me-card:hover{background-color:var(--panel-3)}
+#me-card{display:flex;align-items:center;gap:.55rem;padding:.5rem .7rem;margin:.4rem .6rem .6rem -70px;border:0;border-radius:12px;background-color:var(--panel-2);font-size:.88rem;font-weight:600;overflow:hidden;transition:background-color .15s;position:relative;z-index:2}
+/* The avatar + name is the only part of the bar that opens your card, so the
+   space around mute/deafen/settings does nothing. It says so on hover with a
+   rounded outline (outline, not border, so the target never moves the layout). */
+#me-open{display:flex;align-items:center;gap:.55rem;flex:1;min-width:0;padding:.15rem .4rem .15rem .35rem;margin:-.15rem 0;border:0;border-radius:10px;background:transparent;color:inherit;font:inherit;font-weight:inherit;text-align:left;cursor:pointer}
+@media (hover:hover){
+  #me-open:hover{background:var(--panel-3);outline:1px solid var(--line);outline-offset:1px}
+  #me-card.has-banner #me-open:hover{background:rgba(255,255,255,.12);outline-color:rgba(255,255,255,.3)}
+}
+#me-open:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 #me-card.off{opacity:.55}
 #me-card .avwrap{position:relative;width:28px;height:28px;flex-shrink:0}
 #me-card .avwrap .avatar{width:100%;height:100%;font-size:.75rem}
@@ -367,7 +375,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #voice-status{display:flex;align-items:center;min-width:0;font-weight:650}
 .live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:.45rem;flex-shrink:0}
 .live-badge{font-size:.66rem;font-weight:800;letter-spacing:.07em;background:var(--green);color:#06281c;border-radius:6px;padding:.14rem .45rem}
-#sidebar-scrim{display:none}
+#btn-nav-close{display:none}
 
 #chat{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)}
 #chat-header{display:flex;align-items:center;gap:.55rem;padding:.75rem 1rem;border-bottom:1px solid var(--line-soft);background:var(--panel)}
@@ -1640,10 +1648,17 @@ body{touch-action:manipulation}
   #vf-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
   .msg .text{font-size:.95rem}
 }
-/* ---------- mobile (drawer rules) ---------- */
+/* ---------- mobile (nav is a full-screen page) ---------- */
 @media (max-width:700px){
-  #left{position:fixed;top:var(--safe-t);bottom:var(--safe-b);left:var(--safe-l);z-index:30;display:flex;transform:translateX(-105%);transition:transform .2s;width:min(348px,94vw);background:var(--rail)}
+  /* The rail + chat list is a whole page, not a drawer hanging over the chat:
+     nothing shows behind it, so there is no scrim to dim and no partial-width
+     peek. It closes from its own ✕ (the chat's ☰ is behind the page), from
+     picking a channel or DM, and from the Home/Friends/Stories rows. */
+  #left{position:fixed;inset:var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l);z-index:30;display:flex;transform:translateX(-102%);transition:transform .22s;background:var(--rail)}
   body.nav-open #left{transform:none}
+  #btn-nav-close{display:inline-flex;position:absolute;top:.5rem;right:.55rem;z-index:7}
+  #server-header{padding-right:3rem}
+  .home-head{padding-right:3rem}
   #left #rail{width:62px;flex-shrink:0}
   #left .rail-head{padding:.7rem 0 .5rem}
   #left .server-btn,#left #btn-add-server{width:44px;height:44px}
@@ -1665,8 +1680,6 @@ body{touch-action:manipulation}
   #dm-rail{gap:.45rem}
   .server-btn.active::before{left:-8px;width:4px;height:22px}
   #left #sidebar{position:static;transform:none;width:auto!important;flex:1;min-width:0;border-left:1px solid var(--line)}
-  #sidebar-scrim{display:block;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:20;opacity:0;pointer-events:none;transition:opacity .2s}
-  body.nav-open #sidebar-scrim{opacity:1;pointer-events:auto}
   .icon-btn{display:inline-flex}
 }
 

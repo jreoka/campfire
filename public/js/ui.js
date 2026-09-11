@@ -173,6 +173,16 @@ function showInvite(srv, invite) {
 // ---------- mobile nav ----------
 // ---------- mobile navigation ----------
 $('#btn-menu').onclick = () => document.body.classList.toggle('nav-open');
+// Mobile nav is a full-screen page, so it carries its own ✕ (the chat header's
+// ☰ is behind the page while it is open).
+$('#btn-nav-close').onclick = (e) => { e.stopPropagation(); document.body.classList.remove('nav-open'); };
+// The nav page's destinations close it (channel and DM rows already do that in
+// their own selectors; a server tap deliberately keeps it open so a channel can
+// be picked).
+$('#left').addEventListener('click', (e) => {
+  if (!document.body.classList.contains('nav-open')) return;
+  if (e.target.closest && e.target.closest('#btn-home, #btn-friends, #btn-stories')) document.body.classList.remove('nav-open');
+});
 $('#btn-members').onclick = (e) => { e.stopPropagation(); document.body.classList.toggle('members-open'); };
 // Mobile DM header overflow (⋯): voice/video call buttons stay on top; the
 // rest open from a bottom sheet. Items mirror the header buttons' own
@@ -196,7 +206,6 @@ $('#btn-chat-more').onclick = (e) => {
   if (!items.length) return;
   openCtxSheet(items, { title: ($('#chan-name') || {}).textContent || 'Chat', sub: 'Chat options' });
 };
-$('#sidebar-scrim').onclick = () => document.body.classList.remove('nav-open');
 
 /* ---------- chat finder: quick-jump to channels, servers, DMs + message text ---------- */
 let findSel = 0, findRows = [], findLastQ = '', findMsgSeq = 0, findMsgTimer = null;

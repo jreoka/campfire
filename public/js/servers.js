@@ -502,6 +502,20 @@ function paintGameBadge(el) {
     el.innerHTML = CONTROLLER_SVG;
   }
 }
+// Sidebar banner: the picture behind a member/me row, under a flat scrim plus a
+// left-to-right darkening ramp so the name stays readable.
+//
+// background-repeat MUST be no-repeat and the ramps must be 100% 100%: these
+// rows are fractional-width (the sidebar's padding makes them e.g. 327.406px),
+// and `cover` + the default `repeat` leaves a sub-pixel tiling seam at the left
+// edge — at 1x that lands on a whole device pixel and reads as a light 1px line
+// down the left of the slot where the undarkened picture leaks through.
+function paintSidebarBanner(el, url, base) {
+  el.style.backgroundImage = `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, ${base} 5%, rgba(0,0,0,0) 78%), url("${url}")`;
+  el.style.backgroundSize = '100% 100%, 100% 100%, cover';
+  el.style.backgroundPosition = '0 0, 0 0, right center';
+  el.style.backgroundRepeat = 'no-repeat';
+}
 function paintMe() {
   if (!S.me) return;
   paintAvatar($('#me-avatar'), S.me);
@@ -522,13 +536,8 @@ function paintMe() {
   const meTag = tagHTML(S.me);
   if (meTag) name.insertAdjacentHTML('afterend', meTag);
   const card = $('#me-card');
-  if (S.me.sidebar_banner_url && !off) {
-    card.style.backgroundImage = `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, var(--panel-2) 5%, rgba(0,0,0,0) 78%), url("${S.me.sidebar_banner_url}")`;
-    card.style.backgroundSize = 'cover';
-    card.style.backgroundPosition = 'right center';
-  } else {
-    card.style.backgroundImage = '';
-  }
+  if (S.me.sidebar_banner_url && !off) paintSidebarBanner(card, S.me.sidebar_banner_url, 'var(--panel-2)');
+  else card.style.backgroundImage = '';
   card.classList.toggle('off', off);
   card.classList.toggle('has-banner', !!(S.me.sidebar_banner_url && !off));
   // One sub-line max: streaming wins, then custom status, otherwise the game.
@@ -559,11 +568,7 @@ function memberRowEl(m) {
   const hasBanner = !!(m.sidebar_banner_url && !off);
   div.className = 'member' + (off ? ' off' : '') + (hasBanner ? ' has-banner' : '');
   div.dataset.uid = m.id;
-  if (hasBanner) {
-    div.style.backgroundImage = `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${m.sidebar_banner_url}")`;
-    div.style.backgroundSize = 'cover';
-    div.style.backgroundPosition = 'right center';
-  }
+  if (hasBanner) paintSidebarBanner(div, m.sidebar_banner_url, 'var(--panel)');
   div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="mnames"><span class="mname-row"><span class="mname" style="${nameStyleFor(m)}">${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${tagHTML(m)}${!off && m.playing_game ? gameBadgeHTML(m.playing_game) : ''}</span>${streaming ? `<span class="mstatus ustream" title="Streaming ${esc(streaming)}">Streaming ${esc(streaming)}</span>` : ((!off && m.status_text) ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ((!off && m.playing_game) ? `<span class="mstatus ugame" title="Playing ${esc(m.playing_game)}">Playing ${esc(m.playing_game)}</span>` : ''))}</span>`;
   paintAvatar(div.querySelector('.avatar'), m);
   paintGameBadge(div.querySelector('.gbadge'));

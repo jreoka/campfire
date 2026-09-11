@@ -81,6 +81,7 @@
 
     <!-- channel sidebar -->
     <aside id="sidebar">
+      <button type="button" id="btn-nav-close" class="icon-btn" title="Close menu" aria-label="Close menu"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       <div id="sidebar-resizer" title="Drag to resize"></div>
       <div id="server-ui">
       <div id="srv-banner" class="hidden"></div>
@@ -131,15 +132,16 @@
         </div>
       </div>
       <div id="me-card">
-        <span id="me-avwrap" class="avwrap st-online"><span id="me-avatar" class="avatar">?</span><span id="me-dot" class="status-dot online"></span></span>
-        <span class="mnames"><span class="mname-row"><span id="me-name">—</span><span id="me-game-badge" class="gbadge" style="display:none"></span></span><span id="me-sub" class="mstatus" style="display:none"></span></span>
+        <button type="button" id="me-open" title="Your profile card">
+          <span id="me-avwrap" class="avwrap st-online"><span id="me-avatar" class="avatar">?</span><span id="me-dot" class="status-dot online"></span></span>
+          <span class="mnames"><span class="mname-row"><span id="me-name">—</span><span id="me-game-badge" class="gbadge" style="display:none"></span></span><span id="me-sub" class="mstatus" style="display:none"></span></span>
+        </button>
         <button id="me-mute" class="me-icobtn" title="Mute mic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/></svg></button>
         <button id="me-deafen" class="me-icobtn" title="Deafen"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg></button>
         <button id="btn-settings-me" class="me-icobtn" title="Settings"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       </div>
     </aside>
     </div>
-    <div id="sidebar-scrim"></div>
 
     <!-- chat -->
     <main id="chat">

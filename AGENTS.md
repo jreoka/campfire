@@ -228,6 +228,22 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   lapsed timer, the text is escaped, and the old body section
   (`statusEditHTML`/`uc-statusbox`) is gone while the bubble still renders in the
   avatar row.
+  `node scripts/test-mobile-nav-mebar.js` covers two surfaces in headless Chrome
+  (skips without Chrome): the phone nav is a whole page — it covers the viewport
+  edge to edge, the chat behind it is unreachable by hit test, it carries its own
+  ✕, and it is off-screen while closed (the scrim, its CSS and its handler are
+  gone) — and the me bar's click target is only the avatar + name: the
+  mute/deafen/settings buttons are outside it with real dead space between, a
+  hit test in that gap lands on the bar (and clicking it opens nothing), the
+  avatar/name opens the card, and only the target reads as clickable.
+  `node scripts/test-sidebar-banner-edge.js` covers the sidebar-banner ramp in
+  headless Chrome (skips without Chrome): the real `paintSidebarBanner` paints a
+  white banner at three device scale factors and the row's left edge must stay
+  dark while the picture is still visibly painted, plus the recipe assertions
+  (`no-repeat`, box-sized ramps) and that all three surfaces (me bar, member
+  rows, DM rows) go through the helper instead of re-inlining the old
+  cover/repeat style. The harness keeps a "vintage" row with the old recipe so
+  it proves it can still reproduce the light edge.
   `node scripts/test-presence-widget.js` covers the presence switcher that now
   lives on your own user card (offline; it runs the real `presenceWidgetHTML`,
   `statusLineHTML`, `presenceDurationSel` and `choosePresence` pulled out of
@@ -511,6 +527,18 @@ composer always keeps its slot (`--strip-h`, one text line, transparent, text
 fades) — hiding it resizes `#messages` and shoves the conversation up/down.
 `#messages` pays for that slot by giving up its bottom padding, and anything
 anchored to the composer top stacks `var(--strip-h)` on `var(--composer-h)`.
+Every sidebar banner (the me bar, member rows, DM rows) is painted through
+`paintSidebarBanner` in `servers.js` — never inline the gradient again. Those
+rows are fractional-width, and `background-size: cover` with the default
+`background-repeat: repeat` on a right-anchored picture leaves a sub-pixel
+tiling seam at the LEFT edge that lands on a whole device pixel at dpr 1: a
+light 1px line down the left of the slot. Keep the layers `no-repeat` and the
+two ramps at `100% 100%`. On mobile the server rail + chat list is a whole page
+(`body.nav-open`), not a drawer over the chat: it covers the viewport, has no
+scrim, and closes from its own ✕, a channel/DM row, or the Home/Friends/Stories
+nav rows — a server tap deliberately keeps it open so a channel can be picked.
+The me bar's only click target is `#me-open` (the avatar + name), which outlines
+itself on hover; the space around mute/deafen/settings is dead.
 The bottom-pin state (`#messages`/`#thread-replies` `dataset.atBottom`) flips
 only on real input (wheel/touch/drag/key) — never on a bare scroll event.
 Browsers fire those for their own reasons (reload scroll restore, layout

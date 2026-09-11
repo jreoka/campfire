@@ -535,9 +535,7 @@ function dmRowEl(t) {
   // same picture the member sidebar paints next to their name.
   if (av && av.sidebar_banner_url) {
     b.classList.add('has-banner');
-    b.style.backgroundImage = `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("${av.sidebar_banner_url}")`;
-    b.style.backgroundSize = 'cover';
-    b.style.backgroundPosition = 'right center';
+    paintSidebarBanner(b, av.sidebar_banner_url, 'var(--panel)');
   }
   b.onclick = () => selectDmThread(t.id);
   if (t.pinned) {
