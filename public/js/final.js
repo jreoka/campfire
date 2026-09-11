@@ -71,6 +71,66 @@ function poke() {
 }
 ['mousemove', 'keydown', 'click'].forEach((ev) => document.addEventListener(ev, poke, { passive: true }));
 
+// ---------- swipe-down-to-dismiss (mobile panels) ----------
+// Drag a full-screen mobile panel (the profile page, the me-bar card sheet)
+// downward and it follows the finger, then closes past the threshold or springs
+// back. Touch events, not pointer events: the panel's own body is a scroll
+// container, and with pointer events the browser treats a downward drag at the
+// top as an overscroll pan, cancels the pointer stream and the gesture never
+// lands (the same trap `.sv-stage`'s touch-action had). A non-passive touchmove
+// lets us preventDefault and take the drag ourselves — but only from the top of
+// the scroller, so normal scrolling still wins below it. The synthetic click
+// after a drag is swallowed, or the panel would also activate whatever row was
+// under the finger.
+function swipeDownToClose(panel, onClose, opts = {}) {
+  if (!panel) return;
+  const threshold = opts.threshold || 90;
+  const live = opts.live || 0.55;
+  const scroller = () => (opts.scroller ? opts.scroller() : panel);
+  const atTop = () => { const s = scroller(); return !s || s.scrollTop <= 0; };
+  let sx = 0, sy = 0, dy = 0, active = false, swallowUntil = 0;
+  panel.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || (opts.enabled && !opts.enabled())) { active = false; return; }
+    active = atTop();
+    const t = e.touches[0];
+    sx = t.clientX; sy = t.clientY; dy = 0;
+  }, { passive: true });
+  panel.addEventListener('touchmove', (e) => {
+    if (!active || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    const d = t.clientY - sy, dx = t.clientX - sx;
+    if (!atTop()) { active = false; dy = 0; panel.style.transform = ''; return; }
+    // Upward is the scroll's, sideways is nobody's: leave both alone.
+    if (d <= 0 || Math.abs(dx) > Math.abs(d) * 1.4) { dy = 0; panel.style.transform = ''; return; }
+    e.preventDefault();
+    dy = d;
+    panel.style.animation = 'none'; // take over from the entry animation
+    panel.style.transition = '';
+    panel.style.transform = 'translateY(' + Math.round(Math.min(d, 340) * live) + 'px)';
+  }, { passive: false });
+  const end = () => {
+    if (!active) return;
+    active = false;
+    const close = dy > threshold;
+    const dragged = dy > 8;
+    dy = 0;
+    panel.style.transform = '';
+    if (dragged) swallowUntil = Date.now() + 400;
+    // The inline animation override stays: clearing it here would restart the
+    // panel's entry animation on the spot. The panel's close function clears it
+    // so the next open still animates in.
+    if (close) { panel.style.transition = ''; onClose(); return; }
+    panel.style.transition = 'transform .2s ease-out';
+    setTimeout(() => { if (!active) panel.style.transition = ''; }, 220);
+  };
+  panel.addEventListener('touchend', end, { passive: true });
+  panel.addEventListener('touchcancel', end, { passive: true });
+  document.addEventListener('click', (e) => {
+    if (Date.now() < swallowUntil) { e.stopPropagation(); e.preventDefault(); }
+  }, true);
+}
+swipeDownToClose($('#profile-backdrop .profile'), () => closeProfileScreen(), { scroller: () => $('#pf-body') });
+swipeDownToClose($('#usercard'), () => closeUserCard(), { enabled: () => $('#usercard').classList.contains('sheet') });
 // ---------- global closers ----------
 // Was this click originally inside one of `sels`? composedPath() is captured
 // when the event is dispatched, so it keeps answering correctly even after a

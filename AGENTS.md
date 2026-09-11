@@ -394,10 +394,39 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   pointer stream, so the swipe never landed), a downward drag closes whether it
   starts on the picture or on a stage-covering tap zone, and that same drag must
   not step the story (the zones fire on any pointerup unless movement is
-  treated as a swipe). It also pins the rest of the gesture set: short and
+  treated as a swipe). The drag moves the WHOLE `#story-view` overlay — bars,
+  header (✕/sound/more) and footer travel with the picture 1:1 — and then it
+  carries on to `translateY(100%)` off the bottom before the viewer tears down
+  (the pending teardown holds the viewer instance, so a close+reopen mid-slide
+  can't close the new one). It also pins the rest of the gesture set: short and
   sideways drags neither close nor step (and spring back), plain taps still step
   forward/back, press-and-hold pauses and resumes without stepping, and a quick
   flick never pauses.
+  `node scripts/test-swipe-dismiss.js` covers swipe-down-to-dismiss for the
+  mobile panels (offline; runs the real `swipeDownToClose` sliced out of
+  `final.js` against the real `#profile-backdrop` markup and `styles.css` in
+  headless Chrome with real TouchEvents, skipping without Chrome): the profile
+  page and the me-bar `.sheet` card follow the finger and close past the
+  threshold (the class is only honoured while the card IS a sheet), a drag that
+  starts below the top of the scroller or travels upward is left to the scroller
+  (`touchmove` is not preventDefaulted), a short drag springs back, and the
+  synthetic click a drag produces is swallowed so the row under the finger never
+  also fires. Touch events, not pointer events, are the point: the panel body is
+  a scroll container, so a pointer drag at the top is an overscroll pan the
+  browser cancels. `closeProfileScreen`/`closeUserCard` must clear the inline
+  `transform`/`transition`/`animation` the drag leaves behind, or the next open
+  skips its entry animation.
+  `node scripts/test-touch-hold-hover.js` covers the "one row looks already
+  selected" bug when a long-press slides its sheet up under a finger that is
+  still down (offline; runs the real `suppressHoverFromTouch`/
+  `noteTouchStart`/`noteTouchMove` out of `actions.js` against a fake classList
+  and clock): nothing is suppressed for a menu that was not opened out of a
+  recent touch (`openCtx`/`openCtxSheet`/`openMsgSheet` all call it, so a
+  desktop right-click keeps its hover feedback), the class goes on for a
+  touch-opened menu and comes off on the next touch or a real move, and the
+  stylesheet neutralizes every `:hover` such a menu can paint under
+  `body.touch-hold` — the last check sweeps the sheet/ctx hover rules, so a new
+  row added without a guard fails the test instead of glowing.
   `node scripts/test-mobile-settings-sheet.js` covers the phone's settings
   master/detail and the me-bar card sheet (offline static checks plus headless
   Chrome at a phone and a desktop viewport, skipping without Chrome — note
@@ -603,7 +632,19 @@ and clears the popup's inline geometry, so `#usercard.sheet` owns it and
 `clampUserCard()` must keep bailing on a sheet); desktop keeps the
 bottom-anchored popup. `.sv-stage` must stay `touch-action:none` — the story
 viewer's swipe-down-to-close rides on raw pointer events, and `pan-y` let the
-browser claim the drag and cancel them. Settings is responsive in two shapes:
+browser claim the drag and cancel them — and that gesture moves `#story-view`
+itself (bars/head/foot travel with the picture, then the overlay slides off the
+bottom), never just the stage. A long-press opens its sheet/popup under a finger
+that is still down: `suppressHoverFromTouch()` (actions.js) puts `body.touch-hold`
+on for anything opened within 1.5s of a touch so the row under that finger does
+not paint its `:hover` background as if it were chosen, and every hover a
+sheet/ctx menu can paint needs its `body.touch-hold …:hover` override — a new
+row style without one is what test-touch-hold-hover.js fails on. Mobile panels
+dismiss with `swipeDownToClose()` (final.js): touch events, not pointer events,
+because the panel body is a scroll container and a pointer drag at the top is an
+overscroll pan the browser cancels; it only engages from the top of the scroller,
+and swallows the click the drag would otherwise land on the row underneath.
+Settings is responsive in two shapes:
 desktop keeps the side rail, a phone (`max-width:700px`) gets a menu of section
 rows (`.settings.menu`) and picking one shows that section alone
 (`.settings.section`) with `#settings-back` + `#settings-close-detail` in a

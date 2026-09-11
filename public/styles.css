@@ -867,6 +867,13 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .sheet-rows{display:flex;flex-direction:column;gap:2px}
 .sheet-row{display:flex;align-items:center;gap:.75rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:10px;padding:.75rem .65rem;font-size:.92rem;font-weight:650;cursor:pointer}
 .sheet-row:hover{background:var(--panel-3)}
+/* A long-press opens the sheet under a finger that is still down: the row beneath
+   it must not paint a "selected" background before anything is chosen (see
+   suppressHoverFromTouch). Cleared on the next touch / real move. */
+body.touch-hold .sheet-row:hover,
+body.touch-hold .sheet-reacts button:hover,
+body.touch-hold .ctx-item:hover{background:transparent}
+body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .sheet-row.danger{color:var(--danger-tx)}
 .sheet-row .ctx-ic{width:20px}
 .sheet-sep{height:1px;background:var(--line);margin:.3rem .45rem;opacity:.5}
@@ -1020,7 +1027,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .pf-name{font-size:1.22rem;font-weight:750;letter-spacing:-.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pf-sub{font-size:.85rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #profile-close{flex-shrink:0}
-.pf-body{padding:.75rem 1rem 1.1rem;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:.75rem}
+.pf-body{padding:.75rem 1rem 1.1rem;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:.75rem;overscroll-behavior:contain}
 .pf-status{display:flex;align-items:center;gap:.45rem;font-size:.85rem;font-weight:600;color:var(--muted)}
 .pf-statustext{color:var(--text);font-weight:500}
 .pf-playing{font-size:.86rem;color:var(--accent-hover);font-weight:650}

@@ -1129,7 +1129,17 @@ async function openUserCard(uid, x, y) {
     } catch (err) { toast('Failed: ' + prettyError(err.message)); }
   }));
 }
-function closeUserCard() { const c = $('#usercard'); c.classList.add('hidden'); c.classList.remove('sheet'); }
+// A swipe-down dismiss leaves an inline `transform` (and the `animation: none`
+// that let the drag take over the entry animation) on the panel — clear both so
+// the next open animates in and nothing starts offset.
+function closeUserCard() {
+  const c = $('#usercard');
+  c.classList.add('hidden');
+  c.classList.remove('sheet');
+  c.style.transform = '';
+  c.style.transition = '';
+  c.style.animation = '';
+}
 // ---------- server tag mini-panel ----------
 function closeTagCard() { $('#tagcard').classList.add('hidden'); }
 async function tagServerInfo(sid) {
@@ -1618,7 +1628,11 @@ function openProfileScreen(uid) {
   };
   bd.classList.remove('hidden');
 }
-function closeProfileScreen() { $('#profile-backdrop').classList.add('hidden'); }
+function closeProfileScreen() {
+  const p = document.querySelector('#profile-backdrop .profile');
+  $('#profile-backdrop').classList.add('hidden');
+  if (p) { p.style.transform = ''; p.style.transition = ''; p.style.animation = ''; }
+}
 $('#profile-close').onclick = closeProfileScreen;
 $('#profile-backdrop').addEventListener('click', (e) => { if (e.target.id === 'profile-backdrop') closeProfileScreen(); });
 

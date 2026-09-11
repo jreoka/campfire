@@ -22,7 +22,21 @@ function bumpFreq(e) {
 }
 let ctxEl = null;
 function closeCtx() { if (ctxEl) { ctxEl.remove(); ctxEl = null; } }
+// A long-press opens its sheet/menu while the finger is still down. Blink then
+// paints the :hover background of whatever row sits under that finger (and keeps
+// it sticky after the lift), so a row reads as pre-selected before anything was
+// chosen. Track when the last touch began and hold hover off for anything opened
+// out of it; the class clears on the next touch / real move, when a row under the
+// finger is honest feedback again. A mouse-opened menu (>1500ms since any touch)
+// is never affected.
+let lastTouchAt = 0;
+function suppressHoverFromTouch() {
+  if (Date.now() - lastTouchAt < 1500) document.body.classList.add('touch-hold');
+}
+function noteTouchStart() { lastTouchAt = Date.now(); document.body.classList.remove('touch-hold'); }
+function noteTouchMove() { document.body.classList.remove('touch-hold'); }
 function openCtx(x, y, items) {
+  suppressHoverFromTouch();
   closeCtx();
   const m = document.createElement('div');
   m.id = 'ctx-menu';
@@ -130,6 +144,7 @@ function closeMsgSheet(instant) {
 function openMsgSheet(mid) {
   const m = msgById(mid);
   if (!m) return;
+  suppressHoverFromTouch();
   closeCtx();
   closePicker();
   closeMsgSheet(true);
@@ -232,6 +247,7 @@ function openFolderSheet(fid) {
 }
 function openCtxSheet(items, head) {
   if (!items || !items.length) return;
+  suppressHoverFromTouch();
   closeCtx();
   closePicker();
   closeMsgSheet(true);
@@ -834,6 +850,7 @@ document.addEventListener('touchend', (e) => {
   if (holdMenu) { holdMenu = false; try { e.preventDefault(); } catch {} }
 }, { passive: false });
 document.addEventListener('touchstart', (e) => {
+  noteTouchStart();
   if (!e.target.closest || e.target.closest('input, textarea, select, a')) return;
   const t = e.target.closest('.msg,.chan,.member,.server-btn,.folder-btn,.vuser,[data-dmthread]');
   if (!t) return;
@@ -859,6 +876,14 @@ document.addEventListener('touchstart', (e) => {
 // touchmove only cancels a hold on a real move (finger jitter is normal)
 document.addEventListener('touchmove', (e) => {
   const t = e.touches && e.touches[0];
-  if (t && Math.hypot(t.clientX - holdX, t.clientY - holdY) > 12) { clearTimeout(holdT); holdT = null; }
+  if (t && Math.hypot(t.clientX - holdX, t.clientY - holdY) > 12) {
+    clearTimeout(holdT);
+    holdT = null;
+    noteTouchMove(); // the finger is exploring: hover is real feedback now
+  }
 }, { passive: true });
+// A real mouse move means we are back to a pointer that can hover (hybrid
+// devices) — touch→mouse compatibility events are MouseEvents, not pointer
+// events, so this cannot fire spuriously after a touch.
+document.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse') noteTouchMove(); }, { passive: true });
 

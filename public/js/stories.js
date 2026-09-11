@@ -682,10 +682,11 @@ function svTeardown() {
   try { $('#sv-vid').pause(); } catch {}
   $('#sv-vid').removeAttribute('src');
   $('#sv-img').removeAttribute('src');
-  // A half-finished swipe-down must not leave the stage offset for the next open.
-  const st = $('#sv-stage');
-  if (st) { st.style.transform = ''; st.style.transition = ''; }
+  // A half-finished swipe-down must not leave the overlay offset for the next
+  // open (the gesture moves the whole #story-view, not just the media).
   const root = $('#story-view');
+  root.style.transform = '';
+  root.style.transition = '';
   root.classList.add('hidden');
   document.body.classList.remove('story-open');
   const wasMuted = sv.muted;
@@ -2131,39 +2132,54 @@ function storyZoneEl(el, fn) {
 let svHoldT = 0;
 storyZoneEl($('#sv-next'), () => sv && svNext());
 storyZoneEl($('#sv-prev'), () => sv && svPrev());
-// Swipe down on the stage closes the viewer. The stage has nothing to scroll,
-// so touch-action:none (see .sv-stage) keeps the browser from claiming the drag
-// — under pan-y the pointer stream was cancelled and the swipe never landed.
-// The picture follows the finger, then closes past the threshold or springs back.
+// Swipe down anywhere on the media slides the WHOLE story view down — progress
+// bars, header (✕/sound/more) and footer travel with the picture, then the
+// overlay continues off the bottom of the screen and closes. The stage has
+// nothing to scroll, so touch-action:none (see .sv-stage) keeps the browser from
+// claiming the drag — under pan-y the pointer stream was cancelled and the swipe
+// never landed. Listeners stay on the stage so the reply input keeps its own
+// gestures.
 (function () {
+  const root = $('#story-view');
   const stage = $('#sv-stage');
-  const LIMIT = 90;
-  let sx = 0, sy = 0, dy = 0, active = false;
-  const clearDrag = () => { active = false; dy = 0; stage.style.transform = ''; stage.style.transition = ''; };
+  const CLOSE_PX = 110;   // dragged this far and it is a dismissal
+  const FLICK = 0.55;     // px/ms — a quick short flick closes too
+  let sx = 0, sy = 0, dy = 0, active = false, t0 = 0;
+  const clearDrag = () => { active = false; dy = 0; root.style.transform = ''; root.style.transition = ''; };
   stage.addEventListener('pointerdown', (e) => {
     if (e.button && e.button !== 0) return;
-    active = true; sx = e.clientX; sy = e.clientY; dy = 0;
-    stage.style.transition = '';
+    if (!sv) return;
+    active = true; sx = e.clientX; sy = e.clientY; dy = 0; t0 = Date.now();
+    root.style.transition = '';
   });
   stage.addEventListener('pointermove', (e) => {
     if (!active) return;
     const dx = e.clientX - sx;
     if (Math.abs(dx) > Math.abs(e.clientY - sy) * 1.5) return; // sideways: leave it to the zones
     dy = e.clientY - sy;
-    if (dy <= 0) { stage.style.transform = ''; return; }
-    stage.style.transform = 'translateY(' + Math.round(Math.min(dy, 240) * 0.6) + 'px)';
+    if (dy <= 0) { root.style.transform = ''; return; }
+    root.style.transform = 'translateY(' + Math.round(dy) + 'px)';
   });
   const end = (e) => {
     if (!active) return;
     const d = e.clientY - sy, dx = Math.abs(e.clientX - sx);
+    const v = d / Math.max(1, Date.now() - t0); // px/ms
     active = false;
-    const close = d > LIMIT && dx < 80;
     dy = 0;
-    if (close) { stage.style.transform = ''; svClose(); return; }
+    if (dx < 90 && (d > CLOSE_PX || (v > FLICK && d > 30))) {
+      // Let it keep going all the way off the bottom, then tear the viewer down.
+      // Hold on to this viewer: if it was closed and reopened while the slide was
+      // running, the stale timer must not close the new one.
+      const mine = sv;
+      root.style.transition = 'transform .2s ease-in';
+      root.style.transform = 'translateY(100%)';
+      setTimeout(() => { if (sv && sv === mine) svClose(); }, 210);
+      return;
+    }
     // Not far enough: spring back.
-    stage.style.transition = 'transform .18s ease-out';
-    stage.style.transform = '';
-    setTimeout(() => { if (!active) stage.style.transition = ''; }, 200);
+    root.style.transition = 'transform .2s ease-out';
+    root.style.transform = '';
+    setTimeout(() => { if (!active) root.style.transition = ''; }, 220);
   };
   stage.addEventListener('pointerup', end);
   stage.addEventListener('pointercancel', clearDrag);
