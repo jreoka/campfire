@@ -337,15 +337,18 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   members drawer, the full-page nav, settings/profile sheets), no module may
   decide layout on the raw 700px width query any more, and in headless Chrome
   over CDP (touch emulation is what makes `pointer:coarse` true) the shell at
-  852x393 / 667x375 / 915x412 must stay one column — nav page off-screen until
-  opened (then covering the chat, edge to edge), the members panel an off-screen
-  drawer (never a static column), chat full width, header buttons unclipped and
-  non-overlapping, every bottom sheet/modal/profile fitting the short viewport,
-  and the story composer's tool rail clearing the caption slot and the
-  Retake/Next bar. It also pins that the auth screen scrolls to its Log in
-  button in landscape (it used to sit below a 393px viewport with nothing able
-  to scroll) and that portrait + a short *desktop* window (fine pointer) keep
-  today's layouts. Skips without Chrome.
+  852x393 / 667x375 / 915x412 must be Discord's three-pane shape — the server
+  rail + channel sidebar are persistent columns on the left, the chat takes the
+  rest of the width beside them, the portrait full-page nav (`body.nav-open`) is
+  inert there (it must move nothing), and the chat ☰ / nav ✕ are hidden — with
+  the members panel an off-screen right drawer (never a static column), header
+  buttons unclipped and non-overlapping, every bottom sheet/modal/profile
+  fitting the short viewport, and the story composer's tool rail clearing the
+  caption slot and the Retake/Next bar. It also pins that the auth screen
+  scrolls to its Log in button in landscape (it used to sit below a 393px
+  viewport with nothing able to scroll) and that portrait keeps the full-page
+  nav (chat full width) while a short *desktop* window (fine pointer) keeps the
+  desktop shell. Skips without Chrome.
   `node scripts/test-viewonce.js` covers view-once messages against the same
 dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   one-replay lifecycle, and that unopened items never expire.
@@ -702,14 +705,23 @@ landscape onto the desktop three-pane shell (static rail + chat list + members
 column, the chat crushed into ~320px). Every mobile @media block in
 styles.css spells that condition out and every JS layout decision goes through
 `phoneLayout()` in `core.js` (which is the same condition in one place) — use
-those, and re-run `scripts/test-mobile-landscape.js`. On mobile the server rail
-+ chat list is a whole page
+those, and re-run `scripts/test-mobile-landscape.js`. In **portrait** the server
+rail + chat list is a whole page
 (`body.nav-open`), not a drawer over the chat: it covers the viewport, has no
 scrim, and closes from its own ✕, a channel/DM row, or the Friends/Stories nav
 rows — a server tap and the campfire Home button deliberately keep it open so a
 channel or conversation can be picked (`#btn-home` only swaps the chat list over
 to the home lists; closing it there dropped the reader into the DM that happened
-to be open behind the page).
+to be open behind the page). A phone held **sideways** is the exception that
+`test-mobile-landscape.js` protects: the short-touch condition still applies
+there, but a later `@media (max-height:560px) and (pointer:coarse)` block resets
+`#left{display:contents}` and
+`#left #sidebar{width:min(260px,38vw)!important;flex:0 0 auto!important}` (the
+mobile nav block's `flex:1` must be beaten), so the rail + channel sidebar become
+persistent columns with the chat beside them — Discord's landscape shape. The
+members panel stays a right drawer, and `#btn-menu` / `#btn-nav-close` are hidden
+because there is nothing left to overlay; `body.nav-open` is inert there. Never
+re-add the full-page nav to landscape, and never key this on width alone.
 The me bar's only click target is `#me-open` (the avatar + name), which outlines
 itself on hover; the space around mute/deafen/settings is dead, and it never
 shows your own active server tag (`paintMe` used to insert one — other people's

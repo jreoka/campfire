@@ -1784,6 +1784,26 @@ body{touch-action:manipulation}
   .icon-btn{display:inline-flex}
 }
 
+/* ---------- phone held sideways: Discord's three-pane shape ----------
+   A phone on its side is wide (850+) but short (~390). The portrait full-page
+   nav (a rail + chat-list page that covers the chat) makes no sense there: the
+   rail and the channel sidebar stay as persistent columns on the left and the
+   chat takes the rest, exactly like Discord. The members panel keeps the
+   drawer treatment from the blocks above and is reached from the header
+   members button. The overlay's ✕ and the chat's ☰ are hidden because the
+   sidebar is always on screen. */
+@media (max-height:560px) and (pointer:coarse){
+  #left{display:contents}
+  #left #sidebar{width:min(260px,38vw)!important;flex:0 0 auto!important;min-width:0;border-left:0;border-right:1px solid var(--line-soft)}
+  #btn-nav-close{display:none!important}
+  #btn-menu{display:none!important}
+  /* The sidebar always shows the in-call bar, so the chat's floating voice
+     pill would be a second copy of the same controls. */
+  #voice-fab{display:none!important}
+  #server-header{padding-right:.9rem}
+  .home-head{padding-right:.9rem}
+}
+
 /* ---------- media settings (call devices + tests) ---------- */
 .media-preview{background:#000;border-radius:12px;overflow:hidden;aspect-ratio:16/9;max-width:420px;margin-top:.45rem}
 .media-preview video{width:100%;height:100%;object-fit:cover;display:block;background:#000}

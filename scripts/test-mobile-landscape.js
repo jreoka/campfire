@@ -175,8 +175,9 @@ window.__dump = () => {
     vw: innerWidth, vh: innerHeight,
     sw: document.documentElement.scrollWidth,
     phone: matchMedia(${JSON.stringify(PHONE_MQ)}).matches,
-    leftPos: style('#left', 'position'), membersPos: style('#members', 'position'),
-    left: box('#left'), chat: box('#chat'), members: box('#members'),
+    leftPos: style('#left', 'position'), leftDisplay: style('#left', 'display'), membersPos: style('#members', 'position'),
+    left: box('#left'), rail: box('#rail'), sidebar: box('#sidebar'), chat: box('#chat'), members: box('#members'),
+    menuVisible: (() => { const b = $$('#btn-menu'); return !!(b && b.offsetParent !== null); })(),
     membersBtnVisible: (() => { const b = $$('#btn-members'); return !!(b && b.offsetParent !== null); })(),
     navCloseVisible: (() => { const b = $$('#btn-nav-close'); return !!(b && b.offsetWidth); })(),
     head: box('#chat-header'), chan: box('#chan-name'), caption: box('#sc-caption'),
@@ -268,7 +269,17 @@ function staticChecks() {
   check(/@media \(max-width:900px\),\(max-height:560px\) and \(pointer:coarse\)\{\s*#members\{display:flex;flex-direction:column;position:fixed/.test(css),
     'the members panel is a drawer in landscape, never a static column');
   check(/@media \(max-width:700px\),\(max-height:560px\) and \(pointer:coarse\)\{\s*\/\* The rail \+ chat list is a whole page/.test(css),
-    'the rail + chat list is the full-page nav in landscape');
+    'the rail + chat list is the full-page nav in portrait');
+  // Landscape is different: the rail + sidebar are persistent columns (the
+  // Discord shape), so the portrait full-page nav must be neutralised there.
+  check(/@media \(max-height:560px\) and \(pointer:coarse\)\{\s*#left\{display:contents\}/.test(css),
+    'landscape restores the rail + sidebar as columns');
+  check(/#left #sidebar\{width:min\(260px,38vw\)!important;flex:0 0 auto!important/.test(css),
+    'the landscape sidebar is a fixed-width column, not the nav page\'s flex:1');
+  check(/#btn-menu\{display:none!important\}/.test(css) && /#btn-nav-close\{display:none!important\}/.test(css),
+    'landscape hides the chat ☰ and the nav ✕ (the sidebar is always visible)');
+  check(/#voice-fab\{display:none!important\}/.test(css),
+    'landscape hides the duplicate chat voice pill (the sidebar voice bar is on screen)');
   check(/@media \(max-width:820px\),\(max-height:560px\) and \(pointer:coarse\)\{#profile-backdrop/.test(css),
     'the profile screen goes full-screen in landscape');
   check(core.includes("const PHONE_MQ = '(max-width:700px), (max-height:560px) and (pointer:coarse)'") && /const phoneLayout = \(\) =>/.test(core),
@@ -285,12 +296,26 @@ function shellChecks(tag, d, expect) {
   const { vw, vh } = d;
   check(d.phone === true, `${tag}: the phone layout is active`);
   check(d.sw <= vw + 1, `${tag}: nothing overflows the viewport horizontally`, { sw: d.sw, vw });
-  check(d.leftPos === 'fixed' && d.membersPos === 'fixed', `${tag}: the rail/members are overlays, not columns`, { leftPos: d.leftPos, membersPos: d.membersPos });
-  check(expect.navOpen ? d.left.l === 0 && d.left.r === vw : d.left.r <= 0, `${tag}: the nav page is ${expect.navOpen ? 'edge to edge' : 'off-screen while closed'}`, d.left);
-  check(d.left.w === vw && d.left.h === vh, `${tag}: it covers the whole viewport`, d.left);
+  check(d.membersPos === 'fixed', `${tag}: the members panel is an overlay, not a column`, { membersPos: d.membersPos });
+  if (expect.columns) {
+    // Landscape (Discord shape): rail + channel sidebar are persistent
+    // columns on the left and the chat takes the rest.
+    check(d.leftDisplay === 'contents', `${tag}: the rail + sidebar are columns, never the nav page`, { display: d.leftDisplay });
+    check(d.rail && d.rail.l <= 1 && d.rail.w >= 50 && d.rail.h > vh - 60, `${tag}: the server rail is a full-height column`, d.rail);
+    check(!!d.sidebar && d.sidebar.l >= d.rail.r - 1 && Math.abs(d.sidebar.w - Math.min(260, 0.38 * vw)) <= 2,
+      `${tag}: the channel sidebar sits beside the rail at its column width`, d.sidebar);
+    check(!!d.chat && d.chat.l >= d.sidebar.r - 1 && d.chat.r >= vw - 1, `${tag}: the chat fills the rest of the width`, d.chat);
+    check(d.chat.w < vw, `${tag}: the chat no longer owns the full width`, { chatW: d.chat.w, vw });
+    check(d.navCloseVisible === false, `${tag}: the nav page ✕ is gone (the sidebar is always visible)`);
+    check(d.menuVisible === false, `${tag}: the chat ☰ is gone (nothing left to overlay)`);
+  } else {
+    check(d.leftPos === 'fixed' && d.leftDisplay !== 'contents', `${tag}: the rail/members are overlays, not columns`, { leftPos: d.leftPos, display: d.leftDisplay });
+    check(expect.navOpen ? d.left.l === 0 && d.left.r === vw : d.left.r <= 0, `${tag}: the nav page is ${expect.navOpen ? 'edge to edge' : 'off-screen while closed'}`, d.left);
+    check(d.left.w === vw && d.left.h === vh, `${tag}: it covers the whole viewport`, d.left);
+    check(d.chat.l === 0 && d.chat.w === vw, `${tag}: the chat keeps the full width`, d.chat);
+  }
   check(expect.membersOpen ? d.members.r === vw && d.members.w < vw : d.members.l >= vw,
     `${tag}: the members drawer is ${expect.membersOpen ? 'in from the right edge' : 'off-screen while closed'}`, d.members);
-  check(d.chat.l === 0 && d.chat.w === vw, `${tag}: the chat keeps the full width`, d.chat);
   check(d.membersBtnVisible === true, `${tag}: the members button is offered`);
   check(d.composer && d.composer.b <= vh + 1 && d.composer.t > 0, `${tag}: the composer sits on the bottom edge`, d.composer);
   check(d.msgs && d.msgs.h >= 40, `${tag}: the message list keeps a usable height`, d.msgs);
@@ -306,29 +331,34 @@ function headerChecks(tag, d) {
   }
   check(!clash, `${tag}: no two header buttons overlap`, clash);
   check(d.chan && !d.btns.some((b) => overlaps(b, d.chan)), `${tag}: the channel name is not buried under a button`);
-  check(d.head.l === 0 && d.head.r <= vw + 1, `${tag}: the header spans the viewport`, d.head);
+  check(d.head && d.head.l === d.chat.l && d.head.r <= vw + 1, `${tag}: the header spans the chat column`, d.head);
 }
 
 async function main() {
   staticChecks();
 
   await withChrome(async ({ device, state, dump, auth }) => {
-    console.log('\n[2] landscape: rotate sideways and the shell stays one column');
+    console.log('\n[2] landscape: the rail + sidebar are columns, the chat takes the rest');
     for (const [w, h] of [[852, 393], [667, 375], [915, 412]]) {
+      const tag = `${w}x${h}`;
       await device(w, h);
       await state({});
       const closed = await dump();
-      shellChecks(`${w}x${h}`, closed, { navOpen: false, membersOpen: false });
-      headerChecks(`${w}x${h}`, closed);
+      shellChecks(tag, closed, { columns: true, membersOpen: false });
+      headerChecks(tag, closed);
+      check(closed.centerOwner !== 'left' && closed.centerOwner !== 'members', `${tag}: the middle of the screen is the chat, not an open panel`, { owner: closed.centerOwner });
+      // The portrait nav page is inert in landscape: flipping body.nav-open must
+      // move nothing (the sidebar is already on screen).
+      const before = JSON.stringify({ rail: closed.rail, sidebar: closed.sidebar, chat: closed.chat });
       await state({ nav: true });
       const nav = await dump();
-      shellChecks(`${w}x${h} nav-open`, nav, { navOpen: true, membersOpen: false });
-      check(nav.centerInLeft === true && nav.centerOwner === 'left', `${w}x${h}: the open nav page covers the chat (chat unreachable)`, { owner: nav.centerOwner });
-      check(nav.navCloseVisible === true, `${w}x${h}: the nav page carries its own close button`);
+      shellChecks(`${tag} nav-open`, nav, { columns: true, membersOpen: false });
+      check(JSON.stringify({ rail: nav.rail, sidebar: nav.sidebar, chat: nav.chat }) === before,
+        `${tag}: the portrait nav-open flag moves nothing in landscape`, { chat: nav.chat });
       await state({ members: true });
       const members = await dump();
-      shellChecks(`${w}x${h} members-open`, members, { navOpen: false, membersOpen: true });
-      check(members.centerInMembers === true, `${w}x${h}: the members drawer is hit-testable where it sits`, members.centerOwner);
+      shellChecks(`${tag} members-open`, members, { columns: true, membersOpen: true });
+      check(members.centerInMembers === true, `${tag}: the members drawer is hit-testable where it sits`, members.centerOwner);
     }
 
     console.log('\n[3] landscape: the overlays that used to collide still fit');
@@ -393,7 +423,7 @@ async function main() {
     await device(390, 844);
     await state({});
     const port = await dump();
-    shellChecks('390x844', port, { navOpen: false, membersOpen: false });
+    shellChecks('390x844', port, { columns: false, navOpen: false, membersOpen: false });
     headerChecks('390x844', port);
     await device(1200, 900, { touch: false });
     await state({});
