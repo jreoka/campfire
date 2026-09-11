@@ -521,13 +521,6 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .dmrow .avwrap{position:relative;width:28px;height:28px;flex-shrink:0}
 .member .avwrap .avatar,.dmrow .avwrap .avatar{width:100%;height:100%;font-size:.75rem}
 .member .avwrap .status-dot,.dmrow .avwrap .status-dot{position:absolute;bottom:-3px;right:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2.5px var(--panel);z-index:2}
-#status-pop{position:fixed;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:190px;z-index:130;padding:.35rem}
-#status-sub{position:fixed;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:210px;z-index:131;padding:.35rem}
-.stat-subhead{font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);padding:.35rem .65rem .2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.stat-foot{font-size:.74rem;color:var(--faint);padding:.35rem .65rem .2rem;border-top:1px solid var(--line-soft);margin-top:.25rem}
-.mention-item .chev{margin-left:auto;color:var(--faint);font-weight:800;font-size:1rem;line-height:1}
-.mention-item .cnt{color:var(--faint);font-size:.76rem;font-weight:600;white-space:nowrap}
-.mention-item .stat-check{margin-left:auto;color:var(--green);font-weight:800}
 .edit-box textarea{width:100%;min-height:64px;background:var(--inset);border:1px solid var(--accent);color:var(--text);border-radius:10px;padding:.55rem .65rem;font-size:.9rem;outline:none;resize:vertical}
 .edit-box .row{margin-top:.35rem}
 .edit-atts{display:flex;flex-direction:column;gap:.35rem;margin:.5rem 0}
@@ -955,6 +948,13 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .uc-bubble-x{position:absolute;top:-.4rem;right:-.3rem;width:20px;height:20px;padding:0;border:0;border-radius:50%;background:var(--panel-4);color:var(--muted);font:inherit;font-size:.9rem;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
 .uc-bubble-x:hover{background:var(--danger-bg);color:var(--danger-tx)}
 .uc-bubble-exp{font-size:.7rem;color:var(--faint);margin-top:.2rem}
+/* Presence switcher on your own card — the avatar menu's replacement. Two
+   columns of state chips (the active one is the filled accent pill), then the
+   "back to Online" timer row, which only exists while a state is set. */
+.uc-presence .preseg{display:grid;grid-template-columns:1fr 1fr;gap:.35rem;margin-top:.25rem}
+.uc-presence .mini{padding:.32rem .6rem;gap:.35rem;min-width:0}
+.uc-presence .status-dot{width:8px;height:8px}
+.uc-preseg-note{font-size:.7rem;color:var(--faint);margin-top:.3rem}
 .exp-row{display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.25rem}
 .uc-gaming{margin-top:.6rem}
 .ugame-title{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin-bottom:.35rem}
@@ -1977,14 +1977,14 @@ body.story-open{overflow:hidden}
 @keyframes cf-rise-x{from{opacity:0;transform:translate(-50%,6px)}to{opacity:1;transform:translate(-50%,0)}}
 .modal,.settings,.profile{animation:cf-rise .16s ease-out}
 #modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#profile-backdrop,#lightbox{animation:cf-fade .15s ease-out}
-#ctx-menu,#folder-menu,#status-pop,#status-sub,#picker,#usercard,#mention-pop,#emoji-pop,#chan-pop,#composer-more{animation:cf-pop-in .13s ease-out}
+#ctx-menu,#folder-menu,#picker,#usercard,#mention-pop,#emoji-pop,#chan-pop,#composer-more{animation:cf-pop-in .13s ease-out}
 #lightbox img{animation:cf-pop-in .18s ease-out}
 #toast,#jump-present{animation:cf-rise-x .16s ease-out}
 .auth-card{animation:cf-rise .2s ease-out}
 #thread-panel,#find-panel{animation:cf-rise .16s ease-out}
 .folder-open{animation:cf-fade .14s ease-out}
 @media (prefers-reduced-motion:reduce){
-  .modal,.settings,.profile,#modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#profile-backdrop,#lightbox,#ctx-menu,#folder-menu,#status-pop,#status-sub,#picker,#usercard,#mention-pop,#emoji-pop,#chan-pop,#composer-more,#lightbox img,#toast,#jump-present,.auth-card,#thread-panel,#find-panel,.folder-open{animation:none}
+  .modal,.settings,.profile,#modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#profile-backdrop,#lightbox,#ctx-menu,#folder-menu,#picker,#usercard,#mention-pop,#emoji-pop,#chan-pop,#composer-more,#lightbox img,#toast,#jump-present,.auth-card,#thread-panel,#find-panel,.folder-open{animation:none}
   .msg-actions,.reaction,.send-btn svg{transition:none}
   .rc-old,.rc-new{animation:none}
   .reaction:active,.dm-close:active{transform:none}

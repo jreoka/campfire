@@ -416,14 +416,14 @@ function renderDecoPicker() {
   if (camp.length) { grid.appendChild(lab('Camping')); camp.forEach((d) => grid.appendChild(mk(d.id, d.name))); }
   if (other.length) { grid.appendChild(lab('More')); other.forEach((d) => grid.appendChild(mk(d.id, d.name))); }
 }
-// Pending timed-presence note (status lives in the avatar menu;
-// saving here never touches it).
+// Pending timed-presence note (the status switcher lives on your own user
+// card, next to the avatar; saving here never touches it).
 function updatePresenceNote() {
   const el = $('#set-presence-note');
   if (!el) return;
   const ts = +((S.me || {}).presence_expires_at || 0);
   el.textContent = (ts > Date.now() && (S.me || {}).status !== 'online')
-    ? `Returns to Online ${fmtCountdown(ts)} — changing status via your avatar clears the timer.`
+    ? `Returns to Online ${fmtCountdown(ts)} — changing status from your user card clears the timer.`
     : '';
 }
 function updateBioCount() { const b = $('#set-bio'); if (b) $('#set-bio-count').textContent = `${b.value.length} / 300`; }

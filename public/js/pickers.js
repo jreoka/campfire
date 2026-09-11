@@ -1015,7 +1015,6 @@ async function openUserCard(uid, x, y) {
       <div class="uc-actions" style="margin-top:0">${myPeer && myPeer.sharing ? '<button class="btn small primary" id="uc-watch">Watch stream</button>' : ''}${canVoiceMod ? `<button class="btn small${peerMuted ? '' : ' danger'}" id="uc-vmute">${peerMuted ? 'Unmute' : 'Mute'}</button><button class="btn small danger" id="uc-vdrop">Disconnect</button>` : ''}</div>` : '';
   const st = statusOf(uid);
   const streaming = !isOff(st) && (u.streaming_game || null);
-  const stLabel = streaming ? 'Streaming' : ({ online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' }[st] || 'Offline');
   const ban = u.banner_url || u.sidebar_banner_url;
   card.dataset.uid = uid;
   card.style.background = cardBgFor(u);
@@ -1026,7 +1025,8 @@ async function openUserCard(uid, x, y) {
       <div class="uc-name"><span style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u)}</div>
       <div class="uc-sub">@${esc(u.username)}${u.role === 'owner' ? ' · server owner' : ''}</div>
       ${isSysAdmin(u) || isEarlyUser(u) ? `<div class="uc-badges">${isSysAdmin(u) ? '<span class="sysadmin-badge">System admin</span>' : ''}${isEarlyUser(u) ? '<span class="early-badge">Early user</span>' : ''}</div>` : ''}
-      <div class="uc-status"><span class="status-dot ${dotOf(st, streaming)}"></span><span>${stLabel}</span></div>
+      <div class="uc-status" id="uc-statusline">${statusLineHTML(uid, u)}</div>
+      ${uid === S.me.id ? presenceWidgetHTML() : ''}
       ${streaming ? `<div class="uc-statustext ustream"><span class="vlive">LIVE</span><span>Streaming ${esc(streaming)}</span></div>` : ''}
       ${u.playing_game ? `<div class="uc-statustext ugame">${gameBadgeHTML(u.playing_game)}<span>Playing ${esc(u.playing_game)}</span></div>` : ''}
       ${u.bio ? `<div class="uc-bio">${renderRich(u.bio)}</div>` : ''}
@@ -1041,6 +1041,7 @@ async function openUserCard(uid, x, y) {
   paintGameBadge(card.querySelector('.gbadge'));
   try { paintUserCardStory(card, u); } catch {}
   wireStatusBubble(card);
+  wirePresenceWidget(card);
   loadUserGaming($('#uc-gaming'), u.username, { compact: true });
   card.style.bottom = ''; card.style.maxHeight = ''; card.style.overflowY = '';
   card.classList.remove('hidden');
@@ -1347,6 +1348,74 @@ function wireStatusBubble(card) {
   if (se) se.onclick = () => openStatusEditor();
   const sc = card && card.querySelector('#uc-status-clear');
   if (sc) sc.onclick = () => clearMyStatus();
+}
+// ---------- presence switcher (your own card) ----------
+// The states used to live in a menu hanging off the avatar. They live here now,
+// one tap each, with the timed "back to Online" one more tap away — so the
+// avatar can just open the card like every other avatar does.
+const STATUS_TEXT = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' };
+const PRESENCE_STATES = [['online', 'Online'], ['away', 'Away'], ['dnd', 'Do not disturb'], ['invisible', 'Invisible']];
+// How long away/dnd/invisible lasts before lapsing back to Online.
+const PRESENCE_DURATIONS = [
+  { label: '15m', ms: 15 * 60e3 },
+  { label: '1h', ms: 3600e3 },
+  { label: '4h', ms: 4 * 3600e3 },
+  { label: '8h', ms: 8 * 3600e3 },
+  { label: '24h', ms: 24 * 3600e3 },
+  { label: '3d', ms: 3 * 864e5 },
+  { label: 'Never', ms: null },
+];
+function statusLineHTML(uid, u) {
+  const st = statusOf(uid);
+  const streaming = !isOff(st) && (u.streaming_game || null);
+  const label = streaming ? 'Streaming' : (STATUS_TEXT[st] || 'Offline');
+  return `<span class="status-dot ${dotOf(st, streaming)}"></span><span>${label}</span>`;
+}
+// Index of the pending duration nearest the live timer (so the chip stays lit
+// on a reopen), else the last one — "Never".
+function presenceDurationSel(cur, exp) {
+  if (cur === 'online' || !exp) return PRESENCE_DURATIONS.length - 1;
+  let best = -1, bd = Infinity;
+  PRESENCE_DURATIONS.forEach((p, i) => { if (p.ms) { const d = Math.abs((Date.now() + p.ms) - exp); if (d < bd) { bd = d; best = i; } } });
+  return (best >= 0 && bd < 5 * 60e3) ? best : PRESENCE_DURATIONS.length - 1;
+}
+function presenceWidgetHTML() {
+  if (!S.me) return '';
+  const cur = S.me.status || 'online';
+  const exp = presenceExpiry();
+  const chips = PRESENCE_STATES.map(([id, label]) =>
+    `<button type="button" class="mini${cur === id ? ' on' : ''}" data-presence="${id}" aria-pressed="${cur === id}"><span class="status-dot ${id}"></span>${label}</button>`).join('');
+  const timer = cur !== 'online' ? `
+      <div class="uc-sec-label">Back to Online</div>
+      <div class="exp-row" id="uc-presence-dur">${PRESENCE_DURATIONS.map((p, i) => `<button type="button" class="mini${i === presenceDurationSel(cur, exp) ? ' on' : ''}" data-presence-ms="${p.ms === null ? 'never' : p.ms}">${p.label}</button>`).join('')}</div>
+      ${exp ? `<div class="uc-preseg-note">Clears ${fmtCountdown(exp)}</div>` : ''}` : '';
+  return `<div class="uc-presence" id="uc-presence"><div class="uc-sec-label">Set status</div><div class="preseg">${chips}</div>${timer}</div>`;
+}
+function wirePresenceWidget(card) {
+  const box = card && card.querySelector('#uc-presence');
+  if (!box) return;
+  box.querySelectorAll('[data-presence]').forEach((b) => (b.onclick = () => choosePresence(b.dataset.presence)));
+  box.querySelectorAll('[data-presence-ms]').forEach((b) => (b.onclick = () => {
+    const raw = b.dataset.presenceMs;
+    choosePresence((S.me || {}).status || 'online', raw === 'never' ? null : +raw);
+  }));
+}
+// State chips keep whatever timer is already counting; picking Online drops it.
+async function choosePresence(s, ms) {
+  const cur = (S.me || {}).status || 'online';
+  if (ms === undefined && s === cur) return; // nothing changed: never clear a live timer
+  const exp = ms === undefined ? (presenceExpiry() || null) : ms;
+  try { await setStatus(s, s === 'online' ? null : exp); } catch {}
+}
+function refreshOwnPresence() {
+  // Repaint the dot/label and the switcher in place: the open card must not
+  // move, rescale, or lose its scroll position.
+  const card = $('#usercard');
+  if (!card || card.classList.contains('hidden') || card.dataset.uid !== S.me.id) return;
+  const line = card.querySelector('#uc-statusline');
+  if (line) line.innerHTML = statusLineHTML(S.me.id, S.me);
+  const box = card.querySelector('#uc-presence');
+  if (box) { box.outerHTML = presenceWidgetHTML(); wirePresenceWidget(card); }
 }
 function refreshOwnStatusBubble() {
   // Swap just the bubble so the open card never moves, rescales, or loses

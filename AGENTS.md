@@ -228,6 +228,17 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   lapsed timer, the text is escaped, and the old body section
   (`statusEditHTML`/`uc-statusbox`) is gone while the bubble still renders in the
   avatar row.
+  `node scripts/test-presence-widget.js` covers the presence switcher that now
+  lives on your own user card (offline; it runs the real `presenceWidgetHTML`,
+  `statusLineHTML`, `presenceDurationSel` and `choosePresence` pulled out of
+  `pickers.js`): all four states get a chip and only the active one is lit, the
+  "Back to Online" timer row appears only while a state is set with the nearest
+  duration chip lit (and no timer row while online), tapping the state you are
+  already in never clears a live timer, switching state carries the pending
+  timer over, Online drops it and Never keeps the state, the chips are wired to
+  those semantics, the card repaints in place, and the avatar-menu code and CSS
+  are gone (`#status-pop`, `openStatusMenu`, the `#me-avatar` click and the
+  menu's `.stat-check`/`.stat-foot` rules).
   `node scripts/test-pin-badge.js` covers the pin button's badge offline (it
   runs the real helpers pulled out of `pins.js` against stub globals): a pin is
   "new" until this account opens the panel in that conversation, pinning
