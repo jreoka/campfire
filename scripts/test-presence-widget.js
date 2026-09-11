@@ -102,13 +102,25 @@ window.S = { me: { id: 'me', status: 'online' } };
 window.statusOf = () => S.me.status || 'online';
 window.isOff = (st) => st === 'offline' || st === 'invisible';
 window.dotOf = (st, t) => (t && !isOff(st)) ? 'streaming' : (st === 'invisible' ? 'offline' : st);
-window.presenceExpiry = () => 0;
-window.setStatus = async (s) => { S.me.status = s; };
+window.$ = (s) => document.querySelector(s);
+window.presenceExpiry = () => +((S.me && S.me.presence_expires_at) || 0);
 window.clampUserCard = () => {};
+// Mirror the server's PATCH: an expiry has to be a future epoch or it is a 400
+// (bad_expiry), which the real setStatus swallows.
+window.__sent = [];
+window.__badExpiry = null;
+window.setStatus = async (s, exp) => {
+  const abs = s === 'online' ? null : (exp ?? null);
+  window.__sent.push([s, abs]);
+  if (abs !== null && !(abs > Date.now())) { window.__badExpiry = abs; return; }
+  S.me = { ...S.me, status: s, presence_expires_at: abs };
+  try { refreshOwnPresence(); } catch (e) { window.__refreshErr = String(e); }
+};
 ${escSrc}
 ${closer}
 ${codeSrc}
 const card = document.getElementById('usercard');
+card.dataset.uid = 'me';
 document.getElementById('presence-slot').outerHTML = presenceWidgetHTML();
 wirePresenceWidget(card);
 let wouldClose = false;
@@ -128,7 +140,15 @@ out.pickTime = { wouldClose, open: presenceMenu.open, cascade: presenceMenu.casc
 wouldClose = false; document.getElementById('outside').click();
 out.realOutside = { wouldClose };
 } catch (e) { out.err = String(e && e.stack || e); }
-setTimeout(() => { document.title = JSON.stringify(out); }, 80);
+setTimeout(() => {
+  const note = document.querySelector('.uc-preseg-note');
+  out.pickTime.note = note ? note.textContent : null;
+  out.pickTime.label = (document.querySelector('#presence-toggle .plabel') || {}).textContent || null;
+  out.pickTime.sent = window.__sent;
+  out.pickTime.badExpiry = window.__badExpiry;
+  out.pickTime.refreshErr = window.__refreshErr || null;
+  document.title = JSON.stringify(out);
+}, 80);
 </script></body></html>`;
 }
 async function main() {
@@ -221,9 +241,11 @@ async function main() {
   statusCalls = [];
   setMe('away', pending);
   setMenu(true, 'away');
+  const tBefore = Date.now();
   f.timeRows[1].onclick(); // For 1 Hour
   await null;
-  check(statusCalls.length === 1 && statusCalls[0][1] === 3600e3, 'a timer row sends its own span', statusCalls);
+  check(statusCalls.length === 1 && statusCalls[0][1] > tBefore, 'a timer row sends a future epoch, not the raw span', statusCalls);
+  check(Math.abs(statusCalls[0][1] - (tBefore + 3600e3)) < 5000, 'and it is exactly the span from now (the server rejects anything else)', statusCalls);
   check(getPresenceMenu().open === false && getPresenceMenu().cascade === null, 'picking a span is the end of the interaction — menu collapsed');
   check(wirePresenceWidget({ querySelector: () => null }) === undefined, 'no card element → a quiet no-op');
 
@@ -272,6 +294,12 @@ async function main() {
         check(out.pickAway.wouldClose === false && out.pickAway.cascade === 'away' && out.pickAway.status === 'away', 'picking a state cascades it and leaves the card open', out.pickAway);
         check(out.pickTime.wouldClose === false && out.pickTime.open === false && out.pickTime.cascade === null, 'picking a span collapses the menu', out.pickTime);
         check(out.pickTime.listLeft === false && out.pickTime.cardThere === true, 'and the card stays open, just without the open menu', out.pickTime);
+        const sent = out.pickTime.sent || [];
+        const lastSent = sent[sent.length - 1] || [];
+        check(sent[0] && sent[0][1] === null && lastSent[0] === 'away' && lastSent[1] > Date.now(), 'the span goes out as a future epoch, never the raw span', sent);
+        check(out.pickTime.badExpiry === null, 'so the server-shaped expiry check accepts it (a raw span 400s)', { badExpiry: out.pickTime.badExpiry });
+        check(out.pickTime.note && /^Until /.test(out.pickTime.note), 'and the card shows the Until note under the state', { note: out.pickTime.note, label: out.pickTime.label });
+        check(out.pickTime.label === 'Away', 'under the state that was picked', out.pickTime.label);
         check(out.realOutside.wouldClose === true, 'a click genuinely outside still closes the card', out.realOutside);
       }
     } finally {
@@ -290,9 +318,10 @@ async function main() {
   wirePresenceWidget(f2.card);
   setMe('online'); setMenu(true, 'away');
   statusCalls = [];
+  const t0b = Date.now();
   f2.timeRows[1].onclick(); // For 1 Hour, while the state has lapsed to Online
   await null;
-  check(statusCalls.length === 1 && statusCalls[0][0] === 'away' && statusCalls[0][1] === 3600e3, 'picking a timer mid-lapse still applies Away + the span', statusCalls);
+  check(statusCalls.length === 1 && statusCalls[0][0] === 'away' && Math.abs(statusCalls[0][1] - (t0b + 3600e3)) < 5000, 'picking a timer mid-lapse still applies Away + the span', statusCalls);
 
   console.log('\n[11] activity reverts only the idle auto-away');
   // The other half: poke() runs on every mousemove/keydown/click, and its old

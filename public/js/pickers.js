@@ -1459,11 +1459,16 @@ function wirePresenceWidget(card) {
     // lapsed, and setStatus drops the timer for Online picks — the click did
     // nothing at all.
     const state = b.dataset.presenceState || (S.me || {}).status || 'online';
+    // `data-presence-ms` is a SPAN ("900000" = 15 minutes) while the setter wants
+    // an absolute expiry. Posting the span raw sent an epoch-1970 timestamp, the
+    // server answered 400 bad_expiry, and setStatus swallows that — so the state
+    // stuck but the timer and its "Until …" note never appeared. Convert here.
+    const ms = raw === 'never' ? null : Date.now() + Number(raw);
     // A picked span is the end of the interaction: collapse the menu back to the
     // status readout (the user card itself stays open).
     presenceMenu = { open: false, cascade: null };
     renderPresenceWidget(card);
-    choosePresence(state, raw === 'never' ? null : +raw);
+    choosePresence(state, ms);
   }));
 }
 // State picks keep whatever timer is already counting; picking Online drops it.

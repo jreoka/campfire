@@ -255,7 +255,9 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   (with the live timer's nearest step marked and Forever when there is none, plus
   the "Until 3:55 PM" wall-clock note — `fmtUntil`, not a countdown), picking a
   span collapses the menu back to the readout while the card stays open, each row
-  is wired to those semantics (a timer row applies the state it hangs off rather
+  is wired to those semantics (a timer row converts its span to a future epoch —
+  posting the raw span is a 400 `bad_expiry` the setter swallows, which is how
+  DND could stick with no time shown — and applies the state it hangs off rather
   than the live status, re-picking your current state never clears a live timer,
   switching state carries it over, Online drops it, Forever keeps the state), and
   the menu renders in place with the card re-clamped after it grows. It also
