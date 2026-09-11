@@ -472,6 +472,26 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   browser cancels. `closeProfileScreen`/`closeUserCard` must clear the inline
   `transform`/`transition`/`animation` the drag leaves behind, or the next open
   skips its entry animation.
+  `node scripts/test-lightbox.js` covers the photo lightbox (headless Chrome,
+  skipping without Chrome; it runs the real lightbox block pulled out of
+  `pickers.js` against the real `#lightbox` markup and `styles.css`): the
+  Download/Close controls live in `#lb-bar`, a fixed safe-area row, so they stay
+  fully inside the viewport and hit-testable for tall/wide/square photos on
+  phone portrait, phone landscape and desktop (the bug: an unsafetied corner
+  anchor on a tall photo sat off the top of the screen); the photo never
+  overflows the stage; double-tap and pinch zoom (and pan on a zoomed photo does
+  not close it); a downward drag past the threshold dismisses the viewer while a
+  short drag springs back; a tap on the backdrop or Close closes, a tap on the
+  photo does not, and tapping Download does not; and closing/reopening resets the
+  zoom.
+  `node scripts/test-chan-unread.js` covers unread channel dots (offline; runs
+  the real helpers sliced out of `servers.js` against a fake DOM +
+  localStorage, then checks the render/socket wiring and stylesheet statically):
+  a background message marks its channel and the server's rail icon, the memory
+  is per account and survives a reload (and another account never inherits it),
+  the store is capped and forgets marks past its TTL, opening a channel clears
+  it (and a hidden-tab message on the open channel clears when the tab returns),
+  and the row repaints in place.
   `node scripts/test-touch-hold-hover.js` covers the "one row looks already
   selected" bug when a long-press slides its sheet up under a finger that is
   still down (offline; runs the real `suppressHoverFromTouch`/

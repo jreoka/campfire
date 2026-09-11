@@ -277,6 +277,11 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 @media (prefers-reduced-motion:reduce){.server-btn.pill-pop::before,.fwrap.pill-pop .folder-btn::before,#home-wrap.pill-pop:has(> .active)::before{animation:none}}
 .server-btn:hover{background:var(--panel-3);border-radius:10px}
 .server-btn.active{background:var(--accent);color:var(--on-accent)}
+/* Unread somewhere in this server: a quiet dot on the rail edge, so it is
+   visible without opening the server. The active pill already carries the
+   selection, so it wins. */
+.server-btn.unread::after{content:'';position:absolute;left:-7px;top:50%;transform:translateY(-50%);width:8px;height:8px;border-radius:50%;background:var(--text);z-index:3}
+.server-btn.unread.active::after{display:none}
 .server-btn.has-icon{background-color:transparent;background-size:cover;background-position:center}
 .server-btn.has-icon:hover{background-color:transparent}
 .server-btn.has-icon.active{border-radius:10px}
@@ -340,6 +345,13 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .chan .count{margin-left:auto;font-size:.7rem;font-weight:800;background:var(--accent);color:var(--on-accent);border-radius:999px;padding:.1rem .5rem}
 .vtime{color:var(--green);font-size:.75rem;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
 .chan .dot{width:8px;height:8px;border-radius:50%;background:var(--green);margin-left:auto;flex-shrink:0}
+/* Unread text channel: a small dot in the always-present slot on the left (so
+   the name never jumps) plus a brighter, heavier label. The dot uses the text
+   colour, like the server rail's, rather than a semantic status colour. */
+.chan .unread-dot{width:6px;height:6px;border-radius:50%;background:var(--text);flex-shrink:0;opacity:0}
+.chan.unread .unread-dot{opacity:1}
+.chan.unread{color:var(--text);font-weight:650}
+.chan.unread .muted{color:inherit}
 .mini{display:inline-flex;align-items:center;justify-content:center;min-height:30px;border:0;background:var(--panel-3);color:var(--text);border-radius:8px;padding:.32rem .85rem;font-size:.8rem;font-weight:700;line-height:1;cursor:pointer;transition:background var(--t-fast)}
 /* Square icon close buttons: every settings/admin panel uses the same 30×30
    box so the ✕ lands in the same place everywhere (a stray .mini pill here
@@ -1162,9 +1174,23 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .anow-voice b{color:var(--text)}
 
 /* ---------- lightbox ---------- */
-#lightbox{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:200;display:flex;align-items:center;justify-content:center;padding:1.5rem;cursor:zoom-out}
-#lightbox img{max-width:100%;max-height:100%;border-radius:12px}
-#lightbox-dl{position:absolute;top:1rem;right:1rem;z-index:2;cursor:pointer}
+/* Full-screen photo viewer. #lightbox is fixed to the viewport and the
+   control bar hangs off its top-right with the safe-area inset added, so the
+   Download / Close buttons stay reachable no matter how tall the photo is.
+   touch-action:none hands every gesture to the pointer handlers below. */
+#lightbox{position:fixed;inset:0;background:rgba(3,5,10,.94);z-index:200;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;overscroll-behavior:contain}
+#lb-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:calc(4.4rem + var(--safe-t)) calc(1rem + var(--safe-r)) calc(1rem + var(--safe-b)) calc(1rem + var(--safe-l));cursor:zoom-out;touch-action:none}
+#lightbox-img{max-width:100%;max-height:100%;width:auto;height:auto;border-radius:12px;transform-origin:center center;will-change:transform;cursor:zoom-in;-webkit-user-drag:none}
+#lightbox.zoomed #lb-stage{cursor:grab}
+#lightbox.zoomed #lightbox-img{cursor:grab}
+#lb-bar{position:absolute;top:calc(.6rem + var(--safe-t));right:calc(.6rem + var(--safe-r));display:flex;gap:.5rem;z-index:3}
+.lb-btn{display:inline-flex;align-items:center;justify-content:center;gap:.42rem;min-height:40px;padding:.5rem .95rem;border:0;border-radius:999px;background:rgba(28,33,48,.82);color:#fff;font-size:.82rem;font-weight:700;line-height:1;text-decoration:none;cursor:pointer;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);transition:background var(--t-fast)}
+.lb-btn:hover{background:rgba(52,59,80,.94)}
+.lb-btn svg{display:block;flex-shrink:0}
+.lb-close{padding:0;width:40px;flex-shrink:0}
+/* The photo can be dragged down to dismiss (see closeLightbox) — the overlay
+   itself follows the finger, so it gets inline transform/opacity. */
+#lightbox.dragging #lb-stage{cursor:grabbing}
 
 /* ---------- settings ---------- */
 #settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#admin-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.68);display:flex;align-items:center;justify-content:center;z-index:100;padding:1rem}

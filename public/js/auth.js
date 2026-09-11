@@ -274,6 +274,9 @@ async function boot() {
     if (cfg && cfg.linkPreviews === false && typeof setLinkPreviews === 'function') setLinkPreviews(false);
     const { user } = await api('/api/me');
     S.me = user;
+    // Per-account unread channel dots (localStorage) — load before the first
+    // server/channel restore so the dots are already painted when it lands.
+    try { loadChanUnread(); } catch {}
     S.bootRetrying = false;
     try { syncAccountTheme(); } catch {}
     // Report local timezone so game streaks bucket play on the player's

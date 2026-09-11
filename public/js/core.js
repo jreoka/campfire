@@ -132,6 +132,7 @@ const S = {
   friendTab: 'all', // friends page tab: 'online' | 'all' | 'pending' (blocked lives in Settings)
   dmThreadId: null, dmMessages: new Map(), // threadId -> [msgs]
   dmUnread: new Map(), // threadId -> unread DM count (drives DM row + home button badges)
+  chanUnread: new Map(), // "serverId:channelId" -> 1 while the channel has unread messages (drives channel dots)
   voiceOccupancy: new Map(), // channelId -> [peers]
   voiceSince: new Map(), // channelId -> epoch ms first seen occupied (drives room timers)
   friendsVoice: new Map(), // userId -> {kind,serverId,channelId,threadId,joinable,…} (Active Now IN VOICE)

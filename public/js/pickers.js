@@ -960,24 +960,211 @@ $('#thread-composer').addEventListener('submit', (e) => {
 });
 
 // ---------- lightbox ----------
+// Full-screen photo viewer. The Download / Close controls sit in #lb-bar, a
+// fixed safe-area bar, so a tall photo can never carry them off the top of the
+// screen. One pointer pans a zoomed photo, two pinch it, double-tap toggles
+// zoom, and dragging an unzoomed photo down dismisses the viewer (the whole
+// overlay follows the finger, exactly like the story viewer).
+const LB_MIN = 1, LB_MAX = 6;
+const lb = { open: false, scale: 1, tx: 0, ty: 0, gen: 0, ptrs: new Map(), pinch: null, pan: null, swipe: null, lastTap: 0, tapX: 0, tapY: 0 };
+function lbStage() { return $('#lb-stage'); }
+function lbImg() { return $('#lightbox-img'); }
+// Keep a zoomed photo from being dragged off its own edges (and re-centre it
+// when it is smaller than the stage). Uses layout sizes, not the transformed
+// rect, so it stays correct while the finger is moving.
+function lbClampPan() {
+  const img = lbImg(), stage = lbStage();
+  if (!img || !stage) return;
+  const cs = getComputedStyle(stage);
+  const availW = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const availH = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  const maxX = Math.max(0, (img.offsetWidth * lb.scale - availW) / 2);
+  const maxY = Math.max(0, (img.offsetHeight * lb.scale - availH) / 2);
+  lb.tx = Math.min(maxX, Math.max(-maxX, lb.tx));
+  lb.ty = Math.min(maxY, Math.max(-maxY, lb.ty));
+}
+function lbApply(animate) {
+  const img = lbImg();
+  if (!img) return;
+  img.style.transition = animate ? 'transform .16s ease-out' : '';
+  img.style.transform = `translate(${lb.tx.toFixed(1)}px, ${lb.ty.toFixed(1)}px) scale(${lb.scale.toFixed(4)})`;
+  $('#lightbox').classList.toggle('zoomed', lb.scale > 1.001);
+}
+function lbReset() {
+  lb.scale = 1; lb.tx = 0; lb.ty = 0;
+  lb.ptrs.clear(); lb.pinch = null; lb.pan = null; lb.swipe = null;
+  const img = lbImg();
+  if (img) { img.style.transition = ''; img.style.transform = ''; }
+  const root = $('#lightbox');
+  if (root) { root.classList.remove('zoomed', 'dragging'); root.style.transform = ''; root.style.opacity = ''; root.style.transition = ''; }
+}
+function closeLightbox() {
+  const root = $('#lightbox');
+  if (!root || !lb.open) return;
+  lb.gen++;
+  lb.open = false;
+  root.classList.add('hidden');
+  const img = lbImg();
+  if (img) img.src = '';
+  $('#lightbox-dl')?.classList.add('hidden');
+  lbReset();
+}
 function openLightbox(src, name) {
-  $('#lightbox-img').src = src;
+  const root = $('#lightbox');
+  const img = lbImg();
+  if (!root || !img) return;
+  lb.gen++;
+  lbReset();
+  img.src = src;
   const dl = $('#lightbox-dl');
   if (dl) {
     if (src && name) { dl.href = src; dl.setAttribute('download', name); dl.classList.remove('hidden'); }
     else { dl.removeAttribute('href'); dl.classList.add('hidden'); }
   }
-  $('#lightbox').classList.remove('hidden');
+  lb.open = true;
+  root.classList.remove('hidden');
 }
-$('#lightbox-dl').addEventListener('click', (e) => {
-  // Don't bubble to #lightbox (which would close it); the anchor still
-  // downloads natively. Toast here — the document-level att-dl toast never
-  // sees this click because of the stopPropagation below.
+// Zoom about a point given in stage-centre coordinates (the same convention as
+// the story composer's pinch): the content under the point stays under it.
+function lbZoomAt(scale, mx, my) {
+  const next = Math.min(LB_MAX, Math.max(LB_MIN, scale));
+  const k = next / lb.scale;
+  lb.tx = mx - (mx - lb.tx) * k;
+  lb.ty = my - (my - lb.ty) * k;
+  lb.scale = next;
+  lbClampPan();
+  lbApply(false);
+}
+function lbToggleZoom(cx, cy) {
+  const stage = lbStage();
+  if (!stage) return;
+  if (lb.scale > 1.001) { lb.scale = 1; lb.tx = 0; lb.ty = 0; lbApply(true); return; }
+  const r = stage.getBoundingClientRect();
+  const mx = cx - (r.left + r.width / 2), my = cy - (r.top + r.height / 2);
+  lb.scale = 1; lb.tx = 0; lb.ty = 0;
+  lbZoomAt(2.4, mx, my);
+  lbApply(true);
+}
+function lbSlideOut() {
+  const root = $('#lightbox');
+  const g = lb.gen;
+  root.classList.remove('dragging');
+  root.style.transition = 'transform .2s ease-in, opacity .2s ease-in';
+  root.style.transform = 'translateY(100%)';
+  root.style.opacity = '0';
+  setTimeout(() => { if (lb.gen === g) closeLightbox(); }, 210);
+}
+$('#lightbox')?.addEventListener('pointerdown', (e) => {
+  if (!lb.open) return;
+  if (e.target.closest('#lb-bar')) return; // the buttons own their own clicks
+  lb.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (lb.ptrs.size === 2) {
+    const [a, b] = [...lb.ptrs.values()];
+    const r = lbStage().getBoundingClientRect();
+    const c = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    lb.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, scale: lb.scale, tx: lb.tx, ty: lb.ty, mx: c.x - (r.left + r.width / 2), my: c.y - (r.top + r.height / 2) };
+    lb.pan = null; lb.swipe = null;
+  } else if (lb.ptrs.size === 1) {
+    if (lb.scale > 1.001) lb.pan = { x: e.clientX, y: e.clientY, tx: lb.tx, ty: lb.ty, moved: false };
+    else lb.swipe = { x: e.clientX, y: e.clientY, t0: Date.now(), dy: 0, moved: false };
+  }
+});
+$('#lightbox')?.addEventListener('pointermove', (e) => {
+  if (!lb.open || !lb.ptrs.has(e.pointerId)) return;
+  lb.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const r = lbStage().getBoundingClientRect();
+  if (lb.pinch && lb.ptrs.size >= 2) {
+    e.preventDefault();
+    const [a, b] = [...lb.ptrs.values()];
+    const c = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    const z = Math.min(LB_MAX, Math.max(LB_MIN, lb.pinch.scale * (d / lb.pinch.d)));
+    const k = z / lb.pinch.scale;
+    lb.scale = z;
+    lb.tx = (c.x - (r.left + r.width / 2)) - (lb.pinch.mx - lb.pinch.tx) * k;
+    lb.ty = (c.y - (r.top + r.height / 2)) - (lb.pinch.my - lb.pinch.ty) * k;
+    lbClampPan();
+    lbApply(false);
+    return;
+  }
+  if (lb.pan) {
+    e.preventDefault();
+    const dx = e.clientX - lb.pan.x, dy = e.clientY - lb.pan.y;
+    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) lb.pan.moved = true;
+    lb.tx = lb.pan.tx + dx; lb.ty = lb.pan.ty + dy;
+    lbClampPan();
+    lbApply(false);
+    return;
+  }
+  if (lb.swipe) {
+    const dx = e.clientX - lb.swipe.x, dy = e.clientY - lb.swipe.y;
+    if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) { lb.swipe = null; return; } // sideways: not a dismissal
+    if (Math.abs(dy) > 8) lb.swipe.moved = true;
+    const root = $('#lightbox');
+    if (dy > 0) {
+      lb.swipe.dy = dy;
+      root.classList.add('dragging');
+      root.style.transition = '';
+      root.style.transform = `translateY(${Math.round(dy)}px)`;
+      root.style.opacity = String(Math.max(0.4, 1 - dy / 700));
+    } else { lb.swipe.dy = 0; root.style.transform = ''; root.style.opacity = ''; }
+  }
+});
+// Up/cancel on the window, not the overlay: a finger that leaves the picture
+// (or a pointer the browser cancels) must still retire its entry, or the next
+// single-finger tap reads as a two-finger pinch.
+function lbPointerUp(e) {
+  if (!lb.ptrs.has(e.pointerId)) return;
+  lb.ptrs.delete(e.pointerId);
+  if (lb.pinch) {
+    if (lb.ptrs.size < 2) lb.pinch = null;
+    if (lb.ptrs.size === 1) {
+      const p = [...lb.ptrs.values()][0];
+      if (lb.scale > 1.001) lb.pan = { x: p.x, y: p.y, tx: lb.tx, ty: lb.ty, moved: true };
+    }
+    if (lb.ptrs.size) return;
+  }
+  if (lb.ptrs.size) return;
+  const wasPan = lb.pan, swipe = lb.swipe, target = e.target;
+  lb.pan = null; lb.swipe = null;
+  if (!lb.open) return;
+  if (swipe && swipe.moved) {
+    const d = swipe.dy, v = d / Math.max(1, Date.now() - swipe.t0);
+    if (d > 110 || (v > 0.55 && d > 40)) { lbSlideOut(); return; }
+    const root = $('#lightbox'); // short drag: spring back
+    root.classList.remove('dragging');
+    root.style.transition = 'transform .18s ease-out, opacity .18s ease-out';
+    root.style.transform = ''; root.style.opacity = '';
+    setTimeout(() => { if (lb.open) root.style.transition = ''; }, 200);
+    return;
+  }
+  if (wasPan && wasPan.moved) return;
+  // A tap: double-tap zooms, a tap on the backdrop closes.
+  const now = Date.now();
+  const near = Math.hypot(e.clientX - lb.tapX, e.clientY - lb.tapY) < 60;
+  if (now - lb.lastTap < 320 && near) { lb.lastTap = 0; lbToggleZoom(e.clientX, e.clientY); return; }
+  lb.lastTap = now; lb.tapX = e.clientX; lb.tapY = e.clientY;
+  if (target === lbImg()) return; // a single tap on the photo does nothing
+  closeLightbox();
+}
+window.addEventListener('pointerup', lbPointerUp);
+window.addEventListener('pointercancel', lbPointerUp);
+// Trackpad pinch arrives as ctrl+wheel on desktop.
+$('#lightbox')?.addEventListener('wheel', (e) => {
+  if (!lb.open || !e.ctrlKey) return;
+  e.preventDefault();
+  const r = lbStage().getBoundingClientRect();
+  lbZoomAt(lb.scale * (1 - e.deltaY / 240), e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+}, { passive: false });
+$('#lightbox-close')?.addEventListener('click', (e) => { e.stopPropagation(); closeLightbox(); });
+$('#lightbox-dl')?.addEventListener('click', (e) => {
+  // Don't let the tap reach the overlay (which would close it); the anchor
+  // still downloads natively. Toast here — the document-level att-dl toast
+  // never sees this click because of the stopPropagation.
   e.stopPropagation();
   const dl = e.currentTarget;
   toast(`Downloading ${(dl.getAttribute('download') || 'image').slice(0, 60)}…`);
 });
-$('#lightbox').onclick = () => { $('#lightbox').classList.add('hidden'); $('#lightbox-img').src = ''; $('#lightbox-dl')?.classList.add('hidden'); };
 
 // ---------- user card action tabs ----------
 // The card's actions are a vertical list of tab rows (icon + label), not a

@@ -67,7 +67,7 @@ function folderGridHtml(f) {
 function serverBtn(s) {
   const b = document.createElement('button');
   const label = s.name.trim().charAt(0).toUpperCase() || '?';
-  b.className = 'server-btn' + (S.view === 'server' && s.id === S.serverId ? ' active' : '') + (s.icon_url ? ' has-icon' : '') + (serverMuted(s.id) ? ' muted' : '');
+  b.className = 'server-btn' + (S.view === 'server' && s.id === S.serverId ? ' active' : '') + (s.icon_url ? ' has-icon' : '') + (serverMuted(s.id) ? ' muted' : '') + (serverHasUnread(s.id) ? ' unread' : '');
   b.title = s.name;
   b.draggable = !isCoarse(); // touch devices: drop native drag so long-press opens the slide-up sheet
   b.dataset.drag = 'server:' + s.id;
@@ -240,6 +240,82 @@ setInterval(() => {
     el.textContent = fmtVoiceTime(now - t0);
   });
 }, 1000);
+// ---------- unread channels ----------
+// A channel gets a small dot (and a brighter name) when a message arrives while
+// you are not looking at it. Tracked per account in localStorage so it survives
+// a reload, and it also puts a quiet dot on the server's rail icon so an
+// unread channel in a server you are not in is still discoverable. The live
+// push arrives for every joined server (broadcastToServer), so the dot lands
+// even when you are sitting in a different one.
+const CHAN_UNREAD_MAX = 60;             // conversations remembered per account
+const CHAN_UNREAD_TTL = 30 * 864e5;     // a month of silence forgets it
+function chanUnreadKey() { return S.me ? 'cf_chanunread_' + S.me.id : null; }
+function chanUnreadCtx(serverId, channelId) { return serverId + ':' + channelId; }
+function hasChanUnread(serverId, channelId) { return !!serverId && !!channelId && S.chanUnread.has(chanUnreadCtx(serverId, channelId)); }
+function serverHasUnread(serverId) {
+  if (!serverId) return false;
+  const prefix = serverId + ':';
+  for (const k of S.chanUnread.keys()) if (k.startsWith(prefix)) return true;
+  return false;
+}
+function loadChanUnread() {
+  S.chanUnread = new Map();
+  const k = chanUnreadKey();
+  if (!k) return;
+  let all = {};
+  try { all = JSON.parse(localStorage.getItem(k) || '{}') || {}; } catch { return; }
+  const cut = Date.now() - CHAN_UNREAD_TTL;
+  for (const [ctx, v] of Object.entries(all)) {
+    if (!v || (v.at || 0) < cut) continue;
+    S.chanUnread.set(ctx, 1);
+  }
+}
+let chanUnreadTimer = null;
+function saveChanUnread() {
+  clearTimeout(chanUnreadTimer);
+  chanUnreadTimer = setTimeout(() => {
+    const k = chanUnreadKey();
+    if (!k) return;
+    const out = {};
+    // Object.keys preserves insertion order, so the cap drops the oldest marks.
+    const keys = [...S.chanUnread.keys()].slice(-CHAN_UNREAD_MAX);
+    for (const ctx of keys) out[ctx] = { at: Date.now() };
+    try { localStorage.setItem(k, JSON.stringify(out)); } catch {}
+  }, 400);
+}
+// In-place repaint so a busy server doesn't rebuild the whole sidebar on every
+// background message (and never flickers the voice occupant rows).
+function paintChanUnread(serverId, channelId) {
+  if (serverId !== S.serverId) return;
+  const row = document.querySelector(`#text-channels .chan[data-cid="${CSS.escape(channelId)}"]`);
+  if (row) row.classList.toggle('unread', hasChanUnread(serverId, channelId));
+}
+function paintServerUnread(serverId) {
+  const btn = document.querySelector(`#server-list .server-btn[data-sid="${CSS.escape(serverId)}"]`);
+  if (btn) btn.classList.toggle('unread', serverHasUnread(serverId));
+}
+function markChanUnread(serverId, channelId) {
+  if (!serverId || !channelId) return;
+  const ctx = chanUnreadCtx(serverId, channelId);
+  if (S.chanUnread.has(ctx)) return;
+  S.chanUnread.set(ctx, 1);
+  saveChanUnread();
+  paintChanUnread(serverId, channelId);
+  paintServerUnread(serverId);
+}
+function clearChanUnread(serverId, channelId) {
+  if (!serverId || !channelId) return;
+  const ctx = chanUnreadCtx(serverId, channelId);
+  if (!S.chanUnread.delete(ctx)) return;
+  saveChanUnread();
+  paintChanUnread(serverId, channelId);
+  paintServerUnread(serverId);
+}
+// A channel opened (or already open) is read: drop its dot the moment it is
+// actually in front of the reader.
+function clearActiveChanUnread() {
+  if (S.view === 'server' && S.serverId && S.channelId) clearChanUnread(S.serverId, S.channelId);
+}
 function renderChannels() {
   const d = S.serverDetail;
   if (!d) return;
@@ -247,8 +323,11 @@ function renderChannels() {
   tc.innerHTML = ''; vc.innerHTML = '';
   for (const c of d.channels.filter((x) => x.type === 'text')) {
     const b = document.createElement('button');
-    b.className = 'chan' + (c.id === S.channelId ? ' active' : '') + (chanMuted(c.id) ? ' muted' : '');
-    b.innerHTML = `<span class="muted">#</span><span>${esc(c.name)}</span>${c.nsfw ? '<span class="nsfw-badge">18+</span>' : ''}`;
+    const unread = hasChanUnread(S.serverId, c.id);
+    b.className = 'chan' + (c.id === S.channelId ? ' active' : '') + (chanMuted(c.id) ? ' muted' : '') + (unread ? ' unread' : '');
+    // The unread dot's slot is always in the row (hidden via CSS) so toggling
+    // unread never shifts the channel name sideways.
+    b.innerHTML = `<span class="unread-dot" aria-hidden="true"></span><span class="muted">#</span><span>${esc(c.name)}</span>${c.nsfw ? '<span class="nsfw-badge">18+</span>' : ''}`;
     b.onclick = () => selectChannel(c.id);
     b.dataset.cid = c.id; b.dataset.ctype = 'text';
     b.ondblclick = () => confirmDeleteChannel(c);
@@ -359,6 +438,7 @@ async function selectChannel(id, opts = {}) {
   flushDrafts(); // file the previous channel's text before its context changes
   saveScrollPos();
   S.channelId = id;
+  clearChanUnread(S.serverId, id); // it is in front of the reader now
   rememberView();
   S.callOpen = false;
   // Mobile: tapping a channel slides the drawer away to reveal the chat.

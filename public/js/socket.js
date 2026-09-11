@@ -199,8 +199,16 @@ function onWS(m) {
       break;
     }
     case 'message-new': {
-      if (m.serverId !== S.serverId) break;
       const msg = m.message;
+      // Background unread: a normal message from someone else in a channel the
+      // reader is not looking at (another server, another channel, or a hidden
+      // tab) earns that channel's dot. Thread replies have their own surface.
+      if (msg && !msg.sys && !msg.threadRoot) {
+        const mine = !!(msg.user && S.me && msg.user.id === S.me.id);
+        const viewing = m.serverId === S.serverId && m.channelId === S.channelId && !document.hidden;
+        if (!mine && !viewing) { try { markChanUnread(m.serverId, m.channelId); } catch {} }
+      }
+      if (m.serverId !== S.serverId) break;
       const dnd = S.me && S.me.status === 'dnd';
       if (msg.threadRoot) {
         updateMsgInCaches(msg.threadRoot, (r) => { r.threadCount = (r.threadCount || 0) + 1; });

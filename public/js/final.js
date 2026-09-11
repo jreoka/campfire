@@ -172,7 +172,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
  document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeTagCard(); closeStatusMenu(); closeCtx(); closeFolderFlyout(); closeFolderPopout(); closeSettings(); closeServerSettings(); closeChannelSettings(); closeAdminConsole(); closeProfileScreen(); $('#composer-more')?.classList.add('hidden'); cancelModal(); $('#lightbox').classList.add('hidden'); hideEmojiPop(); }
+  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeTagCard(); closeStatusMenu(); closeCtx(); closeFolderFlyout(); closeFolderPopout(); closeSettings(); closeServerSettings(); closeChannelSettings(); closeAdminConsole(); closeProfileScreen(); $('#composer-more')?.classList.add('hidden'); cancelModal(); closeLightbox(); hideEmojiPop(); }
 });
 function composerAnchor() {
   const t = $('#composer-tools')?.getBoundingClientRect();
@@ -333,6 +333,12 @@ window.addEventListener('beforeunload', () => {
   // The pin "seen" memory is mirrored on the server: a panel opened moments
   // before the reload must not lose its push (keepalive so it still lands).
   try { pinSeenFlush(); } catch {}
+});
+// Coming back to a tab that was hidden while the open channel collected
+// background messages: that channel is being read again, so drop its dot.
+// (The composer/scroll state is untouched; this is purely the sidebar dot.)
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { try { clearActiveChanUnread(); } catch {} }
 });
 
 // ---------- go ----------
