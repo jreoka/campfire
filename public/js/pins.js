@@ -14,11 +14,15 @@ function sameCtx(a, b) { return !!a && !!b && a.kind === b.kind && a.id === b.id
  * however many times you open the panel reads as an unread badge that cannot be
  * cleared. Opening the panel (or pinning something yourself) remembers what was
  * in it, so the badge goes away and stays away across reloads.
- * Per account in localStorage, like the composer drafts (nothing about pins is
- * per-reader on the server, and this must survive a reload). Contexts match
- * draftCtx: 's:<serverId>:<channelId>' / 'd:<threadId>'. */
+ * Per account, and mirrored on the server (pin_seen table) so the memory
+ * follows the account across devices rather than per browser: clearing it on
+ * the phone clears it on the desktop, live (the server pushes pin-seen to the
+ * account's other sockets). localStorage stays as the instant-paint cache and
+ * is merged with the server copy on boot. Contexts match draftCtx:
+ * 's:<serverId>:<channelId>' / 'd:<threadId>'. */
 const PIN_SEEN_MAX = 60;          // conversations remembered (oldest fall off)
 const PIN_SEEN_TTL = 90 * 864e5;
+const PIN_SEEN_IDS_MAX = 300;    // ids kept per conversation (backstop)
 function pinSeenStoreKey() { return S.me ? 'cf_pinseen_' + S.me.id : null; }
 function pinSeenCtxKey(ctx) {
   if (!ctx) return null;
@@ -29,6 +33,18 @@ function pinSeenLoad() {
   if (!k) return {};
   try { return JSON.parse(localStorage.getItem(k) || '{}') || {}; } catch { return {}; }
 }
+// Persist, pruning by age then by recency. The cap is by write/at time rather
+// than insertion order so a merge (below) can't shuffle the survivors.
+function pinSeenSave(all) {
+  const k = pinSeenStoreKey();
+  if (!k) return;
+  const cut = Date.now() - PIN_SEEN_TTL;
+  const keys = Object.keys(all).filter((x) => all[x] && (all[x].at || 0) >= cut);
+  keys.sort((a, b) => (all[a].at || 0) - (all[b].at || 0));
+  const out = {};
+  for (const x of keys.slice(-PIN_SEEN_MAX)) out[x] = all[x];
+  try { localStorage.setItem(k, JSON.stringify(out)); } catch {}
+}
 function pinSeenIds(ctx) {
   const key = pinSeenCtxKey(ctx);
   if (!key) return new Set();
@@ -36,17 +52,69 @@ function pinSeenIds(ctx) {
   return new Set(e && Array.isArray(e.ids) ? e.ids : []);
 }
 function pinSeenWrite(ctx, ids) {
-  const k = pinSeenStoreKey(), key = pinSeenCtxKey(ctx);
-  if (!k || !key) return;
+  const key = pinSeenCtxKey(ctx);
+  if (!pinSeenStoreKey() || !key) return;
   const all = pinSeenLoad();
-  // Delete first so the key moves to the end: the stored order is write order,
-  // which is what the cap below prunes from.
-  delete all[key];
-  all[key] = { ids: [...new Set(ids)], at: Date.now() };
-  const cut = Date.now() - PIN_SEEN_TTL;
-  const out = {};
-  for (const x of Object.keys(all).filter((x) => all[x] && (all[x].at || 0) >= cut).slice(-PIN_SEEN_MAX)) out[x] = all[x];
-  try { localStorage.setItem(k, JSON.stringify(out)); } catch {}
+  const list = [...new Set(ids || [])].filter((x) => x).slice(-PIN_SEEN_IDS_MAX);
+  all[key] = { ids: list, at: Date.now() };
+  pinSeenSave(all);
+  pinSeenQueue(ctx, list); // ...and to the account's shared copy
+}
+/* ---- cross-device mirror ----
+ * Writes are coalesced (the panel open walks every pin id, then the re-fetch
+ * walks them again) and fire-and-forget: failing to reach the server must
+ * never block the badge clearing locally. keepalive so the pagehide flush
+ * still lands when the tab is being reloaded/closed. */
+const pinSeenPending = new Map(); // ctxKey -> { key, ids }
+let pinSeenPushT = null;
+async function pinSeenFlush() {
+  pinSeenPushT = null;
+  const jobs = [...pinSeenPending.values()];
+  pinSeenPending.clear();
+  if (!jobs.length || typeof api !== 'function') return;
+  await Promise.all(jobs.map((j) => api('/api/pins/seen', {
+    method: 'POST', keepalive: true, body: JSON.stringify({ ctx: j.key, ids: j.ids }),
+  }).catch(() => {})));
+}
+function pinSeenQueue(ctx, ids) {
+  if (typeof api !== 'function') return; // e.g. the offline unit test harness
+  const key = typeof ctx === 'string' ? ctx : pinSeenCtxKey(ctx);
+  if (!key) return;
+  pinSeenPending.set(key, { key, ids });
+  if (!pinSeenPushT) pinSeenPushT = setTimeout(pinSeenFlush, 300);
+}
+// Merge a server copy (boot fetch or the live pin-seen push) into the cache.
+// Union, never replace: the badge is a "have I looked at this" hint, so an id
+// either side has read must stay read. Ids are never reused, so a stale id that
+// the server no longer holds can't hide a genuinely new pin. A conversation
+// this device has read but the server has not (the write never got through:
+// offline, killed tab) is pushed back, so the copies converge on the next boot.
+async function pinSeenPull() {
+  try {
+    const { seen } = await api('/api/pins/seen');
+    applyPinSeenRemote(seen);
+  } catch {}
+}
+function applyPinSeenRemote(seen) {
+  const k = pinSeenStoreKey();
+  if (!k || !seen) return;
+  const all = pinSeenLoad();
+  // Every conversation either side knows about: one the server has never heard
+  // of is still this device's memory (the write never got through: offline,
+  // tab killed before the flush), so it is pushed back below.
+  for (const key of new Set([...Object.keys(all), ...Object.keys(seen)])) {
+    const remote = seen[key] || { ids: [], at: 0 };
+    const ids = Array.isArray(remote.ids) ? remote.ids : [];
+    const cur = all[key] && Array.isArray(all[key].ids) ? all[key].ids : [];
+    const remoteSet = new Set(ids);
+    const localOnly = cur.filter((x) => !remoteSet.has(x));
+    if (!localOnly.length && ids.every((x) => cur.includes(x))) continue; // already in sync
+    const merged = [...new Set([...cur, ...ids])].slice(-PIN_SEEN_IDS_MAX);
+    all[key] = { ids: merged, at: Math.max((all[key] && all[key].at) || 0, Number(remote.at) || 0) };
+    if (localOnly.length) pinSeenQueue(key, merged);
+  }
+  pinSeenSave(all);
+  try { paintPinsBtn(); } catch {}
 }
 // Pin something yourself → it is not news to you (the badge must not light for
 // an action you just took).

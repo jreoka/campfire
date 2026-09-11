@@ -658,6 +658,9 @@ function renderDmMembers() {
     for (const m of off) box.appendChild(memberRowEl(m));
   }
   renderDmLists();
+  // The home sidebar's Active Now strip is not the members panel: keep it fed
+  // while a DM is open too (renderActiveNow itself skips the panel then).
+  try { renderActiveNow(); } catch {}
 }
 
 // ---------- roles + name styling ----------

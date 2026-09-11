@@ -2016,6 +2016,59 @@ app.delete('/api/servers/:id/channels/:chId/pins/:mid', authRequired, async (req
   res.json({ ok: true });
 });
 
+// ---------- pin "seen" memory (per account, synced across devices) ----------
+// The pin button's badge is a hint that this account has not looked at a
+// conversation's pins yet. That memory used to be localStorage only, so
+// clearing it on the phone left the badge lit on the desktop. It is mirrored
+// here instead (localStorage stays the instant-paint cache) and pushed to the
+// account's other sockets, so every device agrees.
+//
+// ctx is the client's conversation key ('s:<serverId>:<channelId>' /
+// 'd:<threadId>'), ids the pin ids it has read. Ids are never reused (a
+// re-pin inserts a new message_pins row), so an empty list drops the row
+// rather than storing a tombstone.
+const PIN_SEEN_CTX_RE = /^[sd]:[^:\s]{1,64}(:[^:\s]{1,64})?$/;
+const PIN_SEEN_IDS_MAX = 300;   // per conversation
+const PIN_SEEN_ROWS_MAX = 200;  // per account (the client caps itself at 60)
+app.get('/api/pins/seen', authRequired, async (req, res) => {
+  const rows = await db.prepare('SELECT ctx, ids, at FROM pin_seen WHERE user_id = ? ORDER BY at DESC LIMIT ?')
+    .all(req.user.id, PIN_SEEN_ROWS_MAX);
+  const seen = {};
+  for (const r of rows) {
+    let ids;
+    try { ids = JSON.parse(r.ids); } catch { ids = []; }
+    seen[r.ctx] = { ids: Array.isArray(ids) ? ids : [], at: Number(r.at) || 0 };
+  }
+  res.json({ seen });
+});
+app.post('/api/pins/seen', authRequired, async (req, res) => {
+  const b = req.body || {};
+  const ctx = String(b.ctx || '');
+  if (!PIN_SEEN_CTX_RE.test(ctx)) return res.status(400).json({ error: 'bad_pin_ctx' });
+  const ids = [...new Set((Array.isArray(b.ids) ? b.ids : []).map((x) => String(x || '')).filter((x) => x && x.length <= 64))]
+    .slice(-PIN_SEEN_IDS_MAX);
+  const ts = now();
+  if (ids.length) {
+    await db.prepare(
+      `INSERT INTO pin_seen (user_id, ctx, ids, at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(user_id, ctx) DO UPDATE SET ids = excluded.ids, at = excluded.at`
+    ).run(req.user.id, ctx, JSON.stringify(ids), ts);
+    // Backstop for accounts that roam far more conversations than the client's
+    // 60-slot cap remembers.
+    try {
+      await db.prepare(
+        `DELETE FROM pin_seen WHERE user_id = ? AND ctx NOT IN
+         (SELECT ctx FROM pin_seen WHERE user_id = ? ORDER BY at DESC, ctx DESC LIMIT ?)`
+      ).run(req.user.id, req.user.id, PIN_SEEN_ROWS_MAX);
+    } catch {}
+  } else {
+    await db.prepare('DELETE FROM pin_seen WHERE user_id = ? AND ctx = ?').run(req.user.id, ctx);
+  }
+  // The account's other devices: clear the same badge without a refetch.
+  notifyUser(req.user.id, { t: 'pin-seen', ctx, ids, at: ts });
+  res.json({ ctx, ids, at: ts });
+});
+
 // ---------- uploads ----------
 app.post('/api/upload', authRequired, (req, res, next) => {
   upFile.single('file')(req, res, (err) => {

@@ -318,6 +318,10 @@ async function boot() {
     return;
   }
   showMain();
+  // The pin "seen" memory (pin button badge) follows the account across
+  // devices, so fold in the server's copy as soon as the shell is up — the
+  // cached localStorage value already painted, this corrects it.
+  pinSeenPull();
   // Persistent per-user last-view (localStorage, survives browser restarts),
   // so a reload reopens the conversation you were in; the composer text for
   // that conversation comes from the per-account draft store (see core.js).

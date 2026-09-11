@@ -171,6 +171,15 @@ async function main() {
       if (S.channelId !== ${JSON.stringify(cid)}) await selectChannel(${JSON.stringify(cid)});
       return S.channelId;
     })()`);
+    // Page.reload resolves before the new document exists, and the dying page
+    // still answers evaluates (S.me is set there): wait for the new document's
+    // scripts, or the next evaluate lands in the half-parsed one where
+    // refreshServers does not exist yet.
+    const reload = async () => {
+      await send('Page.reload');
+      await sleep(400);
+      return waitFor(`document.readyState === 'complete' && typeof refreshServers === 'function' && S.me && S.me.username === 'pinner'`);
+    };
     const sendMsg = async (text) => {
       await evaluate(`(() => { const i = document.querySelector('#in-message'); i.value = ${JSON.stringify(text)}; i.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#composer').requestSubmit(); })()`);
       const found = await waitFor(`!!(S.messages.get(S.channelId) || []).find((m) => m.content === ${JSON.stringify(text)})`, 10000);
@@ -222,8 +231,7 @@ async function main() {
     })()`);
     check(other.status === 200 || other.status === 201, 'the other account pinned over HTTP', other.status);
     check(await badgeIs('1'), 'the badge counts the pin I have not looked at');
-    await send('Page.reload');
-    check(!!(await waitFor(`S.me && S.me.username === 'pinner'`)), 'the reload signs back in');
+    check(!!(await reload()), 'the reload signs back in');
     check(!!(await openConv(srv.sid, srv.cid)), 'and lands back in the channel');
     check(await badgeIs('1'), 'the badge is still there after the reload (it is persisted, not per-page)');
 
@@ -235,8 +243,7 @@ async function main() {
     await evaluate(`cancelModal()`);
 
     console.log('\n[5] it stays cleared across another reload');
-    await send('Page.reload');
-    check(!!(await waitFor(`S.me && S.me.username === 'pinner'`)), 'signed in again');
+    check(!!(await reload()), 'signed in again');
     check(!!(await openConv(srv.sid, srv.cid)), 'channel reopened');
     await sleep(600); // let the pins fetch land
     check((await badge()) === null, 'no badge on the conversation I have reviewed', await badge());
@@ -244,6 +251,36 @@ async function main() {
     console.log('\n[6] a per-account memory, not a shared blob');
     const key = await evaluate(`Object.keys(localStorage).filter((k) => k.indexOf('cf_pinseen_') === 0)`);
     check(Array.isArray(key) && key.length === 1 && key[0] === 'cf_pinseen_' + a.uid, 'the memory lives under this account\'s key', key);
+
+    console.log('\n[7] the memory follows the account across devices');
+    const mid3 = await sendMsg('a third thing worth pinning');
+    const pin3 = await evaluate(`(async () => {
+      const r = await fetch('/api/servers/' + S.serverId + '/channels/' + S.channelId + '/pins', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + ${JSON.stringify(other.token)} },
+        body: JSON.stringify({ messageId: ${JSON.stringify(mid3)} }),
+      });
+      return r.status;
+    })()`);
+    check(pin3 === 200 || pin3 === 201, 'the other account pinned a third message', pin3);
+    check(await badgeIs('1'), 'only the pin nobody has read badges');
+    await sleep(800); // let the panel's own write reach the server
+    // A brand-new browser: no localStorage at all. The server copy is the only
+    // reason the two older pins still read as seen (otherwise this would be 3).
+    await evaluate(`localStorage.removeItem('cf_pinseen_' + S.me.id)`);
+    check(!!(await reload()), 'the fresh browser signs in');
+    check(!!(await openConv(srv.sid, srv.cid)), 'and opens the channel');
+    check(await badgeIs('1'), 'the server copy is pulled — 1, not 3 (nothing has read all three here)');
+    // Another device reads them. The badge must clear here without a reload:
+    // nothing local calls rememberPinsSeen, so only the pin-seen push can do it.
+    const readElsewhere = await evaluate(`(async () => {
+      const r = await api('/api/pins/seen', { method: 'POST', body: JSON.stringify({ ctx: pinSeenCtxKey(pinsCtx()), ids: [...S.pinIds] }) });
+      return r.ids.length;
+    })()`);
+    check(readElsewhere === 3, 'the other device read all three pins', readElsewhere);
+    check(await badgeGone(), 'this device clears live (the pin-seen push), no reload needed', await badge());
+    check(!!(await reload()), 'signed in once more');
+    check(!!(await openConv(srv.sid, srv.cid)), 'channel reopened');
+    check((await badge()) === null, 'and it stays cleared', await badge());
 
     const realErrors = pageErrors.filter((e) => e && !/favicon|Failed to load resource/i.test(e));
     check(realErrors.length === 0, 'no page exceptions', realErrors.slice(0, 3));

@@ -256,14 +256,90 @@ function activeCard(c) {
   el.onclick = (e) => openMemberCard(c.f.id, el);
   return el;
 }
+/* ---------- Active Now on a phone ----------
+ * The rail lives in #members, which at <=900px is a drawer Home never opens
+ * (Home hides the members button), so the same people are mirrored into the
+ * home sidebar as a horizontal scroller under Stories — one compact tile per
+ * friend, most-urgent first. Same data, same tap target (the member card) and
+ * the same Join affordance as the desktop card. */
+function anowTileLine(c) {
+  if (c.stream) return { cls: ' stream', title: 'Streaming ' + c.stream, html: esc(c.stream) };
+  if (c.voice) {
+    const v = c.voice;
+    const where = v.kind === 'dm' ? 'In a call' : (v.channelName ? 'In ' + v.channelName : 'In voice');
+    return { cls: ' voice', title: (v.kind === 'dm' ? 'In a call' : 'In voice') + (v.serverName && v.joinable ? ' — ' + v.serverName : ''), html: esc(where) };
+  }
+  if (c.live) {
+    const icon = c.hit?.icon_url ? `<img class="anow-gicon" src="${esc(c.hit.icon_url)}" alt="" loading="lazy" onerror="this.remove()" />` : '';
+    return { cls: '', title: 'Playing ' + c.live, html: `${icon}${c.hit?.icon_url ? '' : 'Playing '}${esc(c.live)}` };
+  }
+  const label = c.st === 'away' ? 'Away' : (c.st === 'dnd' ? 'Do not disturb' : (c.f.status_text || 'Online'));
+  return { cls: '', title: label, html: esc(label) };
+}
+function anowTileEl(c) {
+  const dot = dotOf(c.st, c.stream);
+  const line = anowTileLine(c);
+  const el = document.createElement('div');
+  el.className = 'anow-tile' + (c.off ? ' anow-off' : '');
+  el.setAttribute('role', 'button');
+  el.tabIndex = 0;
+  el.title = `${c.f.display_name} — ${line.title}`;
+  el.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span>`
+    + `<span class="anow-tname" style="${nameStyleFor(c.f)}">${esc(c.f.display_name)}</span>`
+    + `<span class="anow-tline${line.cls}" title="${esc(line.title)}">${line.html}</span>`;
+  paintAvatar(el.querySelector('.avatar'), c.f);
+  const join = anowJoinBtn(c.voice);
+  if (join) el.appendChild(join);
+  el.onclick = () => openMemberCard(c.f.id, el);
+  el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openMemberCard(c.f.id, el); } };
+  return el;
+}
+function paintActiveNowStrip(g) {
+  const wrap = $('#anow-strip'), rail = $('#anow-rail');
+  if (!wrap || !rail) return;
+  // Everyone the panel lists (streaming, then in voice, then playing, then
+  // just online) in one scroller; nothing online → no strip at all.
+  const list = [...g.streaming, ...g.voiced, ...g.playing, ...g.online];
+  wrap.classList.toggle('hidden', !list.length);
+  rail.innerHTML = '';
+  for (const c of list) rail.appendChild(anowTileEl(c));
+}
+// One friend lands in exactly one section: streaming beats voice, voice beats
+// now-playing, and everyone else online is just online.
+function activeNowGroups(friends) {
+  const cards = friends.map((f) => {
+    const st = statusOf(f.id);
+    const off = isOff(st);
+    const stream = !off && (f.streaming_game || null);
+    const voice = off ? null : (S.friendsVoice.get(f.id) || null);
+    const g = activeGamingFresh(f.username);
+    const live = !off && !stream ? (g?.now_playing || (!off && f.playing_game)) : null;
+    const games = g?.games || [];
+    const recent = games.length ? games.reduce((a, b) => ((a.last_seen_ms || 0) > (b.last_seen_ms || 0) ? a : b)) : null;
+    const hit = live ? games.find((x) => x.game === live) : null;
+    return { f, st, off, stream, voice, live, hit, recent };
+  });
+  const byName = (a, b) => a.f.display_name.localeCompare(b.f.display_name);
+  return {
+    streaming: cards.filter((c) => c.stream).sort(byName),
+    voiced: cards.filter((c) => !c.stream && c.voice).sort(byName),
+    playing: cards.filter((c) => !c.stream && !c.voice && c.live).sort(byName),
+    online: cards.filter((c) => !c.stream && !c.voice && !c.live && !c.off).sort(byName),
+  };
+}
 async function renderActiveNow() {
-  if (S.view !== 'home' || S.dmThreadId) return;
+  if (S.view !== 'home') return;
   const box = $('#member-list');
   if (!box || !S.friends) return;
   const gen = ++activeNowGen;
   const friends = [...(S.friends.friends || [])];
   const paint = () => {
-    if (gen !== activeNowGen || S.view !== 'home' || S.dmThreadId) return;
+    if (gen !== activeNowGen || S.view !== 'home') return;
+    const groups = activeNowGroups(friends);
+    const { streaming, voiced, playing, online } = groups;
+    paintActiveNowStrip(groups);
+    // With a DM open the member panel lists that thread's members instead.
+    if (S.dmThreadId) return;
     const head = $('#members-head');
     head.classList.remove('hidden');
     box.innerHTML = '';
@@ -273,25 +349,6 @@ async function renderActiveNow() {
       box.innerHTML = '<p class="muted small anow-empty">No friends yet — add someone from the list to see what they are up to.</p>';
       return;
     }
-    const cards = friends.map((f) => {
-      const st = statusOf(f.id);
-      const off = isOff(st);
-      const stream = !off && (f.streaming_game || null);
-      const voice = off ? null : (S.friendsVoice.get(f.id) || null);
-      const g = activeGamingFresh(f.username);
-      const live = !off && !stream ? (g?.now_playing || (!off && f.playing_game)) : null;
-      const games = g?.games || [];
-      const recent = games.length ? games.reduce((a, b) => ((a.last_seen_ms || 0) > (b.last_seen_ms || 0) ? a : b)) : null;
-      const hit = live ? games.find((x) => x.game === live) : null;
-      return { f, st, off, stream, voice, live, hit, recent };
-    });
-    // A friend lands in exactly one section: streaming beats voice, voice beats
-    // now-playing, and everyone else online is just online.
-    const byName = (a, b) => a.f.display_name.localeCompare(b.f.display_name);
-    const streaming = cards.filter((c) => c.stream).sort(byName);
-    const voiced = cards.filter((c) => !c.stream && c.voice).sort(byName);
-    const playing = cards.filter((c) => !c.stream && !c.voice && c.live).sort(byName);
-    const online = cards.filter((c) => !c.stream && !c.voice && !c.live && !c.off).sort(byName);
     $('#members-title').textContent = 'ACTIVE NOW';
     $('#online-count').textContent = String(streaming.length + voiced.length + playing.length);
     if (!streaming.length && !voiced.length && !playing.length && !online.length) {

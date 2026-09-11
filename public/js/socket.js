@@ -379,6 +379,11 @@ function onWS(m) {
         if (S.pinsCtx && S.pinsCtx.kind === 'dm' && S.pinsCtx.id === m.threadId) renderPinsList();
       }
       break;
+    // Another device on this account read a conversation's pins: the badge has
+    // to go away here too (see applyPinSeenRemote).
+    case 'pin-seen':
+      try { applyPinSeenRemote({ [m.ctx]: { ids: m.ids, at: m.at } }); } catch {}
+      break;
     case 'dm-threads-changed':
       // Refresh everywhere (not just on Home): a thread left/closed/created
       // on another device must vanish/appear here too, even mid-server-view.

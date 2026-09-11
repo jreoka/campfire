@@ -324,6 +324,9 @@ function pollVersion() {
 window.addEventListener('beforeunload', () => {
   flushDrafts(); // synchronous localStorage write — the last keystrokes survive a reload
   rememberView();
+  // The pin "seen" memory is mirrored on the server: a panel opened moments
+  // before the reload must not lose its push (keepalive so it still lands).
+  try { pinSeenFlush(); } catch {}
 });
 
 // ---------- go ----------

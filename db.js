@@ -430,6 +430,17 @@ CREATE TABLE IF NOT EXISTS notif_prefs (
   mode TEXT NOT NULL CHECK (mode IN ('all','mentions','muted')),
   PRIMARY KEY (user_id, scope)
 );
+-- Which pins this account has already looked at, per conversation (the pin
+-- button's "new" badge). Mirrored server-side so the memory follows the
+-- account across devices; the client keeps localStorage as its paint cache.
+-- ctx is the client's conversation key: 's:<serverId>:<channelId>' / 'd:<threadId>'.
+CREATE TABLE IF NOT EXISTS pin_seen (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  ctx TEXT NOT NULL,
+  ids TEXT NOT NULL DEFAULT '[]',
+  at BIGINT NOT NULL,
+  PRIMARY KEY (user_id, ctx)
+);
 `);
   await addColumn('dm_messages', 'sys', 'TEXT');
   await addColumn('dm_members', 'hidden', 'BIGINT NOT NULL DEFAULT 0');

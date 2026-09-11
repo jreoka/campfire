@@ -4,8 +4,9 @@
 // that never went away, so it read as unread notifications that could not be
 // cleared. It is now a hint that this account has not looked at the pins in
 // THIS conversation: opening the panel — or pinning something yourself —
-// remembers what it held (localStorage, per account), the badge drops to 0, and
-// it stays dropped across reloads until a pin you have not seen appears.
+// remembers what it held (localStorage cache, mirrored on the server so the
+// memory follows the account across devices), the badge drops to 0, and it
+// stays dropped across reloads until a pin you have not seen appears.
 //
 // No bundler and no exports here, so this drives the REAL helpers by extracting
 // them from public/js/pins.js and running them against stub globals.
@@ -55,7 +56,8 @@ const code = slice('function sameCtx(a, b)', '// Per-conversation scroll memory'
 const {
   pinSeenIds, pinSeenWrite, markPinsSeen, rememberPinsSeen,
   pinsPanelOpen, unseenPinCount, pinSeenCtxKey, PIN_SEEN_MAX, PIN_SEEN_TTL,
-} = eval(code + '\n;({ pinSeenIds, pinSeenWrite, markPinsSeen, rememberPinsSeen, pinsPanelOpen, unseenPinCount, pinSeenCtxKey, PIN_SEEN_MAX, PIN_SEEN_TTL })');
+  applyPinSeenRemote, pinSeenFlush,
+} = eval(code + '\n;({ pinSeenIds, pinSeenWrite, markPinsSeen, rememberPinsSeen, pinsPanelOpen, unseenPinCount, pinSeenCtxKey, PIN_SEEN_MAX, PIN_SEEN_TTL, applyPinSeenRemote, pinSeenFlush })');
 
 const chan = (id, serverId = 's1') => ({ kind: 'server', id, serverId });
 const dm = (id) => ({ kind: 'dm', id });
@@ -145,5 +147,55 @@ check(/if \(pinsPanelOpen\(ctx\)\) rememberPinsSeen\(ctx, S\.pinIds\);/.test(src
 check(/const unseen = unseenPinCount\(ctx\);/.test(src), 'paintPinsBtn badges unseen pins, not the total');
 check(!/b\.textContent = S\.pinCount > 0/.test(src), 'the old always-on total count is gone');
 
+(async () => {
+console.log('\n[10] the account\'s shared copy is folded in (cross-device)');
+store.delete('cf_pinseen_me');
+applyPinSeenRemote({ 's:s1:c1': { ids: ['p1', 'p2'], at: Date.now() } });
+check(unseenFor(chan('c1'), ['p1', 'p2']) === 0, 'pins read on another device are already seen here');
+check(unseenFor(chan('c1'), ['p1', 'p2', 'p3']) === 1, 'a pin nobody has read still badges');
+rememberPinsSeen(dm('keep'), ['k1']);
+// Union, never replace: an older server copy must not un-read a local read
+// (ids are never reused, so a stale id cannot hide a genuinely new pin).
+rememberPinsSeen(chan('c1'), ['p1', 'p2', 'p3']);
+applyPinSeenRemote({ 's:s1:c1': { ids: ['p1'], at: Date.now() - 5000 } });
+check(unseenPinCount(chan('c1')) === 0, 'merging keeps what this device already read');
+check(pinSeenIds(dm('keep')).has('k1'), 'other conversations in the store are untouched');
+
+console.log('\n[11] a local read is pushed to the shared copy');
+store.delete('cf_pinseen_me');
+const pushed = [];
+global.api = async (p, opts) => { pushed.push({ p, body: JSON.parse(opts.body) }); return {}; };
+applyPinSeenRemote({ 'd:t9': { ids: ['r1'], at: Date.now() } });
+await pinSeenFlush();
+check(pushed.length === 0, 'folding in the server copy does not echo it back');
+markPinsSeen(dm('t9'), ['r2']);
+check(pushed.length === 0, 'the write is queued, not sent on every panel row');
+await pinSeenFlush();
+check(pushed.length === 1 && pushed[0].p === '/api/pins/seen' && pushed[0].body.ctx === 'd:t9', 'a local read POSTs its ids for that conversation');
+check(pushed[0] && pushed[0].body.ids.includes('r1') && pushed[0].body.ids.includes('r2'), 'the pushed list is the whole memory, not just the new id');
+// Opening the panel walks every id (remember) and then re-fetches (mark): the
+// burst must collapse into one request per conversation.
+pushed.length = 0;
+for (let i = 0; i < 5; i++) markPinsSeen(chan('c1'), ['x' + i]);
+markPinsSeen(dm('t9'), ['r3']);
+await pinSeenFlush();
+check(pushed.length === 2, 'a burst of writes collapses to one request per conversation');
+
+console.log('\n[12] a read the server never got is pushed back');
+store.delete('cf_pinseen_me');
+pushed.length = 0;
+rememberPinsSeen(chan('c1'), ['solo1']);   // the write itself reaches the server here
+await pinSeenFlush();
+pushed.length = 0;
+applyPinSeenRemote({});                    // ...but pretend it never did
+await pinSeenFlush();
+check(pushed.length === 1 && pushed[0].body.ctx === 's:s1:c1' && pushed[0].body.ids.join(',') === 'solo1', 'a conversation only this device knows about is pushed on the next pull', pushed);
+pushed.length = 0;
+applyPinSeenRemote({ 's:s1:c1': { ids: ['solo1'], at: Date.now() } });
+await pinSeenFlush();
+check(pushed.length === 0, 'and once both copies agree nothing more is sent');
+delete global.api;
+
 console.log('\n' + (failures.length ? failures.length + ' FAILED, ' + passed + ' passed' : 'all ' + passed + ' checks passed'));
 process.exit(failures.length ? 1 : 0);
+})();

@@ -223,13 +223,30 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   runs the real helpers pulled out of `pins.js` against stub globals): a pin is
   "new" until this account opens the panel in that conversation, pinning
   something yourself is never news, the memory is per account / per channel / per
-  DM and survives a reload, an emptied pin list drops it, and the store is
-  capped (60 conversations, 90-day TTL).
+  DM and survives a reload, an emptied pin list drops it, the store is capped
+  (60 conversations, 90-day TTL), the server copy is merged in without un-reading
+  anything, local reads are POSTed (coalesced) and a memory the server never
+  received is pushed back.
   `node scripts/test-pin-badge-browser.js` drives the real page the same way
   (`test-drafts-browser.js`'s harness, second account joins by invite and pins
   over plain HTTP) and proves the badge lifecycle end to end: no badge for a pin
   I made, "1" for a pin someone else made (still there after a reload), gone
-  after opening the panel, still gone after another reload. Skips when Postgres
+  after opening the panel, still gone after another reload. It also proves the
+  cross-device memory: a browser with no localStorage pulls the server copy
+  (1 new, not 3) and a read made elsewhere clears the badge here live, over the
+  `pin-seen` push, with no reload. Skips when Postgres or Chrome is missing.
+  `node scripts/test-pin-seen-sync.js` covers that server side against a
+  throwaway database: the same account can read its memory back, its other
+  sockets get the `pin-seen` push, other accounts hear nothing, an emptied list
+  deletes the row, ids are deduped/capped and contexts and auth are validated,
+  and the table stays bounded (200 conversations per account).
+  `node scripts/test-anow-strip.js` covers the phone's Active Now strip in
+  headless Chrome at a phone viewport with injected friends: the strip sits
+  under Stories and above DIRECT MESSAGES, one tile per online friend (the one
+  in a room first), the row really scrolls horizontally, only a reachable voice
+  room offers Join, it disappears when nobody is online, it stays out of the
+  way on desktop (where `#members` is the rail), and it stays fed while a DM is
+  open. Writes phone/desktop screenshots to the temp dir. Skips when Postgres
   or Chrome is missing.
   `node scripts/test-viewonce.js` covers view-once messages against the same
 dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
@@ -399,7 +416,12 @@ references and where it happened, pushes every site admin live, drops an inbox
 entry, and puts a badge on the console's Reports tab + rail shield; admins
 search/filter the queue and dismiss, delete the message, disable the author,
 delete + disable, or ban from the server (one decision closes every open report
-on that message).
+on that message). The pin button's "N new" badge is a per-account memory
+(`pin_seen`) mirrored server-side and pushed over `pin-seen`, so reading a
+conversation's pins on the phone clears the badge on the desktop too; the phone
+Home tab mirrors the Active Now rail as a horizontal tile scroller under
+Stories (`#anow-strip`, `home.js`), since `#members` is a drawer Home never
+opens there.
 Detail per change lives in `git log` — don't duplicate it here.
 
 ## Deployment (owner directive)
