@@ -88,17 +88,25 @@ async function existsSameSize(dst, key, size) {
 
 async function copyOne(src, dst, obj) {
   const got = await src.s3.send(new GetObjectCommand({ Bucket: src.bucket, Key: obj.key }));
+  // Read the object fully into memory and send it as a BUFFER, not a stream.
+  // A streaming Body makes aws-sdk v3 issue a chunked PUT with a checksum
+  // trailer (STREAMING-UNSIGNED-PAYLOAD-TRAILER), which several S3-compatible
+  // stores reject with "non-retryable streaming request". MinIO accepted it, so
+  // this only shows up against the real destination. Uploads here are at most a
+  // few MB and concurrency is bounded, so buffering is cheap.
+  const bytes = Buffer.from(await got.Body.transformToByteArray());
   // Preserve the source Content-Type: served uploads must keep the type the app
   // set, or browsers will download instead of render them.
   const contentType = got.ContentType || undefined;
   await dst.s3.send(new PutObjectCommand({
     Bucket: dst.bucket,
     Key: obj.key,
-    Body: got.Body,
-    ContentLength: Number(got.ContentLength) || obj.size,
+    Body: bytes,
+    ContentLength: bytes.length,
     ...(contentType ? { ContentType: contentType } : {}),
     ...(got.CacheControl ? { CacheControl: got.CacheControl } : {}),
   }));
+  return bytes.length;
 }
 
 async function main() {
