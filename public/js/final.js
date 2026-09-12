@@ -82,13 +82,21 @@ function poke() {
 // the scroller, so normal scrolling still wins below it. The synthetic click
 // after a drag is swallowed, or the panel would also activate whatever row was
 // under the finger.
+// One shared swallow window: a drag fires a synthetic click when the finger
+// lifts, and that click must not also activate whatever row was under it. It
+// lives on the function object (see below) so wiring a freshly created sheet
+// does not add a document listener per open.
+
 function swipeDownToClose(panel, onClose, opts = {}) {
   if (!panel) return;
   const threshold = opts.threshold || 90;
   const live = opts.live || 0.55;
+  // A class that suppresses the panel's own transform transition while the
+  // finger owns the motion; it comes off on release so the settle still eases.
+  const dragClass = opts.dragClass || null;
   const scroller = () => (opts.scroller ? opts.scroller() : panel);
   const atTop = () => { const s = scroller(); return !s || s.scrollTop <= 0; };
-  let sx = 0, sy = 0, dy = 0, active = false, swallowUntil = 0;
+  let sx = 0, sy = 0, dy = 0, active = false;
   panel.addEventListener('touchstart', (e) => {
     if (e.touches.length !== 1 || (opts.enabled && !opts.enabled())) { active = false; return; }
     active = atTop();
@@ -99,10 +107,11 @@ function swipeDownToClose(panel, onClose, opts = {}) {
     if (!active || e.touches.length !== 1) return;
     const t = e.touches[0];
     const d = t.clientY - sy, dx = t.clientX - sx;
-    if (!atTop()) { active = false; dy = 0; panel.style.transform = ''; return; }
+    if (!atTop()) { active = false; dy = 0; panel.style.transform = ''; if (dragClass) panel.classList.remove(dragClass); return; }
     // Upward is the scroll's, sideways is nobody's: leave both alone.
-    if (d <= 0 || Math.abs(dx) > Math.abs(d) * 1.4) { dy = 0; panel.style.transform = ''; return; }
+    if (d <= 0 || Math.abs(dx) > Math.abs(d) * 1.4) { dy = 0; panel.style.transform = ''; if (dragClass) panel.classList.remove(dragClass); return; }
     e.preventDefault();
+    if (dragClass) panel.classList.add(dragClass);
     dy = d;
     panel.style.animation = 'none'; // take over from the entry animation
     panel.style.transition = '';
@@ -114,8 +123,9 @@ function swipeDownToClose(panel, onClose, opts = {}) {
     const close = dy > threshold;
     const dragged = dy > 8;
     dy = 0;
+    if (dragClass) panel.classList.remove(dragClass);
     panel.style.transform = '';
-    if (dragged) swallowUntil = Date.now() + 400;
+    if (dragged) swipeDownToClose.swallowUntil = Date.now() + 400;
     // The inline animation override stays: clearing it here would restart the
     // panel's entry animation on the spot. The panel's close function clears it
     // so the next open still animates in.
@@ -125,12 +135,20 @@ function swipeDownToClose(panel, onClose, opts = {}) {
   };
   panel.addEventListener('touchend', end, { passive: true });
   panel.addEventListener('touchcancel', end, { passive: true });
-  document.addEventListener('click', (e) => {
-    if (Date.now() < swallowUntil) { e.stopPropagation(); e.preventDefault(); }
-  }, true);
 }
+// One shared swallow window for every sweepable panel: a drag fires a
+// synthetic click when the finger lifts, and that click must not also activate
+// whatever row was under it. Kept on the function object (not a module-level
+// let) so the whole behaviour stays in one readable piece and wiring a freshly
+// created sheet never adds a document listener per open.
+swipeDownToClose.swallowUntil = 0;
+document.addEventListener('click', (e) => {
+  if (Date.now() < swipeDownToClose.swallowUntil) { e.stopPropagation(); e.preventDefault(); }
+}, true);
 swipeDownToClose($('#profile-backdrop .profile'), () => closeProfileScreen(), { scroller: () => $('#pf-body') });
 swipeDownToClose($('#usercard'), () => closeUserCard(), { enabled: () => $('#usercard').classList.contains('sheet') });
+// Context / message sheets are built fresh on every open (see openMsgSheet and
+// openCtxSheet), so their swipe is wired where they are created.
 // ---------- global closers ----------
 // Was this click originally inside one of `sels`? composedPath() is captured
 // when the event is dispatched, so it keeps answering correctly even after a
@@ -171,8 +189,32 @@ document.addEventListener('keydown', (e) => {
     openTagCard(e.target.dataset.tagSid, r.left + r.width / 2, r.bottom + 6);
   }
 });
- document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closePicker(); closeUserCard(); closeTagCard(); closeStatusMenu(); closeCtx(); closeFolderFlyout(); closeFolderPopout(); closeSettings(); closeServerSettings(); closeChannelSettings(); closeAdminConsole(); closeProfileScreen(); $('#composer-more')?.classList.add('hidden'); closeStoryNewMenu(); cancelModal(); closeLightbox(); hideEmojiPop(); }
+// Escape is the desktop twin of the phone's back button: it peels one layer at
+// a time, topmost first, and must never throw on the way down or the layers
+// under the one that threw stay open. (`closeStatusMenu` used to be called here
+// and does not exist — the status menu lives inside the user card now — so the
+// whole list after it was dead code.)
+const ESCAPE_LAYERS = [
+  () => closePicker(),
+  () => closeUserCard(),
+  () => closeTagCard(),
+  () => closeCtx(),
+  () => closeFolderFlyout(),
+  () => closeFolderPopout(),
+  () => closeSettings(),
+  () => closeServerSettings(),
+  () => closeChannelSettings(),
+  () => closeAdminConsole(),
+  () => closeProfileScreen(),
+  () => $('#composer-more')?.classList.add('hidden'),
+  () => closeStoryNewMenu(),
+  () => cancelModal(),
+  () => closeLightbox(),
+  () => hideEmojiPop(),
+];
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  for (const close of ESCAPE_LAYERS) { try { close(); } catch {} }
 });
 function composerAnchor() {
   const t = $('#composer-tools')?.getBoundingClientRect();

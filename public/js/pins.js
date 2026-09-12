@@ -628,7 +628,11 @@ function renderDmBlank() {
 function renderDmMessages(force = false) {
   const box = $('#messages');
   const msgs = S.dmMessages.get(S.dmThreadId) || [];
-  box.dataset.ctx = 'dm:' + (S.dmThreadId || ''); // see renderMessages/saveScrollPos
+  const dmCtx = 'dm:' + (S.dmThreadId || '');
+  // Fade in only on a real conversation change (see convoSwapPulse): an
+  // incoming message re-renders this same list and must not flicker.
+  if (box.dataset.ctx && box.dataset.ctx !== dmCtx) convoSwapPulse();
+  box.dataset.ctx = dmCtx; // see renderMessages/saveScrollPos
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
   // Same anchor preservation as renderMessages: rebuilding resets scrollTop
   // to 0, which used to yank scrolled-up readers upward on updates.

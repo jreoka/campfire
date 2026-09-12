@@ -17,7 +17,12 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Campfire" />
 <link rel="stylesheet" href="/styles.css" />
-<script>try{var __t=localStorage.getItem('cf_theme');document.documentElement.setAttribute('data-theme',(['light','dracula','oled'].indexOf(__t)>=0)?__t:'dark');}catch(e){}</script>
+<script>try{var __t=localStorage.getItem('cf_theme');document.documentElement.setAttribute('data-theme',(['light','dracula','oled'].indexOf(__t)>=0)?__t:'dark');}catch(e){}
+/* Installed-app flag, set before the first paint so the shell can tighten
+   itself up with no flash: an installed app has no browser chrome to work
+   around, no reload button, and no URL bar to scroll away. */
+try{var __sa=(window.matchMedia&&matchMedia('(display-mode: standalone)').matches)||navigator.standalone===true||(window.matchMedia&&matchMedia('(display-mode: window-controls-overlay)').matches);if(__sa)document.documentElement.classList.add('standalone');}catch(e){}
+try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}catch(e){}</script>
 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=cfTurnstileReady&render=explicit" async defer></script>
 </head>
 <body>
@@ -421,13 +426,17 @@ downward drag dismisses it (see the lightbox block in pickers.js). -->
         <span class="spacer"></span>
         <button type="button" id="settings-close-menu" class="mini" title="Close settings" aria-label="Close settings">✕</button>
       </div>
-      <button data-tab="profile" class="set-tab active">Profile</button>
-      <button data-tab="account" class="set-tab">Account</button>
-      <button data-tab="games" class="set-tab">Games</button>
-      <button data-tab="media" class="set-tab">Media</button>
-      <button data-tab="notifs" class="set-tab">Notifications</button>
-      <button data-tab="blocked" class="set-tab">Blocked</button>
-      <button data-tab="themes" class="set-tab">Themes</button>
+      <!-- Each row carries its own icon: on a phone this rail IS the settings
+           screen (a full page of rows), and a list of bare labels reads as a
+           web menu. The icon span is display:none on desktop, where this is a
+           side rail and the labels alone are the convention. -->
+      <button data-tab="profile" class="set-tab active"><span class="set-tab-ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1.5A5.5 5.5 0 0 1 9.5 14h5a5.5 5.5 0 0 1 5.5 5.5V21"/></svg></span>Profile</button>
+      <button data-tab="account" class="set-tab"><span class="set-tab-ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l7.5 3.2v5.1c0 4.7-3.1 8.8-7.5 10.2-4.4-1.4-7.5-5.5-7.5-10.2V5.7z"/><path d="M12 10.5v4"/><circle cx="12" cy="8.4" r=".6" fill="currentColor"/></svg></span>Account</button>
+      <button data-tab="games" class="set-tab"><span class="set-tab-ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="5"/><path d="M7 10v4M5 12h4M16 11.5h.01M18.5 14h.01"/></svg></span>Games</button>
+      <button data-tab="media" class="set-tab"><span class="set-tab-ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/></svg></span>Media</button>
+      <button data-tab="notifs" class="set-tab"><span class="set-tab-ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></span>Notifications</button>
+      <button data-tab="blocked" class="set-tab"><span class="set-tab-ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg></span>Blocked</button>
+      <button data-tab="themes" class="set-tab"><span class="set-tab-ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.9-.9 1.9-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2H16a5 5 0 0 0 5-5c0-3.6-4-6.4-9-6.4z"/><circle cx="7.5" cy="11.5" r="1.1" fill="currentColor"/><circle cx="11" cy="7.5" r="1.1" fill="currentColor"/><circle cx="16" cy="9.5" r="1.1" fill="currentColor"/></svg></span>Themes</button>
       <span class="spacer"></span>
       <button id="settings-close" class="mini">✕</button>
     </div>
@@ -725,6 +734,7 @@ downward drag dismisses it (see the lightbox block in pickers.js). -->
 <script src="/js/admin.js"></script>
 <script src="/js/security.js"></script>
 <script src="/js/final.js"></script>
+<script src="/js/native.js"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(()=>{}));

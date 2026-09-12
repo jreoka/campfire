@@ -18,8 +18,21 @@ const isCoarse = () => window.matchMedia && matchMedia('(hover: none)').matches;
 // styles.css — the two must be kept in sync.
 const PHONE_MQ = '(max-width:700px), (max-height:560px) and (pointer:coarse)';
 const phoneLayout = () => !!(window.matchMedia && matchMedia(PHONE_MQ).matches);
-// ---------- haptics ----------
-// Android WebView and Chrome expose navigator.vibrate (iOS never does, so this
+// ---------- conversation swap ----------
+// Switching channel or DM replaces the whole message list in one frame, which
+// reads as a hard cut between two pages. Restarting a ~130ms fade on the list
+// makes it read as one surface changing its contents — the trick behind every
+// native tab switch. Fired only when the conversation actually changed, never
+// on an ordinary re-render (a message arriving, an edit, a reaction): a pulse
+// on every update would flicker the whole chat.
+function convoSwapPulse() {
+  const box = $('#messages');
+  if (!box || box.classList.contains('hidden')) return;
+  box.classList.remove('convo-swap');
+  void box.offsetWidth; // reflow so the animation restarts
+  box.classList.add('convo-swap');
+}
+// ---------- haptics ----------// Android WebView and Chrome expose navigator.vibrate (iOS never does, so this
 // is a silent no-op there). Patterns stay tiny — a tick, not a buzz — and a
 // short debounce keeps one gesture's several handlers from rattling the phone.
 // The on/off switch lives in Settings → Media (cf_media.haptics).

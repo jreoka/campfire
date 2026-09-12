@@ -68,7 +68,8 @@ campfire/
     js/              # SPA modules (ordered classic scripts): core, auth, noise,
                      # servers, messages, socket, ui, voice, actions, rail, home,
                      # pins, compose, story-edit, stories, viewonce, pickers,
-                     # settings, security, final
+                     # settings, security, final, native (the native shell: back
+                     # navigation, edge-swipe, press feedback — see below)
     vendor/rnnoise/  # RNNoise wasm + worklet (mic noise suppression) vendored
     manifest.webmanifest
     service-worker.js   # bump CACHE ('campfire-vN') on every frontend change
@@ -712,6 +713,23 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   back on the left half and close on the right half (and the header fits, so the
   close is never clipped), back returns to the menu, the detail title comes off
   the row label, and the view classes are inert on desktop.
+  `node scripts/test-native-back.js` covers the native shell (`js/native.js`)
+  against a throwaway database with a real phone viewport and real touch input,
+  skipping without Postgres or Chrome: on a touch device the first touch arms
+  the history sentinel (and nothing arms before it — the auth screen must keep
+  the back button), one back press closes exactly ONE thing topmost-first (the
+  user card, then a picker stacked on settings, then settings, then a modal,
+  then the members drawer), back from a channel or a DM opens the nav page
+  rather than leaving the app, the press after that closes the page and keeps
+  the conversation, the shell re-arms after each handled press, Escape peels
+  the same list without one throwing (it used to die on a `closeStatusMenu`
+  that does not exist, which killed every layer below it), a swipe in from the
+  left edge opens the nav page and a swipe back out closes it while a vertical
+  drag from the edge is left to the list, every back layer's predicate can be
+  evaluated (a throwing predicate is swallowed and silently disables that
+  overlay — which is how nine of them were un-backable the first time round),
+  each header icon button carries a ≥44px hit box that never steals its
+  neighbour's tap, and a fine pointer (desktop) pushes no history entry at all.
 - **Upload pipeline E2E:** `node scripts/test-upload-pipeline.js` (needs ffmpeg
   + the dev Postgres, skips otherwise) boots a real server against a throwaway
   database with a fake clamd and asserts the single-transition compression flow
@@ -1011,7 +1029,62 @@ row style without one is what test-touch-hold-hover.js fails on. Mobile panels
 dismiss with `swipeDownToClose()` (final.js): touch events, not pointer events,
 because the panel body is a scroll container and a pointer drag at the top is an
 overscroll pan the browser cancels; it only engages from the top of the scroller,
-and swallows the click the drag would otherwise land on the row underneath.
+and swallows the click the drag would otherwise land on the row underneath. Every
+sweepable panel on the phone is wired to it, including the ctx/message `#sheet`,
+which is built fresh on each open — so the shared swallow window lives on the
+function object (`swipeDownToClose.swallowUntil`, guarded by one document
+listener) rather than as a module-level `let`, or wiring a new sheet would add a
+document listener per open and the offline `test-swipe-dismiss.js` slice (which
+starts at `function swipeDownToClose(`) would not see the variable at all.
+
+**The native shell (`public/js/native.js`) is the phone's navigation contract.**
+On a touch device the first touch arms one sentinel history entry
+(`cfArm`/`cfBackWanted` — coarse pointers only, so a desktop browser's back
+button is never hijacked); a back press pops it, closes exactly ONE thing, and
+re-arms, and `CF_BACK_LAYERS` decides what that one thing is, topmost first.
+Adding an overlay means adding a layer whose `open()` reads live DOM state and
+whose `close()` is the app's OWN closer (back must leave the same state behind
+as ✕). Two rules are load-bearing and both were learned by breaking them:
+`cfShown()` takes an element **or a selector** (the layer loop wraps every
+predicate in try/catch, so a predicate that throws is indistinguishable from
+"closed" — nine overlays were silently un-backable that way), and
+`test-native-back.js` fails if any layer's `open()` throws, so a typo shows up
+as a test failure instead of a dead overlay. Below the overlays come the nav page
+and then the conversation → list step (`cfBack`); at the root the shell stops
+re-arming, so back leaves the app the way it does in a native app. The same
+module owns the edge-swipe (`#left` tracks the finger; `nav-dragging` kills its
+transition mid-drag) and the two platform affordances CSS cannot do alone: the
+no-op `touchstart` listener that makes `:active` work in Mobile Safari, and the
+`html.standalone` / `html.wrapper-app` flags (set by the head script before
+first paint, so the installed app can be styled with no flash).
+
+**Interaction rules that make it feel native, and where they live.**
+- Press states: every row/control reacts on touch-DOWN via `:active`
+  (background one tonal step up; icon buttons also scale to .92). A new
+  interactive row belongs in the "Native feel → press states" selector lists or
+  it will feel dead under the thumb.
+- Tap targets: small controls grow an invisible `::after` hit box to
+  `var(--tap)` (44px) under `@media (pointer:coarse)` instead of changing size —
+  resizing would re-flow the phone header and break the landscape three-pane fit.
+  Only controls that are already in flow get `position:relative` there; an
+  absolutely-positioned one (`#stories-nav-add`, the GIF star, the history ✕)
+  already contains its own `::after`, and switching it to relative drops it out
+  of its pinned corner. `test-native-back.js` asserts the boxes stay clear of
+  each other. List rows (`.chan`, `.dmrow`, …) do get a real 44px `min-height`
+  on a phone: that is the density change a thumb needs.
+- **Hover rules live in ONE `@media (hover:hover)` block at the bottom of
+  `styles.css`.** A tap leaves the browser's synthetic `:hover` stuck on the
+  last thing touched, which reads as "that control is still selected" — the
+  single most web-looking artefact on a phone. A new hover rule that only
+  decorates goes in that block; anything that HIDES something until hover (an
+  action bar, a row's ✕) instead needs a `@media (hover:none)` rule near its
+  base so it is shown unconditionally on touch.
+- Motion: drawers/sheets use `var(--t-drawer)`/`var(--t-sheet)` with
+  `var(--ease-native)` (decelerating — `ease` reads as a web transition).
+  `convoSwapPulse()` (core.js) fades `#messages` on a real conversation change
+  only; firing it on every re-render would flicker the chat.
+- Empty states are hairline `--line-soft` surfaces, never dashed borders: a
+  dashed outline reads as an unfinished placeholder.
 Settings is responsive in two shapes:
 desktop keeps the side rail, a phone (`max-width:700px`) gets a menu of section
 rows (`.settings.menu`) and picking one shows that section alone

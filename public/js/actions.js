@@ -206,6 +206,7 @@ function openMsgSheet(mid) {
   sh.appendChild(cancel);
   document.body.appendChild(bd);
   document.body.appendChild(sh);
+  swipeDownToClose(sh, () => closeMsgSheet(), { dragClass: 'sheet-dragging', enabled: () => sh.classList.contains('open') });
   requestAnimationFrame(() => requestAnimationFrame(() => {
     bd.classList.add('open'); sh.classList.add('open');
   }));
@@ -322,6 +323,7 @@ function openCtxSheet(items, head) {
   sh.appendChild(cancel);
   document.body.appendChild(bd);
   document.body.appendChild(sh);
+  swipeDownToClose(sh, () => closeMsgSheet(), { dragClass: 'sheet-dragging', enabled: () => sh.classList.contains('open') });
   requestAnimationFrame(() => requestAnimationFrame(() => { bd.classList.add('open'); sh.classList.add('open'); }));
 }
 function folderSheetItems(fid) {

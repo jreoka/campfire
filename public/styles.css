@@ -37,6 +37,18 @@
   --r-lg:14px;
   --r-xl:18px;
   --t-fast:.14s ease;
+  /* Motion vocabulary. Anything a finger pushed (drawers, sheets, page swaps)
+     rides --ease-native: it starts fast and decelerates, which is what a native
+     shell does and what plain `ease` does not. Direct feedback (a press) is
+     shorter and near-linear so it reads as instant. */
+  --ease-native:cubic-bezier(.2,0,0,1);
+  --ease-out:cubic-bezier(.16,1,.3,1);
+  --t-drawer:.26s;
+  --t-sheet:.3s;
+  /* Tap targets: the minimum a thumb can reliably hit on a coarse pointer.
+     Chrome only — see the coarse-pointer block near the end that grows hit
+     boxes without moving any pixels. */
+  --tap:44px;
   --safe-b:env(safe-area-inset-bottom,0px);
   --safe-t:env(safe-area-inset-top,0px);
   --safe-l:env(safe-area-inset-left,0px);
@@ -195,7 +207,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .auth-card>p{margin:.25rem 0 1.25rem;font-size:.92rem}
 .tabs{display:flex;background:var(--inset);border:0;border-radius:12px;padding:4px;margin:0 0 1.25rem}
 .tab{flex:1;border:0;background:transparent;color:var(--muted);padding:.6rem;border-radius:8px;font-size:.9rem;font-weight:700;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
-.tab:hover{color:var(--text)}
+
 .tab.active{background:var(--accent);color:#fff}
 #form-auth label{display:block;margin:.8rem 0;font-size:.8rem;font-weight:700;color:var(--muted);letter-spacing:.02em}
 #form-auth input{width:100%;margin-top:.4rem;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:.7rem .85rem;font-size:.95rem;outline:none;transition:border-color var(--t-fast),box-shadow var(--t-fast)}
@@ -240,16 +252,16 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 #form-2fa #btn-2fa-back{margin-top:.7rem}
 #ts-wrap{display:flex;justify-content:center;margin:.7rem 0 .2rem}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:.45rem;min-height:38px;border:1px solid transparent;background:var(--panel-3);color:var(--text);border-radius:10px;padding:.55rem 1.25rem;font-size:.9rem;font-weight:650;cursor:pointer;white-space:nowrap;transition:background var(--t-fast),transform .1s ease,filter var(--t-fast)}
-.btn:hover{background:var(--panel-4)}
+
 .btn:active{transform:scale(.98)}
 .btn.primary{background:var(--accent);color:var(--on-accent)}
-.btn.primary:hover{background:var(--accent-hover)}
+
 .btn.primary:active{background:var(--accent-active)}
 .btn.big{width:100%;margin-top:.9rem;min-height:48px;font-size:.95rem}
 .btn.small{min-height:32px;padding:.35rem .95rem;font-size:.84rem}
 .btn.danger{background:var(--danger-bg);border-color:var(--danger-line);color:var(--danger-tx)}
 .btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
-.btn.danger:hover{background:rgba(248,113,113,.17)}
+
 
 /* ---------- main layout ---------- */
 #view-main{display:flex;height:100vh;height:100dvh;overflow:hidden}
@@ -309,7 +321,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #server-header{padding:1rem .9rem .85rem;border-bottom:1px solid var(--line-soft)}
 #server-header strong{font-size:1rem;font-weight:750;display:block;margin-bottom:.6rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:-.01em}
 .chip{border:0;background:var(--panel-2);color:var(--text);border-radius:8px;padding:.4rem .85rem;font-size:.78rem;font-weight:700;cursor:pointer;transition:background var(--t-fast)}
-.chip:hover{background:var(--panel-3)}
+
 .chan-group-label{font-size:.7rem;letter-spacing:.09em;color:var(--faint);padding:.9rem .95rem .35rem;font-weight:800}
 #btn-group-new{width:26px;height:26px;border-radius:8px;padding:0;display:inline-flex;align-items:center;justify-content:center}
 #btn-group-new svg{display:block}
@@ -357,7 +369,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
    box so the ✕ lands in the same place everywhere (a stray .mini pill here
    reads as a different control). */
 #settings-close,#admin-close,#srv-settings-close,#chan-settings-close{padding:0;width:30px;height:30px;min-height:30px;flex-shrink:0}
-.mini:hover{background:var(--panel-4)}
+
 .mini:disabled{opacity:.35;cursor:default}
 .mini:disabled:hover{background:var(--panel-3)}
 .mini.danger{background:var(--danger-bg);border:1px solid var(--danger-line);color:var(--danger-tx)}
@@ -386,7 +398,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #voice-bar:not(.hidden)+#me-card{margin-top:0;border-top-left-radius:0;border-top-right-radius:0}
 .vb-btns{display:flex;align-items:center;justify-content:center;gap:.4rem}
 .vb-btn{border:0;background:var(--panel-3);color:var(--text);border-radius:10px;width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:background var(--t-fast),transform .1s ease}
-.vb-btn:hover{background:var(--panel-4)}
+
 .vb-btn:active{transform:scale(.94)}
 .vb-btn.off{background:#a83226;color:#fff}
 .vb-btn.danger{background:#a83226;color:#fff}
@@ -410,7 +422,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #chan-topic{color:var(--muted);font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:34vw;border-left:1px solid var(--line);padding-left:.65rem;margin-left:.15rem;cursor:pointer}
 #chan-topic:hover{color:var(--text)}
 .icon-btn{display:none;align-items:center;justify-content:center;width:36px;height:36px;border:0;background:var(--panel-2);color:var(--text);border-radius:50%;font-size:1rem;cursor:pointer;transition:background var(--t-fast)}
-.icon-btn:hover{background:var(--panel-3)}
+
 .vusers{display:flex;flex-direction:column;gap:1px;padding:1px 0 5px 22px}
 .vuser{display:flex;align-items:center;gap:.45rem;border-radius:10px;padding:.28rem .6rem .28rem .3rem;cursor:pointer;transition:background var(--t-fast)}
 .vuser:hover{background:var(--panel-2)}
@@ -475,7 +487,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .day{display:flex;align-items:center;gap:.7rem;color:var(--faint);font-size:.72rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;text-align:center;margin:.8rem 0 .45rem}
 .day::before,.day::after{content:'';flex:1;height:1px;background:var(--line-soft)}
 .msg{display:flex;gap:.7rem;padding:.45rem .6rem;border-radius:10px;-webkit-touch-callout:none;transition:background var(--t-fast)}
-.msg:hover{background:rgba(255,255,255,.05)}
+
 .msg .avatar{width:38px;height:38px}
 .msg.grouped{padding-top:.1rem;padding-bottom:.1rem}
 /* Grouped rows have no avatar, but the gutter still shows the hover timestamp.
@@ -603,7 +615,7 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 /* ---------- context menu ---------- */
 #ctx-menu{position:fixed;z-index:400;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);padding:.35rem;min-width:210px;max-width:280px}
 .ctx-item{display:flex;align-items:center;gap:.6rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:8px;padding:.55rem .65rem;font-size:.87rem;font-weight:600;cursor:pointer;transition:background var(--t-fast)}
-.ctx-item:hover{background:var(--panel-3)}
+
 .ctx-item.danger{color:var(--danger-tx)}
 .ctx-ic{display:inline-flex;flex-shrink:0;width:18px;justify-content:center}
 .ctx-sep{height:1px;background:var(--line);margin:.3rem .45rem;opacity:.5}
@@ -888,9 +900,12 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .pk-attr a{color:var(--accent-hover);font-weight:700;text-decoration:none}
 
 /* ---------- bottom sheet (touch message menu) ---------- */
-#sheet-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.6);z-index:158;opacity:0;transition:opacity .22s}
+#sheet-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.6);z-index:158;opacity:0;transition:opacity var(--t-sheet) var(--ease-native)}
 #sheet-backdrop.open{opacity:1}
-#sheet{position:fixed;left:0;right:0;bottom:0;z-index:159;background:var(--panel-2);border:0;border-radius:16px 16px 0 0;padding:.6rem .9rem calc(.9rem + var(--safe-b));transform:translateY(105%);transition:transform .25s ease;max-height:82vh;max-height:82dvh;overflow-y:auto}
+#sheet{position:fixed;left:0;right:0;bottom:0;z-index:159;background:var(--panel-2);border:0;border-radius:16px 16px 0 0;padding:.6rem .9rem calc(.9rem + var(--safe-b));transform:translateY(105%);transition:transform var(--t-sheet) var(--ease-native);max-height:82vh;max-height:82dvh;overflow-y:auto;overscroll-behavior:contain}
+/* A sheet that has been dragged down follows the finger; the transition comes
+   back on release so it still settles smoothly. */
+#sheet.sheet-dragging{transition:none}
 #sheet.open{transform:none}
 .sheet-handle{width:42px;height:4px;border-radius:999px;background:var(--panel-4);margin:.1rem auto .7rem}
 .sheet-head{display:flex;gap:.65rem;align-items:center;padding:.2rem .2rem .7rem}
@@ -904,7 +919,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .sheet-reacts img.cemoi{width:28px;height:28px;vertical-align:middle}
 .sheet-rows{display:flex;flex-direction:column;gap:2px}
 .sheet-row{display:flex;align-items:center;gap:.75rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:10px;padding:.75rem .65rem;font-size:.92rem;font-weight:650;cursor:pointer}
-.sheet-row:hover{background:var(--panel-3)}
+
 /* A long-press opens the sheet under a finger that is still down: the row beneath
    it must not paint a "selected" background before anything is chosen (see
    suppressHoverFromTouch). Cleared on the next touch / real move. */
@@ -1041,7 +1056,7 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .uc-tab{display:flex;align-items:center;gap:.6rem;width:100%;min-height:34px;border:0;background:transparent;color:var(--text);border-radius:9px;padding:.42rem .55rem;font:inherit;font-size:.84rem;font-weight:650;line-height:1.2;text-align:left;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
 .uc-tab>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .uc-tab svg{flex-shrink:0;color:var(--muted);transition:color var(--t-fast)}
-.uc-tab:hover{background:var(--panel-4)}
+
 .uc-tab:hover svg{color:var(--text)}
 .uc-tab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .uc-tab.primary{background:var(--accent-container);color:var(--on-container)}
@@ -1219,7 +1234,7 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .set-tabs{display:flex;flex-direction:column;gap:.3rem;align-items:stretch;padding:.9rem .7rem;min-width:158px;flex-shrink:0;min-height:0;overflow-y:auto;background:var(--panel);border-right:1px solid var(--line-soft)}
 .set-tab{text-align:left}
 .set-tab{border:0;background:transparent;color:var(--muted);font-weight:650;font-size:.88rem;padding:.6rem .95rem;border-radius:8px;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
-.set-tab:hover{background:var(--panel-2);color:var(--text)}
+
 .set-tab.active{background:var(--accent-dim);color:var(--on-container)}
 .set-body{flex:1;min-width:0;overflow-y:auto;overflow-anchor:none;padding:1.35rem 1.45rem 1.5rem}
 /* The mobile-only header rows: the section menu's title bar, and the detail
@@ -1274,7 +1289,7 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .hist-row{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.6rem}
 .hist-row:empty{display:none}
 .hist-dot{position:relative;width:44px;height:44px;border-radius:50%;border:2px solid var(--panel-3);background-size:cover;background-position:center;cursor:pointer;padding:0;background-color:var(--panel-3);transition:border-color var(--t-fast),transform .1s ease}
-.hist-dot:hover{border-color:var(--accent);transform:scale(1.05)}
+
 .hist-dot.wide{width:76px;border-radius:10px}
 .hist-x{position:absolute;top:-8px;right:-8px;width:20px;height:20px;border-radius:50%;background:var(--panel-3);color:var(--text);border:1px solid var(--line);font-size:11px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
 .hist-x:hover{background:var(--red);border-color:var(--red);color:#fff}
@@ -1307,7 +1322,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .gif-btn:hover{background:var(--panel-3);color:var(--text)}
 /* borderless white icon buttons on the me-card (mute / deafen / gear) */
 .me-icobtn{flex-shrink:0;border:0;background:transparent;color:#fff;border-radius:8px;width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:background var(--t-fast),color var(--t-fast),transform .1s ease}
-.me-icobtn:hover{background:rgba(255,255,255,.12)}
+
 .me-icobtn:active{transform:scale(.94)}
 .me-icobtn svg{display:block}
 .me-icobtn.off{background:#a83226;color:#fff}
@@ -1318,7 +1333,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 #btn-settings-me:hover svg{transform:rotate(360deg)}
 @media (prefers-reduced-motion:reduce){.me-icobtn.pop{animation:none}#btn-settings-me svg{transition:none}#btn-settings-me:hover svg{transform:none}}
 [data-theme="light"] .me-icobtn{color:var(--text)}
-[data-theme="light"] .me-icobtn:hover{background:rgba(0,0,0,.08)}
+
 #me-card .gbadge{background:transparent}
 #me-card #me-name{flex:0 1 auto}
 #drop-marker{position:fixed;height:3px;background:var(--accent);border-radius:2px;z-index:300;pointer-events:none;display:none}
@@ -1331,7 +1346,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
   background:color-mix(in srgb,var(--fcolor,#5865f2) 30%,var(--panel-2));
   transition:background .12s ease,border-radius var(--t-fast);
 }
-.folder-btn:hover{background:color-mix(in srgb,var(--fcolor,#5865f2) 44%,var(--panel-2));border-radius:10px}
+
 .folder-btn.open{box-shadow:inset 0 0 0 2px var(--fcolor,#5865f2)}
 .folder-btn.open:hover{background:color-mix(in srgb,var(--fcolor,#5865f2) 40%,var(--panel-2))}
 .fwrap.active .folder-btn::before{content:'';position:absolute;left:-10px;top:50%;transform:translateY(-50%);width:6px;height:28px;border-radius:0 999px 999px 0;background:var(--text);z-index:2}
@@ -1384,7 +1399,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 #friend-reqs:empty,#friend-list:empty,#dm-list:empty,#group-list:empty{display:none}
 .ftabs{display:flex;gap:.3rem;padding:.25rem 0 .4rem}
 .ftab{flex:0 0 auto;border:0;background:transparent;color:var(--muted);border-radius:8px;padding:.55rem 1.15rem;font-size:.85rem;font-weight:700;cursor:pointer;white-space:nowrap;transition:background var(--t-fast),color var(--t-fast)}
-.ftab:hover{background:var(--panel-2);color:var(--text)}
+
 .ftab.active{background:var(--panel-3);color:var(--text)}
 .ftab #req-count{color:var(--accent-hover)}
 /* sidebar Friends nav button (full-width row, icon right) */
@@ -1601,12 +1616,12 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .fwd-dest.sel .fwd-check{visibility:visible}
 .dm-close{flex-shrink:0;width:24px;height:24px;border:0;border-radius:8px;background:transparent;color:var(--faint);cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity var(--t-fast),background var(--t-fast),color var(--t-fast),transform .1s ease}
 .dmrow:hover .dm-close,.dmrow:focus-within .dm-close{opacity:1}
-.dm-close:hover{background:var(--danger-bg);color:var(--danger-tx)}
+
 .dm-close:active{transform:scale(.88)}
 .dm-close svg{display:block}
 @media (hover:none){.dm-close{opacity:1}}
 .home-btn{background:var(--panel-2);border-radius:12px;position:relative;overflow:hidden;display:grid;place-items:center}
-.home-btn:hover{background:var(--panel-3)}
+
 .home-btn.active{background:var(--accent)}
 .home-btn.active::before{display:none}
 #home-wrap{position:relative;width:48px;height:48px;flex-shrink:0}
@@ -1614,8 +1629,8 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .home-btn img{width:42px;height:42px;object-fit:cover;display:block;transition:opacity var(--t-fast)}
 .home-btn .home-fire{position:absolute;inset:0;margin:auto;width:42px;height:42px;opacity:0;transition:opacity var(--t-fast);pointer-events:none}
 @media (hover:hover){
-  .home-btn:hover img{opacity:0}
-  .home-btn:hover .home-fire{opacity:1}
+  
+  
 }
 /* Sidebar rows are long-press targets (they open slide-up menus), so the
    browser must not start a text selection or callout under the finger — a
@@ -1749,7 +1764,7 @@ body{touch-action:manipulation}
 .members-btn{display:none}
 #voice-fab{display:none}
 @media (max-width:900px),(max-height:560px) and (pointer:coarse){
-  #members{display:flex;flex-direction:column;position:fixed;top:var(--safe-t);bottom:var(--safe-b);right:var(--safe-r);width:min(300px,84vw);z-index:45;transform:translateX(105%);transition:transform .22s;border-left:1px solid var(--line)}
+  #members{display:flex;flex-direction:column;position:fixed;top:var(--safe-t);bottom:var(--safe-b);right:var(--safe-r);width:min(300px,84vw);z-index:45;transform:translateX(105%);transition:transform var(--t-drawer) var(--ease-native);border-left:1px solid var(--line)}
   body.members-open #members{transform:none}
   .members-btn{display:inline-flex;align-items:center}
 }
@@ -1791,8 +1806,12 @@ body{touch-action:manipulation}
      peek. It closes from its own ✕ (the chat's ☰ is behind the page), from
      picking a channel or DM, and from the Friends/Stories rows — the campfire
      Home button keeps it open, since Home is where the picking happens. */
-  #left{position:fixed;inset:var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l);z-index:30;display:flex;transform:translateX(-102%);transition:transform .22s;background:var(--rail)}
+  #left{position:fixed;inset:var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l);z-index:30;display:flex;transform:translateX(-102%);transition:transform var(--t-drawer) var(--ease-native);background:var(--rail)}
   body.nav-open #left{transform:none}
+  /* While an edge-swipe is moving the page it follows the finger exactly: the
+     transition would otherwise lag every touchmove. Cleared on release, when
+     the settle animation takes over. */
+  #left.nav-dragging{transition:none}
   #btn-nav-close{display:inline-flex;position:absolute;top:.5rem;right:.55rem;z-index:7}
   #server-header{padding-right:3rem}
   .home-head{padding-right:3rem}
@@ -1907,7 +1926,7 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 .codebox-inline{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--inset);border:1px solid var(--line);border-radius:8px;padding:.08rem .5rem;user-select:all}
 
 /* ---------- light-theme fixes (hardcoded dark assumptions) ---------- */
-[data-theme="light"] .msg:hover{background:rgba(20,26,38,.045)}
+
 [data-theme="light"] ::-webkit-scrollbar-thumb{background:#b9c2d4}
 [data-theme="light"] ::-webkit-scrollbar-thumb:hover{background:#9aa5bd}
 [data-theme="light"] *{scrollbar-color:#b9c2d4 transparent}
@@ -2381,4 +2400,209 @@ body.story-open{overflow:hidden}
   .msg-actions,.reaction,.send-btn svg{transition:none}
   .rc-old,.rc-new{animation:none}
   .reaction:active,.dm-close:active{transform:none}
+}
+
+/* ==========================================================================
+   Native feel
+   --------------------------------------------------------------------------
+   A web page answers a tap when the finger comes UP. A native app answers the
+   moment the finger lands, and it moves like something with mass. Three
+   ingredients, in order of how much they matter:
+
+     1. press states  — every row and control reacts on touch-down
+     2. tap targets   — nothing a thumb is expected to hit is under ~44px
+     3. settled motion — decelerating curves, and no phantom hover left behind
+
+   Everything here is additive: the desktop layout is only reached by the
+   `pointer:coarse` blocks, and every press state is a background/transform
+   step on a control that already had a resting value.
+   ========================================================================== */
+
+/* ---------- 1. press states ----------
+   Rows tint a step up their own tonal ladder (that is what "elevation" means
+   in this theme); buttons and icon buttons add a hair of scale so the control
+   visibly gives under the thumb. Kept to one frame of transition or the lag is
+   felt as slowness. */
+.chan,.dmrow,.member,.vuser,.find-row,.inbox-item,.thread-item,.rx-user,.fwd-dest,.anow-card,.anow-tile,.st-tile,.dm-close,.set-row,.set-check,.theme-card,.prow,.share-row,.gmem,.sc-pick-row,.adm-row,.dm-close,.ss-add,.mini,.chip,.ftab,.set-tab,.pk-tab,.pk-subbtn,.pk-rail-btn,.ctx-item,.sheet-row,.sheet-cancel,.uc-tab,.att-dl,.lb-btn,.pcaret{
+  -webkit-tap-highlight-color:transparent;
+}
+.chan:active,.dmrow:active,.member:active,.vuser:active,.find-row:active,.inbox-item:active,.thread-item:active,.rx-user:active,.fwd-dest:active,.anow-card:active,.anow-tile:active,.st-tile:active,.set-row:active,.set-check:active,.theme-card:active,.prow:active,.share-row:active,.gmem:active,.sc-pick-row:active,.adm-row:active,.ctx-item:active,.sheet-row:active,.sheet-cancel:active,.uc-tab:active,.pk-tab:active,.pk-subbtn:active,.pk-rail-btn:active{
+  background:var(--panel-3);
+}
+.chan:active,.dmrow:active,.member:active,.vuser:active,.find-row:active,.inbox-item:active,.thread-item:active,.rx-user:active,.fwd-dest:active,.anow-card:active,.anow-tile:active,.st-tile:active,.set-row:active,.set-check:active,.theme-card:active,.prow:active,.share-row:active,.gmem:active,.sc-pick-row:active,.adm-row:active,.ctx-item:active,.sheet-row:active,.sheet-cancel:active,.uc-tab:active,.pk-tab:active,.pk-subbtn:active,.pk-rail-btn:active,.mini:active,.chip:active,.ftab:active,.set-tab:active,.att-dl:active,.lb-btn:active,.dm-close:active,.ss-add:active{
+  transition:background 0s,transform var(--t-press) var(--ease-native);
+}
+/* The two rows the app is actually navigated with give the most: a channel or
+   a DM is the phone's whole navigation surface. */
+.icon-btn:active,.chip:active,.mini:active,.me-icobtn:active,.vb-btn:active,.ss-add:active,.pk-star:active,.hist-x:active,.sb-close:active{
+  transform:scale(.92);
+}
+.icon-btn,.chip,.mini,.me-icobtn,.ss-add,.pk-star,.hist-x,.sb-close{
+  transition:background var(--t-fast),color var(--t-fast),transform var(--t-press) var(--ease-native);
+}
+.chan:active,.dmrow:active,.member:active,.vuser:active,.find-row:active,.inbox-item:active,.thread-item:active,.anow-card:active,.anow-tile:active,.st-tile:active,.set-row:active,.theme-card:active,.prow:active,.sheet-row:active,.uc-tab:active,.ctx-item:active,.sc-pick-row:active,.gmem:active{
+  transition:background var(--t-press) var(--ease-native);
+}
+/* Rows that already own a `.active` background must not flash a weaker one on
+   the way in: a press on the current channel would read as a downgrade. */
+.chan.active:active,.dmrow.active:active{background:var(--panel-4)}
+.server-btn:active{transform:scale(.92)}
+.server-btn{transition:background var(--t-fast),border-radius var(--t-fast),transform var(--t-press) var(--ease-native)}
+.tab:active{background:var(--panel-3)}
+.tab.active:active{background:var(--accent-active)}
+.sheet-row:active{background:var(--panel-3)}
+@media (prefers-reduced-motion:reduce){
+  .icon-btn:active,.chip:active,.mini:active,.me-icobtn:active,.vb-btn:active,.ss-add:active,.pk-star:active,.hist-x:active,.sb-close:active,.server-btn:active{transform:none}
+}
+
+/* ---------- 2. tap targets ----------
+   A 36px circle is fine with a mouse and a coin-toss with a thumb. Rather than
+   growing the visible control (which would re-flow every header on the phone
+   and break the landscape three-pane fit), each one grows an invisible hit box
+   to ~44px. `::after` on a positioned button costs no layout.
+
+   Only controls that are already in flow get `position:relative` here. An
+   absolutely-placed one (`#stories-nav-add` on the Stories row, the GIF star,
+   the history ✕) is already a containing block for its own ::after, and
+   switching it to relative would drop it out of its pinned corner — which is
+   exactly what happened to the nav page's ✕ the first time round. */
+@media (pointer:coarse){
+  .icon-btn,.me-icobtn,.mini,.chip,.dm-close{position:relative}
+  .icon-btn::after,.me-icobtn::after,.mini::after,.chip::after,#btn-nav-close::after{
+    content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:max(100%,var(--tap));height:max(100%,var(--tap));
+  }
+  /* A hit box may only grow into space that is actually empty. The row's ✕ sits
+     in a tight list, so it takes the row's own height and no more. */
+  .dm-close::after{content:'';position:absolute;inset:0}
+  /* List rows are the phone's navigation: give them a real thumb height
+     instead of the desktop's 34px. Everything above them keeps its size. */
+  #text-channels .chan,#voice-channels .chan,#dm-list .dmrow,#group-list .dmrow,#friend-list .dmrow,#home-ui .dmrow,.folder-open .dmrow{
+    min-height:44px;
+  }
+  .member,.vuser,.find-row,.thread-item{min-height:44px}
+  #stories-page .dmrow,#friend-reqs .dmrow{min-height:44px}
+}
+
+/* ---------- 3. no phantom hover on touch ----------
+   Touch screens have no hover, but a tap leaves the synthetic :hover applied
+   to whatever was tapped until something else is tapped. On a row that also
+   carries `.active` nobody notices; on a header icon or a filled button it
+   reads as "that control is still selected". Every hover rule that only
+   decorates is therefore declared once, at the very bottom of this file, under
+   `@media (hover:hover)` — see "hover, only where hover exists". */
+@media (hover:none){
+  /* Reveal-on-hover controls have no hover to reveal them. */
+  .dm-close{opacity:1}
+}
+
+/* ---------- 4. installed-app chrome ----------
+   In a standalone window there is no URL bar to scroll away and no reload
+   button, so the shell can stop reserving room for one and stop treating
+   long-press as "open the browser's selection menu". */
+html.standalone body{
+  -webkit-touch-callout:none;
+  user-select:none;
+  overscroll-behavior:none;
+}
+html.standalone .msg .text,html.standalone .msg .text *,html.standalone input,html.standalone textarea,html.standalone .codebox,html.standalone .backup-codes,html.standalone .codebox-inline,html.standalone .uc-bio{
+  user-select:text;
+  -webkit-user-select:text;
+}
+/* The drag-to-select callout is pure browser: nothing in the app is draggable
+   except a rail folder, which manages its own affordance. */
+@media (pointer:coarse){
+  button,.chip,.tab,.set-tab,.ftab,.dmrow,.chan,.member,.vuser,.anow-card,.anow-tile,.st-tile,.sheet-row,.ctx-item,.uc-tab,.sv-re,.sc-tool,.sc-swatch{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-user-drag:none}
+}
+
+/* ---------- 5. empty states: hairline, not wireframe ----------
+   A dashed outline reads as "unfinished placeholder". The design language is
+   tonal surfaces with hairline edges, so an empty state is a flat card one
+   tonal step off the surface it sits on. */
+.srv-stories-empty,.sp-hero-empty,.sp-empty,.uc-bubble.empty,.tag-emoji-btn.empty{
+  border-style:solid;border-color:var(--line-soft);background:var(--panel);
+}
+.srv-stories-empty{background:var(--panel)}
+
+/* ---------- 6. phone settings menu ----------
+   The desktop rail turned into a list of bare labels on a phone. As a full
+   page it is a menu, so it gets menu rows: a surface, an icon, and a chevron
+   that says "this opens something". */
+@media (max-width:700px),(max-height:560px) and (pointer:coarse){
+  #settings-backdrop .set-tabs{gap:.25rem;padding:.55rem .7rem 1rem}
+  #settings-backdrop .set-tab{
+    display:flex;align-items:center;gap:.85rem;min-height:52px;padding:.7rem .9rem;
+    background:var(--panel);border-radius:12px;font-size:.95rem;font-weight:650;color:var(--text);
+  }
+  #settings-backdrop .set-tab:active{background:var(--panel-3)}
+  #settings-backdrop .set-tab.active{background:var(--accent-dim);color:var(--on-container)}
+  #settings-backdrop .set-tab .set-tab-ic{display:flex;flex-shrink:0;color:var(--muted)}
+  #settings-backdrop .set-tab.active .set-tab-ic{color:var(--on-container)}
+  #settings-backdrop .set-tab::after{
+    content:'';flex-shrink:0;width:8px;height:8px;margin-left:auto;
+    border-right:2px solid var(--faint);border-bottom:2px solid var(--faint);
+    transform:rotate(-45deg) translateY(-1px);
+  }
+  #settings-backdrop .settings.section .set-tab::after{display:none}
+}
+.set-tab-ic{display:none}
+.set-tab-ic svg{display:block}
+
+/* ---------- 7. one shape per action ----------
+   The Stories row and the GROUP CHATS header sit two rows apart in the same
+   list and both mean "create". They were a filled accent circle and a rounded
+   grey square: same action, two shapes, which is exactly the kind of mismatch
+   that reads as assembled rather than designed. */
+#btn-group-new{width:24px;height:24px;min-height:24px;padding:0;border-radius:50%;background:var(--accent);color:var(--on-accent)}
+#btn-group-new svg{width:13px;height:13px}
+
+/* ---------- 8. conversation swap ----------
+   Changing channel or DM used to be a hard cut. A short fade hides the paint
+   and keeps the shell feeling continuous, which is the entire trick behind a
+   native tab switch. Long enough to read as motion, short enough to never wait
+   on it. */
+@keyframes cf-convo-in{from{opacity:0}to{opacity:1}}
+#messages.convo-swap{animation:cf-convo-in .13s var(--ease-out)}
+@media (prefers-reduced-motion:reduce){#messages.convo-swap{animation:none}}
+
+/* ==========================================================================
+   hover, only where hover exists
+   --------------------------------------------------------------------------
+   Every rule below decorates a control that already has a resting look. On a
+   touch screen there is no hover to leave, but the browser still applies one
+   to whatever was last tapped and keeps it there — so a tapped header icon
+   stayed lit and a tapped message stayed tinted, which is exactly the "I am
+   looking at a web page" tell this whole pass exists to remove.
+
+   They live here, together, so that a new hover rule has an obvious home and
+   the touch cascade above stays free of phantom states. Anything that HIDES
+   something until hover (an action bar, a close button) belongs in a
+   `@media (hover:none)` block near its own base rule instead, because it has
+   to be shown unconditionally on touch rather than simply not hovered.
+   ========================================================================== */
+@media (hover:hover){
+  .icon-btn:hover{background:var(--panel-3)}
+  .chip:hover{background:var(--panel-3)}
+  .mini:hover{background:var(--panel-4)}
+  .btn:hover{background:var(--panel-4)}
+  .btn.primary:hover{background:var(--accent-hover)}
+  .btn.danger:hover{background:rgba(248,113,113,.17)}
+  .me-icobtn:hover{background:rgba(255,255,255,.12)}
+  [data-theme="light"] .me-icobtn:hover{background:rgba(0,0,0,.08)}
+  .vb-btn:hover{background:var(--panel-4)}
+  .tab:hover{color:var(--text)}
+  .set-tab:hover{background:var(--panel-2);color:var(--text)}
+  .ftab:hover{background:var(--panel-2);color:var(--text)}
+  .sheet-row:hover{background:var(--panel-3)}
+  .ctx-item:hover{background:var(--panel-3)}
+  .uc-tab:hover{background:var(--panel-4)}
+  .folder-btn:hover{background:color-mix(in srgb,var(--fcolor,#5865f2) 44%,var(--panel-2));border-radius:10px}
+  .msg:hover{background:rgba(255,255,255,.05)}
+  [data-theme="light"] .msg:hover{background:rgba(20,26,38,.045)}
+  .dm-close:hover{background:var(--danger-bg);color:var(--danger-tx)}
+  .hist-dot:hover{border-color:var(--accent);transform:scale(1.05)}
+  .home-btn:hover{background:var(--panel-3)}
+  .home-btn:hover img{opacity:0}
+  .home-btn:hover .home-fire{opacity:1}
+  #btn-group-new:hover{background:var(--accent-hover)}
 }

@@ -969,6 +969,10 @@ function renderMessages(force = false) {
   // the conversation already on screen — this box is reused across channels,
   // and a switch must still restore its own anchor.
   const pinned = box.dataset.ctx === ctx && box.dataset.atBottom === '1';
+  // A different conversation than the one on screen: fade the list in so the
+  // swap reads as one surface changing rather than two pages cutting. Checked
+  // before the stamp below overwrites the old value.
+  if (box.dataset.ctx && box.dataset.ctx !== ctx) convoSwapPulse();
   box.dataset.ctx = ctx;
   const nearBottom = pinned || box.scrollHeight - box.scrollTop - box.clientHeight < 200;
   // Rebuilding the list resets scrollTop to 0 — anchor on the topmost
