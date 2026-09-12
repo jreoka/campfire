@@ -1674,6 +1674,25 @@ function storyExtFor(mime) {
   return 'jpg';
 }
 
+// View-once is aimed at one person, so opening it from a 1:1 DM should arrive
+// with that person already picked. A server channel has nobody to pick, and a
+// group chat has no single recipient.
+function viewOnceDmPeerId() {
+  if (!S.me || S.view !== 'home' || !S.dmThreadId) return '';
+  const t = (S.dms || []).find((x) => x.id === S.dmThreadId) || null;
+  if (!t || t.isGroup) return '';
+  const p = (t.members || []).find((m) => m.id !== S.me.id);
+  return (p && p.id) || '';
+}
+// …but only someone on the friends list can actually take delivery: the picker
+// lists friends and the server drops everyone else. A stranger's DM keeps the
+// empty picker instead of a "1 selected" with no row to show for it.
+function viewOncePrePick(peerId, friends) {
+  const p = String(peerId || '');
+  if (!p) return [];
+  const f = (friends || []).find((u) => String(u.id) === p);
+  return f ? [f.id] : [];
+}
 async function openStoryComposer(opts = {}) {
   if (sc) return;
   const el = $('#story-compose');
@@ -1706,7 +1725,12 @@ async function openStoryComposer(opts = {}) {
     micCtx: null, micGain: null, micAnalyser: null, micTimer: null, micSource: null, micRaw: null,
   };
   if (opts.serverId) { sc.audServers = [opts.serverId]; sc.audFriends = true; }
-  if (opts.viewOnce) { try { await ensureFriends(); } catch {} }
+  if (opts.viewOnce) {
+    try { await ensureFriends(); } catch {}
+    // Opened from a DM, that person is who the view-once was aimed at: the
+    // picker opens with them already picked.
+    sc.voIds = viewOncePrePick(opts.viewOnceUser, (S.friends && S.friends.friends) || []);
+  }
   scCapBusy = false; // a toBlob from a previous session must not block this one
   storyClearFreeze(); // a stale shot must not sit over the fresh camera
   storyResetShotUi();
@@ -1741,7 +1765,16 @@ function storySetStep(step) {
   if (preview) storyPaintOv();
   else $('#sc-ov').classList.add('hidden');
   storyRenderColors();
-  if (pick) renderStoryAudience();
+  if (pick) {
+    renderStoryAudience();
+    // The pre-picked recipient (opened from their DM) can sit below the fold in
+    // a long friends list — bring their row into view so the menu opens on the
+    // answer instead of on an alphabetically-earlier stranger.
+    if (sc && (sc.voIds || []).length) {
+      const on = $('#sc-pick-list .sc-pick-row.on');
+      if (on && on.scrollIntoView) { try { on.scrollIntoView({ block: 'nearest' }); } catch {} }
+    }
+  }
 }
 async function storyStartCam() {
   if (!sc) return;
@@ -3335,7 +3368,8 @@ async function storyPostNow() {
 $('#cm-viewonce').onclick = (e) => {
   e.stopPropagation();
   $('#composer-more').classList.add('hidden');
-  openStoryComposer({ viewOnce: true });
+  // In a DM the person you were just talking to opens the picker pre-picked.
+  openStoryComposer({ viewOnce: true, viewOnceUser: viewOnceDmPeerId() });
 };
 $('#cm-story').onclick = (e) => {
   e.stopPropagation();

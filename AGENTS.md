@@ -472,6 +472,16 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   `node scripts/test-viewonce.js` covers view-once messages against the same
 dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   one-replay lifecycle, and that unopened items never expire.
+  `node scripts/test-viewonce-pick.js` covers "Send a view-once" arriving with
+  the DM you clicked it in already picked (offline for the two real helpers —
+  `viewOnceDmPeerId`/`viewOncePrePick` sliced out of `stories.js` — then the
+  real `renderStoryAudience` against the real `#sc-pick` markup + stylesheet in
+  headless Chrome, skipping without Chrome): a 1:1 DM hands over its peer, a
+  server channel and a group chat hand over nobody, a peer who is not a friend
+  is never pre-picked (the picker lists friends and the server drops everyone
+  else, so the menu must stay honestly empty rather than read "1 selected" with
+  no row), the row arrives lit and `aria-pressed` with the count and the Send
+  label agreeing, and a second friend still toggles on normally.
   `node scripts/test-admin-stats.js` covers the site-admin Overview numbers
   against a throwaway database: distinct-user Online count vs sessions (two
   tabs are one person), invisible users excluded, and the live
