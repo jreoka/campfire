@@ -111,6 +111,12 @@ check(/#stories-nav-add svg\{color:var\(--on-accent\)\}/.test(css),
   'the glyph keeps the on-accent white (the row\'s muted-svg rule would grey it on the accent circle)');
 check(/#stories-nav-add::after\{content:'';position:absolute;inset:-10px -9px;border-radius:50%\}/.test(css),
   'a phone grows the 24px circle a ~42x44 hit box without resizing it');
+// The other "create" ＋ in the same list: same shape, and the same trailing
+// inset, or it sits 5.6px out of column with this one.
+check(/#btn-group-new\{width:24px;height:24px;min-height:24px;padding:0;border-radius:50%;background:var\(--accent\);color:var\(--on-accent\)\}/.test(css),
+  'the GROUP CHATS ＋ is the same shape as this one (24px accent circle, not a grey square)');
+check(/\.chan-group-label\.row-between\{padding-right:\.6rem\}/.test(css),
+  'and the section label it sits in uses the Home list\'s trailing inset (.6rem), so the two line up');
 // The rule must live inside the phone-nav @media block — the nearest @media
 // above it has to be the one condition every mobile block spells out.
 const afterIx = css.indexOf('#stories-nav-add::after');
@@ -161,6 +167,8 @@ function pageHtml() {
       <div id="anow-strip" class="hidden"><div class="chan-group-label">ACTIVE NOW</div><div class="anow-rail" id="anow-rail"></div></div>
       <div class="chan-group-label">DIRECT MESSAGES</div>
       <div id="dm-list"></div>
+      <div class="chan-group-label row-between">GROUP CHATS <button id="btn-group-new" class="mini" title="New group chat"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 6v12M6 12h12"/></svg></button></div>
+      <div id="group-list"></div>
     </div>
   </aside>
 </div><main id="chat"></main></section>
@@ -228,8 +236,10 @@ window.__report = async function () {
   const add = document.getElementById('stories-nav-add');
   const friends = document.getElementById('btn-friends');
   const wrap = document.getElementById('stories-nav-wrap');
+  const groupPlus = document.getElementById('btn-group-new');
   const cam = row.querySelector('svg');
   const rb = box(row), ab = box(add), fb = box(friends), wb = box(wrap), cb = box(cam);
+  const gb = box(groupPlus);
   const cx = (ab.l + ab.r) / 2, cy = (ab.t + ab.b) / 2;
   const probe = { at0: hitsAdd(cx, cy), up18: hitsAdd(cx, cy - 18), down18: hitsAdd(cx, cy + 18), up30: hitsAdd(cx, cy - 30) };
   document.body.classList.add('nav-open');
@@ -244,7 +254,10 @@ window.__report = async function () {
   return {
     vw: innerWidth, vh: innerHeight, pathname: location.pathname,
     rowTag: row.tagName, rowTab: row.tabIndex, nested: !!row.querySelector('#stories-nav-add'),
-    row: rb, add: ab, friends: fb, wrap: wb, cam: cb,
+    row: rb, add: ab, friends: fb, wrap: wb, cam: cb, groupPlus: gb,
+    // The two "create" ＋s in the Home list share one column: the Stories row's
+    // and the GROUP CHATS header's, two rows apart.
+    plusAlign: { right: +(ab.r - gb.r).toFixed(2), left: +(ab.l - gb.l).toFixed(2), size: +((ab.w - gb.w) || (ab.h - gb.h)).toFixed(2) },
     // the hit box the CSS adds, measured the way the browser uses it
     hitBox: { l: ab.l - 9, t: ab.t - 10, r: ab.r + 9, b: ab.b + 10 },
     probe, afterAdd, afterRow, deep,
@@ -306,6 +319,14 @@ function chromeHalf() {
       'a thumb 18px above/below the centre still lands on the ＋ (24px circle, 44px target)', phone.probe);
     check(phone.probe.up30 === false, 'but the target is bounded (~44px), not the whole column', phone.probe);
     check(phone.friendsCenter === 'friends', 'and the Friends row above is still reachable', { center: phone.friendsCenter });
+    // Two "create" ＋s sit in this list, two rows apart. The GROUP CHATS header
+    // carried .95rem of right padding while every trailing action in the Home
+    // list sits at .6rem, so its ＋ was 5.6px left of this one — visibly out of
+    // column. Both edges are pinned, so a change to either inset has to keep
+    // them together.
+    check(phone.plusAlign.right === 0 && phone.plusAlign.left === 0,
+      'the GROUP CHATS ＋ below lines up with the Stories ＋ (same column, both edges)', phone.plusAlign);
+    check(phone.plusAlign.size === 0, 'and the two are the same size', phone.plusAlign);
 
     console.log('\n[6] the two targets do their own thing');
     check(phone.afterAdd.composer === 1 && phone.afterAdd.panel === 0,

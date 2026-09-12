@@ -1100,6 +1100,14 @@ first paint, so the installed app can be styled with no flash).
   only; firing it on every re-render would flicker the chat.
 - Empty states are hairline `--line-soft` surfaces, never dashed borders: a
   dashed outline reads as an unfinished placeholder.
+- The Home list has ONE trailing column: `.6rem` from the sidebar's edge, which
+  is where the Stories row's ＋ is pinned and where every `.dmrow`'s own ✕ sits
+  (the row's padding). Any new trailing action in that list — a section header's
+  button, a row's control — has to land there too, or it sits visibly out of
+  column with the ones above it. `.chan-group-label` carries `.95rem` of right
+  padding for its text, so a label that also holds a trailing button needs
+  `.chan-group-label.row-between{padding-right:.6rem}`. `test-story-add-entry.js`
+  measures both ＋s and fails on any drift.
 - The composer field is its own surface (`--field`/`--field-line`, one tonal
   step above the bar), never `--inset` — that is the app's LOGIN-input well and
   it read as a hole punched in the chat. `#in-message` (the transparent
