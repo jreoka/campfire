@@ -105,12 +105,21 @@
           <span id="friends-nav-count" class="dm-badge hidden"></span>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         </button>
-        <button id="btn-stories" class="dmrow friends-btn " title="Stories">
-          <span class="avwrap"><span id="stories-nav-av" class="avatar"></span></span>
-          <span class="dmmain"><span class="dmname">Stories</span><span id="stories-nav-sub" class="dmlast">No stories yet</span></span>
-          <span id="stories-nav-count" class="dm-badge hidden"></span>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.2"/></svg>
-        </button>
+        <!-- The row keeps its own tap (opens the story center) and carries an
+             accent ＋ that opens the camera directly, mirroring the server
+             sidebar's Stories row. The ＋ is a SIBLING pinned over the row's
+             trailing edge, not a nested button (a button cannot nest one) and
+             not a div[role=button] row (that would drop the row out of the UA
+             button font the Friends row above it uses). -->
+        <div id="stories-nav-wrap">
+          <button id="btn-stories" class="dmrow friends-btn " title="Stories">
+            <span class="avwrap"><span id="stories-nav-av" class="avatar"></span></span>
+            <span class="dmmain"><span class="dmname">Stories</span><span id="stories-nav-sub" class="dmlast">No stories yet</span></span>
+            <span id="stories-nav-count" class="dm-badge hidden"></span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.2"/></svg>
+          </button>
+          <button type="button" id="stories-nav-add" class="ss-add" title="Add to your story" aria-label="Add to your story"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+        </div>
         <div id="anow-strip" class="hidden">
           <div class="chan-group-label">ACTIVE NOW</div>
           <div class="anow-rail" id="anow-rail"></div>

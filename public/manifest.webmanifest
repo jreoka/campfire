@@ -13,6 +13,21 @@
       "url": "url"
     }
   },
+  "shortcuts": [
+    {
+      "name": "Add to your story",
+      "short_name": "Add to story",
+      "description": "Open the story camera and post to your story",
+      "url": "/?story=1",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ],
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#1a1d29",

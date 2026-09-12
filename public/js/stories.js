@@ -3343,6 +3343,12 @@ $('#cm-story').onclick = (e) => {
   openStoryComposer({ serverId: S.view === 'server' ? S.serverId : null });
 };
 $('#btn-stories').onclick = () => showStoriesPanel();
+// The row's trailing ＋ opens the camera in one tap from anywhere in Home — the
+// same control (and the same audience default: friends) as the story center's
+// own post button. It is a sibling of the row, not a child, so this tap never
+// reaches the row's handler; like the server sidebar's ＋ it leaves the phone
+// nav page open behind the composer, so posting lands you back on the nav.
+$('#stories-nav-add').onclick = () => openStoryComposer({});
 $('#sp-post').onclick = () => openStoryComposer({});
 $('#sv-close').onclick = () => svClose();
 // Tapping the poster's picture/name opens their profile. The profile's own

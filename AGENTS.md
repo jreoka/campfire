@@ -236,6 +236,19 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   `stories.js`): an accent "N new" (unseen items) while something waits, a muted
   "SEEN" once everything is watched — never the bare grey author count that read
   as "1 unread" — and no chip at all when the only live post is mine.
+  `node scripts/test-story-add-entry.js` covers the two quick ways into the story
+  camera (offline checks, then the real `#stories-nav-wrap` markup + `styles.css`
+  and the real wiring and boot deep-link code from `stories.js`/`auth.js` in
+  headless Chrome, skipping without Chrome): Home's Stories row carries an accent
+  ＋ as a SIBLING pinned over its trailing edge (never nested — a button cannot
+  nest a button — and never a `div[role=button]`, which would drop the row out of
+  the UA button font the Friends row above it renders in), it stays a 24px circle
+  on desktop while a phone grows a ~42x44 hit box that fits inside the row and the
+  gaps around it (the Friends row above keeps its taps), the ＋ opens the composer
+  while the row still opens the story center, and the manifest's "Add to story"
+  shortcut (`/?story=1`, in scope, with a served icon) boots straight into the
+  camera with the param stripped first — while `?dm=`/`?friends=`/`?admin=reports`
+  still win when both are present.
   `node scripts/test-status-bubble.js` covers the custom status as a
   thought bubble beside the avatar (offline; it runs the real
   `statusBubbleHTML` pulled out of `pickers.js`): other people only get a bubble

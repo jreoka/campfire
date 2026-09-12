@@ -1392,6 +1392,16 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 #btn-friends .dmname{font-size:.95rem}
 .friends-btn svg{flex-shrink:0;color:var(--muted)}
 .friends-btn:hover svg{color:var(--text)}
+/* Home's Stories row carries the accent ＋ the server sidebar's Stories row has
+   (add a post without a trip through the story center's header). The ＋ sits in
+   a wrapper, so it can be a real sibling button instead of a nested one, and the
+   row pays for that slot with right padding — nothing is ever overlapped. The
+   row's own .3rem gap moves onto the wrapper so the wrapper IS the row's box and
+   the absolutely centred ＋ lands on the row's centre line, not 2.4px above it. */
+#stories-nav-wrap{position:relative;display:flex;margin-top:.3rem}
+#stories-nav-wrap #btn-stories{margin-top:0;padding-right:2.7rem}
+#stories-nav-add{position:absolute;right:.6rem;top:50%;transform:translateY(-50%)}
+#stories-nav-add svg{color:var(--on-accent)}
 /* friends page header + add-friend row */
 .fp-head{display:flex;align-items:center;justify-content:space-between;gap:.6rem;margin:.1rem 0 .5rem}
 .fp-head .fp-title{margin:0}
@@ -1784,6 +1794,11 @@ body{touch-action:manipulation}
   #btn-nav-close{display:inline-flex;position:absolute;top:.5rem;right:.55rem;z-index:7}
   #server-header{padding-right:3rem}
   .home-head{padding-right:3rem}
+  /* A 24px circle is a thumb-miss on a phone. The ＋ keeps its size but grows a
+     ~42x44 hit box: the Friends row above keeps ~3px of clearance, the group
+     label below sits in its own 14px padding and the row's own right padding
+     (9.6px) swallows the horizontal growth, so nothing else gets tapped. */
+  #stories-nav-add::after{content:'';position:absolute;inset:-10px -9px;border-radius:50%}
   #left #rail{width:62px;flex-shrink:0}
   #left .rail-head{padding:.7rem 0 .5rem}
   #left .server-btn,#left #btn-add-server{width:44px;height:44px}

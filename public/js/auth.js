@@ -389,10 +389,11 @@ async function boot() {
     if (pending) showInviteLanding(pending);
   }
   // deep links from push notifications (?server=ID&channel=ID, ?dm=ID, ?friends=1, ?admin=reports)
+  // and from the installed app's "Add to your story" shortcut (?story=1)
   try {
     const qs = new URLSearchParams(location.search);
-    const qdm = qs.get('dm'), qserv = qs.get('server'), qchan = qs.get('channel'), qfriends = qs.get('friends'), qadmin = qs.get('admin');
-    if (qdm || qserv || qfriends || qadmin) history.replaceState(null, '', location.pathname);
+    const qdm = qs.get('dm'), qserv = qs.get('server'), qchan = qs.get('channel'), qfriends = qs.get('friends'), qadmin = qs.get('admin'), qstory = qs.get('story');
+    if (qdm || qserv || qfriends || qadmin || qstory) history.replaceState(null, '', location.pathname);
     if (qadmin === 'reports' && isSiteAdmin()) openAdminConsole('reports');
     else if (qdm) {
       await openHome();
@@ -411,6 +412,12 @@ async function boot() {
     } else if (qfriends) {
       await openHome();
       showFriendsPanel();
+    } else if (qstory) {
+      // The home-screen "Add to your story" shortcut (manifest shortcuts → /?story=1)
+      // lands straight in the story camera. This runs at the end of boot, so every
+      // module — stories.js included — is parsed and loaded; the URL was cleaned
+      // above, so a refresh does not reopen the camera.
+      await openStoryComposer({}).catch(() => {});
     }
   } catch {}
   // shared from the Android system share sheet (/share?title=&text=&url=)
