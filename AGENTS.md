@@ -169,7 +169,8 @@ The owner will iterate on features **without ever losing persistent data**.
 - Code and data are separate: Postgres data lives in the `pgdata` Docker
   volume, uploads in `./data`. Never `rm -rf data`, never drop the
   database, never write destructive one-offs without explicit confirmation.
-  Nightly `pg_dump` snapshots also land in S3 `backups/` (see README §5).
+  Twice-daily `pg_dump` snapshots land in the bucket's `backups/` prefix
+  (`BACKUP_KEEP=3`) — see `deploy/civo/README.md` §4.
 - Schema changes must be **guarded migrations** (`CREATE TABLE IF NOT EXISTS`,
   `ALTER TABLE ... ADD COLUMN` only when the column is missing — see
   `columnExists`/`addColumn` in `db.js`) so existing databases upgrade in

@@ -33,7 +33,8 @@ write`. The package is private, so the pod pulls through the
 **Hostname — repointed directly.** There is no temporary `civo.dill.moe` route.
 The owner's call was to bring the migration up on the real name; the tunnel
 route for `campfire.dill.moe` was switched to the cluster in one step, with the
-VPS intact underneath as the fallback.
+VPS left intact underneath until the migration was verified. That VPS has since
+been decommissioned — see §8.
 
 ---
 
@@ -95,8 +96,11 @@ kubectl -n campfire create secret generic campfire-s3 \
   --from-literal=S3_ACCESS_KEY='<key>' \
   --from-literal=S3_SECRET_KEY='<secret>'
 
-# App secrets — these were created ON the VPS from /opt/campfire/.env so the
-# values never left the server; see the note below before recreating them.
+# App secrets — the live values came from /opt/campfire/.env on the VPS, which
+# has been decommissioned. Do NOT recreate this Secret from scratch: read the
+# existing values out of the cluster instead, or you invalidate every session.
+#   kubectl -n campfire get secret campfire-secrets \
+#     -o jsonpath='{.data.JWT_SECRET}' | base64 -d
 kubectl -n campfire create secret generic campfire-secrets \
   --from-literal=JWT_SECRET='<same as production>' \
   --from-literal=DOMAIN='campfire.dill.moe' \
@@ -282,23 +286,39 @@ server, so it has to resolve publicly.
 
 ---
 
-## 8. Rollback
+## 8. Recovery
 
-**The rollback is database-only now.** The OVH bucket is deleted, so the media
-for any pre-cutover state exists only in the Civo bucket.
+**There is no fallback host any more.** The OVH VPS has been decommissioned and
+its bucket is deleted, so the cluster and the Civo bucket are the only copies of
+anything. Read this section as disaster recovery, not as a rollback.
 
-- The VPS at `148.113.179.123` is still running with its `campfire_pgdata`
-  volume intact. Repointing the Cloudflare route at it restores the *app and its
-  database* — but its uploads would 404, because the bucket they pointed at no
-  longer exists.
-- The pre-cutover dump is at `/root/campfire-predeploy/cutover.dump` on the VPS.
-- Because `campfire.dill.moe` now resolves to the tunnel, SSH by that name no
-  longer reaches the VPS. Use the IP:
-  `ssh -o StrictHostKeyChecking=accept-new root@148.113.179.123`.
+What exists, and only this:
 
-The honest recovery path for media is the Civo bucket itself plus `backups/`:
-`pg_restore` a dump and point `S3_*` at the Civo store. Cancelling the VPS ends
-the DB-only fallback, so decide that deliberately.
+- **Postgres** — the `pgdata` PVC on the node, plus up to three dumps under
+  `backups/`. With `BACKUP_KEEP=3` and a 00:00/12:00 cadence that is roughly
+  **36 hours of history with up to 12 hours of loss**.
+- **Media** — the Civo bucket. Nothing else. It is not in the dumps.
+- The pre-cutover dump at `/root/campfire-predeploy/cutover.dump` went with the
+  VPS.
+
+So the recovery path is: `pg_restore` the newest dump from `backups/` into a
+fresh `db-0`, and point `S3_*` at the Civo bucket.
+
+```bash
+kubectl -n campfire exec deploy/campfire -- node -e \
+  "require('/app/storage').s3List('backups/').then(r=>r.forEach(o=>console.log(o.key,o.size)))"
+# then: pull that key, kubectl cp it into db-0, pg_restore --clean --if-exists
+```
+
+Two things follow from the VPS being gone, and both are worth acting on:
+
+1. **The dumps are now the only point-in-time history of the database.** They
+   live in the same bucket as the media, under the same credentials — an
+   accidental `S3_*` change or a bucket mistake takes out the app's data *and*
+   its backups together. Copying `backups/` somewhere independent (R2, or
+   `pg_dump` on a laptop) is the only thing that would survive that.
+2. **`retire-bucket.js` and the OVH-era migration tooling are spent** and were
+   deleted from the repo; the source bucket no longer exists to migrate from.
 
 ---
 
