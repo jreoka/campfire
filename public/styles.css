@@ -203,6 +203,32 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 ::-webkit-scrollbar-thumb:hover{background:#3a4560}
 ::-webkit-scrollbar-track{background:transparent}
 *{scrollbar-width:thin;scrollbar-color:#2b354d transparent}
+/* The rule above is the DESKTOP page/window scrollbar (an 8px #2b354d thumb).
+   Every INNER scroll region opts out of it — one list, because a region that
+   forgets is exactly how a stray bar appears. A UA thumb's *length* is
+   content/container and its *position* is the scroll offset, so a list that
+   overflows by a few pixels paints a 2-6px pill that reads as a random floating
+   line rather than a scrollbar, and it can sit anywhere in the gutter. Each of
+   these regions is a panel whose edge already reads as a boundary, so the bar
+   was decoration to begin with. Scrolling itself is untouched: wheel, trackpad,
+   touch and scrollTop/scrollIntoView all still work. Add a new inner scroller
+   here (or hide it on the spot) — never let it fall back to the global rule.
+   Deliberately NOT listed: #view-auth and #modal-backdrop, edge-to-edge
+   overlay scrollers where a scrollbar is the correct affordance. */
+#server-list,#dm-rail,#server-ui,#home-ui,#messages,#member-list,#thread-replies,#friends-page,
+#find-results,#story-view .pf-body,#set-tabs,#set-body,.rx-list,.pk-grid,.pk-rail,.share-targets,
+#m-inbox-list,#m-threads-list,.pins-list,.sc-pick-list,#fwd-dests,.gmem-list,.story-sheet,
+.adm-scroll,.adm-rep-text,#stories-page,.sc-emoji-grid,.txt-full{scrollbar-width:none}
+#server-list::-webkit-scrollbar,#dm-rail::-webkit-scrollbar,#server-ui::-webkit-scrollbar,
+#home-ui::-webkit-scrollbar,#messages::-webkit-scrollbar,#member-list::-webkit-scrollbar,
+#thread-replies::-webkit-scrollbar,#friends-page::-webkit-scrollbar,#find-results::-webkit-scrollbar,
+#story-view .pf-body::-webkit-scrollbar,#set-tabs::-webkit-scrollbar,#set-body::-webkit-scrollbar,
+.rx-list::-webkit-scrollbar,.pk-grid::-webkit-scrollbar,.pk-rail::-webkit-scrollbar,
+.share-targets::-webkit-scrollbar,#m-inbox-list::-webkit-scrollbar,#m-threads-list::-webkit-scrollbar,
+.pins-list::-webkit-scrollbar,.sc-pick-list::-webkit-scrollbar,#fwd-dests::-webkit-scrollbar,
+.gmem-list::-webkit-scrollbar,.story-sheet::-webkit-scrollbar,.adm-scroll::-webkit-scrollbar,
+.adm-rep-text::-webkit-scrollbar,#stories-page::-webkit-scrollbar,.sc-emoji-grid::-webkit-scrollbar,
+.txt-full::-webkit-scrollbar{display:none}
 
 #app{height:100vh;height:100dvh;height:var(--vvh,100dvh)}
 
@@ -284,9 +310,8 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 #rail{width:80px;background:var(--rail);border-right:1px solid var(--line-soft);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
 .rail-head{display:flex;flex-direction:column;align-items:center;gap:.45rem;padding:.8rem 0 .6rem;flex-shrink:0}
 .rail-divider{width:40px;height:1px;background:var(--line);margin:.2rem auto}
-#server-list{flex:1;display:flex;flex-direction:column;align-items:center;gap:.5rem;overflow-y:auto;padding:.45rem .75rem 64px;min-height:0;scrollbar-width:none}
-#server-list::-webkit-scrollbar,#dm-rail::-webkit-scrollbar{display:none}
-#dm-rail{display:flex;flex-direction:column;align-items:center;gap:.45rem;flex-shrink:1;min-height:0;overflow-y:auto;max-height:40vh;scrollbar-width:none;padding:.15rem .5rem .5rem}
+#server-list{flex:1;display:flex;flex-direction:column;align-items:center;gap:.5rem;overflow-y:auto;padding:.45rem .75rem 64px;min-height:0}
+#dm-rail{display:flex;flex-direction:column;align-items:center;gap:.45rem;flex-shrink:1;min-height:0;overflow-y:auto;max-height:40vh;padding:.15rem .5rem .5rem}
 #dm-rail:empty{display:none}
 #server-list #btn-add-server{margin:.15rem 0 .5rem;flex-shrink:0}
 #dm-rail .server-btn .avatar{position:absolute;inset:0;width:100%;height:100%;font-size:1.1rem}
