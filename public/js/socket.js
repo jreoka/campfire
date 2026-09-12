@@ -320,7 +320,12 @@ function onWS(m) {
       }
       const ddnd = S.me && S.me.status === 'dnd';
       const own = !!(msg.user && S.me && msg.user.id === S.me.id);
-      if (S.view === 'home' && S.dmThreadId === msg.threadId) {
+      const viewingDm = S.view === 'home' && S.dmThreadId === msg.threadId;
+      // Already on screen = already read, and the server has to hear about it:
+      // otherwise the next reload brings the badge back for a message the
+      // reader saw arrive (dm-unread lives in the database now).
+      if (viewingDm && !msg.sys && !own) markDmRead(msg.threadId);
+      if (viewingDm) {
         if (inHistDm) {
           // viewing older messages: hold the window, count up the jump pill
           if (!msg.sys) {
@@ -347,6 +352,13 @@ function onWS(m) {
       } else {
         refreshDms();
       }
+      break;
+    }
+    case 'dm-read': {
+      // This account read the thread somewhere else — another device, or this
+      // one echoing its own read back. One memory for the account, so the badge
+      // goes away everywhere it is painted.
+      if (S.dmUnread.delete(m.threadId)) paintHomeBadge();
       break;
     }
     case 'dm-updated': {

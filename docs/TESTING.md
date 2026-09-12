@@ -582,3 +582,21 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   overlay — which is how nine of them were un-backable the first time round),
   each header icon button carries a ≥44px hit box that never steals its
   neighbour's tap, and a fine pointer (desktop) pushes no history entry at all.
+  `node scripts/test-dm-unread.js` covers the unread-DM badges under the campfire
+  (offline for the client half, then a real server against a throwaway database,
+  skipping without Postgres): they used to be a per-tab tally built from live
+  `dm-new` pushes, so the reload the auto-updater fires after a deploy dismissed
+  every one of them. It drives the real `refreshDms`/`markDmRead` out of
+  `home.js` against fakes (a server count becomes the badge, a gone thread drops
+  it, the chat being read never keeps one, opening reports the read and a burst
+  in the open chat is one write) and checks the wiring statically, then over HTTP
+  and a live socket: the receiver's `/api/dms` reports the message as unread for
+  a fresh page load while the sender's never does, marking read clears it
+  durably and is pushed back to the account as `dm-read`, a later message is
+  unread again, a stranger gets a 404 and no auth a 401, a member added to an old
+  group chat joins caught up (their start line is `joined_at`, not the dawn of
+  time) and the next message counts, and a system line never counts as unread.
+  It then drops the column to rebuild a pre-migration database, restarts the
+  server, and asserts the ALTER + backfill ran as one unit (every pre-existing
+  membership stamped, an old unread DM not resurrected) and that the backfill
+  stays one-shot — a plain restart must not mark a live unread message read.

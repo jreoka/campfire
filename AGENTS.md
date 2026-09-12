@@ -290,6 +290,14 @@ long-press menu and the member's user card (a danger `Remove` tab, like a
 server's Kick, via `groupRemoveTabHTML`) — behind one shared predicate
 (`canRemoveGroupMember`), with the server re-checking `creator_only`. Groups
 stay remove-only: no ban.
+DM unread is server state, never a per-tab tally: `dm_members.last_read_at`
+(stamped by `POST /api/dms/:tid/read`, which the client fires when a thread opens
+and when a message lands in the one already open) and `/api/dms` returns each
+thread's `unread`, so the unread-sender avatars under the campfire (`#dm-rail`)
+come back after a reload — including the one the auto-updater fires seconds
+after a deploy — and reading a DM on the phone clears the desktop (`dm-read`).
+A row that was never read starts at `joined_at`, so being added to an old group
+chat doesn't light up its history, and own/system messages never count.
 Detail per change lives in `git log` — don't duplicate it here.
 
 ## Deployment (owner directive)

@@ -4364,6 +4364,29 @@ async function dmNotify(threadId, obj) {
   const mems = (await db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ?').all(threadId)).map((r) => r.user_id);
   for (const uid of mems) notifyUser(uid, obj);
 }
+// Unread DM counts, read from the database instead of accumulated from live
+// pushes: someone else's messages newer than this member's last read
+// (dm_members.last_read_at, stamped by POST /api/dms/:tid/read; joined_at until
+// they first read it). The rail badges used to live only in an in-memory map on
+// the client, so any reload — including the one the auto-updater fires seconds
+// after a deploy — silently dropped every DM that had arrived since page load.
+// System lines don't count (the client's live counter skipped them too).
+async function dmUnreadCounts(userId) {
+  const out = new Map();
+  let rows = [];
+  try {
+    rows = await db.prepare(`
+      SELECT m.thread_id AS tid, COUNT(*) AS n
+        FROM dm_messages m
+        JOIN dm_members mem ON mem.thread_id = m.thread_id AND mem.user_id = ?
+       WHERE m.user_id IS NOT NULL AND m.user_id != ?
+         AND (m.sys IS NULL OR m.sys = '')
+         AND m.created_at > COALESCE(mem.last_read_at, mem.joined_at)
+       GROUP BY m.thread_id`).all(userId, userId);
+  } catch { return out; }
+  for (const r of rows) { const n = Number(r.n) || 0; if (n) out.set(r.tid, n); }
+  return out;
+}
 // Fully erase a DM thread and everything in it. Called whenever a thread is
 // left with zero members (last leave or remove) — explicit deletes so
 // no messages/attachments/reactions/pins dangle even if FK cascades lag.
@@ -4908,11 +4931,15 @@ app.put('/api/notifs/prefs', authRequired, async (req, res) => {
 });
 app.get('/api/dms', authRequired, async (req, res) => {
   const ids = (await db.prepare('SELECT thread_id FROM dm_members WHERE user_id = ? AND (hidden IS NULL OR hidden = 0)').all(req.user.id)).map((r) => r.thread_id);
+  // One grouped query rather than a count per thread; the client repaints its
+  // DM row and rail badges from these numbers (see refreshDms).
+  const unread = await dmUnreadCounts(req.user.id);
   const out = [];
   for (const id of ids) {
     const t = await db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(id);
     if (!t) continue;
     const v = await dmThreadView(t, req.user.id);
+    v.unread = unread.get(id) || 0;
     try { v.callCount = (voiceRooms.get(dmVoiceKey(id)) || new Set()).size; } catch { v.callCount = 0; }
     out.push(v);
   }
@@ -5008,6 +5035,17 @@ app.post('/api/dms/:tid/open', authRequired, async (req, res) => {
   await db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ? AND user_id = ?').run(t.id, req.user.id);
   notifyUser(req.user.id, { t: 'dm-threads-changed' });
   res.json({ thread: await dmThreadView(t, req.user.id) });
+});
+// Mark a thread read up to now. This is the durable half of the unread badge:
+// opening a chat, or a message landing in the one already open, stamps it, and
+// the push clears the badge on this account's other devices (reading a DM on
+// the phone clears the desktop) — one memory, not one per tab.
+app.post('/api/dms/:tid/read', authRequired, async (req, res) => {
+  const t = await dmThreadFor(req.user.id, req.params.tid);
+  if (!t) return res.status(404).json({ error: 'no_thread' });
+  await db.prepare('UPDATE dm_members SET last_read_at = ? WHERE thread_id = ? AND user_id = ?').run(now(), t.id, req.user.id);
+  notifyUser(req.user.id, { t: 'dm-read', threadId: t.id });
+  res.json({ ok: true });
 });
 
 // Group chat settings: rename and/or re-describe a group DM. Any member may

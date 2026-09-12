@@ -534,8 +534,9 @@ async function selectDmThread(id, opts = {}) {
   S.dmThreadId = id;
   rememberView();
   rememberHomeTab(); // this is the tab Home comes back to
-  // Opening a thread clears its unread badge (row + home button).
-  if (S.dmUnread.delete(id)) paintHomeBadge();
+  // Opening a thread clears its unread badge (row + home button) and tells the
+  // server, so it stays cleared across a reload or a rollout restart.
+  markDmRead(id, 0);
   renderDmLists();
   S.callOpen = false;
   // A row tap closes the phone's nav page. The campfire button's restore must

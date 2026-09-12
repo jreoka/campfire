@@ -446,6 +446,24 @@ CREATE TABLE IF NOT EXISTS pin_seen (
   await addColumn('dm_messages', 'sys', 'TEXT');
   await addColumn('dm_members', 'hidden', 'BIGINT NOT NULL DEFAULT 0');
   await addColumn('dm_members', 'pinned', 'BIGINT NOT NULL DEFAULT 0');
+  // DM unread is derived from this: messages from someone else newer than the
+  // member's last read (see dmUnreadCounts in server.js). A row that has never
+  // been read falls back to joined_at, so joining an old group chat doesn't
+  // light up its whole history.
+  if (!(await columnExists('dm_members', 'last_read_at'))) {
+    // The ALTER and the backfill go in ONE transaction: if the process dies
+    // between them the whole thing rolls back and the next boot redoes both.
+    // Half-applied, the legacy rows would stay NULL forever — and because a
+    // never-read row counts from joined_at, every DM ever received would light
+    // up as unread. Rows that predate the column have no read history, so they
+    // start "caught up"; rows created later are left NULL on purpose, since
+    // joined_at is their start line and a restart must not mark live unread
+    // messages read.
+    await db.transaction(async () => {
+      await db.exec('ALTER TABLE dm_members ADD COLUMN last_read_at BIGINT');
+      await db.prepare('UPDATE dm_members SET last_read_at = ? WHERE last_read_at IS NULL').run(Date.now());
+    });
+  }
   await addColumn('dm_threads', 'description', "TEXT NOT NULL DEFAULT ''");
   await addColumn('messages', 'fwd_from', 'TEXT');
   await addColumn('dm_messages', 'fwd_from', 'TEXT');

@@ -97,8 +97,32 @@ async function refreshDms() {
     // Drop unread counts for threads that no longer exist (left/deleted).
     const alive = new Set(threads.map((t) => t.id));
     for (const tid of [...S.dmUnread.keys()]) if (!alive.has(tid)) S.dmUnread.delete(tid);
+    // The count is the server's (dm_members.last_read_at), not a tally that
+    // only exists in this tab: a reload — the auto-updater fires one seconds
+    // after every deploy — repaints the rail badges from it instead of losing
+    // every DM that arrived since the page loaded. The chat you are looking at
+    // is read by definition, so it never gets a badge back here.
+    for (const t of threads) {
+      const n = (S.view === 'home' && S.dmThreadId === t.id) ? 0 : (t.unread || 0);
+      if (n) S.dmUnread.set(t.id, n);
+      else S.dmUnread.delete(t.id);
+    }
     renderDmLists();
   } catch {}
+}
+// Reading a thread is reported to the server, or the next reload brings its
+// badge back. Opening a chat stamps immediately; the messages that arrive in an
+// already-open chat are coalesced into one stamp (a busy DM is one write).
+const dmReadTimers = new Map();
+function markDmRead(tid, delay = 500) {
+  if (!tid || !S.me) return;
+  if (S.dmUnread.delete(tid)) paintHomeBadge();
+  const prev = dmReadTimers.get(tid);
+  if (prev) clearTimeout(prev);
+  dmReadTimers.set(tid, setTimeout(() => {
+    dmReadTimers.delete(tid);
+    api('/api/dms/' + encodeURIComponent(tid) + '/read', { method: 'POST' }).catch(() => {});
+  }, delay));
 }
 // Red count on the campfire home button: incoming friend requests only.
 // Unread DMs already show as their own red count on the rail avatars, so
