@@ -193,7 +193,7 @@ spec:
           # Built and published by .github/workflows/container.yml to GHCR.
           # The package is PRIVATE by default, so the pod needs the
           # campfire-registry imagePullSecret (see README).
-          image: ghcr.io/jreoka/campfire:sha-4aabc53
+          image: ghcr.io/jreoka/campfire:sha-34963d8
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
