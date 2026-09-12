@@ -21,6 +21,12 @@ const STORY_MAX_EDGE = 1920;      // picked photos are downscaled to this long e
 // readback — see storyShowPendingShot: Android encodes canvas.toBlob on the
 // main thread during idle time, so the shutter no longer waits for it.)
 const storyCamMaxEdge = () => (isCoarse() ? 1280 : STORY_MAX_EDGE);
+// Quick reactions. A small fixed set, mirrored by the server's allowlist, so the
+// rail, the float-up animation and the author's viewer list all agree on what
+// can be sent. Each tap adds another copy of that emoji up to SV_REACTION_MAX;
+// tapping a maxed-out one takes all of that person's copies back.
+const SV_REACTIONS = ['❤️', '😂', '😮', '😢', '🔥', '👏'];
+const SV_REACTION_MAX = 4; // matches the server cap (STORY_REACTION_MAX)
 
 // Icon set (inline SVG, no emoji — see the design language in AGENTS.md).
 const svSvg = {
@@ -735,7 +741,7 @@ function openStoryViewer(opt = {}) {
   else if (opt.kind === 'mine') { const i = trays.findIndex((t) => t.kind === 'mine'); ti = i < 0 ? 0 : i; }
   const ii = storyStartIndex(trays[ti], opt);
   if (sv) svTeardown();
-  sv = { trays, ti: 0, ii: 0, dur: STORY_IMG_MS, t0: 0, elapsed: 0, paused: false, raf: 0, holdT: 0, swipe: null, muted: false, gen: 0, seenT: 0, retryT: 0, retries: 0, waiting: false, replyFor: null, opt: { kind: opt.kind, userId: opt.userId, serverId: opt.serverId } };
+  sv = { trays, ti: 0, ii: 0, dur: STORY_IMG_MS, t0: 0, elapsed: 0, paused: false, raf: 0, holdT: 0, swipe: null, muted: false, gen: 0, seenT: 0, retryT: 0, retries: 0, waiting: false, replyFor: null, burstT: [], opt: { kind: opt.kind, userId: opt.userId, serverId: opt.serverId } };
   $('#story-view').classList.remove('hidden');
   document.body.classList.add('story-open');
   $('#sv-reply').value = '';
@@ -762,6 +768,14 @@ function svTeardown() {
   clearTimeout(sv.seenT);
   clearTimeout(sv.retryT);
   clearTimeout(sv.holdT);
+  for (const t of sv.burstT || []) clearTimeout(t);
+  sv.burstT = [];
+  // The floats are mid-animation (a story can be skipped while they rise): drop
+  // them or they linger over the next story.
+  const floats = $('#sv-floats');
+  if (floats) floats.textContent = '';
+  const react = $('#sv-react');
+  if (react) { react.textContent = ''; react.classList.add('hidden'); }
   try { $('#sv-vid').pause(); } catch {}
   $('#sv-vid').removeAttribute('src');
   $('#sv-img').removeAttribute('src');
@@ -913,6 +927,11 @@ function svShow(ti, ii) {
     if (!sv || sv.gen !== gen) return;
     markStorySeen(it);
   }, 500);
+
+  // Reactions: paint the rail for this item, then replay what people already
+  // left so a new viewer sees what the room thought of it.
+  svRenderReactions();
+  svStartReactionBurst(it);
 }
 
 // A story's bytes may still be scanning/compressing right after posting:
@@ -1034,6 +1053,7 @@ function svSyncState() {
   sv.ii = ii;
   const it = items[sv.ii];
   $('#sv-views-n').textContent = it.views === 1 ? '1 view' : (it.views || 0) + ' views';
+  svRenderReactions();
 }
 // Live view receipts: someone watched my story while the viewer is open.
 function storyViewsUpdated(storyId, views) {
@@ -1074,6 +1094,189 @@ function paintSvSound() {
   b.title = sv.muted ? 'Unmute' : 'Mute';
   b.setAttribute('aria-pressed', sv.muted ? 'false' : 'true');
 }
+
+// ---------- quick reactions ----------
+// The rail sits under the stage. Each tap adds another copy of that emoji (up
+// to SV_REACTION_MAX, like mashing the button on a live stream): a haptic tick
+// and a copy of it floats up out of the button. A tap on a maxed-out emoji takes
+// all of that person's copies back. On your own story the same row shows the
+// counts only — who reacted what lives under "Who watched".
+function svMyCount(it, emoji) {
+  const e = (it && it.myReactions || []).find((r) => r && r.emoji === emoji);
+  return (e && e.count) || 0;
+}
+function svRenderReactions() {
+  const row = $('#sv-react');
+  if (!row) return;
+  row.textContent = '';
+  const it = svCurrentItem();
+  if (!it || !sv) { row.classList.add('hidden'); return; }
+  const counts = (Array.isArray(it.reactions) ? it.reactions : []).filter((r) => r && r.emoji && r.count > 0);
+  if (svItemIsMine(sv.trays[sv.ti], it)) {
+    for (const r of counts) {
+      const chip = document.createElement('span');
+      chip.className = 'sv-rx-chip';
+      chip.innerHTML = `<span>${esc(r.emoji)}</span><b>${r.count}</b>`;
+      chip.title = r.count + ' reaction' + (r.count === 1 ? '' : 's');
+      row.appendChild(chip);
+    }
+    row.classList.toggle('hidden', !counts.length);
+    return;
+  }
+  for (const e of SV_REACTIONS) {
+    const n = svMyCount(it, e);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'sv-re' + (n ? ' on' : '');
+    // The little badge is how you tell one tap from four, and it is why the
+    // maxed-out tap (which clears them) is discoverable.
+    b.innerHTML = n
+      ? `<span class="sv-re-e">${esc(e)}</span><span class="sv-re-n">${n >= SV_REACTION_MAX ? SV_REACTION_MAX : n}</span>`
+      : `<span class="sv-re-e">${esc(e)}</span>`;
+    b.title = n >= SV_REACTION_MAX ? 'Clear your reactions' : (n ? `Send another ${e} (${n}/${SV_REACTION_MAX})` : 'React with ' + e);
+    b.setAttribute('aria-label', b.title);
+    b.setAttribute('aria-pressed', n ? 'true' : 'false');
+    b.dataset.n = String(n);
+    b.onclick = () => svReact(e, b);
+    row.appendChild(b);
+  }
+  // A running total beside the rail, so a viewer can see the room's reaction
+  // without opening anything.
+  const total = counts.reduce((a, r) => a + r.count, 0);
+  if (total) {
+    const chip = document.createElement('span');
+    chip.className = 'sv-rx-chip';
+    chip.innerHTML = `<b>${total}</b>`;
+    chip.title = total === 1 ? '1 reaction' : total + ' reactions';
+    row.appendChild(chip);
+  }
+  row.classList.remove('hidden');
+}
+// Optimistic: the button lights, its badge moves and the tally shifts before the
+// round trip; a failure rolls all of it back. The server echoes the story's FULL
+// tally, so applying that echo on top of the optimistic state is harmless.
+async function svReact(emoji, btn) {
+  const it = svCurrentItem();
+  if (!it || !sv) return;
+  haptic(12);
+  const before = { mine: (it.myReactions || []).map((r) => ({ ...r })), reactions: (it.reactions || []).map((r) => ({ ...r })) };
+  const have = svMyCount(it, emoji);
+  // Mirrors the server rule exactly: +1 until the cap, then clear the set.
+  const clearing = have >= SV_REACTION_MAX;
+  const next = clearing ? 0 : have + 1;
+  if (!clearing && btn) svFloatEmoji(emoji, btn);
+  const mine = new Map((it.myReactions || []).map((r) => [r.emoji, r.count]));
+  if (next) mine.set(emoji, next); else mine.delete(emoji);
+  it.myReactions = [...mine.entries()].map(([e, count]) => ({ emoji: e, count }));
+  const tally = new Map((it.reactions || []).map((r) => [r.emoji, r.count]));
+  tally.set(emoji, Math.max(0, (tally.get(emoji) || 0) + (next - have)));
+  it.reactions = [...tally.entries()].filter(([, n]) => n > 0).map(([e, count]) => ({ emoji: e, count }));
+  svRenderReactions();
+  try {
+    const r = await api('/api/stories/' + encodeURIComponent(it.id) + '/react', { method: 'POST', body: JSON.stringify({ emoji }) });
+    if (Array.isArray(r.myReactions)) it.myReactions = r.myReactions;
+    if (Array.isArray(r.reactions)) it.reactions = r.reactions;
+    if (typeof r.views === 'number') it.views = r.views;
+    svRenderReactions();
+  } catch (err) {
+    it.myReactions = before.mine;
+    it.reactions = before.reactions;
+    svRenderReactions();
+    toast('Reaction failed: ' + prettyError(err.message));
+  }
+}
+// A copy of the emoji rises out of its button (or from a random spot when there
+// is no anchor, i.e. the replay on open) and fades away.
+function svFloatEmoji(emoji, anchor, opts = {}) {
+  const box = $('#sv-floats');
+  const root = $('#story-view');
+  if (!box || !root || !emoji) return;
+  if (box.childElementCount > 40) return; // a burst can't flood the DOM
+  const rb = root.getBoundingClientRect();
+  const w = rb.width || window.innerWidth || 360;
+  const h = rb.height || window.innerHeight || 640;
+  const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
+  let x, y;
+  if (r && r.width) {
+    x = r.left - rb.left + r.width / 2 + (Math.random() * 24 - 12);
+    y = r.top - rb.top + r.height / 2;
+  } else {
+    x = opts.x != null ? opts.x : w * (0.2 + Math.random() * 0.6);
+    y = opts.y != null ? opts.y : h * 0.72;
+  }
+  const el = document.createElement('span');
+  el.className = 'sv-float';
+  el.textContent = emoji;
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+  if (opts.scale) el.style.fontSize = (opts.scale * 2).toFixed(2) + 'rem';
+  el.addEventListener('animationend', () => { try { el.remove(); } catch {} });
+  box.appendChild(el);
+}
+// Replay: when a story opens, the reactions people already left float up and
+// fade, so a new viewer sees what the room thought of it. Your own story never
+// replays at you — the counts are in the rail and the detail is under "Who
+// watched" — and a burst is capped so a 200-heart story cannot strobe.
+function svStartReactionBurst(it) {
+  if (!it || !sv) return;
+  if (svItemIsMine(sv.trays[sv.ti], it)) return;
+  const list = [];
+  for (const r of (Array.isArray(it.reactions) ? it.reactions : [])) {
+    if (!r || !r.count) continue;
+    for (let i = 0; i < Math.min(r.count, 5); i++) list.push(r.emoji);
+  }
+  if (!list.length) return;
+  for (let i = list.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = list[i]; list[i] = list[j]; list[j] = t;
+  }
+  const box = $('#sv-floats');
+  const w = (box && box.clientWidth) || window.innerWidth || 360;
+  const h = (box && box.clientHeight) || window.innerHeight || 640;
+  const gen = sv.gen;
+  const n = Math.min(list.length, 16);
+  const timers = sv.burstT || (sv.burstT = []);
+  for (let i = 0; i < n; i++) {
+    timers.push(setTimeout(() => {
+      if (!sv || sv.gen !== gen) return;
+      svFloatEmoji(list[i], null, { x: w * (0.14 + Math.random() * 0.72), y: h * (0.7 + Math.random() * 0.12), scale: 0.85 });
+    }, 200 + i * 230));
+  }
+}
+// A reaction landed somewhere (possibly my own, from another tab). The payload
+// carries the story's full tally, so it is applied verbatim everywhere and a
+// re-delivery is harmless; only someone else's tap floats.
+function storyReactionPush(m) {
+  if (!m || !m.storyId) return;
+  const lists = [
+    (storyData.mine && storyData.mine.items) || [],
+    ...(storyData.friends || []).map((t) => t.items || []),
+    ...(storyData.everyone || []).map((t) => t.items || []),
+    ...(storyData.servers || []).map((t) => t.items || []),
+  ];
+  for (const items of lists) {
+    for (const it of items) {
+      if (!it || it.id !== m.storyId) continue;
+      if (Array.isArray(m.reactions)) it.reactions = m.reactions;
+      if (typeof m.views === 'number') it.views = m.views;
+      if (m.userId && S.me && m.userId === S.me.id) {
+        // My own tap, delivered to my other devices: mirror the per-emoji count
+        // this account now holds (0 = cleared).
+        const mine = (it.myReactions || []).filter((r) => r && r.emoji !== m.emoji);
+        if (m.count > 0) mine.push({ emoji: m.emoji, count: m.count });
+        it.myReactions = mine;
+      }
+    }
+  }
+  if (!sv) return;
+  const it = svCurrentItem();
+  if (!it || it.id !== m.storyId) return;
+  if (!m.cleared && m.userId !== (S.me && S.me.id)) svFloatEmoji(m.emoji, null, { scale: 0.9 });
+  svRenderReactions();
+  if (svItemIsMine(sv.trays[sv.ti], it) && typeof m.views === 'number') {
+    $('#sv-views-n').textContent = m.views === 1 ? '1 view' : (m.views || 0) + ' views';
+  }
+}
 async function svViewers() {
   if (!sv) return;
   const it = svCurrentItem();
@@ -1087,7 +1290,14 @@ async function svViewers() {
     svResume();
     return;
   }
-  const html = `<div class="gmem-list">${viewers.map((u) => `<div class="member sv-viewer" data-uid="${esc(u.id)}"><span class="avwrap"><span class="avatar"></span></span><span class="dmmain"><span class="mname-row"><span class="dmname">${esc(u.display_name)}</span>${tagHTML(u)}</span><span class="dmlast">@${esc(u.username)} · ${esc(storyAgo(u.viewed_at))}</span></span></div>`).join('')}</div>`;
+  // Reactions first (a chip per emoji with its total), then one row per viewer
+  // with the emoji they sent on the right (×2 when they tapped it twice).
+  const tally = new Map();
+  for (const u of viewers) for (const r of (u.reactions || [])) tally.set(r.emoji, (tally.get(r.emoji) || 0) + r.count);
+  const summary = [...tally.entries()].sort((a, b) => b[1] - a[1])
+    .map(([e, n]) => `<span class="sv-rx-chip"><span>${esc(e)}</span><b>${n}</b></span>`).join('');
+  const rxBadges = (u) => (u.reactions || []).map((r) => `<span class="sv-viewer-rx" title="${esc(u.display_name)} reacted ${esc(r.emoji)}">${esc(r.emoji)}${r.count > 1 ? `<b>${r.count}</b>` : ''}</span>`).join('');
+  const html = `${summary ? `<div class="sv-viewers-sum">${summary}</div>` : ''}<div class="gmem-list">${viewers.map((u) => `<div class="member sv-viewer" data-uid="${esc(u.id)}"><span class="avwrap"><span class="avatar"></span></span><span class="dmmain"><span class="mname-row"><span class="dmname">${esc(u.display_name)}</span>${tagHTML(u)}</span><span class="dmlast">@${esc(u.username)} · ${esc(storyAgo(u.viewed_at))}</span></span><span class="sv-viewer-rxs">${rxBadges(u)}</span></div>`).join('')}</div>`;
   openModal(viewers.length === 1 ? '1 view' : viewers.length + ' views', html, 'Close', null, { wide: true });
   const box = $('#modal-body');
   viewers.forEach((u) => {

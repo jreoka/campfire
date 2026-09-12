@@ -2130,6 +2130,13 @@ const STORY_MAX_ACTIVE = 20;   // live items per user, across audiences
 const STORY_CAPTION_MAX = 200;
 const STORY_MIN_GAP_MS = 3000; // anti-flood: one post per few seconds
 const storyPostAt = new Map();
+// Quick reactions. A fixed set so the viewer's rail, the float-up animation and
+// the server all agree on what can be sent. One row per (person, emoji) with a
+// repeat count: tapping adds another copy of the same emoji up to
+// STORY_REACTION_MAX, and tapping a maxed-out one takes all of them back.
+const STORY_REACTIONS = ['❤️', '😂', '😮', '😢', '🔥', '👏'];
+const STORY_REACTION_SET = new Set(STORY_REACTIONS);
+const STORY_REACTION_MAX = 4;
 
 // ---- story markup (text / emoji stickers / freehand drawing) ----
 // The composer sends a JSON array of overlay items; nothing about it is
@@ -2254,7 +2261,7 @@ function shareLabels(shares) {
     users: [...new Set(shares.filter((a) => a.kind === 'user' && a.user_id).map((a) => a.user_id))],
   };
 }
-function storyView(s, author, seen, views, shared) {
+function storyView(s, author, seen, views, shared, rxs) {
   return {
     id: s.id, url: s.url, kind: s.kind, mime: s.mime, caption: s.caption || '',
     duration_ms: Math.max(1000, Math.min(60000, Number(s.duration_ms) || 5000)),
@@ -2263,7 +2270,35 @@ function storyView(s, author, seen, views, shared) {
     overlays: overlaysFromJson(s.overlays),
     shared: shared || null,
     author: author || null, seen: !!seen, views: Number(views) || 0,
+    // Aggregated quick reactions (everyone may see the counts) and what this
+    // viewer sent, so the rail opens with the right buttons lit and counted.
+    reactions: (rxs && rxs.counts) || [],
+    myReactions: (rxs && rxs.mine) || [],
   };
+}
+// reactMap[storyId] = { counts: [{emoji,count}], mine: [{emoji,count}] }.
+// `mineId` may be null when only the tallies are wanted (the reaction push).
+async function storyReactionMap(storyIds, mineId) {
+  const out = new Map();
+  const ids = [...new Set((storyIds || []).filter(Boolean))];
+  if (!ids.length) return out;
+  const ph = ids.map(() => '?').join(',');
+  const slot = (id) => out.get(id) || out.set(id, { counts: [], mine: [] }).get(id);
+  try {
+    for (const r of await db.prepare(`SELECT story_id, emoji, SUM(count) c FROM story_reactions WHERE story_id IN (${ph}) GROUP BY story_id, emoji`).all(...ids)) {
+      slot(r.story_id).counts.push({ emoji: r.emoji, count: Number(r.c) || 0 });
+    }
+    if (mineId) {
+      for (const r of await db.prepare(`SELECT story_id, emoji, count FROM story_reactions WHERE user_id = ? AND story_id IN (${ph})`).all(mineId, ...ids)) {
+        slot(r.story_id).mine.push({ emoji: r.emoji, count: Number(r.count) || 0 });
+      }
+    }
+  } catch { return out; }
+  for (const e of out.values()) {
+    e.counts.sort((a, b) => (b.count - a.count) || (STORY_REACTIONS.indexOf(a.emoji) - STORY_REACTIONS.indexOf(b.emoji)));
+    e.mine.sort((a, b) => STORY_REACTIONS.indexOf(a.emoji) - STORY_REACTIONS.indexOf(b.emoji));
+  }
+  return out;
 }
 function notifyAllClients(obj) {
   for (const c of clients) safeSend(c, obj);
@@ -2373,6 +2408,7 @@ app.get('/api/stories', authRequired, async (req, res) => {
   }
   const rows = [...byStory.values()];
   const ids = rows.map((e) => e.row.id);
+  const rxMap = await storyReactionMap(ids, me);
   const authorIds = [...new Set(rows.map((e) => e.row.user_id))];
   const byId = new Map(authorIds.length
     ? (await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id IN (${authorIds.map(() => '?').join(',')})`).all(...authorIds)).map((u) => [u.id, publicUser(u)])
@@ -2399,7 +2435,7 @@ app.get('/api/stories', authRequired, async (req, res) => {
     // My own posts are always "seen" — there is nothing to watch, and a
     // missing story_views row would otherwise keep an unseen dot/badge on
     // Home and in the server's Stories row until the story expires.
-    const item = storyView(s, byId.get(s.user_id) || publicUser(null), s.user_id === me || seen.has(s.id), viewCount.get(s.id) || 0, labels);
+    const item = storyView(s, byId.get(s.user_id) || publicUser(null), s.user_id === me || seen.has(s.id), viewCount.get(s.id) || 0, labels, rxMap.get(s.id));
     if (s.user_id === me) {
       if (!mine) mine = { items: [], latest: 0, viewers: 0 };
       mine.items.push(item);
@@ -2502,12 +2538,73 @@ app.post('/api/stories/:id/view', authRequired, async (req, res) => {
   res.json({ ok: true, views });
 });
 
-// GET /api/stories/:id/viewers — who watched my story (author only).
+// POST /api/stories/:id/react — a quick reaction. Each tap adds another copy of
+// the same emoji (up to STORY_REACTION_MAX); a tap on a maxed-out one takes all
+// of that person's copies back. Reacting also records the view, so a reactor can
+// never end up missing from "Who watched".
+app.post('/api/stories/:id/react', authRequired, async (req, res) => {
+  const me = req.user;
+  const emoji = String(req.body?.emoji || '');
+  if (!STORY_REACTION_SET.has(emoji)) return res.status(400).json({ error: 'bad_emoji' });
+  const s = await db.prepare('SELECT * FROM stories WHERE id = ?').get(String(req.params.id || ''));
+  if (!s || s.expires_at <= now() || !(await storyVisibleTo(s, me.id))) return res.status(404).json({ error: 'not_found' });
+  if (s.user_id === me.id) return res.status(400).json({ error: 'own_story' });
+  if (await db.prepare('SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)').get(s.user_id, me.id, me.id, s.user_id)) {
+    return res.status(403).json({ error: 'blocked' });
+  }
+  if (!rateOk(me.id)) return res.status(429).json({ error: 'slow_down' });
+  const cur = await db.prepare('SELECT count FROM story_reactions WHERE story_id = ? AND user_id = ? AND emoji = ?').get(s.id, me.id, emoji);
+  const have = Number(cur && cur.count) || 0;
+  let mineCount, cleared = false;
+  if (have >= STORY_REACTION_MAX) {
+    // Maxed out: tapping again clears the whole set for that emoji (the only
+    // undo, and it is reachable exactly when the cap is hit).
+    await db.prepare('DELETE FROM story_reactions WHERE story_id = ? AND user_id = ? AND emoji = ?').run(s.id, me.id, emoji);
+    mineCount = 0;
+    cleared = true;
+  } else {
+    await db.prepare(`INSERT INTO story_reactions (story_id,user_id,emoji,count,created_at) VALUES (?,?,?,?,?)
+      ON CONFLICT (story_id,user_id,emoji) DO UPDATE SET count = story_reactions.count + 1, created_at = EXCLUDED.created_at`)
+      .run(s.id, me.id, emoji, 1, now());
+    mineCount = have + 1;
+  }
+  try {
+    await db.prepare('INSERT INTO story_views (story_id,user_id,viewed_at) VALUES (?,?,?) ON CONFLICT (story_id,user_id) DO UPDATE SET viewed_at = EXCLUDED.viewed_at')
+      .run(s.id, me.id, now());
+  } catch {}
+  const views = (await db.prepare('SELECT COUNT(*) c FROM story_views WHERE story_id = ?').get(s.id)).c;
+  const rx = (await storyReactionMap([s.id], me.id)).get(s.id) || { counts: [], mine: [] };
+  const total = rx.counts.reduce((a, e) => a + e.count, 0);
+  // The push carries the full tally (not a delta), so it is safe to apply on
+  // every device and in any order — including the sender's own other tabs.
+  await notifyStoryAudience(s, {
+    t: 'story-reaction', storyId: s.id, emoji, userId: me.id,
+    name: me.display_name || me.username || '', count: mineCount, cleared,
+    reactions: rx.counts, views, total,
+  });
+  res.json({ ok: true, emoji, count: mineCount, cleared, reactions: rx.counts, myReactions: rx.mine, views, total });
+});
+
+// GET /api/stories/:id/viewers — who watched my story (author only), each with
+// the reactions they left (emoji + how many copies).
 app.get('/api/stories/:id/viewers', authRequired, async (req, res) => {
   const s = await db.prepare('SELECT * FROM stories WHERE id = ?').get(String(req.params.id || ''));
   if (!s || s.user_id !== req.user.id) return res.status(404).json({ error: 'not_found' });
-  const rows = await db.prepare('SELECT u.*, v.viewed_at FROM story_views v JOIN users u ON u.id = v.user_id WHERE v.story_id = ? ORDER BY v.viewed_at DESC LIMIT 200').all(s.id);
-  res.json({ viewers: rows.map((r) => ({ ...publicUser(r), viewed_at: r.viewed_at })) });
+  const rows = await db.prepare(`SELECT u.*, v.viewed_at
+    FROM story_views v JOIN users u ON u.id = v.user_id
+    WHERE v.story_id = ? ORDER BY v.viewed_at DESC LIMIT 200`).all(s.id);
+  const agg = await storyReactionMap([s.id], null).then((m) => m.get(s.id) || { counts: [] });
+  const rxRows = await db.prepare('SELECT user_id, emoji, count FROM story_reactions WHERE story_id = ? ORDER BY created_at ASC').all(s.id);
+  const byUser = new Map();
+  for (const r of rxRows) {
+    const list = byUser.get(r.user_id) || byUser.set(r.user_id, []).get(r.user_id);
+    list.push({ emoji: r.emoji, count: Number(r.count) || 0 });
+  }
+  for (const list of byUser.values()) list.sort((a, b) => STORY_REACTIONS.indexOf(a.emoji) - STORY_REACTIONS.indexOf(b.emoji));
+  res.json({
+    viewers: rows.map((r) => ({ ...publicUser(r), viewed_at: r.viewed_at, reactions: byUser.get(r.id) || [] })),
+    reactions: agg.counts,
+  });
 });
 
 // POST /api/stories/:id/reply — answer a story in the DM with its author.

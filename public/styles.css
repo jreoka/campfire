@@ -665,7 +665,11 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .up-sub{font-size:.7rem;color:var(--faint);margin-top:.25rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .up-card.failed .up-sub{color:var(--red)}
 .up-x,.up-retry{flex-shrink:0}
-@media (prefers-reduced-motion:reduce){.up-card,.up-spin,.sv-spin,.att-spin,.up-fill.indet{animation:none}}
+@media (prefers-reduced-motion:reduce){.up-card,.up-spin,.sv-spin,.att-spin,.up-fill.indet{animation:none}
+/* The reaction still appears and fades — just without the long rise. */
+.sv-float{animation:sv-float-reduced .9s ease-out forwards}}
+@keyframes sv-float-reduced{0%{opacity:0}20%{opacity:1}100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){.sv-float{animation-name:sv-float-reduced}}
 /* ---------- virus-scan states ---------- */
 .scan-block{display:flex;align-items:center;gap:.65rem;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:.6rem .75rem;max-width:420px}
 .scan-ic{width:38px;height:38px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--accent);background:var(--accent-dim);border:1px solid var(--line-soft)}
@@ -2045,6 +2049,33 @@ body.story-open{overflow:hidden}
 .sv-zone.prev{left:0;width:32%}
 .sv-zone.next{right:0;width:68%}
 .sv-foot{display:flex;align-items:center;gap:.5rem;flex-shrink:0;min-height:40px}
+/* Quick-reaction rail under the stage: tap an emoji and a copy of it floats up
+   out of the button (see svFloatEmoji). On your own story the same row shows
+   read-only counts instead — you cannot react to yourself. */
+.sv-react{display:flex;align-items:center;justify-content:center;gap:.35rem;flex-shrink:0;padding:.1rem 0 .45rem;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.sv-react::-webkit-scrollbar{display:none}
+.sv-react.hidden{display:none}
+.sv-re{position:relative;width:38px;height:38px;border-radius:50%;border:0;background:rgba(255,255,255,.09);color:#fff;font-size:1.12rem;line-height:1;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;padding:0;font-family:inherit;transition:background var(--t-fast),box-shadow var(--t-fast),transform var(--t-fast)}
+.sv-re:hover{background:rgba(255,255,255,.19)}
+.sv-re:active{transform:scale(.86)}
+.sv-re.on{background:rgba(255,255,255,.24);box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.6)}
+.sv-re-e{display:block;line-height:1}
+/* How many copies of this emoji you have sent (1-4): the tap count is otherwise
+   invisible, and the badge is what makes the maxed-out "tap again to clear"
+   reachable. */
+.sv-re-n{position:absolute;right:-1px;bottom:-1px;min-width:15px;height:15px;padding:0 3px;border-radius:999px;background:var(--accent);color:#fff;font-size:.6rem;font-weight:800;line-height:15px;text-align:center;box-shadow:0 0 0 2px #05070c}
+.sv-rx-chip{display:inline-flex;align-items:center;gap:.35rem;background:rgba(255,255,255,.1);border-radius:999px;padding:.32rem .72rem;font-size:.78rem;font-weight:700;color:#fff;flex-shrink:0}
+.sv-rx-chip b{font-weight:800;opacity:.85}
+/* The float-up lane: pointer-events:none so it never eats a tap on the stage,
+   and overflow:hidden so a reaction never escapes the overlay. */
+.sv-floats{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:6}
+.sv-float{position:absolute;font-size:2rem;line-height:1;transform:translate(-50%,-50%);filter:drop-shadow(0 5px 12px rgba(0,0,0,.45));animation:sv-float 2.4s cubic-bezier(.22,.61,.36,1) forwards;will-change:transform,opacity}
+@keyframes sv-float{
+  0%{opacity:0;transform:translate(-50%,-50%) scale(.5)}
+  12%{opacity:1;transform:translate(-50%,-72%) scale(1.18)}
+  26%{transform:translate(-50%,-92%) scale(1)}
+  100%{opacity:0;transform:translate(-50%,calc(-50% - 340px)) scale(.9)}
+}
 .sv-reply-row{flex:1;display:flex;gap:.5rem}
 #sv-reply{flex:1;min-width:0;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:.55rem 1rem;color:#fff;font:inherit;font-size:.88rem}
 #sv-reply::placeholder{color:rgba(255,255,255,.5)}
@@ -2052,6 +2083,10 @@ body.story-open{overflow:hidden}
 .sv-views{display:inline-flex;align-items:center;gap:.45rem;background:rgba(255,255,255,.1);border:0;border-radius:999px;color:#fff;padding:.5rem .95rem;font-size:.8rem;font-weight:700;cursor:pointer;font-family:inherit}
 .sv-views:hover{background:rgba(255,255,255,.17)}
 .sv-viewer{cursor:default}
+.sv-viewer-rxs{margin-left:auto;display:inline-flex;align-items:center;gap:.3rem;flex-shrink:0;padding-left:.5rem}
+.sv-viewer-rx{display:inline-flex;align-items:center;gap:.12rem;font-size:1.05rem;line-height:1}
+.sv-viewer-rx b{font-size:.62rem;font-weight:800;color:rgba(255,255,255,.75)}
+.sv-viewers-sum{display:flex;flex-wrap:wrap;gap:.35rem;margin-bottom:.7rem}
 /* Composer: camera (tap = photo, hold = video, pinch = zoom) → free markup
    (text / emoji / drawing) → audience. */
 #story-compose{position:fixed;inset:0;z-index:152;background:#05070c;color:#fff;display:flex;flex-direction:column;padding:calc(.55rem + var(--safe-t)) .8rem calc(.7rem + var(--safe-b))}

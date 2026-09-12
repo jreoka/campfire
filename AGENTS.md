@@ -209,6 +209,23 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   server (audiences, view receipts, delete, 24h reaper) and restarts the dev
   server for the boot-reaper check. It expects the dev Postgres and a
   `JWT_SECRET`-equivalent `.env` (see Running it).
+  `node scripts/test-story-reactions.js` covers story quick reactions against a
+  throwaway database: the client's emoji set and repeat cap match the server's,
+  the same emoji can be tapped up to 4 times (each tap adds a copy) and a tap at
+  the cap takes that whole set back, different emojis stack independently, the
+  author's own item never offers a reaction while each viewer row lists the
+  emojis they sent and how many, reacting also records the view,
+  auth/audience/blacklist/emoji validation, and the live `story-reaction` push
+  (full tally + view count) reaching the audience only. The static half always
+  runs; the API half skips without Postgres.
+  `node scripts/test-story-reactions-browser.js` drives the real rail (the
+  sliced `svRenderReactions`/`svReact`/`svFloatEmoji`/`svStartReactionBurst`)
+  in headless Chrome against the real `#story-view` markup + stylesheet: the
+  buttons light and badge their count, a tap ticks and floats a copy out of the
+  button (real keyframes, anchored at the button, self-removing on animationend),
+  the float lane is `pointer-events:none` so it never eats a tap, opening a story
+  replays what people left, your own story shows count chips with no buttons, and
+  the rail fits a phone between the stage and the footer. Skips without Chrome.
   `node scripts/test-story-start.js` covers where a story tap lands, offline
   (it runs the real `storyStartIndex` pulled out of `stories.js`): in a server,
   a person's row opens that person's first item instead of the tray's oldest
@@ -681,7 +698,20 @@ the view-once player (the markup travels with the post, not in the pixels).
 A story sent to an individual friend is delivered as a view-once DM instead of
 a tray entry (`POST /api/dm/viewonce` with `storyId` re-files the story's bytes
 under the gated `viewonce/` prefix), and picks alongside a broadcast audience
-get both. Message reports: right-click / long-press → **Report message** (red,
+get both. Stories carry quick reactions: the viewer's rail sits under the stage
+(`#sv-react`, a fixed emoji set mirroring the server allowlist) and each tap adds
+another copy of that emoji up to 4 (`story_reactions` holds a `count` per
+(account, emoji)), a copy of the emoji floats up out of the button (`.sv-float`
+in `#sv-floats`) with a haptic tick, and a tap on a maxed-out emoji takes that
+set back — the button's badge is the tap count. The float lane is
+`pointer-events:none` or it would eat every tap on the rail. Opening someone
+else's story replays the reactions already on it (a staggered burst, capped);
+your own story shows read-only count chips and never replays at you, and under
+the views button each viewer row carries the emoji they sent (×N). The author
+sees the per-viewer detail; everyone else only ever gets aggregate counts, and
+the live `story-reaction` push carries the full tally (idempotent to apply) plus
+the view count. Reactions are user content, so the emoji here are intentional
+(the rail's own chrome is text/SVG). Message reports: right-click / long-press → **Report message** (red,
 last item; never your own) files it with a snapshot of the text, media
 references and where it happened, pushes every site admin live, drops an inbox
 entry, and puts a badge on the console's Reports tab + rail shield; admins

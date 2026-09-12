@@ -556,6 +556,8 @@ downward drag dismisses it (see the lightbox block in pickers.js). -->
     <button id="sv-prev" class="sv-zone prev" aria-label="Previous story"></button>
     <button id="sv-next" class="sv-zone next" aria-label="Next story"></button>
   </div>
+  <!-- quick reactions (hidden on your own story, where it shows counts instead) -->
+  <div class="sv-react" id="sv-react" role="group" aria-label="React to this story"></div>
   <div class="sv-foot">
     <div id="sv-reply-row" class="sv-reply-row hidden">
       <input id="sv-reply" maxlength="500" placeholder="Reply…" autocomplete="off" />
@@ -566,6 +568,8 @@ downward drag dismisses it (see the lightbox block in pickers.js). -->
       <span id="sv-views-n">0 views</span>
     </button>
   </div>
+  <!-- the float-up lane: a copy of every reaction rises from here and fades -->
+  <div class="sv-floats" id="sv-floats" aria-hidden="true"></div>
 </div>
 
 <!-- stories: composer — shoot a photo/video or pick one from the gallery -->

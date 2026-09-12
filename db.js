@@ -598,6 +598,20 @@ CREATE TABLE IF NOT EXISTS story_views (
   PRIMARY KEY (story_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_story_views_story ON story_views(story_id);
+-- Quick reactions on a story: one row per (person, emoji) carrying how many
+-- times they tapped it (capped at 4 on the server), so the author's "Who
+-- watched" list can show exactly who reacted what and how much. Everybody else
+-- only gets the aggregate counts, which float up when the story opens.
+-- Cascades with the story, so expiry takes the reactions with it.
+CREATE TABLE IF NOT EXISTS story_reactions (
+  story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  emoji TEXT NOT NULL,
+  count BIGINT NOT NULL DEFAULT 1,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (story_id, user_id, emoji)
+);
+CREATE INDEX IF NOT EXISTS idx_story_reactions_story ON story_reactions(story_id);
 -- Who each story is shared with, one row per audience. A post can target
 -- several at once (friends + a couple of servers), so visibility is read from
 -- here — the legacy stories.audience/server_id columns are backfilled below
@@ -644,6 +658,9 @@ WHERE (s.audience = 'server' OR s.audience = 'friends')
   // prefix, and the markup has to travel with them.
   await addColumn('stories', 'overlays', 'TEXT');
   await addColumn('dm_messages', 'viewonce_overlays', 'TEXT');
+  // Story reactions gained a repeat count (tap the same emoji up to 4 times).
+  // Guarded so a database that saw the first cut upgrades in place.
+  await addColumn('story_reactions', 'count', 'BIGINT NOT NULL DEFAULT 1');
   // View-once messages: media that stays gated until the recipient opens it
   // (state: 'unopened' | 'replayable' | 'consumed'), with one replay allowed.
   // Unopened items never expire; the bytes go when the view is used up.

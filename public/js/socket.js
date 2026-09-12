@@ -425,6 +425,11 @@ function onWS(m) {
     case 'story-viewed':
       storyViewsUpdated(m.storyId, m.views);
       break;
+    case 'story-reaction':
+      // Quick reactions: update every tray (and the open viewer) from the full
+      // tally the server sends, and float the emoji if we are watching it.
+      storyReactionPush(m);
+      break;
     case 'dm-typing':
       if (S.view === 'home' && S.dmThreadId === m.threadId) showTyping(m.userId, m.display_name);
       break;
