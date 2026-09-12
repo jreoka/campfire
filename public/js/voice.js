@@ -2,6 +2,9 @@
 // ---------- VOICE (WebRTC mesh) ----------
 // call + notification sounds (synthesized with WebAudio, no assets)
 let sfxCtx = null;
+// True while the camera is opening (see toggleCamera) — the camera buttons
+// render a spinner instead of their icon for the duration.
+let camBusy = false;
 function sfxTone(freq, dur = 0.12, type = 'sine', vol = 0.1, delay = 0) {
   try {
     if (!sfxCtx) sfxCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -285,6 +288,7 @@ function leaveVoice(silent) {
   S.voice.screenStream?.getTracks().forEach((t) => t.stop());
   for (const [, el] of S.voice.audioEls) { try { el.remove(); } catch {} }
   for (const [, el] of S.voice.screenAudioEls) { try { el.remove(); } catch {} }
+  camBusy = false;
   S.callOpen = false;
   $('#chat').classList.remove('call-open');
   if (S.view === 'home' && !S.dmThreadId) renderDmBlank();
@@ -396,9 +400,14 @@ function paintVoiceControls() {
   set('#me-deafen', dOff, deafLabel);
   set('#vf-deafen', dOff, deafLabel);
   set('#cv-deafen', dOff, deafLabel);
-  set('#btn-camera', !v?.cameraOn, v?.cameraOn ? 'Turn camera off' : 'Turn camera on');
-  set('#vf-camera', !v?.cameraOn, v?.cameraOn ? 'Turn camera off' : 'Turn camera on');
-  set('#cv-camera', !v?.cameraOn, v?.cameraOn ? 'Turn camera off' : 'Turn camera on');
+  const camLabel = camBusy ? 'Starting camera…' : (v?.cameraOn ? 'Turn camera off' : 'Turn camera on');
+  for (const id of ['#btn-camera', '#vf-camera', '#cv-camera']) {
+    const b = $(id);
+    if (!b) continue;
+    b.classList.toggle('busy', camBusy);
+    b.classList.toggle('off', !camBusy && !v?.cameraOn);
+    b.title = camLabel;
+  }
   set('#btn-share', v?.sharing, v?.sharing ? 'Stop streaming' : 'Go Live — stream a game or screen');
   set('#vf-share', v?.sharing, v?.sharing ? 'Stop streaming' : 'Go Live — stream a game or screen');
   set('#cv-share', v?.sharing, v?.sharing ? 'Stop streaming' : 'Go Live — stream a game or screen');
@@ -499,15 +508,48 @@ function applySenderQuality(sender) {
     sender.setParameters(p).catch(() => {});
   } catch {}
 }
+// The camera button carries a spinner from the tap until the first real frame
+// lands: getUserMedia (permission prompt, sensor warm-up) plus the gap before
+// the local tile paints is otherwise dead air (camBusy, declared up top).
+function camWaitFirstFrame(ms) {
+  const el = [...(S.voice?.tiles?.values() || [])]
+    .map((t) => t.querySelector('video'))
+    .find((v) => v && v.srcObject === ms);
+  if (!el) return Promise.resolve();
+  return new Promise((resolve) => {
+    let done = false;
+    const fin = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(cap);
+      el.removeEventListener('loadeddata', fin);
+      el.removeEventListener('playing', fin);
+      resolve();
+    };
+    const cap = setTimeout(fin, 3000);
+    el.addEventListener('loadeddata', fin);
+    el.addEventListener('playing', fin);
+  });
+}
 async function toggleCamera() {
-  if (!S.voice) return;
+  if (!S.voice || camBusy) return;
   if (S.voice.cameraOn) { stopCamera(); return; }
+  camBusy = true;
+  paintVoiceControls();
   const q = V_QUALITY[S.voice.quality] || V_QUALITY.high;
   const mpc = mediaPrefs();
   let cam;
   try {
     cam = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: 30 }, ...(mpc.camId ? { deviceId: { ideal: mpc.camId } } : {}) }, audio: false });
-  } catch { toast('Camera blocked — allow camera access'); return; }
+  } catch { camBusy = false; paintVoiceControls(); toast('Camera blocked — allow camera access'); return; }
+  // Left (or switched) calls while the permission prompt was open: drop the
+  // camera instead of attaching it to a voice session that is gone.
+  if (!S.voice) {
+    cam.getTracks().forEach((t) => { try { t.stop(); } catch {} });
+    camBusy = false;
+    paintVoiceControls();
+    return;
+  }
   S.voice.camStream = cam;
   S.voice.cameraOn = true;
   const track = cam.getVideoTracks()[0];
@@ -522,6 +564,9 @@ async function toggleCamera() {
   sendVoiceState();
   paintVoiceControls();
   renderStage();
+  await camWaitFirstFrame(cam);
+  camBusy = false;
+  paintVoiceControls();
 }
 function stopCamera() {
   if (!S.voice || !S.voice.cameraOn) return;

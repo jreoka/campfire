@@ -461,6 +461,19 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   waits for them (Post says "Saving…") and then posts. Skips when Chrome has no
   fake video device. Re-run it after touching the story composer's capture or
   encode path.
+  `node scripts/test-camera-busy.js` covers the camera button's loading state in
+  a call (offline for the flag, headless Chrome for the paint, skipping without
+  Chrome): the real `paintVoiceControls` puts `.busy` on all three camera
+  buttons (`#btn-camera`/`#vf-camera`/`#cv-camera`) while `camBusy` is up, drops
+  the red off state and says "Starting camera…" — and the flag cannot park or
+  leak: `toggleCamera` refuses a second tap, clears it on a blocked camera, on
+  a call left mid-prompt (the camera is stopped, not attached to a dead
+  session), and after the first frame lands, with a 3 s cap on that wait and a
+  clear in `leaveVoice` too; `camBusy` must also be declared above the
+  top-level `paintVoiceControls()` call or boot dies in the TDZ. In Chrome the
+  icon really disappears behind a 14px up-spin ring (18px on the big call-view
+  button), the ring sits inside the button box, the box never changes size, and
+  the busy button keeps its own surface instead of the off red.
   `node scripts/test-story-overlays.js` covers the story-markup model offline
   (it runs the real `ovSanitize`/`ovParse`/`ovContentRect` out of
   `public/js/story-edit.js` and the real `storyDestDims`/`storyDrawFrame` out of

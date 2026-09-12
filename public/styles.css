@@ -391,6 +391,12 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .vb-btn.off{background:#a83226;color:#fff}
 .vb-btn.danger{background:#a83226;color:#fff}
 .vb-btn svg{display:block}
+/* Camera starting: the icon gives way to a spinner until the first frame lands
+   — getUserMedia + hardware warm-up is otherwise dead air on the button. */
+.vb-btn.busy{cursor:default}
+.vb-btn.busy svg{display:none}
+.vb-btn.busy::after{content:'';width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,.22);border-top-color:var(--text);animation:up-spin .8s linear infinite}
+.vb-btn.big.busy::after{width:18px;height:18px;border-width:2.5px}
 #voice-status{display:flex;align-items:center;min-width:0;font-weight:650}
 .live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:.45rem;flex-shrink:0}
 .live-badge{font-size:.66rem;font-weight:800;letter-spacing:.07em;background:var(--green);color:#06281c;border-radius:6px;padding:.14rem .45rem}
@@ -665,7 +671,7 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .up-sub{font-size:.7rem;color:var(--faint);margin-top:.25rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .up-card.failed .up-sub{color:var(--red)}
 .up-x,.up-retry{flex-shrink:0}
-@media (prefers-reduced-motion:reduce){.up-card,.up-spin,.sv-spin,.att-spin,.up-fill.indet{animation:none}
+@media (prefers-reduced-motion:reduce){.up-card,.up-spin,.sv-spin,.att-spin,.vb-btn.busy::after,.up-fill.indet{animation:none}
 /* The reaction still appears and fades — just without the long rise. */
 .sv-float{animation:sv-float-reduced .9s ease-out forwards}}
 @keyframes sv-float-reduced{0%{opacity:0}20%{opacity:1}100%{opacity:0}}
