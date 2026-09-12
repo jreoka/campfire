@@ -21,7 +21,8 @@ const sfx = {
   mute() { sfxTone(440, 0.1, 'square', 0.045); },
   unmute() { sfxTone(660, 0.1, 'square', 0.045); },
   deaf() { sfxTone(330, 0.14, 'sawtooth', 0.045); sfxTone(220, 0.16, 'sawtooth', 0.045, 0.1); },
-  undeaf() { sfxTone(520, 0.12, 'sine', 0.09); },
+  // Time-reversal of deaf(): same sawtooth pair, second tone first.
+  undeaf() { sfxTone(220, 0.16, 'sawtooth', 0.045); sfxTone(330, 0.14, 'sawtooth', 0.045, 0.1); },
   join() { sfxTone(523, 0.1, 'sine', 0.09); sfxTone(784, 0.14, 'sine', 0.09, 0.09); },
   leave() { sfxTone(784, 0.1, 'sine', 0.08); sfxTone(523, 0.16, 'sine', 0.08, 0.09); },
   ring() { sfxTone(660, 0.18, 'sine', 0.09); sfxTone(520, 0.24, 'sine', 0.09, 0.22); },
