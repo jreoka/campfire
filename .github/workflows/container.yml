@@ -28,6 +28,9 @@ on:
       - 'public/**'
       - 'scripts/gen-icons.js'
       - 'scripts/png-util.js'
+      # Ships in the image so it can be run from inside the pod, which is where
+      # both credential sets already are.
+      - 'scripts/restore-from-r2.js'
       - '.github/workflows/container.yml'
 
 permissions:
