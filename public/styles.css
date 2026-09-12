@@ -508,7 +508,9 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #typing-bar.show #typing{opacity:1;visibility:visible}
 #slowmode-hint{display:inline-flex;align-items:center;gap:.32rem;font-size:.74rem;font-weight:700;color:var(--amber);white-space:nowrap}
 #slowmode-hint.hidden{display:none}
-.send-btn{width:46px;height:46px;border-radius:50%;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:background var(--t-fast),transform .1s ease}
+/* Rounded square, not a circle — it reads as a key in the composer row and
+   matches the 14px radius the composer input/backdrop use. */
+.send-btn{width:46px;height:46px;border-radius:14px;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:background var(--t-fast),transform .1s ease}
 .send-btn:hover{background:var(--accent-hover)}
 .send-btn:active{transform:scale(.94)}
 .send-btn svg{display:block;transition:transform .15s ease}
