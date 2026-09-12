@@ -721,6 +721,9 @@ function renderServerTab() {
         row.appendChild(del);
         rbox.appendChild(row);
       }
+      const hint = document.createElement('p'); hint.className = 'muted small';
+      hint.textContent = 'Anyone can @mention a role to ping everyone who holds it. @everyone and @here are for server admins.';
+      rbox.appendChild(hint);
       const add = document.createElement('div'); add.className = 'row'; add.style.marginTop = '.5rem';
       add.innerHTML = `<input id="srv-newrole" maxlength="32" placeholder="new role" style="flex:2" /><input id="srv-newrole-c" type="color" value="#5865f2" class="clr" />`;
       const go = document.createElement('button'); go.className = 'btn small'; go.textContent = 'Add';

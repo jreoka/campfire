@@ -1857,24 +1857,45 @@ function hideMentionPop() { $('#mention-pop').classList.add('hidden'); }
 $('#in-message').addEventListener('input', () => {
   const inp = $('#in-message');
   const upto = inp.value.slice(0, inp.selectionStart ?? inp.value.length);
-  const m = upto.match(/@([A-Za-z0-9_.]{1,24})$/);
+  // Role names may contain spaces, so the query is "everything since the @".
+  const m = upto.match(/@([^@\n]{1,32})$/);
   if (!m) { hideMentionPop(); return; }
-  const q = m[1].toLowerCase();
+  const q = m[1].toLowerCase().trim();
+  const server = S.view === 'server' ? S.serverDetail : null;
   const pool = S.view === 'home'
     ? (((S.dms.find((t) => t.id === S.dmThreadId) || {}).members) || [])
     : (S.serverDetail?.members || []);
-  const cands = pool.filter((x) => x.username.includes(q) || x.display_name.toLowerCase().includes(q)).slice(0, 6);
-  if (!cands.length) { hideMentionPop(); return; }
+  const cands = [];
+  for (const x of pool) {
+    if (x.username.includes(q) || x.display_name.toLowerCase().includes(q)) cands.push({ kind: 'user', insert: x.username, user: x });
+  }
+  if (server) {
+    // Roles are mentionable by anyone; @everyone / @here are the admins' alone,
+    // so they are never even offered to anyone else.
+    for (const r of (server.roles || [])) {
+      if (r.name.trim() && r.name.toLowerCase().startsWith(q)) cands.push({ kind: 'role', insert: r.name, role: r });
+    }
+    if (canManage()) for (const t of ['everyone', 'here']) if (t.startsWith(q)) cands.push({ kind: 'all', insert: t });
+  }
+  const list = cands.slice(0, 6);
+  if (!list.length) { hideMentionPop(); return; }
   mentionIdx = 0;
   const pop = $('#mention-pop');
   pop.innerHTML = '';
-  cands.forEach((c, i) => {
+  list.forEach((c, i) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'mention-item' + (i === 0 ? ' sel' : '');
-    b.innerHTML = `<span class="avatar"></span><span>${esc(c.display_name)}${tagHTML(c)} <span class="muted">@${esc(c.username)}</span></span>`;
-    paintAvatar(b.querySelector('.avatar'), c);
-    b.onmousedown = (e) => { e.preventDefault(); applyMention(c.username); };
+    b.dataset.insert = c.insert;
+    if (c.kind === 'user') {
+      b.innerHTML = `<span class="avatar"></span><span>${esc(c.user.display_name)}${tagHTML(c.user)} <span class="muted">@${esc(c.user.username)}</span></span>`;
+      paintAvatar(b.querySelector('.avatar'), c.user);
+    } else if (c.kind === 'role') {
+      b.innerHTML = `<span class="rdot"${/^#[0-9a-fA-F]{6}$/.test(c.role.color || '') ? ` style="background:${esc(c.role.color)}"` : ''}></span><span>@${esc(c.role.name)} <span class="mitem-sub">Role</span></span>`;
+    } else {
+      b.innerHTML = `<span class="chan-glyph">@</span><span>@${c.insert} <span class="mitem-sub">${c.insert === 'everyone' ? 'Notify everyone' : 'Notify online members'}</span></span>`;
+    }
+    b.onmousedown = (e) => { e.preventDefault(); applyMention(c.insert); };
     pop.appendChild(b);
   });
   pop.classList.remove('hidden');
@@ -1890,13 +1911,14 @@ $('#in-message').addEventListener('keydown', (e) => {
   } else if ((e.key === 'Enter' || e.key === 'Tab') && items[mentionIdx]) {
     e.preventDefault();
     popupTookKey(e);
-    applyMention(items[mentionIdx].querySelector('.muted').textContent.slice(1));
+    applyMention(items[mentionIdx].dataset.insert);
   } else if (e.key === 'Escape') hideMentionPop();
 });
-function applyMention(username) {
+function applyMention(name) {
   const inp = $('#in-message');
   const pos = inp.selectionStart ?? inp.value.length;
-  inp.value = inp.value.slice(0, pos).replace(/@[A-Za-z0-9_.]{1,24}$/, '@' + username + ' ');
+  // A function replacement, so a role name containing `$&`/`$1` stays literal.
+  inp.value = inp.value.slice(0, pos).replace(/@[^@\n]{0,32}$/, () => '@' + name + ' ');
   hideMentionPop();
   inp.focus();
   syncComposerRender();

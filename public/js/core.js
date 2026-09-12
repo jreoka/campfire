@@ -296,6 +296,75 @@ function memberById(id) {
   }
   return merged;
 }
+// ---------- mention vocabulary ----------
+// `reEsc` / `mentionsToken` / `mentionedRoleIds` mirror the server's copies in
+// server.js — keep the two in step, they decide who gets pinged.
+function reEsc(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+// A whole-word @token, the shape @username / @everyone / @here are matched in.
+function mentionsToken(text, name) {
+  if (!name) return false;
+  try { return new RegExp('(^|[\\s(])@' + reEsc(name) + '(?![\\w])', 'i').test(String(text || '')); } catch { return false; }
+}
+// Role ids whose names are mentioned, longest name first so a role called
+// "Mod Team" never also counts as a mention of a role called "Mod".
+function mentionedRoleIds(text, roles) {
+  let s = String(text || '');
+  const out = [];
+  const sorted = [...(roles || [])].sort((a, b) => String(b.name || '').length - String(a.name || '').length);
+  for (const r of sorted) {
+    const n = String(r.name || '').trim();
+    if (!n) continue;
+    const re = new RegExp('(^|[\\s(])@' + reEsc(n) + '(?![\\w])', 'gi');
+    let hit = false;
+    s = s.replace(re, (m, pre) => { hit = true; return pre + '@' + '\u0000'.repeat(n.length); });
+    if (hit) out.push(r.id);
+  }
+  return out;
+}
+// The owner, or anyone holding `admin` — the only people who can @everyone /
+// @here (and the same test canManage() uses).
+function memberIsAdmin(uid) {
+  const d = S.serverDetail;
+  if (!d || !uid) return false;
+  if (d.owner_id === uid) return true;
+  const m = (d.members || []).find((x) => x.id === uid);
+  const mine = new Set((m && m.roleIds) || []);
+  return (d.roles || []).some((r) => r.admin && mine.has(r.id));
+}
+// Server-context mention matcher: usernames, role names, and — for the
+// message's own author, when they are a server admin — @everyone / @here. One
+// alternation, longest name first, so a role called "Mod Team" beats one called
+// "Mod" and neither can match inside the other. Cached against the live
+// member/role arrays, which the server replaces wholesale on every update.
+let mentionCache = { key: '', members: null, roles: null, re: null, byName: null, myRoles: null };
+function mentionMatcher(authorId) {
+  const d = S.serverDetail;
+  if (!d || S.view !== 'server' || !S.me) return null;
+  const admin = memberIsAdmin(authorId);
+  const key = d.id + '|' + (admin ? 'a' : 'm') + '|' + S.me.id;
+  if (mentionCache.key === key && mentionCache.members === d.members && mentionCache.roles === d.roles) return mentionCache;
+  const byName = new Map();
+  const names = [];
+  const add = (name, hit) => {
+    const n = String(name || '').trim();
+    if (!n) return;
+    const k = n.toLowerCase();
+    if (byName.has(k)) return;
+    byName.set(k, hit);
+    names.push(n);
+  };
+  // Specials first so a member actually named "everyone" can't shadow the
+  // broadcast token, then usernames (the older meaning of @), then roles.
+  if (admin) { add('everyone', { kind: 'all' }); add('here', { kind: 'all' }); }
+  for (const m of (d.members || [])) add(m.username, { kind: 'user', user: m });
+  for (const r of (d.roles || [])) add(r.name, { kind: 'role', role: r });
+  const me = (d.members || []).find((x) => x.id === S.me.id);
+  const myRoles = new Set((me && me.roleIds) || []);
+  names.sort((a, b) => b.length - a.length);
+  const re = names.length ? new RegExp('(^|[\\s(])@(' + names.map(reEsc).join('|') + ')(?![\\w])', 'gi') : null;
+  mentionCache = { key, members: d.members, roles: d.roles, re, byName, myRoles };
+  return mentionCache;
+}
 // Escape + fenced code / quotes / inline code / bold / italic / strike +
 // spoilers + custom + standard emoji + @mentions + links.
 //
@@ -341,11 +410,35 @@ function renderRich(text, opts = {}) {
       ? '<img class="cemoi" src="' + em.url + '" alt="' + m + '" title="' + m + '" data-fb-emoji="' + m + '">'
       : (S.stdEmoji[n] || m);
   });
-  h = h.replace(/(^|[\s(])@([A-Za-z0-9_.]{2,24})/g, (m, pre, un) => {
-    const mem = memberByUsername(un);
-    if (!mem) return m;
-    return pre + '<span class="mention' + (mem.id === S.me.id ? ' me' : '') + '" data-uid="' + mem.id + '">@' + esc(mem.display_name) + '</span>';
-  });
+  // @mentions: in a server that is usernames + role names + (for an admin's
+  // own message) @everyone / @here; anywhere else it stays username-only.
+  // `opts.authorId` is the message's author, which is what decides whether
+  // @everyone is a real mention or just someone typing the word.
+  const mm = mentionMatcher(opts.authorId);
+  if (mm && mm.re) {
+    h = h.replace(mm.re, (m, pre, name) => {
+      const hit = mm.byName.get(name.toLowerCase());
+      if (!hit) return m;
+      if (hit.kind === 'user') {
+        const mem = hit.user;
+        return pre + '<span class="mention' + (mem.id === S.me.id ? ' me' : '') + '" data-uid="' + mem.id + '">@' + esc(mem.display_name) + '</span>';
+      }
+      if (hit.kind === 'role') {
+        const r = hit.role;
+        const col = /^#[0-9a-fA-F]{6}$/.test(r.color || '') ? r.color : '';
+        const mine = mm.myRoles.has(r.id);
+        return pre + '<span class="mention role' + (mine ? ' me' : '') + '" data-rid="' + esc(r.id) + '"'
+          + (col && !mine ? ' style="--rc:' + col + '"' : '') + '>@' + esc(r.name) + '</span>';
+      }
+      return pre + '<span class="mention all">@' + name.toLowerCase() + '</span>';
+    });
+  } else {
+    h = h.replace(/(^|[\s(])@([A-Za-z0-9_.]{2,24})/g, (m, pre, un) => {
+      const mem = memberByUsername(un);
+      if (!mem) return m;
+      return pre + '<span class="mention' + (mem.id === S.me.id ? ' me' : '') + '" data-uid="' + mem.id + '">@' + esc(mem.display_name) + '</span>';
+    });
+  }
   // #channel links: only in server context, and only when the name matches a
   // real channel (so #5, C#, hex colors etc. stay plain text).
   h = h.replace(/(^|[\s(])#([A-Za-z0-9_-]{1,32})/g, (m, pre, name) => {

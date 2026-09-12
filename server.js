@@ -4472,10 +4472,35 @@ async function pushToUser(uid, payload) {
     });
   }
 }
+function reEsc(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function mentionsName(content, username) {
   try {
-    return new RegExp('(^|[\\s(])@' + String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(String(content || ''));
+    return new RegExp('(^|[\\s(])@' + reEsc(username) + '\\b').test(String(content || ''));
   } catch { return false; }
+}
+// A whole-word @token — the shape @everyone / @here are matched in, and the
+// shape the client renders. Kept next to mentionsName so the two stay in step.
+function mentionsToken(content, name) {
+  if (!name) return false;
+  try { return new RegExp('(^|[\\s(])@' + reEsc(name) + '(?![\\w])', 'i').test(String(content || '')); } catch { return false; }
+}
+// Roles whose names are mentioned in `content`, longest name first so a role
+// called "Mod Team" never also counts as a mention of a role called "Mod".
+// Each hit blanks its own token out of the working copy so a shorter role can
+// never match inside a longer one.
+function mentionedRoleIds(content, roles) {
+  let s = String(content || '');
+  const out = [];
+  const sorted = [...(roles || [])].sort((a, b) => String(b.name || '').length - String(a.name || '').length);
+  for (const r of sorted) {
+    const n = String(r.name || '').trim();
+    if (!n) continue;
+    const re = new RegExp('(^|[\\s(])@' + reEsc(n) + '(?![\\w])', 'gi');
+    let hit = false;
+    s = s.replace(re, (m, pre) => { hit = true; return pre + '@' + '\u0000'.repeat(n.length); });
+    if (hit) out.push(r.id);
+  }
+  return out;
 }
 async function unreadNotifs(uid) {
   try { return (await db.prepare('SELECT COUNT(*) c FROM notifications WHERE user_id = ? AND read_at IS NULL').get(uid)).c; } catch { return 0; }
@@ -4537,11 +4562,31 @@ async function notifyServerMessage(serverId, channelId, author, content, message
   }
   const ch = await db.prepare('SELECT name FROM channels WHERE id = ?').get(channelId);
   const s = await getServer(serverId);
+  // Mentions beyond a plain @username: every role name in the message pings
+  // its holders, while @everyone / @here belong to the server admins alone (a
+  // plain member typing them pings nobody). Webhooks have no author account,
+  // so they can never broadcast — only roles, which are not privileged.
+  let roles = [];
+  try { roles = await serverRoles(serverId); } catch {}
+  const roleIds = mentionedRoleIds(text, roles);
+  const authorAdmin = author.userId ? await isAdmin(serverId, author.userId) : false;
+  const everyone = authorAdmin && mentionsToken(text, 'everyone');
+  const here = authorAdmin && !everyone && mentionsToken(text, 'here');
+  let online = null;
+  if (here) { try { online = await presenceFor(serverId, author.userId); } catch { online = {}; } }
+  const roleHolders = new Set();
+  if (roleIds.length) {
+    try {
+      const ph = roleIds.map(() => '?').join(',');
+      for (const r of await db.prepare(`SELECT DISTINCT user_id FROM member_roles WHERE server_id = ? AND role_id IN (${ph})`).all(serverId, ...roleIds)) roleHolders.add(r.user_id);
+    } catch {}
+  }
   for (const uid of cands) {
     const pm = byUser.get(uid) || new Map();
     const mode = pm.get(`c:${channelId}`) || pm.get(`s:${serverId}`) || pm.get('global') || 'all';
     if (mode === 'muted') continue;
-    const isMention = mentionsName(text, names.get(uid));
+    const isMention = mentionsName(text, names.get(uid)) || roleHolders.has(uid)
+      || everyone || (here && !!online && !!online[uid]);
     if (mode === 'mentions' && !isMention) continue;
     const title = `#${(ch && ch.name) || 'chat'} · ${s ? s.name : ''}`;
     const body = `${displayOf(author)}: ${text}`.slice(0, 160);

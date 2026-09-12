@@ -613,7 +613,7 @@ function messageEl(m, opts = {}) {
       + `<div class="row"><button class="btn small primary" data-act="edit-save">Save</button><button class="btn small" data-act="edit-cancel">Cancel</button></div></div>`;
   } else if (m.content) {
     const big = isBigEmoji(m.content) && !m.attachments?.length;
-    inner += `<div class="text${big ? ' bigemoji' : ''}">${renderRich(m.content)}${grouped && m.edited ? ' <span class="edited">(edited)</span>' : ''}</div>`;
+    inner += `<div class="text${big ? ' bigemoji' : ''}">${renderRich(m.content, { authorId: m.user && m.user.id })}${grouped && m.edited ? ' <span class="edited">(edited)</span>' : ''}</div>`;
     if (!big && typeof linkEmbedsHTML === 'function') inner += linkEmbedsHTML(m.content);
   }
   if (m.attachments?.length) {

@@ -706,7 +706,16 @@ function paintMe() {
 }
 function mentionsMe(msg) {
   if (!msg || !msg.content || !S.me) return false;
-  return new RegExp('(^|[\\s(])@' + S.me.username + '\\b').test(msg.content);
+  const text = String(msg.content);
+  if (mentionsToken(text, S.me.username)) return true;
+  // Role names ping their holders; @everyone / @here only count from a server
+  // admin's message (the same gate the server applies before notifying).
+  const d = S.serverDetail;
+  if (S.view !== 'server' || !d) return false;
+  if (memberIsAdmin(msg.user && msg.user.id) && (mentionsToken(text, 'everyone') || mentionsToken(text, 'here'))) return true;
+  const mine = new Set(myRoleIds());
+  if (!mine.size) return false;
+  return mentionedRoleIds(text, (d.roles || []).filter((r) => mine.has(r.id))).length > 0;
 }
 function memberRowEl(m) {
   const st = statusOf(m.id);
@@ -825,11 +834,8 @@ function myRoleIds() {
   return (me && me.roleIds) || [];
 }
 function canManage() {
-  const d = S.serverDetail;
-  if (!d || !S.me) return false;
-  if (d.owner_id === S.me.id) return true;
-  const mine = new Set(myRoleIds());
-  return (d.roles || []).some((r) => r.admin && mine.has(r.id));
+  if (!S.serverDetail || !S.me) return false;
+  return memberIsAdmin(S.me.id);
 }
 function topRoleOf(m) {
   const roles = S.serverDetail?.roles || [];

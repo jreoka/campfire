@@ -790,6 +790,10 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .mention-item{display:flex;align-items:center;gap:.55rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);padding:.5rem .65rem;font-size:.88rem;font-weight:550;cursor:pointer;border-radius:8px}
 .mention-item:hover,.mention-item.sel{background:var(--panel-3)}
 .mention-item .avatar{width:24px;height:24px;font-size:.7rem}
+/* Role rows carry a colour dot in the same 24px slot as an avatar so the list
+   keeps one column. */
+.mention-item .rdot{width:14px;height:14px;margin:5px}
+.mention-item .mitem-sub{color:var(--faint);font-size:.78rem}
 .reply-quote{display:flex;gap:.4rem;align-items:center;font-size:.78rem;color:var(--muted);border-left:2px solid var(--accent);padding-left:.45rem;margin-bottom:.15rem;cursor:pointer;max-width:100%}
 .reply-quote:hover{color:var(--text)}
 .reply-quote .rq-author{font-weight:700}
@@ -882,6 +886,12 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .edited{font-size:.7rem;color:var(--faint)}
 .mention{background:var(--accent-container);color:var(--on-container);border-radius:6px;padding:.05rem .3rem;font-weight:650}
 .mention.me{background:var(--accent);color:var(--on-accent)}
+/* Role mentions wear the role's own colour; a role you hold reads as a
+   personal mention (solid accent), so the inline colour is dropped there. */
+.mention.role{color:var(--rc,var(--on-container))}
+.mention.role.me{background:var(--accent);color:var(--on-accent)}
+/* @everyone / @here — a broadcast, so it is always a personal-strength chip. */
+.mention.all{background:var(--accent);color:var(--on-accent)}
 .chan-link{background:var(--accent-container);color:var(--on-container);border-radius:6px;padding:.05rem .3rem;font-weight:650;cursor:pointer;white-space:nowrap}
 .chan-link:hover{text-decoration:underline}
 .chan-glyph{width:24px;text-align:center;color:var(--faint);font-weight:800;flex-shrink:0}

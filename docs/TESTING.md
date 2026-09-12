@@ -368,6 +368,30 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   delimiters stay in the flow (dimmed), message rendering is unchanged, and
   the `#in-render` rules stay metric-neutral (no padding/size/weight/font
   changes — `.spoiler` and `<code>` have to override the generic rules).
+  `node scripts/test-role-mentions.js` covers server-role mentions and the
+  admin-only `@everyone` / `@here` offline (it runs the real `renderRich` out of
+  `core.js` plus the real `mentionsToken`/`mentionedRoleIds` out of `server.js`):
+  a role renders as its own chip in the role's colour and highlights as "me"
+  when you hold it, the longest role name wins (`@Mod Team` is never also a ping
+  of a role called `Mod`, and `@Moderator` is neither), `@everyone`/`@here`
+  render only from an owner's or an admin role's message (a plain member's stays
+  plain text — and so does any render with no author, e.g. a bio), usernames and
+  username-only DMs are unchanged, the client and server matchers agree
+  token-for-token, the notifier resolves the author's admin status before it
+  pings, and the composer never offers `@everyone`/`@here` to a non-admin.
+  Re-run after touching `renderRich`, the mention helpers, `mentionsMe`,
+  `canManage` or the mention autocomplete.
+  `node scripts/test-role-mentions-e2e.js` proves the same rules against a real
+  server on a throwaway database (headless Chrome over CDP for the UI half;
+  skips without Postgres, and skips only the browser half without Chrome): a
+  member's `@everyone` lands in nobody's inbox while the owner's — and an admin
+  role holder's — reaches every member including offline ones, `@here` reaches
+  only members with a live socket, `@Role Name` reaches exactly its holders, the
+  composer's autocomplete offers roles to a member but neither `@everyone` nor
+  `@here` (and offers both to the owner, inserting the mention text), and the
+  chat renders a broadcast chip for an admin's `@everyone`/`@here` and a
+  `data-rid`/`--rc` role chip for a role mention, while a member's `@everyone`
+  paints as plain text.
   `node scripts/test-composer-field.js` covers the composer's field itself
   (offline checks, then the real `index.html` + `styles.css` in headless Chrome,
   skipping without Chrome): the field has its own `--field`/`--field-line` pair
