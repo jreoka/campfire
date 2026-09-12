@@ -381,8 +381,14 @@ function stopAdminStatsLive() {
 // ---------- media compression monitor ----------
 function scanLine(sc) {
   if (!sc) return '';
-  const eng = { off: 'OFF', none: 'NO ENGINE (fail-open)', starting: 'STARTING', ready: 'READY', failed: 'ENGINE FAILED (fail-open)' }[sc.engine || ''] || String(sc.engine || '?');
   const c = sc.counts || {};
+  // No clamd (a small node cannot afford it): the slot is still doing work — it
+  // holds every compression candidate until the compressor has settled it — so
+  // the line must not read as "idle".
+  if (sc.mode === 'compress') {
+    return `Virus scan: OFF (no clamd) · uploads wait for compression, then serve · pending ${c.pending || 0} · errors ${c.error || 0}`;
+  }
+  const eng = { off: 'OFF', none: 'NO ENGINE (fail-open)', starting: 'STARTING', ready: 'READY', failed: 'ENGINE FAILED (fail-open)' }[sc.engine || ''] || String(sc.engine || '?');
   const sig = sc.dbPresent ? `signatures ${sc.dbAgeMs != null ? agoStr(Date.now() - sc.dbAgeMs) : 'present'}` : 'no signatures';
   return `Virus scan: ${esc(eng)} · pending ${c.pending || 0} · infected ${c.infected || 0} · errors ${c.error || 0} · ${esc(sig)}`;
 }

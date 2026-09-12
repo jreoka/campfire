@@ -199,9 +199,11 @@ async function main() {
   const media = {
     wav: path.join(tmp, 'tone.wav'),
     jpg: path.join(tmp, 'noise.jpg'),
+    small: path.join(tmp, 'thumb.png'), // below MIN_BYTES.image: never a candidate
   };
   if (!ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=20,volume=0.4', '-ac', '1', '-c:a', 'pcm_s16le', media.wav])
-    || !ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'nullsrc=s=2048x2048,geq=random(1)*255:128:128', '-frames:v', '1', '-q:v', '1', media.jpg])) {
+    || !ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'nullsrc=s=2048x2048,geq=random(1)*255:128:128', '-frames:v', '1', '-q:v', '1', media.jpg])
+    || !ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x334155:s=64x64', '-frames:v', '1', media.small])) {
     return skip('ffmpeg could not generate test media');
   }
 
@@ -214,27 +216,44 @@ async function main() {
 
     fake = await startFakeClamd(CLAM_PORT);
 
-    child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
-      cwd: ROOT,
-      env: {
-        ...process.env,
-        PORT: String(PORT),
-        PGHOST: pg.host, PGPORT: String(pg.port), PGUSER: pg.user, PGPASSWORD: pg.password, PGDATABASE: TEST_DB,
-        JWT_SECRET: 'test-single-pass-secret',
-        UPLOAD_DIR: uploads,
-        VIRUS_SCAN: '1',
-        CLAM_PORT: String(CLAM_PORT),
-        CLAM_DB_DIR: clamdb,
-        MEDIA_COMPRESS_ACTIVE_MS: '250',
-        MEDIA_COMPRESS_EVERY_MS: '5000',
-        ORPHAN_SWEEP: '1', // exercised below (dry run + real sweep on a planted orphan)
-        UNFURL: '0',
-        PATH: bindir + path.delimiter + (process.env.PATH || ''),
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    child.stdout.on('data', (d) => { serverLog += d; });
-    child.stderr.on('data', (d) => { serverLog += d; });
+    const baseEnv = {
+      ...process.env,
+      PORT: String(PORT),
+      PGHOST: pg.host, PGPORT: String(pg.port), PGUSER: pg.user, PGPASSWORD: pg.password, PGDATABASE: TEST_DB,
+      JWT_SECRET: 'test-single-pass-secret',
+      UPLOAD_DIR: uploads,
+      VIRUS_SCAN: '1',
+      CLAM_PORT: String(CLAM_PORT),
+      CLAM_DB_DIR: clamdb,
+      MEDIA_COMPRESS_ACTIVE_MS: '250',
+      MEDIA_COMPRESS_EVERY_MS: '5000',
+      ORPHAN_SWEEP: '1', // exercised below (dry run + real sweep on a planted orphan)
+      UNFURL: '0',
+      DRAIN_WAIT_MS: '0', // the compression-only phase restarts the server
+      PATH: bindir + path.delimiter + (process.env.PATH || ''),
+    };
+    // Boot/stop helpers: the second phase runs the SAME database with no clamd
+    // at all, which is the shape the production cluster uses.
+    function startServer(extra) {
+      serverLog = '';
+      const c = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
+        cwd: ROOT, env: { ...baseEnv, ...(extra || {}) }, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      c.stdout.on('data', (d) => { serverLog += d; });
+      c.stderr.on('data', (d) => { serverLog += d; });
+      return c;
+    }
+    function stopServer() {
+      return new Promise((resolve) => {
+        const c = child;
+        if (!c) return resolve();
+        child = null;
+        c.once('exit', () => resolve());
+        try { c.kill(); } catch { resolve(); }
+        setTimeout(resolve, 15000); // never hang the suite on a stubborn exit
+      });
+    }
+    child = startServer();
     const fail = (msg) => { throw new Error(msg + '\n--- server log ---\n' + serverLog.slice(-4000)); };
 
     if (!(await waitForHttp('/api/config', 30000))) return fail('server did not come up');
@@ -360,7 +379,13 @@ async function main() {
       console.log('[test] server log tail: ' + serverLog.split('\n').slice(-12).join('\n'));
     }
     check('sweeper compressed + re-verified the missed file', !!sweptAtt, sweptDone ? '' : 'no compressed update within 30s');
-    check('original bytes gone', !fs.existsSync(path.join(uploads, sweptKey)));
+    // The sweeper only ever sees files clients can already fetch, so it publishes
+    // the compressed bytes under a NEW key and leaves the old object alone: a
+    // byte swap behind a live URL is what this rule exists to prevent. The old
+    // key stops being referenced, and the orphan sweep reaps it after its grace.
+    check('original bytes are left for the orphan sweep (never swapped in place)', fs.existsSync(path.join(uploads, sweptKey)));
+    const sweptOldRows = await db.query("SELECT COUNT(*) c FROM attachments WHERE split_part(url,'?',1) = $1", ['/uploads/' + sweptKey]);
+    check('nothing references the old key any more', Number(sweptOldRows.rows[0].c) === 0, 'rows=' + sweptOldRows.rows[0].c);
     if (sweptAtt) {
       const newKey = sweptAtt.url.split('?')[0].replace('/uploads/', '');
       check('new key exists on disk', fs.existsSync(path.join(uploads, newKey)));
@@ -401,6 +426,93 @@ async function main() {
     const real = await api('POST', '/api/admin/sweep/run', undefined, token);
     check('real sweep deletes it', !!real.result && !fs.existsSync(orphanPath), JSON.stringify(real.result && { deleted: real.result.deleted, scanned: real.result.scanned }));
     await db.query('UPDATE users SET is_admin = 0 WHERE id = $1', [reg.user.id]);
+
+    // ---------- compression-only slot (no clamd) ----------
+    // What the production cluster runs: a 1 vCPU / ~1.14GiB node cannot afford
+    // clamd's ~1GB, so VIRUS_SCAN=0. The slot must still settle every upload's
+    // bytes BEFORE they are served, or a client gets the uncompressed file and
+    // then a swap. And what the sweeper does touch is already visible, so it
+    // must publish under a NEW key instead of rewriting the bytes behind a URL
+    // someone may be streaming.
+    console.log('\n-- compression-only slot: VIRUS_SCAN=0, MEDIA_COMPRESS=1 --');
+    const scansBefore = fake.state.scans;
+    await stopServer();
+    child = startServer({ VIRUS_SCAN: '0' });
+    if (!(await waitForHttp('/api/config', 30000))) return fail('server did not come back up without a scanner');
+
+    await db.query('UPDATE users SET is_admin = 1 WHERE id = $1', [reg.user.id]);
+    const noScanAdmin = await api('GET', '/api/admin/media', undefined, token);
+    check('the admin panel is told the slot runs with no scanner',
+      !!noScanAdmin.scan && noScanAdmin.scan.mode === 'compress' && noScanAdmin.scan.scanning === false && noScanAdmin.scan.compressing === true,
+      JSON.stringify(noScanAdmin.scan && { mode: noScanAdmin.scan.mode, engine: noScanAdmin.scan.engine }));
+    await db.query('UPDATE users SET is_admin = 0 WHERE id = $1', [reg.user.id]);
+
+    const pUp = await uploadFile(media.wav, 'plain-tone.wav', 'audio/wav', token);
+    check('a candidate upload is gated while its encode is pending', pUp.scan === 'pending', 'scan=' + pUp.scan);
+    const gatedRes = await fetch(`http://127.0.0.1:${PORT}${pUp.url}`);
+    check('the gate refuses the bytes until the slot publishes', gatedRes.status === 423, 'status=' + gatedRes.status);
+
+    const smallUp = await uploadFile(media.small, 'thumb.png', 'image/png', token);
+    check('a file no compressor would touch is NOT gated', smallUp.scan === 'clean', 'scan=' + smallUp.scan);
+    check('...and is servable immediately', (await fetch(`http://127.0.0.1:${PORT}${smallUp.url}`)).status === 200);
+
+    const pConn = await connectWs(token);
+    await waitFor(() => pConn.events.some((e) => e.t === 'hello'), 5000);
+    pConn.send({
+      t: 'message', serverId: srv.server.id, channelId, content: '',
+      attachments: [{ url: pUp.url, name: pUp.name, mime: pUp.mime, size: pUp.size, kind: pUp.kind }],
+    });
+    const pNew = await waitFor(() => pConn.events.find((e) => e.t === 'message-new'), 8000);
+    if (!pNew) fail('message-new never arrived in compression-only mode');
+    check('message first rendered as pending', pNew.message.attachments[0].scan === 'pending');
+    const pMid = pNew.message.id;
+    const pDone = await waitFor(() => pConn.events.find((e) => e.t === 'message-updated' && e.message.id === pMid && e.message.attachments[0].scan === 'clean'), 30000);
+    await sleep(1500);
+    pConn.close();
+    const pUpdates = pConn.events.filter((e) => e.t === 'message-updated' && e.message.id === pMid);
+    check('exactly ONE transition, no clamd involved', pUpdates.length === 1 && !!pDone, 'updates=' + pUpdates.length);
+    const pAtt = pDone && pDone.message.attachments[0];
+    check('final bytes are compressed + clean', !!pAtt && pAtt.mime === 'audio/mpeg' && pAtt.size < pUp.size, pAtt && (pAtt.mime + ' ' + pAtt.size + ' < ' + pUp.size));
+    check('no clamd was asked anything at all', fake.state.scans === scansBefore, 'scans=' + (fake.state.scans - scansBefore));
+    const pServed = await fetch(`http://127.0.0.1:${PORT}${pAtt ? pAtt.url : ''}`);
+    check('the published file is servable through the gate', pServed.status === 200, 'status=' + pServed.status);
+    check('old scan row dropped, new key carries the verdict', (await scanRow(pUp.url.split('?')[0].replace('/uploads/', ''))) === null && !!(await scanRow(pAtt && pAtt.url.split('?')[0].replace('/uploads/', ''))));
+
+    console.log('\n-- sweeper: an already-visible file is republished on a NEW key --');
+    // Bytes + a clean verdict + compressed = 0: exactly the state of a file
+    // uploaded while the compressor was off. Only the sweeper can pick it up,
+    // and it may not rewrite the bytes the URL already points at.
+    const oldKey = 'files/' + crypto.randomBytes(16).toString('hex') + '.jpg';
+    const oldPath = path.join(uploads, oldKey);
+    fs.copyFileSync(media.jpg, oldPath);
+    const oldSize = fs.statSync(oldPath).size;
+    const oldHash = crypto.createHash('sha256').update(fs.readFileSync(oldPath)).digest('hex');
+    await db.query("INSERT INTO file_scans (key,status,attempts,error,created_at,scanned_at) VALUES ($1,'clean',1,'',$2,$2)", [oldKey, Date.now()]);
+    const swConn = await connectWs(token);
+    await waitFor(() => swConn.events.some((e) => e.t === 'hello'), 5000);
+    swConn.send({
+      t: 'message', serverId: srv.server.id, channelId, content: '',
+      attachments: [{ url: '/uploads/' + oldKey + '?v=' + Date.now().toString(36), name: 'old-photo.jpg', mime: 'image/jpeg', size: oldSize, kind: 'image' }],
+    });
+    const swNew = await waitFor(() => swConn.events.find((e) => e.t === 'message-new'), 8000);
+    if (!swNew) fail('sweeper fixture message never arrived');
+    const swMid = swNew.message.id;
+    const swDone = await waitFor(() => swConn.events.find((e) => e.t === 'message-updated' && e.message.id === swMid
+      && e.message.attachments[0].url.split('?')[0] !== '/uploads/' + oldKey), 40000);
+    swConn.close();
+    const swAtt = swDone && swDone.message.attachments[0];
+    const newKey = swAtt && swAtt.url.split('?')[0].replace('/uploads/', '');
+    check('the sweeper compressed the already-visible file', !!swAtt && swAtt.size > 0 && swAtt.size < oldSize, swAtt && (swAtt.size + ' < ' + oldSize));
+    check('compressed bytes landed on a NEW key', !!newKey && newKey !== oldKey, newKey);
+    check('the published URL was never rewritten in place', fs.existsSync(oldPath)
+      && crypto.createHash('sha256').update(fs.readFileSync(oldPath)).digest('hex') === oldHash);
+    const oldRows = await rowFor(oldKey);
+    const newRows = await rowFor(newKey);
+    check('the row follows the new key (the old one is left for the orphan sweep)',
+      oldRows.length === 0 && newRows.length === 1 && Number(newRows[0].compressed) === 1,
+      JSON.stringify({ old: oldRows.length, now: newRows.length }));
+    const newServed = await fetch(`http://127.0.0.1:${PORT}${swAtt ? swAtt.url : ''}`);
+    check('the re-published file is servable', newServed.status === 200, 'status=' + newServed.status);
 
     await db.end();
   } finally {

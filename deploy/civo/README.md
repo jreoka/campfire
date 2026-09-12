@@ -224,8 +224,11 @@ Retention details worth knowing:
   entirely, because deleting a blob a snapshot still needs would silently
   corrupt a backup. It fails towards keeping bytes.
 - If a key's content is rewritten in place, an older snapshot references that
-  key and so restores the newer bytes for it (`media-compress` can rewrite a
-  key; it is off in production, so keys are immutable in practice).
+  key and so restores the newer bytes for it. `media-compress` is the only
+  writer that does this, and only for a same-format re-encode **before** the
+  file is published (the cache-busted URL moves with it); everything it does to
+  an already-visible file lands on a fresh key instead. So a restore still gets
+  exactly the bytes the app is serving for that key.
 - The old `.dump`-only gotcha is gone: nothing is pruned by filename pattern any
   more, and no object can sit in a backup location invisible to retention.
 
@@ -397,14 +400,30 @@ two are kept separate.
 
 ## 9. Known trade-off of `VIRUS_SCAN=0`
 
-With scanning off, `startVirusScan()` returns before its loop, so the
-single-pass path never runs. Uploads are recorded `clean` immediately and served
-ungated. That is the accepted cost of fitting a 1165 Mi node — clamd alone
-measured **996 MiB** on production.
+There is **no virus scanning here**, and that is the accepted cost of fitting a
+1165 Mi node — clamd alone measured **996 MiB** on production. Uploads are not
+inspected for malware; the gate below exists for compression, not for AV.
 
-`MEDIA_COMPRESS=0` is set alongside it deliberately: otherwise compression falls
-to the sweeper, which republishes the file *after* it is already visible and can
-swap the bytes under someone playing it.
+Compression is NOT disabled with it. The `virus-scan` worker runs whenever
+scanning **or** compression is on, so with `VIRUS_SCAN=0` it becomes a
+compress-and-publish slot: it takes each upload the compressor would rewrite,
+encodes it before anything can fetch it, and only then lifts the 423 the
+`/uploads` gate is holding it behind. That keeps the property the pipeline was
+built for — one `pending -> final` transition per upload, never a byte swap
+under a player — without a scanner to ask. Anything the compressor would never
+touch (a zip, a PDF, a 100 KB screenshot) is marked `clean` at upload time and
+served immediately, so only real candidates wait.
+
+What the *sweeper* compresses is different: those files are already visible, so
+it publishes the smaller bytes under a NEW key and leaves the old object for the
+orphan sweep. The attachment's url moves and the client repaints from the
+`message-updated` push; nothing is ever rewritten behind a URL someone may be
+streaming.
+
+`VIRUS_SCAN_CONCURRENCY=1` on this node: S3 mode buffers each download in RAM
+(up to `MAX_FILE_MB`) and compressions are serialized process-wide anyway, so
+parallel slots would only hold more copies of a large file inside the 640 Mi
+limit.
 
 To get scanning back later, run clamd somewhere and point `CLAM_HOST` at it —
 a config change, not a code change, and the one thing that would let this fit on

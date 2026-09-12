@@ -2153,16 +2153,21 @@ app.post('/api/upload', authRequired, (req, res, next) => {
   if (!req.file) return res.status(400).json({ error: 'bad_file (no file received)' });
   try { await persistUpload('files', req.file); }
   catch { return res.status(500).json({ error: 'storage_failed' }); }
-  // Every upload is virus-scanned by content (extensions lie — see
-  // virus-scan.js). The file posts to chat immediately but stays
-  // unservable until the verdict lands.
-  let scan = 'clean';
-  const fileKey = 'files/' + req.file.filename;
-  try { scan = await require('./virus-scan').queueFileScan(fileKey); } catch {}
   let mt = req.file.mimetype;
   // Extension-accepted code/text with an empty or generic MIME reads as text.
   if ((!mt || mt === 'application/octet-stream') && CODE_TEXT_EXTS.has(path.extname(String(req.file.originalname || '')).toLowerCase().slice(1))) mt = 'text/plain';
   const kind = mt.startsWith('image/') ? 'image' : mt.startsWith('video/') ? 'video' : mt.startsWith('audio/') ? 'audio' : 'file';
+  // Every upload is virus-scanned by content (extensions lie — see
+  // virus-scan.js); with no scanner the same slot compresses the file before
+  // anyone can fetch it. Either way the file posts to chat immediately but
+  // stays unservable until the verdict lands — and when there is no scanner,
+  // only a file the compressor would actually rewrite waits for it (see
+  // media-compress.isCandidate): the rest is servable the moment it lands.
+  let scan = 'clean';
+  const fileKey = 'files/' + req.file.filename;
+  let candidate = false;
+  try { candidate = require('./media-compress').isCandidate(mt, fileKey, req.file.size); } catch {}
+  try { scan = await require('./virus-scan').queueFileScan(fileKey, { compress: candidate }); } catch {}
   res.json({ url: uploadUrl('files', req.file), name: String(req.file.originalname || 'file').slice(0, 120), mime: mt, size: req.file.size, kind, scan });
 });
 

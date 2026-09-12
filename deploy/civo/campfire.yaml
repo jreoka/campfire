@@ -3,7 +3,8 @@
 #
 # Sized for ONE Civo Small node: ~1336 MiB allocatable after Civo's reservations
 # (kube-reserved 512 + system-reserved 100 + eviction-hard 100 of 2 GiB).
-# Budget, with AV scanning off so there is no clamd:
+# Budget, with AV scanning off so there is no clamd (compression IS on, and it
+# runs in-process: one niced single-threaded ffmpeg at a time):
 #   k3s system pods (Traefik/CoreDNS/metrics-server/ServiceLB/CSI)  ~300 MiB
 #   postgres                                                        ~150-250
 #   campfire                                                        ~150-250
@@ -217,16 +218,22 @@ spec:
               valueFrom: { secretKeyRef: { name: campfire-db, key: POSTGRES_PASSWORD } }
             - name: PGDATABASE
               valueFrom: { secretKeyRef: { name: campfire-db, key: POSTGRES_DB } }
-            # ---- AV OFF: clamd needs ~1GB and this node has 1336MiB in total.
+            # ---- AV OFF, compression ON: clamd needs ~1GB and this node has
+            # 1336MiB in total, so there is no scanner here. The virus-scan
+            # worker still runs as a compress-and-publish slot: an upload the
+            # compressor would rewrite stays gated ("Processing file") until
+            # ffmpeg has settled it, so clients still get exactly ONE
+            # pending -> final transition; a zip or a small screenshot is
+            # servable the moment it lands. See media-compress.js / virus-scan.js.
             - name: VIRUS_SCAN
               value: "0"
-            # Compression normally runs inside the scan slot. With scanning off
-            # that slot never runs, so compression would fall to the sweeper and
-            # REPUBLISH the file after it is already visible -- swapping the
-            # bytes under anyone playing it. Off is honest and keeps one
-            # transition per upload.
             - name: MEDIA_COMPRESS
-              value: "0"
+              value: "1"
+            # One slot: S3 mode buffers each download in RAM (up to MAX_FILE_MB)
+            # and compressions are serialized process-wide anyway, so parallel
+            # slots would only hold more copies of a file on a 640Mi limit.
+            - name: VIRUS_SCAN_CONCURRENCY
+              value: "1"
             - name: MAX_FILE_MB
               value: "50"           # S3 mode buffers uploads in RAM per upload
             # S3 mode ignores this, but without it a deployment whose S3_* is

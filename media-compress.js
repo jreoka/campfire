@@ -28,11 +28,19 @@
 //   just appeared is never swapped out from under itself. This sweeper stays
 //   as the fallback for anything the pipeline missed (scanning off or
 //   unavailable, the pre-existing backlog, a failed candidate scan).
-// - Same URL shape always (/uploads/<sub>/<file>?v=<cachekey>). Same-format
-//   results overwrite in place with a fresh ?v cache-buster; format changes
-//   (wav/flac -> mp3, mov/webm video -> mp4) mint a new random filename and
-//   the DB row (url/mime/size) is updated to match. Display filenames are
-//   never touched.
+// - ... and the same slot runs WITHOUT a scanner: with VIRUS_SCAN=0 the
+//   worker still claims every upload, compresses it before anything is
+//   published, and only then lets it be served (virus-scan.js processRow). So
+//   the one-transition promise holds on a box that cannot afford clamd.
+// - Anything the sweeper touches is ALREADY visible, so it always publishes
+//   under a fresh key and leaves the old bytes for the orphan sweep: bytes
+//   behind a live URL are never rewritten under a reader.
+// - Same URL shape always (/uploads/<sub>/<file>?v=<cachekey>). Before
+//   publication a same-format result overwrites in place with a fresh ?v
+//   cache-buster; format changes (wav/flac -> mp3, mov/webm video -> mp4) mint a
+//   new random filename and the DB row (url/mime/size) is updated to match.
+//   The sweeper's path always mints a new filename (see above). Display
+//   filenames are never touched.
 // - Needs ffmpeg on PATH (Docker image installs it via apk). Without ffmpeg
 //   the worker logs once and stays idle — the app runs fine uncompressed.
 //
@@ -217,6 +225,19 @@ function planFor(mime, filename) {
   return null;
 }
 
+function compressionEnabled() { return ENABLED; }
+
+// Would this upload be re-encoded? The upload route asks (see /api/upload): with
+// no scanner the gate holds a file back until the compressor has settled it, and
+// a file the compressor will never touch must not pay that wait — it is served
+// the moment it lands, exactly as it is with compression off.
+function isCandidate(mime, key, size) {
+  if (!ENABLED || !key) return false;
+  const plan = planFor(mime, key);
+  if (!plan) return false;
+  return (Number(size) || 0) >= (MIN_BYTES[plan.group] || MIN_BYTES.image);
+}
+
 const SCALE_IMG = 'scale=2048:2048:force_original_aspect_ratio=decrease';
 const SCALE_GIF = 'fps=20,scale=1280:1280:force_original_aspect_ratio=decrease:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=256[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5';
 const SCALE_VID = 'scale=1920:1080:force_original_aspect_ratio=decrease';
@@ -394,14 +415,17 @@ async function pendingRowsForKey(key) {
 }
 
 // Single-pass upload processing, shared by both callers:
-//   - this sweeper (inspect = null): commit the smaller bytes, then re-queue a
-//     scan for them (the sweeper only ever touches scan-clean files);
+//   - this sweeper (inspect = null, freshKey: true): the file is already
+//     visible, so the smaller bytes are published under a NEW key and the old
+//     bytes are left for the orphan sweep, then a scan is re-queued for them
+//     (where a scanner exists);
 //   - virus-scan.js: hand each candidate output to `inspect({path,size})` and
 //     only commit when the scanner approves it, so the verdict that reaches
-//     clients describes the bytes they will actually play.
+//     clients describes the bytes they will actually play. The file is not
+//     servable yet, so a same-format result keeps its key (`freshKey` false).
 // Returns null when there is nothing to do (rows are marked done), else
 // { key, url, size, origSize, mime, group, pipeline, renamed }.
-async function processUpload(key, inspect) {
+async function processUpload(key, inspect, opts) {
   if (!ENABLED || !key || inflight.has(key)) return null;
   inflight.add(key);
   try {
@@ -412,12 +436,13 @@ async function processUpload(key, inspect) {
     //     same upload simultaneously: double the CPU, two different candidate
     //     byte streams, and a race to publish them (which is exactly the
     //     "one pending->final transition per file" rule this pipeline keeps).
-    const r = await db.withKeyLock('media:' + key, () => withCompressLock(() => compressLocked(key, inspect)));
+    const r = await db.withKeyLock('media:' + key, () => withCompressLock(() => compressLocked(key, inspect, opts)));
     return r.ran ? r.value : null;
   } finally { inflight.delete(key); }
 }
 
-async function compressLocked(key, inspect) {
+async function compressLocked(key, inspect, opts) {
+  const forceFresh = !!(opts && opts.freshKey);
   const rows = await pendingRowsForKey(key);
   if (!rows.length) return null; // not a pending chat upload (avatar, emoji, …)
   const done = async () => { await markRowsDone(rows); return null; };
@@ -467,9 +492,17 @@ async function compressLocked(key, inspect) {
 
     const sameFormat = extOf(key) === outExt;
     const newMime = sameFormat ? String(row.mime) : (MIME_BY_OUT[outExt] || String(row.mime));
+    // `forceFresh` = these bytes are already being served (the sweeper's path),
+    // so the smaller version has to land on a NEW key. Rewriting the bytes
+    // behind a live URL is the swap that broke a playing <video> — a fresh key
+    // just changes the attachment's url, and the old bytes stay until the
+    // orphan sweep's grace period is up. The scan slot compresses before
+    // publication, so there a same-format result keeps its key.
+    const freshKey = forceFresh || !sameFormat;
     let newKey = key;
-    if (!sameFormat) {
-      // Format change (wav->mp3, mov/webm video->mp4): mint a fresh name.
+    if (freshKey) {
+      // Format change (wav->mp3, mov/webm video->mp4) or a post-publication
+      // rewrite: mint a fresh name.
       const dir = key.slice(0, key.lastIndexOf('/') + 1);
       newKey = dir + crypto.randomBytes(16).toString('hex') + outExt;
     }
@@ -482,7 +515,10 @@ async function compressLocked(key, inspect) {
         else await db.prepare('UPDATE ' + table + ' SET size = ?, url = ?, mime = ?, compressed = 1 WHERE id = ?').run(outStat.size, newUrl, newMime, rr.id);
       } catch (e) { warn('row update failed:', String((e && e.message) || e).slice(0, 120)); }
     }
-    if (!sameFormat) {
+    if (newKey !== key && !forceFresh) {
+      // Only the not-yet-visible copy is dropped. A published one is left in
+      // place: something may still be streaming it, and the orphan sweep knows
+      // how to reap it once nothing references it any more.
       await removeKey(key);
       try { require('./virus-scan').dropScan(key); } catch {}
     }
@@ -492,7 +528,7 @@ async function compressLocked(key, inspect) {
     await logJob({ tbl: row.tbl, url: newUrl, filename: row.filename, kind: plan.group, pipeline: plan.pipeline, result: 'compressed', origSize: inStat.size, newSize: outStat.size });
     const pct = Math.round((1 - outStat.size / inStat.size) * 100);
     log(`${plan.group} ${key}: ${Math.round(inStat.size / 1024)}KB -> ${Math.round(outStat.size / 1024)}KB (-${pct}%)`);
-    return { key: newKey, url: newUrl, size: outStat.size, origSize: inStat.size, mime: newMime, group: plan.group, pipeline: plan.pipeline, renamed: !sameFormat };
+    return { key: newKey, url: newUrl, size: outStat.size, origSize: inStat.size, mime: newMime, group: plan.group, pipeline: plan.pipeline, renamed: newKey !== key };
   } catch (e) {
     // A scanner failure on the candidate is NOT a reason to give up on the
     // file: keep the original bytes in place, stay queued (compressed = 0) so
@@ -516,17 +552,26 @@ async function compressLocked(key, inspect) {
 }
 
 // Sweeper path: returns 'compressed' | 'skipped' (both mean: never look at
-// this row again). The scan-integrated path is the primary one now; this is
-// the safety net for files it missed — scanning disabled/unavailable, the
-// backlog from before the single-pass change, a failed candidate scan.
+// this row again). The scan-integrated path is the primary one; this is
+// the safety net for files it missed — the backlog from before the single-pass
+// change, a file that was published before its encode finished (the slot and
+// the message insert can race), a failed candidate scan. Everything it touches
+// is already visible, hence freshKey.
 async function processRow(row) {
   const key = cleanKey(row.url);
   if (!key) { stats.skipped++; await markDone(row.tbl === 'dm' ? 'dm_attachments' : 'attachments', row.id); return 'skipped'; } // remote GIF URL etc.
-  const out = await processUpload(key, null);
+  const out = await processUpload(key, null, { freshKey: true });
   if (!out) { stats.skipped++; return 'skipped'; }
-  // Rewritten bytes need a fresh virus verdict: the scan gate holds the file
-  // as pending until the rescan lands.
-  try { require('./virus-scan').queueFileScan(out.key); } catch {}
+  try {
+    const vs = require('./virus-scan');
+    // Where a scanner exists the rewritten bytes need a fresh verdict, and that
+    // verdict is what re-broadcasts the message showing them. With scanning off
+    // there is no verdict to earn (an unknown key is served) and queueing one
+    // would only gate the file this sweep just published — but the clients
+    // still have to learn its new URL, so the change is emitted directly.
+    if (vs.scanningEnabled()) vs.queueFileScan(out.key);
+    else await vs.emitScanChange(out.key, 'clean');
+  } catch {}
   return 'compressed';
 }
 
@@ -702,4 +747,4 @@ function startMediaCompress() {
   }).catch((e) => warn('migration failed:', String((e && e.message) || e).slice(0, 200)));
 }
 
-module.exports = { startMediaCompress, tickMediaCompress: tick, kickMediaCompress, ensureColumns, planFor, buildArgs, cleanKey, MIN_BYTES, getMediaStats, mediaQueueCounts, mediaTotals, mediaRecentJobs, processUpload, isCompressing };
+module.exports = { startMediaCompress, tickMediaCompress: tick, kickMediaCompress, ensureColumns, planFor, buildArgs, cleanKey, MIN_BYTES, getMediaStats, mediaQueueCounts, mediaTotals, mediaRecentJobs, processUpload, isCompressing, isCandidate, compressionEnabled };

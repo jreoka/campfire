@@ -389,6 +389,22 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   `node scripts/test-viewonce.js` covers view-once messages against the same
 dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   one-replay lifecycle, and that unopened items never expire.
+  `node scripts/test-upload-pipeline.js` covers the whole upload pipeline
+  end-to-end against a throwaway database with a fake (slow) clamd on loopback,
+  in the two shapes production runs. **Scan mode** (`VIRUS_SCAN=1`): the message
+  renders the file as pending, exactly ONE `message-updated` follows carrying
+  bytes the scanner also approved, the old key is deleted on a format change and
+  `file_scans` follows the new one; the sweeper fallback still compresses a file
+  the slot never saw. **Compression-only mode** (the server is restarted with
+  `VIRUS_SCAN=0`, no clamd at all — the Civo cluster's shape): a candidate upload
+  is gated (423) until the slot publishes it and then raises ONE transition with
+  no clamd contacted, a file below `MIN_BYTES` is served the instant it lands,
+  and a sweeper-compressed file that clients could already fetch lands on a NEW
+  key with the old object left intact (never rewritten in place, nothing
+  referencing it, so the orphan sweep reaps it). Skips without ffmpeg or
+  Postgres. On Windows run it from Git Bash: `haveBinaries()` probes with `sh`,
+  and a PowerShell session has no `sh` on PATH, so the scan-mode phase silently
+  falls back to the no-engine path and its checks fail.
   `node scripts/test-viewonce-pick.js` covers "Send a view-once" arriving with
   the DM you clicked it in already picked (offline for the two real helpers —
   `viewOnceDmPeerId`/`viewOncePrePick` sliced out of `stories.js` — then the

@@ -206,13 +206,16 @@ by a **Cloudflare Tunnel** (no LoadBalancer — it would cost more than the node
 Postgres 18 on a `civo-volume` PVC, coturn in-cluster via `hostNetwork`.
 Manifests + runbook: `deploy/civo/`. See **Deployment** below for how to ship.
 
-**The app runs with `VIRUS_SCAN=0` and `MEDIA_COMPRESS=0`.** clamd needs ~1 GB
-and the node has ~1.14 GiB allocatable, so AV scanning is off. Compression is off
-with it on purpose: with scanning disabled the single-pass scan slot never runs,
-so compression would fall to the sweeper and *republish files after they are
-visible*, swapping bytes under whoever is playing them. `MAX_FILE_MB=50`,
-because S3 mode buffers every upload in RAM. To get scanning back, run one clamd
-anywhere and set `CLAM_HOST` — that is config, not code.
+**The app runs with `VIRUS_SCAN=0` and `MEDIA_COMPRESS` on.** clamd needs ~1 GB
+and the node has ~1.14 GiB allocatable, so AV scanning is off. Compression does
+NOT depend on it: the `virus-scan` slot runs with no engine as a
+compress-and-publish slot, so an upload the compressor would rewrite waits
+(gated, "Processing file") until its encode lands and clients still get exactly
+one `pending -> final` transition. What it will never touch is served the moment
+it lands. `MAX_FILE_MB=50`, because S3 mode buffers every upload in RAM, and
+`VIRUS_SCAN_CONCURRENCY=1` keeps one download + one ffmpeg in flight on a box
+this small. To get scanning back, run one clamd anywhere and set `CLAM_HOST` —
+that is config, not code.
 
 **Uploads live in the Civo object store** (`objectstore.nyc1.civo.com`, bucket
 `campfire`, path-style addressing), not on disk — so replicas need no shared
@@ -685,8 +688,14 @@ NEXT: iterate per owner feedback on the live site.
 - **Upload pipeline E2E:** `node scripts/test-upload-pipeline.js` (needs ffmpeg
   + the dev Postgres, skips otherwise) boots a real server against a throwaway
   database with a fake clamd and asserts the single-transition compression flow
-  for both the scan-integrated path and the sweeper fallback. Re-run it after
-  touching `virus-scan.js`, `media-compress.js`, or the upload routes.
+  for the scan-integrated path, then **restarts it with `VIRUS_SCAN=0`** to
+  assert the compression-only shape the cluster runs (gated candidate -> one
+  transition with no clamd, immediate serving for non-candidates, and a
+  sweeper rewrite landing on a fresh key with the old bytes untouched). Re-run
+  it after touching `virus-scan.js`, `media-compress.js`, or the upload routes.
+  On Windows run it from Git Bash: its `haveBinaries()` probe shells out to `sh`,
+  which a PowerShell session has no PATH entry for, and the scan-mode phase then
+  silently exercises the no-engine path instead.
 - Smoke test API: `curl localhost:3000/api/config`, register/login flow.
 - E2E (register → create server → invite-join → WS live message → history →
   channel create/delete → voice-join signaling) was verified passing; re-run an
@@ -724,10 +733,29 @@ are load-bearing:
   candidate output into clamd (a local temp file — never re-downloaded), and
   only commits it once that verdict is clean. So clients see exactly one
   `pending -> final` transition and a playing file is never swapped out from
-  under a running player. `media-compress`'s sweeper is the fallback for
-  anything the pipeline missed (scanning off/unavailable, the pre-existing
-  backlog, a failed candidate scan) and still re-queues `virus-scan` after
-  rewriting. Never hand unscanned bytes to ffmpeg or publish unscanned output.
+  under a running player. Never hand unscanned bytes to ffmpeg or publish
+  unscanned output.
+- **The slot is not only a scan slot.** `virus-scan`'s worker runs whenever
+  scanning **or** compression is on (`slotOn()`), and the serving gate
+  (`scanGating`) is tied to the same predicate. With `VIRUS_SCAN=0` it becomes a
+  compress-and-publish slot: `processRow` skips every clamd path, calls
+  `processMedia(key, null)` (no candidate scan to ask for) and marks the row
+  clean, which is what lifts the 423. Which uploads wait for it is the upload
+  route's call — `queueFileScan(key, {compress: media-compress.isCandidate(...)})`
+  — so a file the compressor would never rewrite (a zip, a 100 KB screenshot) is
+  `clean` immediately, exactly as it is with compression off. Keep those two
+  halves in step: gating a file the slot would never settle parks it at 423.
+- **What the sweeper touches is already visible, so it republishes on a NEW
+  key.** `media-compress.processRow` passes `{freshKey: true}`, so even a
+  same-format result lands beside the old object instead of overwriting it, the
+  attachment's url is updated (the client repaints from the emitted
+  `message-updated`), and the old key is left for the orphan sweep: nothing is
+  ever rewritten behind a URL someone may be streaming. That is also the safety
+  net for the one race the slot cannot close — the slot can settle an upload
+  before the message insert creates its attachment row (then the file is served
+  uncompressed and upgraded seconds later, under a new key, instead of being
+  swapped). The format-change case in the slot itself still deletes the old
+  bytes, because that file was never servable.
 - **One ffmpeg at a time, process-wide.** The sweeper and the scan pipeline
   share `withCompressLock`/the `inflight` key set; the sweeper skips keys with a
   pass in flight and `virus-scan`'s `reapStuckClaims` leaves a claim alone while

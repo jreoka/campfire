@@ -20,6 +20,13 @@
 //   (scan -> compress -> scan the smaller bytes -> publish, see
 //   processMedia) so clients only ever see one transition. Files the
 //   pipeline misses are picked up by the media sweeper.
+// - WITHOUT a scanner the slot still runs, as a compress-and-publish slot:
+//   there is no verdict to ask for, so it compresses the upload (when it is
+//   one the compressor would rewrite) and only then marks it clean. The gate
+//   below stays on for exactly that reason — a candidate has to wait for its
+//   encode or clients would get the uncompressed bytes and then a swap. A box
+//   that cannot afford clamd gets compression and one transition per upload
+//   without the ~1GB daemon.
 // - On every verdict change the server re-broadcasts the affected
 //   messages (hooked via setScanHooks) so scanning cards flip to the
 //   real file without a refresh.
@@ -34,7 +41,9 @@
 // keep working, never wedge in `pending` forever.
 //
 // Env:
-//   VIRUS_SCAN=0      disable entirely (uploads record `clean` immediately)
+//   VIRUS_SCAN=0      disable scanning entirely. Uploads are still gated while
+//                     the slot compresses them, provided MEDIA_COMPRESS is on;
+//                     with both off they record `clean` immediately.
 //   CLAM_DB_DIR       signature/config dir (default /data/clamav when
 //                     writable, else next to the upload dir)
 //   CLAM_PORT         clamd TCP port on loopback (default 3310)
@@ -52,7 +61,15 @@ const storage = require('./storage');
 
 const now = () => Date.now();
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'data', 'uploads');
-const ENABLED = process.env.VIRUS_SCAN !== '0';
+const SCANNING = process.env.VIRUS_SCAN !== '0';
+// The slot is not only a scan slot. Compression has to happen BEFORE the bytes
+// are published (the sweeper only ever sees files clients can already fetch),
+// so with scanning off the worker keeps running as a compress-and-publish slot
+// and the serving gate stays on. Lazy requires keep the module graph flat.
+function compressing() {
+  try { return require('./media-compress').compressionEnabled(); } catch { return false; }
+}
+function slotOn() { return SCANNING || compressing(); }
 const CLAM_PORT = Math.max(1, parseInt(process.env.CLAM_PORT || '3310', 10) || 3310);
 // Where clamd lives. The default is the loopback daemon this module supervises.
 // Set CLAM_HOST to run ONE clamd for the whole cluster (its own pod + Service)
@@ -137,14 +154,20 @@ async function ensureTables() {
 
 // ---------- public intake ----------
 
-// Record a fresh upload for scanning. When scanning is disabled the row
-// goes straight to `clean` so every downstream reader stays uniform.
-// Media-compress re-queues keys it rewrote (new bytes need a new verdict)
-// via the same function — existing `infected` rows are never resurrected.
-async function queueFileScan(key) {
+// Record a fresh upload for the slot. The row goes to `pending` whenever the
+// slot owns the bytes: a scanner will judge them, or (scanning off) the
+// compressor will rewrite them before anyone can fetch them — either way the
+// file has to wait, or clients would see the uncompressed bytes and then a
+// swap. `opts.compress` is the upload route's candidate verdict (see
+// media-compress isCandidate): with no scanner, anything the compressor would
+// never touch is marked `clean` here and served immediately, exactly as it is
+// with compression off. Every other reader stays uniform: unknown keys read as
+// `clean`, and media-compress re-queues keys it rewrote.
+async function queueFileScan(key, opts) {
   if (!key) return 'clean';
   try { await ensureTables(); } catch {}
-  if (!ENABLED) {
+  const gate = SCANNING || (compressing() && !!(opts && opts.compress));
+  if (!gate) {
     try {
       await db.prepare(`INSERT INTO file_scans (key,status,attempts,error,created_at,scanned_at)
         VALUES (?,'clean',0,'',?,?) ON CONFLICT(key) DO NOTHING`).run(key, now(), now());
@@ -172,7 +195,7 @@ async function dropScan(key) {
 // Single status; unknown keys (pre-feature uploads, non-chat prefixes)
 // are `clean` — only rows say otherwise.
 async function scanStatus(key) {
-  if (!key || !ENABLED) return 'clean';
+  if (!key || !slotOn()) return 'clean';
   try {
     const r = await db.prepare('SELECT status FROM file_scans WHERE key = ?').get(key);
     return (r && r.status) || 'clean';
@@ -183,7 +206,7 @@ async function scanStatus(key) {
 async function scanStatusMap(keys) {
   const out = new Map();
   const uniq = [...new Set((keys || []).filter(Boolean))];
-  if (!uniq.length || !ENABLED) return out;
+  if (!uniq.length || !slotOn()) return out;
   try {
     const ph = uniq.map(() => '?').join(',');
     const rows = await db.prepare(`SELECT key, status FROM file_scans WHERE key IN (${ph})`).all(...uniq);
@@ -192,9 +215,10 @@ async function scanStatusMap(keys) {
   return out;
 }
 
-// Whether the /uploads gate should enforce verdicts at all.
+// Whether the /uploads gate should enforce verdicts at all: it must, whenever
+// the slot owns the bytes a client would otherwise fetch.
 function scanGating() {
-  return ENABLED;
+  return slotOn();
 }
 
 function setScanHooks(h) {
@@ -433,7 +457,7 @@ async function markRow(key, status, error) {
 }
 
 async function tick() {
-  if (!ENABLED || !ready) return 'deferred';
+  if (!slotOn() || !ready) return 'deferred';
   if (active >= CONCURRENCY) return 'busy';
   const row = await claimRow();
   if (!row) return 'idle';
@@ -533,17 +557,19 @@ async function scanCandidate(cand) {
   return false;
 }
 
-// Single-pass media processing, run inside the scan slot right after the
-// upload's own clean verdict: compress now, verify the smaller bytes, and
-// publish them — so clients get ONE pending -> final transition instead of
+// Single-pass media processing, run inside the slot before the bytes are
+// published: compress now, verify the smaller bytes when there is a scanner,
+// and publish them — so clients get ONE pending -> final transition instead of
 // the file appearing, being played, then swapping under the player when a
 // background compression lands (see media-compress.js processUpload).
+// `inspect` is null when there is no scanner: the compressed bytes are then the
+// final bytes, with nothing left to ask.
 // Returns the storage key whose verdict should be published (the format
 // change on wav->mp3 / mov->mp4 mints a new key; the verdict follows it).
-async function processMedia(key) {
+async function processMedia(key, inspect) {
   let out = null;
   try {
-    out = await require('./media-compress').processUpload(key, scanCandidate);
+    out = await require('./media-compress').processUpload(key, inspect);
   } catch (e) {
     // Compression or candidate-scan hiccup: publish the verdict for the
     // original, already-verified bytes. The sweeper retries the encode.
@@ -569,6 +595,25 @@ async function processMedia(key) {
 // attempts=0 with an idle box: claimed but no live slot).
 async function processRow(row) {
   try {
+  // Compression-only slot (no scanner): settle the bytes and publish. There is
+  // no verdict to ask for, no engine to fail open from — processMedia hands
+  // back the key holding the final bytes (the original one when there was
+  // nothing to compress, a fresh one after a format change) and the row goes
+  // clean, which is what lifts the serving gate. Everything here is bounded by
+  // the encode's own timeout, so a pathological file cannot park an upload in
+  // `pending` for good.
+  if (!SCANNING) {
+    let finalKey = row.key;
+    try { finalKey = await processMedia(row.key, null); }
+    catch (e) { warn('compression-only slot failed for ' + row.key + ': ' + String((e && e.message) || e).slice(0, 160)); }
+    // Fail open on anything unforeseen: an upload that cannot be compressed is
+    // served uncompressed, never left waiting behind the gate.
+    await markRow(finalKey, 'clean', '');
+    stats.scanned++; stats.clean++;
+    stats.lastScan = { key: finalKey, result: 'clean', at: now() };
+    await emitChange(finalKey, 'clean');
+    return 'done';
+  }
   // Fail-open paths: no engine (local dev) marks clean; a broken engine
   // marks `error` (served, but visible in admin) — never wedge uploads.
   if (noEngine) {
@@ -613,7 +658,7 @@ async function processRow(row) {
     if (verdict.clean) {
       // The bytes the client will actually get are verified before this
       // verdict is published (see processMedia): scan -> compress -> scan.
-      const finalKey = await processMedia(row.key);
+      const finalKey = await processMedia(row.key, scanCandidate);
       await markRow(finalKey, 'clean', '');
       stats.clean++;
       stats.lastScan = { key: finalKey, result: 'clean', at: now() };
@@ -686,7 +731,7 @@ async function loop() {
 }
 
 function kickVirusScan() {
-  if (!started || !ENABLED || !ready || active >= CONCURRENCY) return;
+  if (!started || !slotOn() || !ready || active >= CONCURRENCY) return;
   schedule(KICK_MS);
 }
 
@@ -712,7 +757,9 @@ async function getScanStats() {
     }
   } catch {}
   return {
-    enabled: ENABLED, engine: !ENABLED ? 'off' : noEngine ? 'none' : engineFailed ? 'failed' : clamdReady ? 'ready' : 'starting',
+    enabled: slotOn(), scanning: SCANNING, compressing: compressing(),
+    mode: SCANNING ? 'scan' : slotOn() ? 'compress' : 'off',
+    engine: !SCANNING ? 'off' : noEngine ? 'none' : engineFailed ? 'failed' : clamdReady ? 'ready' : 'starting',
     clamdReady, dbPresent, dbAgeMs, counts,
     concurrency: CONCURRENCY, active, busy: active > 0,
     stuck: [...claimAt].map(([key, at]) => ({ key, ageMs: now() - at })).filter((x) => x.ageMs > 60000),
@@ -725,9 +772,17 @@ async function getScanStats() {
 function startVirusScan() {
   if (started) return;
   started = true;
-  if (!ENABLED) { log('disabled (VIRUS_SCAN=0) — uploads marked clean'); return; }
+  if (!slotOn()) { log('disabled (VIRUS_SCAN=0, MEDIA_COMPRESS=0) — uploads marked clean'); return; }
   ensureTables().then(() => {
     stats.startedAt = now();
+    // No scanner: the slot's whole job is to settle each upload's bytes before
+    // they are published, so there is no engine to supervise, no signature DB
+    // to download and no freshclam to schedule.
+    if (!SCANNING) {
+      log('worker on (compression-only slot: no clamd — uploads wait for compression, then serve)');
+      schedule(2000);
+      return;
+    }
     if (!CLAM_REMOTE && !haveBinaries()) {
       noEngine = true;
       if (!loggedNoEngine) { loggedNoEngine = true; warn('clamd/freshclam not found — uploads fail open as clean (install clamav-daemon, or point CLAM_HOST at a clamd)'); }
@@ -753,6 +808,8 @@ function startVirusScan() {
 module.exports = {
   startVirusScan, kickVirusScan, queueFileScan, dropScan,
   scanStatus, scanStatusMap, scanGating, setScanHooks, getScanStats,
+  scanningEnabled: () => SCANNING,
+  emitScanChange: emitChange,
   // exported for unit tests (fake clamd server):
   _clamdScanStream: clamdScanStream, _pingClamd: pingClamd,
 };
