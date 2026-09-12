@@ -294,6 +294,15 @@ function openFolderMenu(fid, x, y) {
   expand.textContent = S.openFolderId === f.id ? 'Collapse folder' : 'Expand folder';
   expand.addEventListener('click', () => { toggleFolder(f.id); closeFolderFlyout(); });
   m.appendChild(expand);
+  // Same action the folder's touch sheet carries (see folderSheetItems); only
+  // offered while there is something to clear.
+  if (typeof folderUnreadCount === 'function' && folderUnreadCount(f)) {
+    const mr = document.createElement('button');
+    mr.className = 'fm-item';
+    mr.textContent = 'Mark all as read';
+    mr.addEventListener('click', () => { closeFolderFlyout(); markFolderRead(f.id); });
+    m.appendChild(mr);
+  }
   for (const mv of folderMoveOrderItems(fid)) {
     const b = document.createElement('button');
     b.className = 'fm-item';

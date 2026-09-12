@@ -532,14 +532,29 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   short drag springs back; a tap on the backdrop or Close closes, a tap on the
   photo does not, and tapping Download does not; and closing/reopening resets the
   zoom.
-  `node scripts/test-chan-unread.js` covers unread channel dots (offline; runs
-  the real helpers sliced out of `servers.js` against a fake DOM +
-  localStorage, then checks the render/socket wiring and stylesheet statically):
-  a background message marks its channel and the server's rail icon, the memory
-  is per account and survives a reload (and another account never inherits it),
-  the store is capped and forgets marks past its TTL, opening a channel clears
-  it (and a hidden-tab message on the open channel clears when the tab returns),
-  and the row repaints in place.
+  `node scripts/test-chan-unread.js` covers unread channel dots and the rail's
+  unread badges (offline; runs the real helpers sliced out of `servers.js`
+  against a fake DOM + localStorage, then checks the render/menu/socket wiring
+  and stylesheet statically): a background message marks its channel and counts
+  up the server's badge (`data-unread`, rendered by `content:attr(...)`, capping
+  at 99+), a collapse folder sums its servers while the numbers inside stay
+  their own, the memory is per account and survives a reload (and another
+  account never inherits it), the store is capped and forgets marks past its
+  TTL, "Mark all as read" clears exactly the marks a server or a folder owns and
+  persists that, opening a channel clears it (and a hidden-tab message on the
+  open channel clears when the tab returns), and the row repaints in place.
+  `node scripts/test-rail-unread-badges.js` drives the same badges in a real
+  browser (headless Chrome against a throwaway database, desktop viewport,
+  skipping without Postgres or Chrome): it marks channels unread on three
+  servers, one folder holding two of them, then measures the generated
+  pseudo-elements — the count in the app red, white on a 999px pill pinned to
+  the icon's corner, the icon still inside the rail — and walks the folder
+  hand-off (collapsed shows the sum, expanding hides the folder's circle and
+  puts 2 and 1 on the servers, retracting restores the 3 without reading
+  anything), the active server keeping its count for another unread channel, and
+  both menus end to end: a read server offers no "Mark all as read", an unread
+  one offers it as the last row, and the folder's flyout clears every server in
+  it while leaving a server outside it alone.
   `node scripts/test-touch-hold-hover.js` covers the "one row looks already
   selected" bug when a long-press slides its sheet up under a finger that is
   still down (offline; runs the real `suppressHoverFromTouch`/

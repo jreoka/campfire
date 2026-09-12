@@ -298,6 +298,20 @@ come back after a reload — including the one the auto-updater fires seconds
 after a deploy — and reading a DM on the phone clears the desktop (`dm-read`).
 A row that was never read starts at `joined_at`, so being added to an old group
 chat doesn't light up its history, and own/system messages never count.
+Channel notifications are a count, not a dot: a server with unread channels
+shows the number in a red corner circle on its rail icon (`paintServerBadge`
+writes it into `data-unread`, and the CSS renders it with
+`content:attr(data-unread)` so a pill can never be empty), and a **collapsed**
+folder shows the sum for its servers — `paintFolderBadge`/`folderUnreadCount`
+in `servers.js`. Opening the folder hides the folder's circle (CSS,
+`.folder-btn.open`) and the servers inside paint their own through the same
+helper, so retracting without reading restores it untouched. The live path is
+`paintServerUnread`, which repaints every copy of the button AND the folder that
+holds it — a server inside a closed folder has no button of its own. Both menus
+(the server ctx menu / sheet and the folder's desktop flyout / touch sheet)
+carry **Mark all as read** through `markServerRead`/`markFolderRead` gated on
+there being something to clear; those marks are this account's localStorage
+memory, so clearing never talks to the server.
 Detail per change lives in `git log` — don't duplicate it here.
 
 ## Deployment (owner directive)

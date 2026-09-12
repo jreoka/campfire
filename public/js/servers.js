@@ -67,11 +67,14 @@ function folderGridHtml(f) {
 function serverBtn(s) {
   const b = document.createElement('button');
   const label = s.name.trim().charAt(0).toUpperCase() || '?';
-  b.className = 'server-btn' + (S.view === 'server' && s.id === S.serverId ? ' active' : '') + (s.icon_url ? ' has-icon' : '') + (serverMuted(s.id) ? ' muted' : '') + (serverHasUnread(s.id) ? ' unread' : '');
+  b.className = 'server-btn' + (S.view === 'server' && s.id === S.serverId ? ' active' : '') + (s.icon_url ? ' has-icon' : '') + (serverMuted(s.id) ? ' muted' : '');
   b.title = s.name;
   b.draggable = !isCoarse(); // touch devices: drop native drag so long-press opens the slide-up sheet
   b.dataset.drag = 'server:' + s.id;
   b.dataset.sid = s.id;
+  // The unread count rides the button itself (see paintServerBadge): the rail
+  // copy and the copy inside an open folder are painted by the same helper.
+  paintServerBadge(b, s);
   if (s.icon_url) {
     const img = document.createElement('img');
     img.src = s.icon_url; img.alt = ''; img.draggable = false;
@@ -111,6 +114,9 @@ function folderBtn(f) {
     openFolderMenu(f.id, e.clientX, e.clientY);
   };
   wireDrag(b, 'folder', f.id);
+  // Collapsed, the folder carries its servers' unread count (CSS hides it while
+  // the folder is open, where the servers show their own).
+  paintFolderBadge(b, f);
   w.appendChild(b);
   return w;
 }
@@ -243,20 +249,31 @@ setInterval(() => {
 // ---------- unread channels ----------
 // A channel gets a small dot (and a brighter name) when a message arrives while
 // you are not looking at it. Tracked per account in localStorage so it survives
-// a reload, and it also puts a quiet dot on the server's rail icon so an
-// unread channel in a server you are not in is still discoverable. The live
-// push arrives for every joined server (broadcastToServer), so the dot lands
-// even when you are sitting in a different one.
+// a reload, and it also counts up a red badge on the server's rail icon (and on
+// the folder that holds it while the folder is collapsed) so an unread channel
+// in a server you are not in is still discoverable. The live push arrives for
+// every joined server (broadcastToServer), so the badge lands even when you are
+// sitting in a different one.
 const CHAN_UNREAD_MAX = 60;             // conversations remembered per account
 const CHAN_UNREAD_TTL = 30 * 864e5;     // a month of silence forgets it
 function chanUnreadKey() { return S.me ? 'cf_chanunread_' + S.me.id : null; }
 function chanUnreadCtx(serverId, channelId) { return serverId + ':' + channelId; }
 function hasChanUnread(serverId, channelId) { return !!serverId && !!channelId && S.chanUnread.has(chanUnreadCtx(serverId, channelId)); }
-function serverHasUnread(serverId) {
-  if (!serverId) return false;
+// The rail badge's number: how many channels of this server are unread.
+function serverUnreadCount(serverId) {
+  if (!serverId) return 0;
   const prefix = serverId + ':';
-  for (const k of S.chanUnread.keys()) if (k.startsWith(prefix)) return true;
-  return false;
+  let n = 0;
+  for (const k of S.chanUnread.keys()) if (k.startsWith(prefix)) n++;
+  return n;
+}
+function serverHasUnread(serverId) { return serverUnreadCount(serverId) > 0; }
+// A collapsed folder carries the sum of its servers; while it is open the pill
+// is hidden and the servers inside show their own (see the CSS).
+function folderUnreadCount(f) {
+  let n = 0;
+  for (const sid of ((f && f.servers) || [])) n += serverUnreadCount(sid);
+  return n;
 }
 function loadChanUnread() {
   S.chanUnread = new Map();
@@ -290,9 +307,37 @@ function paintChanUnread(serverId, channelId) {
   const row = document.querySelector(`#text-channels .chan[data-cid="${CSS.escape(channelId)}"]`);
   if (row) row.classList.toggle('unread', hasChanUnread(serverId, channelId));
 }
+// The rail pill: the count in a red corner badge. The stylesheet keys off the
+// data attribute, so a badge can never render without a number in it. One
+// helper paints it for the rail copy and the copy inside an open folder.
+function paintServerBadge(btn, s) {
+  const n = serverUnreadCount(s.id);
+  btn.classList.toggle('unread', n > 0);
+  if (n > 0) { btn.dataset.unread = n > 99 ? '99+' : String(n); btn.title = s.name + ' · ' + n + ' unread'; }
+  else { delete btn.dataset.unread; btn.title = s.name; }
+}
+function paintFolderBadge(btn, f) {
+  const n = folderUnreadCount(f);
+  btn.classList.toggle('unread', n > 0);
+  if (n > 0) btn.dataset.unread = n > 99 ? '99+' : String(n);
+  else delete btn.dataset.unread;
+}
+function paintFolderUnread(fid) {
+  const f = folderById(fid);
+  if (!f) return;
+  const btn = document.querySelector(`#server-list .folder-btn[data-fid="${CSS.escape(fid)}"]`);
+  if (btn) paintFolderBadge(btn, f);
+}
 function paintServerUnread(serverId) {
-  const btn = document.querySelector(`#server-list .server-btn[data-sid="${CSS.escape(serverId)}"]`);
-  if (btn) btn.classList.toggle('unread', serverHasUnread(serverId));
+  if (!serverId) return;
+  const s = (S.servers || []).find((x) => x.id === serverId);
+  if (s) {
+    for (const btn of document.querySelectorAll(`#server-list .server-btn[data-sid="${CSS.escape(serverId)}"]`)) paintServerBadge(btn, s);
+  }
+  // A server inside a closed folder has no button of its own — its count shows
+  // on the folder until the folder is opened.
+  const f = serverFolder(serverId);
+  if (f) paintFolderUnread(f.id);
 }
 function markChanUnread(serverId, channelId) {
   if (!serverId || !channelId) return;
@@ -310,6 +355,35 @@ function clearChanUnread(serverId, channelId) {
   saveChanUnread();
   paintChanUnread(serverId, channelId);
   paintServerUnread(serverId);
+}
+// "Mark all as read" (rail right-click / long-press): drop every mark a server
+// — or every server in a folder — owns. These marks are this account's local
+// memory (see above), so this is exactly what opening each channel does, in one
+// go; the server is never told anything.
+function clearChanUnreadMatching(pred) {
+  let hit = false;
+  for (const k of [...S.chanUnread.keys()]) if (pred(k)) { S.chanUnread.delete(k); hit = true; }
+  if (hit) saveChanUnread();
+  return hit;
+}
+function repaintUnreadSurfaces() {
+  renderServerList();                    // rail badges + the folder sums
+  if (S.serverDetail) renderChannels();  // the open server's channel dots
+}
+function markServerRead(serverId) {
+  if (!serverId) return false;
+  if (!clearChanUnreadMatching((k) => k.startsWith(serverId + ':'))) return false;
+  repaintUnreadSurfaces();
+  return true;
+}
+function markFolderRead(fid) {
+  const f = folderById(fid);
+  if (!f) return false;
+  const prefixes = (f.servers || []).map((sid) => sid + ':');
+  if (!prefixes.length) return false;
+  if (!clearChanUnreadMatching((k) => prefixes.some((p) => k.startsWith(p)))) return false;
+  repaintUnreadSurfaces();
+  return true;
 }
 // A channel opened (or already open) is read: drop its dot the moment it is
 // actually in front of the reader.

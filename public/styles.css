@@ -303,11 +303,13 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 @media (prefers-reduced-motion:reduce){.server-btn.pill-pop::before,.fwrap.pill-pop .folder-btn::before,#home-wrap.pill-pop:has(> .active)::before{animation:none}}
 .server-btn:hover{background:var(--panel-3);border-radius:10px}
 .server-btn.active{background:var(--accent);color:var(--on-accent)}
-/* Unread somewhere in this server: a quiet dot on the rail edge, so it is
-   visible without opening the server. The active pill already carries the
-   selection, so it wins. */
-.server-btn.unread::after{content:'';position:absolute;left:-7px;top:50%;transform:translateY(-50%);width:8px;height:8px;border-radius:50%;background:var(--text);z-index:3}
-.server-btn.unread.active::after{display:none}
+/* Unread somewhere in this server: the count in a red corner badge (the number
+   comes from the button's data-unread, so a badge can never render empty). A
+   folder shows the sum of its servers' counts while it is collapsed; opening it
+   hands each number back to the server buttons inside (.folder-open), which is
+   exactly where the reader is now looking. */
+.server-btn.unread[data-unread]::after,.folder-btn.unread[data-unread]::after{content:attr(data-unread);position:absolute;right:-4px;bottom:-4px;min-width:19px;height:19px;padding:0 5px;box-sizing:border-box;border-radius:999px;background:var(--red);color:#fff;font-size:.62rem;font-weight:800;line-height:19px;text-align:center;pointer-events:none;z-index:3}
+.folder-btn.open.unread[data-unread]::after{display:none}
 .server-btn.has-icon{background-color:transparent;background-size:cover;background-position:center}
 .server-btn.has-icon:hover{background-color:transparent}
 .server-btn.has-icon.active{border-radius:10px}

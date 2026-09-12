@@ -330,6 +330,8 @@ function folderSheetItems(fid) {
   const f = folderById(fid); if (!f) return [];
   return [
     { label: S.openFolderId === fid ? 'Collapse folder' : 'Expand folder', icon: S.openFolderId === fid ? '▴' : '▾', fn: () => toggleFolder(fid) },
+    // Same action the folder's own desktop flyout carries (see openFolderMenu).
+    ...(typeof folderUnreadCount === 'function' && folderUnreadCount(f) ? [{ label: 'Mark all as read', icon: '✓', fn: () => markFolderRead(fid) }] : []),
     { label: 'Rename folder', icon: '✎', fn: () => renameFolder(fid) },
     ...(typeof folderMoveOrderItems === 'function' ? folderMoveOrderItems(fid) : []),
     { label: 'Delete folder', icon: '🗑', danger: true, fn: () => deleteFolder(fid) },
@@ -799,6 +801,8 @@ function serverMenuItems(sid) {
     { sep: true },
     muteToggleItem(serverMuted(sid), own === 'muted', 'server', 's:' + sid),
     { label: 'Notification settings', icon: BELL_SVG, fn: () => openServerNotifSettings(sid) },
+    // Only offered when there is something to clear — like "Remove from folder".
+    ...(typeof serverUnreadCount === 'function' && serverUnreadCount(sid) ? [{ label: 'Mark all as read', icon: '✓', fn: () => markServerRead(sid) }] : []),
   ];
 }
 function serverCtxMenu(sid, x, y) { openCtx(x, y, serverMenuItems(sid)); }
