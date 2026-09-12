@@ -567,6 +567,27 @@ async function main() {
       check('the compressed story bytes are what is served', (await fetch(`http://127.0.0.1:${PORT}${stRow.url}`)).status === 200);
     }
 
+    // A story posted before the size column existed carries size = 0. Reading
+    // that as "a tiny file" skipped exactly the big ones, so the unknown size has
+    // to be resolved from the object itself.
+    console.log('\n-- a story row with no recorded size is not mistaken for a small file --');
+    const legacyKey = 'files/' + crypto.randomBytes(16).toString('hex') + '.jpg';
+    const legacyId = 'story-legacy-' + crypto.randomBytes(4).toString('hex');
+    fs.copyFileSync(media.jpg, path.join(uploads, legacyKey));
+    await db.query("INSERT INTO stories (id,user_id,audience,url,mime,kind,caption,duration_ms,created_at,expires_at,overlays,size,compressed) VALUES ($1,$2,'friends',$3,'image/jpeg','image','legacy',5000,$4,$5,'[]',0,0)",
+      [legacyId, reg.user.id, '/uploads/' + legacyKey, Date.now(), Date.now() + 3600000]);
+    const legacyRow = await waitForAsync(async () => {
+      const r = await db.query('SELECT compressed, size, url FROM stories WHERE id = $1', [legacyId]);
+      const row = r.rows[0];
+      return row && Number(row.compressed) === 1 ? row : null;
+    }, 40000);
+    check('a story with no size was still compressed', !!legacyRow, 'the queue skipped it as below the floor');
+    if (legacyRow) {
+      const legacyNew = legacyRow.url.split('?')[0].replace('/uploads/', '');
+      check('...and the object size is now recorded on the row', Number(legacyRow.size) > 0, 'size=' + legacyRow.size);
+      check('...on a fresh key, with the old bytes left alone', legacyNew !== legacyKey && fs.existsSync(path.join(uploads, legacyKey)) && fs.existsSync(path.join(uploads, legacyNew)));
+    }
+
     // ---------- the scheduled bucket reconciliation ----------
     // The queue is flag-driven, so a flagless table (profile media), an object
     // only a pasted link mentions, and anything an older build left behind are

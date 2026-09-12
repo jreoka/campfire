@@ -573,6 +573,15 @@ async function compressLocked(key, inspect, opts) {
   // can still adopt the object.
   const done = async (why, origSize) => {
     await recordKey(key, 'kept', why || '', Number(origSize) || 0, 0);
+    // A row that carried no size (story media from before the size column
+    // existed) learns it here, so the panel's queue totals stay honest and no
+    // later pass has to ask the object again.
+    if (Number(origSize) > 0) {
+      for (const r of rows) {
+        if (Number(r.size)) continue;
+        try { await db.prepare(`UPDATE ${tableFor(r.tbl)} SET size = ? WHERE id = ?`).run(Math.floor(Number(origSize)), r.id); } catch {}
+      }
+    }
     await markRowsDone(rows);
     return null;
   };
@@ -582,6 +591,14 @@ async function compressLocked(key, inspect, opts) {
   const minSize = MIN_BYTES[plan.group] || MIN_BYTES.image;
   let dbSize = 0;
   for (const r of rows) dbSize = Math.max(dbSize, Number(r.size) || 0);
+  // A row can carry no size at all — every story posted before the size column
+  // existed, and any future table that forgets one. Ask the object itself:
+  // treating "unknown" as "tiny" skips exactly the big files this is for (a
+  // 20 MB story video was marked done on the first production pass that way).
+  if (!dbSize) {
+    dbSize = await keySize(key);
+    if (!dbSize) return done('gone', 0);
+  }
   if (dbSize < minSize) return done('below_floor', dbSize);
   if (!(await keyExists(key))) return done('gone', dbSize);
 
