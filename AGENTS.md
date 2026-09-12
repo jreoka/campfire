@@ -219,7 +219,9 @@ banners, server icons, custom emoji, webhook avatars, the profile picker's
 history) through the same compressor, which lists the bucket hourly
 (`MEDIA_SWEEP_EVERY_MS`) and settles a fresh profile upload within a second of
 it landing. A per-key ledger (`media_compress_keys`) is what keeps any of that
-from being re-encoded twice. `MAX_FILE_MB=50`, because S3 mode buffers every
+from being re-encoded twice. It attempts **any size, any type the image's
+ffmpeg can decode** (no floor; `MEDIA_COMPRESS_MIN_KB` restores one).
+`MAX_FILE_MB=50`, because S3 mode buffers every
 upload in RAM, and `VIRUS_SCAN_CONCURRENCY=1` keeps one download + one ffmpeg in
 flight on a box this small. To get scanning back, run one clamd anywhere and set
 `CLAM_HOST` — that is config, not code.
@@ -754,9 +756,17 @@ are load-bearing:
   `processMedia(key, null)` (no candidate scan to ask for) and marks the row
   clean, which is what lifts the 423. Which uploads wait for it is the upload
   route's call — `queueFileScan(key, {compress: media-compress.isCandidate(...)})`
-  — so a file the compressor would never rewrite (a zip, a 100 KB screenshot) is
+  — so a file the compressor would never rewrite (a zip, a PDF, an SVG) is
   `clean` immediately, exactly as it is with compression off. Keep those two
   halves in step: gating a file the slot would never settle parks it at 423.
+  There is **no size floor**: any size is attempted (the 8% rule is what stops a
+  pointless rewrite), so the non-candidates are non-media, not small media.
+  `MEDIA_COMPRESS_MIN_KB` restores a flat floor. Coverage is every type the box
+  can decode — `planFor` sends any other image through a deferred `still` plan
+  that `resolvePlan` settles against the bytes (alpha -> PNG, opaque -> JPEG, a
+  multi-frame file left alone rather than flattened), any video container to
+  MP4, any audio codec to MP3/AAC/Opus; SVG stays out on purpose (vector, so a
+  raster re-encode degrades instead of shrinks).
 - **What the sweeper touches is already visible, so it republishes on a NEW
   key.** The queue's `processRow` passes `{visible: true}`, and
   `compressLocked` then mints a fresh key for every commit (`freshKey = !sameFormat
@@ -775,7 +785,7 @@ are load-bearing:
   `media_history`), an object only a pasted link mentions, and anything an older
   build left behind are all invisible to it. `reconcileBucket()`
   (`MEDIA_SWEEP_EVERY_MS`, hourly on the cluster, leader-locked) lists the
-  bucket, and for every object that is referenced, above the size floor, past
+  bucket, and for every object that is referenced, past
   `MEDIA_SWEEP_MIN_AGE_MS`, and **absent from the key ledger** it either runs the
   row path (a flag table points at it) or `compressStandalone` (repoint the
   referencing columns). A profile upload also kicks its own key

@@ -18,7 +18,14 @@
 // - Visually transparent settings only (see PIPELINES): quality levels where
 //   artifacts are essentially invisible in chat embeds, plus downscale caps
 //   (2048px stills / 1280px GIFs / 1080p video) that only bite oversized
-//   sources. Files that would shrink <8% keep their original bytes.
+//   sources. Files that would shrink <8% keep their original bytes — which is
+//   what makes attempting a tiny file cheap rather than reckless.
+// - Every size, every type the box can decode: there is NO size floor (a 40 KB
+//   screenshot is still worth a look — set MEDIA_COMPRESS_MIN_KB for one), and
+//   planFor() routes any image (BMP/TIFF/AVIF/JXL/HEIC/ICO/…, alpha-aware),
+//   any video container to MP4, and any audio codec to MP3/AAC/Opus. Only
+//   non-media (PDF, zip, source code) and SVG — vector, which a raster
+//   re-encode would degrade rather than shrink — are left alone.
 // - Idempotent + resumable: attachments/dm_attachments carry a `compressed`
 //   flag (0 = pending, 1 = done). Every upload is queued automatically via
 //   the column default; the backlog of pre-existing media drains gradually.
@@ -51,6 +58,8 @@
 //   MEDIA_COMPRESS_ACTIVE_MS  ms between ticks while files remain queued
 //                             (default 2000, min 250)
 //   MEDIA_COMPRESS_BATCH      files compressed per tick (default 1, max 5)
+//   MEDIA_COMPRESS_MIN_KB     flat size floor in KB — media below it is never
+//                             attempted (default 0 = no floor at all)
 'use strict';
 
 const fs = require('fs');
@@ -76,8 +85,14 @@ const BATCH = Math.min(5, Math.max(1, parseInt(process.env.MEDIA_COMPRESS_BATCH 
 const JOB_TIMEOUT_MS = 15 * 60 * 1000; // pathological inputs can't wedge the queue
 const MIN_SAVING = 0.08; // replace only when the output is >=8% smaller
 
-// Skip files below these sizes (CPU would buy almost nothing).
-const MIN_BYTES = { image: 400 * 1024, gif: 800 * 1024, video: 2 * 1024 * 1024, audio: 1024 * 1024 };
+// Size floor. There is none by default: the compressor attempts media of ANY
+// size and lets the 8% rule (MIN_SAVING) decide whether a rewrite is worth
+// keeping, which is the real guard against a pointless re-encode. The old
+// per-type floors (image 400 KB / gif 800 KB / video 2 MB / audio 1 MB) are
+// still available as one flat knob for an operator who would rather not spend
+// the CPU on small files — MEDIA_COMPRESS_MIN_KB, default 0.
+const MIN_KB = Math.max(0, Number(process.env.MEDIA_COMPRESS_MIN_KB) || 0);
+const MIN_BYTES = { image: MIN_KB * 1024, gif: MIN_KB * 1024, video: MIN_KB * 1024, audio: MIN_KB * 1024 };
 
 // Bucket reconciliation. The queue above is flag-driven, which covers the chat
 // tables and stories — but a flag only exists for a table someone remembered to
@@ -172,6 +187,15 @@ async function ensureColumns() {
         FROM dm_attachments WHERE compressed = 1 AND url LIKE '/uploads/files/%'
       ON CONFLICT (key) DO NOTHING`);
   } catch (e) { warn('ledger seed skipped:', String((e && e.message) || e).slice(0, 120)); }
+  // A verdict recorded under a policy that no longer exists is not a verdict:
+  // `below_floor` means "skipped because there was a size floor", and there is
+  // none any more. Dropping just those rows lets the bucket scan reconsider the
+  // files the old rule never looked at — the objects themselves are untouched
+  // (the scan either republishes one under a new key or leaves it byte for
+  // byte). Every other verdict stands.
+  try {
+    await db.exec("DELETE FROM media_compress_keys WHERE mode = 'below_floor'");
+  } catch (e) { warn('ledger floor cleanup skipped:', String((e && e.message) || e).slice(0, 120)); }
 }
 
 // ---------- the key ledger ----------
@@ -276,21 +300,50 @@ function extOf(name) {
   return path.extname(String(name || '')).toLowerCase();
 }
 
-// Decide the pipeline for a row. Returns null when the type is out of scope
-// (non-media, exotic image formats, ...) — caller marks those done.
+// Media extensions, for the two cases a MIME cannot cover: the bucket scan only
+// has the object's name (storage.mimeForFilename falls back to
+// application/octet-stream), and a chat upload keeps whatever the client called
+// it. `.ts` is deliberately NOT here — MPEG-TS in a video player, TypeScript in
+// a chat; video/mp2t still matches the MIME rule, and guessing "video" for every
+// shared .ts file is the wrong way round.
+const IMAGE_EXTS = new Set(['.bmp', '.tif', '.tiff', '.avif', '.jxl', '.ico', '.heic', '.heif', '.jfif', '.jpe', '.apng', '.psd', '.tga', '.dds', '.pcx', '.qoi', '.wbmp', '.jp2', '.j2k', '.exr', '.hdr', '.xbm', '.xpm']);
+const VIDEO_EXTS = new Set(['.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi', '.wmv', '.flv', '.3gp', '.3g2', '.mpg', '.mpeg', '.m2ts', '.mts', '.ogv', '.vob', '.rm', '.rmvb', '.asf', '.f4v']);
+const AUDIO_EXTS = new Set(['.mp3', '.m4a', '.m4b', '.aac', '.ogg', '.oga', '.opus', '.wav', '.flac', '.aif', '.aiff', '.aifc', '.wma', '.amr', '.ac3', '.mp2', '.caf', '.au', '.wv', '.ape', '.mka', '.weba', '.ra', '.dts', '.3ga']);
+
+// A MIME that names no family at all — only then is the extension the best
+// available evidence. A file that calls itself text/plain or application/zip is
+// taken at its word: source code and archives must never reach ffmpeg.
+function opaqueMime(mt) { return !mt || mt === 'application/octet-stream' || mt === 'binary/octet-stream'; }
+
+// Decide the pipeline for a row. Returns null when the type is out of scope —
+// the caller marks those done and they are never looked at again.
+//
+// Coverage is deliberately broad: ANY image the box can decode (BMP, TIFF,
+// AVIF, JXL, HEIC, ICO, PSD, …), ANY video container (-> MP4), ANY audio codec
+// (-> MP3/AAC/Opus). What stays out is anything that is not media (PDF, zip,
+// source code, executables) and SVG on purpose — vector art has no fixed
+// resolution, so rasterizing it would be a downgrade, not a compression.
+//
+// `pipeline: 'still'` is a DEFERRED decision: the encoder (JPEG vs PNG) depends
+// on the alpha channel, which only the bytes know. See resolvePlan().
 function planFor(mime, filename) {
   const mt = String(mime || '');
   const ext = extOf(filename);
   const enc = probeEncoders();
   // GIFs (animated or still — the palette pipeline handles both).
   if (mt === 'image/gif' || ext === '.gif') return { pipeline: 'gif', outExt: '.gif', group: 'gif' };
-  // Stills. SVG/AVIF/BMP/ICO are left alone (vector, slow to encode, or rare).
+  if (mt === 'image/svg+xml' || ext === '.svg') return null;
   if (mt === 'image/jpeg' || ext === '.jpg' || ext === '.jpeg') return { pipeline: 'jpeg', outExt: '.jpg', group: 'image' };
-  if (mt === 'image/png' || ext === '.png') return { pipeline: 'png', outExt: '.png', group: 'image' };
-  if ((mt === 'image/webp' || ext === '.webp') && enc.webp) return { pipeline: 'webp', outExt: '.webp', group: 'image' };
-  if (mt.startsWith('image/')) return null;
+  // PNG and WebP keep their own encoder (`prefer`) and are still probed: both
+  // containers can hold an ANIMATION (APNG, animated WebP), and one frame is all
+  // a still re-encode would leave of it.
+  if (mt === 'image/png' || ext === '.png') return { pipeline: 'still', prefer: 'png', outExt: '.png', group: 'image' };
+  if ((mt === 'image/webp' || ext === '.webp') && enc.webp) return { pipeline: 'still', prefer: 'webp', outExt: '.webp', group: 'image' };
+  // Any other image (BMP, TIFF, AVIF, JXL, HEIC, ICO, PSD, …): the bytes decide
+  // between JPEG and PNG, and whether they are safe to touch at all.
+  if (mt.startsWith('image/') || (opaqueMime(mt) && IMAGE_EXTS.has(ext))) return { pipeline: 'still', outExt: '.jpg', group: 'image' };
   // Video -> H264 MP4 (transparent at CRF 24 for chat-sized embeds).
-  if (mt.startsWith('video/')) {
+  if (mt.startsWith('video/') || (opaqueMime(mt) && VIDEO_EXTS.has(ext))) {
     if (!enc.x264) return null;
     return { pipeline: 'mp4', outExt: '.mp4', group: 'video' };
   }
@@ -315,8 +368,71 @@ function planFor(mime, filename) {
     if (!enc.mp3) return null;
     return { pipeline: 'wav2mp3', outExt: '.mp3', group: 'audio' };
   }
-  if (mt.startsWith('audio/')) return null;
+  // Anything else that is audio (AIFF, WMA, AMR, AC3, MP2, MKA, …) -> MP3 too:
+  // a codec this box reads but no browser plays inside a chat is exactly the
+  // case worth normalising, and the 8% rule drops a re-encode that would grow.
+  if (mt.startsWith('audio/') || (opaqueMime(mt) && AUDIO_EXTS.has(ext))) {
+    if (!enc.mp3) return null;
+    return { pipeline: 'wav2mp3', outExt: '.mp3', group: 'audio' };
+  }
   return null;
+}
+
+// Alpha channel? A pix_fmt always starts with its base name — 'rgba64le',
+// 'yuva420p', 'gbrap16be', 'ya8' and 'pal8' carry alpha; 'yuv420p', 'rgb24' and
+// 'gray' do not.
+const ALPHA_PIX = /^(rgba|bgra|argb|abgr|yuva|gbrap|ya8|ya16|pal8)/;
+
+// ffprobe, async like runFfmpeg: -count_frames on a large animation can take
+// seconds, and spawnSync would block every request on the box for that long.
+function runFfprobe(args, timeoutMs) {
+  return new Promise((resolve) => {
+    const useNice = checkNice();
+    const cmd = useNice ? 'nice' : 'ffprobe';
+    const cmdArgs = useNice ? ['-n', '19', 'ffprobe', ...args] : args;
+    let child;
+    try {
+      child = spawn(cmd, cmdArgs, { stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch { resolve(''); return; }
+    let out = '';
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, timeoutMs);
+    try {
+      child.stdout.on('data', (d) => { out += String(d); if (out.length > 4096) out = out.slice(0, 4096); });
+    } catch {}
+    child.on('error', () => { clearTimeout(timer); resolve(''); });
+    child.on('close', () => { clearTimeout(timer); resolve(out); });
+  });
+}
+
+// How many frames, and is there an alpha channel? -count_frames rather than the
+// container's nb_frames on purpose: an animated AVIF/JXL routinely declares
+// nothing, and mistaking an animation for a still is data loss, not a
+// compression (frame one is all that would survive).
+async function probeStill(inPath) {
+  const out = await runFfprobe(['-v', 'error', '-select_streams', 'v:0', '-count_frames',
+    '-show_entries', 'stream=pix_fmt,nb_read_frames', '-of', 'csv=p=0', inPath], 30000);
+  const line = String(out || '').trim().split(/\r?\n/)[0] || '';
+  if (!line) return null;
+  const [pix, frames] = line.split(',');
+  return { pix: String(pix || '').toLowerCase(), frames: Number(frames) || 0 };
+}
+
+// Settle a deferred 'still' plan against the actual bytes, once they are local.
+// Returns a concrete plan, or null to leave the file exactly as it is. A probe
+// that cannot answer keeps the safe choice — the encoder is the next judge, and
+// a file it rejects is simply kept with its original bytes.
+async function resolvePlan(plan, inPath) {
+  if (!plan || plan.pipeline !== 'still') return plan;
+  const info = await probeStill(inPath);
+  if (info && info.frames > 1) return null; // an animation: not ours to flatten
+  const alpha = !!(info && ALPHA_PIX.test(info.pix));
+  // `prefer` is a promise the file's own format made — a PNG stays a PNG
+  // (lossless), a WebP stays a WebP. Only an image with no format of its own
+  // gets the alpha-driven choice, where JPEG would flatten transparency to
+  // black and PNG would balloon a photograph.
+  const pipeline = plan.prefer || (alpha ? 'png' : 'jpeg');
+  const outExt = plan.prefer ? plan.outExt : (alpha ? '.png' : '.jpg');
+  return { ...plan, pipeline, outExt };
 }
 
 function compressionEnabled() { return ENABLED; }
@@ -377,6 +493,11 @@ function buildArgs(pipelineName, inPath, outPath) {
       throw new Error('unknown_pipeline:' + pipelineName);
   }
 }
+
+// ffmpeg errors that mean "these bytes will never decode": a wrong type, a
+// truncated file, a codec this build does not carry. Distinct from a killed
+// process or a full disk, which a later attempt may get past.
+const UNDECODABLE = /invalid data|not found|unsupported|unknown decoder|no decoder|could not find codec|moov atom|end of file|decoder .* not/i;
 
 function runFfmpeg(args) {
   return new Promise((resolve) => {
@@ -586,7 +707,7 @@ async function compressLocked(key, inspect, opts) {
     return null;
   };
   const row = rows[0];
-  const plan = planFor(row.mime, key);
+  let plan = planFor(row.mime, key);
   if (!plan) return done('no_pipeline');
   const minSize = MIN_BYTES[plan.group] || MIN_BYTES.image;
   let dbSize = 0;
@@ -604,13 +725,18 @@ async function compressLocked(key, inspect, opts) {
 
   const rand = crypto.randomBytes(8).toString('hex');
   const tmpIn = path.join(os.tmpdir(), `cfc-in-${rand}${extOf(key) || '.bin'}`);
-  const outExt = plan.outExt;
-  const tmpOut = path.join(os.tmpdir(), `cfc-out-${rand}${outExt}`);
+  // tmpOut is minted once the plan is concrete: a deferred 'still' plan has no
+  // output extension of its own until the bytes have been read.
+  let tmpOut = null;
   let inScan = !!inspect;
   try {
     await downloadToTemp(key, tmpIn);
     const inStat = await fs.promises.stat(tmpIn).catch(() => null);
     if (!inStat || !inStat.size) return done('empty_input', dbSize);
+
+    plan = await resolvePlan(plan, tmpIn);
+    if (!plan) return done('animated', inStat.size);
+    tmpOut = path.join(os.tmpdir(), `cfc-out-${rand}${plan.outExt}`);
 
     const r = await runFfmpeg(buildArgs(plan.pipeline, tmpIn, tmpOut));
     if (!r.ok) {
@@ -637,8 +763,8 @@ async function compressLocked(key, inspect, opts) {
       }
     }
 
-    const sameFormat = extOf(key) === outExt;
-    const newMime = sameFormat ? String(row.mime) : (MIME_BY_OUT[outExt] || String(row.mime));
+    const sameFormat = extOf(key) === plan.outExt;
+    const newMime = sameFormat ? String(row.mime) : (MIME_BY_OUT[plan.outExt] || String(row.mime));
     // A file that is already being served moves to a NEW key: rewriting bytes
     // behind a live URL is what swaps a file out from under a reader (a player
     // reading ranges is only the worst case). The row — and, for stories, the
@@ -651,7 +777,7 @@ async function compressLocked(key, inspect, opts) {
       // Format change (wav->mp3, mov/webm video->mp4), or a post-publication
       // rewrite of bytes something could be streaming: mint a fresh name.
       const dir = key.slice(0, key.lastIndexOf('/') + 1);
-      newKey = dir + crypto.randomBytes(16).toString('hex') + outExt;
+      newKey = dir + crypto.randomBytes(16).toString('hex') + plan.outExt;
     }
     await replaceBytes(newKey, tmpOut, newMime);
     const newUrl = cacheBust('/uploads/' + newKey);
@@ -698,7 +824,7 @@ async function compressLocked(key, inspect, opts) {
     try { await markRowsDone(rows); } catch {}
     return null;
   } finally {
-    for (const f of [tmpIn, tmpOut]) { try { await fs.promises.unlink(f); } catch {} }
+    for (const f of [tmpIn, tmpOut]) { if (!f) continue; try { await fs.promises.unlink(f); } catch {} }
   }
 }
 
@@ -808,8 +934,9 @@ async function compressStandalone(key, refs, opts) {
 
 async function commitStandaloneLocked(key, refs, opts) {
   const done = async (why, origSize) => { await recordKey(key, 'kept', why || '', Number(origSize) || 0, 0); return null; };
-  const plan = planFor(storage.mimeForFilename(key), key);
-  if (!plan) return done('no_pipeline');
+  const plan0 = planFor(storage.mimeForFilename(key), key);
+  if (!plan0) return done('no_pipeline');
+  let plan = plan0;
   const origSize = Number(opts.size) || (await keySize(key));
   if (!origSize) return done('gone');
   const minSize = MIN_BYTES[plan.group] || MIN_BYTES.image;
@@ -817,18 +944,27 @@ async function commitStandaloneLocked(key, refs, opts) {
 
   const rand = crypto.randomBytes(8).toString('hex');
   const tmpIn = path.join(os.tmpdir(), `cfs-in-${rand}${extOf(key) || '.bin'}`);
-  const tmpOut = path.join(os.tmpdir(), `cfs-out-${rand}${plan.outExt}`);
+  let tmpOut = null; // minted once a deferred 'still' plan is concrete
   try {
     await downloadToTemp(key, tmpIn);
     const inStat = await fs.promises.stat(tmpIn).catch(() => null);
     if (!inStat || !inStat.size) return done('empty_input', origSize);
+    plan = await resolvePlan(plan, tmpIn);
+    if (!plan) return done('animated', inStat.size);
+    tmpOut = path.join(os.tmpdir(), `cfs-out-${rand}${plan.outExt}`);
     const r = await runFfmpeg(buildArgs(plan.pipeline, tmpIn, tmpOut));
     if (!r.ok) {
       const err = String(r.error || 'encode_failed').slice(0, 160);
       stats.errors++;
       stats.lastError = { key, error: err, at: now() };
       warn('encode failed, keeping original:', key, err);
-      return null; // no ledger entry: a later pass may succeed
+      // Deterministic decode/format failure: these bytes will not decode on the
+      // next pass either, so record the verdict or the bucket scan re-runs the
+      // same doomed encode every single pass (the scan now attempts every media
+      // type and every size, so an undecodable object is no longer rare).
+      // Everything else — killed for memory, a full disk, a timeout — stays
+      // unrecorded on purpose, because a later pass may well succeed.
+      return UNDECODABLE.test(err) ? done('undecodable', inStat.size) : null;
     }
     const outStat = await fs.promises.stat(tmpOut).catch(() => null);
     if (!outStat || !outStat.size) return done('no_output', inStat.size);
@@ -860,7 +996,7 @@ async function commitStandaloneLocked(key, refs, opts) {
     warn('standalone job failed, keeping original:', key, String((e && e.message) || e).slice(0, 160));
     return null;
   } finally {
-    for (const f of [tmpIn, tmpOut]) { try { await fs.promises.unlink(f); } catch {} }
+    for (const f of [tmpIn, tmpOut]) { if (!f) continue; try { await fs.promises.unlink(f); } catch {} }
   }
 }
 
@@ -1091,7 +1227,7 @@ function getMediaStats() {
   try { cpus = (os.cpus() || []).length || 1; load = os.loadavg()[0]; } catch {}
   return {
     enabled: ENABLED, everyMs: EVERY_MS, activeMs: ACTIVE_MS, batch: BATCH,
-    ffmpeg: checkFfmpeg(), encoders: { ...probeEncoders() },
+    ffmpeg: checkFfmpeg(), encoders: { ...probeEncoders() }, minKb: MIN_KB,
     busy, s3: storage.s3Enabled(), cpus, load,
     startedAt: stats.startedAt, ticks: stats.ticks,
     processed: stats.processed, skipped: stats.skipped, errors: stats.errors,
@@ -1173,8 +1309,8 @@ function startMediaCompress() {
 }
 
 module.exports = {
-  startMediaCompress, tickMediaCompress: tick, kickMediaCompress, ensureColumns, planFor, buildArgs, cleanKey,
-  MIN_BYTES, getMediaStats, mediaQueueCounts, mediaTotals, mediaRecentJobs, processUpload, isCompressing,
+  startMediaCompress, tickMediaCompress: tick, kickMediaCompress, ensureColumns, planFor, resolvePlan, probeEncoders, buildArgs, cleanKey,
+  MIN_BYTES, MIN_KB, getMediaStats, mediaQueueCounts, mediaTotals, mediaRecentJobs, processUpload, isCompressing,
   isCandidate, compressionEnabled,
   // profile media + the scheduled bucket reconciliation
   kickProfileMedia, kickBucketScan, reconcileBucket, getBucketScanStats, refsForKey, compressStandalone, keySize,

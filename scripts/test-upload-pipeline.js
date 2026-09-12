@@ -213,8 +213,10 @@ async function main() {
   const media = {
     wav: path.join(tmp, 'tone.wav'),
     jpg: path.join(tmp, 'noise.jpg'),
-    small: path.join(tmp, 'thumb.png'), // below MIN_BYTES.image: never a candidate
+    small: path.join(tmp, 'thumb.png'), // tiny, but still a candidate: there is no size floor
+    txt: path.join(tmp, 'notes.txt'), // not media at all — the compressor must never gate it
   };
+  fs.writeFileSync(media.txt, 'not media, just a text file\n');
   if (!ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=20,volume=0.4', '-ac', '1', '-c:a', 'pcm_s16le', media.wav])
     || !ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'nullsrc=s=2048x2048,geq=random(1)*255:128:128', '-frames:v', '1', '-q:v', '1', media.jpg])
     || !ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x334155:s=64x64', '-frames:v', '1', media.small])) {
@@ -472,10 +474,10 @@ async function main() {
     const gatedRes = await fetch(`http://127.0.0.1:${PORT}${pUp.url}`);
     check('the gate refuses the bytes until the slot publishes', gatedRes.status === 423, 'status=' + gatedRes.status);
 
-    const smallUp = await uploadFile(media.small, 'thumb.png', 'image/png', token);
-    check('a file no compressor would touch is NOT gated', smallUp.scan === 'clean', 'scan=' + smallUp.scan);
-    check('...and is servable immediately', (await fetch(`http://127.0.0.1:${PORT}${smallUp.url}`)).status === 200);
-
+    // The message is posted immediately after the upload on purpose: this whole
+    // phase is about the slot settling an upload while its attachment row is
+    // still being written, so nothing may sit between the two (the checks for
+    // the other sizes/types below come after it).
     const pConn = await connectWs(token);
     await waitFor(() => pConn.events.some((e) => e.t === 'hello'), 5000);
     pConn.send({
@@ -497,6 +499,25 @@ async function main() {
     const pServed = await fetch(`http://127.0.0.1:${PORT}${pAtt ? pAtt.url : ''}`);
     check('the published file is servable through the gate', pServed.status === 200, 'status=' + pServed.status);
     check('old scan row dropped, new key carries the verdict', (await scanRow(pUp.url.split('?')[0].replace('/uploads/', ''))) === null && !!(await scanRow(pAtt && pAtt.url.split('?')[0].replace('/uploads/', ''))));
+
+    // Size and type decide nothing on their own any more. There is no size
+    // floor: a 174-byte image is attempted like anything else, so it waits for
+    // the slot — and it still has to be published afterwards, including when the
+    // encoder looks at it and declines to rewrite it (`no_saving` keeps the
+    // original bytes, and the gate still lifts).
+    const smallUp = await uploadFile(media.small, 'thumb.png', 'image/png', token);
+    check('a tiny image is a candidate (gated like any other)', smallUp.scan === 'pending', 'scan=' + smallUp.scan);
+    const smallSettled = await waitForAsync(async () => {
+      const r = await fetch(`http://127.0.0.1:${PORT}${smallUp.url}`);
+      return r.status === 200 ? r.status : null;
+    }, 30000);
+    check('...and the slot publishes it, rewritten or not', smallSettled === 200, 'status=' + smallSettled);
+
+    // What the gate is actually for: a file no compressor would touch must not
+    // pay the wait — it is served the moment it lands.
+    const txtUp = await uploadFile(media.txt, 'notes.txt', 'text/plain', token);
+    check('a non-media file is NOT gated', txtUp.scan === 'clean', 'scan=' + txtUp.scan);
+    check('...and is servable immediately', (await fetch(`http://127.0.0.1:${PORT}${txtUp.url}`)).status === 200);
 
     console.log('\n-- sweeper: an already-visible file is republished on a NEW key --');
     // Bytes + a clean verdict + compressed = 0: exactly the state of a file
@@ -638,8 +659,11 @@ async function main() {
     check('the pasted-link object was left exactly as it was', sha256Of(path.join(uploads, textKey)) === textHash);
 
     const dry2 = await api('POST', '/api/admin/media/scan?dry=1', undefined, token);
-    check('the ledger stops a second pass re-encoding anything', (dry2.result.candidates || 0) === 0,
-      JSON.stringify({ candidates: dry2.result.candidates, ledger: dry2.result.ledger, objects: dry2.result.objects }));
+    // `result: null` is the route saying a pass was already running — report it
+    // rather than crashing on the property read.
+    const dry2res = (dry2 && dry2.result) || {};
+    check('the ledger stops a second pass re-encoding anything', (dry2res.candidates || 0) === 0,
+      JSON.stringify({ candidates: dry2res.candidates, ledger: dry2res.ledger, objects: dry2res.objects, result: dry2 && dry2.result }));
     const adm = await api('GET', '/api/admin/media', undefined, token);
     check('the admin payload carries the bucket-scan state',
       !!(adm.bucketScan && adm.bucketScan.enabled && adm.bucketScan.lastResult && Number(adm.bucketScan.lastResult.compressed) >= 1),
@@ -647,6 +671,11 @@ async function main() {
     await db.query('UPDATE users SET is_admin = 0 WHERE id = $1', [reg.user.id]);
 
     await db.end();
+  } catch (e) {
+    // A crash used to hide the server's own log (which is where the reason
+    // usually is), so print it before the error propagates.
+    console.log('--- server log tail ---\n' + serverLog.split('\n').slice(-40).join('\n'));
+    throw e;
   } finally {
     try { if (db) await db.end(); } catch {}
     try { if (child) child.kill(); } catch {}

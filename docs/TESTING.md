@@ -398,7 +398,9 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   the slot never saw. **Compression-only mode** (the server is restarted with
   `VIRUS_SCAN=0`, no clamd at all — the Civo cluster's shape): a candidate upload
   is gated (423) until the slot publishes it and then raises ONE transition with
-  no clamd contacted, a file below `MIN_BYTES` is served the instant it lands,
+  no clamd contacted, a non-media upload (a zip/text file) is served the instant
+  it lands while a tiny image is gated like any other and still published after
+  the encoder declines to rewrite it (`no_saving`),
   and a sweeper-compressed file that clients could already fetch lands on a NEW
   key with the old object left intact (never rewritten in place, nothing
   referencing it, so the orphan sweep reaps it). Then the coverage the flags
@@ -414,6 +416,21 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   run it from Git Bash: `haveBinaries()` probes with `sh`, and a PowerShell
   session has no `sh` on PATH, so the scan-mode phase silently falls back to the
   no-engine path and its checks fail.
+  `node scripts/test-compress-types.js` covers the compressor's **coverage
+  contract** offline (no server, no database): that there is no size floor
+  (`MIN_BYTES` all zero, so a 174-byte png / 300-byte mp4 / 2 KB wav are all
+  candidates while a zip, a pdf, source code, an svg and an unidentifiable
+  binary are not), that `planFor` routes every family — jpeg/png/gif/webp, the
+  deferred `still` plan for BMP/TIFF/AVIF/JXL/HEIC/ICO by MIME *and* by name
+  alone (the bucket scan's only evidence), any video container to mp4, any audio
+  codec to mp3/m4a/ogg/webaudio, and neither `.ts` (TypeScript, not MPEG-TS) as
+  video — and that every routed pipeline exists in `buildArgs`. Then the
+  byte-level half: against real files it generates, `resolvePlan` keeps a PNG a
+  PNG, sends an opaque BMP/TIFF/AVIF/JXL to JPEG, and leaves a multi-frame APNG
+  and animated WebP alone (a still re-encode would flatten them), with each
+  resolved pipeline actually run on those bytes. Skips without ffmpeg/ffprobe.
+  Re-run it after touching `planFor`/`resolvePlan`/`MIN_BYTES` in
+  `media-compress.js`.
   `node scripts/test-viewonce-pick.js` covers "Send a view-once" arriving with
   the DM you clicked it in already picked (offline for the two real helpers —
   `viewOnceDmPeerId`/`viewOncePrePick` sliced out of `stories.js` — then the
