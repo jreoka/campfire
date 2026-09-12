@@ -765,10 +765,19 @@ are load-bearing:
   pointless rewrite), so the non-candidates are non-media, not small media.
   `MEDIA_COMPRESS_MIN_KB` restores a flat floor. Coverage is every type the box
   can decode — `planFor` sends any other image through a deferred `still` plan
-  that `resolvePlan` settles against the bytes (alpha -> PNG, opaque -> JPEG, a
-  multi-frame file left alone rather than flattened), any video container to
+  that `resolvePlan` settles against the bytes (a **PNG becomes WebP q82** by
+  owner decision, alpha preserved, falling back to lossless PNG when libwebp is
+  missing; an opaque BMP/TIFF/AVIF/JXL goes to JPEG; a multi-frame file is left
+  alone rather than flattened), any video container to
   MP4, any audio codec to MP3/AAC/Opus; SVG stays out on purpose (vector, so a
   raster re-encode degrades instead of shrinks).
+- **A verdict belongs to the policy that produced it.** When a policy widens
+  (the size floor went away; PNG stopped being lossless-only), the ledger rows
+  it produced have to be handed back to the bucket scan — but exactly once, or
+  every boot would re-queue the whole bucket and undo the ledger's purpose.
+  `oncePolicy(name, fn)` (migration-time, remembered in `media_compress_meta`)
+  is how that is done; the PNG one deletes `kept/no_saving` verdicts on `.png`
+  keys. Add a new `oncePolicy` call rather than a bare DELETE in `ensureColumns`.
 - **What the sweeper touches is already visible, so it republishes on a NEW
   key.** The queue's `processRow` passes `{visible: true}`, and
   `compressLocked` then mints a fresh key for every commit (`freshKey = !sameFormat

@@ -203,6 +203,18 @@ async function ensureColumns() {
         FROM dm_attachments WHERE compressed = 1 AND url LIKE '/uploads/files/%'
       ON CONFLICT (key) DO NOTHING`);
   } catch (e) { warn('ledger seed skipped:', String((e && e.message) || e).slice(0, 120)); }
+  // One-time policy changes need a memory of their own: the ledger's verdicts
+  // are only final for the policy that produced them, and a policy that widens
+  // what the compressor will do has to hand back exactly the files it would now
+  // treat differently — once, or every boot would queue the bucket again.
+  await db.exec(`CREATE TABLE IF NOT EXISTS media_compress_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL DEFAULT '',
+  at BIGINT NOT NULL
+)`);
+  await oncePolicy('png-lossy', async () => (await db.prepare(
+    "DELETE FROM media_compress_keys WHERE status = 'kept' AND mode = 'no_saving' AND lower(key) LIKE '%.png'"
+  ).run()).changes);
   // A verdict recorded under a policy that no longer exists is not a verdict:
   // `below_floor` means "skipped because there was a size floor", and there is
   // none any more. Dropping just those rows lets the bucket scan reconsider the
@@ -212,6 +224,19 @@ async function ensureColumns() {
   try {
     await db.exec("DELETE FROM media_compress_keys WHERE mode = 'below_floor'");
   } catch (e) { warn('ledger floor cleanup skipped:', String((e && e.message) || e).slice(0, 120)); }
+}
+
+// Run a one-time migration exactly once per database (media_compress_meta is
+// the memory). `fn` returns how many rows it affected, for the log.
+async function oncePolicy(name, fn) {
+  try {
+    const seen = await db.prepare('SELECT value FROM media_compress_meta WHERE key = ?').get(name);
+    if (seen) return;
+    const n = Number((await fn()) || 0);
+    await db.prepare('INSERT INTO media_compress_meta (key,value,at) VALUES (?,?,?) ON CONFLICT (key) DO NOTHING')
+      .run(name, String(n), now());
+    if (n > 0) log(`policy ${name}: ${n} earlier verdict(s) handed back to the bucket scan`);
+  } catch (e) { warn('policy ' + name + ' skipped:', String((e && e.message) || e).slice(0, 120)); }
 }
 
 // ---------- the key ledger ----------
@@ -356,7 +381,16 @@ function planFor(mime, filename) {
   // PNG and WebP keep their own encoder (`prefer`) and are still probed: both
   // containers can hold an ANIMATION (APNG, animated WebP), and one frame is all
   // a still re-encode would leave of it.
-  if (mt === 'image/png' || ext === '.png') return { pipeline: 'still', prefer: 'png', outExt: '.png', group: 'image' };
+  // A PNG goes to WebP by owner decision — lossless PNG cannot win anything on
+  // a web-sized photo (a re-encode lands within a few percent, which the 8% rule
+  // then keeps), while WebP q82 takes 40-60% off it and still carries alpha.
+  // Screenshots soften slightly, which is the trade that was chosen. Without
+  // libwebp the old lossless behaviour stands.
+  if (mt === 'image/png' || ext === '.png') {
+    return enc.webp
+      ? { pipeline: 'still', prefer: 'webp', outExt: '.webp', group: 'image' }
+      : { pipeline: 'still', prefer: 'png', outExt: '.png', group: 'image' };
+  }
   if ((mt === 'image/webp' || ext === '.webp') && enc.webp) return { pipeline: 'still', prefer: 'webp', outExt: '.webp', group: 'image' };
   // Any other image (BMP, TIFF, AVIF, JXL, HEIC, ICO, PSD, …): the bytes decide
   // between JPEG and PNG, and whether they are safe to touch at all.
@@ -473,8 +507,11 @@ const SCALE_VID = 'scale=1920:1080:force_original_aspect_ratio=decrease';
 
 // Quality rationale (chat embeds, not archival):
 // - jpeg q:v 3 (~quality 85): artifacts invisible at embed sizes.
-// - png: lossless (level 9 + metadata strip + downscale only).
-// - webp quality 82: Google's transparent-for-photos band.
+// - png: lossless (metadata strip + downscale only) — now the FALLBACK for a
+//   PNG, because a PNG becomes WebP instead unless libwebp is missing (see
+//   planFor: lossless PNG cannot improve an already-encoded photo, and the
+//   owner chose the size over the pixel-exactness of screenshots).
+// - webp quality 82: Google's transparent-for-photos band (alpha rides along).
 // - gif: 20fps cap (most chat GIFs ship <=20fps already), 1280px cap,
 //   full 256-color palette with bayer dither.
 // - video: x264 veryfast CRF 24 — the standard "looks like the source"

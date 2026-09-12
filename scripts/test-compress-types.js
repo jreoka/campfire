@@ -59,7 +59,9 @@ async function main() {
 
     console.log('\n-- routing: every media family the box can decode --');
     check('jpeg -> jpeg', (media.planFor('image/jpeg', 'files/a.jpg') || {}).pipeline === 'jpeg');
-    check('png keeps its lossless encoder', (media.planFor('image/png', 'files/a.png') || {}).prefer === 'png');
+    check('png goes lossy to WebP when libwebp is there (owner decision)',
+      (media.planFor('image/png', 'files/a.png') || {}).prefer === (enc.webp ? 'webp' : 'png'),
+      JSON.stringify(media.planFor('image/png', 'files/a.png')));
     check('gif keeps its animation-aware pipeline', (media.planFor('image/gif', 'files/a.gif') || {}).pipeline === 'gif');
     check('webp is routed (own encoder, or alpha-driven)',
       !enc.webp ? (media.planFor('image/webp', 'files/a.webp') || {}).pipeline === 'still' : (media.planFor('image/webp', 'files/a.webp') || {}).prefer === 'webp');
@@ -120,12 +122,14 @@ async function main() {
     mk('pic.avif', ['-f', 'lavfi', '-i', 'color=c=yellow:s=64x64', '-frames:v', '1', '-c:v', 'libaom-av1', '-still-picture', '1']);
     mk('pic.jxl', ['-f', 'lavfi', '-i', 'color=c=purple:s=64x64', '-frames:v', '1', '-c:v', 'libjxl']);
 
-    // What each one must resolve to. A PNG stays a PNG whatever it holds; a
-    // format with no promise of its own goes to JPEG unless it has alpha; an
-    // animation is left alone, because one frame is all a still encode keeps.
+    // What each one must resolve to. A PNG goes to WebP (lossy, alpha kept) —
+    // or back to lossless PNG on a box without libwebp; a format with no promise
+    // of its own goes to JPEG unless it has alpha; an animation is left alone,
+    // because one frame is all a still encode keeps.
     const MIME = { '.png': 'image/png', '.bmp': 'image/bmp', '.tiff': 'image/tiff', '.webp': 'image/webp', '.avif': 'image/avif', '.jxl': 'image/jxl' };
+    const png = enc.webp ? 'webp' : 'png';
     const expect = {
-      'opaque.png': 'png', 'alpha.png': 'png', 'pic.bmp': 'jpeg', 'pic.tiff': 'jpeg',
+      'opaque.png': png, 'alpha.png': png, 'pic.bmp': 'jpeg', 'pic.tiff': 'jpeg',
       'pic.avif': 'jpeg', 'pic.jxl': 'jpeg', 'anim.webp': null, 'anim.png': null,
     };
     for (const name of made) {
@@ -144,6 +148,13 @@ async function main() {
       const dst = f('out-' + name + out.outExt);
       const r = spawnSync('ffmpeg', media.buildArgs(out.pipeline, src, dst), { stdio: 'ignore' });
       check(name + ' encodes with the ' + out.pipeline + ' pipeline', r.status === 0 && fs.existsSync(dst) && fs.statSync(dst).size > 0, 'exit=' + r.status);
+      // The lossy conversion is only allowed to change the size, never to throw
+      // away an alpha channel.
+      if (name === 'alpha.png' && out.pipeline !== 'png') {
+        const p = spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=pix_fmt', '-of', 'csv=p=0', dst], { encoding: 'utf8' });
+        const pix = String(p.stdout || '').trim();
+        check('...and transparency survives it', /^(rgba|bgra|argb|abgr|yuva|gbrap|ya[0-9])/.test(pix), 'pix_fmt=' + pix);
+      }
     }
     check('the multi-frame fixtures really were animations',
       made.includes('anim.webp') && made.includes('anim.png'), 'generated: ' + made.join(', '));

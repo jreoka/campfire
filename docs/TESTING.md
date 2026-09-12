@@ -431,10 +431,11 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   alone (the bucket scan's only evidence), any video container to mp4, any audio
   codec to mp3/m4a/ogg/webaudio, and neither `.ts` (TypeScript, not MPEG-TS) as
   video — and that every routed pipeline exists in `buildArgs`. Then the
-  byte-level half: against real files it generates, `resolvePlan` keeps a PNG a
-  PNG, sends an opaque BMP/TIFF/AVIF/JXL to JPEG, and leaves a multi-frame APNG
-  and animated WebP alone (a still re-encode would flatten them), with each
-  resolved pipeline actually run on those bytes. It also checks the **knobs**
+  byte-level half: against real files it generates, `resolvePlan` sends a PNG to
+  WebP (lossy by owner decision, and it checks the alpha channel survives that
+  conversion), sends an opaque BMP/TIFF/AVIF/JXL to JPEG, and leaves a
+  multi-frame APNG and animated WebP alone (a still re-encode would flatten
+  them), with each resolved pipeline actually run on those bytes. It also checks the **knobs**
   in a child process (they are read at require time): concurrency defaults to 1
   and batch to 1, a configured pair is reported back, and both are clamped
   (4 encodes / 16 rows) and floored at one. Skips without ffmpeg/ffprobe.

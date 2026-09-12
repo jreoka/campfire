@@ -534,7 +534,9 @@ async function main() {
     const feed = await api('GET', '/api/admin/media/recent?limit=50', undefined, token);
     await db.query('UPDATE users SET is_admin = 0 WHERE id = $1', [reg.user.id]);
     const smallKey = smallUp.url.split('?')[0];
-    const smallRow = (feed.jobs || []).find((j) => (j.url || '').split('?')[0] === smallKey);
+    // A converted PNG lands on a NEW key (png -> webp), so match the row by
+    // either the key it was uploaded under or the name it was posted with.
+    const smallRow = (feed.jobs || []).find((j) => (j.url || '').split('?')[0] === smallKey || j.filename === 'thumb.png');
     check('a tiny image shows up in the panel feed, kept or compressed',
       !!smallRow && (smallRow.result === 'kept' || smallRow.result === 'compressed'), JSON.stringify(smallRow || null));
     check('...and a kept row carries the reason it was left alone',
