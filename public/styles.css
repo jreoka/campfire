@@ -424,6 +424,30 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .vb-btn.busy::after{content:'';width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,.22);border-top-color:var(--text);animation:up-spin .8s linear infinite}
 .vb-btn.big.busy::after{width:18px;height:18px;border-width:2.5px}
 #voice-status{display:flex;align-items:center;min-width:0;font-weight:650}
+/* The room name yields to the status chip on a narrow phone sidebar. */
+#voice-chan-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+/* The sidebar voice readout: the room name says WHERE, this says WHETHER the
+   mesh is up. Three states only, in the app's own semantic palette — green =
+   live, amber = working on it (connecting / reconnecting), red = the socket is
+   down. The dot takes the colour too, and the bar's own top border (and the
+   call view's header) tints with it, so the state reads at a glance. */
+#voice-conn{margin-left:auto;flex-shrink:0;font-size:.68rem;font-weight:800;letter-spacing:.02em;padding:.16rem .5rem;border-radius:999px;background:var(--panel-3);color:var(--muted);transition:background var(--t-fast),color var(--t-fast)}
+#voice-bar.vc-connected #voice-conn{background:rgba(52,211,153,.15);color:var(--green)}
+#voice-bar.vc-connected .live-dot{background:var(--green)}
+#voice-bar.vc-warn{border-color:rgba(251,191,36,.42)}
+#voice-bar.vc-warn #voice-conn{background:rgba(251,191,36,.15);color:var(--amber)}
+#voice-bar.vc-warn .live-dot{background:var(--amber);animation:vc-pulse 1.5s ease-in-out infinite}
+#voice-bar.vc-down{border-color:rgba(248,113,113,.42)}
+#voice-bar.vc-down #voice-conn{background:rgba(248,113,113,.14);color:var(--red)}
+#voice-bar.vc-down .live-dot{background:var(--red)}
+#vf-name.vc-connected{color:var(--green)}
+#stage-name.vc-connected{color:var(--green)}
+#vf-name.vc-warn{color:var(--amber)}
+#stage-name.vc-warn{color:var(--amber)}
+#vf-name.vc-down{color:var(--red)}
+#stage-name.vc-down{color:var(--red)}
+@keyframes vc-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){#voice-bar.vc-warn .live-dot{animation:none}}
 .live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:.45rem;flex-shrink:0}
 .live-badge{font-size:.66rem;font-weight:800;letter-spacing:.07em;background:var(--green);color:#06281c;border-radius:6px;padding:.14rem .45rem}
 #btn-nav-close{display:none}
@@ -1868,6 +1892,10 @@ body{touch-action:manipulation}
      label below sits in its own 14px padding and the row's own right padding
      (9.6px) swallows the horizontal growth, so nothing else gets tapped. */
   #stories-nav-add::after{content:'';position:absolute;inset:-10px -9px;border-radius:50%}
+  /* The server sidebar's Stories ＋ is the same 24px circle, so it gets the same
+     grown hit box. Its row is only ~38px tall and the TEXT CHANNELS label below
+     sits in its own padding, so ±10px stays inside the row's own neighbours. */
+  #srv-stories .ss-add::after{content:'';position:absolute;inset:-10px -9px;border-radius:50%}
   #left #rail{width:62px;flex-shrink:0}
   #left .rail-head{padding:.7rem 0 .5rem}
   #left .server-btn,#left #btn-add-server{width:44px;height:44px}
@@ -2106,21 +2134,37 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 .st-name{font-size:.71rem;font-weight:650;color:var(--muted);max-width:66px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .st-clickable{cursor:pointer}
 /* Server sidebar row: shown only while other members of this server have
-   live stories. */
-.srv-stories{display:flex;align-items:center;gap:.5rem;width:calc(100% - .9rem);margin:.5rem .45rem 0;padding:.42rem .7rem;border:0;border-radius:10px;background:var(--panel-2);color:var(--text);cursor:pointer;font-family:inherit;text-align:left;transition:background var(--t-fast)}
+   live stories. The wrapper (not the row) is the positioning context: the row
+   keeps its own box and tap, and the accent ＋ is pinned over its trailing edge
+   exactly like Home's Stories row, so both lists' "create" actions land on the
+   same column.
+   The wrapper spans the sidebar's FULL content width on purpose. The ＋ is
+   anchored to the wrapper's right edge, so any margin on the wrapper (the row
+   used to carry .45rem) would hold it 7.2px short of Home's — the two ＋s then
+   sit visibly out of line, which is the whole point of the move. The row pays
+   for the inset instead: it keeps the .45rem on its own left/right margins, and
+   the ＋'s slot comes out of its right padding. */
+.srv-stories-wrap{position:relative;display:flex;margin:.5rem 0 0}
+.srv-stories{display:flex;align-items:center;gap:.5rem;width:100%;margin:0 .45rem;padding:.42rem .7rem;border:0;border-radius:10px;background:var(--panel-2);color:var(--text);cursor:pointer;font-family:inherit;text-align:left;transition:background var(--t-fast)}
 .srv-stories:hover{background:var(--panel-3)}
 .srv-stories-empty{background:transparent;border:1px dashed var(--line)}
 .ss-ic{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--panel-3);color:var(--muted);flex-shrink:0}
-.ss-hint{margin-left:auto;font-size:.7rem;font-weight:650;color:var(--faint)}
-.ss-add{margin-left:.1rem;width:24px;height:24px;border-radius:50%;border:0;background:var(--accent);color:var(--on-accent);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;padding:0}
+.ss-hint{margin-left:.35rem;font-size:.7rem;font-weight:650;color:var(--faint)}
+.ss-add{margin-left:auto;width:24px;height:24px;border-radius:50%;border:0;background:var(--accent);color:var(--on-accent);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;padding:0}
 .ss-add:hover{background:var(--accent-hover)}
+/* The row pays for the ＋ slot: an absolutely pinned control does not reserve
+   space, so without this the "N new" chip runs under the circle. Same 2.7rem
+   Home's row gives up. */
+#srv-stories .srv-stories{padding-right:2.7rem}
+#srv-stories .ss-add{position:absolute;right:.6rem;top:50%;transform:translateY(-50%);margin:0}
+#srv-stories .ss-add svg{color:var(--on-accent)}
 /* All-watched status, not a count: uppercase + tracking so it never reads as a
    grey unread number again (see serverStoryChip in stories.js). */
 .ss-count.seen{color:var(--muted);background:var(--panel-3);text-transform:uppercase;letter-spacing:.06em;font-size:.64rem}
 .ss-stack{display:flex;flex-shrink:0;padding-left:8px}
 .ss-stack .avatar{width:22px;height:22px;font-size:.6rem;margin-left:-8px;border:2px solid var(--panel-2)}
 .ss-label{font-size:.86rem;font-weight:700}
-.ss-count{margin-left:auto;font-size:.7rem;font-weight:800;color:var(--on-container);background:var(--accent-dim);border-radius:999px;padding:.1rem .5rem}
+.ss-count{margin-left:.35rem;font-size:.7rem;font-weight:800;color:var(--on-container);background:var(--accent-dim);border-radius:999px;padding:.1rem .5rem}
 
 /* ---------- story center (Home → Stories) ----------
    The full page behind the sidebar's Stories row: your story as a wide hero

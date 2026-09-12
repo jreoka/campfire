@@ -62,5 +62,25 @@ check(!/n\.textContent = String\(others\.length \|\| items\.length\)/.test(src),
 check(/\.ss-count\.seen\{[^}]*text-transform:uppercase/.test(fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8')),
   'the Seen chip is styled as a status, not a badge');
 
+// The row's accent ＋ moved to the trailing slot Home's Stories row uses. It is
+// a SIBLING of the row now (a div[role=button] cannot hold a button), pinned by
+// CSS over the row's trailing edge: a trailing action inside the row's own
+// text flow landed .1rem after the "N new" chip, visibly out of column with
+// the Home row above it.
+console.log('\n[5] the ＋ is pinned to the same trailing slot as Home\'s');
+const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
+check(/wrap\.appendChild\(row\);/.test(src) && /wrap\.appendChild\(add\);/.test(src),
+  'the ＋ is appended beside the row, not inside it');
+check(!/row\.appendChild\(add\);/.test(src), 'and never nested in the row (a button cannot nest a button)');
+check(/\.srv-stories-wrap\{position:relative;display:flex;margin:\.5rem 0 0\}/.test(css),
+  'the wrapper spans the sidebar\'s full content width (a margin here would hold the ＋ short of Home\'s)');
+check(/\.srv-stories\{[^}]*width:100%;margin:0 \.45rem/.test(css), 'and the row pays for that inset on its own margins');
+check(/#srv-stories \.ss-add\{position:absolute;right:\.6rem;top:50%;transform:translateY\(-50%\);margin:0\}/.test(css),
+  'the ＋ is pinned .6rem from the sidebar edge, vertically centred — Home\'s exact slot');
+check(/#srv-stories \.srv-stories\{padding-right:2\.7rem\}/.test(css),
+  'and the row pays for the slot, so the chip can never run under it');
+check(/#srv-stories \.ss-add::after\{content:'';position:absolute;inset:-10px -9px;border-radius:50%\}/.test(css),
+  'a phone grows the 24px circle a ~42x44 hit box, same as Home\'s');
+
 console.log('\n' + (failures.length ? failures.length + ' FAILED, ' + passed + ' passed' : 'all ' + passed + ' checks passed'));
 process.exit(failures.length ? 1 : 0);

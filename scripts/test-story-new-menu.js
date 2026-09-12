@@ -131,7 +131,12 @@ check(/\$\('#sn-file'\)\.addEventListener\('change',[\s\S]{0,400}?if \(!\/\^\(im
 check(/\$\('#sn-close'\)\.onclick = \(\) => closeStoryNewMenu\(\);/.test(stories)
   && /\$\('#story-new'\)\.addEventListener\('click', \(e\) => \{ if \(e\.target\.id === 'story-new'\) closeStoryNewMenu\(\); \}\)/.test(stories),
   'the ✕ and the backdrop both close it');
-check(/closeStoryNewMenu\(\); cancelModal\(\)/.test(final), 'Escape closes it too');
+// Escape closes it through final.js's ESCAPE_LAYERS list (the check used to
+// look for a literal "closeStoryNewMenu(); cancelModal()" pair from before that
+// list existed, so it failed on correct code). It has to sit BEFORE
+// cancelModal(): the chooser is not a modal, and a modal opened over it must
+// win the key.
+check(/\(\) => closeStoryNewMenu\(\),\s*\n\s*\(\) => cancelModal\(\),/.test(final), 'Escape closes it too');
 
 console.log('\n[6] the composer can start from a file or a text card (no camera)');
 check(/if \(opts\.file\) \{\r?\n\s*const shown = await storyPickFile\(opts\.file\);\r?\n\s*if \(sc && !shown\) await storyStartCam\(\);/.test(stories),

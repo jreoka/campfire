@@ -90,7 +90,7 @@ function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(store.token)}`);
   S.ws = ws;
-  ws.onopen = () => { connAttempts = 0; connPingSent = 0; S.lastWsMsg = Date.now(); hideConn(); ws.send(JSON.stringify({ t: 'subscribe' })); sendVisibility(); checkVersion(); };
+  ws.onopen = () => { connAttempts = 0; connPingSent = 0; S.lastWsMsg = Date.now(); hideConn(); ws.send(JSON.stringify({ t: 'subscribe' })); sendVisibility(); checkVersion(); try { paintVoiceStatus(true); } catch {} };
   ws.onmessage = (ev) => {
     S.lastWsMsg = Date.now(); connPingSent = 0;
     let m;
@@ -103,6 +103,9 @@ function connectWS() {
     if (!store.token || S.ws !== ws) return; // logged out or superseded — stay quiet
     connAttempts++;
     armConnSoon();
+    // The voice readout rides the same socket: flip it to Reconnecting… now
+    // instead of waiting for a watchdog tick.
+    try { paintVoiceStatus(true); } catch {}
     // auto-reconnect
     setTimeout(() => { if (store.token && S.ws === ws) connectWS(); }, 2500);
   };

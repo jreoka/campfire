@@ -97,6 +97,10 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
           <button id="btn-server-menu" class="chip" title="Server settings">···</button>
         </div>
       </div>
+      <!-- Wrapper, not the row itself: the row carries its own tap, and its
+           accent ＋ is pinned over the row's trailing edge (stories.js), the
+           same slot Home's Stories row puts its ＋ in. #srv-stories is the
+           positioning context because the row element is built in JS. -->
       <div id="srv-stories" class="hidden"></div>
       <div class="chan-group-label">TEXT CHANNELS</div>
       <div id="text-channels"></div>
@@ -136,7 +140,7 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
       </div>
       <div class="spacer"></div>
       <div id="voice-bar" class="hidden">
-        <span id="voice-status"><span class="live-dot"></span><b id="voice-chan-name">—</b></span>
+        <span id="voice-status"><span class="live-dot"></span><b id="voice-chan-name">—</b><span id="voice-conn" role="status" aria-live="polite">Connected</span></span>
         <div class="vb-btns">
           <button id="btn-mute" class="vb-btn" title="Mute"></button>
           <button id="btn-deafen" class="vb-btn" title="Deafen"></button>

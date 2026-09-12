@@ -248,6 +248,8 @@ async function joinVoice(serverId, channelId) {
   $('#voice-fab').classList.remove('hidden');
   $('#voice-chan-name').textContent = voiceLabel();
   $('#vf-name').textContent = voiceLabel();
+  voicePeerDown.clear(); // fresh mesh: no stale peer's failure from the last room
+  paintVoiceStatus(true);
   paintVoiceControls();
   renderStage();
   S.ws?.send(JSON.stringify({ t: 'voice-join', serverId, channelId }));
@@ -269,6 +271,8 @@ async function joinDmCall(threadId, withVideo = false) {
   $('#voice-fab').classList.remove('hidden');
   $('#voice-chan-name').textContent = voiceLabel();
   $('#vf-name').textContent = voiceLabel();
+  voicePeerDown.clear();
+  paintVoiceStatus(true);
   paintVoiceControls();
   renderStage();
   S.ws?.send(JSON.stringify({ t: 'voice-join', threadId, video: !!withVideo }));
@@ -300,6 +304,7 @@ function leaveVoice(silent) {
   const vkey = myVoiceKey();
   S.voice = null;
   stopSpeakingMonitor();
+  voicePeerDown.clear(); // no room, no readout (paintVoiceStatus bails on !S.voice)
   if (S.me?.streaming_game) { S.me.streaming_game = null; try { paintMe(); } catch {} }
   $('#voice-bar').classList.add('hidden');
   $('#voice-fab').classList.add('hidden');
@@ -749,7 +754,22 @@ function ensurePeer(peerId, initiator) {
     attachRemoteVideo(peerId, media, e.track);
   };
   pc.onconnectionstatechange = () => {
-    if (['failed', 'closed'].includes(pc.connectionState)) closePeer(peerId);
+    // A peer that drops away is only forgotten when it LEAVES the room (see
+    // onVoicePeers / closePeer). Tearing the RTCPeerConnection down here on
+    // 'failed' used to drop it out of the mesh bookkeeping entirely, so the
+    // sidebar readout — which counts the mesh — went green over a person whose
+    // audio was dead. Keep the failed link in the map instead: it is what makes
+    // the retry possible (renegotiate() reuses it, and the next voice-peers
+    // broadcast re-offers through it), and it is what keeps the readout honest.
+    if (pc.connectionState === 'failed') {
+      if (!voicePeerDown.has(peerId)) {
+        voicePeerDown.set(peerId, Date.now());
+        try { renegotiate(peerId); } catch {}
+      }
+    } else if (pc.connectionState === 'connected' || pc.connectionState === 'closed') {
+      voicePeerDown.delete(peerId);
+    }
+    paintVoiceStatus();
   };
   if (initiator) {
     pc.createOffer().then((offer) => pc.setLocalDescription(offer).then(() => {
@@ -820,6 +840,7 @@ function closePeer(peerId) {
   if (!S.voice) return;
   const pc = S.voice.pcs.get(peerId);
   if (pc) { try { pc.close(); } catch {} S.voice.pcs.delete(peerId); }
+  voicePeerDown.delete(peerId);
   S.voice.senders.delete(peerId);
   S.voice.remoteVideo.delete(peerId);
   S.voice.remoteAudio.delete(peerId);
@@ -1049,6 +1070,7 @@ function renderStage() {
     paintTile(k, el);
   }
   updateCallHead();
+  paintVoiceStatus(); // the call view's own header tints with the same state
   fitStage();
 }
 // Full call view: size tiles to fit the available area — no scrollbar, no giant tiles.
@@ -1189,5 +1211,79 @@ function stopSpeakingMonitor() {
   try { speakCtx?.close(); } catch {}
   speakCtx = null;
 }
+// ---------- sidebar connection readout ----------
+// The quick voice bar used to only ever say the room name, so the one question
+// it cannot answer is the one people ask while joining ("is this working?"):
+// a room with two people where the other side never answers looks exactly like
+// a room at rest. The bar now carries a status that tracks the REAL WebRTC
+// mesh (plus the socket the signaling rides on) instead of guessing:
+//   Connecting…   a peer connection exists but has not reported 'connected'
+//   Connected     every live peer is up (and it is honest when you are alone:
+//                 the mic is captured, there are no links to build)
+//   Reconnecting… a peer failed or the signaling socket dropped
+//   Disconnected  the socket is closed and the app is offline
+// Green is the app's existing "live voice" green; amber is the away/connecting
+// amber; the bar's own border and the dot pick up the same colour, so the
+// status is readable without reading.
+let voicePeerDown = new Map(); // peerId -> when its link last left 'connected' (bounds the amber grace)
+let voiceConnAt = 0;           // throttle: a busy connect storm must not repaint per event
+let voiceConnT = null;         // trailing repaint for the state a burst settles on
+function voiceConnInfo() {
+  if (!S.voice) return { state: 'idle', text: 'Connected' };
+  const now = Date.now();
+  let connecting = 0, live = 0, everUp = false;
+  for (const [id, pc] of S.voice.pcs) {
+    const st = pc.connectionState;
+    if (st === 'connected') { voicePeerDown.delete(id); live++; continue; }
+    // 'connecting'/'new' are on their way up; 'failed'/'disconnected' are down
+    // — both mean "this link is not carrying audio yet", so both count. A link
+    // that merely left 'connected' keeps a short grace window (and stays
+    // remembered until it recovers or its owner leaves), so a two-way
+    // renegotiation does not flash the bar amber.
+    const was = voicePeerDown.get(id);
+    if (was) everUp = true;
+    if (!was && (st === 'connecting' || st === 'new')) connecting++;
+    else {
+      if (!was) voicePeerDown.set(id, now);
+      if (now - (was || now) > 1200 || st === 'failed' || st === 'disconnected') connecting++;
+    }
+  }
+  if (!navigator.onLine) return { state: 'offline', text: 'Disconnected' };
+  const ws = S.ws;
+  if (ws && ws.readyState !== 1) return { state: 'reconnecting', text: 'Reconnecting…' };
+  // "Connecting…" only while nothing has ever come up in this room; once a link
+  // has been live, a wobble is a reconnection, not a first attempt.
+  if (connecting) return { state: live ? 'reconnecting' : 'connecting', text: (live || everUp) ? 'Reconnecting…' : 'Connecting…' };
+  return { state: 'connected', text: 'Connected' };
+}
+function paintVoiceStatus(force) {
+  if (!S.voice) return;
+  const now = Date.now();
+  if (!force && now - voiceConnAt < 350) {
+    // A mesh of five peers lands its state changes in one burst. Dropping the
+    // tail would freeze the chip on whoever connected first, so schedule the
+    // settled state instead of skipping it (one timer, never a stack).
+    if (!voiceConnT) voiceConnT = setTimeout(() => { voiceConnT = null; paintVoiceStatus(true); }, 380);
+    return;
+  }
+  voiceConnAt = now;
+  const { state, text } = voiceConnInfo();
+  const chip = $('#voice-conn');
+  if (chip && chip.textContent !== text) chip.textContent = text;
+  // Green only for a genuinely up mesh; amber for "working on it" (connecting
+  // or reconnecting); red for a signaling path that is actually down.
+  const cls = state === 'connected' ? 'vc-connected' : ((state === 'connecting' || state === 'reconnecting') ? 'vc-warn' : 'vc-down');
+  for (const el of [$('#voice-bar'), $('#vf-name'), $('#stage-name')]) {
+    if (!el) continue;
+    for (const c of ['vc-connected', 'vc-warn', 'vc-down']) el.classList.toggle(c, state !== 'idle' && c === cls);
+  }
+  const tip = state === 'connected' ? 'Voice connected' : text;
+  const bar = $('#voice-bar');
+  if (bar) bar.title = tip;
+}
+paintVoiceStatus(true);
+// The socket is the signaling path: its liveness is half of the readout.
+window.addEventListener('online', () => paintVoiceStatus(true));
+window.addEventListener('offline', () => paintVoiceStatus(true));
 window.addEventListener('beforeunload', () => { try { S.ws?.send(JSON.stringify({ t: 'voice-leave' })); } catch {} });
 

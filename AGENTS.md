@@ -534,6 +534,27 @@ first paint, so the installed app can be styled with no flash).
   padding for its text, so a label that also holds a trailing button needs
   `.chan-group-label.row-between{padding-right:.6rem}`. `test-story-add-entry.js`
   measures both ＋s and fails on any drift.
+- The **server** sidebar's Stories row puts its accent ＋ in that same trailing
+  column, because it is the same action in the same visual column one list over.
+  It is a SIBLING of the row (a `div[role=button]` row cannot hold a button),
+  pinned by `#srv-stories .ss-add` inside `.srv-stories-wrap`, and the row pays
+  for the slot with `padding-right:2.7rem`. The wrapper must span the sidebar's
+  FULL content width: it is the ＋'s containing block, so putting the row's own
+  `.45rem` side margin back on the wrapper silently pulls the ＋ 7.2px short of
+  Home's and the two lists read out of line again (that margin now lives on
+  `.srv-stories` itself). `test-story-sidebar-conn-browser.js` measures the pair
+  and fails on any drift.
+- The sidebar **voice bar** (`#voice-bar`, the mute/deafen/camera/share widget
+  above the me bar) carries a connection chip (`#voice-conn`, `paintVoiceStatus`
+  in `voice.js`): Connected in the app green, Connecting…/Reconnecting… in
+  amber, Disconnected in red, with the bar's border and the `.live-dot` taking
+  the same class. It is driven by the REAL mesh — `voiceConnInfo` reads every
+  `RTCPeerConnection.connectionState` plus `S.ws.readyState`, so a peer whose
+  link failed keeps the bar amber until it recovers (which is why
+  `onconnectionstatechange` retries `renegotiate` instead of tearing the peer
+  down: a torn-down peer made the readout green over someone whose audio was
+  dead). `#voice-chan-name` must keep its ellipsis or a long room name pushes
+  the chip out of the bar.
 - The composer field is its own surface (`--field`/`--field-line`, one tonal
   step above the bar), never `--inset` — that is the app's LOGIN-input well and
   it read as a hole punched in the chat. `#in-message` (the transparent

@@ -604,6 +604,14 @@ function renderServerStories() {
   const others = items.filter((i) => i.author && i.author.id !== S.me.id);
   box.classList.remove('hidden');
   box.innerHTML = '';
+  // The ＋ is a SIBLING of the row, pinned over the row's trailing edge — the
+  // exact slot Home's Stories row uses (.stories ＋ at .6rem from the sidebar's
+  // edge). It used to sit at the end of the row's text flow, so it landed only
+  // .1rem after the "N new"/"Be the first" chip while the Home ＋ sat on the
+  // column every trailing action in that list shares. The row's own box comes
+  // from .srv-stories (it owns the margins), so nothing has to be re-inset here.
+  const wrap = document.createElement('div');
+  wrap.className = 'srv-stories-wrap';
   const row = document.createElement('div');
   row.className = 'srv-stories' + (items.length ? '' : ' srv-stories-empty');
   row.setAttribute('role', 'button');
@@ -649,11 +657,12 @@ function renderServerStories() {
   add.setAttribute('aria-label', add.title);
   add.innerHTML = svSvg.plus;
   add.onclick = (e) => { e.stopPropagation(); createStory({ serverId: S.serverId }); };
-  row.appendChild(add);
   const open = () => openStoriesSheet({ serverId: S.serverId, name: S.serverDetail.name });
   row.onclick = open;
   row.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
-  box.appendChild(row);
+  wrap.appendChild(row);
+  wrap.appendChild(add);
+  box.appendChild(wrap);
 }
 // Home sidebar: a Stories entry (with an unseen badge) that opens the sheet.
 function renderHomeStories() {

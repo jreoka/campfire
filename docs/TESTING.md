@@ -46,7 +46,20 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   row's trailing chip, offline (it runs the real `serverStoryChip` pulled out of
   `stories.js`): an accent "N new" (unseen items) while something waits, a muted
   "SEEN" once everything is watched — never the bare grey author count that read
-  as "1 unread" — and no chip at all when the only live post is mine.
+  as "1 unread" — and no chip at all when the only live post is mine. It also
+  pins the row's accent ＋ as a SIBLING pinned over the row's trailing edge
+  (`.srv-stories-wrap` owns the positioning; the row pays for the slot with
+  `padding-right:2.7rem`), plus the phone hit box.
+  `node scripts/test-story-sidebar-conn-browser.js` measures both sidebar
+  surfaces in headless Chrome (offline checks first; skips without Chrome): it
+  runs the REAL `renderServerStories` against the REAL `styles.css` beside the
+  REAL Home Stories row and asserts the two ＋s land on the same pixel column —
+  same distance from the sidebar edge, same left/right edge, same 24px circle,
+  still in column with the GROUP CHATS ＋ — plus the ＋'s grown phone hit box and
+  the voice bar's layout (the `#voice-conn` chip owns the trailing slot, a long
+  room name ellipsises rather than pushing it out, and both stay inside the bar
+  at 390px). Re-run after moving either Stories row, the voice bar markup, or
+  the sidebar's row margins.
   `node scripts/test-story-add-entry.js` covers the two quick ways into the story
   camera (offline checks, then the real `#stories-nav-wrap` markup + `styles.css`
   and the real wiring and boot deep-link code from `stories.js`/`auth.js` in
@@ -406,6 +419,20 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   icon really disappears behind a 14px up-spin ring (18px on the big call-view
   button), the ring sits inside the button box, the box never changes size, and
   the busy button keeps its own surface instead of the off red.
+  `node scripts/test-voice-conn-status.js` covers the sidebar voice bar's
+  connection readout, offline (static markup/CSS/wiring checks, then the REAL
+  `voiceConnInfo`/`paintVoiceStatus` out of `voice.js` against a fake DOM, a fake
+  `RTCPeerConnection.connectionState` set and a fake socket): alone in a room is
+  Connected (the mic is captured, there is no link to build), a negotiating peer
+  reads Connecting…, a live one green, a working peer plus a joining one reads
+  Reconnecting… rather than a false green, a failed/disconnected link stays amber
+  (never a green lie) and is remembered until it recovers — with a grace window
+  so a renegotiation does not flash it — a dropped signaling socket reads
+  Reconnecting…, `navigator.onLine === false` reads Disconnected in red, the
+  throttle schedules a trailing repaint instead of freezing on the first peer,
+  and leaving the room clears it. Also pins the amber `vc-pulse` dot (and its
+  reduced-motion opt-out) and that a failed peer connection is retried rather
+  than torn down.
   `node scripts/test-story-overlays.js` covers the story-markup model offline
   (it runs the real `ovSanitize`/`ovParse`/`ovContentRect` out of
   `public/js/story-edit.js` and the real `storyDestDims`/`storyDrawFrame` out of
