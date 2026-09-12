@@ -206,7 +206,12 @@ function schedule(ms) {
   if (timer) clearTimeout(timer);
   timer = setTimeout(async () => {
     timer = null;
-    try { await runOnce(); } catch (e) { warn('run failed: ' + String((e && e.message) || e).slice(0, 200)); }
+    try {
+      // Leader-only: two replicas sweeping at once would list the same orphans
+      // and race to delete them, so the loser logs a stream of no-such-key
+      // errors for work that was already done.
+      await db.withLock(db.LOCKS.storageSweep, () => runOnce());
+    } catch (e) { warn('run failed: ' + String((e && e.message) || e).slice(0, 200)); }
     schedule(EVERY_MS);
   }, ms);
   try { timer.unref(); } catch {}

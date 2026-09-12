@@ -206,6 +206,7 @@ async function main() {
   }
 
   let child = null, fake = null, db = null;
+  let serverLog = '';
   try {
     await admin.query(`DROP DATABASE IF EXISTS ${TEST_DB} WITH (FORCE)`);
     await admin.query(`CREATE DATABASE ${TEST_DB}`);
@@ -232,7 +233,6 @@ async function main() {
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    let serverLog = '';
     child.stdout.on('data', (d) => { serverLog += d; });
     child.stderr.on('data', (d) => { serverLog += d; });
     const fail = (msg) => { throw new Error(msg + '\n--- server log ---\n' + serverLog.slice(-4000)); };
@@ -417,7 +417,11 @@ async function main() {
   }
 
   console.log(`\n${passed} checks passed, ${failures.length} failed`);
-  if (failures.length) { for (const f of failures) console.log('  - ' + f); process.exit(1); }
+  if (failures.length) {
+    for (const f of failures) console.log('  - ' + f);
+    console.log('--- server log tail ---\n' + serverLog.split('\n').slice(-40).join('\n'));
+    process.exit(1);
+  }
   console.log('upload pipeline: OK');
 }
 

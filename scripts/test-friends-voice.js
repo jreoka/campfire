@@ -122,6 +122,7 @@ async function main() {
   fs.mkdirSync(uploads, { recursive: true });
 
   let child = null;
+  let serverLog = '';
   const conns = [];
   try {
     await admin.query(`DROP DATABASE IF EXISTS ${TEST_DB} WITH (FORCE)`);
@@ -140,7 +141,6 @@ async function main() {
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    let serverLog = '';
     child.stdout.on('data', (d) => { serverLog += d; });
     child.stderr.on('data', (d) => { serverLog += d; });
     const fail = (msg) => { throw new Error(msg + '\n--- server log ---\n' + serverLog.slice(-4000)); };
@@ -271,7 +271,11 @@ async function main() {
   }
 
   console.log(`\n${passed} passed, ${failures.length} failed`);
-  if (failures.length) { console.log(failures.map((f) => '  - ' + f).join('\n')); process.exit(1); }
+  if (failures.length) {
+    console.log(failures.map((f) => '  - ' + f).join('\n'));
+    console.log('--- server log tail ---\n' + serverLog.split('\n').slice(-40).join('\n'));
+    process.exit(1);
+  }
   process.exit(0);
 }
 

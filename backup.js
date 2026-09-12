@@ -18,6 +18,7 @@ const os = require('os');
 const path = require('path');
 const { execFile } = require('node:child_process');
 const { pgEnv } = require('./db');
+const db = require('./db');
 const storage = require('./storage');
 
 const PREFIX = 'backups/';
@@ -67,6 +68,15 @@ async function runBackup(reason) {
     console.log('[backup] skipped (S3 not configured)');
     return;
   }
+  // Leader-only: exactly ONE pg_dump per cluster. Every replica runs this
+  // scheduler, so without the lock a 3-replica deployment would dump the same
+  // database three times a night and store three snapshots for one night.
+  const r = await db.withLock(db.LOCKS.backups, () => runBackupLocked(reason));
+  if (!r.ran) console.log('[backup] another replica holds the backup lock, skipping');
+}
+
+// The dump itself — only ever entered by the replica holding the backups lock.
+async function runBackupLocked(reason) {
   if (running) {
     console.log('[backup] already in progress, skipping');
     return;

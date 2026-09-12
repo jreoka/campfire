@@ -54,6 +54,13 @@ const now = () => Date.now();
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'data', 'uploads');
 const ENABLED = process.env.VIRUS_SCAN !== '0';
 const CLAM_PORT = Math.max(1, parseInt(process.env.CLAM_PORT || '3310', 10) || 3310);
+// Where clamd lives. The default is the loopback daemon this module supervises.
+// Set CLAM_HOST to run ONE clamd for the whole cluster (its own pod + Service)
+// and have every replica scan through it — which is the configuration
+// multi-replica actually wants: clamd needs ~1GB RAM plus a ~500MB signature
+// DB, so a per-replica copy is both wasteful and a memory problem on small nodes.
+const CLAM_HOST = process.env.CLAM_HOST || '127.0.0.1';
+const CLAM_REMOTE = CLAM_HOST !== '127.0.0.1';
 const MAX_FILE_BYTES = parseInt(process.env.MAX_FILE_MB || '200', 10) * 1024 * 1024;
 const KICK_MS = 500;
 const IDLE_MS = 10000;
@@ -118,6 +125,13 @@ async function ensureTables() {
   scanned_at BIGINT
 )`);
   await db.exec('CREATE INDEX IF NOT EXISTS idx_file_scans_status ON file_scans(status, created_at)');
+  // Who holds the row right now. Claiming used to be an in-process Set, which
+  // was only safe because a single process drove a single loop — on more than
+  // one replica every pod would claim the same key (guarded migrations, so an
+  // existing database picks these up in place).
+  await db.exec('ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS claimed_by TEXT');
+  await db.exec('ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS claimed_at BIGINT');
+  await db.exec('CREATE INDEX IF NOT EXISTS idx_file_scans_claim ON file_scans(status, claimed_at)');
   ready = true;
 }
 
@@ -196,6 +210,7 @@ async function emitChange(key, status) {
 // ---------- clamd supervision ----------
 
 function haveBinaries() {
+  if (CLAM_REMOTE) return true; // the remote host owns clamd/freshclam
   try {
     const r = spawnSync('sh', ['-c', 'command -v clamd && command -v freshclam'], { stdio: 'ignore', timeout: 5000 });
     return !!(r && r.status === 0);
@@ -232,7 +247,7 @@ function pingClamd(timeoutMs) {
     let done = false;
     const finish = (v) => { if (!done) { done = true; resolve(v); } };
     const t = setTimeout(() => { try { sock.destroy(); } catch {} finish(false); }, timeoutMs || 5000);
-    const sock = net.createConnection({ host: '127.0.0.1', port: CLAM_PORT });
+    const sock = net.createConnection({ host: CLAM_HOST, port: CLAM_PORT });
     let buf = '';
     sock.on('connect', () => sock.write('PING\n'));
     sock.on('data', (d) => {
@@ -249,7 +264,7 @@ function pingClamd(timeoutMs) {
 function clamdScanStream(source, timeoutMs) {
   return new Promise((resolve, reject) => {
     let done = false;
-    const sock = net.createConnection({ host: '127.0.0.1', port: CLAM_PORT });
+    const sock = net.createConnection({ host: CLAM_HOST, port: CLAM_PORT });
     const finish = (fn, arg) => { if (done) return; done = true; clearTimeout(timer); try { sock.destroy(); } catch {} fn(arg); };
     const timer = setTimeout(() => finish(reject, new Error('clamd_timeout')), timeoutMs);
     let resp = '';
@@ -296,6 +311,19 @@ async function ensureChain() {
   lastSpawnAttempt = Date.now();
   engineStarting = true;
   try {
+    if (CLAM_REMOTE) {
+      // A remote clamd owns its signatures and its process. Nothing to write,
+      // download, chown or spawn here — just wait for it to answer.
+      if (await waitPong(15)) {
+        clamdReady = true;
+        engineFailed = false;
+        log('ClamAV engine ready (remote clamd at ' + CLAM_HOST + ':' + CLAM_PORT + ')');
+        kickVirusScan();
+      } else {
+        throw new Error('remote_clamd_unreachable');
+      }
+      return;
+    }
     writeConfs();
     // freshclam/clamd drop to the clamav user (UID 100:GID 101) — a
     // root-owned DB dir fails their writability check, so hand it over.
@@ -419,39 +447,73 @@ async function tick() {
   return 'more';
 }
 
-// Oldest pending row no live slot holds. The single loop calls this
-// sequentially, so two slots can never claim the same key (and a crash
-// just leaves the row pending for the next boot).
-async function claimRow() {
-  let rows = [];
-  try {
-    rows = await db.prepare("SELECT key, attempts FROM file_scans WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?").all(CONCURRENCY + active + 1);
-  } catch (e) {
-    warn('queue read failed: ' + String((e && e.message) || e).slice(0, 160));
-    return null;
-  }
-  for (const r of rows) {
-    if (r && r.key && !claimed.has(r.key)) { claimed.add(r.key); claimAt.set(r.key, now()); return r; }
-  }
-  return null;
+// This replica's identity, used to record who holds a claim. Shares bus.js's
+// POD_ID so it lines up with bus_replicas (the liveness table everything else
+// reconciles against).
+let _podId = null;
+function podId() {
+  if (!_podId) { try { _podId = require('./bus').POD_ID; } catch { _podId = process.env.HOSTNAME || 'pod'; } }
+  return _podId;
 }
 
-// Release claims stuck longer than SLOT_TIMEOUT_MS (wedged I/O the
-// per-call timeouts somehow missed). The row stays pending for retry.
-// Exception: a slot parked in an inline ffmpeg pass is NOT stuck (media
-// compression runs inside the slot now) — leave it be, the encode has its
-// own timeout.
+// Claim the oldest claimable pending row ATOMICALLY IN THE DATABASE.
+// The in-process Set this replaced was only safe with one process driving one
+// loop: with two replicas both would claim the same key and scan (and compress)
+// the same upload twice, which breaks the exactly-one pending->final transition
+// clients depend on and doubles the work. FOR UPDATE SKIP LOCKED makes
+// concurrent claimers step over each other's rows instead of colliding.
+// A claim older than SLOT_TIMEOUT_MS is reclaimable, so a crashed replica's rows
+// come back on their own.
+async function claimRow() {
+  let row = null;
+  try {
+    row = await db.prepare(
+      `UPDATE file_scans SET claimed_by = ?, claimed_at = ?
+        WHERE key = (
+          SELECT key FROM file_scans
+           WHERE status = 'pending'
+             AND (claimed_at IS NULL OR claimed_at < ?)
+           ORDER BY created_at ASC
+           LIMIT 1
+           FOR UPDATE SKIP LOCKED
+        )
+        RETURNING key, attempts`
+    ).get(podId(), now(), now() - SLOT_TIMEOUT_MS);
+  } catch (e) {
+    warn('claim failed: ' + String((e && e.message) || e).slice(0, 160));
+    return null;
+  }
+  if (!row || !row.key) return null;
+  claimed.add(row.key);       // local bookkeeping for the stall log
+  claimAt.set(row.key, now());
+  return row;
+}
+
+// Release claims stuck longer than SLOT_TIMEOUT_MS (wedged I/O the per-call
+// timeouts somehow missed). The row stays pending for retry and the attempt
+// counter still bounds a permanently broken file. Read from the DATABASE, so a
+// claim held by a replica that died is released too — the in-process map could
+// only ever see its own. Exception: a slot parked in an inline ffmpeg pass is
+// NOT stuck (media compression runs inside the slot now); only this replica can
+// know that about its own slots, so those are skipped locally.
 async function reapStuckClaims() {
-  const cutoff = now() - SLOT_TIMEOUT_MS;
-  for (const [key, at] of claimAt) {
-    if (at > cutoff) continue;
+  let rows = [];
+  try {
+    rows = await db.prepare(
+      "SELECT key FROM file_scans WHERE status = 'pending' AND claimed_at IS NOT NULL AND claimed_at < ?"
+    ).all(now() - SLOT_TIMEOUT_MS);
+  } catch (e) {
+    warn('claim reap read failed: ' + String((e && e.message) || e).slice(0, 160));
+    return;
+  }
+  for (const r of rows) {
     let compressing = false;
-    try { compressing = require('./media-compress').isCompressing(key); } catch {}
+    try { compressing = require('./media-compress').isCompressing(r.key); } catch {}
     if (compressing) continue;
-    claimAt.delete(key);
-    claimed.delete(key);
-    warn('slot watchdog: released stuck claim on ' + key);
-    try { await db.prepare('UPDATE file_scans SET attempts = attempts + 1 WHERE key = ?').run(key); } catch {}
+    claimAt.delete(r.key);
+    claimed.delete(r.key);
+    warn('slot watchdog: released stuck claim on ' + r.key);
+    try { await db.prepare('UPDATE file_scans SET attempts = attempts + 1, claimed_by = NULL, claimed_at = NULL WHERE key = ?').run(r.key); } catch {}
   }
 }
 
@@ -584,6 +646,8 @@ async function processRow(row) {
   } finally {
     claimed.delete(row.key);
     claimAt.delete(row.key);
+    // Hand the row back so another replica (or a later tick here) can take it.
+    try { await db.prepare('UPDATE file_scans SET claimed_by = NULL, claimed_at = NULL WHERE key = ?').run(row.key); } catch {}
   }
 }
 
@@ -664,17 +728,19 @@ function startVirusScan() {
   if (!ENABLED) { log('disabled (VIRUS_SCAN=0) — uploads marked clean'); return; }
   ensureTables().then(() => {
     stats.startedAt = now();
-    if (!haveBinaries()) {
+    if (!CLAM_REMOTE && !haveBinaries()) {
       noEngine = true;
-      if (!loggedNoEngine) { loggedNoEngine = true; warn('clamd/freshclam not found — uploads fail open as clean (install clamav-daemon for real scanning)'); }
+      if (!loggedNoEngine) { loggedNoEngine = true; warn('clamd/freshclam not found — uploads fail open as clean (install clamav-daemon, or point CLAM_HOST at a clamd)'); }
       schedule(2000);
       return;
     }
-    log('worker on (clamd at 127.0.0.1:' + CLAM_PORT + ', signatures in ' + dbDir() + ')');
+    log('worker on (clamd at ' + CLAM_HOST + ':' + CLAM_PORT + (CLAM_REMOTE ? ', remote' : ', signatures in ' + dbDir()) + ')');
     schedule(2000);
     ensureChain().catch(() => {});
-    // Signature refresh: one-shot freshclam runs exit after updating;
-    // clamd picks the new DBs up on its own SelfCheck.
+    // Signature refresh: one-shot freshclam runs exit after updating; clamd
+    // picks the new DBs up on its own SelfCheck. A REMOTE clamd owns its own
+    // database, so every replica running freshclam would be fighting over it.
+    if (CLAM_REMOTE) return;
     const t = setInterval(() => {
       if (clamdReady || engineFailed) {
         runFreshclam().then((ok) => { if (!ok) warn('scheduled freshclam run failed'); });

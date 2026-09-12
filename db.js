@@ -707,6 +707,88 @@ CREATE INDEX IF NOT EXISTS idx_reports_message ON message_reports(message_id);
 CREATE INDEX IF NOT EXISTS idx_reports_author ON message_reports(author_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_one_open ON message_reports(reporter_id, message_id) WHERE status = 'open';
 `);
+  await db.exec(`
+-- Cluster-wide voice occupancy. Voice media is peer-to-peer (WebRTC mesh), so
+-- the server never touches audio/video — but every replica still has to agree
+-- on WHO is in a room: the sidebar occupants, the Active Now "IN VOICE" rail
+-- and voice moderation all read it, and an incoming SDP/ICE offer has to be
+-- routed to the replica that actually holds the target's socket. pod_id is
+-- that route (it matches bus_replicas.pod_id).
+-- One row per USER, not per socket: a user is only ever in one room because
+-- joining elsewhere leaves first, so the key is stable and a row left behind by
+-- a crashed replica is unambiguous. Those are reaped by the pod_id
+-- reconciliation in server.js, which drops rows whose pod is not heartbeating.
+CREATE TABLE IF NOT EXISTS voice_occupants (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  pod_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  server_id TEXT,
+  channel_id TEXT,
+  thread_id TEXT,
+  muted BIGINT NOT NULL DEFAULT 0,
+  speaking BIGINT NOT NULL DEFAULT 0,
+  deafened BIGINT NOT NULL DEFAULT 0,
+  camera BIGINT NOT NULL DEFAULT 0,
+  sharing BIGINT NOT NULL DEFAULT 0,
+  server_muted BIGINT NOT NULL DEFAULT 0,
+  stream_name TEXT,
+  updated_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_voice_occupants_pod ON voice_occupants(pod_id);
+CREATE INDEX IF NOT EXISTS idx_voice_occupants_server ON voice_occupants(server_id, channel_id);
+CREATE INDEX IF NOT EXISTS idx_voice_occupants_thread ON voice_occupants(thread_id);
+`);
+  await db.exec(`
+-- Cluster-wide live sockets. Presence used to be read from this process's own
+-- clients Set, which is wrong the moment there is more than one replica: each
+-- pod would report only the people connected to it, so half the roster read
+-- offline, the admin panel's Online count was a fraction of the truth, and
+-- userVisible (which decides whether to SUPPRESS an OS push) would say "they are
+-- looking at the app" for someone who had already closed it — silently killing
+-- their notifications.
+-- One row per SOCKET, because the session count and the visible flag are
+-- per-socket, while status and invisible are per-user and duplicated across
+-- their rows (presenceSetStatus updates them together).
+CREATE TABLE IF NOT EXISTS live_sessions (
+  sid TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  pod_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'online',
+  invisible BIGINT NOT NULL DEFAULT 0,
+  visible BIGINT NOT NULL DEFAULT 0,
+  is_admin BIGINT NOT NULL DEFAULT 0,
+  updated_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_live_sessions_user ON live_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_live_sessions_pod ON live_sessions(pod_id);
+CREATE INDEX IF NOT EXISTS idx_live_sessions_online ON live_sessions(invisible, user_id);
+`);
+  await db.exec(`
+-- Shared rate limiting and other short-lived security state. All of this used to
+-- live in a per-process Map, which multiplies every limit by the replica count:
+-- with 3 pods a 12-messages-per-10s cap became 36, and the 2FA brute-force brake
+-- gave an attacker 10 tries per replica instead of 10 in total.
+-- One generic fixed-window counter keeps it bounded: every limiter is a bucket
+-- (a namespaced string) with a hit count and the moment its window ends.
+CREATE TABLE IF NOT EXISTS rate_limits (
+  bucket TEXT PRIMARY KEY,
+  count BIGINT NOT NULL DEFAULT 0,
+  reset_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_limits_reset ON rate_limits(reset_at);
+-- WebAuthn challenges. A challenge is issued by one request and verified by the
+-- next, which may land on a different replica — held in process memory that
+-- failed outright. Consumed with DELETE ... RETURNING so a challenge can never
+-- be used twice, even by two replicas racing.
+CREATE TABLE IF NOT EXISTS webauthn_challenges (
+  state_id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  user_id TEXT,
+  challenge TEXT NOT NULL,
+  expires BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wac_expires ON webauthn_challenges(expires);
+`);
   // Site owner is always an admin (idempotent; runs on every boot so fresh
   // installs and existing databases both converge without manual SQL).
   try { await db.exec(`UPDATE users SET is_admin = 1 WHERE username = '${OWNER_USERNAME}'`); } catch {}
@@ -718,8 +800,96 @@ async function closePool() {
   try { await pool.end(); } catch {}
 }
 
+// ---------- infrastructure accessors (not for application code) ----------
+// The raw pool. Needed by layers that must own a dedicated connection for the
+// life of the process (bus.js's LISTEN client) or query outside the
+// transaction AsyncLocalStorage. Application code uses db.prepare/exec.
+const rawPool = () => pool;
+
+// Cluster-wide mutexes, for the work that must happen on exactly one replica:
+// schema migrations, the one-shot boot repairs, and every periodic sweeper.
+//
+// Postgres advisory locks are SESSION-scoped, so each helper pins a single
+// connection for the whole critical section and releases it in a finally.
+// Keys are fixed constants (never hashed from a name) so they are greppable
+// and cannot collide by accident. Keep this table and the call sites in sync.
+const LOCKS = {
+  migrate: 771001,        // initDb DDL — blocking: late replicas wait their turn
+  bootRepair: 771002,     // repairThreads + initPushKeys (one-shot boot repairs)
+  bootClear: 771003,      // stale playing_game / streaming_game clears
+  sweepStatuses: 771004,  // sweepExpiredStatuses
+  reapStories: 771005,    // reapStories (24h story expiry)
+  storageSweep: 771006,   // storage-sweep orphan bytes
+  mediaCompress: 771007,  // media-compress sweeper
+  virusScan: 771008,      // virus-scan claim reaper
+  unfurlPrune: 771009,    // unfurl cache prune
+  backups: 771010,        // nightly pg_dump
+  busSweep: 771011,       // bus.js event retention sweep
+  stateReconcile: 771012, // drop voice_occupants + live_sessions rows left by dead replicas
+  beaconSweep: 771014,    // watcher stale-beacon cleanup (playing_game) — one replica
+};
+
+// Try to take the lock without waiting. Resolves { ran: false } when another
+// replica already holds it — the caller simply skips this round, so a skipped
+// tick is normal operation, never an error.
+async function withLock(key, fn) {
+  const client = await pool.connect();
+  let held = false;
+  try {
+    const r = await client.query('SELECT pg_try_advisory_lock($1::bigint) AS ok', [key]);
+    held = !!(r.rows[0] && r.rows[0].ok);
+    if (!held) return { ran: false };
+    return { ran: true, value: await fn() };
+  } finally {
+    if (held) { try { await client.query('SELECT pg_advisory_unlock($1::bigint)', [key]); } catch {} }
+    client.release();
+  }
+}
+
+// Blocking variant, for migrations: every replica must wait for the holder to
+// finish rather than proceed against a half-migrated schema.
+async function withLockWait(key, fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock($1::bigint)', [key]);
+    try {
+      return { ran: true, value: await fn() };
+    } finally {
+      try { await client.query('SELECT pg_advisory_unlock($1::bigint)', [key]); } catch {}
+    }
+  } finally {
+    client.release();
+  }
+}
+
+// Cross-replica exclusion for ONE unit of work, keyed by a string (a storage
+// key). withLock() takes one of the fixed LOCKS constants and is for jobs there
+// is exactly one of; this derives the lock id from the key itself, so any number
+// of keys can be in flight without a registry. The two-int form puts these in
+// their own namespace (771013) so they can never collide with the LOCKS table.
+// Returns { ran: false } when another replica already holds this key.
+const KEY_LOCK_NAMESPACE = 771013;
+async function withKeyLock(key, fn) {
+  const client = await pool.connect();
+  let held = false;
+  try {
+    const r = await client.query('SELECT pg_try_advisory_lock($1::int, hashtext($2)) AS ok', [KEY_LOCK_NAMESPACE, String(key)]);
+    held = !!(r.rows[0] && r.rows[0].ok);
+    if (!held) return { ran: false };
+    return { ran: true, value: await fn() };
+  } finally {
+    if (held) { try { await client.query('SELECT pg_advisory_unlock($1::int, hashtext($2))', [KEY_LOCK_NAMESPACE, String(key)]); } catch {} }
+    client.release();
+  }
+}
+
 module.exports = db;
 module.exports.initDb = initDb;
 module.exports.closePool = closePool;
 module.exports.pgEnv = pgEnv;
 module.exports.OWNER_USERNAME = OWNER_USERNAME;
+module.exports.rawPool = rawPool;
+module.exports.LOCKS = LOCKS;
+module.exports.withLock = withLock;
+module.exports.withLockWait = withLockWait;
+module.exports.withKeyLock = withKeyLock;

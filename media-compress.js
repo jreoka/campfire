@@ -404,8 +404,17 @@ async function pendingRowsForKey(key) {
 async function processUpload(key, inspect) {
   if (!ENABLED || !key || inflight.has(key)) return null;
   inflight.add(key);
-  try { return await withCompressLock(() => compressLocked(key, inspect)); }
-  finally { inflight.delete(key); }
+  try {
+    // Two guards, and both are needed:
+    //   withCompressLock  — one ffmpeg per POD, the low-CPU promise.
+    //   withKeyLock       — one ffmpeg per FILE across all pods. Without it a
+    //     scan slot on one replica and the sweeper on another could compress the
+    //     same upload simultaneously: double the CPU, two different candidate
+    //     byte streams, and a race to publish them (which is exactly the
+    //     "one pending->final transition per file" rule this pipeline keeps).
+    const r = await db.withKeyLock('media:' + key, () => withCompressLock(() => compressLocked(key, inspect)));
+    return r.ran ? r.value : null;
+  } finally { inflight.delete(key); }
 }
 
 async function compressLocked(key, inspect) {

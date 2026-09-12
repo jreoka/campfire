@@ -416,7 +416,7 @@ function newBackupCodes() {
   const hashes = codes.map((c) => crypto.createHash('sha256').update(c).digest('hex'));
   return { codes, hashes };
 }
-const twofaFails = new Map(); // userId -> {n, until} — brute-force brake for 2FA codes
+// (The 2FA attempt brake now lives in the shared rate_limits table — see rateHit.)
 function getTokenFromReq(req) {
   const h = req.headers.authorization || '';
   if (h.startsWith('Bearer ')) return h.slice(7);
@@ -527,10 +527,11 @@ async function sweepExpiredStatuses() {
         broadcastToServer(sid, { t: 'user-status', serverId: sid, userId: id, status: 'online' });
       }
       for (const c of clients) if (c.meta && c.meta.userId === id) c.meta.status = 'online';
+      await presenceSetStatus(id, 'online');
     } catch {}
   }
   // An invisible user lapsed back to online: the admin panel's count moved.
-  pushAdminPresence();
+  await pushAdminPresence();
 }
 function publicUser(u) {
   if (!u) return { id: null, username: 'deleted', display_name: 'deleted user', avatar_color: '#555' };
@@ -576,24 +577,67 @@ function blockedByOwnerLock(req, res, target) {
 const AVATAR_DECOS = ['ember', 'fireflies', 'aurora', 'neon', 'tide', 'stardust'];
 const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, playing_game, streaming_game, bio, name_color, name_gradient, card_color, card_gradient, avatar_decoration, active_tag_server_id, active_tag, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset, nsfw_ok, theme';
 
-// simple in-memory rate limit for posting messages: 10 msgs / 10s per user
-const rl = new Map();
-const slowTs = new Map(); // `${channelId}:${userId}` -> last accepted post (slow mode)
-function slowBlocked(channelId, userId, secs) {
-  if (!secs) return 0;
-  const k = channelId + ':' + userId;
-  const wait = Math.ceil(((slowTs.get(k) || 0) + secs * 1000 - Date.now()) / 1000);
-  if (wait > 0) return wait;
-  slowTs.set(k, Date.now());
-  return 0;
-}
-function rateOk(userId) {
+// ---------- shared rate limiting ----------
+// Every limiter lives in the rate_limits table rather than in process memory,
+// because a per-process counter multiplies by the replica count: three pods
+// would allow 36 messages per 10s where one allows 12, and the 2FA brake would
+// hand an attacker ten tries per pod. Each helper is ONE atomic statement, so
+// two replicas racing cannot both slip through the same slot.
+//
+// A fixed window rather than the old sliding one: the cap and the period are
+// unchanged (12 per 10s), only the shape differs — a burst can land on a window
+// boundary instead of being spread evenly. That is the price of one round trip,
+// and it is what makes the limit correct across replicas.
+async function rateHit(bucket, limit, windowMs) {
   const t = Date.now();
-  const arr = (rl.get(userId) || []).filter((x) => t - x < 10000);
-  if (arr.length >= 12) return false;
-  arr.push(t);
-  rl.set(userId, arr);
-  return true;
+  try {
+    const r = await db.prepare(
+      `INSERT INTO rate_limits (bucket, count, reset_at) VALUES (?, 1, ?)
+       ON CONFLICT (bucket) DO UPDATE SET
+         count = CASE WHEN rate_limits.reset_at <= ? THEN 1 ELSE rate_limits.count + 1 END,
+         reset_at = CASE WHEN rate_limits.reset_at <= ? THEN ? ELSE rate_limits.reset_at END
+       RETURNING count, reset_at`
+    ).get(bucket, t + windowMs, t, t, t + windowMs);
+    const count = Number(r.count), resetAt = Number(r.reset_at);
+    if (count > limit) return { ok: false, retryAfter: Math.max(1, Math.ceil((resetAt - t) / 1000)) };
+    return { ok: true, retryAfter: 0 };
+  } catch (e) {
+    // Fail open: a broken limiter must not take the endpoint down with it.
+    console.error('[ratelimit] failed:', (e && e.message) || e);
+    return { ok: true, retryAfter: 0 };
+  }
+}
+async function rateClear(bucket) {
+  try { await db.prepare('DELETE FROM rate_limits WHERE bucket = ?').run(bucket); } catch {}
+}
+async function ratePeek(bucket) {
+  try { return await db.prepare('SELECT count, reset_at FROM rate_limits WHERE bucket = ?').get(bucket); }
+  catch { return null; }
+}
+// Message rate limit: 12 posts / 10s per user (unchanged).
+async function rateOk(userId) {
+  return (await rateHit('msg:' + userId, 12, 10e3)).ok;
+}
+// Slow mode: one post per `secs` per channel+user. The upsert reports whether it
+// won the window, so a second replica cannot also accept the same slot.
+async function slowBlocked(channelId, userId, secs) {
+  if (!secs) return 0;
+  const t = Date.now();
+  const next = t + secs * 1000;
+  try {
+    const r = await db.prepare(
+      `INSERT INTO rate_limits (bucket, count, reset_at) VALUES (?, 1, ?)
+       ON CONFLICT (bucket) DO UPDATE SET
+         count = 1,
+         reset_at = CASE WHEN rate_limits.reset_at <= ? THEN ? ELSE rate_limits.reset_at END
+       RETURNING (reset_at = ?) AS won, reset_at`
+    ).get('slow:' + channelId + ':' + userId, next, t, next, next);
+    if (r && r.won) return 0;
+    return Math.max(1, Math.ceil((Number(r.reset_at) - t) / 1000));
+  } catch (e) {
+    console.error('[ratelimit] slow failed:', (e && e.message) || e);
+    return 0;
+  }
 }
 
 // ---------- API ----------
@@ -642,17 +686,12 @@ async function verifyTurnstile(token, ip) {
 // type). Public on purpose — the captcha only shows up on submit — so it is
 // rate-limited per IP, and it normalizes EXACTLY like /api/register so the
 // answer is about the name that would actually be created.
-const unameHits = new Map(); // ip -> { n, reset }
-function unameAllow(ip) {
-  const t = Date.now();
-  let b = unameHits.get(ip);
-  if (!b || b.reset < t) { b = { n: 0, reset: t + 60 * 1000 }; unameHits.set(ip, b); }
-  b.n++;
-  if (unameHits.size > 4000) for (const [k, v] of unameHits) if (v.reset < t) unameHits.delete(k);
-  return b.n <= 60;
+// 60 lookups / minute per IP, shared across replicas.
+async function unameAllow(ip) {
+  return (await rateHit('uname:' + ip, 60, 60e3)).ok;
 }
 app.get('/api/username-available', async (req, res) => {
-  if (!unameAllow(req.ip || '')) return res.status(429).json({ error: 'slow_down' });
+  if (!(await unameAllow(req.ip || ''))) return res.status(429).json({ error: 'slow_down' });
   const username = String(req.query.u || '').trim().toLowerCase().replace(/[^a-z0-9_.]/g, '').slice(0, 24);
   if (!username) return res.json({ username, available: false, reason: 'empty' });
   if (username.length < 2) return res.json({ username, available: false, reason: 'too_short' });
@@ -768,24 +807,23 @@ app.post('/api/2fa/enable', authRequired, async (req, res) => {
   for (const h of hashes) await ins.run(req.user.id, h, now());
   res.json({ ok: true, backupCodes: codes });
 });
-// A code may be a TOTP or an unused backup code (single-use).
+// A code may be a TOTP or an unused backup code (single-use). The attempt brake
+// is shared: held in process memory it allowed ten tries PER REPLICA, so adding
+// pods silently multiplied an attacker's budget.
 async function check2faCode(uid, secret, code) {
   const c = String(code || '').trim().toUpperCase().replace(/[\s-]/g, '');
   if (!c) return false;
-  const f = twofaFails.get(uid);
-  if (f && f.until > now()) return false;
-  const fail = () => {
-    const e = twofaFails.get(uid) || { n: 0, until: 0 };
-    e.n += 1;
-    if (e.n >= 10) { e.until = now() + 60e3; e.n = 0; }
-    twofaFails.set(uid, e);
-  };
-  if (secret && verifyTotp(secret, c)) { twofaFails.delete(uid); return true; }
+  const r = await rateHit('2fa:' + uid, 10, 60e3);
+  if (!r.ok) return false; // locked out for the rest of the window
+  if (secret && verifyTotp(secret, c)) { await rateClear('2fa:' + uid); return true; }
   const h = crypto.createHash('sha256').update(c).digest('hex');
   const row = await db.prepare('SELECT code_hash FROM totp_backups WHERE user_id = ? AND code_hash = ?').get(uid, h);
-  if (row) { await db.prepare('DELETE FROM totp_backups WHERE user_id = ? AND code_hash = ?').run(uid, h); twofaFails.delete(uid); return true; }
-  fail();
+  if (row) { await db.prepare('DELETE FROM totp_backups WHERE user_id = ? AND code_hash = ?').run(uid, h); await rateClear('2fa:' + uid); return true; }
   return false;
+}
+async function is2faLocked(uid) {
+  const r = await ratePeek('2fa:' + uid);
+  return !!(r && Number(r.count) > 10 && Number(r.reset_at) > Date.now());
 }
 app.post('/api/2fa/disable', authRequired, async (req, res) => {
   const u = await db.prepare('SELECT totp_secret, totp_enabled FROM users WHERE id = ?').get(req.user.id);
@@ -812,8 +850,7 @@ app.post('/api/login/2fa', async (req, res) => {
   if (u.disabled) return res.status(403).json({ error: 'account_disabled' });
   if (!u.totp_enabled) return res.status(400).json({ error: 'not_enabled' });
   if (!(await check2faCode(u.id, u.totp_secret, req.body?.code))) {
-    const f = twofaFails.get(u.id);
-    if (f && f.until > now()) return res.status(429).json({ error: 'slow_down' });
+    if (await is2faLocked(u.id)) return res.status(429).json({ error: 'slow_down' });
     return res.status(401).json({ error: 'bad_code' });
   }
   const sid = await newSession(u.id, req);
@@ -823,8 +860,24 @@ app.post('/api/login/2fa', async (req, res) => {
 });
 
 // ---------- passkeys (WebAuthn) ----------
-const wac = new Map(); // stateId -> {type:'reg'|'auth', userId?, challenge, expires}
-setInterval(() => { const t = now(); for (const [k, v] of wac) if (v.expires < t) wac.delete(k); }, 60e3);
+// WebAuthn challenges live in the database, not in process memory: the options
+// request and the verify request are two separate calls that may land on
+// different replicas, and an in-process Map meant verify simply could not find
+// the challenge (passkey login and registration both failed outright).
+// wacTake consumes with DELETE ... RETURNING, so a challenge can never be
+// replayed — not even by two replicas racing on the same state id.
+async function wacPut(stateId, kind, userId, challenge, ttlMs) {
+  await db.prepare('INSERT INTO webauthn_challenges (state_id, kind, user_id, challenge, expires) VALUES (?,?,?,?,?)')
+    .run(stateId, kind, userId || null, challenge, Date.now() + ttlMs);
+}
+async function wacTake(stateId, kind) {
+  const r = await db.prepare(
+    'DELETE FROM webauthn_challenges WHERE state_id = ? AND kind = ? RETURNING kind, user_id, challenge, expires'
+  ).get(stateId, kind);
+  if (!r) return null;
+  if (Number(r.expires) < Date.now()) return null; // consumed, but too late to use
+  return { type: r.kind, userId: r.user_id, challenge: r.challenge, expires: Number(r.expires) };
+}
 function webauthnRp(req) { return req.hostname; }
 function webauthnOrigin(req) { return `${req.protocol}://${req.get('host')}`; }
 app.post('/api/passkeys/register/options', authRequired, async (req, res) => {
@@ -838,16 +891,15 @@ app.post('/api/passkeys/register/options', authRequired, async (req, res) => {
       excludeCredentials: existing.map((r) => ({ id: r.credential_id })),
     });
     const stateId = uid();
-    wac.set(stateId, { type: 'reg', userId: req.user.id, challenge: options.challenge, expires: now() + 5 * 60e3 });
+    await wacPut(stateId, 'reg', req.user.id, options.challenge, 5 * 60e3);
     res.json({ stateId, options });
   } catch { res.status(500).json({ error: 'webauthn_failed' }); }
 });
 app.post('/api/passkeys/register/verify', authRequired, async (req, res) => {
   try {
     const sid0 = String(req.body?.stateId || '');
-    const st = wac.get(sid0);
-    if (!st || st.type !== 'reg' || st.userId !== req.user.id) return res.status(400).json({ error: 'bad_state' });
-    wac.delete(sid0);
+    const st = await wacTake(sid0, 'reg');
+    if (!st || st.userId !== req.user.id) return res.status(400).json({ error: 'bad_state' });
     const v = await verifyRegistrationResponse({
       response: req.body?.attResp, expectedChallenge: st.challenge,
       expectedOrigin: webauthnOrigin(req), expectedRPID: webauthnRp(req),
@@ -892,16 +944,15 @@ app.post('/api/passkeys/login/options', async (req, res) => {
     }
     const options = await generateAuthenticationOptions({ rpID: webauthnRp(req), allowCredentials: allow.length ? allow : undefined, userVerification: 'preferred' });
     const stateId = uid();
-    wac.set(stateId, { type: 'auth', userId, challenge: options.challenge, expires: now() + 5 * 60e3 });
+    await wacPut(stateId, 'auth', userId, options.challenge, 5 * 60e3);
     res.json({ stateId, options });
   } catch { res.status(500).json({ error: 'webauthn_failed' }); }
 });
 app.post('/api/passkeys/login/verify', async (req, res) => {
   try {
     const sid0 = String(req.body?.stateId || '');
-    const st = wac.get(sid0);
-    if (!st || st.type !== 'auth') return res.status(400).json({ error: 'bad_state' });
-    wac.delete(sid0);
+    const st = await wacTake(sid0, 'auth');
+    if (!st) return res.status(400).json({ error: 'bad_state' });
     const authResp = req.body?.authResp;
     const credId = String(authResp?.id || '');
     if (!credId) return res.status(400).json({ error: 'verify_failed' });
@@ -1092,6 +1143,9 @@ app.delete('/api/servers/:id/channels/:chId', authRequired, async (req, res) => 
     safeSend(c, { t: 'voice-kicked', serverId: s.id, channelId: ch.id });
   }
   voiceRooms.delete(key);
+  // The channel is gone, so its occupancy has to go with it — otherwise every
+  // roster keeps showing people sitting in a channel that no longer exists.
+  for (const uid of displaced) { try { await voiceForget(uid); } catch {} }
   for (const uid of displaced) { try { await pushFriendsVoice(uid); } catch {} }
   broadcastToServer(s.id, { t: 'channel-deleted', channelId: ch.id, serverId: s.id });
   res.json({ ok: true });
@@ -1156,13 +1210,9 @@ async function textChannelOf(serverId, channelId) {
   const ch = await db.prepare('SELECT * FROM channels WHERE id = ? AND server_id = ?').get(channelId, serverId);
   return ch && ch.type === 'text' ? ch : null;
 }
-function webhookRateOk(wid) {
-  const t = Date.now();
-  const arr = (rl.get('wh:' + wid) || []).filter((x) => t - x < 60000);
-  if (arr.length >= 30) return false;
-  arr.push(t);
-  rl.set('wh:' + wid, arr);
-  return true;
+// 30 webhook posts / minute per webhook, shared across replicas.
+async function webhookRateOk(wid) {
+  return (await rateHit('wh:' + wid, 30, 60e3)).ok;
 }
 app.get('/api/servers/:id/channels/:chId/webhooks', authRequired, async (req, res) => {
   const s = await getServer(req.params.id);
@@ -1268,7 +1318,7 @@ app.post('/api/webhooks/:wid/:token', async (req, res) => {
   if (!w) return res.status(404).json({ error: 'bad_webhook' });
   const ch = await textChannelOf(w.server_id, w.channel_id);
   if (!ch) return res.status(404).json({ error: 'no_channel' });
-  if (!webhookRateOk(w.id)) return res.status(429).json({ error: 'slow_down' });
+  if (!(await webhookRateOk(w.id))) return res.status(429).json({ error: 'slow_down' });
   const content = squashBreaks(String(req.body?.content || '')).trim().slice(0, 5000);
   const atts = Array.isArray(req.body?.attachments) ? req.body.attachments.slice(0, 5) : [];
   // Per-message overrides (fall back to the webhook's own name/avatar).
@@ -1915,7 +1965,7 @@ async function notifyAdminsOfReport(rep) {
       report_id: rep.id, server_id: rep.server_id || null, channel_id: rep.channel_id || null,
       message_id: rep.message_id || null, thread_id: rep.thread_id || null,
     });
-    if (!userVisible(a.id)) {
+    if (!(await userVisible(a.id))) {
       await pushToUser(a.id, {
         title: 'New report',
         body: `${reason} · ${where}${who ? ' · ' + who : ''}`,
@@ -2306,6 +2356,10 @@ async function storyReactionMap(storyIds, mineId) {
   return out;
 }
 function notifyAllClients(obj) {
+  notifyAllClientsLocal(obj);
+  busPublish('all', { obj });
+}
+function notifyAllClientsLocal(obj) {
   for (const c of clients) safeSend(c, obj);
 }
 async function storyAudienceIds(s) {
@@ -2559,7 +2613,7 @@ app.post('/api/stories/:id/react', authRequired, async (req, res) => {
   if (await db.prepare('SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)').get(s.user_id, me.id, me.id, s.user_id)) {
     return res.status(403).json({ error: 'blocked' });
   }
-  if (!rateOk(me.id)) return res.status(429).json({ error: 'slow_down' });
+  if (!(await rateOk(me.id))) return res.status(429).json({ error: 'slow_down' });
   const cur = await db.prepare('SELECT count FROM story_reactions WHERE story_id = ? AND user_id = ? AND emoji = ?').get(s.id, me.id, emoji);
   const have = Number(cur && cur.count) || 0;
   let mineCount, cleared = false;
@@ -2646,7 +2700,7 @@ app.post('/api/stories/:id/reply', authRequired, async (req, res) => {
     return res.status(403).json({ error: 'blocked' });
   }
   if (!text) return res.status(400).json({ error: 'empty_reply' });
-  if (!rateOk(me.id)) return res.status(429).json({ error: 'slow_down' });
+  if (!(await rateOk(me.id))) return res.status(429).json({ error: 'slow_down' });
   const t = await dmThreadWith(me.id, s.user_id);
   const mid = uid();
   await db.prepare('INSERT INTO dm_messages (id,thread_id,user_id,content,reply_to_id,fwd_from,story_id,created_at) VALUES (?,?,?,?,?,?,?,?)')
@@ -2706,7 +2760,7 @@ app.post('/api/dm/viewonce', authRequired, async (req, res) => {
   let overlays = overlaysToJson(req.body?.overlays);
   const ids = [...new Set((Array.isArray(req.body?.userIds) ? req.body.userIds : []).map(String).filter((x) => x && x !== me.id))].slice(0, 25);
   if (!ids.length) return res.status(400).json({ error: 'pick_friends' });
-  if (!rateOk(me.id)) return res.status(429).json({ error: 'slow_down' });
+  if (!(await rateOk(me.id))) return res.status(429).json({ error: 'slow_down' });
   // Story → private DMs (the story composer's individual recipients): the
   // media is copied into the gated viewonce/ prefix so it really is view-once.
   // Only the author may do this, and only while their story is still live.
@@ -2997,6 +3051,9 @@ app.patch('/api/me', authRequired, async (req, res) => {
   // Theme-only saves stay silent: no user-update broadcast (nothing other
   // clients render), no presence fan-out — just the PATCH response.
   if (!(sets.length === 1 && sets[0] === 'theme = ?')) {
+  // Registry FIRST: every broadcast below — and any peer's roster read that
+  // races this request — must observe the new status, never the old one.
+  await presenceSetStatus(u.id, u.status);
   await broadcastUserUpdate(u);
   for (const sid of [...clients].filter((c) => c.meta && c.meta.userId === u.id).flatMap((c) => [...c.meta.servers])) {
     broadcastToServer(sid, { t: 'user-status', serverId: sid, userId: u.id, status: u.status });
@@ -3005,13 +3062,14 @@ app.patch('/api/me', authRequired, async (req, res) => {
   // plain offline to everyone else (only your own clients know you're hidden).
   if (u.status === 'invisible') notifyFriends(u.id, { t: 'user-offline', userId: u.id });
   else notifyFriends(u.id, { t: 'user-status', userId: u.id, status: u.status });
-  // sync live sockets' presence state
+  // sync live sockets' presence state: the local copy for this pod (the shared
+  // registry was already updated above, before the broadcasts).
   for (const c of clients) if (c.meta && c.meta.userId === u.id) c.meta.status = u.status;
   // Voice visibility follows status: going invisible drops the IN VOICE row
   // from every friend's rail, coming back restores it.
-  if (userInVoice(u.id)) { try { await pushFriendsVoice(u.id); } catch {} }
+  if (await userInVoice(u.id)) { try { await pushFriendsVoice(u.id); } catch {} }
   // An invisible<->visible flip moves the admin panel's Online number.
-  if ((u.status || 'online') !== (req.user.status || 'online')) pushAdminPresence();
+  if ((u.status || 'online') !== (req.user.status || 'online')) await pushAdminPresence();
   }
   // Friends hear about a custom-status change (falls through to no-op when
   // the text didn't actually change).
@@ -3445,7 +3503,7 @@ app.get('/api/admin/stats', authRequired, requireSiteAdmin, async (req, res) => 
     dmMessages: await count('SELECT COUNT(*) c FROM dm_messages'),
     // People, not sockets: two tabs (or phone + desktop) are one user online.
     // Invisible users are hidden from everyone, so they don't count either.
-    online: onlineUsers(),
+    online: await onlineUsers(),
     sessions: clients.size,
     openReports: await openReportCount(),
   });
@@ -3717,7 +3775,7 @@ app.patch('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, re
   // Live sockets carry their owner's admin flag (the panel's live fan-out is
   // addressed by it), so a grant/demotion applies without a reconnect.
   for (const c of clients) if (c.meta && c.meta.userId === fresh.id) c.meta.is_admin = !!fresh.is_admin;
-  pushAdminPresence();
+  await pushAdminPresence();
   await broadcastUserUpdate(fresh);
   res.json({ user: await adminUserView(fresh) });
 });
@@ -4262,13 +4320,23 @@ async function areFriends(a, b) {
   return !!(f && f.status === 'accepted');
 }
 function notifyUser(userId, obj) {
+  notifyUserLocal(userId, obj);
+  // Covers dmNotify and notifyStoryAudience's per-user fan-out too: both are
+  // built on notifyUser, so they need no publish of their own.
+  busPublish('user', { userId, obj });
+}
+function notifyUserLocal(userId, obj) {
   for (const c of clients) if (c.meta && c.meta.userId === userId) safeSend(c, obj);
 }
 // Does the user have a live socket with their page visible/focused? Only then do
 // we suppress the OS push (so backgrounded/closed mobile apps still get pings).
-function userVisible(uid) {
-  for (const c of clients) if (c.meta && c.meta.userId === uid && c.meta.visible) return true;
-  return false;
+// Does ANY of this user's sockets — on ANY replica — have the page visible?
+// Only then is the OS push suppressed. Answering from this process's sockets
+// alone used to silently drop notifications: a user who closed the app but
+// whose stale row said "visible" would get no push at all.
+async function userVisible(uid) {
+  const r = await db.prepare('SELECT 1 AS ok FROM live_sessions WHERE user_id = ? AND visible = 1').get(uid);
+  return !!r;
 }
 async function dmThreadFor(userId, threadId) {
   if (!threadId) return null;
@@ -4458,7 +4526,7 @@ async function notifyServerMessage(serverId, channelId, author, content, message
     // messages never land in the inbox, even on 'All messages' (that scope
     // still controls the OS/push ping below).
     if (isMention) await pushInbox(uid, { kind: 'mention', title, body, server_id: serverId, channel_id: channelId, message_id: messageId || null });
-    if (userVisible(uid)) continue;
+    if (await userVisible(uid)) continue;
     await pushToUser(uid, {
       title,
       body,
@@ -4479,7 +4547,7 @@ async function notifyDmMessage(thread, author, content, messageId) {
     const body = thread.is_group ? `${displayOf(author)}: ${text}`.slice(0, 160) : text.slice(0, 160);
     // DMs stay out of the notification inbox (mentions + major events only) —
     // visible tabs badge via dm-new, hidden/closed devices still get a push below.
-    if (userVisible(uid)) continue;
+    if (await userVisible(uid)) continue;
     await pushToUser(uid, {
       title,
       body,
@@ -4525,7 +4593,7 @@ async function notifyReaction(authorId, reactor, emoji, target) {
   if (now() - (reactionPingAt.get(pingKey) || 0) < 5 * 60000) return;
   reactionPingAt.set(pingKey, now());
   if (reactionPingAt.size > 5000) reactionPingAt.clear(); // bound the dedupe map
-  if (userVisible(authorId)) return;
+  if (await userVisible(authorId)) return;
   await pushToUser(authorId, {
     title,
     body,
@@ -4553,7 +4621,7 @@ async function notifyFriendStatus(user, statusText) {
     try { if ((await notifMode(uid, ['global'])) === 'muted') continue; } catch {}
     try { if (await db.prepare('SELECT 1 FROM blocks WHERE user_id = ? AND blocked_id = ?').get(uid, user.id)) continue; } catch {}
     await pushInbox(uid, { kind: 'friend-status', title, body });
-    if (userVisible(uid)) continue;
+    if (await userVisible(uid)) continue;
     await pushToUser(uid, { title, body, icon: user.avatar_url || '/icons/icon-192.png', tag: `status:${user.id}`, url: '/?friends=1' });
   }
 }
@@ -4582,7 +4650,19 @@ function evictFromServer(serverId, userId) {
     }
     if (set.size === 0) voiceRooms.delete(key);
   }
-  if (leftVoice) pushFriendsVoice(userId).catch(() => {});
+  if (leftVoice) {
+    // ORDER MATTERS: the roster broadcast below re-reads voice_occupants, so the
+    // row must be gone first. Deleting and broadcasting concurrently (the old
+    // fire-and-forget pair) let the roster be built from the row that was about
+    // to disappear, leaving every friend showing a user in a room they had left.
+    Promise.resolve()
+      .then(() => voiceForget(userId))
+      // The same eviction has to happen on whichever replica holds this user's
+      // other sockets, or a server ban would leave them talking.
+      .then(() => busPublish('voice-kick', { userId, serverId, threadId: null, reason: 'mod' }))
+      .then(() => pushFriendsVoice(userId))
+      .catch(() => {});
+  }
 }
 const DM_JOIN = `SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,
   p.content AS p_content, pu.display_name AS p_name
@@ -5191,14 +5271,9 @@ app.delete('/api/me/gif-favorites/:slug', authRequired, async (req, res) => {
 // cached in Postgres, so only the first viewer of a URL costs a fetch — cache
 // hits aren't rate-limited, live fetches are.
 const unfurl = require('./unfurl');
-const unfurlHits = new Map(); // userId -> { n, reset }
-function unfurlAllow(userId) {
-  const t = Date.now();
-  let b = unfurlHits.get(userId);
-  if (!b || b.reset < t) { b = { n: 0, reset: t + 5 * 60 * 1000 }; unfurlHits.set(userId, b); }
-  b.n++;
-  if (unfurlHits.size > 2000) for (const [k, v] of unfurlHits) if (v.reset < t) unfurlHits.delete(k);
-  return b.n <= 60;
+// 60 live unfurls / 5 min per user, shared across replicas.
+async function unfurlAllow(userId) {
+  return (await rateHit('unfurl:' + userId, 60, 5 * 60e3)).ok;
 }
 
 app.get('/api/unfurl', authRequired, async (req, res) => {
@@ -5206,7 +5281,7 @@ app.get('/api/unfurl', authRequired, async (req, res) => {
   if (!url) return res.status(400).json({ error: 'url_required' });
   if (!unfurl.enabled()) return res.json({ embed: null });
   const { embed, cached } = await unfurl.getEmbed(url);
-  if (!cached && !unfurlAllow(req.user.id)) return res.status(429).json({ error: 'too_many_requests', embed: null });
+  if (!cached && !(await unfurlAllow(req.user.id))) return res.status(429).json({ error: 'too_many_requests', embed: null });
   res.setHeader('Cache-Control', 'no-store');
   res.json({ embed: unfurl.publicEmbed(embed) });
 });
@@ -5239,12 +5314,54 @@ async function fullMessage(id, meId) {
   `).get(id);
   return row ? (await hydrateMessages([row], meId))[0] : null;
 }
-function presenceFor(serverId, forUserId) {
+// ---------- shared presence (cluster-wide live sockets) ----------
+// Each replica registers its own sockets in live_sessions so ANY replica can
+// answer "who is online" and "are they looking at the app" for the whole
+// cluster, not just for whichever pod happens to hold them.
+async function presenceUpsert(ws) {
+  const m = ws && ws.meta;
+  if (!m || !ws.lsid) return;
+  const status = m.status || 'online';
+  try {
+    await db.prepare(
+      `INSERT INTO live_sessions (sid, user_id, pod_id, status, invisible, visible, is_admin, updated_at)
+       VALUES (?,?,?,?,?,?,?,?)
+       ON CONFLICT (sid) DO UPDATE SET
+         user_id = EXCLUDED.user_id, pod_id = EXCLUDED.pod_id, status = EXCLUDED.status,
+         invisible = EXCLUDED.invisible, visible = EXCLUDED.visible,
+         is_admin = EXCLUDED.is_admin, updated_at = EXCLUDED.updated_at`
+    ).run(ws.lsid, m.userId, bus.POD_ID, status, status === 'invisible' ? 1 : 0,
+      m.visible ? 1 : 0, m.is_admin ? 1 : 0, Date.now());
+  } catch (e) { console.error('[presence] upsert failed:', (e && e.message) || e); }
+}
+async function presenceForget(ws) {
+  if (!ws || !ws.lsid) return;
+  try { await db.prepare('DELETE FROM live_sessions WHERE sid = ?').run(ws.lsid); }
+  catch (e) { console.error('[presence] delete failed:', (e && e.message) || e); }
+}
+// A status flip belongs to the user, so it applies to all of their rows at
+// once. ws.meta.status is kept in step locally, but it is no longer what
+// presence reads — the registry is.
+async function presenceSetStatus(userId, status) {
+  const s = status || 'online';
+  try {
+    await db.prepare('UPDATE live_sessions SET status = ?, invisible = ?, updated_at = ? WHERE user_id = ?')
+      .run(s, s === 'invisible' ? 1 : 0, Date.now(), userId);
+  } catch (e) { console.error('[presence] status update failed:', (e && e.message) || e); }
+}
+// Who is online among a server's members. Membership is already database-backed
+// (replica-safe), presence comes from live_sessions, so this is correct no
+// matter which pod anyone connected to.
+async function presenceFor(serverId, forUserId) {
+  const rows = await db.prepare(
+    `SELECT DISTINCT s.user_id, s.status, s.invisible
+       FROM live_sessions s
+       JOIN server_members m ON m.user_id = s.user_id AND m.server_id = ?`
+  ).all(serverId);
   const map = {};
-  for (const c of clients) {
-    if (!c.meta || !c.meta.servers.has(serverId)) continue;
-    if ((c.meta.status || 'online') === 'invisible' && c.meta.userId !== forUserId) continue;
-    map[c.meta.userId] = c.meta.status || 'online';
+  for (const r of rows) {
+    if (r.invisible && r.user_id !== forUserId) continue; // hidden from everyone but yourself
+    map[r.user_id] = r.status || 'online';
   }
   return map;
 }
@@ -5259,18 +5376,26 @@ async function friendIdsOf(userId) {
     return new Set(rows.map((f) => (f.user_a === userId ? f.user_b : f.user_a)));
   } catch { return new Set(); }
 }
-function presenceForUsers(ids, forUserId) {
+async function presenceForUsers(ids, forUserId) {
   const map = {};
   if (!ids || !ids.size) return map;
-  for (const c of clients) {
-    if (!c.meta || !ids.has(c.meta.userId)) continue;
-    if (c.meta.userId !== forUserId && (c.meta.status || 'online') === 'invisible') continue;
-    map[c.meta.userId] = c.meta.status || 'online';
+  const list = [...ids];
+  const ph = list.map(() => '?').join(',');
+  const rows = await db.prepare(
+    `SELECT DISTINCT user_id, status, invisible FROM live_sessions WHERE user_id IN (${ph})`
+  ).all(...list);
+  for (const r of rows) {
+    if (r.invisible && r.user_id !== forUserId) continue;
+    map[r.user_id] = r.status || 'online';
   }
   return map;
 }
 // Send a payload to every live socket of the given user's friends.
 function notifyFriends(userId, obj) {
+  notifyFriendsLocal(userId, obj);
+  busPublish('friends', { userId, obj });
+}
+function notifyFriendsLocal(userId, obj) {
   for (const c of clients) {
     if (!c.meta || c.meta.userId === userId) continue;
     if (c.meta.friends && c.meta.friends.has(userId)) safeSend(c, obj);
@@ -5284,7 +5409,7 @@ async function syncSocketFriends(userId) {
   for (const c of clients) {
     if (!c.meta || c.meta.userId !== userId) continue;
     c.meta.friends = ids;
-    safeSend(c, { t: 'presence', online: presenceForUsers(ids, userId) });
+    safeSend(c, { t: 'presence', online: await presenceForUsers(ids, userId) });
   }
   // A brand-new friend may already be sitting in a voice room.
   try { await sendFriendsVoice(userId); } catch {}
@@ -5405,60 +5530,196 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 
 /** ws.meta = { userId, username, display_name, avatar_color, servers:Set, voice:{kind:'server'|'dm',serverId,channelId,threadId,muted,...}|null } */
 const clients = new Set();
+let socketSeq = 0; // monotonic per-process, only used to build live_sessions.sid
 const voiceRooms = new Map(); // key `${serverId}:${channelId}` (servers) or `dm:${threadId}` (DM calls) -> Set<ws>
 
 function safeSend(ws, obj) {
   if (ws.readyState === 1) { try { ws.send(JSON.stringify(obj)); } catch {} }
 }
 function broadcastToServer(serverId, obj, except) {
+  broadcastToServerLocal(serverId, obj, except);
+  // `except` is a socket on THIS replica (the originator). Peers hold no such
+  // socket, and the originator's *other* devices should still receive it —
+  // which is exactly what the single-replica path does. So it is not published.
+  busPublish('server', { serverId, obj });
+}
+function broadcastToServerLocal(serverId, obj, except) {
   for (const ws of clients) {
     if (ws.meta && ws.meta.servers.has(serverId) && ws !== except) safeSend(ws, obj);
   }
 }
 // Site-admin console: distinct users online (not sockets — two tabs or two
-// devices are one person), invisible users excluded like everywhere else.
-function onlineUsers() {
-  const ids = new Set();
-  for (const ws of clients) {
-    if (!ws.meta || (ws.meta.status || 'online') === 'invisible') continue;
-    ids.add(ws.meta.userId);
-  }
-  return ids.size;
+// devices are one person), invisible users excluded like everywhere else, and
+// counted across every replica.
+async function onlineUsers() {
+  const r = await db.prepare('SELECT COUNT(DISTINCT user_id) AS c FROM live_sessions WHERE invisible = 0').get();
+  return (r && r.c) || 0;
+}
+async function liveSessionCount() {
+  const r = await db.prepare('SELECT COUNT(*) AS c FROM live_sessions').get();
+  return (r && r.c) || 0;
+}
+function pushAdminPresenceLocal(payload) {
+  for (const ws of clients) if (ws.meta && ws.meta.is_admin) safeSend(ws, payload);
 }
 // Push the live counts to every admin socket so the Overview card moves the
 // moment someone connects, disconnects or flips to/from invisible — no manual
-// refresh. Fired on the changes that can move the number; the DB-backed counts
-// are refreshed by the panel's own poll while it's open.
-function pushAdminPresence() {
-  const payload = { t: 'admin-presence', online: onlineUsers(), sessions: clients.size };
-  for (const ws of clients) if (ws.meta && ws.meta.is_admin) safeSend(ws, payload);
+// refresh. Counted once from the shared registry and the SAME payload is
+// published, so peers do not each re-query the database.
+async function pushAdminPresence() {
+  const payload = { t: 'admin-presence', online: await onlineUsers(), sessions: await liveSessionCount() };
+  pushAdminPresenceLocal(payload);
+  busPublish('admin-presence', payload);
 }
 function voiceKey(s, c) { return s + ':' + c; }
 function dmVoiceKey(tid) { return 'dm:' + tid; }
 function voiceKeyOf(v) { return v.kind === 'dm' ? dmVoiceKey(v.threadId) : voiceKey(v.serverId, v.channelId); }
-function voicePeersPayload(key) {
-  const set = voiceRooms.get(key) || new Set();
-  return [...set].map((ws) => ({
-    id: ws.meta.userId,
-    username: ws.meta.username,
-    display_name: ws.meta.display_name,
-    avatar_color: ws.meta.avatar_color,
-    active_tag: ws.meta.active_tag || null,
-    avatar_url: ws.meta.avatar_url || null,
-    muted: !!(ws.meta.voice && ws.meta.voice.muted),
-    speaking: !!(ws.meta.voice && ws.meta.voice.speaking),
-    deafened: !!(ws.meta.voice && ws.meta.voice.deafened),
-    camera: !!(ws.meta.voice && ws.meta.voice.camera),
-    sharing: !!(ws.meta.voice && ws.meta.voice.sharing),
-    serverMuted: !!(ws.meta.voice && ws.meta.voice.serverMuted),
-    streamName: (ws.meta.voice && ws.meta.voice.streamName) || null,
+// Room key -> the voice_occupants rows that belong to it. Room ids never
+// contain ':' (voiceKey is s + ':' + c), which is what this split relies on.
+function voiceRoomWhere(key) {
+  if (key.startsWith('dm:')) return { sql: "kind = 'dm' AND thread_id = ?", args: [key.slice(3)] };
+  const i = key.indexOf(':');
+  return { sql: "kind = 'server' AND server_id = ? AND channel_id = ?", args: [key.slice(0, i), key.slice(i + 1)] };
+}
+// The cluster-wide roster for one room, read from Postgres rather than this
+// replica's voiceRooms. Occupants who connected to a PEER replica must be
+// included: voice-peers and voice-peer-left are whole-list replacements, so a
+// pod reporting only its own sockets would not merely be incomplete, it would
+// overwrite a correct roster with an empty one.
+async function voicePeersPayload(key) {
+  const w = voiceRoomWhere(key);
+  const rows = await db.prepare(
+    `SELECT v.user_id, v.muted, v.speaking, v.deafened, v.camera, v.sharing, v.server_muted, v.stream_name,
+            u.username, u.display_name, u.avatar_color, u.active_tag, u.avatar_url
+       FROM voice_occupants v JOIN users u ON u.id = v.user_id
+      WHERE ${w.sql}
+      ORDER BY v.updated_at`
+  ).all(...w.args);
+  return rows.map((r) => ({
+    id: r.user_id,
+    username: r.username,
+    display_name: r.display_name,
+    avatar_color: r.avatar_color,
+    active_tag: r.active_tag || null,
+    avatar_url: r.avatar_url || null,
+    muted: !!r.muted,
+    speaking: !!r.speaking,
+    deafened: !!r.deafened,
+    camera: !!r.camera,
+    sharing: !!r.sharing,
+    serverMuted: !!r.server_muted,
+    streamName: r.stream_name || null,
   }));
 }
-function findWsInVoice(key, userId) {
+// LOCAL socket lookup ONLY. The peer's socket lives on whichever replica it
+// connected to, so this finds it just when it happens to be ours — which is
+// why signalling has a cross-replica path (see the 'voice-signal' handler).
+function findLocalWsInVoice(key, userId) {
   for (const ws of voiceRooms.get(key) || []) {
     if (ws.meta.userId === userId) return ws;
   }
   return null;
+}
+// Write this socket's voice state to the shared registry. Called on join and on
+// every voice-state / moderation change — upserting a single row per user, so
+// the frequency of voice-state frames costs one cheap statement.
+async function voiceUpsert(ws) {
+  const m = ws && ws.meta;
+  const v = m && m.voice;
+  if (!v) return;
+  try {
+    await db.prepare(
+      `INSERT INTO voice_occupants
+         (user_id, pod_id, kind, server_id, channel_id, thread_id,
+          muted, speaking, deafened, camera, sharing, server_muted, stream_name, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT (user_id) DO UPDATE SET
+         pod_id = EXCLUDED.pod_id, kind = EXCLUDED.kind, server_id = EXCLUDED.server_id,
+         channel_id = EXCLUDED.channel_id, thread_id = EXCLUDED.thread_id,
+         muted = EXCLUDED.muted, speaking = EXCLUDED.speaking, deafened = EXCLUDED.deafened,
+         camera = EXCLUDED.camera, sharing = EXCLUDED.sharing,
+         server_muted = EXCLUDED.server_muted, stream_name = EXCLUDED.stream_name,
+         updated_at = EXCLUDED.updated_at`
+    ).run(
+      m.userId, bus.POD_ID, v.kind,
+      v.serverId || null, v.channelId || null, v.threadId || null,
+      v.muted ? 1 : 0, v.speaking ? 1 : 0, v.deafened ? 1 : 0, v.camera ? 1 : 0,
+      v.sharing ? 1 : 0, v.serverMuted ? 1 : 0, v.streamName || null, Date.now()
+    );
+  } catch (e) { console.error('[voice] registry upsert failed:', (e && e.message) || e); }
+}
+async function voiceForget(userId) {
+  try { await db.prepare('DELETE FROM voice_occupants WHERE user_id = ?').run(userId); }
+  catch (e) { console.error('[voice] registry delete failed:', (e && e.message) || e); }
+}
+// Evict a user from the voice rooms THIS replica holds. `scope` narrows it to a
+// DM thread ({threadId}) or a server ({serverId}); an empty scope evicts every
+// room, which is what a site-level ban needs. The registry row is cleared here
+// too so a roster never keeps a user who has been pulled out of the room.
+function voiceKickLocal(userId, scope) {
+  const sc = scope || {};
+  for (const c of [...clients]) {
+    if (!c.meta || c.meta.userId !== userId) continue;
+    const v = c.meta.voice;
+    if (!v) continue;
+    if (sc.threadId && !(v.kind === 'dm' && v.threadId === sc.threadId)) continue;
+    if (sc.serverId && !(v.kind === 'server' && v.serverId === sc.serverId)) continue;
+    const key = voiceKeyOf(v);
+    const set = voiceRooms.get(key);
+    if (set) { set.delete(c); if (!set.size) voiceRooms.delete(key); }
+    c.meta.voice = null;
+    voiceForget(userId).catch(() => {});
+    syncStreaming(c).catch(() => {});
+    if (v.kind === 'dm') safeSend(c, { t: 'voice-kicked', threadId: v.threadId, reason: sc.reason || 'mod' });
+    else safeSend(c, { t: 'voice-kicked', serverId: v.serverId, channelId: v.channelId, reason: sc.reason || 'mod' });
+  }
+}
+// …and ask every other replica to do the same, because the user may hold a
+// socket on any of them. Publishing is unconditional: even with no local socket
+// a peer may have one.
+function voiceKickEverywhere(userId, scope) {
+  const sc = scope || {};
+  voiceKickLocal(userId, sc);
+  busPublish('voice-kick', { userId, threadId: sc.threadId || null, serverId: sc.serverId || null, reason: sc.reason || 'mod' });
+}
+// A replica that dies leaves its voice_occupants and live_sessions rows behind.
+// Nobody can be sitting in a room, or online at all, on a replica that no longer
+// exists — and without this a crashed pod's users would read as present forever.
+// Leader-only, and driven off bus_replicas (the same heartbeat table that
+// decides liveness everywhere else), so it settles about half a minute after a
+// crash.
+async function reconcileReplicaState() {
+  if (!bus.stats().enabled) return; // no heartbeats at all → every row would look dead
+  const staleBefore = Date.now() - bus.PEER_STALE_MS;
+  try {
+    await db.withLock(db.LOCKS.stateReconcile, async () => {
+      const deadVoice = await db.prepare(
+        `SELECT v.user_id FROM voice_occupants v
+          WHERE NOT EXISTS (
+            SELECT 1 FROM bus_replicas r WHERE r.pod_id = v.pod_id AND r.last_seen >= ?
+          )`
+      ).all(staleBefore);
+      for (const row of deadVoice) {
+        await voiceForget(row.user_id);
+        try { await pushFriendsVoice(row.user_id); } catch {}
+      }
+      const gone = await db.prepare(
+        `DELETE FROM live_sessions s
+          WHERE NOT EXISTS (
+            SELECT 1 FROM bus_replicas r WHERE r.pod_id = s.pod_id AND r.last_seen >= ?
+          )
+          RETURNING s.user_id`
+      ).all(staleBefore);
+      // Short-lived state as well: expired limiter windows and stale WebAuthn
+      // challenges. Bounded here so neither table can grow without limit.
+      const deadRl = await db.prepare('DELETE FROM rate_limits WHERE reset_at < ? RETURNING bucket').all(Date.now());
+      const deadWac = await db.prepare('DELETE FROM webauthn_challenges WHERE expires < ? RETURNING state_id').all(Date.now());
+      if (deadVoice.length || gone.length || deadRl.length || deadWac.length) {
+        console.log(`[reconcile] reaped ${deadVoice.length} voice, ${gone.length} session, ${deadRl.length} limiter, ${deadWac.length} challenge row(s)`);
+      }
+      if (gone.length) { try { await pushAdminPresence(); } catch {} }
+    });
+  } catch (e) { console.error('[reconcile] failed:', (e && e.message) || e); }
 }
 // ---------- friends' voice presence (Active Now "IN VOICE") ----------
 // Who is sitting in a voice room, seen through the viewer's friend list. This
@@ -5481,33 +5742,40 @@ async function voiceRoomNames(channelId) {
   voiceNameCache.set(channelId, info);
   return info;
 }
-// One row per user currently in a voice room, independent of the viewer. A
-// user is only ever in one room (joining elsewhere leaves first), so the map
-// keyed by user id is stable even with a stray second socket.
-function voiceOccupantRows() {
-  const rows = new Map();
-  for (const set of voiceRooms.values()) {
-    for (const ws of set) {
-      const m = ws.meta;
-      if (!m || !m.voice) continue;
-      rows.set(m.userId, {
-        userId: m.userId, kind: m.voice.kind,
-        serverId: m.voice.serverId || null, channelId: m.voice.channelId || null, threadId: m.voice.threadId || null,
-        count: set.size, invisible: (m.status || 'online') === 'invisible',
-      });
-    }
+// One row per user currently in a voice room, CLUSTER-WIDE, independent of the
+// viewer. A user is only ever in one room (joining elsewhere leaves first), so
+// the map keyed by user id is stable even with a stray second socket.
+async function voiceOccupantRows() {
+  const rows = await db.prepare(
+    `SELECT v.user_id, v.kind, v.server_id, v.channel_id, v.thread_id, u.status
+       FROM voice_occupants v JOIN users u ON u.id = v.user_id`
+  ).all();
+  const counts = new Map();
+  for (const r of rows) {
+    const k = r.kind === 'dm' ? dmVoiceKey(r.thread_id) : voiceKey(r.server_id, r.channel_id);
+    counts.set(k, (counts.get(k) || 0) + 1);
   }
-  return rows;
+  const out = new Map();
+  for (const r of rows) {
+    const k = r.kind === 'dm' ? dmVoiceKey(r.thread_id) : voiceKey(r.server_id, r.channel_id);
+    out.set(r.user_id, {
+      userId: r.user_id, kind: r.kind,
+      serverId: r.server_id || null, channelId: r.channel_id || null, threadId: r.thread_id || null,
+      count: counts.get(k) || 1,
+      invisible: (r.status || 'online') === 'invisible',
+    });
+  }
+  return out;
 }
-function userInVoice(userId) {
-  for (const set of voiceRooms.values()) for (const ws of set) if (ws.meta && ws.meta.userId === userId) return true;
-  return false;
+async function userInVoice(userId) {
+  const r = await db.prepare('SELECT 1 AS ok FROM voice_occupants WHERE user_id = ?').get(userId);
+  return !!r;
 }
 async function friendsVoiceFor(sockets, viewerId) {
   const friendIds = (sockets[0] && sockets[0].meta.friends) || new Set();
   const myServers = (sockets[0] && sockets[0].meta.servers) || new Set();
   const out = {};
-  for (const row of voiceOccupantRows().values()) {
+  for (const row of (await voiceOccupantRows()).values()) {
     if (row.userId === viewerId || row.invisible || !friendIds.has(row.userId)) continue;
     if (row.kind === 'dm') {
       // Only calls the viewer is part of: a 1:1 call between two other people
@@ -5532,10 +5800,19 @@ async function sendFriendsVoice(userId) {
 }
 // Someone's voice membership changed: only their friends can see it, and only
 // while they are not invisible.
-async function pushFriendsVoice(userId) {
+async function pushFriendsVoiceLocal(userId) {
   const friends = await friendIdsOf(userId);
   if (!friends.size) return;
   await Promise.all([...friends].map((fid) => sendFriendsVoice(fid).catch(() => {})));
+}
+// A user's voice membership changed. Their friends may be connected to a peer
+// replica, so it is published as well as delivered locally. This is only safe
+// because the payload is now cluster-wide (voiceOccupantRows reads the shared
+// registry): sendFriendsVoice sends a WHOLE map, so a replica with no occupants
+// of its own would otherwise blank out a correct roster on its clients.
+function pushFriendsVoice(userId) {
+  busPublish('friends-voice', { userId });
+  return pushFriendsVoiceLocal(userId);
 }
 // Streaming presence: while a user shares (Go Live), their profile carries
 // streaming_game so friends see a purple Streaming status + Active Now entry.
@@ -5563,6 +5840,7 @@ async function leaveVoice(ws, notify = true) {
     if (set.size === 0) voiceRooms.delete(key);
   }
   ws.meta.voice = null;
+  await voiceForget(ws.meta.userId);
   await syncStreaming(ws);
   try { await pushFriendsVoice(ws.meta.userId); } catch {}
   if (!notify) return;
@@ -5574,7 +5852,7 @@ async function leaveVoice(ws, notify = true) {
   broadcastToServer(v.serverId, { t: 'voice-peer-left', serverId: v.serverId, channelId: v.channelId, userId: ws.meta.userId });
   // send updated list to remaining occupants… and to the leaver too,
   // otherwise their own sidebar keeps showing them until a refresh
-  const peers = voicePeersPayload(key);
+  const peers = await voicePeersPayload(key);
   for (const other of voiceRooms.get(key) || []) safeSend(other, { t: 'voice-peers', serverId: v.serverId, channelId: v.channelId, peers });
   safeSend(ws, { t: 'voice-peers', serverId: v.serverId, channelId: v.channelId, peers });
 }
@@ -5582,7 +5860,7 @@ async function leaveVoice(ws, notify = true) {
 // badges + join buttons). When the room drains, the call is over.
 async function afterDmVoiceChange(threadId) {
   const key = dmVoiceKey(threadId);
-  const peers = voicePeersPayload(key);
+  const peers = await voicePeersPayload(key);
   const mems = new Set((await db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ?').all(threadId)).map((r) => r.user_id));
   for (const c of clients) {
     if (c.meta && mems.has(c.meta.userId)) safeSend(c, { t: 'voice-peers', threadId, peers });
@@ -5599,15 +5877,19 @@ async function afterDmVoiceChange(threadId) {
 async function evictFromDmCall(threadId, userId) {
   const key = dmVoiceKey(threadId);
   const set = voiceRooms.get(key);
-  if (!set) return;
-  for (const c of [...set]) {
-    if (c.meta && c.meta.userId === userId) {
-      set.delete(c);
-      c.meta.voice = null;
-      await syncStreaming(c);
-      safeSend(c, { t: 'voice-kicked', threadId });
+  if (set) {
+    for (const c of [...set]) {
+      if (c.meta && c.meta.userId === userId) {
+        set.delete(c);
+        c.meta.voice = null;
+        await syncStreaming(c);
+        safeSend(c, { t: 'voice-kicked', threadId });
+      }
     }
+    if (set.size === 0) voiceRooms.delete(key);
   }
+  await voiceKickEverywhere(userId, { threadId });
+  await voiceForget(userId);
   await pushFriendsVoice(userId);
   await afterDmVoiceChange(threadId);
 }
@@ -5647,8 +5929,12 @@ wss.on('connection', async (ws, req) => {
     is_admin: !!u.is_admin,
   };
   clients.add(ws);
+  // Cluster-wide identity for this socket in live_sessions. Per-socket (not per
+  // user) because the session count and the page-visible flag are per-socket.
+  ws.lsid = bus.POD_ID + ':' + (++socketSeq);
+  await presenceUpsert(ws);
   safeSend(ws, { t: 'hello', user: publicUser(u), version: APP_VERSION });
-  pushAdminPresence();
+  await pushAdminPresence();
 
   const onMessage = async raw => {
     try {
@@ -5657,7 +5943,7 @@ wss.on('connection', async (ws, req) => {
     const me = ws.meta;
     if (!me) return;
 
-    if (msg.t === 'visibility') { me.visible = msg.visible !== false; return; }
+    if (msg.t === 'visibility') { me.visible = msg.visible !== false; await presenceUpsert(ws); return; }
     if (msg.t === 'ping') { safeSend(ws, { t: 'pong' }); return; } // client liveness probe
 
     if (msg.t === 'subscribe') {
@@ -5666,12 +5952,12 @@ wss.on('connection', async (ws, req) => {
       me.servers = new Set(rows.map((r) => r.server_id));
       // send presence roster per server (invisible users hidden from others)
       for (const sid of me.servers) {
-        safeSend(ws, { t: 'presence', serverId: sid, online: presenceFor(sid, me.userId) });
+        safeSend(ws, { t: 'presence', serverId: sid, online: await presenceFor(sid, me.userId) });
       }
       // Friends are visible regardless of shared servers: refresh the set and
       // hand over their presence (serverId-less roster merges into the same map).
       me.friends = await friendIdsOf(me.userId);
-      safeSend(ws, { t: 'presence', online: presenceForUsers(me.friends, me.userId) });
+      safeSend(ws, { t: 'presence', online: await presenceForUsers(me.friends, me.userId) });
       // announce online to others (unless invisible)
       if ((me.status || 'online') !== 'invisible') {
         for (const sid of me.servers) broadcastToServer(sid, { t: 'user-online', serverId: sid, userId: me.userId, status: me.status || 'online' }, ws);
@@ -5683,14 +5969,14 @@ wss.on('connection', async (ws, req) => {
         const [srv] = key.split(':');
         if (me.servers.has(srv)) {
           const [, ch] = key.split(':');
-          safeSend(ws, { t: 'voice-peers', serverId: srv, channelId: ch, peers: voicePeersPayload(key) });
+          safeSend(ws, { t: 'voice-peers', serverId: srv, channelId: ch, peers: await voicePeersPayload(key) });
         }
       }
       // …and for my DM calls (drives in-call badges after reloads)
       for (const [key, set] of voiceRooms) {
         if (!key.startsWith('dm:')) continue;
         const tid = key.slice(3);
-        if (await dmThreadFor(me.userId, tid)) safeSend(ws, { t: 'voice-peers', threadId: tid, peers: voicePeersPayload(key) });
+        if (await dmThreadFor(me.userId, tid)) safeSend(ws, { t: 'voice-peers', threadId: tid, peers: await voicePeersPayload(key) });
       }
       // …and who among my friends is in voice (Active Now rail).
       safeSend(ws, { t: 'friends-voice', voice: await friendsVoiceFor([ws], me.userId) });
@@ -5709,9 +5995,9 @@ wss.on('connection', async (ws, req) => {
       if (!me.servers.has(serverId) || !(await isMember(serverId, me.userId))) return;
       const ch = await db.prepare('SELECT * FROM channels WHERE id = ? AND server_id = ?').get(channelId, serverId);
       if (!ch || ch.type !== 'text') return;
-      if (!rateOk(me.userId)) { safeSend(ws, { t: 'error', error: 'slow_down' }); return; }
+      if (!(await rateOk(me.userId))) { safeSend(ws, { t: 'error', error: 'slow_down' }); return; }
       if (ch.slowmode > 0 && !(await isAdmin(serverId, me.userId))) {
-        const wait = slowBlocked(channelId, me.userId, ch.slowmode);
+        const wait = await slowBlocked(channelId, me.userId, ch.slowmode);
         if (wait > 0) { safeSend(ws, { t: 'error', error: 'slow_mode', retryAfter: wait }); return; }
       }
       if (replyTo) {
@@ -5773,7 +6059,7 @@ wss.on('connection', async (ws, req) => {
       const cleanAtts = cleanAttachments(msg.attachments);
       const pollOpts = normalizePollOptions(msg.poll);
       if (!content && !cleanAtts.length && !pollOpts) return;
-      if (!rateOk(me.userId)) { safeSend(ws, { t: 'error', error: 'slow_down' }); return; }
+      if (!(await rateOk(me.userId))) { safeSend(ws, { t: 'error', error: 'slow_down' }); return; }
       if (replyTo && !(await db.prepare('SELECT id FROM dm_messages WHERE id = ? AND thread_id = ?').get(replyTo, threadId))) return;
       const mid = uid();
       const fwdFrom = String(msg.fwdFrom || '').trim().slice(0, 64) || null;
@@ -5811,7 +6097,8 @@ wss.on('connection', async (ws, req) => {
       const wasEmpty = !(voiceRooms.get(key) && voiceRooms.get(key).size);
       if (!voiceRooms.has(key)) voiceRooms.set(key, new Set());
       voiceRooms.get(key).add(ws);
-      const peers = voicePeersPayload(key);
+      await voiceUpsert(ws); // registry first, so the roster read below includes us
+      const peers = await voicePeersPayload(key);
       safeSend(ws, { t: 'voice-peers', threadId, peers });
       const others = (await db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ? AND user_id != ?').all(threadId, me.userId)).map((r) => r.user_id);
       const mePeer = { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, active_tag: me.active_tag || null, avatar_url: me.avatar_url || null, muted: false, speaking: false, deafened: false, camera: false, sharing: false, serverMuted: false, streamName: null };
@@ -5841,15 +6128,16 @@ wss.on('connection', async (ws, req) => {
       const key = voiceKey(serverId, channelId);
       if (!voiceRooms.has(key)) voiceRooms.set(key, new Set());
       voiceRooms.get(key).add(ws);
+      await voiceUpsert(ws); // registry first, so the roster read below includes us
       // tell joiner full peer list
-      safeSend(ws, { t: 'voice-peers', serverId, channelId, peers: voicePeersPayload(key) });
+      safeSend(ws, { t: 'voice-peers', serverId, channelId, peers: await voicePeersPayload(key) });
       // tell others someone joined
       broadcastToServer(serverId, {
         t: 'voice-peer-joined', serverId, channelId,
         peer: { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, active_tag: me.active_tag || null, avatar_url: me.avatar_url || null, muted: false, speaking: false, deafened: false, camera: false, sharing: false, serverMuted: false, streamName: null },
       }, ws);
       // also broadcast updated occupancy to whole server (for channel user counts)
-      broadcastToServer(serverId, { t: 'voice-peers', serverId, channelId, peers: voicePeersPayload(key) }, ws);
+      broadcastToServer(serverId, { t: 'voice-peers', serverId, channelId, peers: await voicePeersPayload(key) }, ws);
       await pushFriendsVoice(me.userId);
       return;
     }
@@ -5869,6 +6157,7 @@ wss.on('connection', async (ws, req) => {
       if (!me.voice.sharing) me.voice.streamName = null;
       if (typeof msg.speaking === 'boolean') me.voice.speaking = msg.speaking;
       if (me.voice.muted || me.voice.deafened) me.voice.speaking = false;
+      await voiceUpsert(ws); // carry mute/deafen/camera/share to peers via the registry
       await syncStreaming(ws);
       if (me.voice.kind === 'dm') {
         await dmNotify(me.voice.threadId, {
@@ -5915,6 +6204,7 @@ wss.on('connection', async (ws, req) => {
             await syncStreaming(c);
             safeSend(c, { t: 'voice-kicked', threadId, reason: 'mod' });
           }
+          await voiceForget(targetId);
           await pushFriendsVoice(targetId);
           await afterDmVoiceChange(threadId);
           return;
@@ -5922,6 +6212,7 @@ wss.on('connection', async (ws, req) => {
         for (const c of targets) {
           if (action === 'mute') { c.meta.voice.muted = true; c.meta.voice.serverMuted = true; c.meta.voice.speaking = false; }
           else { c.meta.voice.serverMuted = false; }
+          await voiceUpsert(c);
           safeSend(c, { t: 'voice-mod', threadId, action: action === 'mute' ? 'muted' : 'unmuted' });
         }
         await dmNotify(threadId, { t: 'voice-state', threadId, userId: targetId, ...modStateOf(targets[0]) });
@@ -5940,8 +6231,9 @@ wss.on('connection', async (ws, req) => {
           await syncStreaming(c);
           safeSend(c, { t: 'voice-kicked', serverId, channelId, reason: 'mod' });
         }
+        await voiceForget(targetId);
         broadcastToServer(serverId, { t: 'voice-peer-left', serverId, channelId, userId: targetId });
-        const peers = voicePeersPayload(key);
+        const peers = await voicePeersPayload(key);
         broadcastToServer(serverId, { t: 'voice-peers', serverId, channelId, peers });
         await pushFriendsVoice(targetId);
         return;
@@ -5949,6 +6241,7 @@ wss.on('connection', async (ws, req) => {
       for (const c of targets) {
         if (action === 'mute') { c.meta.voice.muted = true; c.meta.voice.serverMuted = true; c.meta.voice.speaking = false; }
         else { c.meta.voice.serverMuted = false; }
+        await voiceUpsert(c);
         safeSend(c, { t: 'voice-mod', serverId, channelId, action: action === 'mute' ? 'muted' : 'unmuted' });
       }
       broadcastToServer(serverId, { t: 'voice-state', serverId, channelId, userId: targetId, ...modStateOf(targets[0]) });
@@ -5956,14 +6249,23 @@ wss.on('connection', async (ws, req) => {
     }
 
     if (msg.t === 'voice-signal') {
+      // WebRTC signalling has to reach the peer's actual socket, which lives on
+      // whichever replica that user connected to — the local lookup alone is why
+      // two people in one room on different pods could not connect at all.
       if (!me.voice) return;
       const key = voiceKeyOf(me.voice);
-      const target = findWsInVoice(key, String(msg.to || ''));
-      if (!target) return;
+      const to = String(msg.to || '');
+      if (!to) return;
       const out = { t: 'voice-signal', from: me.userId, data: msg.data };
       if (me.voice.kind === 'dm') out.threadId = me.voice.threadId;
       else { out.serverId = me.voice.serverId; out.channelId = me.voice.channelId; }
-      safeSend(target, out);
+      const local = findLocalWsInVoice(key, to);
+      if (local) { safeSend(local, out); return; }
+      // Not ours: the target's registry row names the replica holding it.
+      const row = await db.prepare('SELECT pod_id FROM voice_occupants WHERE user_id = ?').get(to);
+      if (row && row.pod_id && row.pod_id !== bus.POD_ID) {
+        busPublish('voice-signal', { to, key, out });
+      }
       return;
     }
     } catch (e) { console.error('[ws] message handler failed:', (e && e.message) || e); }
@@ -5975,6 +6277,9 @@ wss.on('connection', async (ws, req) => {
   ws.on('close', async () => {
     try {
     clients.delete(ws);
+    // Deregister before anything reads the roster, or this socket's own
+    // disconnect would still count as online for its friends.
+    await presenceForget(ws);
     if (ws.meta) {
       if (ws.meta.voice) await leaveVoice(ws);
       for (const sid of ws.meta.servers || []) {
@@ -5985,7 +6290,7 @@ wss.on('connection', async (ws, req) => {
       // Friends see the flip even with no shared server (last socket only).
       const stillLive = [...clients].some((c) => c.meta && c.meta.userId === ws.meta.userId);
       if (!stillLive) notifyFriends(ws.meta.userId, { t: 'user-offline', userId: ws.meta.userId });
-      pushAdminPresence();
+      await pushAdminPresence();
     }
     } catch (e) { console.error('[ws] close handler failed:', (e && e.message) || e); }
   });
@@ -6006,6 +6311,107 @@ const wsHeartbeat = setInterval(() => {
 }, 30000);
 try { wsHeartbeat.unref(); } catch {}
 
+// ---------- cross-replica bus ----------
+const bus = require('./bus');
+
+// ---------- cross-replica fan-out ----------
+// Every audience class has exactly ONE local-delivery primitive, which is why
+// the ~120 individual fan-out call sites in this file never had to change:
+//   notifyUser        -> one user's sockets (dmNotify + story audiences sit on top)
+//   broadcastToServer -> a server's members
+//   notifyFriends     -> a user's accepted friends
+//   notifyAllClients  -> every socket
+// Each delivers locally and then publishes. Peers replay the event through the
+// matching *Local variant, which never publishes — that asymmetry is what stops
+// an event ping-ponging between replicas forever.
+//
+// Publishing is fire-and-forget but SERIALIZED through a single promise chain,
+// so events reach the outbox in call order and get ascending ids: an edit can
+// never overtake the message it edits on a peer.
+//
+// DELIBERATELY NOT WIRED YET: voice fan-out (voice-peers, friends-voice) and
+// presence. Those payloads are built from the LOCAL voiceRooms and clients maps
+// and are full-list replacements, so publishing them before the shared registry
+// exists would let a replica holding no occupants overwrite a correct roster
+// with an empty one. They are wired in the presence phase.
+let busChain = Promise.resolve();
+function busPublish(topic, payload) {
+  busChain = busChain
+    .then(() => bus.publish(topic, payload))
+    .catch((e) => { console.error('[bus] publish failed:', (e && e.message) || e); });
+  return busChain;
+}
+// Registered before bus.start() so an event can never arrive before its handler
+// exists. With one replica every published event is skipped by origin, so this
+// changes nothing until a second replica appears.
+function wireBus() {
+  bus.subscribe('user', (p) => notifyUserLocal(p.userId, p.obj));
+  bus.subscribe('server', (p) => broadcastToServerLocal(p.serverId, p.obj));
+  bus.subscribe('friends', (p) => notifyFriendsLocal(p.userId, p.obj));
+  bus.subscribe('all', (p) => notifyAllClientsLocal(p.obj));
+  // WebRTC signalling addressed to a socket on THIS replica. The room is
+  // re-checked here (findLocalWsInVoice only looks in that room's local set) so
+  // a stale route can never deliver a signal outside the room it belongs to.
+  bus.subscribe('voice-signal', (p) => {
+    if (!p || !p.to || !p.key || !p.out) return;
+    const target = findLocalWsInVoice(p.key, p.to);
+    if (target) safeSend(target, p.out);
+  });
+  // A user was pulled out of a voice room (moderation, ban, group removal). The
+  // replica handling that request only holds its own sockets, so peers apply
+  // the same eviction to theirs.
+  bus.subscribe('voice-kick', (p) => {
+    if (!p || !p.userId) return;
+    voiceKickLocal(p.userId, { threadId: p.threadId || undefined, serverId: p.serverId || undefined, reason: p.reason });
+  });
+  // A user's voice membership changed; re-send the (cluster-wide) map to this
+  // replica's friends of theirs.
+  bus.subscribe('friends-voice', (p) => {
+    if (!p || !p.userId) return;
+    pushFriendsVoiceLocal(p.userId).catch(() => {});
+  });
+  // Admin presence counts are computed once, by whichever replica observed the
+  // change, from the shared registry — every replica just hands the same payload
+  // to its own admin sockets.
+  bus.subscribe('admin-presence', (p) => { if (p) pushAdminPresenceLocal(p); });
+}
+
+// Run a periodic job on exactly ONE replica. The lock is taken per tick rather
+// than held for the process lifetime, so leadership moves freely after a
+// crash/restart and a skipped tick is normal operation, never an error.
+function safeLockedInterval(name, key, fn, ms) {
+  safeInterval(async () => {
+    try {
+      const r = await db.withLock(key, fn);
+      if (!r.ran) return; // a peer is running it this tick
+    } catch (e) { console.error(`[${name}] failed:`, (e && e.message) || e); }
+  }, ms);
+}
+
+let shuttingDown = false;
+// How long to stay up after readiness starts failing, so the load balancer has
+// time to stop routing here before we drop sockets.
+const DRAIN_WAIT_MS = Math.max(0, parseInt(process.env.DRAIN_WAIT_MS || '5000', 10) || 0);
+
+// ---------- container probes ----------
+// /healthz is LIVENESS only: the process is up and the event loop is turning.
+// It deliberately touches nothing external, so a slow database can never make
+// the kubelet restart an otherwise healthy replica.
+app.get('/healthz', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ ok: true, pod: bus.POD_ID, uptime: Math.round(process.uptime()) });
+});
+// /readyz is READINESS: fail it and traffic stops being sent here. It fails
+// during shutdown on purpose — that is what removes this replica from rotation
+// BEFORE its sockets are dropped, so reconnecting clients land on a survivor.
+app.get('/readyz', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (shuttingDown) return res.status(503).json({ ok: false, reason: 'shutting_down' });
+  try { await db.prepare('SELECT 1 AS ok').get(); }
+  catch (e) { return res.status(503).json({ ok: false, reason: 'db_unavailable' }); }
+  res.json({ ok: true, pod: bus.POD_ID, bus: bus.stats() });
+});
+
 // SPA fallback (after API + static)
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/') || req.path.startsWith('/ws')) return next();
@@ -6013,19 +6419,61 @@ app.get('*', (req, res, next) => {
 });
 
 async function boot() {
-  await db.initDb();
-  await repairThreads();
-  await initPushKeys();
-  // Clear stale playing_game on startup (watchers will re-beacon within 30s)
-  await db.prepare('UPDATE users SET playing_game = NULL WHERE playing_game IS NOT NULL').run();
-  // Streaming never survives a restart (voice rooms don't either).
-  try { await db.prepare('UPDATE users SET streaming_game = NULL WHERE streaming_game IS NOT NULL').run(); } catch {}
+  // Schema DDL is serialized cluster-wide: a replica starting alongside a peer
+  // waits for it to finish rather than racing it (and rather than racing
+  // bus.js's own table creation).
+  await db.withLockWait(db.LOCKS.migrate, () => db.initDb());
+  // Subscriptions first, then the bus: starting first would leave a window in
+  // which a peer's event arrives with no handler registered to receive it.
+  wireBus();
+  // Start the bus before serving so cross-replica fan-out is live from the
+  // first request, and so our heartbeat is visible to a peer that boots
+  // concurrently with us (which is what makes the boot clears below safe).
+  await bus.start();
+  // One-shot boot repairs: leader-only, or every new pod during a rolling
+  // update would re-run them.
+  await db.withLock(db.LOCKS.bootRepair, async () => {
+    await repairThreads();
+    await initPushKeys();
+  });
+  // Stale playing_game / streaming_game clears. These are cluster-wide writes,
+  // so they are only safe when this replica is running ALONE: during a rolling
+  // update the user's live game/stream is being served by a peer and wiping it
+  // would clobber real state. Taking the lock before the peer check makes the
+  // decision race-free — the first starter holds the lock, the second sees its
+  // heartbeat and skips.
+  //
+  // KNOWN GAP (deliberate, biased toward not destroying live state): a replica
+  // that CRASHES cannot delete its own bus_replicas row, so a restarted replica
+  // arriving within PEER_STALE_MS (30s) of the crash still sees it as a peer
+  // and skips these clears. Consequences are cosmetic and self-healing:
+  // playing_game is reaped by the 90s stale-beacon sweep below, and a stale
+  // streaming_game badge persists only until that user next joins/leaves a
+  // voice room. The presence phase replaces both clears with a leader-only
+  // reconciliation against the shared voice registry, which removes the
+  // "am I alone?" question entirely.
+  await db.withLock(db.LOCKS.bootClear, async () => {
+    const peers = await bus.liveReplicas();
+    if (peers.length) {
+      console.log(`[campfire] ${peers.length} peer replica(s) live — skipping boot state clears`);
+      return;
+    }
+    // Clear stale playing_game on startup (watchers will re-beacon within 30s)
+    await db.prepare('UPDATE users SET playing_game = NULL WHERE playing_game IS NOT NULL').run();
+    // Streaming never survives a restart (voice rooms don't either).
+    try { await db.prepare('UPDATE users SET streaming_game = NULL WHERE streaming_game IS NOT NULL').run(); } catch {}
+  });
   // Expired custom statuses clear within a minute (reads mask them instantly).
-  await sweepExpiredStatuses();
-  safeInterval(sweepExpiredStatuses, 60 * 1000);
+  await db.withLock(db.LOCKS.sweepStatuses, sweepExpiredStatuses);
+  safeLockedInterval('statuses', db.LOCKS.sweepStatuses, sweepExpiredStatuses, 60 * 1000);
   // Stories expire after 24h: rows + their uploaded bytes go together.
-  await reapStories();
-  safeInterval(reapStories, 20 * 60 * 1000);
+  await db.withLock(db.LOCKS.reapStories, reapStories);
+  safeLockedInterval('stories', db.LOCKS.reapStories, reapStories, 20 * 60 * 1000);
+  // NOTE: media-compress / virus-scan / storage-sweep / backup own their own
+  // schedulers and are still per-replica. They are made leader-aware in the
+  // next phase (each takes its LOCKS key per tick); their work is idempotent
+  // in the meantime, so running them on more than one replica is wasteful
+  // rather than unsafe.
   // Chat-upload compressor (images/GIFs/video/audio): one file at a time,
   // niced + single-threaded, so the VPS never feels it.
   try { require('./media-compress').startMediaCompress(); } catch (e) { console.error('[media] scheduler failed to start:', (e && e.message) || e); }
@@ -6039,8 +6487,10 @@ async function boot() {
   } catch (e) { console.error('[virusscan] scheduler failed to start:', (e && e.message) || e); }
   try { require('./storage-sweep').startStorageSweep(); } catch (e) { console.error('[sweep] scheduler failed to start:', (e && e.message) || e); }
   // Link previews: one fetch per URL (cached in link_embeds), swept monthly.
-  try { require('./unfurl').prune(); } catch (e) { console.error('[unfurl] prune failed:', (e && e.message) || e); }
-  safeInterval(() => require('./unfurl').prune(), 6 * 3600 * 1000);
+  try { await db.withLock(db.LOCKS.unfurlPrune, () => require('./unfurl').prune()); } catch (e) { console.error('[unfurl] prune failed:', (e && e.message) || e); }
+  safeLockedInterval('unfurl', db.LOCKS.unfurlPrune, () => require('./unfurl').prune(), 6 * 3600 * 1000);
+  // Reap voice occupancy and live sessions left by a replica that died.
+  safeInterval(() => reconcileReplicaState(), 30 * 1000);
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`[campfire] listening on :${PORT}  pg=${process.env.PGHOST || 'localhost'}:${process.env.PGPORT || '5432'}/${process.env.PGDATABASE || 'campfire'}`);
     try { require('./backup').startBackups(); } catch (e) { console.error('[backup] scheduler failed to start:', (e && e.message) || e); }
@@ -6048,9 +6498,33 @@ async function boot() {
 }
 boot().catch((e) => { console.error('[campfire] boot failed:', (e && e.message) || e); process.exit(1); });
 
+// ---------- graceful shutdown ----------
+// A rolling update only avoids dropping live calls if the replica (1) stops
+// being routed to, (2) tells its clients to reconnect, and (3) only then
+// exits. Readiness fails first so the load balancer drains us; the client
+// reconnects on any close except 4401 (public/js/socket.js), so closing with
+// 1012 "service restart" sends every client straight to a surviving replica
+// instead of leaving them on a dying socket.
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[campfire] ${signal} received — readiness 503, draining for ${DRAIN_WAIT_MS}ms`);
+  await new Promise((r) => setTimeout(r, DRAIN_WAIT_MS));
+  try { server.close(); } catch {}
+  for (const ws of wss.clients) { try { ws.close(1012, 'restart'); } catch {} }
+  try { await bus.stop(); } catch (e) { console.error('[campfire] bus stop failed:', (e && e.message) || e); }
+  try { await db.closePool(); } catch {}
+  console.log('[campfire] drained — exiting');
+  process.exit(0);
+}
+process.on('SIGTERM', () => { shutdown('SIGTERM'); });
+process.on('SIGINT', () => { shutdown('SIGINT'); });
+
 // Watcher stale-beacon cleanup: no heartbeat for 90s (3 missed 30s beats)
 // means the watcher died without a goodbye — assume stopped playing.
-safeInterval(async () => {
+// Leader-only, so N replicas don't each write the same clear and re-broadcast
+// the same user-update for one stale beacon.
+safeLockedInterval('beacon', db.LOCKS.beaconSweep, async () => {
   const stale = Date.now() - BEACON_STALE_MS;
   for (const [userId, beacon] of lastBeacon.entries()) {
     if (beacon.ts < stale && beacon.game) {
