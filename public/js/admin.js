@@ -465,6 +465,13 @@ function bucketScanLine(b) {
   const led = b.ledger ? ` · ledger ${b.ledger.keys} key${b.ledger.keys === 1 ? '' : 's'}` : '';
   return ` · Bucket scan: every ${every}, last ${esc(last)} — ${esc(did)}${extra.length ? ' · ' + esc(extra.join(' · ')) : ''}${led}`;
 }
+// Why the compressor looked at a file and left it exactly as it was.
+const KEPT_WHY = {
+  no_saving: 'no gain', below_floor: 'under floor', no_pipeline: 'type not handled',
+  animated: 'animated', undecodable: 'undecodable', empty_input: 'empty file',
+  gone: 'object missing', no_output: 'no output', encode_failed: 'encode failed',
+  candidate_flagged: 'scanner rejected the smaller copy',
+};
 async function loadAdminMedia() {
   const box = $('#adm-media');
   if (!box) return;
@@ -480,12 +487,18 @@ async function loadAdminMedia() {
     const card = (n, l) => `<div class="adm-stat"><b>${n}</b><span>${l}</span></div>`;
     const jobRow = (j) => {
       const ok = j.result === 'compressed';
+      const kept = j.result === 'kept';
       const pct = ok && j.orig_size > 0 ? ` (-${Math.round((1 - j.new_size / j.orig_size) * 100)}%)` : '';
       const sizes = ok ? `${fmtSize(j.orig_size)} → ${fmtSize(j.new_size)}${pct}` : fmtSize(j.orig_size);
+      // A kept file was examined and deliberately left byte-for-byte alone.
+      // Saying WHY is the whole point: "no gain" on a screenshot is a different
+      // thing from "type not handled", and neither is a failure.
+      const why = kept ? (KEPT_WHY[j.error] || j.error || 'no change needed') : '';
       return `<div class="adm-subrow">
         <span class="adm-subname" title="${esc(j.filename || '')}">${esc(j.filename || 'file')}</span>
         ${badge(j.kind || '?', '')}
-        ${ok ? '' : badge('FAILED', 'off')}
+        ${ok ? '' : kept ? badge('KEPT', 'me') : badge('FAILED', 'off')}
+        ${kept ? `<span class="muted small">${esc(why)}</span>` : ''}
         <span class="spacer"></span>
         <span class="muted small">${esc(sizes)} · ${esc(j.pipeline || '')} · ${agoStr(j.created_at)}</span>
       </div>`;
@@ -506,13 +519,14 @@ async function loadAdminMedia() {
         ${card(fmtSize(m.totals?.savedBytes || 0), 'Saved total')}
       </div>
       ${!w.ffmpeg ? '<div class="muted small">ffmpeg is not on PATH — uploads work, they just stay uncompressed.</div>' : ''}
+      <div class="muted small" style="margin-top:.4rem">${m.totals?.kept ? `${m.totals.kept} examined and kept as-is (already small, or nothing to gain) — every one is listed below.` : 'Every upload is examined, whatever its size or type.'}</div>
       <div class="muted small" style="margin-top:.4rem">${scanLine(m.scan)}${sweepLine(m.sweep)}</div>
       <div class="muted small" style="margin-top:.25rem">${bucketScanLine(m.bucketScan)}</div>
       <div class="pf-sec-label" style="margin-top:1rem">Recent files</div>
       ${jobs.length
         ? `<div class="adm-scroll">${jobs.map(jobRow).join('')}</div>`
           + (capped ? `<div class="muted small adm-recent-note">Newest ${ADMIN_MEDIA_RECENT} · the log keeps more</div>` : '')
-        : '<p class="muted small">Nothing compressed yet.</p>'}
+        : '<p class="muted small">Nothing examined yet.</p>'}
       <div class="adm-actions">
         <button class="mini" id="adm-media-refresh">Refresh</button>
         <button class="mini" id="adm-bucket-check">Check bucket</button>

@@ -800,7 +800,7 @@ are load-bearing:
 - **`media_compress_keys` is the ledger, and the bucket scan depends on it.**
   One row per storage key the compressor reached a terminal verdict on
   (`compressed` or `kept` — examined and declined); `media_compress_log` cannot
-  serve this role, it is a rolling 300-row panel feed. Without the ledger a scan
+  serve this role, it is a rolling panel feed. Without the ledger a scan
   would re-encode every object every pass, and re-encoding an already-compressed
   photo costs quality, not just CPU. It is seeded at migration time from the
   existing `compressed = 1` rows so the first pass after an upgrade does not

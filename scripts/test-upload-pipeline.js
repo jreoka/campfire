@@ -515,6 +515,31 @@ async function main() {
     }, 30000);
     check('...and the slot publishes it, rewritten or not', smallSettled === 200, 'status=' + smallSettled);
 
+    // ...and once it is posted, the panel's feed has to show what happened to
+    // it — "the compressor examined it and left it alone" and "nothing ever
+    // looked at my upload" must not look the same from the admin panel. (A bare
+    // upload with no message behind it is an orphan; the compressor correctly
+    // does nothing with it and the orphan sweep owns those bytes.)
+    const keptMsg = 'msg-' + crypto.randomBytes(8).toString('hex');
+    await db.query('INSERT INTO messages (id,server_id,channel_id,user_id,content,created_at) VALUES ($1,$2,$3,$4,$5,$6)',
+      [keptMsg, srv.server.id, channelId, reg.user.id, 'tiny', Date.now()]);
+    await db.query("INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,compressed,created_at) VALUES ($1,$2,$3,'thumb.png','image/png',$4,'image',0,$5)",
+      ['att-' + crypto.randomBytes(8).toString('hex'), keptMsg, smallUp.url.split('?')[0], fs.statSync(media.small).size, Date.now()]);
+    const tinySettled = await waitForAsync(async () => {
+      const r = await db.query('SELECT compressed FROM attachments WHERE message_id = $1', [keptMsg]);
+      return Number(r.rows[0] && r.rows[0].compressed) === 1 ? true : null;
+    }, 30000);
+    check('the posted tiny image settled', tinySettled === true, 'never settled');
+    await db.query('UPDATE users SET is_admin = 1 WHERE id = $1', [reg.user.id]);
+    const feed = await api('GET', '/api/admin/media/recent?limit=50', undefined, token);
+    await db.query('UPDATE users SET is_admin = 0 WHERE id = $1', [reg.user.id]);
+    const smallKey = smallUp.url.split('?')[0];
+    const smallRow = (feed.jobs || []).find((j) => (j.url || '').split('?')[0] === smallKey);
+    check('a tiny image shows up in the panel feed, kept or compressed',
+      !!smallRow && (smallRow.result === 'kept' || smallRow.result === 'compressed'), JSON.stringify(smallRow || null));
+    check('...and a kept row carries the reason it was left alone',
+      !smallRow || smallRow.result !== 'kept' || !!smallRow.error, JSON.stringify(smallRow || null));
+
     // What the gate is actually for: a file no compressor would touch must not
     // pay the wait — it is served the moment it lands.
     const txtUp = await uploadFile(media.txt, 'notes.txt', 'text/plain', token);

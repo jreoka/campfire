@@ -140,7 +140,7 @@ const stats = {
   startedAt: 0, ticks: 0, processed: 0, skipped: 0, errors: 0,
   savedBytes: 0, lastTickAt: 0, lastJob: null, lastError: null,
 };
-const LOG_KEEP = 300; // recent job rows kept for the admin panel
+const LOG_KEEP = 600; // recent job rows kept for the admin panel (kept rows count too)
 // Bucket-scan state (see reconcileBucket). `pendingKeys` holds profile uploads
 // that asked to be settled now — they belong to no flag table, so the queue's
 // candidate query can never surface them.
@@ -175,7 +175,7 @@ async function ensureColumns() {
 )`);
   await db.exec('CREATE INDEX IF NOT EXISTS idx_media_compress_log_created ON media_compress_log(created_at DESC)');
   // One row per storage key the compressor has ever reached a verdict on.
-  // `media_compress_log` cannot serve this purpose: it is a rolling 300-row
+  // `media_compress_log` cannot serve this purpose: it is a rolling panel feed
   // panel feed, so "have I already handled these bytes?" would be answered
   // "no" for everything older — and re-encoding an already-compressed photo
   // costs quality, not just CPU. The ledger is what lets the bucket scan skip
@@ -253,8 +253,11 @@ async function ledgerStats() {
   return out;
 }
 
-// One row per finished file (compressed or failed). Skips are too noisy to
-// log — they are visible as aggregate counters instead.
+// One row per finished file: compressed, kept as it was, or failed. Kept rows
+// are logged on purpose — now that the compressor attempts every size and every
+// type it can decode, "examined and left alone" is the COMMON outcome, and
+// without it an owner who uploads a photo sees an empty panel and cannot tell
+// "nothing to gain" from "never looked at". The feed is capped (LOG_KEEP).
 async function logJob({ tbl, url, filename, kind, pipeline, result, origSize, newSize, error }) {
   try {
     await db.prepare('INSERT INTO media_compress_log (id,tbl,url,filename,kind,pipeline,result,orig_size,new_size,error,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
@@ -758,12 +761,16 @@ async function compressLocked(key, inspect, opts) {
     // A row that carried no size (story media from before the size column
     // existed) learns it here, so the panel's queue totals stay honest and no
     // later pass has to ask the object again.
+    const size = Number(origSize) || rows.reduce((m, r) => Math.max(m, Number(r.size) || 0), 0);
     if (Number(origSize) > 0) {
       for (const r of rows) {
         if (Number(r.size)) continue;
         try { await db.prepare(`UPDATE ${tableFor(r.tbl)} SET size = ? WHERE id = ?`).run(Math.floor(Number(origSize)), r.id); } catch {}
       }
     }
+    try {
+      await logJob({ tbl: row.tbl, url: row.url, filename: row.filename, kind: (plan && plan.group) || row.kind || '', pipeline: (plan && plan.pipeline) || '', result: 'kept', origSize: size, newSize: 0, error: why || '' });
+    } catch {}
     await markRowsDone(rows);
     return null;
   };
@@ -994,7 +1001,15 @@ async function compressStandalone(key, refs, opts) {
 }
 
 async function commitStandaloneLocked(key, refs, opts) {
-  const done = async (why, origSize) => { await recordKey(key, 'kept', why || '', Number(origSize) || 0, 0); return null; };
+  const done = async (why, origSize) => {
+    const size = Number(origSize) || 0;
+    await recordKey(key, 'kept', why || '', size, 0);
+    // Visible in the panel like any other terminal verdict (see logJob).
+    try {
+      await logJob({ tbl: '', url: '/uploads/' + key, filename: key.split('/').pop(), kind: (plan0 && plan0.group) || '', pipeline: (plan0 && plan0.pipeline) || '', result: 'kept', origSize: size, newSize: 0, error: why || '' });
+    } catch {}
+    return null;
+  };
   const plan0 = planFor(storage.mimeForFilename(key), key);
   if (!plan0) return done('no_pipeline');
   let plan = plan0;
@@ -1325,7 +1340,7 @@ async function mediaQueueCounts() {
 
 // Lifetime totals from the job log (survives restarts).
 async function mediaTotals() {
-  const out = { compressed: 0, errors: 0, savedBytes: 0 };
+  const out = { compressed: 0, errors: 0, kept: 0, savedBytes: 0 };
   let rows = [];
   try {
     rows = await db.prepare('SELECT result, COUNT(*) c, COALESCE(SUM(orig_size),0) orig, COALESCE(SUM(new_size),0) cur FROM media_compress_log GROUP BY result').all();
@@ -1336,6 +1351,11 @@ async function mediaTotals() {
       out.savedBytes = Math.max(0, (Number(r.orig) || 0) - (Number(r.cur) || 0));
     } else if (r.result === 'error') {
       out.errors = Number(r.c) || 0;
+    } else if (r.result === 'kept') {
+      // Examined and left exactly as it was (no gain, an animation, a type
+      // with no pipeline): the owner's photos are usually here, so it is a
+      // headline number rather than a footnote.
+      out.kept = Number(r.c) || 0;
     }
   }
   return out;

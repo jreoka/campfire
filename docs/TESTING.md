@@ -403,7 +403,10 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   the encoder declines to rewrite it (`no_saving`), and **concurrency** really
   is parallel: four rows are planted at once and the worker's own high-water
   mark (`worker.peak`, reported by `/api/admin/media`) has to show more than one
-  encode in flight and never more than `MEDIA_COMPRESS_CONCURRENCY`,
+  encode in flight and never more than `MEDIA_COMPRESS_CONCURRENCY`, and a tiny
+  image that was posted has to appear in the panel's feed whether it was kept or
+  compressed — with the reason it was left alone when it was kept, so "examined,
+  nothing to gain" can never look like "never looked at",
   and a sweeper-compressed file that clients could already fetch lands on a NEW
   key with the old object left intact (never rewritten in place, nothing
   referencing it, so the orphan sweep reaps it). Then the coverage the flags
