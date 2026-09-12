@@ -116,6 +116,14 @@ window.__state = (s) => {
   const story = document.getElementById('story-compose');
   document.body.classList.toggle('nav-open', !!s.nav);
   document.body.classList.toggle('members-open', !!s.members);
+  // The two conversation shells a phone header has to survive: a 1:1 DM (which
+  // also paints the call buttons) and Home's feed.
+  document.body.classList.toggle('view-home', !!s.home);
+  document.body.classList.toggle('dm-open', !!(s.home && s.dm));
+  const cls = (sel, on) => { const el = $$(sel); if (el) el.classList.toggle('hidden', !on); };
+  cls('#btn-call-voice', !!(s.dm && s.call));
+  cls('#btn-call-video', !!(s.dm && s.call));
+  cls('#btn-pins', !!s.pins);
   const box = (sel, open, cls) => {
     const el = $$(sel);
     if (!el) return;
@@ -195,6 +203,13 @@ window.__dump = () => {
     serverUi: (() => { const e = $$('#server-ui'); return e ? { scrollH: e.scrollHeight, clientH: e.clientHeight, scrollTop: e.scrollTop } : null; })(),
     menuVisible: (() => { const b = $$('#btn-menu'); return !!(b && b.offsetParent !== null); })(),
     membersBtnVisible: (() => { const b = $$('#btn-members'); return !!(b && b.offsetParent !== null); })(),
+    // The phone header hides its secondary rails behind the ⋯ sheet (styles.css),
+    // so a reachable Members control can be either the button itself (desktop) or
+    // that sheet (phone).
+    moreBtnVisible: (() => { const b = $$('#btn-chat-more'); return !!(b && b.offsetParent !== null); })(),
+    // The rails the phone header hides and hands to the ⋯ sheet.
+    hiddenRails: ['#btn-find', '#btn-notifs', '#btn-threads', '#btn-pins', '#btn-members']
+      .filter((s) => { const b = $$(s); return !(b && b.offsetParent !== null); }),
     navCloseVisible: (() => { const b = $$('#btn-nav-close'); return !!(b && b.offsetWidth); })(),
     head: box('#chat-header'), chan: box('#chan-name'), caption: box('#sc-caption'),
     btns: btns.map((b) => Object.assign({ id: b.id }, box('#' + b.id))),
@@ -306,6 +321,27 @@ function staticChecks() {
   const calls = ['pickers.js', 'ui.js', 'security.js', 'settings.js']
     .filter((f) => fs.readFileSync(path.join(ROOT, 'public/js', f), 'utf8').includes('phoneLayout()'));
   check(calls.length === 4, 'the layout-deciding modules call phoneLayout()', { calls });
+  // The phone header's overflow: every view hides its secondary rails on a phone
+  // (not just a DM) and offers ⋯ instead, and the sheet it opens lists exactly
+  // those rails. Members stays out of it on Home's feed, where the drawer has no
+  // content (the Active Now strip stands in).
+  const ui = fs.readFileSync(path.join(ROOT, 'public/js/ui.js'), 'utf8');
+  check(/#btn-find,\s*#btn-notifs,\s*#btn-threads,\s*#btn-pins,\s*#btn-members\{display:none\}/.test(css)
+    && /#btn-chat-more\{display:inline-flex\}/.test(css),
+    'the phone chat header hides its secondary rails and offers the ⋯ sheet (.css)');
+  check(/const homeFeed = document\.body\.classList\.contains\('view-home'\) && !document\.body\.classList\.contains\('dm-open'\);/.test(ui)
+    && /if \(sel === '#btn-members' && homeFeed\) continue;/.test(ui),
+    'the ⋯ sheet offers Members for any open conversation, never on Home\'s feed (ui.js)');
+  // Moving the bell into that sheet must not hide its unread count: it rides the
+  // ⋯ button, and both badges also come along into the sheet's row labels.
+  const security = fs.readFileSync(path.join(ROOT, 'public/js/security.js'), 'utf8');
+  check(/id="chat-more-count"/.test(index) && /\$\('#chat-more-count'\)/.test(security),
+    'the unread-notification count rides the ⋯ button (the bell is hidden on a phone)');
+  check(/#chat-more-count\{[^}]*background:var\(--red\)/.test(css) && /#chat-more-count\.hidden\{display:none\}/.test(css),
+    'drawn like the bell\'s own pill (.css)');
+  check(/sel === '#btn-notifs' \? badgeOf\('#notifs-count'\) : \(sel === '#btn-pins' \? badgeOf\('#pins-count'\) : ''\)/.test(ui)
+    && /items\.push\(\{ label: n \? `\$\{label\} · \$\{n\}/.test(ui),
+    'and the ⋯ sheet\'s row labels carry the counts its buttons had (ui.js)');
 }
 
 function shellChecks(tag, d, expect) {
@@ -332,14 +368,22 @@ function shellChecks(tag, d, expect) {
   }
   check(expect.membersOpen ? d.members.r === vw && d.members.w < vw : d.members.l >= vw,
     `${tag}: the members drawer is ${expect.membersOpen ? 'in from the right edge' : 'off-screen while closed'}`, d.members);
-  check(d.membersBtnVisible === true, `${tag}: the members button is offered`);
+  // The members drawer has to stay reachable on a phone. Since the phone header
+  // moved its secondary rails into the ⋯ sheet, "reachable" means the button
+  // itself OR that sheet (which offers Members for any open conversation).
+  check(d.membersBtnVisible === true || d.moreBtnVisible === true,
+    `${tag}: the members drawer is still reachable from the header`, { members: d.membersBtnVisible, more: d.moreBtnVisible });
   check(d.composer && d.composer.b <= vh + 1 && d.composer.t > 0, `${tag}: the composer sits on the bottom edge`, d.composer);
   check(d.msgs && d.msgs.h >= 40, `${tag}: the message list keeps a usable height`, d.msgs);
 }
 
 function headerChecks(tag, d) {
   const { vw, vh } = d;
-  check(d.btns.length >= 3, `${tag}: the header buttons are there`, { n: d.btns.length });
+  // On a phone this header is deliberately spare: the name plus whatever the
+  // screen has room for, with the secondary rails in the ⋯ sheet. So the count
+  // only has to be non-empty — the ⋯ sheet is what has to be there.
+  check(d.btns.length >= 1, `${tag}: the header buttons are there`, { n: d.btns.length });
+  check(d.moreBtnVisible === true, `${tag}: the ⋯ overflow is offered (the header's secondary rails live there)`);
   check(d.btns.every((b) => inside(b, vw, vh)), `${tag}: every header button is inside the viewport`, d.btns.filter((b) => !inside(b, vw, vh)));
   let clash = null;
   for (let i = 0; i < d.btns.length && !clash; i++) {
@@ -463,6 +507,29 @@ async function main() {
     const short = await dump();
     check(short.phone === false, 'a short DESKTOP window (fine pointer) keeps the desktop shell');
     check(short.leftPos !== 'fixed', 'a short desktop window does not get the nav page', short.leftPos);
+
+    console.log('\n[7] the phone chat header is the spare one, in a DM and in a channel');
+    for (const [w, h] of [[390, 844], [852, 393]]) {
+      const tag = `${w}x${h}`;
+      await device(w, h);
+      // A DM with both call buttons live and something pinned — the busiest the
+      // header ever gets on a phone.
+      await state({ home: true, dm: true, call: true, pins: true });
+      const dm = await dump();
+      check(dm.hiddenRails.length === 5, `${tag} DM: the secondary rails leave the header`, dm.hiddenRails);
+      check(dm.moreBtnVisible === true, `${tag} DM: the ⋯ overflow stands in for them`);
+      check(dm.btns.every((b) => ['btn-menu', 'btn-call-voice', 'btn-call-video', 'btn-chat-more'].includes(b.id)),
+        `${tag} DM: only the call buttons + ⋯ + ☰ are left`, dm.btns.map((b) => b.id));
+      check(dm.btns.some((b) => b.id === 'btn-call-voice') && dm.btns.some((b) => b.id === 'btn-call-video'),
+        `${tag} DM: calling stays one tap away`);
+      headerChecks(`${tag} DM`, dm);
+      // A server channel: nothing but the name and ⋯.
+      await state({ pins: true });
+      const chan = await dump();
+      check(chan.hiddenRails.length === 5 && chan.moreBtnVisible === true, `${tag} channel: same spare header`, chan.hiddenRails);
+      check(chan.btns.every((b) => ['btn-menu', 'btn-chat-more'].includes(b.id)),
+        `${tag} channel: only ☰ + ⋯ are left`, chan.btns.map((b) => b.id));
+    }
   });
 
   console.log('');

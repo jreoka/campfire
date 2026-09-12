@@ -199,7 +199,15 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   closes the card (Enter too), a seen story is still labelled "(seen)", no story
   leaves the pfp a plain picture, your own card never becomes a button, and the
   full profile screen's picture behaves the same way (it is reused for every
-  profile, so an expired story has to leave it clean).
+  profile, so an expired story has to leave it clean). It also pins the DM-header
+  route into the card: `#chat-header`'s click handler resolves the open 1:1 DM's
+  peer and calls `openUserCard(..., { sheet: phoneLayout() })`,
+  `paintDmHead`/`paintHeaderNameTap` marks the header only for a 1:1 (every other
+  header painter clears it), the `.dm-name-tap` cursor/hit-box/`:active` rules are
+  in the stylesheet, and the shared `userCardAsSheet()` really does leave the card
+  full-screen from the bottom edge at a phone viewport (measured after its entry
+  animation is taken out of the way). Re-run after touching `openUserCard`, the
+  card's action list, the header name tap or the sheet CSS.
   `node scripts/test-story-viewer-profile.js` covers the story viewer's header
   (offline checks, then the real `#story-view` markup + stylesheet in headless
   Chrome, skipping without Chrome): the header is ONE real `<button>` wrapping
@@ -385,7 +393,11 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   scrolls to its Log in button in landscape (it used to sit below a 393px
   viewport with nothing able to scroll) and that portrait keeps the full-page
   nav (chat full width) while a short *desktop* window (fine pointer) keeps the
-  desktop shell. Skips without Chrome.
+  desktop shell. The header it measures is the phone's spare one: the secondary
+  rails (search, notifications, threads, pins, members) are hidden by the phone
+  block and the ⋯ sheet stands in, so the header checks assert that ⋯ is offered
+  and the members drawer is still reachable (button or sheet), never that five
+  icons are on screen. Skips without Chrome.
   `node scripts/test-viewonce.js` covers view-once messages against the same
 dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   one-replay lifecycle, and that unopened items never expire.
@@ -644,7 +656,15 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   a scroll container, so a pointer drag at the top is an overscroll pan the
   browser cancels. `closeProfileScreen`/`closeUserCard` must clear the inline
   `transform`/`transition`/`animation` the drag leaves behind, or the next open
-  skips its entry animation.
+  skips its entry animation. It also covers the members drawer's own exit: the
+  right-swipe twin (`swipeRightToClose`) drags the drawer out to the right and
+  closes it past the threshold (a short drag springs back, a vertical or leftward
+  drag is left to the list, and the release click is swallowed through the same
+  shared window), and the capture-phase click listener, which is what stops the
+  tap that dismisses the drawer from ALSO landing on the chat underneath — a tap
+  outside closes it with no click reaching the control below, a tap inside is
+  still the drawer's (and keeps it open), and the header (☰, the members button)
+  is exempt.
   `node scripts/test-video-placeholder.js` covers the video attachment's
   loading state (headless Chrome + a generated mp4, skipping when Chrome or
   ffmpeg is missing; it runs the real `attachmentHTML` video branch and the
@@ -735,7 +755,11 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   evaluated (a throwing predicate is swallowed and silently disables that
   overlay — which is how nine of them were un-backable the first time round),
   each header icon button carries a ≥44px hit box that never steals its
-  neighbour's tap, and a fine pointer (desktop) pushes no history entry at all.
+  neighbour's tap (the phone header only shows ☰ and the ⋯ overflow, so the count
+  is small on purpose — the check is that the visible ones keep their boxes), and
+  a fine pointer (desktop) pushes no history entry at all. The members drawer is
+  reached the way a thumb reaches it now: the ⋯ sheet's own Members row (the
+  header button itself is hidden on a phone).
   `node scripts/test-dm-unread.js` covers the unread-DM badges under the campfire
   (offline for the client half, then a real server against a throwaway database,
   skipping without Postgres): they used to be a per-tab tally built from live

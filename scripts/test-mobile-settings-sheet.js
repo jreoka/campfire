@@ -45,6 +45,7 @@ function findChrome() {
 const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
 const security = fs.readFileSync(path.join(ROOT, 'public/js/security.js'), 'utf8');
 const settings = fs.readFileSync(path.join(ROOT, 'public/js/settings.js'), 'utf8');
+const pickers = fs.readFileSync(path.join(ROOT, 'public/js/pickers.js'), 'utf8');
 const core = fs.readFileSync(path.join(ROOT, 'public/js/core.js'), 'utf8');
 const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
 
@@ -55,6 +56,10 @@ const phoneSrc = core.slice(core.indexOf('const PHONE_MQ'), core.indexOf('// ---
 
 const settingsMarkup = index.slice(index.indexOf('<!-- settings'), index.indexOf('<!-- server settings'));
 const ownCardSrc = security.slice(security.indexOf('function openOwnCard() {'), security.indexOf('// Only the avatar + name opens it'));
+// The sheet geometry is one shared helper now (the me bar and a DM's header name
+// both use it): the harness stubs openUserCard — which paints the whole card
+// body — but runs the REAL userCardAsSheet.
+const sheetSrc = pickers.slice(pickers.indexOf('function userCardAsSheet(card) {'), pickers.indexOf('async function openUserCard('));
 const viewSrc = settings.slice(settings.indexOf('function settingsPanelEl()'), settings.indexOf('function openSettings('));
 
 function pageHtml() {
@@ -70,10 +75,12 @@ ${settingsMarkup}
 window.S = { me: { id: 'me', display_name: 'Jordan', username: 'jordan' } };
 window.$ = (s) => document.querySelector(s);
 window.__calls = [];
-window.openUserCard = (uid, x, y) => {
+window.openUserCard = (uid, x, y, fallback, opts = {}) => {
   const c = document.getElementById('usercard');
   c.dataset.uid = uid;
   c.classList.remove('hidden');
+  // openOwnCard asks for the phone sheet through this option (see openUserCard).
+  if (opts.sheet) userCardAsSheet(c);
   __calls.push(['openUserCard', uid]);
 };
 window.closeUserCard = () => {
@@ -83,6 +90,7 @@ window.closeUserCard = () => {
   __calls.push(['closeUserCard']);
 };
 ${phoneSrc}
+${sheetSrc}
 ${ownCardSrc}
 ${viewSrc}
 const rect = (el) => { const r = el.getBoundingClientRect(); return { x: Math.round(r.x), w: Math.round(r.width), y: Math.round(r.y), h: Math.round(r.height), bottom: Math.round(r.bottom) }; };
@@ -153,8 +161,12 @@ function main() {
   check(/setSettingsView\(settingsIsPhone\(\) && !explicit \? 'menu' : 'section'\)/.test(settings), 'the gear opens the menu on a phone, a caller-named tab opens straight to it');
   check(/#usercard\.sheet\{[^}]*translateY|@keyframes cf-sheet-up\{from\{transform:translateY\(100%\)/.test(css), 'the sheet animates up from below (.css)');
   check(/@media \(max-width:700px\)\{[^}]*#usercard\.sheet|#usercard\.sheet\{/.test(css), 'the sheet rules only exist on mobile');
-  check(security.includes("card.classList.add('sheet')"), 'openOwnCard switches the card to a sheet on a phone');
-  check(security.includes("card.classList.remove('sheet')"), 'and the desktop branch clears it');
+  check(/card\.classList\.add\('sheet'\);/.test(sheetSrc) && /if \(opts\.sheet\) userCardAsSheet\(card\);/.test(pickers),
+    'the card switches to a sheet through the shared helper on a phone');
+  check(/const sheet = phoneLayout\(\);[\s\S]{0,120}openUserCard\(S\.me\.id, r\.left, r\.top, null, \{ sheet \}\);/.test(security),
+    'openOwnCard asks for it on a phone');
+  check(/if \(sheet\) return;/.test(ownCardSrc) && /card\.style\.bottom = \(innerHeight - r\.top \+ 8\)/.test(ownCardSrc),
+    'and keeps the bottom-anchored popup on desktop');
 
   const chrome = findChrome();
   if (!chrome) return skip('no Chrome/Edge found — set CHROME_PATH');

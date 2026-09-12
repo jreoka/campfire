@@ -227,7 +227,7 @@ async function selectServer(id) {
     if (S.srvSetId) { if (server.id === S.srvSetId) renderServerTab(); else closeServerSettings(); }
     if (S.chanSet) { if (server.id === S.chanSet.sid) renderChanSettings(); else closeChannelSettings(); }
     if (firstText) selectChannel(firstText, { keepNav: true });
-    else { $('#chan-name').textContent = '—'; $('#messages').innerHTML = ''; }
+    else { $('#chan-name').textContent = '—'; $('#messages').innerHTML = ''; paintHeaderNameTap(false); }
   } catch (err) {
     toast('Could not load server');
     await refreshServers();
@@ -523,6 +523,7 @@ async function selectChannel(id, opts = {}) {
   renderStage();
   const ch = S.serverDetail.channels.find((c) => c.id === id);
   $('#chan-name').textContent = ch ? ch.name : '—';
+  paintHeaderNameTap(false); // a channel name is not a person's card button
   try { clearTyping(); } catch {}
   // NSFW gate: unconfirmed members get the age check instead of the feed.
   if (ch && ch.nsfw && !S.me?.nsfw_ok) {

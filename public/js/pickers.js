@@ -1218,7 +1218,17 @@ function openMemberCard(uid, rowEl, y) {
   const w = Math.min(300, innerWidth - 16);
   openUserCard(uid, (p && p.width ? p.left : (r ? r.left : innerWidth)) - w - 8, r ? r.top : y);
 }
-async function openUserCard(uid, x, y, fallback) {
+// The phone shape of the person popover: a full-height sheet that slides up from
+// the bottom. The sheet CSS (`#usercard.sheet` in the phone block) owns the
+// geometry, so the popup's inline positioning is dropped — and clampUserCard()
+// bails on a sheet for the same reason. Shared by the me bar (openOwnCard) and a
+// 1:1 DM's header name (ui.js).
+function userCardAsSheet(card) {
+  card.classList.add('sheet');
+  card.style.left = ''; card.style.top = ''; card.style.bottom = '';
+  card.style.maxHeight = ''; card.style.overflowY = '';
+}
+async function openUserCard(uid, x, y, fallback, opts = {}) {
   if (S.me && uid !== S.me.id) await ensureFriends();
   // `fallback` is for rows that already hold the person: a story's viewers list
   // can name someone in no loaded roster (a viewer who shares a server you do
@@ -1288,8 +1298,12 @@ async function openUserCard(uid, x, y, fallback) {
   card.style.bottom = ''; card.style.maxHeight = ''; card.style.overflowY = '';
   card.classList.remove('hidden');
   const h = card.offsetHeight || 300; // offsetHeight, not the animating rect (see popupBox)
-  card.style.left = Math.max(8, Math.min(x || 8, innerWidth - Math.min(296, innerWidth - 16))) + 'px';
-  card.style.top = Math.max(8, Math.min(y || 8, innerHeight - h - 8)) + 'px';
+  if (opts.sheet) userCardAsSheet(card);
+  else {
+    card.classList.remove('sheet');
+    card.style.left = Math.max(8, Math.min(x || 8, innerWidth - Math.min(296, innerWidth - 16))) + 'px';
+    card.style.top = Math.max(8, Math.min(y || 8, innerHeight - h - 8)) + 'px';
+  }
   $('#uc-close').onclick = closeUserCard;
   const pr = $('#uc-profile');
   if (pr) pr.onclick = () => { closeUserCard(); openProfileScreen(uid, u); };

@@ -77,7 +77,7 @@ check(cardZ > zOf(css, '#profile-backdrop') && cardZ > zOf(css, '#settings-backd
   'and the card still floats over the screens it is opened from', { profile: zOf(css, '#profile-backdrop'), settings: zOf(css, '#settings-backdrop') });
 
 console.log('\n[2] the rows hand over the person they already have');
-check(/async function openUserCard\(uid, x, y, fallback\)/.test(pickers) && /const u = memberById\(uid\) \|\| \(fallback && fallback\.id === uid \? fallback : null\);/.test(pickers),
+check(/async function openUserCard\(uid, x, y, fallback, opts = \{\}\)/.test(pickers) && /const u = memberById\(uid\) \|\| \(fallback && fallback\.id === uid \? fallback : null\);/.test(pickers),
   'openUserCard takes a fallback user, like openProfileScreen');
 check(/openProfileScreen\(uid, u\)/.test(pickers), 'and the card\'s Profile tab carries it on');
 check(/if \(memberEl\?\.dataset\.uid && !memberEl\.dataset\.ownclick\) \{ openMemberCard/.test(pickers),

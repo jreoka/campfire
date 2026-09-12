@@ -58,11 +58,15 @@ const pickers = fs.readFileSync(path.join(ROOT, 'public/js/pickers.js'), 'utf8')
 const home = fs.readFileSync(path.join(ROOT, 'public/js/home.js'), 'utf8');
 const servers = fs.readFileSync(path.join(ROOT, 'public/js/servers.js'), 'utf8');
 const stories = fs.readFileSync(path.join(ROOT, 'public/js/stories.js'), 'utf8');
+const pins = fs.readFileSync(path.join(ROOT, 'public/js/pins.js'), 'utf8');
+const ui = fs.readFileSync(path.join(ROOT, 'public/js/ui.js'), 'utf8');
 const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
 
 // ---------- the real tab builders ----------
 const tabCode = slice(pickers, 'const UC_ICONS = {', '// ---------- user card ----------');
 const { ucTabHTML, ucIconHTML, UC_ICONS } = eval(tabCode + '\n;({ ucTabHTML, ucIconHTML, UC_ICONS })');
+// The phone sheet shape (see openUserCard's opts.sheet).
+const sheetSrc = slice(pickers, 'function userCardAsSheet(card) {', 'async function openUserCard(');
 
 // ---------- the real friend button, in both shapes ----------
 const friendCode = slice(home, 'const FRIEND_TAB_ICONS = {', 'async function friendCardAction(');
@@ -87,6 +91,7 @@ function cardPageHtml() {
   </button>
 </div>
 ${card('card1')}${card('card2')}${card('card3')}${card('card4')}
+<div id="usercard" class="hidden"><div class="uc-body">card</div></div>
 <div id="minecard" data-uid="me"><div class="uc-body"><div class="uc-head">${avatar}</div></div></div>
 <span class="avatar big" id="pf-avatar"></span>
 <div id="tabhost" class="uc-tabs"><button type="button" class="uc-tab" id="uc-mention">${ucIconHTML('mention')}<span>Mention</span></button><button type="button" class="uc-tab danger" id="uc-kick">${ucIconHTML('minus-user')}<span>Kick</span></button></div>
@@ -103,6 +108,7 @@ window.paintGameBadge = () => {};
 window.tagHTML = (u) => (u && u.active_tag ? '<span class="usertag">' + u.active_tag + '</span>' : '');
 ${meSrc}
 ${storySrc}
+${sheetSrc}
 const out = {};
 // [1] the me bar
 paintMe();
@@ -189,6 +195,24 @@ out.hostW = hostW;
 out.tabW = tabW;
 out.tabIcon = !!mentionTab.querySelector('svg');
 out.kickDanger = getComputedStyle(document.getElementById('uc-kick')).color !== getComputedStyle(mentionTab).color;
+// [4] the phone sheet shape: full-screen, pinned to the bottom edge
+const sheetCard = document.getElementById('usercard');
+sheetCard.classList.remove('hidden');
+sheetCard.style.left = '60px'; sheetCard.style.top = '40px'; sheetCard.style.maxHeight = '200px'; sheetCard.style.overflowY = 'auto';
+userCardAsSheet(sheetCard);
+// The entry animation starts at translateY(100%) — take it out of the way so the
+// rect below measures the geometry the sheet actually owns.
+sheetCard.style.animation = 'none';
+const sr = sheetCard.getBoundingClientRect();
+out.sheet = {
+  cls: sheetCard.classList.contains('sheet'),
+  top: Math.round(sr.top), left: Math.round(sr.left),
+  w: Math.round(sr.width), h: Math.round(sr.height),
+  vw: innerWidth, vh: innerHeight,
+  inlineLeft: sheetCard.style.left, inlineTop: sheetCard.style.top, inlineMaxH: sheetCard.style.maxHeight,
+  radius: getComputedStyle(sheetCard).borderTopLeftRadius,
+  pos: getComputedStyle(sheetCard).position,
+};
 document.title = JSON.stringify(out);
 </script></body></html>`;
 }
@@ -241,6 +265,24 @@ function main() {
   check(!/id="pf-story"|\.pf-story\{/.test(pickers + stories + css), 'and gone from the profile screen too (host + stylesheet)');
   check(stories.includes("card.querySelector('.uc-head .avatar')"), 'the card avatar is the story anchor');
   check(/paintStoryAvatar\(\$\('#pf-avatar'\), u, \{ ring: '3px'/.test(stories), 'the profile avatar is the story anchor');
+
+  console.log('\n[4b] a DM header name opens that person\'s card as a phone sheet');
+  check(/\$\('#chat-header'\)\.addEventListener\('click', \(e\) => \{/.test(ui), 'the header is a click target (ui.js)');
+  check(/e\.target\.closest\('#chan-name, #chan-hash'\)/.test(ui), 'the name and its @ are the target');
+  check(/document\.body\.classList\.contains\('dm-open'\)/.test(ui) && /!t\.isGroup \? dmPeer\(t\) : null/.test(ui),
+    'only an open 1:1 DM resolves to a person');
+  check(/openUserCard\(peer\.id,[\s\S]{0,60}\{ sheet: phoneLayout\(\) \}\)/.test(ui), 'and it opens the card as a sheet on a phone');
+  check(/function userCardAsSheet\(card\) \{/.test(pickers) && /if \(opts\.sheet\) userCardAsSheet\(card\);/.test(pickers),
+    'the sheet shape is one shared helper (pickers.js)');
+  check(/function paintHeaderNameTap\(on\) \{/.test(home) && /paintHeaderNameTap\(!t\.isGroup && !!peer\)/.test(home),
+    'paintDmHead marks the name only for a 1:1');
+  check(/paintHeaderNameTap\(false\)/.test(pins) && /paintHeaderNameTap\(false\)/.test(servers),
+    'every other header painter clears the mark');
+  check(/#chat-header\.dm-name-tap #chan-name,#chat-header\.dm-name-tap #chan-hash\{cursor:pointer\}/.test(css),
+    'the name reads as clickable (.css)');
+  check(/#chat-header\.dm-name-tap #chan-name::after,[\s\S]{0,90}\{content:'';position:absolute;inset:-12px -3px\}/.test(css),
+    'with a thumb-sized hit box that stays clear of the ☰ beside it (.css)');
+  check(/#chat-header\.dm-name-tap #chan-name:active,[\s\S]{0,60}\{opacity:\.6\}/.test(css), 'and gives under the thumb (.css)');
   const chrome = findChrome();
   if (!chrome) { console.log('  (skipped: no Chrome/Edge found — set CHROME_PATH)'); }
   else {
@@ -277,6 +319,12 @@ function main() {
         check(out.tabW > 0 && out.hostW > 0 && out.tabW > out.hostW - 12 && out.tabW <= out.hostW, 'and each row spans the card', { tabW: out.tabW, hostW: out.hostW });
         check(out.tabIcon === true, 'with its icon');
         check(out.kickDanger === true, 'danger rows read differently from plain ones');
+        check(out.sheet && out.sheet.cls === true && out.sheet.pos === 'fixed', 'the sheet class takes the card over (.css)', out.sheet);
+        check(out.sheet.top === 0 && out.sheet.left === 0 && out.sheet.w === out.sheet.vw && out.sheet.h >= out.sheet.vh - 2,
+          'and fills the whole screen from the bottom edge', out.sheet);
+        check(out.sheet.inlineLeft === '' && out.sheet.inlineTop === '' && out.sheet.inlineMaxH === '',
+          'the popup\'s inline geometry is cleared so the sheet CSS owns it', out.sheet);
+        check(parseFloat(out.sheet.radius) > 0, 'with the sheet\'s rounded top corners', out.sheet.radius);
       }
     } finally {
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}

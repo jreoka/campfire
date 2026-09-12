@@ -814,6 +814,13 @@ async function openGroupEdit(tid) {
 // The open conversation's header: hash + name + placeholder, plus the topic
 // line (a group's description). Shared by selectDmThread and the socket's
 // dm-threads-changed so a rename on another device reaches this header too.
+// A 1:1 DM's name is also the button for that person's card (ui.js), so the
+// header carries `.dm-name-tap` for exactly that case — every other header
+// painter clears it through paintHeaderNameTap.
+function paintHeaderNameTap(on) {
+  const h = $('#chat-header');
+  if (h) h.classList.toggle('dm-name-tap', !!on);
+}
 function paintDmHead(t) {
   if (!t) return;
   const peer = dmPeer(t);
@@ -821,6 +828,7 @@ function paintDmHead(t) {
   $('#chan-name').textContent = t.isGroup ? (t.name || 'Group chat') : ((peer || {}).display_name || 'DM');
   $('#in-message').placeholder = t.isGroup ? `Message ${t.name || 'group'}` : `Message @${(peer || {}).username || ''}`;
   renderTopic();
+  paintHeaderNameTap(!t.isGroup && !!peer);
 }
 async function openGroupAdd(tid) {
   const t = S.dms.find((x) => x.id === tid);

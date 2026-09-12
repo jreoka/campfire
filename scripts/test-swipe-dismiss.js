@@ -10,9 +10,14 @@
 // helper listens to TOUCH events and preventDefaults the move it owns, and only
 // when its scroller is already at the top (normal scrolling still wins below).
 //
-// Drives the REAL `swipeDownToClose` out of final.js (sliced) against the real
-// `#profile-backdrop` markup and stylesheet in headless Chrome, dispatching real
-// TouchEvents. Skips without Chrome.
+// A second ask rides here because it is the same gesture family: the members
+// drawer comes in from the right edge and must leave the same way
+// (`swipeRightToClose`), and a tap outside it must ONLY dismiss it — the tap used
+// to reach the chat underneath and activate whatever was under the finger.
+//
+// Drives the REAL `swipeDownToClose`/`swipeRightToClose` out of final.js (sliced)
+// against the real `#profile-backdrop` markup and stylesheet in headless Chrome,
+// dispatching real TouchEvents. Skips without Chrome.
 //
 // Usage: node scripts/test-swipe-dismiss.js
 'use strict';
@@ -59,6 +64,11 @@ function pageHtml() {
 #usercard.hidden{display:none!important}</style></head><body>
 ${profileMarkup}
 <div id="usercard" class="sheet hidden"></div>
+<!-- The members drawer (a right-hand drawer on a phone) plus the chat it covers:
+     the tap that dismisses the drawer must not reach the chat underneath. -->
+<header id="chat-header"><button type="button" id="btn-members" class="icon-btn">Members</button></header>
+<aside id="members"><div id="member-list"><button type="button" class="member" id="m-row">Jordan</button></div></aside>
+<div id="chat-pane"><button type="button" id="msg-under">message under the drawer</button></div>
 <script>
 window.$ = (s) => document.querySelector(s);
 window.__calls = [];
@@ -72,6 +82,9 @@ window.closeUserCard = () => {
 ${helperSrc}
 // A drag handler elsewhere on the page: a swallowed click must not reach it.
 document.body.addEventListener('click', () => __calls.push('bogus-click'));
+// The chat control under the drawer, and the drawer's own row.
+document.getElementById('msg-under').addEventListener('click', () => __calls.push('chat-click'));
+document.getElementById('m-row').addEventListener('click', () => __calls.push('row-click'));
 const out = {};
 const panel = document.querySelector('#profile-backdrop .profile');
 const body = document.getElementById('pf-body');
@@ -164,6 +177,60 @@ const tap = (el, x, y) => { ev(el, 'touchstart', x, y); ev(el, 'touchend', x, y)
   await drag(card, 200, 200, 205, 330);
   out.noSheetCalls = window.__calls.slice();
 
+  // [7] the members drawer swipes away to the right
+  const drawer = document.getElementById('members');
+  const rowBox = document.getElementById('member-list');
+  const openDrawer = () => { document.body.classList.add('members-open'); window.__calls.length = 0; drawer.style.transform = ''; drawer.style.transition = ''; };
+  const drawerStyles = () => ({ pos: getComputedStyle(drawer).position, tr: getComputedStyle(drawer).transform });
+  openDrawer();
+  out.drawerStyle = drawerStyles();
+  ev(rowBox, 'touchstart', 300, 400);
+  await sleep(20);
+  ev(rowBox, 'touchmove', 360, 402);
+  out.drawerMidTransform = drawer.style.transform;
+  out.drawerMidTransition = drawer.style.transition;
+  ev(rowBox, 'touchend', 360, 402);
+  await sleep(20);
+  out.drawerOpenAfterMid = document.body.classList.contains('members-open');
+  out.drawerClearedAfterMid = drawer.style.transform === '';
+  openDrawer();
+  out.drawerPrevented = await drag(rowBox, 300, 400, 420, 402);
+  out.drawerClosed = !document.body.classList.contains('members-open');
+  out.drawerCalls = window.__calls.slice();
+  // a short drag springs back and stays open
+  await sleep(450);
+  openDrawer();
+  await drag(rowBox, 300, 400, 340, 402);
+  out.drawerShortOpen = document.body.classList.contains('members-open');
+  out.drawerShortCleared = drawer.style.transform === '';
+  // a vertical drag belongs to the list, and a leftward one is nobody's
+  await sleep(450);
+  openDrawer();
+  out.drawerDownPrevented = await drag(rowBox, 300, 400, 302, 520);
+  out.drawerDownOpen = document.body.classList.contains('members-open');
+  openDrawer();
+  out.drawerLeftPrevented = await drag(rowBox, 420, 400, 300, 402);
+
+  // [8] a tap outside the drawer dismisses it and nothing else
+  await sleep(500); // clear the drag's shared swallow window
+  openDrawer();
+  document.getElementById('msg-under').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  out.tapClosed = !document.body.classList.contains('members-open');
+  out.tapCalls = window.__calls.slice();
+  // a tap INSIDE the drawer is the drawer's (it keeps it open and runs the row)
+  await sleep(500);
+  openDrawer();
+  document.getElementById('m-row').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  out.rowTapOpen = document.body.classList.contains('members-open');
+  out.rowTapCalls = window.__calls.slice();
+  // the header is exempt — ☰ and the members button are deliberate destinations
+  await sleep(500);
+  openDrawer();
+  document.getElementById('btn-members').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  out.headerTapOpen = document.body.classList.contains('members-open');
+  out.headerTapCalls = window.__calls.slice();
+  document.body.classList.remove('members-open');
+
   document.title = JSON.stringify(out);
 })();
 </script></body></html>`;
@@ -172,9 +239,13 @@ const tap = (el, x, y) => { ev(el, 'touchstart', x, y); ev(el, 'touchend', x, y)
 function main() {
   console.log('\n[1] the wiring is there');
   check(/function swipeDownToClose\(panel, onClose, opts = \{\}\)/.test(finalSrc), 'the helper exists');
+  check(/function swipeRightToClose\(panel, onClose, opts = \{\}\)/.test(finalSrc), 'the right-swipe twin exists');
   check(finalSrc.includes("panel.addEventListener('touchmove'") && finalSrc.includes('{ passive: false }'), 'it owns a non-passive touchmove (pointer events lose this to the scroller)');
   check(finalSrc.includes("swipeDownToClose($('#profile-backdrop .profile'), () => closeProfileScreen()"), 'the profile page is wired');
   check(finalSrc.includes("swipeDownToClose($('#usercard'), () => closeUserCard(), { enabled: () => $('#usercard').classList.contains('sheet') })"), 'the me-bar sheet is wired, and only as a sheet');
+  check(finalSrc.includes("swipeRightToClose($('#members'), () => document.body.classList.remove('members-open')"), 'the members drawer swipes away to the right');
+  check(/document\.addEventListener\('click', \(e\) => \{\s*if \(!document\.body\.classList\.contains\('members-open'\)\) return;[\s\S]{0,420}e\.stopPropagation\(\);\s*e\.preventDefault\(\);/.test(finalSrc),
+    'a tap outside the open drawer is swallowed in the capture phase (it used to click through)');
   check(/function closeProfileScreen\(\) \{[\s\S]{0,240}p\.style\.animation = ''/.test(pickers), 'closeProfileScreen clears the drag overrides');
   check(/function closeUserCard\(\) \{[\s\S]{0,240}c\.style\.animation = ''/.test(pickers), 'closeUserCard clears the drag overrides');
   check(/\.pf-body\{[^}]*overscroll-behavior:contain/.test(css), 'the profile body contains its overscroll (.css)');
@@ -210,6 +281,24 @@ function main() {
     console.log('\n[5] the me-bar card sheet');
     check(out.cardCalls && out.cardCalls.join() === 'closeCard', 'swiping the sheet down closes it', out.cardCalls);
     check(out.noSheetCalls && out.noSheetCalls.length === 0, 'the popup card (not a sheet) is left alone', out.noSheetCalls);
+    console.log('\n[6] the members drawer swipes away to the right');
+    check(out.drawerStyle && out.drawerStyle.pos === 'fixed', 'the drawer is the phone overlay (.css)', out.drawerStyle);
+    check(out.drawerMidTransform === 'translateX(60px)', 'it follows the finger while dragging', out.drawerMidTransform);
+    check(out.drawerMidTransition === 'none', 'and the CSS transition is out of the way mid-drag', out.drawerMidTransition);
+    check(out.drawerOpenAfterMid === true && out.drawerClearedAfterMid === true, 'releasing early leaves it open and clears the offset', out);
+    check(out.drawerPrevented === true, 'a rightward drag is taken from the browser (touchmove preventDefault)');
+    check(out.drawerClosed === true, 'and past the threshold the drawer closes', out.drawerCalls);
+    check(out.drawerShortOpen === true && out.drawerShortCleared === true, 'a short drag springs back without closing', out);
+    check(out.drawerDownPrevented === false && out.drawerDownOpen === true, 'a vertical drag is left to the list', { prevented: out.drawerDownPrevented, open: out.drawerDownOpen });
+    check(out.drawerLeftPrevented === false, 'so is a leftward one', out.drawerLeftPrevented);
+    console.log('\n[7] a tap outside the open drawer only dismisses it');
+    check(out.tapClosed === true, 'the tap closes the drawer', out.tapCalls);
+    check(out.tapCalls && out.tapCalls.length === 0,
+      'and the chat underneath never sees it (no click-through)', out.tapCalls);
+    check(out.rowTapOpen === true && out.rowTapCalls && out.rowTapCalls.join() === 'row-click,bogus-click',
+      'a tap inside the drawer is still the drawer\'s, and it stays open', out.rowTapCalls);
+    check(out.headerTapOpen === true && out.headerTapCalls && out.headerTapCalls.includes('bogus-click'),
+      'a header control (the members button) is exempt from the swallow', out.headerTapCalls);
   } finally {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }

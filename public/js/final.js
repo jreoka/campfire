@@ -147,8 +147,80 @@ document.addEventListener('click', (e) => {
 }, true);
 swipeDownToClose($('#profile-backdrop .profile'), () => closeProfileScreen(), { scroller: () => $('#pf-body') });
 swipeDownToClose($('#usercard'), () => closeUserCard(), { enabled: () => $('#usercard').classList.contains('sheet') });
+// The members drawer's own dismiss: it comes in from the right edge, so it
+// leaves the same way. Same touch-event shape as the vertical twin (and it
+// shares that swallow window, so the release click cannot land on the member
+// row the finger was dragged across), but there is no "at the top" rule: the
+// drawer's own list only ever scrolls vertically, so a mostly-horizontal drag
+// is always this gesture. A leftward drag or a vertical one is left alone —
+// that is the list scrolling.
+function swipeRightToClose(panel, onClose, opts = {}) {
+  if (!panel) return;
+  const threshold = opts.threshold || 80;
+  let sx = 0, sy = 0, dx = 0, active = false;
+  panel.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || (opts.enabled && !opts.enabled())) { active = false; return; }
+    active = true;
+    const t = e.touches[0];
+    sx = t.clientX; sy = t.clientY; dx = 0;
+  }, { passive: true });
+  panel.addEventListener('touchmove', (e) => {
+    if (!active || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    const ddx = t.clientX - sx, ddy = t.clientY - sy;
+    if (ddx <= 0 || Math.abs(ddy) > Math.abs(ddx)) { dx = 0; panel.style.transform = ''; panel.style.transition = ''; return; }
+    e.preventDefault();
+    dx = ddx;
+    panel.style.transition = 'none';
+    panel.style.transform = 'translateX(' + Math.round(Math.min(dx, 340)) + 'px)';
+  }, { passive: false });
+  const end = () => {
+    if (!active) return;
+    active = false;
+    const dragged = dx > 8, close = dx > threshold;
+    dx = 0;
+    if (dragged) swipeDownToClose.swallowUntil = Date.now() + 400;
+    if (close) {
+      // The class owns the geometry: clearing the inline transform hands the
+      // drawer back to `body.members-open`'s rule, and removing it below eases
+      // it out through the CSS transition (`--t-drawer`).
+      panel.style.transition = '';
+      panel.style.transform = '';
+      onClose();
+      return;
+    }
+    panel.style.transition = 'transform .2s ease-out';
+    panel.style.transform = '';
+    setTimeout(() => { panel.style.transition = ''; }, 240);
+  };
+  panel.addEventListener('touchend', end, { passive: true });
+  panel.addEventListener('touchcancel', end, { passive: true });
+}
+// Only on a phone (and only while it is open): on desktop #members is a static
+// column and the enabled() guard leaves it alone.
+swipeRightToClose($('#members'), () => document.body.classList.remove('members-open'),
+  { enabled: () => document.body.classList.contains('members-open') });
 // Context / message sheets are built fresh on every open (see openMsgSheet and
 // openCtxSheet), so their swipe is wired where they are created.
+// A tap outside the open members drawer dismisses it — and does ONLY that. The
+// drawer is a right-hand panel, not a full-screen page, so the tap that lands on
+// the chat beside it used to reach whatever was under the finger as well (the
+// reported bug: closing the drawer also opened the message/composer button
+// underneath). This runs in the CAPTURE phase on purpose: the bubble listener
+// further down is on this same document and is what would otherwise do the
+// closing, so stopping propagation from here would skip it — instead the drawer
+// closes here and the click never reaches the chat at all. `preventDefault` is
+// part of it, because stopping propagation does not cancel a link's own default
+// action. Header controls are exempt: ☰ and the members button are deliberate
+// destinations, and the members button is how the drawer toggles.
+document.addEventListener('click', (e) => {
+  if (!document.body.classList.contains('members-open')) return;
+  const t = e.target;
+  if (t && t.closest && (t.closest('#members') || t.closest('#chat-header'))) return;
+  document.body.classList.remove('members-open');
+  e.stopPropagation();
+  e.preventDefault();
+}, true);
 // ---------- global closers ----------
 // Was this click originally inside one of `sels`? composedPath() is captured
 // when the event is dispatched, so it keeps answering correctly even after a

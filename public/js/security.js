@@ -328,10 +328,15 @@ $('#set-sess-revoke-others').onclick = async () => {
 };
 // ---------- notification inbox ----------
 function paintNotifBadge(n) {
+  const txt = n > 99 ? '99+' : String(n);
   const b = $('#notifs-count');
-  if (!b) return;
-  b.textContent = n > 99 ? '99+' : String(n);
-  b.classList.toggle('hidden', !n);
+  if (b) { b.textContent = txt; b.classList.toggle('hidden', !n); }
+  // The phone header hides the bell behind the ⋯ sheet (see styles.css), so the
+  // same count rides that button — otherwise an unread notification would be
+  // invisible on a phone. On desktop the ⋯ button is display:none, so the pill
+  // can never show twice.
+  const more = $('#chat-more-count');
+  if (more) { more.textContent = txt; more.classList.toggle('hidden', !n); }
   // Desktop app: mirror the count onto the tray icon + taskbar badge
   // (no-op in a browser; older app builds reject the unknown command).
   try {
@@ -407,19 +412,13 @@ function openOwnCard() {
   const card = $('#usercard');
   if (!card.classList.contains('hidden') && card.dataset.uid === S.me.id) { closeUserCard(); return; }
   const r = $('#me-card').getBoundingClientRect();
-  openUserCard(S.me.id, r.left, r.top);
-  if (phoneLayout()) {
-    // Phone: a full-height sheet that slides up from the bottom. The sheet CSS
-    // owns the geometry, so drop the popup's inline positioning (the async
-    // clampUserCard() bails on a sheet for the same reason).
-    card.classList.add('sheet');
-    card.style.left = ''; card.style.top = ''; card.style.bottom = '';
-    card.style.maxHeight = ''; card.style.overflowY = '';
-    return;
-  }
-  card.classList.remove('sheet');
-  // Bottom-anchored so the card grows upward as content (gaming, bio) loads
-  // and can never slide down over the name/avatar area.
+  // Phone: a full-height sheet that slides up from the bottom (openUserCard
+  // applies it). Desktop keeps the popup, bottom-anchored so the card grows
+  // upward as content (gaming, bio) loads and can never slide down over the
+  // name/avatar area.
+  const sheet = phoneLayout();
+  openUserCard(S.me.id, r.left, r.top, null, { sheet });
+  if (sheet) return;
   card.style.left = Math.max(8, Math.min(r.left, innerWidth - Math.min(296, innerWidth - 16))) + 'px';
   card.style.top = 'auto';
   card.style.bottom = (innerHeight - r.top + 8) + 'px';

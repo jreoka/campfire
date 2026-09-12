@@ -274,7 +274,11 @@ async function main() {
       }
       return { count: boxes.length, minH: Math.min(...boxes.map((b) => b.h)), stolen };
     })()`);
-    check(targets.count >= 4, 'the channel header exposes its icon buttons', targets);
+    // The phone header is deliberately spare: its secondary rails (search,
+    // notifications, threads, pins, members) live in the ⋯ overflow sheet, so the
+    // header itself only carries ☰ and that ⋯. What matters is that each control
+    // it does show keeps its own 44px box.
+    check(targets.count >= 2, 'the channel header exposes ☰ and the ⋯ overflow', targets);
     check(targets.minH >= 44, 'and each one carries at least a 44px hit box', targets);
     check(targets.stolen.length === 0, 'a tap inside one button\'s hit box never lands on its neighbour', targets.stolen);
 
@@ -333,8 +337,18 @@ async function main() {
     await sleep(350);
     await goBack();
     check(await evaluate(`document.querySelector('#modal-backdrop').classList.contains('hidden')`), 'back closes a modal');
-    // The members drawer (a right-hand drawer on a phone).
-    await touchTap('#btn-members');
+    // The members drawer (a right-hand drawer on a phone). The header hides the
+    // members button itself behind the ⋯ overflow now, so that sheet is the way a
+    // thumb gets there — the same `b.click()` the hidden button would have run.
+    await touchTap('#btn-chat-more');
+    await sleep(400);
+    const membersRow = await evaluate(`(() => {
+      const row = [...document.querySelectorAll('#sheet .sheet-row')].find((r) => r.textContent.trim() === 'Members');
+      if (!row) return false;
+      row.click();
+      return true;
+    })()`);
+    check(membersRow === true, 'the ⋯ overflow offers the members drawer');
     await sleep(400);
     check(await evaluate(`document.body.classList.contains('members-open')`), 'the members drawer is open');
     await goBack();

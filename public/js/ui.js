@@ -196,9 +196,12 @@ $('#left').addEventListener('click', (e) => {
   if (e.target.closest && e.target.closest('#btn-friends, #btn-stories')) document.body.classList.remove('nav-open');
 });
 $('#btn-members').onclick = (e) => { e.stopPropagation(); document.body.classList.toggle('members-open'); };
-// Mobile DM header overflow (⋯): voice/video call buttons stay on top; the
-// rest open from a bottom sheet. Items mirror the header buttons' own
-// enabled state (.hidden), so the sheet never offers anything unavailable.
+// Mobile header overflow (⋯): the phone header hides its secondary rails behind
+// this sheet (see styles.css), so the sheet lists exactly what is available:
+// a `.hidden` class means the app switched that control off (pins with nothing
+// pinned, threads in a DM), and Members is only offered where the drawer has
+// something in it — a conversation (a DM/group, or a server channel). Home's
+// feed keeps the Active Now strip instead and hides that button outright.
 $('#btn-chat-more').onclick = (e) => {
   e.stopPropagation();
   const defs = [
@@ -208,16 +211,41 @@ $('#btn-chat-more').onclick = (e) => {
     ['#btn-pins', 'Pinned messages'],
     ['#btn-members', 'Members'],
   ];
+  const homeFeed = document.body.classList.contains('view-home') && !document.body.classList.contains('dm-open');
+  // A control's own badge rides into the sheet, or hiding the button would hide
+  // "3 unread notifications" / "2 new pins" with it.
+  const badgeOf = (sel) => {
+    const b = $(sel);
+    if (!b || b.classList.contains('hidden')) return '';
+    return (b.textContent || '').trim();
+  };
   const items = [];
   for (const [sel, label] of defs) {
     const b = $(sel);
     if (!b || b.classList.contains('hidden')) continue;
-    if (sel === '#btn-members' && !document.body.classList.contains('dm-open')) continue;
-    items.push({ label, fn: () => b.click() });
+    if (sel === '#btn-members' && homeFeed) continue;
+    const n = sel === '#btn-notifs' ? badgeOf('#notifs-count') : (sel === '#btn-pins' ? badgeOf('#pins-count') : '');
+    items.push({ label: n ? `${label} · ${n}${sel === '#btn-pins' ? ' new' : ''}` : label, fn: () => b.click() });
   }
   if (!items.length) return;
   openCtxSheet(items, { title: ($('#chan-name') || {}).textContent || 'Chat', sub: 'Chat options' });
 };
+// A 1:1 DM's name (and its @) opens that person's card — on a phone as the
+// full-height sheet that slides up from the bottom, the same surface the me bar
+// uses (openUserCard with a sheet: see openOwnCard). Groups have no single peer
+// and a server channel has no card at all, so the name stays inert there; that
+// is what paintHeaderNameTap() marks on the header.
+$('#chat-header').addEventListener('click', (e) => {
+  if (!e.target.closest || !e.target.closest('#chan-name, #chan-hash')) return;
+  if (!document.body.classList.contains('dm-open')) return;
+  const t = (S.dms || []).find((x) => x.id === S.dmThreadId);
+  const peer = t && !t.isGroup ? dmPeer(t) : null;
+  if (!peer) return;
+  const card = $('#usercard');
+  if (!card.classList.contains('hidden') && card.dataset.uid === peer.id) { closeUserCard(); return; }
+  const r = (e.target.closest('#chan-hash') || e.target.closest('#chan-name')).getBoundingClientRect();
+  openUserCard(peer.id, r.left, r.bottom + 6, peer, { sheet: phoneLayout() });
+});
 
 /* ---------- chat finder: quick-jump to channels, servers, DMs + message text ---------- */
 let findSel = 0, findRows = [], findLastQ = '', findMsgSeq = 0, findMsgTimer = null;

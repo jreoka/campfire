@@ -621,6 +621,7 @@ function renderDmBlank() {
   $(stories ? '#btn-stories' : '#btn-friends')?.classList.add('active');
   $('#chan-hash').textContent = '';
   $('#chan-name').textContent = stories ? 'Stories' : 'Friends';
+  paintHeaderNameTap(false);
   try { clearTyping(); } catch {}
   paintDmCallButtons();
   renderTopic();
