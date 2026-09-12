@@ -1,0 +1,65 @@
+name: container
+
+# Builds the Campfire container and publishes it to GHCR so the Civo cluster has
+# an image to pull. Uses the workflow's own GITHUB_TOKEN (which carries
+# packages:write); no PAT or registry secret is required.
+#
+# Tags produced: ghcr.io/jreoka/campfire:sha-<short> and :latest
+# NOTE: GHCR packages created here are PRIVATE by default, so a cluster needs an
+# imagePullSecret unless the package is switched to public in package settings.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'package.json'
+      - 'server.js'
+      - 'db.js'
+      - 'bus.js'
+      - 'unfurl.js'
+      - 'virus-scan.js'
+      - 'media-compress.js'
+      - 'storage-sweep.js'
+      - 'storage.js'
+      - 'backup.js'
+      - 'public/**'
+      - 'scripts/gen-icons.js'
+      - 'scripts/png-util.js'
+      - '.github/workflows/container.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha,format=short
+            type=raw,value=latest
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

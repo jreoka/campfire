@@ -1,0 +1,355 @@
+# Campfire on Civo Kubernetes — all resources.
+#   kubectl apply -f deploy/civo/campfire.yaml
+#
+# Sized for ONE Civo Small node: ~1336 MiB allocatable after Civo's reservations
+# (kube-reserved 512 + system-reserved 100 + eviction-hard 100 of 2 GiB).
+# Budget, with AV scanning off so there is no clamd:
+#   k3s system pods (Traefik/CoreDNS/metrics-server/ServiceLB/CSI)  ~300 MiB
+#   postgres                                                        ~150-250
+#   campfire                                                        ~150-250
+#   cloudflared + coturn                                            ~50
+#   -> ~650-850 MiB of 1336, roughly 500 MiB of headroom.
+# REQUESTS are what get scheduled; LIMITS are only reached under load, so the
+# limits below deliberately sum above the allocatable figure.
+#
+# Secrets are NOT in this file. Create them first (see deploy/civo/README.md).
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: campfire
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pgdata
+  namespace: campfire
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: civo-volume      # CSI civo.com, WaitForFirstConsumer
+  resources:
+    requests:
+      # Production DB is 12 MB. 5 GiB is ~EUR 0.55/mo and leaves room to grow.
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+  namespace: campfire
+spec:
+  clusterIP: None            # headless: the StatefulSet's stable name is "db"
+  selector:
+    app: campfire-db
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db
+  namespace: campfire
+spec:
+  serviceName: db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: campfire-db
+  template:
+    metadata:
+      labels:
+        app: campfire-db
+    spec:
+      # RWO volume + one replica: let the old pod release the volume before the
+      # new one starts, or the replacement wedges on a still-attached disk.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: postgres
+          image: postgres:18-alpine     # matches production (18.6)
+          args:
+            # Tuned down for a small node rather than postgres' 128MB default.
+            - -c
+            - shared_buffers=64MB
+            - -c
+            - max_connections=50
+            - -c
+            - effective_cache_size=256MB
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: campfire-db, key: POSTGRES_USER } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: campfire-db, key: POSTGRES_PASSWORD } }
+            - name: POSTGRES_DB
+              valueFrom: { secretKeyRef: { name: campfire-db, key: POSTGRES_DB } }
+          volumeMounts:
+            # postgres:18+ REFUSES to start when it finds a mount at
+            # /var/lib/postgresql/data -- it exits 1 with an explanation
+            # (docker-library/postgres#1259). Data must live under a mount at
+            # /var/lib/postgresql, which is what production's compose does too.
+            # Do NOT set PGDATA here; the image picks the versioned subdirectory.
+            - name: pgdata
+              mountPath: /var/lib/postgresql
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "campfire", "-d", "campfire"] }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec: { command: ["pg_isready", "-U", "campfire", "-d", "campfire"] }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests: { memory: "128Mi", cpu: "100m" }
+            limits:   { memory: "384Mi", cpu: "500m" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: campfire
+  namespace: campfire
+spec:
+  selector:
+    app: campfire
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: campfire
+  namespace: campfire
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: campfire
+  strategy:
+    # RWO Postgres pin plus the in-pod upload buffer: recreate rather than
+    # surging a second pod onto a node that cannot hold two of these.
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: campfire
+    spec:
+      # The app drains for DRAIN_WAIT_MS (5s) after failing readiness, so this
+      # must comfortably exceed that. Civo's ingress/proxy needs the readiness
+      # 503 to land before the socket closes.
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: campfire
+          # Registry must be reachable from Civo. See README before applying.
+          image: ghcr.io/jreoka/campfire:455515f
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          env:
+            - name: PORT
+              value: "3000"
+            - name: NODE_ENV
+              value: production
+            - name: PG_POOL_MAX
+              value: "8"            # the bus LISTEN client holds one connection
+            - name: PGHOST
+              value: db
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: campfire-db, key: POSTGRES_USER } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: campfire-db, key: POSTGRES_PASSWORD } }
+            - name: PGDATABASE
+              valueFrom: { secretKeyRef: { name: campfire-db, key: POSTGRES_DB } }
+            # ---- AV OFF: clamd needs ~1GB and this node has 1336MiB in total.
+            - name: VIRUS_SCAN
+              value: "0"
+            # Compression normally runs inside the scan slot. With scanning off
+            # that slot never runs, so compression would fall to the sweeper and
+            # REPUBLISH the file after it is already visible -- swapping the
+            # bytes under anyone playing it. Off is honest and keeps one
+            # transition per upload.
+            - name: MEDIA_COMPRESS
+              value: "0"
+            - name: MAX_FILE_MB
+              value: "50"           # S3 mode buffers uploads in RAM per upload
+            # S3 mode ignores this, but without it a deployment whose S3_* is
+            # missing would silently write uploads into the image layer. Mirrors
+            # production (which mounts ./data at /data).
+            - name: UPLOAD_DIR
+              value: /data/uploads
+            - name: STUN_URL
+              value: stun:stun.l.google.com:19302
+            - name: DRAIN_WAIT_MS
+              value: "5000"
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: campfire-secrets, key: JWT_SECRET } }
+            - name: DOMAIN
+              valueFrom: { secretKeyRef: { name: campfire-secrets, key: DOMAIN } }
+            - name: ORIGIN
+              valueFrom: { secretKeyRef: { name: campfire-secrets, key: ORIGIN } }
+            - name: KLIPY_KEY
+              valueFrom: { secretKeyRef: { name: campfire-secrets, key: KLIPY_KEY } }
+            - name: TURNSTILE_SECRET
+              valueFrom: { secretKeyRef: { name: campfire-secrets, key: TURNSTILE_SECRET } }
+            - name: TURNSTILE_SITEKEY
+              valueFrom: { secretKeyRef: { name: campfire-secrets, key: TURNSTILE_SITEKEY } }
+            - name: TURN_URL
+              valueFrom: { secretKeyRef: { name: campfire-secrets, key: TURN_URL } }
+            - name: TURN_USER
+              valueFrom: { secretKeyRef: { name: campfire-secrets, key: TURN_USER } }
+            - name: TURN_PASS
+              valueFrom: { secretKeyRef: { name: campfire-secrets, key: TURN_PASS } }
+            - name: S3_ENDPOINT
+              valueFrom: { secretKeyRef: { name: campfire-s3, key: S3_ENDPOINT } }
+            - name: S3_BUCKET
+              valueFrom: { secretKeyRef: { name: campfire-s3, key: S3_BUCKET } }
+            - name: S3_REGION
+              valueFrom: { secretKeyRef: { name: campfire-s3, key: S3_REGION } }
+            - name: S3_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: campfire-s3, key: S3_ACCESS_KEY } }
+            - name: S3_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: campfire-s3, key: S3_SECRET_KEY } }
+          startupProbe:
+            httpGet: { path: /healthz, port: 3000 }
+            failureThreshold: 30
+            periodSeconds: 2
+          livenessProbe:
+            # /healthz deliberately touches nothing external, so a slow database
+            # can never cause a restart loop.
+            httpGet: { path: /healthz, port: 3000 }
+            periodSeconds: 20
+            timeoutSeconds: 3
+          readinessProbe:
+            # /readyz 503s during shutdown: that is what takes this pod out of
+            # rotation before its sockets are dropped.
+            httpGet: { path: /readyz, port: 3000 }
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests: { memory: "192Mi", cpu: "100m" }
+            limits:   { memory: "640Mi", cpu: "1000m" }
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+# coturn as a TURN relay. hostNetwork so it binds the node's public IP directly
+# and needs NO Civo LoadBalancer (which would cost EUR 10.86/mo and double the
+# node bill). Because the node address is used as-is, external-ip is omitted and
+# coturn advertises the address it listens on.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coturn-conf
+  namespace: campfire
+data:
+  turnserver.conf: |
+    realm=campfire.dill.moe
+    server-name=campfire.dill.moe
+    listening-port=3478
+    alt-listening-port=3479
+    listening-ip=0.0.0.0
+    min-port=49160
+    max-port=49200
+    fingerprint
+    lt-cred-mech
+    total-quota=100
+    bps-cap=262144
+    stale-nonce=600
+    denied-peer-ip=10.0.0.0-10.255.255.255
+    denied-peer-ip=192.168.0.0-192.168.255.255
+    denied-peer-ip=172.16.0.0-172.31.255.255
+    denied-peer-ip=127.0.0.0-127.255.255.255
+    simple-log
+    no-stdout-log
+    log-file=/var/log/turnserver.log
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coturn
+  namespace: campfire
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: coturn
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: coturn
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: coturn
+          image: coturn/coturn:latest
+          # The credential must not live in the ConfigMap (it is a Secret), and
+          # coturn reads exactly one config file, so render the base config plus
+          # the user line into an emptyDir and run from there.
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              cat /etc/coturn-base/turnserver.conf > /etc/coturn/turnserver.conf
+              printf 'user=%s:%s\n' "$TURN_USER" "$TURN_PASS" >> /etc/coturn/turnserver.conf
+              exec turnserver -c /etc/coturn/turnserver.conf --pidfile= --no-cli
+          env:
+            - name: TURN_USER
+              valueFrom: { secretKeyRef: { name: campfire-secrets, key: TURN_USER } }
+            - name: TURN_PASS
+              valueFrom: { secretKeyRef: { name: campfire-secrets, key: TURN_PASS } }
+          ports:
+            - { name: turn-udp, containerPort: 3478, protocol: UDP }
+            - { name: turn-tcp, containerPort: 3478, protocol: TCP }
+            - { name: turns-tcp, containerPort: 3479, protocol: TCP }
+          volumeMounts:
+            - name: conf
+              mountPath: /etc/coturn-base
+            - name: rendered
+              mountPath: /etc/coturn
+          resources:
+            requests: { memory: "24Mi", cpu: "50m" }
+            limits:   { memory: "128Mi", cpu: "300m" }
+      volumes:
+        - name: conf
+          configMap:
+            name: coturn-conf
+        - name: rendered
+          emptyDir: {}
+---
+# Outbound-only tunnel: no inbound 80/443 and no LoadBalancer needed, and
+# Cloudflare terminates TLS on the dill.moe zone that is already there.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: campfire
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          # Token-based tunnel: cloudflared reads TUNNEL_TOKEN from the env.
+          args: ["tunnel", "--no-autoupdate", "run"]
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom: { secretKeyRef: { name: campfire-tunnel, key: TUNNEL_TOKEN } }
+          resources:
+            requests: { memory: "24Mi", cpu: "20m" }
+            limits:   { memory: "128Mi", cpu: "300m" }
