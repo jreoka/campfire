@@ -2085,7 +2085,6 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 .sp-tip{position:relative;padding-left:1.15rem;font-size:.81rem;color:var(--muted);line-height:1.45}
 .sp-tip::before{content:'';position:absolute;left:.1rem;top:.45em;width:6px;height:6px;border-radius:50%;background:var(--accent)}
 .sp-empty .btn{margin-top:.35rem}
-.sp-note{margin:1.4rem 0 0;font-size:.74rem;color:var(--faint);max-width:520px}
 /* Phone: the hero stacks tighter, its buttons get their own full-width row, and
    the wall keeps two columns of smaller cards. */
 @media (max-width:700px),(max-height:560px) and (pointer:coarse){

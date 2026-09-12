@@ -527,11 +527,17 @@ function renderStoriesPage() {
   const watched = trays.filter((t) => !t.unseen);
   const srvTrays = (storyData.servers || []).filter((t) => storyLive(t.items).length);
   const unseen = fresh.reduce((n, t) => n + t.unseen, 0);
+  // The summary line only speaks when it has something to say. An empty tray
+  // is already spelled out by the welcome panel below, so it never renders a
+  // "nothing live" line here (and the element is hidden rather than left as an
+  // empty box in the header).
   const sub = $('#sp-sub');
   if (sub) {
-    sub.textContent = unseen
+    const summary = unseen
       ? `${unseen} new ${unseen === 1 ? 'story' : 'stories'} from ${fresh.length} ${fresh.length === 1 ? 'person' : 'people'}`
-      : (trays.length ? `${trays.length} ${trays.length === 1 ? 'person' : 'people'} with live stories` : 'Nothing live right now');
+      : (trays.length ? `${trays.length} ${trays.length === 1 ? 'person' : 'people'} with live stories` : '');
+    sub.textContent = summary;
+    sub.classList.toggle('hidden', !summary);
   }
   body.innerHTML = '';
   const nothing = !mineItems.length && !trays.length && !srvTrays.length;
@@ -544,10 +550,6 @@ function renderStoriesPage() {
     if (watched.length) { body.appendChild(spSection('Already watched')); body.appendChild(spGrid(watched)); }
     if (srvTrays.length) { body.appendChild(spSection('Servers')); body.appendChild(spServerRow(srvTrays)); }
   }
-  const note = document.createElement('p');
-  note.className = 'sp-note';
-  note.innerHTML = '<span>Stories last 24 hours. Reply to a friend\'s story in their DMs, or tap an emoji while you watch to react.</span>';
-  body.appendChild(note);
   if (mineItems.length) spLoadHeroViewers(mineItems, body.firstChild);
 }
 

@@ -414,6 +414,8 @@ async function main() {
 
   console.log('\n[3] nothing else still points at the rail');
   check(!/#story-rail/.test(index + stories + css), 'no rail id left anywhere in the frontend');
+  check(!/sp-note|Stories last 24 hours/.test(index + stories + css),
+    'the old "Stories last 24 hours…" footer note is gone from the markup, module and stylesheet');
   check(/#stories-page\{[^}]*overflow-y:auto/.test(css), 'the page scrolls like the Friends feed (.css)');
 
   const chrome = findChrome();
@@ -491,7 +493,7 @@ async function main() {
     check(out.servers.length === 1 && /Studio/.test(out.servers[0]) && /1 new/.test(out.servers[0]), 'the server strip carries the server and its count', out.servers);
     check(out.cols >= 3, 'the wall is a multi-column grid on a desktop panel', { cols: out.cols });
     check(out.portrait && out.portrait.ratio > 1.2, 'the cards are portrait, like a story', out.portrait);
-    check(/24 hours/.test(out.note) && /DMs/.test(out.note), 'and the footer explains how stories work', out.note);
+    check(out.note === '', 'and there is no footer note under the wall', out.note);
 
     const shot = (await sess('Page.captureScreenshot', { format: 'png' })).data;
     const shotPath = path.join(os.tmpdir(), 'campfire-story-center.png');
@@ -513,7 +515,7 @@ async function main() {
     out = await evaluate('window.__out()');
     check(out.sections.join('|') === 'Already watched', 'a watched-only friend gets the watched heading', out.sections);
     check(out.cards.length === 1 && out.cards[0].seen && out.cards[0].new === '', 'with no "new" badge', out.cards);
-    check(out.sub === '1 person with live stories', 'and the summary says so', out.sub);
+    check(out.sub === '1 person with live stories' && !(await evaluate('document.getElementById("sp-sub").classList.contains("hidden")')), 'and the summary says so', out.sub);
     await evaluate('window.__seed("empty")');
     await sleep(80);
     out = await evaluate('window.__out()');
@@ -522,7 +524,8 @@ async function main() {
     const welcome = await evaluate(`(() => { const b = document.querySelector('#sp-body .sp-empty'); return b ? { title: b.querySelector('.sp-empty-title').textContent, tips: [...b.querySelectorAll('.sp-tip')].map((e) => e.textContent), btn: (b.querySelector('.btn') || {}).textContent } : null; })()`);
     check(!!welcome && welcome.title === 'No stories right now' && welcome.tips.length === 3 && welcome.btn === 'Post a story',
       'with the how-it-works tips and one way in', welcome);
-    check(out.sub === 'Nothing live right now', 'the summary admits it', out.sub);
+    check(out.sub === '' && (await evaluate('document.getElementById("sp-sub").classList.contains("hidden")')),
+      'the header says nothing at all — no "nothing live" line', out.sub);
 
     console.log('\n[8] it fits a phone');
     await sess('Emulation.setDeviceMetricsOverride', { width: 390, height: 800, deviceScaleFactor: 2, mobile: true });

@@ -320,7 +320,10 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   row (filled from the viewers route), opens your story, and its Add / Post
   buttons open the composer; the wall is one portrait card per person (unseen
   first, badged, then "Already watched", greyed), a tap opens that person, and
-  the server strip opens that server's tray; with nothing live it is one welcome
+  the server strip opens that server's tray; the header's summary line hides
+  itself rather than state "Nothing live right now" (the welcome panel below
+  already says it) and the old "Stories last 24 hours…" footer note is gone —
+  neither is to come back; with nothing live it is one welcome
   panel (never a hero *and* an empty card) with the how-it-works tips; the page
   fits a phone (two columns, no sideways scroll, the phone nav closes on tap);
   and in the real app clicking the sidebar row switches the panel, the highlight
