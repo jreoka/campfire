@@ -442,14 +442,14 @@ function spHero(mineItems) {
     add.className = 'btn small';
     add.textContent = 'Add';
     add.title = 'Add another post to your story';
-    add.onclick = () => openStoryComposer({});
+    add.onclick = () => createStory({});
     btns.append(watch, add);
   } else {
     const post = document.createElement('button');
     post.type = 'button';
     post.className = 'btn small primary';
     post.textContent = 'Post a story';
-    post.onclick = () => openStoryComposer({});
+    post.onclick = () => createStory({});
     btns.appendChild(post);
   }
   inn.appendChild(btns);
@@ -484,7 +484,7 @@ function spEmpty() {
   b.type = 'button';
   b.className = 'btn small primary';
   b.textContent = 'Post a story';
-  b.onclick = () => openStoryComposer({});
+  b.onclick = () => createStory({});
   box.append(ic, h, p, tips, b);
   return box;
 }
@@ -647,7 +647,7 @@ function renderServerStories() {
   add.title = 'Post to this server\'s stories';
   add.setAttribute('aria-label', add.title);
   add.innerHTML = svSvg.plus;
-  add.onclick = (e) => { e.stopPropagation(); openStoryComposer({ serverId: S.serverId }); };
+  add.onclick = (e) => { e.stopPropagation(); createStory({ serverId: S.serverId }); };
   row.appendChild(add);
   const open = () => openStoriesSheet({ serverId: S.serverId, name: S.serverDetail.name });
   row.onclick = open;
@@ -844,7 +844,7 @@ function openStoriesSheet(scope = 'home') {
     b.type = 'button';
     b.className = 'story-post';
     b.innerHTML = svSvg.camera + `<span>${esc(label)}</span>`;
-    b.onclick = () => { $('#modal-backdrop').classList.add('hidden'); openStoryComposer({ serverId: serverIdForPost || null }); };
+    b.onclick = () => { $('#modal-backdrop').classList.add('hidden'); createStory({ serverId: serverIdForPost || null }); };
     body.appendChild(b);
   };
   if (serverId) {
@@ -1693,6 +1693,30 @@ function viewOncePrePick(peerId, friends) {
   const f = (friends || []).find((u) => String(u.id) === p);
   return f ? [f.id] : [];
 }
+// ---------- the way into a new post (desktop asks first) ----------
+// Every "add to your story" entry used to open the camera, so anyone who meant
+// to upload a photo or write a text card was asked for camera permission first
+// (and on a desktop that is a browser prompt over an empty viewfinder). On a
+// mouse device the entries ask how the post should start; a touch device keeps
+// the one-tap camera. Both land in the same composer.
+let snOpts = null;
+function openStoryNewMenu(opts = {}) {
+  const el = $('#story-new');
+  if (!el || sc) return; // never over a running composer
+  snOpts = opts || {};
+  el.classList.remove('hidden');
+  const b = $('#sn-camera');
+  if (b && b.focus) { try { b.focus(); } catch {} }
+}
+function closeStoryNewMenu() {
+  const el = $('#story-new');
+  if (el) el.classList.add('hidden');
+  snOpts = null;
+}
+function createStory(opts = {}) {
+  if (isCoarse()) { openStoryComposer(opts); return; }
+  openStoryNewMenu(opts);
+}
 async function openStoryComposer(opts = {}) {
   if (sc) return;
   const el = $('#story-compose');
@@ -1738,7 +1762,18 @@ async function openStoryComposer(opts = {}) {
   storyRenderColors();
   renderStoryAudience();
   paintScMic();
-  await storyStartCam();
+  // How the composer was opened (see createStory): a file already in hand and a
+  // text card both skip the camera — there is nothing to shoot, and asking for
+  // it would prompt for a permission neither of them needs. A refused file
+  // falls back to the camera rather than parking on a dead viewfinder.
+  if (opts.file) {
+    const shown = await storyPickFile(opts.file);
+    if (sc && !shown) await storyStartCam();
+  } else if (opts.text) {
+    await storyStartTextOnly();
+  } else {
+    await storyStartCam();
+  }
 }
 function storySetStep(step) {
   if (sc) sc.step = step;
@@ -3226,8 +3261,11 @@ function storyVideoDuration(file) {
     } catch { resolve(0); }
   });
 }
+// Returns false when nothing was shown (no composer, or a file this flow can't
+// carry) so the caller that opened the composer for a picked file knows it has
+// nothing behind it and can fall back to the camera.
 async function storyPickFile(file) {
-  if (!sc || !file) return;
+  if (!sc || !file) return false;
   if (file.type.startsWith('image/')) {
     // Show the picked file at once (its own bytes, no encode) and re-encode
     // behind it — the downscale/JPEG is the same slow main-thread idle work
@@ -3240,11 +3278,14 @@ async function storyPickFile(file) {
       storyShowPreview(img, 'image', 0);
     })();
     await sc.encodePromise;
+    return true;
   } else if (file.type.startsWith('video/')) {
-    if (file.size > S.maxUploadMb * 1024 * 1024) { toast(`Videos are limited to ${S.maxUploadMb}MB`); return; }
+    if (file.size > S.maxUploadMb * 1024 * 1024) { toast(`Videos are limited to ${S.maxUploadMb}MB`); return false; }
     storyShowPreview(file, 'video', await storyVideoDuration(file));
+    return true;
   } else {
     toast('Pick a photo or a video');
+    return false;
   }
 }
 async function storyPostNow() {
@@ -3374,16 +3415,35 @@ $('#cm-viewonce').onclick = (e) => {
 $('#cm-story').onclick = (e) => {
   e.stopPropagation();
   $('#composer-more').classList.add('hidden');
-  openStoryComposer({ serverId: S.view === 'server' ? S.serverId : null });
+  createStory({ serverId: S.view === 'server' ? S.serverId : null });
 };
 $('#btn-stories').onclick = () => showStoriesPanel();
-// The row's trailing ＋ opens the camera in one tap from anywhere in Home — the
+// The row's trailing ＋ opens a post in one tap from anywhere in Home — the
 // same control (and the same audience default: friends) as the story center's
-// own post button. It is a sibling of the row, not a child, so this tap never
-// reaches the row's handler; like the server sidebar's ＋ it leaves the phone
-// nav page open behind the composer, so posting lands you back on the nav.
-$('#stories-nav-add').onclick = () => openStoryComposer({});
-$('#sp-post').onclick = () => openStoryComposer({});
+// own post button (createStory decides camera vs chooser). It is a sibling of
+// the row, not a child, so this tap never reaches the row's handler; like the
+// server sidebar's ＋ it leaves the phone nav page open behind the composer, so
+// posting lands you back on the nav.
+$('#stories-nav-add').onclick = () => createStory({});
+$('#sp-post').onclick = () => createStory({});
+// The chooser itself (desktop only — createStory hands touch devices the
+// camera). Upload keeps the menu up until a file actually lands, so a cancelled
+// file dialog leaves the reader where they were rather than behind a
+// viewfinder with no camera running.
+$('#sn-close').onclick = () => closeStoryNewMenu();
+$('#story-new').addEventListener('click', (e) => { if (e.target.id === 'story-new') closeStoryNewMenu(); });
+$('#sn-camera').onclick = () => { const o = snOpts || {}; closeStoryNewMenu(); openStoryComposer(o); };
+$('#sn-text').onclick = () => { const o = snOpts || {}; closeStoryNewMenu(); openStoryComposer({ ...o, text: true }); };
+$('#sn-upload').onclick = () => { const f = $('#sn-file'); if (f) f.click(); };
+$('#sn-file').addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  const o = snOpts || {};
+  e.target.value = '';
+  if (!file) return;
+  if (!/^(image|video)\//.test(file.type || '')) { toast('Pick a photo or a video'); return; }
+  closeStoryNewMenu();
+  openStoryComposer({ ...o, file });
+});
 $('#sv-close').onclick = () => svClose();
 // Tapping the poster's picture/name opens their profile. The profile's own
 // picture is the story button (paintProfileStory), so it leads straight back

@@ -239,7 +239,9 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   `node scripts/test-story-add-entry.js` covers the two quick ways into the story
   camera (offline checks, then the real `#stories-nav-wrap` markup + `styles.css`
   and the real wiring and boot deep-link code from `stories.js`/`auth.js` in
-  headless Chrome, skipping without Chrome): Home's Stories row carries an accent
+  headless Chrome, skipping without Chrome — the harness is a phone's, so
+  `isCoarse()` is true and the ＋ must land in the camera): Home's Stories row
+  carries an accent
   ＋ as a SIBLING pinned over its trailing edge (never nested — a button cannot
   nest a button — and never a `div[role=button]`, which would drop the row out of
   the UA button font the Friends row above it renders in), it stays a 24px circle
@@ -249,6 +251,20 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   shortcut (`/?story=1`, in scope, with a served icon) boots straight into the
   camera with the param stripped first — while `?dm=`/`?friends=`/`?admin=reports`
   still win when both are present.
+  `node scripts/test-story-new-menu.js` covers the desktop create-story chooser
+  (offline checks, then the real `#story-new` markup + `styles.css` and the real
+  `createStory`/`openStoryNewMenu`/`closeStoryNewMenu` and wiring in headless
+  Chrome, skipping without Chrome): every create-story entry in the app goes
+  through `createStory` and none opens the camera directly any more, a coarse
+  pointer still gets the camera in one tap while a mouse gets the card, the card
+  is a centred flat surface of three 42px-tile rows (camera / upload / text-only)
+  that stack as comfortable targets and never overflow, opening it focuses the
+  camera row, each row hands the composer the right thing with the server scope
+  carried through (`{}`, `{text:true}`, `{file}`), upload keeps the menu up until
+  a real file lands and refuses a non-media one out loud, the backdrop/✕/Escape
+  put it away, a cancelled menu does not leak its options into the next open, and
+  the composer skips the camera for `opts.file`/`opts.text` (with a refused file
+  falling back to it). Writes `campfire-story-new-menu.png` to the temp dir.
   `node scripts/test-status-bubble.js` covers the custom status as a
   thought bubble beside the avatar (offline; it runs the real
   `statusBubbleHTML` pulled out of `pickers.js`): other people only get a bubble

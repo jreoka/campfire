@@ -393,7 +393,7 @@ async function main() {
   check(/\$\('#btn-stories'\)\.onclick = \(\) => showStoriesPanel\(\)/.test(stories), 'the sidebar Stories row opens the page');
   check(/openStoriesSheet\(\{ serverId: S\.serverId/.test(stories), 'the server sidebar row still opens its compact sheet');
   check(/async function showStoriesPanel\(\)/.test(stories) && /S\.homePanel = 'stories';/.test(stories), 'showStoriesPanel switches the Home panel');
-  check(/\$\('#sp-post'\)\.onclick = \(\) => openStoryComposer\(\{\}\)/.test(stories), 'the page\'s post button opens the composer (friends audience)');
+  check(/\$\('#sp-post'\)\.onclick = \(\) => createStory\(\{\}\)/.test(stories), 'the page\'s post button starts a post (friends audience; createStory picks camera vs chooser)');
 
   console.log('\n[2] the panel switch is one place');
   check(/homePanel: 'friends'/.test(core), 'S carries which Home panel is showing');

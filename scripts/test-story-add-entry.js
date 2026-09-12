@@ -120,8 +120,8 @@ check(afterIx > 0 && /\(max-width:700px\),\(max-height:560px\) and \(pointer:coa
   'and only under the phone condition (never on a fine pointer)', mediaCond);
 
 console.log('\n[3] the wiring');
-check(/\$\('#stories-nav-add'\)\.onclick = \(\) => openStoryComposer\(\{\}\);/.test(stories),
-  'the ＋ opens the story composer (friends default, like the story center\'s own button)');
+check(/\$\('#stories-nav-add'\)\.onclick = \(\) => createStory\(\{\}\);/.test(stories),
+  'the ＋ starts a post (friends default, like the story center\'s own button)');
 check(/\$\('#btn-stories'\)\.onclick = \(\) => showStoriesPanel\(\)/.test(stories), 'the row itself still opens the story center');
 
 console.log('\n[4] the home-screen shortcut');
@@ -139,6 +139,10 @@ check(/else if \(qfriends\) \{[\s\S]*?\} else if \(qstory\) \{/.test(auth),
   'the story branch is last, so a notification deep link still outranks it');
 
 // ---------- headless Chrome ----------
+// The real createStory/openStoryNewMenu/closeStoryNewMenu (this harness is the
+// phone nav's, so isCoarse() is true: the entry must go straight to the camera
+// and never touch the desktop chooser — that lives in test-story-new-menu.js).
+const createSrc = slice(stories, 'let snOpts = null;', 'async function openStoryComposer(opts = {}) {');
 function pageHtml() {
   const deep = deepLinkBlock();
   const wire = slice(stories, "$('#btn-stories').onclick", "$('#sp-post').onclick");
@@ -169,10 +173,15 @@ if (params.get('nav') === '1') document.body.classList.add('nav-open');
 const calls = { composer: 0, panel: 0, dm: [], admin: [], rs: [] };
 function resetCalls() { calls.composer = 0; calls.panel = 0; calls.dm = []; calls.admin = []; calls.rs = []; }
 
-// ---- the REAL wiring out of stories.js, with its two calls stubbed ----
+// ---- the REAL createStory block out of stories.js, with its two calls stubbed ----
 const $ = (sel) => document.querySelector(sel);
+let sc = null;                       // no composer is running in this page
+function isCoarse() { return true; } // a phone: the entry must skip the chooser
+function toast() {}
 function showStoriesPanel() { calls.panel++; }
 function openStoryComposer() { calls.composer++; return Promise.resolve(true); }
+eval(${JSON.stringify(createSrc)});
+// ---- the REAL wiring out of stories.js, with its two calls stubbed ----
 eval(${JSON.stringify(wire)});
 // the rule in ui.js that closes the phone nav page when a nav row is tapped
 document.addEventListener('click', (e) => {
