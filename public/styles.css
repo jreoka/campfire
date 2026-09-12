@@ -1379,6 +1379,8 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .set-emoji-img{width:26px;height:26px;object-fit:contain}
 .danger-zone{margin-top:1.1rem;background:var(--danger-bg);border:1px solid var(--danger-line);border-radius:12px;padding:.85rem .95rem}
 .danger-zone h4{margin:.1rem 0 .55rem;color:var(--danger-tx);font-size:.9rem}
+.danger-list{margin:.4rem 0 .2rem;padding-left:1.1rem;font-size:.82rem;color:var(--muted)}
+.danger-list li{margin:.18rem 0}
 
 /* ---------- thread panel ---------- */
 #thread-panel{width:330px;background:var(--panel);border-left:1px solid var(--line-soft);display:flex;flex-direction:column;flex-shrink:0;order:4;position:relative}

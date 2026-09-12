@@ -150,6 +150,28 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   unreachable by that handle, and is labelled "Deleted user" by the panel — never
   the invented "Someone". Re-run after touching the search route, the find panel,
   `fmtAgo` or `parseFindQuery`.
+  `node scripts/test-account-close.js` covers Settings → Account → Close account
+  (static checks and a headless-Chrome harness for the dialog — it runs the real
+  `renderDangerBox`/`openCloseAccount`/`submitCloseAccount`/`accountClosed` with
+  the real `openModal` and `showAuth` — skipping only the browser half without
+  Chrome, then a throwaway database over HTTP, skipping without Postgres): the
+  danger zone lists both actions with what each does, delete opens a danger dialog
+  whose confirm button carries the danger class and whose cancel reads "Keep my
+  account", the bullet list is the real consequences, the button stays off until
+  the password (+ a 2FA code when 2FA is on) and the typed username are filled,
+  a refused attempt reopens with the reason in words and the answers still in the
+  fields, success lands on the sign-in screen with the reason and no token, and
+  the disable dialog drops the typed-name field while both drop the code field
+  when 2FA is off. Against the real routes: a wrong password or a wrong 2FA code
+  leaves the account untouched (with the eleventh guess a minute throttled),
+  disable kills the session everywhere and blocks sign-in until a site admin
+  re-enables it (the pre-disable token stays revoked after that, and 2FA
+  survives), delete additionally requires the username — checked server-side, not
+  just in the dialog — works with a backup code in place of the authenticator,
+  and afterwards the account is gone (not disabled), its memberships cascaded and
+  its messages still in their chats with no author; the instance owner's account
+  is refused 'owner_protected' for both. Re-run after touching the account pane,
+  `/api/me/disable`, `/api/me/delete`, `purgeAccount` or the admin delete route.
   `node scripts/test-user-card-actions.js` covers the card's action tabs, the
   me bar's missing server tag and the avatar-as-story-button (offline for the tab
   builders — it runs the real `ucTabHTML`/`UC_ICONS` out of `pickers.js` and

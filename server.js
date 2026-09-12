@@ -3457,6 +3457,49 @@ app.post('/api/me/password', authRequired, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- closing your own account ----------
+// Disabling or deleting yourself ends every session, so both re-prove the
+// account the way a password change should: the current password, plus a 2FA
+// code (or a backup code) when 2FA is on. Ten tries a minute, then a brake —
+// a borrowed session must not be able to grind the password down.
+//
+// The instance owner is refused: no other admin may manage that account, so
+// closing it from here would leave the instance with no way back in.
+async function confirmSelfAction(req, res) {
+  const me = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!me) { res.status(401).json({ error: 'bad_token' }); return null; }
+  if (isOwnerAccount(me)) { res.status(403).json({ error: 'owner_protected' }); return null; }
+  const brake = await rateHit('acct:' + me.id, 10, 60e3);
+  if (!brake.ok) { res.status(429).json({ error: 'slow_down', retryAfter: brake.retryAfter }); return null; }
+  const pw = String(req.body?.password || '');
+  if (!pw || !(await bcrypt.compare(pw, me.password_hash))) { res.status(401).json({ error: 'wrong_password' }); return null; }
+  if (me.totp_enabled && !(await check2faCode(me.id, me.totp_secret, req.body?.code))) {
+    return res.status(400).json({ error: 'bad_code' });
+  }
+  await rateClear('acct:' + me.id);
+  return me;
+}
+// Disable: reversible, but only by a site admin (the sign-in screen says so).
+// Everything the account owns is kept.
+app.post('/api/me/disable', authRequired, async (req, res) => {
+  const me = await confirmSelfAction(req, res);
+  if (!me) return;
+  await db.prepare('UPDATE users SET disabled = 1 WHERE id = ?').run(me.id);
+  await db.prepare('UPDATE sessions SET revoked = 1 WHERE user_id = ?').run(me.id);
+  closeSessionSockets(me.id, null);
+  try { await broadcastUserUpdate(await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(me.id)); } catch {}
+  res.json({ ok: true });
+});
+// Delete: the typed username is checked here too, so the confirmation gate is
+// the server's, not just the dialog's.
+app.post('/api/me/delete', authRequired, async (req, res) => {
+  const me = await confirmSelfAction(req, res);
+  if (!me) return;
+  if (String(req.body?.confirm || '').trim().toLowerCase() !== me.username) return res.status(400).json({ error: 'confirm_mismatch' });
+  await purgeAccount(me);
+  res.json({ ok: true });
+});
+
 // ---------- server layout (rail order + folders, per user) ----------
 // Folders: server_folders rows (id/name/color/position/open) plus each
 // server_members.folder_id + position. Positions are global rail indexes so
@@ -3803,16 +3846,19 @@ app.patch('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, re
   await broadcastUserUpdate(fresh);
   res.json({ user: await adminUserView(fresh) });
 });
-app.delete('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, res) => {
-  const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
-  if (!target) return res.status(404).json({ error: 'no_user' });
-  if (blockedByOwnerLock(req, res, target)) return;
-  if (target.id === req.user.id) return res.status(400).json({ error: 'cannot_delete_self' });
+// Permanently remove an account and everything personal hanging off it.
+// Sessions and live sockets go first so nothing can write underneath the
+// delete; the row itself is last. Messages stay (their FK is ON DELETE SET
+// NULL) so the chats they were written in don't develop holes — they render as
+// a deleted author — while memberships, DMs, friends, blocks, passkeys, push
+// subscriptions, stories and presences all cascade with the row. Profile media
+// is removed from storage. Shared by the site-admin route and the account
+// owner's own Settings → Account.
+async function purgeAccount(target) {
   const serverIds = (await db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(target.id)).map((r) => r.server_id);
   await db.prepare('UPDATE sessions SET revoked = 1 WHERE user_id = ?').run(target.id);
   closeSessionSockets(target.id, null);
   await evictFromServerAll(target.id);
-  // Their messages stay (SET NULL) with files intact; profile media goes.
   deleteUploaded(target.avatar_url);
   deleteUploaded(target.banner_url);
   deleteUploaded(target.sidebar_banner_url);
@@ -3822,6 +3868,14 @@ app.delete('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, r
     const v = await serverView(sid);
     if (v) broadcastToServer(sid, { t: 'server-updated', server: v });
   }
+  return serverIds;
+}
+app.delete('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, res) => {
+  const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'no_user' });
+  if (blockedByOwnerLock(req, res, target)) return;
+  if (target.id === req.user.id) return res.status(400).json({ error: 'cannot_delete_self' });
+  await purgeAccount(target);
   res.json({ ok: true });
 });
 async function evictFromServerAll(userId) {

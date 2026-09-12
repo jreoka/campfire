@@ -82,7 +82,101 @@ $('#btn-passkey').onclick = async () => {
 };
 async function renderSecurityTab() {
   if (!S.me) return;
-  render2faBox(); renderPasskeyBox(); renderSessionBox();
+  render2faBox(); renderPasskeyBox(); renderSessionBox(); renderDangerBox();
+}
+// ---------- close your own account ----------
+// Both actions sign the account out everywhere, so both re-prove it: the
+// password, and a 2FA code (or a backup code) when 2FA is on. Deleting also
+// asks for the username to be typed — the server checks that too, so it is a
+// real gate rather than dialog theatre. The instance owner is refused by the
+// server: no other admin may manage that account, so closing it would leave
+// the instance with no way back in.
+async function renderDangerBox() {
+  const box = $('#set-danger');
+  if (!box) return;
+  let has2fa = false;
+  try { has2fa = !!(await api('/api/2fa/status')).enabled; } catch {}
+  box.innerHTML = '';
+  const dz = document.createElement('div'); dz.className = 'danger-zone';
+  const h = document.createElement('h4'); h.textContent = 'Close account';
+  const dis = document.createElement('p'); dis.className = 'muted small';
+  dis.textContent = 'Disabling signs you out on every device right away, and you cannot sign back in until a site admin re-enables the account.';
+  const del = document.createElement('p'); del.className = 'muted small';
+  del.textContent = 'Deleting removes your account for good: profile, friends, DMs, stories and server memberships.';
+  const row = document.createElement('div'); row.className = 'row'; row.style.marginTop = '.5rem';
+  const bk = document.createElement('button'); bk.className = 'btn danger small'; bk.textContent = 'Disable account';
+  bk.onclick = () => openCloseAccount('disable', has2fa);
+  const bd = document.createElement('button'); bd.className = 'btn danger small'; bd.textContent = 'Delete account';
+  bd.onclick = () => openCloseAccount('delete', has2fa);
+  row.append(bk, bd);
+  dz.append(h, dis, del, row);
+  box.appendChild(dz);
+}
+function openCloseAccount(mode, has2fa, retry) {
+  const del = mode === 'delete';
+  const name = (S.me && S.me.username) || '';
+  const prev = (retry && retry.body) || {};
+  const lines = del
+    ? ['Your profile, avatar, friends, DMs and stories go with it.',
+       'You leave every server. Messages you wrote stay in their chats, shown as a deleted user.',
+       'This cannot be undone — there is no way to restore the account.']
+    : ['You are signed out on every device right away.',
+       'You cannot sign in again until a site admin re-enables the account.',
+       'Nothing is deleted — your messages, servers and chats are kept.'];
+  openModal(del ? 'Delete your account?' : 'Disable your account?', `
+    <p class="muted">${del ? 'This permanently deletes' : 'This closes'} <b>@${esc(name)}</b>.</p>
+    <ul class="danger-list">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>
+    ${retry && retry.msg ? `<p class="error">${esc(retry.msg)}</p>` : ''}
+    <label>Your password<input id="acct-pw" type="password" autocomplete="current-password" value="${esc(prev.password || '')}" /></label>
+    ${has2fa ? `<label>2FA code <span class="muted">(or one of your backup codes)</span><input id="acct-code" maxlength="16" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" value="${esc(prev.code || '')}" /></label>` : ''}
+    ${del ? `<label>Type <b>${esc(name)}</b> to confirm<input id="acct-confirm" autocomplete="off" maxlength="24" placeholder="${esc(name)}" value="${esc(prev.confirm || '')}" /></label>` : ''}
+  `, del ? 'Delete account' : 'Disable account', () => submitCloseAccount(mode, has2fa), { danger: true, cancelLabel: 'Keep my account' });
+  const ok = $('#modal-ok'), pw = $('#acct-pw'), code = $('#acct-code'), conf = $('#acct-confirm');
+  const sync = () => {
+    ok.disabled = !(pw && pw.value)
+      || (has2fa && !(code && code.value.trim()))
+      || (del && (!conf || conf.value.trim().toLowerCase() !== name.toLowerCase()));
+  };
+  for (const el of [pw, code, conf]) if (el) el.addEventListener('input', sync);
+  sync();
+}
+async function submitCloseAccount(mode, has2fa) {
+  const body = {
+    password: ($('#acct-pw') || {}).value || '',
+    code: (($('#acct-code') || {}).value || '').trim(),
+    confirm: (($('#acct-confirm') || {}).value || '').trim(),
+  };
+  try {
+    await api(mode === 'delete' ? '/api/me/delete' : '/api/me/disable', { method: 'POST', body: JSON.stringify(body) });
+  } catch (err) {
+    // Keep the gate in front of them: the same dialog with what they typed and
+    // the server's reason on top, rather than a closed dialog and a toast.
+    openCloseAccount(mode, has2fa, { msg: prettyError(err.message), body });
+    return;
+  }
+  accountClosed(mode);
+}
+// The account is off (or gone) and so is every session: tear the local session
+// down without asking the API for anything, forget this account's device
+// memories, and hand the person the sign-in screen with the reason.
+function accountClosed(mode) {
+  const uid = S.me && S.me.id;
+  try { leaveVoice(true); } catch {}
+  try { closeFind(); } catch {}
+  try { closeSettings(); } catch {}
+  try { S.ws?.close(); } catch {}
+  store.token = ''; store.sid = '';
+  if (mode === 'delete' && uid) {
+    for (const key of ['cf_drafts_', 'cf_view_', 'cf_home_tab_', 'cf_chanunread_', 'cf_pinseen_']) {
+      try { localStorage.removeItem(key + uid); } catch {}
+    }
+  }
+  const msg = mode === 'delete'
+    ? 'Your account has been deleted. Messages you wrote stay in their chats as a deleted user.'
+    : 'Your account is disabled. A site admin can re-enable it for you.';
+  showAuth();
+  const el = $('#auth-error');
+  if (el) { el.textContent = msg; el.classList.remove('hidden'); }
 }
 async function render2faBox() {
   const box = $('#set-2fa');
