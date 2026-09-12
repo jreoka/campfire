@@ -103,6 +103,14 @@ spec:
           resources:
             requests: { memory: "128Mi", cpu: "100m" }
             limits:   { memory: "384Mi", cpu: "500m" }
+      # A volumeMount's name refers to a volume in THIS pod spec, not to the PVC.
+      # With a standalone PVC (rather than volumeClaimTemplates) the claim has to
+      # be wired in explicitly or the StatefulSet is rejected outright:
+      #   spec.template.spec.containers[0].volumeMounts[0].name: Not found: "pgdata"
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim:
+            claimName: pgdata
 ---
 apiVersion: v1
 kind: Service
@@ -139,10 +147,15 @@ spec:
       # must comfortably exceed that. Civo's ingress/proxy needs the readiness
       # 503 to land before the socket closes.
       terminationGracePeriodSeconds: 45
+      # GHCR packages created by Actions are private by default.
+      imagePullSecrets:
+        - name: campfire-registry
       containers:
         - name: campfire
-          # Registry must be reachable from Civo. See README before applying.
-          image: ghcr.io/jreoka/campfire:455515f
+          # Built and published by .github/workflows/container.yml to GHCR.
+          # The package is PRIVATE by default, so the pod needs the
+          # campfire-registry imagePullSecret (see README).
+          image: ghcr.io/jreoka/campfire:sha-acabe59
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
@@ -185,6 +198,11 @@ spec:
               value: /data/uploads
             - name: STUN_URL
               value: stun:stun.l.google.com:19302
+            # Retain only the 3 newest pg_dump snapshots in the bucket's
+            # backups/ prefix (the code default is 10). Pruning happens on each
+            # backup run: it lists backups/, then deletes all but the newest KEEP.
+            - name: BACKUP_KEEP
+              value: "3"
             - name: DRAIN_WAIT_MS
               value: "5000"
             - name: JWT_SECRET
