@@ -350,7 +350,7 @@ async function e2e() {
     await evaluate(`document.getElementById('btn-home').click()`);
     await sleep(400);
     check(await evaluate(`S.homePanel === 'friends' && !document.getElementById('friends-page').classList.contains('hidden')`),
-      'and the campfire Home button always lands on Friends');
+      'and the campfire Home button comes back to the Friends tab it was left on');
 
     console.log('\n[11] a phone-width story page');
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 820, deviceScaleFactor: 2, mobile: true });
@@ -402,8 +402,8 @@ async function main() {
   check(/paintHomePanel\(\);\r?\n\s*document\.querySelectorAll\('#home-ui \.dmrow'\)/.test(pins), 'renderDmBlank routes through it');
   check(/\$\(stories \? '#btn-stories' : '#btn-friends'\)\?\.classList\.add\('active'\)/.test(pins), 'the nav row highlight follows the panel');
   check(/\$\('#chan-name'\)\.textContent = stories \? 'Stories' : 'Friends'/.test(pins), 'and so does the header name');
-  check(/S\.homePanel = 'friends';/.test(home), 'Home (the campfire button) lands on Friends, never on a stale panel');
-  check(/function showFriendsPanel\(\) \{\r?\n  if \(S\.view !== 'home'\) \{ S\.homePanel = 'friends'; openHome\(\); return; \}/.test(home), 'the Friends row sets it before switching views');
+  check(/S\.homePanel = opts\.panel === 'stories' \? 'stories' : 'friends';/.test(home), 'Home\'s own default panel is Friends (the campfire button passes the remembered tab instead)');
+  check(/function showFriendsPanel\(\) \{\r?\n  if \(S\.view !== 'home'\) \{ openHome\(\{ panel: 'friends', dm: null \}\); return; \}/.test(home), 'the Friends row sets it before switching views');
   // Every path that hides the Friends panel must hide the story page with it.
   for (const [name, src] of [['openServerView', home], ['selectDmThread', pins], ['openCallView', voice], ['leaveVoice', voice], ['closeCallView', voice]]) {
     const showFriends = /\$\('#friends-page'\)\.classList\.add\('hidden'\);/.test(src);

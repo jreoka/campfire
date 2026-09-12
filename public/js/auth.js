@@ -339,7 +339,10 @@ async function boot() {
   // Reopen exactly where the user left off: a DM/group thread under Home,
   // or a server + channel. Missing ids fall back gracefully.
   if (mem && mem.view === 'home') {
-    await openHome();
+    // The remembered Home tab supplies the panel, so a reload taken on the
+    // Stories page comes back to it instead of the Friends feed. The DM is
+    // selected below (the last-view memory is the authority on that).
+    await openHome({ panel: readHomeTab().panel, dm: null });
     if (mem.dm) {
       if (S.dms.some((t) => t.id === mem.dm)) await selectDmThread(mem.dm);
       else {

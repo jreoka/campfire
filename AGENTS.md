@@ -411,12 +411,26 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   `node scripts/test-mobile-home-nav.js` drives the real page in headless Chrome
   at a phone viewport against a throwaway database and pins that behavior: the
   campfire Home button tapped with a real touch keeps the nav page up (still
-  slid in, chat behind it unreachable) while landing on Home with no
-  conversation selected, and the clear is synchronous so the DM that was open is
-  not left painted under the page while the roster refreshes are in flight —
-  plus Home from inside a server leaves the home lists, with a DM row in the
-  panel to pick, and picking it closes the page and opens that DM (the ✕ still
-  closes too). Skips when Postgres or Chrome is missing.
+  slid in, chat behind it unreachable) while landing on Home and restoring the
+  tab you were on — synchronously, so the conversation is back in the same task
+  as the click instead of popping in behind the roster refreshes — plus Home
+  from inside a server leaves the home lists, with a DM row in the panel to
+  pick, and picking it closes the page and opens that DM (the ✕ still closes
+  too). Skips when Postgres or Chrome is missing.
+  `node scripts/test-home-tab-return.js` covers the campfire Home button coming
+  back to the tab you were last on (offline for the two real memory helpers —
+  `readHomeTab`/`rememberHomeTab` sliced out of `core.js` — plus static wiring
+  checks, then the REAL app against a throwaway database at a desktop viewport,
+  skipping without Postgres or Chrome): the memory is per account (a second
+  account never inherits it, junk in the store falls back to Friends), which
+  paths remember it (opening a DM or group, the Friends row, the Stories row)
+  and which clear it (Close DM, Leave chat, a thread that vanished or a group
+  you were removed from), the campfire button is the ONLY entry that restores
+  (every internal jump into Home still lands blank and picks its own
+  conversation), and end to end: DM → server → Home lands back in that DM with
+  its header and its `.active` sidebar row, a group chat comes back by name,
+  the Stories and Friends tabs come back as themselves, a closed DM never comes
+  back, the memory survives a reload, and there are no page exceptions.
   `node scripts/test-group-dm-settings.js` covers group chat settings. The
   offline half slices the real `dmMenuItems` out of `home.js` (a group row
   offers Edit group chat / Add members / Leave, a 1:1 row keeps Close DM and
@@ -937,12 +951,26 @@ Home's main panel shows one of two no-conversation pages — the Friends feed or
 the story center — and they are switched in exactly one place,
 `paintHomePanel()` (pins.js): `S.homePanel` is the state, `renderDmBlank()`
 routes through it and follows with the nav highlight (`#btn-friends` vs
-`#btn-stories`) and the header name, `openHome()` always resets it to `friends`
-so the campfire Home button never lands on a stale panel, and `#btn-stories`
+`#btn-stories`) and the header name, `openHome()` defaults it to `friends`
+(`opts.panel` is how a caller asks for the other tab), and `#btn-stories`
 runs `showStoriesPanel()`. Every path that hides `#friends-page` must hide
 `#stories-page` with it (openServerView, selectDmThread, openCallView,
 closeCallView, leaveVoice) — a panel left painted under a channel or a call is
 exactly the bug `test-story-center.js` looks for.
+The campfire Home button is `openHomeTab()` (settings.js wires it; home.js
+defines it): it passes the per-account `cf_home_tab_<uid>` memory from
+`readHomeTab()` (core.js) to `openHome({panel, dm})`, so Home comes back to the
+DM/group or the Friends/Stories tab you were last on instead of the empty feed.
+`rememberHomeTab()` is written by `selectDmThread`, `showFriendsPanel`,
+`showStoriesPanel` and cleared by Close DM / Leave chat / a thread that vanished
+or was removed — never by leaving Home for a server, which is the whole point.
+The restore is the BUTTON's alone: every internal "jump into Home" (a
+notification, a DM row, a share target) still calls `openHome()` with nothing
+and picks its own conversation right after, so don't make `openHome()` restore
+by default. It also runs synchronously inside the click (the blank, then
+`selectDmThread(dm, {keepNav: true})` before the roster refreshes) and
+`keepNav` is what stops the restore from closing the phone nav page Home
+deliberately keeps up.
 The me bar's only click target is `#me-open` (the avatar + name), which outlines
 itself on hover; the space around mute/deafen/settings is dead, and it never
 shows your own active server tag (`paintMe` used to insert one — other people's

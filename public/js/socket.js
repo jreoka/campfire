@@ -399,7 +399,7 @@ function onWS(m) {
       // drop back to a blank instead of showing a ghost room.
       refreshDms().then(() => {
         if (S.view !== 'home') { rememberView(); return; }
-        if (S.dmThreadId && !S.dms.some((t) => t.id === S.dmThreadId)) { S.dmThreadId = null; renderDmBlank(); rememberView(); }
+        if (S.dmThreadId && !S.dms.some((t) => t.id === S.dmThreadId)) { S.dmThreadId = null; renderDmBlank(); rememberView(); rememberHomeTab(); }
         else {
           // Repaint the header too: a rename / new description from another
           // device (or our own group settings modal) must reach #chan-name.
@@ -587,7 +587,7 @@ function onWS(m) {
       refreshServers();
       break;
     case 'removed-from-dm':
-      if (S.dmThreadId === m.threadId) { S.dmThreadId = null; renderDmBlank(); rememberView(); }
+      if (S.dmThreadId === m.threadId) { S.dmThreadId = null; renderDmBlank(); rememberView(); rememberHomeTab(); }
       refreshDms();
       toast('You were removed from a group chat');
       break;

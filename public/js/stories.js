@@ -557,13 +557,14 @@ function renderStoriesPage() {
 // The server sidebar's Stories row still opens the compact sheet — that one is
 // scoped to a single server and is a quick look, not a destination.
 async function showStoriesPanel() {
-  if (S.view !== 'home') await openHome();
+  if (S.view !== 'home') await openHome({ panel: 'stories', dm: null });
   flushDrafts();
   saveScrollPos();
   S.homePanel = 'stories';
   S.dmThreadId = null;
   renderDmBlank();
   rememberView();
+  rememberHomeTab();
   try { await loadStories(); } catch {}
   renderStorySurfaces();
 }

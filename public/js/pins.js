@@ -528,16 +528,20 @@ $('#chan-topic').onclick = () => {
   const desc = (ch?.description || '').trim();
   if (desc) openModal(`#${ch.name}`, `<p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(desc)}</p>`, 'Close', null);
 };
-async function selectDmThread(id) {
+async function selectDmThread(id, opts = {}) {
   flushDrafts(); // file the previous conversation's text before its context changes
   saveScrollPos();
   S.dmThreadId = id;
   rememberView();
+  rememberHomeTab(); // this is the tab Home comes back to
   // Opening a thread clears its unread badge (row + home button).
   if (S.dmUnread.delete(id)) paintHomeBadge();
   renderDmLists();
   S.callOpen = false;
-  document.body.classList.remove('nav-open');
+  // A row tap closes the phone's nav page. The campfire button's restore must
+  // not: Home deliberately keeps that page up so a conversation can be picked
+  // out of it (keepNav).
+  if (!opts.keepNav) document.body.classList.remove('nav-open');
   $('#chat').classList.remove('call-open');
   renderStage();
   document.querySelectorAll('.dmrow').forEach((b) => b.classList.toggle('active', b.dataset.dmthread === id));

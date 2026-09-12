@@ -294,7 +294,7 @@ for (const id of ['settings-close-menu', 'settings-close-detail']) {
   const b = $('#' + id);
   if (b) b.onclick = closeSettings;
 }
-$('#btn-home').onclick = openHome;
+$('#btn-home').onclick = openHomeTab;
 $('#btn-friends').onclick = showFriendsPanel;
 $('#btn-pins').onclick = openPins;
 $('#jump-present').onclick = jumpToPresent;

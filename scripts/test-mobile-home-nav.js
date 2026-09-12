@@ -12,6 +12,14 @@
 // under the closed page until the network answered (indefinitely on a bad
 // connection). The clear has to be synchronous.
 //
+// Later the owner asked for the opposite of the second half: Home should come
+// back to the tab you were last on (a DM, a group, or the Friends/Stories
+// panel) rather than always landing on the empty feed. So the tap now restores
+// that tab in the same tick — synchronously, still without waiting for the
+// rosters — and the page keeps covering it, so nothing is revealed by surprise.
+// The restore is the campfire button's alone: every internal "jump into Home"
+// path still lands blank and picks its own conversation right after.
+//
 // Drives the REAL page in headless Chrome at a phone viewport against a
 // throwaway database (real touch events for the tap itself).
 //
@@ -240,26 +248,34 @@ async function main() {
       open: document.querySelector('#left').getBoundingClientRect().left, dm: S.dmThreadId, view: S.view })`);
     check(afterTap.navOpen, 'tapping Home does not close the page', afterTap);
     check(afterTap.open <= 0, 'the page is still slid in', afterTap);
-    check(afterTap.view === 'home' && afterTap.dm === null, 'it does land on Home (no conversation selected)', afterTap);
+    check(afterTap.view === 'home' && afterTap.dm === setup.tid,
+      'it lands on Home with the conversation you were in restored (the tab you were last on)', afterTap);
 
-    console.log('\n[3] no conversation stays painted behind the page');
-    // Home's clear must be synchronous: the tap revealed the previous DM to the
-    // reader while the roster refreshes were still in flight.
+    console.log('\n[3] the restore is synchronous, and the page still covers it');
+    // The tap used to reveal the previous DM while the roster refreshes were
+    // still in flight. The restore has to happen in the same task as the click,
+    // and the page has to stay over it until the reader picks something.
     await evaluate(`(async () => { await selectDmThread(${JSON.stringify(setup.tid)}); document.body.classList.add('nav-open'); })()`);
     await sleep(250);
     const sameTask = await evaluate(`(() => {
       document.querySelector('#btn-home').click();
+      const row = document.querySelector('#dm-list .dmrow[data-dmthread="${setup.tid}"]');
       return {
         navOpen: document.body.classList.contains('nav-open'),
         dm: S.dmThreadId,
         messagesHidden: document.querySelector('#messages').classList.contains('hidden'),
         friendsHidden: document.querySelector('#friends-page').classList.contains('hidden'),
         chanName: document.querySelector('#chan-name').textContent,
+        rowActive: !!(row && row.classList.contains('active')),
+        covered: (() => { const el = document.elementFromPoint(innerWidth / 2, innerHeight / 2); return !!(el && el.closest && el.closest('#left')); })(),
       };
     })()`);
     check(sameTask.navOpen, 'the click handler alone already keeps the page up', sameTask);
-    check(sameTask.dm === null && sameTask.messagesHidden && !sameTask.friendsHidden,
-      'and the chat area is already the Friends page, not the DM it was', sameTask);
+    check(sameTask.dm === setup.tid && !sameTask.messagesHidden && sameTask.friendsHidden,
+      'and the DM is back in the same task — no blank, no waiting on the rosters', sameTask);
+    check(sameTask.chanName === 'Pally', 'the header follows the restored conversation', sameTask);
+    check(sameTask.rowActive, 'the sidebar row reads as the tab you are on', sameTask);
+    check(sameTask.covered, 'while the kept-open page still covers it', sameTask);
 
     console.log('\n[4] Home from inside a server keeps the page up, with the DM list in it');
     await evaluate(`(async () => { await selectServer(${JSON.stringify(setup.sid)}); })()`);

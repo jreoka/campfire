@@ -17,7 +17,17 @@ function openServerView() {
   $('#btn-home').classList.remove('active');
   paintDmCallButtons();
 }
-async function openHome() {
+// The campfire button. Home is where you come back to, so it reopens the tab
+// you were last on — the DM or group you were in, or the Friends/Stories panel
+// — instead of always dropping you on the empty feed (see readHomeTab).
+async function openHomeTab() {
+  const tab = readHomeTab();
+  await openHome({ panel: tab.panel, dm: tab.dm });
+}
+// Every other caller of openHome() is a "jump into Home" step that picks its
+// own conversation right after (a notification, a DM row, a share target), so
+// they pass nothing and land on the blank Home feed. Only openHomeTab() restores.
+async function openHome(opts = {}) {
   flushDrafts(); // file the outgoing conversation's text before its context changes
   saveScrollPos();
   closeServerSettings();
@@ -31,8 +41,9 @@ async function openHome() {
   $('#home-ui').classList.remove('hidden');
   $('#btn-home').classList.add('active');
   popRailPill();
-  // Home lands on the friends feed, not whichever panel was left open.
-  S.homePanel = 'friends';
+  // Which of the two no-conversation panels Home shows: Friends by default,
+  // or the tab the campfire button is bringing back.
+  S.homePanel = opts.panel === 'stories' ? 'stories' : 'friends';
   document.querySelectorAll('#server-list .server-btn').forEach((b) => b.classList.remove('active'));
   rememberView();
   closeThread(true);
@@ -42,6 +53,13 @@ async function openHome() {
   // been left. The blank is synchronous; the awaits below only fill it in.
   S.dmThreadId = null;
   renderDmBlank();
+  // …and put back the conversation Home was left on, in the same tick, so the
+  // campfire button lands on it instead of flashing the blank first. A thread
+  // that is gone (closed, left, deleted) just leaves the blank in place.
+  const back = opts.dm && (S.dms || []).some((t) => t.id === opts.dm) ? opts.dm : null;
+  // keepNav: restoring must not close the phone's nav page — Home keeps it up
+  // so a conversation can be picked out of it (see selectDmThread).
+  if (back) selectDmThread(back, { keepNav: true });
   await Promise.all([refreshFriends(), refreshDms()]);
   // Stories live at the top of the Friends feed — refresh on every visit so
   // the 24h window and seen rings are current.
@@ -49,13 +67,14 @@ async function openHome() {
 }
 // Sidebar Friends button → back to the friends menu in the main panel.
 function showFriendsPanel() {
-  if (S.view !== 'home') { S.homePanel = 'friends'; openHome(); return; }
+  if (S.view !== 'home') { openHome({ panel: 'friends', dm: null }); return; }
   flushDrafts(); // leaving a DM — its text must be in the store before the context clears
   saveScrollPos();
   S.homePanel = 'friends';
   S.dmThreadId = null;
   renderDmBlank();
   rememberView();
+  rememberHomeTab();
 }
 async function refreshFriends() {
   try { S.friends = await api('/api/friends'); S.friendsAt = Date.now(); renderFriendLists(); paintHomeBadge(); } catch {}
@@ -611,7 +630,7 @@ async function messageUser(uid) {
 }
 async function closeDm(tid) {
   try { await api(`/api/dms/${tid}/close`, { method: 'POST' }); } catch {}
-  if (S.dmThreadId === tid) { saveScrollPos(); S.dmThreadId = null; renderDmBlank(); }
+  if (S.dmThreadId === tid) { saveScrollPos(); S.dmThreadId = null; renderDmBlank(); rememberHomeTab(); }
   refreshDms();
 }
 // Member-card style friend picker row: presence-ring avatar + name/sub-line
@@ -726,7 +745,7 @@ function dmMenuItems(tid) {
     items.push({ sep: true });
     items.push({ label: 'Leave chat', icon: '🗑', danger: true, fn: async () => {
       try { await api(`/api/dms/${tid}/leave`, { method: 'POST' }); } catch {}
-      if (S.dmThreadId === tid) { saveScrollPos(); S.dmThreadId = null; renderDmBlank(); rememberView(); }
+      if (S.dmThreadId === tid) { saveScrollPos(); S.dmThreadId = null; renderDmBlank(); rememberView(); rememberHomeTab(); }
       refreshDms();
     } });
   } else {

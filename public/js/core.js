@@ -420,6 +420,34 @@ function rememberView() {
   };
   try { localStorage.setItem('cf_view_' + S.me.id, JSON.stringify(v)); } catch {}
 }
+/* ---------- the Home tab you were last on ----------
+ * Home is a place you leave and come back to — a server, a call, another
+ * conversation — and coming back used to always land on the empty Friends
+ * feed: the DM/group you were in, or the Stories tab you were reading, was
+ * thrown away. Which one that was is remembered per account, so the campfire
+ * button puts it back (openHomeTab) and a reload agrees with it. Local-only,
+ * same promise as the last-view memory above; nothing is sent to the server. */
+function readHomeTab() {
+  if (!S.me) return { panel: 'friends', dm: null };
+  try {
+    const v = JSON.parse(localStorage.getItem('cf_home_tab_' + S.me.id) || 'null');
+    return {
+      panel: v && v.panel === 'stories' ? 'stories' : 'friends',
+      dm: v && v.dm ? String(v.dm) : null,
+    };
+  } catch { return { panel: 'friends', dm: null }; }
+}
+function rememberHomeTab() {
+  if (!S.me) return;
+  try {
+    localStorage.setItem('cf_home_tab_' + S.me.id, JSON.stringify({
+      panel: S.homePanel === 'stories' ? 'stories' : 'friends',
+      // A DM/group open anywhere — including the one left behind when a server
+      // was opened — is the tab Home should come back to.
+      dm: S.dmThreadId || null,
+    }));
+  } catch {}
+}
 
 /* ---------- composer drafts ----------
  * Text in the message box (and the thread reply box) is saved as you type,
