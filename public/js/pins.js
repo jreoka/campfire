@@ -546,6 +546,7 @@ async function selectDmThread(id) {
   document.body.classList.add('dm-open');
   $('#composer').classList.remove('hidden');
   $('#friends-page').classList.add('hidden');
+  $('#stories-page').classList.add('hidden');
   $('#messages').classList.remove('hidden');
   renderDmMembers();
   paintSlowmodeHint();
@@ -589,22 +590,32 @@ async function selectDmThread(id) {
     if (!cachedDm || !cachedDm.length) $('#messages').innerHTML = '<p class="error">Could not load messages.</p>';
   }
 }
+// The Home main area shows one panel at a time — the Friends feed or the story
+// center. Both are "no conversation" states, so every path that lands on one
+// comes through here (and the header/nav highlight follow).
+function paintHomePanel() {
+  const stories = S.homePanel === 'stories';
+  $('#friends-page').classList.toggle('hidden', stories);
+  $('#stories-page').classList.toggle('hidden', !stories);
+  if (stories) { try { renderStoriesPage(); } catch {} }
+}
 function renderDmBlank() {
   document.body.classList.remove('dm-open');
   S.histMode = null;
   S.histNew = 0;
-  // Friends screen has no conversation: clear any stale pins state so the
+  // A blank Home screen has no conversation: clear any stale pins state so the
   // header pins icon from the previous channel/DM doesn't linger.
   S.pinCount = 0; S.pinIds = new Set(); S.pinIdsCtx = null; paintPinsBtn();
   updatePill();
   document.body.classList.remove('dm-open');
   $('#composer').classList.add('hidden');
   $('#messages').classList.add('hidden');
-  $('#friends-page').classList.remove('hidden');
+  paintHomePanel();
   document.querySelectorAll('#home-ui .dmrow').forEach((b) => b.classList.remove('active'));
-  $('#btn-friends')?.classList.add('active');
+  const stories = S.homePanel === 'stories';
+  $(stories ? '#btn-stories' : '#btn-friends')?.classList.add('active');
   $('#chan-hash').textContent = '';
-  $('#chan-name').textContent = 'Friends';
+  $('#chan-name').textContent = stories ? 'Stories' : 'Friends';
   try { clearTyping(); } catch {}
   paintDmCallButtons();
   renderTopic();

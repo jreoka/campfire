@@ -10,6 +10,7 @@ function openServerView() {
   $('#chat').classList.remove('call-open');
   document.body.classList.remove('view-home', 'dm-open');
   $('#friends-page').classList.add('hidden');
+  $('#stories-page').classList.add('hidden');
   $('#messages').classList.remove('hidden');
   $('#server-ui').classList.remove('hidden');
   $('#home-ui').classList.add('hidden');
@@ -30,6 +31,8 @@ async function openHome() {
   $('#home-ui').classList.remove('hidden');
   $('#btn-home').classList.add('active');
   popRailPill();
+  // Home lands on the friends feed, not whichever panel was left open.
+  S.homePanel = 'friends';
   document.querySelectorAll('#server-list .server-btn').forEach((b) => b.classList.remove('active'));
   rememberView();
   closeThread(true);
@@ -46,9 +49,10 @@ async function openHome() {
 }
 // Sidebar Friends button → back to the friends menu in the main panel.
 function showFriendsPanel() {
-  if (S.view !== 'home') { openHome(); return; }
+  if (S.view !== 'home') { S.homePanel = 'friends'; openHome(); return; }
   flushDrafts(); // leaving a DM — its text must be in the store before the context clears
   saveScrollPos();
+  S.homePanel = 'friends';
   S.dmThreadId = null;
   renderDmBlank();
   rememberView();

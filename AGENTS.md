@@ -307,6 +307,25 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   close itself mid-look; `svShow` arms the header with the current item's author
   and disables it when there is none, and `openProfileScreen` takes a fallback
   user for a poster who is in no loaded roster.
+  `node scripts/test-story-center.js` covers Home → Stories as a full page
+  (offline, then the real `renderStoriesPage` against the real `#stories-page`
+  markup + stylesheet in headless Chrome, then the REAL app against a throwaway
+  database — skipping the browser halves without Chrome and the app half without
+  Postgres): the old `#story-rail` strip and its `storyTile`/`renderStoryRail`
+  helpers are gone from the markup, the module and the stylesheet; `#btn-stories`
+  opens the page while the server sidebar's row keeps its sheet; `S.homePanel` /
+  `paintHomePanel` / the header + nav highlight / `openHome`'s reset are one
+  contract, and every panel-hiding path hides both pages; the hero carries the
+  post count, summed views, reaction emoji, hours left and a "See who watched"
+  row (filled from the viewers route), opens your story, and its Add / Post
+  buttons open the composer; the wall is one portrait card per person (unseen
+  first, badged, then "Already watched", greyed), a tap opens that person, and
+  the server strip opens that server's tray; with nothing live it is one welcome
+  panel (never a hero *and* an empty card) with the how-it-works tips; the page
+  fits a phone (two columns, no sideways scroll, the phone nav closes on tap);
+  and in the real app clicking the sidebar row switches the panel, the highlight
+  and the header together, with no uncaught page errors. Writes
+  campfire-story-center{,-phone,-app,-app-phone}.png to the temp dir.
   `node scripts/test-story-audience.js` covers the removal of the instance-wide
   story audience (offline for the server half — it runs the real
   `normStoryAudiences` out of `server.js` — then the real `renderStoryAudience`
@@ -761,7 +780,16 @@ on that message). The pin button's "N new" badge is a per-account memory
 conversation's pins on the phone clears the badge on the desktop too; the phone
 Home tab mirrors the Active Now rail as a horizontal tile scroller under
 Stories (`#anow-strip`, `home.js`), since `#members` is a drawer Home never
-opens there. Settings → Games is a full game-activity manager — search,
+opens there. The sidebar's **Stories** row is a destination, not a modal: it
+opens the story center (`#stories-page`) in the main panel — your story as a
+wide hero card with post count, views, reaction tallies, hours left and a "See
+who watched" row (the same panel the viewer's views button opens), then a wall
+of portrait cards per person (unseen first, then the ones you have watched),
+then a strip of the servers you share; with nothing live anywhere it is one
+welcome panel with the how-it-works tips, never a hero *and* an empty card. The
+old horizontal strip at the top of Friends is gone, and the server sidebar's
+Stories row keeps its compact sheet (that one is scoped to one server and is a
+quick look). Settings → Games is a full game-activity manager — search,
 per-game Ignore / Track again / Remove playtime, an ignore list that outlives a
 game's stats (an ignored game with its record deleted used to vanish, which is
 exactly how a game "stopped being tracked" with no way back), and a
@@ -860,6 +888,16 @@ re-add the full-page nav to landscape, and never key this on width alone.
 `#server-ui` is the sidebar's one scroll region (`#home-ui` already was): its
 list scrolls under a sticky `#server-header` so a server with more channels than
 fit never pushes the me bar off the bottom.
+Home's main panel shows one of two no-conversation pages — the Friends feed or
+the story center — and they are switched in exactly one place,
+`paintHomePanel()` (pins.js): `S.homePanel` is the state, `renderDmBlank()`
+routes through it and follows with the nav highlight (`#btn-friends` vs
+`#btn-stories`) and the header name, `openHome()` always resets it to `friends`
+so the campfire Home button never lands on a stale panel, and `#btn-stories`
+runs `showStoriesPanel()`. Every path that hides `#friends-page` must hide
+`#stories-page` with it (openServerView, selectDmThread, openCallView,
+closeCallView, leaveVoice) — a panel left painted under a channel or a call is
+exactly the bug `test-story-center.js` looks for.
 The me bar's only click target is `#me-open` (the avatar + name), which outlines
 itself on hover; the space around mute/deafen/settings is dead, and it never
 shows your own active server tag (`paintMe` used to insert one — other people's

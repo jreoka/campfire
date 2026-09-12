@@ -170,7 +170,6 @@
 
       <div id="friends-page" class="hidden">
         <div class="fp-head"><div class="fp-title">Friends</div><button id="btn-friend-add-open" class="btn small primary">Add Friend</button></div>
-        <div id="story-rail" class="hidden" aria-label="Stories"></div>
         <div id="friend-add-wrap" class="hidden">
           <div class="row fp-addrow">
             <input id="in-friend" maxlength="24" placeholder="username" autocomplete="off" />
@@ -184,6 +183,18 @@
         </div>
         <div id="friend-reqs-wrap"><div class="chan-group-label">REQUESTS</div><div id="friend-reqs"></div></div>
         <div id="friend-list"></div>
+      </div>
+
+      <!-- story center: the full page behind the sidebar's Stories row -->
+      <div id="stories-page" class="hidden">
+        <div class="fp-head">
+          <div>
+            <div class="fp-title">Stories</div>
+            <div class="sp-sub" id="sp-sub"></div>
+          </div>
+          <button id="sp-post" class="btn small primary">Post story</button>
+        </div>
+        <div id="sp-body"></div>
       </div>
 
       <div id="stage" class="hidden">

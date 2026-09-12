@@ -4,7 +4,8 @@
    that friends — or everyone in one server — can watch for 24 hours.
 
    Surfaces:
-     - #story-rail   the strip at the top of the Friends page (Home)
+     - #stories-page the story center (Home → Stories): your story's numbers,
+                     everyone else's live posts, and the servers you share
      - #srv-stories  a row in the server sidebar, shown while that server
                      has live stories from other members
      - friend rows   get a ring around the avatar when they've posted
@@ -33,6 +34,8 @@ const svSvg = {
   plus: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   users: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   check: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
+  eye: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>',
+  clock: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.4 2"/></svg>',
   camera: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.2"/></svg>',
   soundOn: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z" fill="currentColor" stroke="none"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>',
   soundOff: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z" fill="currentColor" stroke="none"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"/></svg>',
@@ -140,7 +143,7 @@ function scheduleStoryRefresh(ms = 600) {
   }, ms);
 }
 function renderStorySurfaces() {
-  try { renderStoryRail(); } catch {}
+  try { renderStoriesPage(); } catch {}
   try { renderServerStories(); } catch {}
   try { renderHomeStories(); } catch {}
   try { paintStoryRingsEverywhere(); } catch {}
@@ -267,55 +270,300 @@ function storyRing(user, unseen, items) {
   if (thumb) ring.appendChild(thumb);
   return ring;
 }
-function storyTile(user, label, unseen, onClick, opts = {}) {
-  const wrap = document.createElement('div');
-  wrap.className = 'st-tile';
-  wrap.tabIndex = 0;
-  wrap.setAttribute('role', 'button');
-  wrap.title = opts.title || label;
-  const ring = storyRing(user, unseen, opts.items);
-  wrap.appendChild(ring);
-  if (opts.plus) {
-    // A real button so "post another" stays reachable once you have a live
-    // story (tapping the tile itself then opens the viewer).
-    const p = document.createElement('button');
-    p.type = 'button';
-    p.className = 'st-plus';
-    p.title = label === 'Add story' ? 'Add to your story' : 'Add another';
-    p.setAttribute('aria-label', p.title);
-    p.innerHTML = svSvg.plus;
-    p.onclick = (e) => { e.stopPropagation(); (opts.onPlus || onClick)(); };
-    ring.appendChild(p);
+// ---------- story center (Home → Stories) ----------
+// The full page behind the sidebar's Stories row: your own story with its
+// numbers, then everyone else's live posts, then the servers you share it
+// with. (The old horizontal strip at the top of Friends is gone.)
+function storyLeft(ts) {
+  const ms = Math.max(0, Number(ts) - Date.now());
+  const h = Math.floor(ms / 3600000);
+  if (h >= 1) return h + 'h left';
+  return Math.max(1, Math.round(ms / 60000)) + 'm left';
+}
+function spChip(icon, text, title) {
+  const c = document.createElement('span');
+  c.className = 'sp-chip';
+  if (title) c.title = title;
+  c.innerHTML = icon + '<span>' + text + '</span>';
+  return c;
+}
+function spSection(label) {
+  const s = document.createElement('div');
+  s.className = 'sp-sec';
+  s.textContent = label;
+  return s;
+}
+// One card per person: their latest frame, who it is, how many are waiting.
+function spCard(t) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'sp-card' + (t.unseen > 0 ? '' : ' seen');
+  const name = t.user.display_name || t.user.username || 'User';
+  b.title = t.unseen > 0 ? `Watch ${name} — ${t.unseen} new` : `Watch ${name}'s story again`;
+  const media = storyThumbEl(storyThumbItem(t.items), 'sp-card-media');
+  if (media) b.appendChild(media);
+  const scrim = document.createElement('span');
+  scrim.className = 'sp-card-scrim';
+  b.appendChild(scrim);
+  const ago = document.createElement('span');
+  ago.className = 'sp-card-ago';
+  ago.textContent = storyAgo(t.latest || ((t.items[t.items.length - 1] || {}).created_at) || Date.now());
+  b.appendChild(ago);
+  if (t.unseen > 0) {
+    const n = document.createElement('span');
+    n.className = 'sp-card-new';
+    n.textContent = t.unseen > 9 ? '9+' : String(t.unseen);
+    b.appendChild(n);
   }
-  const n = document.createElement('span');
-  n.className = 'st-name';
-  n.textContent = label;
-  wrap.appendChild(n);
-  wrap.onclick = (e) => { if (e.target.closest('.st-plus')) return; onClick(); };
-  wrap.onkeydown = (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    e.preventDefault();
-    const plus = e.target.closest('.st-plus');
-    if (plus) (opts.onPlus || onClick)();
-    else onClick();
-  };
-  return wrap;
+  const who = document.createElement('span');
+  who.className = 'sp-card-who';
+  const av = document.createElement('span');
+  av.className = 'avatar';
+  paintAvatar(av, t.user);
+  const nm = document.createElement('span');
+  nm.className = 'sp-card-name';
+  nm.textContent = name;
+  who.append(av, nm);
+  b.appendChild(who);
+  b.onclick = () => openStoryViewer({ kind: 'user', userId: t.id });
+  return b;
+}
+function spGrid(trays) {
+  const g = document.createElement('div');
+  g.className = 'sp-grid';
+  for (const t of trays) g.appendChild(spCard(t));
+  return g;
+}
+function spServerRow(srvTrays) {
+  const row = document.createElement('div');
+  row.className = 'sp-srv-row';
+  for (const t of srvTrays) {
+    const unseen = serverTrayUnseen(t);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'sp-srv';
+    b.title = unseen ? `Watch ${unseen} new in ${t.server.name}` : `Watch ${t.server.name}'s stories`;
+    const ic = document.createElement('span');
+    ic.className = 'sp-srv-ic';
+    if (t.server.icon_url) {
+      const img = document.createElement('img');
+      img.src = t.server.icon_url;
+      img.alt = '';
+      ic.appendChild(img);
+    } else ic.textContent = (t.server.name || 'S').slice(0, 1).toUpperCase();
+    const nm = document.createElement('span');
+    nm.className = 'sp-srv-name';
+    nm.textContent = t.server.name || 'Server';
+    b.append(ic, nm);
+    const chip = document.createElement('span');
+    chip.className = 'sp-srv-chip' + (unseen ? '' : ' seen');
+    chip.textContent = unseen ? unseen + ' new' : 'Seen';
+    b.appendChild(chip);
+    b.onclick = () => openStoryViewer({ kind: 'server', serverId: t.server.id, unseen: true });
+    row.appendChild(b);
+  }
+  return row;
+}
+// The hero: your story, its numbers, and the way in (watch / add).
+function spHero(mineItems) {
+  const latest = mineItems[mineItems.length - 1] || null;
+  const hero = document.createElement('div');
+  hero.className = 'sp-hero' + (latest ? '' : ' sp-hero-empty');
+  if (latest) {
+    const media = storyThumbEl(latest, 'sp-hero-media');
+    if (media) hero.appendChild(media);
+    const scrim = document.createElement('span');
+    scrim.className = 'sp-hero-scrim';
+    hero.appendChild(scrim);
+  }
+  const inn = document.createElement('div');
+  inn.className = 'sp-hero-in';
+  const badge = document.createElement('span');
+  badge.className = 'sp-hero-badge';
+  if (latest) {
+    const av = document.createElement('span');
+    av.className = 'avatar';
+    paintAvatar(av, S.me);
+    const thumb = storyThumbEl(storyThumbItem(mineItems), 'st-thumb-inline');
+    if (thumb) av.appendChild(thumb);
+    badge.appendChild(av);
+  } else badge.innerHTML = svSvg.camera;
+  inn.appendChild(badge);
+
+  const txt = document.createElement('div');
+  txt.className = 'sp-hero-txt';
+  const title = document.createElement('div');
+  title.className = 'sp-hero-title';
+  title.textContent = latest ? 'Your story' : 'Your story starts here';
+  const sub = document.createElement('div');
+  sub.className = 'sp-hero-sub';
+  sub.textContent = latest
+    ? `${mineItems.length} ${mineItems.length === 1 ? 'post' : 'posts'} · posted ${storyAgo(latest.created_at)}`
+    : 'Share a photo or a video — it disappears after 24 hours.';
+  txt.append(title, sub);
+
+  if (latest) {
+    const stats = document.createElement('div');
+    stats.className = 'sp-hero-stats';
+    const views = mineItems.reduce((n, i) => n + (Number(i.views) || 0), 0);
+    stats.appendChild(spChip(svSvg.eye, views === 1 ? '1 view' : views + ' views', 'Views across your live posts'));
+    const tally = new Map();
+    let reacts = 0;
+    for (const it of mineItems) for (const r of (it.reactions || [])) { tally.set(r.emoji, (tally.get(r.emoji) || 0) + (Number(r.count) || 0)); reacts += Number(r.count) || 0; }
+    if (reacts) {
+      const top = [...tally.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+      const c = document.createElement('span');
+      c.className = 'sp-chip sp-chip-rx';
+      c.title = 'Reactions on your story';
+      c.innerHTML = top.map(([e, n]) => `<span class="sp-rx">${esc(e)}${n > 1 ? `<b>${n}</b>` : ''}</span>`).join('')
+        + `<span>${reacts === 1 ? '1 reaction' : reacts + ' reactions'}</span>`;
+      stats.appendChild(c);
+    }
+    stats.appendChild(spChip(svSvg.clock, storyLeft(latest.expires_at), 'Time until your newest post expires'));
+    txt.appendChild(stats);
+    // Who watched — filled in from the viewers route below (one request).
+    const who = document.createElement('button');
+    who.type = 'button';
+    who.className = 'sp-hero-viewers hidden';
+    txt.appendChild(who);
+  }
+  inn.appendChild(txt);
+
+  const btns = document.createElement('div');
+  btns.className = 'sp-hero-btns';
+  if (latest) {
+    const watch = document.createElement('button');
+    watch.type = 'button';
+    watch.className = 'btn small primary';
+    watch.textContent = 'Watch';
+    watch.onclick = () => openStoryViewer({ kind: 'mine' });
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'btn small';
+    add.textContent = 'Add';
+    add.title = 'Add another post to your story';
+    add.onclick = () => openStoryComposer({});
+    btns.append(watch, add);
+  } else {
+    const post = document.createElement('button');
+    post.type = 'button';
+    post.className = 'btn small primary';
+    post.textContent = 'Post a story';
+    post.onclick = () => openStoryComposer({});
+    btns.appendChild(post);
+  }
+  inn.appendChild(btns);
+  hero.appendChild(inn);
+  return hero;
+}
+function spEmpty() {
+  const box = document.createElement('div');
+  box.className = 'sp-empty';
+  const ic = document.createElement('span');
+  ic.className = 'sp-empty-ic';
+  ic.innerHTML = svSvg.camera;
+  const h = document.createElement('div');
+  h.className = 'sp-empty-title';
+  h.textContent = 'No stories right now';
+  const p = document.createElement('p');
+  p.className = 'muted small';
+  p.textContent = 'Your story, and your friends\u2019 stories, all in one place.';
+  const tips = document.createElement('div');
+  tips.className = 'sp-tips';
+  for (const t of [
+    'Post a photo or a video — straight from the camera, or from your gallery.',
+    'Everything here lasts 24 hours, then it disappears.',
+    'Reply to a friend privately, or tap an emoji while you watch.',
+  ]) {
+    const row = document.createElement('span');
+    row.className = 'sp-tip';
+    row.textContent = t;
+    tips.appendChild(row);
+  }
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'btn small primary';
+  b.textContent = 'Post a story';
+  b.onclick = () => openStoryComposer({});
+  box.append(ic, h, p, tips, b);
+  return box;
+}
+// One viewers request fills the hero's "who watched" row; it is the same panel
+// the viewer's "N views" button opens.
+let spViewersGen = 0;
+async function spLoadHeroViewers(mineItems, hero) {
+  const it = [...mineItems].reverse().find((i) => (Number(i.views) || 0) > 0);
+  if (!it) return;
+  const gen = ++spViewersGen;
+  let viewers = [];
+  try { ({ viewers } = await api('/api/stories/' + encodeURIComponent(it.id) + '/viewers')); } catch { return; }
+  if (gen !== spViewersGen) return;
+  const slot = hero.querySelector('.sp-hero-viewers');
+  if (!slot || !viewers.length) return;
+  const stack = document.createElement('span');
+  stack.className = 'sp-vstack';
+  for (const u of viewers.slice(0, 5)) {
+    const a = document.createElement('span');
+    a.className = 'avatar';
+    paintAvatar(a, u);
+    stack.appendChild(a);
+  }
+  const txt = document.createElement('span');
+  // Deliberately not a count: the chip above already reports views, and two
+  // different numbers side by side read as one wrong one.
+  txt.textContent = 'See who watched';
+  slot.append(stack, txt);
+  slot.title = 'See who watched';
+  slot.classList.remove('hidden');
+  slot.onclick = () => { storyViewersModal(it); };
+}
+function renderStoriesPage() {
+  const page = $('#stories-page');
+  const body = $('#sp-body');
+  if (!page || page.classList.contains('hidden') || !body || !S.me) return;
+  const mineItems = storyLive(storyData.mine && storyData.mine.items);
+  const trays = storyUserTrays();
+  const fresh = trays.filter((t) => t.unseen > 0);
+  const watched = trays.filter((t) => !t.unseen);
+  const srvTrays = (storyData.servers || []).filter((t) => storyLive(t.items).length);
+  const unseen = fresh.reduce((n, t) => n + t.unseen, 0);
+  const sub = $('#sp-sub');
+  if (sub) {
+    sub.textContent = unseen
+      ? `${unseen} new ${unseen === 1 ? 'story' : 'stories'} from ${fresh.length} ${fresh.length === 1 ? 'person' : 'people'}`
+      : (trays.length ? `${trays.length} ${trays.length === 1 ? 'person' : 'people'} with live stories` : 'Nothing live right now');
+  }
+  body.innerHTML = '';
+  const nothing = !mineItems.length && !trays.length && !srvTrays.length;
+  // Nothing live anywhere: one welcome panel, never a "your story" slot stacked
+  // on top of an empty-state card saying the same thing twice.
+  if (nothing) body.appendChild(spEmpty());
+  else {
+    body.appendChild(spHero(mineItems));
+    if (fresh.length) { body.appendChild(spSection('New stories')); body.appendChild(spGrid(fresh)); }
+    if (watched.length) { body.appendChild(spSection('Already watched')); body.appendChild(spGrid(watched)); }
+    if (srvTrays.length) { body.appendChild(spSection('Servers')); body.appendChild(spServerRow(srvTrays)); }
+  }
+  const note = document.createElement('p');
+  note.className = 'sp-note';
+  note.innerHTML = '<span>Stories last 24 hours. Reply to a friend\'s story in their DMs, or tap an emoji while you watch to react.</span>';
+  body.appendChild(note);
+  if (mineItems.length) spLoadHeroViewers(mineItems, body.firstChild);
 }
 
-// ---------- rail (Friends page) ----------
-function renderStoryRail() {
-  const box = $('#story-rail');
-  if (!box || !S.me) return;
-  const mineItems = storyLive(storyData.mine && storyData.mine.items);
-  box.innerHTML = '';
-  box.appendChild(storyTile(S.me, mineItems.length ? 'Your story' : 'Add story', false, () => {
-    if (mineItems.length) openStoryViewer({ kind: 'mine' });
-    else openStoryComposer({});
-  }, { plus: true, onPlus: () => openStoryComposer({}), items: mineItems }));
-  for (const t of storyUserTrays()) {
-    box.appendChild(storyTile(t.user, t.user.display_name, t.unseen > 0, () => openStoryViewer({ kind: 'user', userId: t.id }), { items: t.items }));
-  }
-  box.classList.remove('hidden');
+// Sidebar Stories row → the story center in the main panel (the full page).
+// The server sidebar's Stories row still opens the compact sheet — that one is
+// scoped to a single server and is a quick look, not a destination.
+async function showStoriesPanel() {
+  if (S.view !== 'home') await openHome();
+  flushDrafts();
+  saveScrollPos();
+  S.homePanel = 'stories';
+  S.dmThreadId = null;
+  renderDmBlank();
+  rememberView();
+  try { await loadStories(); } catch {}
+  renderStorySurfaces();
 }
 
 // ---------- server sidebar row + Home sidebar entry ----------
@@ -1301,18 +1549,18 @@ function storyReactionPush(m) {
     $('#sv-views-n').textContent = m.views === 1 ? '1 view' : (m.views || 0) + ' views';
   }
 }
-async function svViewers() {
-  if (!sv) return;
-  const it = svCurrentItem();
-  if (!it) return;
-  svPause();
+// The viewers panel. Shared by the viewer's "N views" button and the story
+// center's hero, which opens it without a viewer on screen — hence the story
+// item as the argument and a boolean back (false = nothing to show, so the
+// caller can decide whether a paused story should resume).
+async function storyViewersModal(it) {
+  if (!it) return false;
   let viewers = [];
   try { ({ viewers } = await api('/api/stories/' + encodeURIComponent(it.id) + '/viewers')); }
-  catch { toast('Could not load viewers'); svResume(); return; }
+  catch { toast('Could not load viewers'); return false; }
   if (!viewers.length) {
     openModal('No views yet', '<p class="muted">Nobody has watched this story yet.</p>', 'Close', null);
-    svResume();
-    return;
+    return false;
   }
   // Reactions first (a chip per emoji with its total), then one row per viewer
   // with the emoji they sent on the right (×2 when they tapped it twice).
@@ -1328,6 +1576,16 @@ async function svViewers() {
     const row = box.querySelector(`.member[data-uid="${u.id}"]`);
     if (row) paintAvatar(row.querySelector('.avatar'), u);
   });
+  return true;
+}
+async function svViewers() {
+  if (!sv) return;
+  const it = svCurrentItem();
+  if (!it) return;
+  svPause();
+  // Nothing to show (no views, or the request failed): the story picks up
+  // where it left off instead of sitting paused under a closed modal.
+  if (!(await storyViewersModal(it))) svResume();
 }
 // "Mine" is about who posted the item, not the tray: your own story also
 // appears inside a server's tray, and it must still offer viewers + delete.
@@ -3082,7 +3340,8 @@ $('#cm-story').onclick = (e) => {
   $('#composer-more').classList.add('hidden');
   openStoryComposer({ serverId: S.view === 'server' ? S.serverId : null });
 };
-$('#btn-stories').onclick = () => openStoriesSheet('home');
+$('#btn-stories').onclick = () => showStoriesPanel();
+$('#sp-post').onclick = () => openStoryComposer({});
 $('#sv-close').onclick = () => svClose();
 // Tapping the poster's picture/name opens their profile. The profile's own
 // picture is the story button (paintProfileStory), so it leads straight back

@@ -184,6 +184,7 @@ function openCallView() {
   $('#stage-name').textContent = voiceLabel();
   $('#messages').classList.add('hidden');
   $('#friends-page').classList.add('hidden');
+  $('#stories-page').classList.add('hidden');
   $('#composer').classList.add('hidden');
   $('#attach-preview').classList.add('hidden');
   $('#mention-pop').classList.add('hidden');
@@ -197,6 +198,7 @@ function closeCallView() {
   if (S.view === 'home' && !S.dmThreadId) renderDmBlank();
   else {
     $('#friends-page').classList.add('hidden');
+    $('#stories-page').classList.add('hidden');
     $('#messages').classList.remove('hidden');
     $('#composer').classList.remove('hidden');
     if (S.voice) $('#voice-fab').classList.remove('hidden');
@@ -292,7 +294,7 @@ function leaveVoice(silent) {
   S.callOpen = false;
   $('#chat').classList.remove('call-open');
   if (S.view === 'home' && !S.dmThreadId) renderDmBlank();
-  else { $('#friends-page').classList.add('hidden'); $('#messages').classList.remove('hidden'); $('#composer').classList.remove('hidden'); renderComposerMeta(); }
+  else { $('#friends-page').classList.add('hidden'); $('#stories-page').classList.add('hidden'); $('#messages').classList.remove('hidden'); $('#composer').classList.remove('hidden'); renderComposerMeta(); }
   $('#stage').classList.add('hidden');
   $('#stage-grid').innerHTML = '';
   const vkey = myVoiceKey();

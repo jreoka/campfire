@@ -128,6 +128,7 @@ const S = {
   rootOrder: [], // [{kind:'server'|'folder', id, pos}] rail order top-to-bottom
   openFolderId: null, // id of the folder whose pop-out is expanded (null = none)
   view: 'server', // 'server' | 'home'
+  homePanel: 'friends', // which Home panel the main area shows: 'friends' | 'stories'
   dms: [], friends: { friends: [], pendingIn: [], pendingOut: [], blocked: [] },
   friendTab: 'all', // friends page tab: 'online' | 'all' | 'pending' (blocked lives in Settings)
   dmThreadId: null, dmMessages: new Map(), // threadId -> [msgs]

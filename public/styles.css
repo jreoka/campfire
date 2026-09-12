@@ -1933,15 +1933,9 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 .theme-desc{font-size:.76rem;color:var(--muted)}
 
 /* ---------- stories (24h photo/video posts) ---------- */
-/* Rail on the Friends page: your tile first (post / watch), then friends with
-   live stories. Unseen = accent ring, seen = hairline grey. */
-/* overflow-x:auto clips both axes, so a glowing avatar decoration (ember/
-   neon box-shadows reach ~23px past the ring) was cut off at the rail's square
-   padding box and the cut edge read as a box around the glow. The padding is
-   room for the glow; the matching negative margin keeps every tile exactly
-   where it was. */
-#story-rail{display:flex;gap:.5rem;overflow-x:auto;padding:1.1rem 16px .85rem;margin:-1rem -16px .35rem;border-bottom:1px solid var(--line-soft);scrollbar-width:none}
-#story-rail::-webkit-scrollbar{display:none}
+/* The ring (avatar + story thumbnail) is shared by the member/friend rows, the
+   DM rows, the user card, the profile screen and the stories sheet. Unseen =
+   accent ring, seen = hairline grey. */
 .st-tile{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:.28rem;width:68px;padding:0;background:none;border:0;cursor:pointer;font-family:inherit}
 .st-tile:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:12px}
 .st-ring{position:relative;width:58px;height:58px;border-radius:50%;padding:2.5px;background:var(--line);display:inline-flex;align-items:center;justify-content:center;transition:background var(--t-fast),filter var(--t-fast)}
@@ -1999,14 +1993,10 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
    the right/bottom of the circle. */
 .avatar .st-thumb-inline,.avwrap .st-thumb-inline{position:absolute;inset:-2px;width:calc(100% + 4px);height:calc(100% + 4px);border-radius:50%;object-fit:cover;pointer-events:none;z-index:1}
 .st-ring .st-thumb{z-index:1}
-.st-tile .st-plus{z-index:2}
 /* Rows where the thumbnail replaces the avatar face keep the presence dot on top. */
 .avwrap .st-thumb-inline{z-index:1}
 .avwrap .status-dot{z-index:3}
 .st-tile:active .st-ring{filter:brightness(.94)}
-.st-plus{position:absolute;right:-1px;bottom:-1px;width:21px;height:21px;border-radius:50%;background:var(--accent);color:var(--on-accent);display:flex;align-items:center;justify-content:center;border:2.5px solid var(--bg);padding:0;cursor:pointer}
-.st-plus:hover{background:var(--accent-hover)}
-.st-plus svg{display:block}
 .st-name{font-size:.71rem;font-weight:650;color:var(--muted);max-width:66px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .st-clickable{cursor:pointer}
 /* Server sidebar row: shown only while other members of this server have
@@ -2025,6 +2015,89 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 .ss-stack .avatar{width:22px;height:22px;font-size:.6rem;margin-left:-8px;border:2px solid var(--panel-2)}
 .ss-label{font-size:.86rem;font-weight:700}
 .ss-count{margin-left:auto;font-size:.7rem;font-weight:800;color:var(--on-container);background:var(--accent-dim);border-radius:999px;padding:.1rem .5rem}
+
+/* ---------- story center (Home → Stories) ----------
+   The full page behind the sidebar's Stories row: your story as a wide hero
+   card with its numbers, everyone else's live posts as a wall of portrait
+   cards, and the servers you share them with as a strip. */
+#stories-page{flex:1;overflow-y:auto;min-height:0;padding:1rem 1.25rem 2rem;display:flex;flex-direction:column}
+.sp-sub{font-size:.82rem;color:var(--muted);margin:-.35rem 0 .1rem}
+#sp-body{display:flex;flex-direction:column}
+.sp-sec{font-size:.68rem;letter-spacing:.09em;font-weight:800;color:var(--faint);padding:1.15rem 0 .45rem}
+/* --- the hero: your story --- */
+.sp-hero{position:relative;display:flex;align-items:center;min-height:164px;margin-top:.55rem;border-radius:var(--r-xl);overflow:hidden;background:var(--panel-2);border:1px solid var(--line-soft);padding:1.05rem 1.15rem}
+.sp-hero-empty{background:var(--panel);border-style:dashed;min-height:132px}
+.sp-hero-media{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+.sp-hero-media>.st-thumb-media{border-radius:0}
+.sp-hero-scrim{position:absolute;inset:0;background:linear-gradient(90deg,rgba(5,7,12,.94) 12%,rgba(5,7,12,.6) 58%,rgba(5,7,12,.28))}
+.sp-hero-in{position:relative;display:flex;align-items:center;gap:.9rem;flex-wrap:wrap;width:100%;min-width:0}
+.sp-hero-badge{position:relative;width:56px;height:56px;flex-shrink:0;border-radius:50%;background:var(--panel-3);color:var(--muted);display:inline-flex;align-items:center;justify-content:center}
+.sp-hero-badge>svg{width:22px;height:22px}
+.sp-hero-badge .avatar{width:56px;height:56px;font-size:1.1rem}
+.sp-hero-txt{flex:1;min-width:190px;display:flex;flex-direction:column;gap:.22rem}
+.sp-hero-title{font-size:1.05rem;font-weight:800;letter-spacing:-.02em}
+.sp-hero-sub{font-size:.8rem;color:var(--muted)}
+/* On a photo the text sits on the picture, so it needs its own contrast. */
+.sp-hero:not(.sp-hero-empty) .sp-hero-title{color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.5)}
+.sp-hero:not(.sp-hero-empty) .sp-hero-sub{color:rgba(255,255,255,.78)}
+.sp-hero-stats{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap;margin-top:.5rem}
+.sp-chip{display:inline-flex;align-items:center;gap:.35rem;font-size:.74rem;font-weight:650;color:var(--text);background:rgba(255,255,255,.1);border-radius:999px;padding:.26rem .6rem}
+.sp-hero-empty .sp-chip{background:var(--panel-3)}
+.sp-chip svg{opacity:.75;flex-shrink:0}
+.sp-chip-rx{gap:.3rem;padding-left:.45rem}
+.sp-rx{display:inline-flex;align-items:center;gap:.1rem;font-size:.9rem;line-height:1}
+.sp-rx b{font-size:.66rem;font-weight:800;color:var(--muted)}
+.sp-hero-viewers{display:flex;align-items:center;gap:.45rem;margin-top:.55rem;border:0;background:transparent;color:inherit;font:inherit;font-size:.76rem;font-weight:650;padding:0;cursor:pointer;width:max-content}
+.sp-hero-viewers:hover span:last-child{text-decoration:underline}
+.sp-vstack{display:flex;padding-left:9px}
+.sp-vstack .avatar{width:22px;height:22px;font-size:.58rem;margin-left:-9px;border:2px solid rgba(5,7,12,.85)}
+.sp-hero-btns{display:flex;align-items:center;gap:.4rem;flex-shrink:0;margin-left:auto}
+/* --- friends' live stories --- */
+.sp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:.7rem}
+.sp-card{position:relative;aspect-ratio:9/13;border:0;border-radius:16px;overflow:hidden;background:var(--panel-2);padding:0;cursor:pointer;font-family:inherit;color:#fff;text-align:left}
+.sp-card-media{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;transition:transform .25s ease}
+.sp-card-media>.st-thumb-media{border-radius:0;width:100%;height:100%;object-fit:cover;display:block}
+.sp-card-scrim{position:absolute;inset:0;background:linear-gradient(to top,rgba(5,7,12,.92) 4%,rgba(5,7,12,.35) 42%,rgba(5,7,12,.05) 70%)}
+.sp-card:hover .sp-card-media{transform:scale(1.04)}
+.sp-card.seen .sp-card-media{filter:grayscale(.4) brightness(.82)}
+.sp-card-ago{position:absolute;top:.55rem;left:.65rem;z-index:2;font-size:.68rem;font-weight:650;color:rgba(255,255,255,.88);text-shadow:0 1px 4px rgba(0,0,0,.6)}
+.sp-card-new{position:absolute;top:.5rem;right:.5rem;z-index:2;min-width:20px;text-align:center;background:var(--accent);color:var(--on-accent);font-size:.68rem;font-weight:800;border-radius:999px;padding:.12rem .42rem}
+.sp-card-who{position:absolute;left:.6rem;right:.6rem;bottom:.6rem;z-index:2;display:flex;align-items:center;gap:.45rem;min-width:0}
+.sp-card-who .avatar{width:26px;height:26px;font-size:.66rem;border:2px solid rgba(5,7,12,.6);flex-shrink:0}
+.sp-card-name{font-size:.8rem;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 1px 4px rgba(0,0,0,.6)}
+/* --- servers --- */
+.sp-srv-row{display:flex;gap:.5rem;overflow-x:auto;padding:.1rem .1rem .35rem;scrollbar-width:none}
+.sp-srv-row::-webkit-scrollbar{display:none}
+.sp-srv{flex:0 0 auto;display:flex;align-items:center;gap:.5rem;border:1px solid var(--line-soft);background:var(--panel-2);border-radius:999px;padding:.35rem .65rem .35rem .35rem;color:var(--text);font-family:inherit;font-size:.82rem;font-weight:700;cursor:pointer;transition:background var(--t-fast)}
+.sp-srv:hover{background:var(--panel-3)}
+.sp-srv-ic{width:26px;height:26px;border-radius:50%;overflow:hidden;background:var(--panel-4);color:var(--muted);display:inline-flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:800;flex-shrink:0}
+.sp-srv-ic img{width:100%;height:100%;object-fit:cover;display:block}
+.sp-srv-name{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sp-srv-chip{font-size:.68rem;font-weight:800;color:var(--on-accent);background:var(--accent);border-radius:999px;padding:.1rem .45rem}
+.sp-srv-chip.seen{color:var(--muted);background:var(--panel-4);text-transform:uppercase;letter-spacing:.06em;font-size:.62rem}
+/* --- empty + footer --- */
+.sp-empty{display:flex;flex-direction:column;align-items:center;gap:.5rem;text-align:center;padding:2.6rem 1rem 2rem;margin-top:.6rem;border:1px dashed var(--line);border-radius:var(--r-xl);background:var(--panel)}
+.sp-empty-ic{width:52px;height:52px;border-radius:50%;background:var(--panel-3);color:var(--accent);display:inline-flex;align-items:center;justify-content:center}
+.sp-empty-ic svg{width:24px;height:24px}
+.sp-empty-title{font-size:1rem;font-weight:800}
+.sp-empty p{margin:0;max-width:380px}
+.sp-tips{display:flex;flex-direction:column;gap:.4rem;margin:1rem 0 .3rem;text-align:left;max-width:430px}
+.sp-tip{position:relative;padding-left:1.15rem;font-size:.81rem;color:var(--muted);line-height:1.45}
+.sp-tip::before{content:'';position:absolute;left:.1rem;top:.45em;width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.sp-empty .btn{margin-top:.35rem}
+.sp-note{margin:1.4rem 0 0;font-size:.74rem;color:var(--faint);max-width:520px}
+/* Phone: the hero stacks tighter, its buttons get their own full-width row, and
+   the wall keeps two columns of smaller cards. */
+@media (max-width:700px),(max-height:560px) and (pointer:coarse){
+  #stories-page{padding:.9rem .8rem 1.6rem}
+  .sp-hero{padding:.85rem .9rem;min-height:0}
+  .sp-hero-in{align-items:flex-start;gap:.7rem}
+  .sp-hero-badge,.sp-hero-badge .avatar{width:46px;height:46px}
+  .sp-hero-txt{min-width:120px}
+  .sp-hero-btns{width:100%;margin-left:0}
+  .sp-hero-btns .btn{flex:1}
+  .sp-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:.55rem}
+}
 /* Full-screen viewer (always dark: media reads best on a near-black stage). */
 #story-view{position:fixed;inset:0;z-index:148;background:#05070c;color:#fff;display:flex;flex-direction:column;padding:calc(.55rem + var(--safe-t)) .8rem calc(.55rem + var(--safe-b))}
 body.story-open{overflow:hidden}

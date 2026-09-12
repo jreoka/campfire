@@ -67,9 +67,9 @@ function findChrome() {
 function ringSource() {
   const src = fs.readFileSync(path.join(ROOT, 'public/js/stories.js'), 'utf8');
   const a = src.indexOf('function storyLive(items) {');
-  const b = src.indexOf('function storyTile(user, label, unseen, onClick, opts = {}) {');
+  const b = src.indexOf('// ---------- story center (Home \u2192 Stories) ----------');
   if (a < 0 || b < 0 || b < a) {
-    console.error('[test] could not find the storyLive..storyTile block in public/js/stories.js');
+    console.error('[test] could not find the storyLive..story-center block in public/js/stories.js');
     process.exit(1);
   }
   return src.slice(a, b);
