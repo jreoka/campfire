@@ -478,6 +478,25 @@ function fmtFull(ts) {
 function fmtDay(ts) {
   return new Date(ts).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 }
+// How long ago something happened, for lists of things that are not in front of
+// you (search hits): "just now" / "10m ago" / "3h ago" / "5d ago", and once
+// "how long ago" stops meaning anything, the date itself.
+function fmtAgo(ts) {
+  const t = Number(ts) || 0;
+  if (!t) return '';
+  const secs = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (secs < 60) return 'just now';
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return mins + 'm ago';
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return hours + 'h ago';
+  const days = Math.round(hours / 24);
+  if (days <= 6) return days + 'd ago';
+  const d = new Date(t);
+  const thisYear = d.getFullYear() === new Date().getFullYear();
+  try { return d.toLocaleDateString([], thisYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' }); }
+  catch { return d.toDateString(); }
+}
 async function api(path, opts = {}) {
   const res = await fetch(apiBase + path, {
     ...opts,

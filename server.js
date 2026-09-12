@@ -1779,16 +1779,38 @@ app.get('/api/servers/:id/channels/:chId/messages', authRequired, async (req, re
 // Thread replies are excluded — jump-to-context only supports top-level
 // channel messages (same constraint as jump-to-pin). NSFW channels stay
 // hidden until the account confirms 18+ (same rule as history loads).
+// `from:` names an author. Resolve it the way a person would type it: an exact
+// handle, then an exact display name, then the handles that start with it (so a
+// half-remembered name still lands somewhere). No match means no results.
+async function searchAuthors(term) {
+  const t = String(term || '').trim().toLowerCase();
+  if (!t) return [];
+  try {
+    let rows = await db.prepare('SELECT id FROM users WHERE lower(username) = ? OR lower(display_name) = ?').all(t, t);
+    if (!rows.length) rows = await db.prepare("SELECT id FROM users WHERE lower(username) LIKE ? ESCAPE '\\' LIMIT 10").all(t.replace(/[\\%_]/g, (c) => '\\' + c) + '%');
+    return rows.map((r) => r.id);
+  } catch { return []; }
+}
 app.get('/api/search', authRequired, async (req, res) => {
   const q = String(req.query.q || '').trim().slice(0, 80);
-  if (q.length < 2) return res.json({ results: [] });
+  const fromQ = String(req.query.from || '').trim().slice(0, 32);
+  // An author filter alone is a valid search; plain text still needs 2 chars.
+  if (q.length < 2 && !fromQ) return res.json({ results: [] });
   const lim = Math.min(parseInt(req.query.limit || '20', 10) || 20, 30);
   const pat = '%' + q.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
   const me = req.user.id;
   let nsfwOk = 0;
   try { nsfwOk = (await db.prepare('SELECT nsfw_ok FROM users WHERE id = ?').get(me))?.nsfw_ok ? 1 : 0; } catch {}
+  const authors = await searchAuthors(fromQ);
+  if (fromQ && !authors.length) return res.json({ results: [], from: { query: fromQ, users: 0 } });
+  const textSql = q.length >= 2 ? " AND m.content LIKE ? ESCAPE '\\'" : '';
+  const authorSql = authors.length ? ` AND m.user_id IN (${authors.map(() => '?').join(',')})` : '';
   const out = [];
   try {
+    // Scoped to chats this account can actually open: a server they are a
+    // member of (a ban removes the row), and an NSFW channel only with the
+    // opt-in. Messages whose author was deleted keep `user_id = NULL`, so an
+    // author filter can never match them.
     const srows = await db.prepare(`
       SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url,
              p.content AS p_content, pu.display_name AS p_name
@@ -1799,10 +1821,9 @@ app.get('/api/search', authRequired, async (req, res) => {
       LEFT JOIN messages p ON p.id = m.reply_to_id
       LEFT JOIN users pu ON pu.id = p.user_id
       WHERE m.thread_root_id IS NULL AND m.sys IS NULL
-        AND (ch.nsfw = 0 OR ? = 1)
-        AND m.content LIKE ? ESCAPE '\\'
+        AND (ch.nsfw = 0 OR ? = 1)${textSql}${authorSql}
       ORDER BY m.created_at DESC LIMIT ?
-    `).all(me, nsfwOk, pat, lim);
+    `).all(me, nsfwOk, ...(q.length >= 2 ? [pat] : []), ...authors, lim);
     const smsgs = await hydrateMessages(srows, me);
     const sids = [...new Set(srows.map((r) => r.server_id))];
     const cids = [...new Set(srows.map((r) => r.channel_id))];
@@ -1822,11 +1843,14 @@ app.get('/api/search', authRequired, async (req, res) => {
     }));
   } catch {}
   try {
+    // A DM the account closed is not in its DM list, so its history must not
+    // surface here either — that was the leak: dismissed chats stayed
+    // searchable. Leaving a group deletes the row entirely.
     const drows = await db.prepare(`${DM_JOIN}
       JOIN dm_members dmm ON dmm.thread_id = m.thread_id AND dmm.user_id = ?
-      WHERE m.sys IS NULL AND m.content LIKE ? ESCAPE '\\'
+      WHERE m.sys IS NULL AND (dmm.hidden IS NULL OR dmm.hidden = 0)${textSql}${authorSql}
       ORDER BY m.created_at DESC LIMIT ?
-    `).all(me, pat, lim);
+    `).all(me, ...(q.length >= 2 ? [pat] : []), ...authors, lim);
     const dmsgs = await hydrateDm(drows, me);
     for (const [i, msg] of dmsgs.entries()) {
       const t = await db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(drows[i].thread_id);
@@ -1842,7 +1866,7 @@ app.get('/api/search', authRequired, async (req, res) => {
     }
   } catch {}
   out.sort((a, b) => b.message.created_at - a.message.created_at || (a.message.id < b.message.id ? -1 : 1));
-  res.json({ results: out.slice(0, lim) });
+  res.json({ results: out.slice(0, lim), ...(fromQ ? { from: { query: fromQ, users: authors.length } } : {}) });
 });
 
 // Remove one channel message (plus its thread replies, attachments, polls and

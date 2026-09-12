@@ -396,7 +396,9 @@ async function openForward(mid) {
   S.fwdSrcCtx = ctx;
   S.fwdPick = null;
   const au0 = msgAuthor(m);
-  const author = au0 ? au0.display_name : 'Someone';
+  // A deleted account keeps its messages; name the state, never a made-up
+  // person (the same reason search says "Deleted user", not "Someone").
+  const author = au0 ? au0.display_name : 'Deleted user';
   const snip = m.content ? (m.content.length > 140 ? m.content.slice(0, 140) + '…' : m.content)
     : (m.attachments?.length ? `[${m.attachments.length} attachment${m.attachments.length === 1 ? '' : 's'}]` : '[no text]');
   openModal('Forward message', `
@@ -433,7 +435,7 @@ function sendForward() {
   const atts = (src.attachments || []).slice(0, 5).map((a) => ({ url: a.url, name: a.name, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler }));
   if (!content && !atts.length) { toast('Nothing to forward'); return; }
   if (!S.ws || S.ws.readyState !== 1) { toast('Reconnecting… try again in a second'); return; }
-  const fwdFrom = src.fwdFrom || (src.user ? src.user.display_name : 'Someone');
+  const fwdFrom = src.fwdFrom || (src.user ? src.user.display_name : 'Deleted user');
   if (pick.kind === 'dm') {
     S.ws.send(JSON.stringify({ t: 'dm', threadId: pick.id, content, attachments: atts, replyTo: null, fwdFrom }));
   } else {

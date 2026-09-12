@@ -136,6 +136,20 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   a reload keeps an idle Away revertible), and a timed Away keeps its own revert.
   Note the timer labels are the full "For 15 Minutes … Forever" ladder, straight
   from Discord's menu.
+  `node scripts/test-search.js` covers the chat finder's message search
+  (offline checks for `fmtAgo`'s buckets — "just now" / "10m ago" / "3h ago" /
+  "5d ago", then the date once a week has passed — and for the `from:` operator's
+  parser, then a throwaway database driving the real route over HTTP + WS,
+  skipping without Postgres): an open DM is searchable and a DM you **dismissed**
+  is not (it is out of your DM list, so it must be out of your results) while the
+  other participant still finds it; a non-member finds nothing from a server;
+  `from:handle` / `from:Display Name` / a half-typed handle all resolve (an
+  unknown one reports `from.users === 0` so the panel can say "No one matches
+  from:x" instead of "nothing matched"); an author-only query needs no text; and
+  a message whose author's account was deleted comes back with `user: null`, is
+  unreachable by that handle, and is labelled "Deleted user" by the panel — never
+  the invented "Someone". Re-run after touching the search route, the find panel,
+  `fmtAgo` or `parseFindQuery`.
   `node scripts/test-user-card-actions.js` covers the card's action tabs, the
   me bar's missing server tag and the avatar-as-story-button (offline for the tab
   builders — it runs the real `ucTabHTML`/`UC_ICONS` out of `pickers.js` and

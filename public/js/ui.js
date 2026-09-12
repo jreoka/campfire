@@ -246,17 +246,39 @@ async function findGoMessage(r) {
     jumpToPin({ kind: 'server', id: m.channelId, serverId: m.serverId }, m.id);
   }
 }
-function runFindMsgSearch(q, box, searching) {
+// `from:ada` (or from:"Ada Lovelace") narrows a search to one author; whatever
+// else is in the box is the text query. The rest of the panel (channels,
+// servers, DMs) always matches the text part alone.
+function parseFindQuery(raw) {
+  const src = String(raw || '');
+  const m = /(^|\s)from:("[^"]*"|\S+)/i.exec(src);
+  if (!m) return { text: src.trim(), from: '' };
+  const from = m[2].replace(/^"|"$/g, '').trim();
+  // The operator's slot closes up: "a from:b c" is the query "a c", not "a  c".
+  const text = (src.slice(0, m.index) + ' ' + src.slice(m.index + m[0].length)).replace(/\s+/g, ' ').trim();
+  return { text, from };
+}
+function runFindMsgSearch(raw, box, searching) {
   const my = ++findMsgSeq;
   clearTimeout(findMsgTimer);
   findMsgTimer = setTimeout(async () => {
-    let results = [];
-    try { ({ results } = await api('/api/search?q=' + encodeURIComponent(q) + '&limit=20')); } catch { results = []; }
+    const { text, from } = parseFindQuery(raw);
+    let results = [], fromInfo = null;
+    try {
+      const r = await api('/api/search?limit=20'
+        + (text ? '&q=' + encodeURIComponent(text) : '')
+        + (from ? '&from=' + encodeURIComponent(from) : ''));
+      results = r.results || [];
+      fromInfo = r.from || null;
+    } catch { results = []; }
     if (my !== findMsgSeq || !findOpen() || !searching.isConnected) return;
-    if (($('#find-input')?.value || '').trim() !== q) return; // superseded
+    if (($('#find-input')?.value || '').trim() !== raw) return; // superseded
     searching.remove();
     if (!results.length) {
-      if (!findRows.length) box.innerHTML = '<p class="muted small find-empty">Nothing matches your search.</p>';
+      // Nothing to show is two different answers: nobody by that name, or that
+      // person has nothing matching.
+      if (from && fromInfo && !fromInfo.users) box.innerHTML = '<p class="muted small find-empty">No one matches from:' + esc(from) + '.</p>';
+      else if (!findRows.length) box.innerHTML = '<p class="muted small find-empty">Nothing matches your search.</p>';
       return;
     }
     const secEl = document.createElement('div');
@@ -268,9 +290,12 @@ function runFindMsgSearch(q, box, searching) {
       const m = r.message || {};
       const text = m.content ? (m.content.length > 140 ? m.content.slice(0, 140) + '\u2026' : m.content)
         : (m.attachments?.length ? `[${m.attachments.length} attachment${m.attachments.length === 1 ? '' : 's'}]` : '[no text]');
-      const who = m.user ? m.user.display_name : 'Someone';
+      // A deleted account keeps its messages (the chat shows them too), so name
+      // the state instead of inventing a person called "Someone".
+      const who = m.user ? m.user.display_name : 'Deleted user';
       const where = r.kind === 'dm' ? (r.threadTitle || 'Direct message') : ('#' + (r.channelName || 'chat') + ' \u00B7 ' + (r.serverName || ''));
-      rowFn((who || '?').trim().charAt(0).toUpperCase(), text, who + ' \u00B7 ' + where, () => findGoMessage(r));
+      const ago = fmtAgo(m.created_at);
+      rowFn((who || '?').trim().charAt(0).toUpperCase(), text, who + ' \u00B7 ' + where + (ago ? ' \u00B7 ' + ago : ''), () => findGoMessage(r), fmtFull(m.created_at));
     }
     paintFindSel();
   }, 250);
@@ -278,7 +303,7 @@ function runFindMsgSearch(q, box, searching) {
 // Row builder shared by the sync chat sections and the async message
 // section (which renders later into the same list).
 function findRowFactory(box) {
-  return (icon, name, sub, fn) => {
+  return (icon, name, sub, fn, title) => {
     const idx = findRows.length;
     findRows.push(fn);
     const b = document.createElement('button');
@@ -289,6 +314,7 @@ function findRowFactory(box) {
     b.querySelector('.find-ic').textContent = icon;
     b.querySelector('.find-name').textContent = name;
     b.querySelector('.find-sub').textContent = sub;
+    if (title) b.title = title;
     b.onclick = () => activateFind(idx);
     box.appendChild(b);
   };
@@ -298,7 +324,8 @@ function renderFindResults(q) {
   if (!box) return;
   findRows = [];
   findSel = 0;
-  const query = q.trim().toLowerCase();
+  const { text: qText, from: qFrom } = parseFindQuery(q);
+  const query = qText.trim().toLowerCase();
   const hit = (s) => !query || String(s || '').toLowerCase().includes(query);
   box.innerHTML = '';
   const sec = (t) => { const e = document.createElement('div'); e.className = 'find-sec'; e.textContent = t; box.appendChild(e); };
@@ -329,11 +356,12 @@ function renderFindResults(q) {
         async () => { if (S.view !== 'home') await openHome(); await selectDmThread(t.id); });
     }
   }
-  if (!findRows.length && query.length < 2) box.innerHTML = '<p class="muted small find-empty">No chats match.</p>';
+  if (!findRows.length && query.length < 2 && !qFrom) box.innerHTML = '<p class="muted small find-empty">No chats match.</p>';
   paintFindSel();
   // Message text searches the server (debounced) once the query is long
-  // enough to be selective. Renders into this same list when it lands.
-  if (query.length >= 2) {
+  // enough to be selective — or straight away when an author was named, since
+  // `from:ada` on its own is a real search. Renders into this same list.
+  if (query.length >= 2 || qFrom) {
     const searching = document.createElement('p');
     searching.className = 'muted small find-empty';
     searching.textContent = 'Searching messages…';
