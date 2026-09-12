@@ -31,7 +31,6 @@ const SV_REACTION_MAX = 4; // matches the server cap (STORY_REACTION_MAX)
 // Icon set (inline SVG, no emoji — see the design language in AGENTS.md).
 const svSvg = {
   plus: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
-  globe: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>',
   users: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   check: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
   camera: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.2"/></svg>',
@@ -41,6 +40,9 @@ const svSvg = {
   micOff: '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9V5a3 3 0 0 1 6 0v6"/><path d="M5 10a7 7 0 0 0 10.5 6.1M12 19v3"/><path d="M4 4l16 16"/></svg>',
 };
 
+// Trays as the API returns them. `everyone` is legacy: the composer no longer
+// offers an instance-wide post and the server refuses to create one, but a row
+// posted before that still reads back (and shows in trays) until its 24h run out.
 let storyData = { mine: null, friends: [], everyone: [], servers: [] };
 let storyFetch = null;
 let storyRefreshT = null;
@@ -66,7 +68,7 @@ function storyUserTrays() {
     }
   };
   add(storyData.friends, true);
-  add(storyData.everyone, false);
+  add(storyData.everyone, false); // legacy instance-wide posts
   for (const e of by.values()) {
     e.items.sort((a, b) => a.created_at - b.created_at);
     e.unseen = e.items.filter((i) => !i.seen).length;
@@ -472,22 +474,40 @@ function paintFriendStoryRing(row, u) { paintRowStoryRing(row, u); }
 function paintDMStoryRing(row, peer) { paintRowStoryRing(row, peer); }
 function paintMemberStoryRing(row, m) { paintRowStoryRing(row, m); }
 // ---------- user card / profile ----------
-// The card's picture IS the story affordance: the ring + cropped thumb already
-// say "there is a story here", so clicking the avatar opens it (and a stale
-// "Watch story" button next to the action tabs is gone). Keyboard-reachable too.
-function paintUserCardStory(card, u) {
-  if (!card || !u || !S.me || u.id === S.me.id) return;
+// On both surfaces the picture IS the story affordance: the ring + cropped
+// thumb already say "there is a story here", so clicking the avatar opens it —
+// there is no separate "Watch story" button to add back. `opts.ring` is the
+// ring width that surface wants and `opts.close` is what closing its host
+// means (the card pops away, the profile screen closes).
+function clearStoryAvatar(av) {
+  if (!av) return;
+  const thumb = av.querySelector('.st-thumb-inline');
+  if (thumb) thumb.remove();
+  av.style.boxShadow = '';
+  av.classList.remove('st-click');
+  av.removeAttribute('role');
+  av.removeAttribute('tabindex');
+  av.removeAttribute('aria-label');
+  av.removeAttribute('title');
+  av.onclick = null;
+  av.onkeydown = null;
+}
+function paintStoryAvatar(av, u, opts = {}) {
+  if (!av || !u || !S.me || u.id === S.me.id) return false;
   const tray = storyTrayFor(u.id);
   const items = tray ? storyLive(tray.items) : [];
-  if (!items.length) return;
+  // Both hosts repaint the same avatar element (the profile screen keeps one
+  // for good), so a story that has since expired must not leave its ring,
+  // thumb or handler behind on the next person's profile.
+  clearStoryAvatar(av);
+  if (!items.length) return false;
   const unseen = items.some((i) => !i.seen);
-  const av = card.querySelector('.uc-head .avatar');
-  if (!av) return;
-  av.style.boxShadow = '0 0 0 2.5px ' + (unseen ? 'var(--accent)' : 'var(--line)');
+  av.style.boxShadow = '0 0 0 ' + (opts.ring || '2.5px') + ' ' + (unseen ? 'var(--accent)' : 'var(--line)');
   try {
+    // The thumbnail goes INSIDE the avatar element: .avatar{overflow:hidden}
+    // clips it to the same circle, so its antialiased edge never blends with
+    // the person's avatar color at the rim.
     if (getComputedStyle(av).position === 'static') av.style.position = 'relative';
-    const prev = av.querySelector('.st-thumb-inline');
-    if (prev) prev.remove();
     const thumb = storyThumbEl(storyThumbItem(items), 'st-thumb-inline');
     if (thumb) av.appendChild(thumb);
   } catch {}
@@ -497,29 +517,23 @@ function paintUserCardStory(card, u) {
   const label = unseen ? 'Watch story' : 'Watch story (seen)';
   av.title = label;
   av.setAttribute('aria-label', label);
-  const open = () => { try { closeUserCard(); } catch {} openStoryViewer({ kind: 'user', userId: u.id }); };
+  const open = () => {
+    try { if (opts.close) opts.close(); } catch {}
+    openStoryViewer({ kind: 'user', userId: u.id });
+  };
   av.onclick = open;
   av.onkeydown = (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
   };
+  return true;
 }
-// Same affordance inside the full profile screen.
+function paintUserCardStory(card, u) {
+  if (!card) return;
+  paintStoryAvatar(card.querySelector('.uc-head .avatar'), u, { close: () => { try { closeUserCard(); } catch {} } });
+}
+// Same affordance inside the full profile screen (no button beside it).
 function paintProfileStory(u) {
-  const host = $('#pf-story');
-  if (!host || !u || !S.me || u.id === S.me.id) { if (host) host.innerHTML = ''; return; }
-  const tray = storyTrayFor(u.id);
-  const items = tray ? storyLive(tray.items) : [];
-  host.innerHTML = '';
-  if (!items.length) return;
-  const unseen = items.some((i) => !i.seen);
-  const av = $('#pf-avatar');
-  if (av) av.style.boxShadow = '0 0 0 3px ' + (unseen ? 'var(--accent)' : 'var(--line)');
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = 'btn small' + (unseen ? ' primary' : '');
-  b.textContent = unseen ? 'Watch story' : 'Watch story (seen)';
-  b.onclick = () => { try { closeProfileScreen(); } catch {} openStoryViewer({ kind: 'user', userId: u.id }); };
-  host.appendChild(b);
+  paintStoryAvatar($('#pf-avatar'), u, { ring: '3px', close: () => { try { closeProfileScreen(); } catch {} } });
 }
 function renderFriendStoryRings() {
   const list = $('#friend-list');
@@ -654,7 +668,7 @@ function openStoriesSheet(scope = 'home') {
     if (!mineItems.length && !friends.length && !others.length && !srvTrays.length) {
       const p = document.createElement('p');
       p.className = 'muted small story-empty';
-      p.textContent = 'No stories right now. Post one — your friends see it in their Home rail, and you can also share it to everyone here or to a specific server.';
+      p.textContent = 'No stories right now. Post one — your friends see it in their Home rail, and you can also share it with a specific server.';
       body.appendChild(p);
     }
   }
@@ -687,7 +701,7 @@ function shareSummary(shared) {
   if (!shared) return '';
   const bits = [];
   if (shared.friends) bits.push('Friends');
-  if (shared.everyone) bits.push('Everyone');
+  if (shared.everyone) bits.push('Everyone'); // legacy posts only (see storyData)
   for (const sid of shared.servers || []) {
     const s = (S.servers || []).find((x) => x.id === sid);
     bits.push(s ? s.name : 'Server');
@@ -812,6 +826,16 @@ function svShow(ti, ii) {
 
   // header
   paintAvatar($('#sv-av'), author);
+  // The header is who posted it and the way into their profile: the whole
+  // block (picture + name) is one button.
+  const who = $('#sv-who');
+  if (who) {
+    const aid = (author && author.id) || null;
+    sv.whoId = aid;
+    sv.whoUser = aid ? author : null;
+    who.disabled = !aid;
+    who.title = aid ? 'View profile' : '';
+  }
   // "Your story" whenever the item is mine — including my post inside a
   // server's tray (same rule the footer/menu use).
   $('#sv-name').textContent = svItemIsMine(tray, it) ? 'Your story' : (author.display_name || author.username || 'Story');
@@ -1413,14 +1437,15 @@ async function openStoryComposer(opts = {}) {
     // main thread during idle time — seconds). pendingShownUrl: the stand-in
     // on screen is that URL, not the frozen camera frame.
     shotSeq: 0, pendingShot: false, pendingUrl: null, pendingShownUrl: false,
-    // audiences: friends / everyone / servers (multi-select)
-    audFriends: true, audEveryone: false, audServers: [], audUsers: [],
+    // audiences: friends / servers (multi-select). Instance-wide "everyone"
+    // was removed on the owner's request; the read side still serves rows an
+    // old client posted so those finish their 24h instead of vanishing.
+    audFriends: true, audServers: [], audUsers: [],
     // view-once mode: pick friends instead of audiences, sends one DM each
     vo: !!opts.viewOnce, voIds: [],
     micCtx: null, micGain: null, micAnalyser: null, micTimer: null, micSource: null, micRaw: null,
   };
   if (opts.serverId) { sc.audServers = [opts.serverId]; sc.audFriends = true; }
-  if (opts.everyone) sc.audEveryone = true;
   if (opts.viewOnce) { try { await ensureFriends(); } catch {} }
   scCapBusy = false; // a toBlob from a previous session must not block this one
   storyClearFreeze(); // a stale shot must not sit over the fresh camera
@@ -2668,13 +2693,13 @@ function storyRetake() {
 function storyAudCount() {
   if (!sc) return 0;
   if (sc.vo) return (sc.voIds || []).length;
-  return (sc.audFriends ? 1 : 0) + (sc.audEveryone ? 1 : 0) + (sc.audServers || []).length + (sc.audUsers || []).length;
+  return (sc.audFriends ? 1 : 0) + (sc.audServers || []).length + (sc.audUsers || []).length;
 }
 // Broadcast audiences post a story (tray). Individually picked friends are a
 // private delivery instead: each one gets a view-once DM (one view, one
 // replay), never a tray entry.
 function scBroadcast() {
-  return !!(sc && (sc.audFriends || sc.audEveryone || (sc.audServers || []).length));
+  return !!(sc && (sc.audFriends || (sc.audServers || []).length));
 }
 function scPostLabel() {
   if (!sc) return 'Post story';
@@ -2685,8 +2710,8 @@ function scPostLabel() {
   if (scBroadcast() && priv) return priv === 1 ? 'Post + DM' : `Post + ${priv} DMs`;
   return 'Post story';
 }
-// Step 2: the audience menu. Everything is a toggle row — all friends,
-// everyone on this Campfire, whole servers, or individual friends.
+// Step 2: the audience menu. Everything is a toggle row — all friends, whole
+// servers, or individual friends.
 function renderStoryAudience() {
   const list = $('#sc-pick-list');
   if (!list || !sc) return;
@@ -2757,10 +2782,6 @@ function renderStoryAudience() {
       icon: svSvg.users, name: 'All friends', sub: 'Everyone on your friends list',
       on: !!sc.audFriends, toggle: () => { sc.audFriends = !sc.audFriends; },
     });
-    row({
-      icon: svSvg.globe, name: 'Everyone', sub: 'Any account on this Campfire',
-      on: !!sc.audEveryone, toggle: () => { sc.audEveryone = !sc.audEveryone; },
-    });
     if ((S.servers || []).length) {
       section('SERVERS');
       for (const srv of S.servers) {
@@ -2797,7 +2818,7 @@ function renderStoryAudience() {
       const p = document.createElement('p');
       p.className = 'sc-pick-sub';
       p.style.padding = '.2rem .15rem';
-      p.textContent = 'You have no friends yet — share to Everyone or a server instead.';
+      p.textContent = 'You have no friends yet — add someone from Home → Friends to share this.';
       list.appendChild(p);
     }
   }
@@ -3014,7 +3035,7 @@ async function storyPostNow() {
       method: 'POST',
       body: JSON.stringify({
         url: up.url, mime: up.mime, kind: st.kind, caption, overlays,
-        friends: !!st.audFriends, everyone: !!st.audEveryone,
+        friends: !!st.audFriends,
         servers: st.audServers || [],
         durationMs: st.durationMs || undefined,
       }),
@@ -3063,6 +3084,16 @@ $('#cm-story').onclick = (e) => {
 };
 $('#btn-stories').onclick = () => openStoriesSheet('home');
 $('#sv-close').onclick = () => svClose();
+// Tapping the poster's picture/name opens their profile. The profile's own
+// picture is the story button (paintProfileStory), so it leads straight back
+// into the story that was just closed.
+$('#sv-who').onclick = () => {
+  const uid = sv && sv.whoId;
+  if (!uid) return;
+  const u = sv && sv.whoUser;
+  svClose();
+  openProfileScreen(uid, u);
+};
 $('#sv-sound').onclick = () => {
   if (!sv) return;
   sv.muted = !sv.muted;

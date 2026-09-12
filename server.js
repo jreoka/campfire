@@ -2222,25 +2222,30 @@ async function storyVisibleTo(s, viewerId) {
   if (!s) return false;
   if (s.user_id === viewerId) return true;
   for (const a of await storyShares(s.id)) {
-    if (a.kind === 'everyone') return true;
+    if (a.kind === 'everyone') return true; // legacy instance-wide row
     if (a.kind === 'user' && a.user_id === viewerId) return true;
     if (a.kind === 'friends' && await areFriends(s.user_id, viewerId)) return true;
     if (a.kind === 'server' && a.server_id && await isMember(a.server_id, viewerId)) return true;
   }
   return false;
 }
-// Audiences live in story_audiences rows so one post can reach friends, every
-// account on this instance, and any number of servers at once.
+// Audiences live in story_audiences rows so one post can reach friends and any
+// number of servers at once. An instance-wide 'everyone' target existed until
+// the owner removed it: the reader below still understands the kind, and the
+// tray/view paths still serve those rows, but nothing can create one any more.
 function normStoryAudiences(body) {
-  const out = { friends: false, everyone: false, servers: [], users: [] };
+  const out = { friends: false, servers: [], users: [] };
   if (body && typeof body === 'object') {
     if (body.friends === true) out.friends = true;
-    if (body.everyone === true) out.everyone = true;
     if (Array.isArray(body.servers)) for (const id of body.servers.slice(0, 50)) { const s = String(id || ''); if (s) out.servers.push(s); }
     if (Array.isArray(body.users)) for (const id of body.users.slice(0, 200)) { const s = String(id || ''); if (s) out.users.push(s); }
-    // Legacy single-target shape (audience:'friends'|'server' + serverId).
-    // Never when the caller named individual friends only.
-    if (!out.friends && !out.everyone && !out.servers.length && !out.users.length) {
+    // Legacy single-target shape (audience:'friends'|'server' + serverId). Only
+    // for a caller that named no modern audience at all — an old client asking
+    // for 'everyone' must fail loudly, not get silently re-targeted to friends.
+    const modern = body.friends !== undefined || body.everyone !== undefined
+      || Array.isArray(body.servers) || Array.isArray(body.users)
+      || body.audience === 'everyone';
+    if (!modern && !out.friends && !out.servers.length && !out.users.length) {
       if (body.audience === 'server' && body.serverId) out.servers = [String(body.serverId)];
       else out.friends = true;
     }
@@ -2308,13 +2313,14 @@ async function storyAudienceIds(s) {
   for (const a of await storyShares(s.id)) {
     if (a.kind === 'friends') for (const id of await acceptedFriendIds(s.user_id)) ids.add(id);
     else if (a.kind === 'user' && a.user_id) ids.add(a.user_id);
-    else if (a.kind === 'everyone') for (const r of await db.prepare('SELECT id FROM users WHERE disabled = 0').all()) ids.add(r.id);
+    else if (a.kind === 'everyone') for (const r of await db.prepare('SELECT id FROM users WHERE disabled = 0').all()) ids.add(r.id); // legacy only
     else if (a.kind === 'server' && a.server_id) for (const r of await db.prepare('SELECT user_id FROM server_members WHERE server_id = ?').all(a.server_id)) ids.add(r.user_id);
   }
   return [...ids];
 }
 // Tell everyone who can see it. Server targets fan out through the socket
-// roster, 'everyone' to every socket, and friend targets socket-to-socket.
+// roster, 'everyone' to every socket (legacy instance-wide rows only), and
+// friend targets socket-to-socket.
 async function notifyStoryAudience(s, msg) {
   const shares = await storyShares(s.id);
   const ids = new Set([s.user_id]);
@@ -2376,7 +2382,7 @@ async function uploadSize(url) {
 // GET /api/stories — every live story I can see, grouped into trays:
 //   mine     { items, viewers }                       (all of my posts)
 //   friends  [ { user, items, unseen, latest } ]      (shared with friends)
-//   everyone [ { user, items, unseen, latest } ]      (shared instance-wide)
+//   everyone [ { user, items, unseen, latest } ]      (legacy instance-wide posts)
 //   servers  [ { server, items, unseen, latest, mine } ]  (per server, incl. mine)
 app.get('/api/stories', authRequired, async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -2389,6 +2395,8 @@ app.get('/api/stories', authRequired, async (req, res) => {
   const serverIds = (await db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(me)).map((r) => r.server_id);
   const conds = ['s.user_id = ?'];
   const params = [me];
+  // Instance-wide posts can no longer be created, but an unexpired row from
+  // before the audience was removed still has to reach its viewers.
   conds.push("a.kind = 'everyone'");
   conds.push("(a.kind = 'user' AND a.user_id = ?)");
   params.push(me);
@@ -2472,7 +2480,7 @@ app.get('/api/stories', authRequired, async (req, res) => {
 });
 
 // POST /api/stories — publish an already-uploaded file (see /api/upload).
-// Body: { url, mime, caption, durationMs, friends, everyone, servers: [id] }
+// Body: { url, mime, caption, durationMs, friends, servers: [id] }
 app.post('/api/stories', authRequired, async (req, res) => {
   const me = req.user;
   const url = String(req.body?.url || '');
@@ -2502,7 +2510,7 @@ app.post('/api/stories', authRequired, async (req, res) => {
     if (uid === me.id) continue;
     if (await areFriends(me.id, uid)) users.push(uid);
   }
-  if (!aud.friends && !aud.everyone && !servers.length && !users.length) return res.status(400).json({ error: 'pick_audience' });
+  if (!aud.friends && !servers.length && !users.length) return res.status(400).json({ error: 'pick_audience' });
   const caption = squashBreaks(String(req.body?.caption || '')).trim().slice(0, STORY_CAPTION_MAX);
   const durationMs = Math.max(1000, Math.min(60000, parseInt(req.body?.durationMs || 0, 10) || 5000));
   const overlays = overlaysToJson(req.body?.overlays);
@@ -2510,15 +2518,14 @@ app.post('/api/stories', authRequired, async (req, res) => {
   const created = now();
   // Legacy columns hold a coarse summary (audiences are read from the shares).
   await db.prepare('INSERT INTO stories (id,user_id,audience,server_id,url,mime,kind,caption,duration_ms,created_at,expires_at,overlays) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
-    .run(id, me.id, aud.friends || aud.everyone ? 'friends' : 'server', servers.length === 1 && !aud.friends && !aud.everyone ? servers[0] : null, url, mime, kind, caption, durationMs, created, created + STORY_TTL_MS, overlays);
+    .run(id, me.id, aud.friends ? 'friends' : 'server', servers.length === 1 && !aud.friends ? servers[0] : null, url, mime, kind, caption, durationMs, created, created + STORY_TTL_MS, overlays);
   const insShare = db.prepare('INSERT INTO story_audiences (id,story_id,kind,server_id,created_at) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING');
   if (aud.friends) await insShare.run(uid(), id, 'friends', null, created);
-  if (aud.everyone) await insShare.run(uid(), id, 'everyone', null, created);
   for (const sid of servers) await insShare.run(uid(), id, 'server', sid, created);
   for (const u of users) await db.prepare('INSERT INTO story_audiences (id,story_id,kind,server_id,user_id,created_at) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING').run(uid(), id, 'user', null, u, created);
   storyPostAt.set(me.id, created);
   if (storyPostAt.size > 5000) storyPostAt.clear(); // bound the flood map
-  const shared = { friends: aud.friends, everyone: aud.everyone, servers, users };
+  const shared = { friends: aud.friends, servers, users };
   const story = { id, user_id: me.id, audience: 'multi', server_id: null, url, mime, kind, caption, duration_ms: durationMs, created_at: created, expires_at: created + STORY_TTL_MS, overlays, shared };
   await announceStoryNew(story, publicUser(me));
   res.json({ story: storyView(story, publicUser(me), true, 0, shared) });

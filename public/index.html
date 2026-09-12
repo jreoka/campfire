@@ -541,8 +541,10 @@ downward drag dismisses it (see the lightbox block in pickers.js). -->
 <div id="story-view" class="hidden" role="dialog" aria-modal="true" aria-label="Story">
   <div class="sv-bars" id="sv-bars"></div>
   <div class="sv-head">
-    <span class="sv-av" id="sv-av"></span>
-    <span class="sv-who"><b id="sv-name">—</b><span id="sv-sub" class="sv-sub"></span></span>
+    <button type="button" class="sv-who" id="sv-who" title="View profile">
+      <span class="sv-av" id="sv-av"></span>
+      <span class="sv-who-txt"><b id="sv-name">—</b><span id="sv-sub" class="sv-sub"></span></span>
+    </button>
     <button id="sv-sound" class="sv-ico" title="Sound" aria-label="Sound"></button>
     <button id="sv-more" class="sv-ico" title="More" aria-label="More options"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg></button>
     <button id="sv-close" class="sv-ico" title="Close" aria-label="Close"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>

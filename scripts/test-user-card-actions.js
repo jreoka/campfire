@@ -1,19 +1,22 @@
 // User-card actions, the me-bar tag, and the avatar-as-story-button (see
 // AGENTS.md verification conventions).
 //
-// Three owner asks in one surface:
+// Owner asks in one surface:
 //   1. the me bar should not show your own active server tag any more,
-//   2. on someone's card the profile picture IS the story affordance — clicking
-//      it opens their story, and the separate "Watch story" button is gone,
+//   2. on someone's card AND on their full profile screen the picture IS the
+//      story affordance — clicking it opens their story, and the separate
+//      "Watch story" button is gone from both,
 //   3. the card's action buttons (Mention / Message / friend / Kick / Ban /
 //      Block / Profile / Close) are a vertical tab list, not a wrapped row of
 //      pills.
 //
 // Offline sections run the real `ucTabHTML`/`ucIconHTML` (pickers.js) and
 // `friendBtnHTML` (home.js) against stubs. The last section drives the REAL
-// `paintMe` (servers.js) and `paintUserCardStory` (stories.js) in headless
-// Chrome: a tag-returning `tagHTML` proves the me bar drops it, and real clicks
-// / keydowns prove the avatar opens the story. Skips without Chrome.
+// `paintMe` (servers.js) and `paintUserCardStory`/`paintProfileStory`
+// (stories.js) in headless Chrome: a tag-returning `tagHTML` proves the me bar
+// drops it, real clicks / keydowns prove both avatars open the story and close
+// their host, and an expired story proves the profile picture is cleared
+// instead of keeping a dead ring and handler. Skips without Chrome.
 //
 // Usage: node scripts/test-user-card-actions.js
 'use strict';
@@ -72,7 +75,7 @@ const btn = (state, ...args) => { globalThis.__friendState = state; globalThis._
 
 function cardPageHtml() {
   const meSrc = slice(servers, 'function paintSidebarBanner(', 'function mentionsMe(');
-  const storySrc = slice(stories, 'function paintUserCardStory(', '// Same affordance inside the full profile screen.');
+  const storySrc = slice(stories, '// ---------- user card / profile ----------', 'function renderFriendStoryRings()');
   const avatar = '<span class="avatar big"></span>';
   const card = (id) => `<div id="${id}" data-uid="${id}"><div class="uc-body"><div class="uc-head">${avatar}</div></div></div>`;
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
@@ -85,6 +88,7 @@ function cardPageHtml() {
 </div>
 ${card('card1')}${card('card2')}${card('card3')}${card('card4')}
 <div id="minecard" data-uid="me"><div class="uc-body"><div class="uc-head">${avatar}</div></div></div>
+<span class="avatar big" id="pf-avatar"></span>
 <div id="tabhost" class="uc-tabs"><button type="button" class="uc-tab" id="uc-mention">${ucIconHTML('mention')}<span>Mention</span></button><button type="button" class="uc-tab danger" id="uc-kick">${ucIconHTML('minus-user')}<span>Kick</span></button></div>
 <script>
 window.S = { view: 'home', me: { id: 'me', username: 'jordan', display_name: 'Jordan', status: 'online', active_tag: 'CF', active_tag_server_id: 's1', avatar_color: '#5865f2' } };
@@ -148,6 +152,33 @@ paintUserCardStory(document.getElementById('minecard'), window.S.me);
 const myAv = document.querySelector('#minecard .uc-head .avatar');
 out.mineClickable = myAv.classList.contains('st-click');
 out.mineHandler = typeof myAv.onclick;
+// [2b] the full profile screen uses the same picture-as-story-button
+let profileClosed = 0;
+window.closeProfileScreen = () => { profileClosed++; };
+const pfAv = document.getElementById('pf-avatar');
+paintProfileStory({ id: 'friend', display_name: 'Sam' });
+out.pfRole = pfAv.getAttribute('role');
+out.pfTab = pfAv.getAttribute('tabindex');
+out.pfThumb = !!pfAv.querySelector('.st-thumb-inline');
+out.pfRing = pfAv.style.boxShadow;
+pfAv.click();
+out.pfOpened = opened;
+out.pfClosed = profileClosed;
+pfAv.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+out.pfKbOpened = opened;
+out.pfKbClosed = profileClosed;
+// The profile avatar is one element reused for every profile, so an expired
+// story must give it back clean.
+window.__tray = null;
+paintProfileStory({ id: 'friend', display_name: 'Sam' });
+out.pfCleared = {
+  clickable: pfAv.classList.contains('st-click'),
+  thumb: !!pfAv.querySelector('.st-thumb-inline'),
+  handler: typeof pfAv.onclick,
+  label: pfAv.getAttribute('aria-label'),
+  role: pfAv.getAttribute('role'),
+  ring: pfAv.style.boxShadow,
+};
 // [3] the tabs are real vertical rows
 const host = document.getElementById('tabhost');
 out.tabDirection = getComputedStyle(host).flexDirection;
@@ -207,7 +238,9 @@ function main() {
   console.log('\n[4] the me bar drops your own tag, and the pfp is the story button');
   check(!/tagHTML\(S\.me\)/.test(slice(servers, 'function paintMe() {', 'function mentionsMe(')), 'paintMe no longer inserts a tag');
   check(!stories.includes('uc-story'), 'the "Watch story" button is gone from the card');
+  check(!/id="pf-story"|\.pf-story\{/.test(pickers + stories + css), 'and gone from the profile screen too (host + stylesheet)');
   check(stories.includes("card.querySelector('.uc-head .avatar')"), 'the card avatar is the story anchor');
+  check(/paintStoryAvatar\(\$\('#pf-avatar'\), u, \{ ring: '3px'/.test(stories), 'the profile avatar is the story anchor');
   const chrome = findChrome();
   if (!chrome) { console.log('  (skipped: no Chrome/Edge found — set CHROME_PATH)'); }
   else {
@@ -233,6 +266,13 @@ function main() {
         check(out.seenLabel === 'Watch story (seen)' && out.seenRole === 'button', 'a seen story still opens, labelled seen', out.seenLabel);
         check(out.emptyClickable === false, 'no live story → the pfp stays a plain picture');
         check(out.mineClickable === false && out.mineHandler !== 'function', 'my own card never becomes a story button', { clickable: out.mineClickable, handler: out.mineHandler });
+        check(out.pfRole === 'button' && out.pfTab === '0' && out.pfThumb, 'the profile screen picture is the story button too', { role: out.pfRole, thumb: out.pfThumb });
+        check(/3px/.test(out.pfRing || ''), 'with the wider profile ring', out.pfRing);
+        check(out.pfOpened && out.pfOpened.userId === 'friend' && out.pfClosed === 1, 'clicking it opens their story and closes the profile', { opened: out.pfOpened, closed: out.pfClosed });
+        check(out.pfKbOpened && out.pfKbOpened.userId === 'friend' && out.pfKbClosed === 2, 'Enter does the same (keyboard parity)', { opened: out.pfKbOpened, closed: out.pfKbClosed });
+        check(out.pfCleared.clickable === false && out.pfCleared.thumb === false && out.pfCleared.handler !== 'function'
+          && out.pfCleared.label === null && out.pfCleared.role === null && !out.pfCleared.ring,
+          'an expired story leaves the profile picture clean for the next profile', out.pfCleared);
         check(out.tabDirection === 'column', 'the action tabs really are vertical', out.tabDirection);
         check(out.tabW > 0 && out.hostW > 0 && out.tabW > out.hostW - 12 && out.tabW <= out.hostW, 'and each row spans the card', { tabW: out.tabW, hostW: out.hostW });
         check(out.tabIcon === true, 'with its icon');

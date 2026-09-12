@@ -1792,8 +1792,10 @@ function openStatusEditor() {
   if (expSel) expSel.onchange = () => { sel = +expSel.value; };
 }
 // ---------- profile screen (full overlay) ----------
-function openProfileScreen(uid) {
-  const u = memberById(uid);
+// `fallback` is a user object to use when the account is not in any loaded
+// roster (a story author from a server you have since left, for instance).
+function openProfileScreen(uid, fallback) {
+  const u = memberById(uid) || (fallback && fallback.id === uid ? fallback : null);
   if (!u) return;
   const bd = $('#profile-backdrop');
   const isMe = uid === S.me.id;
@@ -1818,8 +1820,8 @@ function openProfileScreen(uid) {
     ${u.bio ? `<div class="pf-bio">${renderRich(u.bio)}</div>` : ''}
     ${u.created_at ? `<div class="pf-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
     <div id="pf-gaming" class="pf-gaming hidden"></div>
-    <div id="pf-story" class="pf-story"></div>
     <div class="pf-actions">${actions}<button class="btn small" id="pf-close">Close</button></div>`;
+  // The profile picture carries the story affordance (see paintProfileStory).
   try { paintProfileStory(u); } catch {}
   loadUserGaming($('#pf-gaming'), u.username, { canDelete: isMe });
   $('#pf-close').onclick = closeProfileScreen;

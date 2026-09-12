@@ -182,8 +182,9 @@ async function uploadAndStory(token, extra = {}) {
   r = await req('GET', '/api/stories', { token: ta });
   ok(r.status === 200, 'server healthy after restart', r.data);
 
-  console.log('\n[9] audiences: everyone + multi-target');
-  // A stranger: no friendship, no shared server — the case that started this.
+  console.log('\n[9] audiences: instance-wide is gone; multi-target');
+  // A stranger: no friendship, no shared server. Nothing can reach them any
+  // more — an instance-wide post is exactly the audience that was removed.
   r = await req('POST', '/api/register', { body: { username: 'sd' + tag, displayName: 'StoryD', password: 'passw0rd!x' } });
   const td = r.data.token;
   await new Promise((s) => setTimeout(s, 3200));
@@ -191,11 +192,11 @@ async function uploadAndStory(token, extra = {}) {
   up2.append('file', new Blob([PngBytes], { type: 'image/png' }), 'pub.png');
   const upRes2 = await req('POST', '/api/upload', { token: ta, form: up2 });
   r = await req('POST', '/api/stories', { token: ta, body: { url: upRes2.data.url, mime: upRes2.data.mime, kind: 'image', caption: 'public', everyone: true } });
-  ok(r.status === 200 && r.data.story.shared.everyone === true, 'everyone post is accepted', r.data);
-  const pub = r.data.story;
+  ok(r.status === 400 && r.data.error === 'pick_audience', 'an instance-wide post is refused', r.data);
+  r = await req('POST', '/api/stories', { token: ta, body: { url: upRes2.data.url, mime: upRes2.data.mime, kind: 'image', caption: 'public', audience: 'everyone' } });
+  ok(r.status === 400, 'and so is the old single-target shape', r.data);
   r = await req('GET', '/api/stories', { token: td });
-  ok((r.data.everyone || []).some((t) => t.items.some((i) => i.id === pub.id)), 'a stranger (no friend, no shared server) sees the everyone story');
-  ok(!(r.data.friends || []).some((t) => t.items.some((i) => i.caption === 'server only')), '…but not posts they cannot see');
+  ok((r.data.friends || []).length === 0 && (r.data.everyone || []).length === 0 && (r.data.servers || []).length === 0, 'a stranger (no friend, no shared server) sees nothing', r.data);
   await new Promise((s) => setTimeout(s, 3200));
   const up3 = new FormData();
   up3.append('file', new Blob([PngBytes], { type: 'image/png' }), 'multi.png');
@@ -211,26 +212,22 @@ async function uploadAndStory(token, extra = {}) {
   ok(!!mineSrv && mineSrv.items.some((i) => i.id === multiId) && mineSrv.mine >= 1, 'my post also shows in the server area (mine count)', mineSrv && { n: mineSrv.items.length, mine: mineSrv.mine });
 
   console.log('\n[10] story reply → DM with a durable preview');
-  r = await req('GET', '/api/stories', { token: td });
-  const pubView = ((r.data.everyone || [])[0] || { items: [] }).items[0];
-  r = await req('POST', '/api/stories/' + pubView.id + '/reply', { token: td, body: { text: 'nice one' } });
-  ok(r.status === 200 && !!r.data.threadId, 'stranger replies to a public story', r.data.error || r.data.ok);
+  const multiStory = (await req('GET', '/api/stories', { token: ta })).data.mine.items.find((i) => i.caption === 'multi');
+  r = await req('POST', '/api/stories/' + multiStory.id + '/reply', { token: tb, body: { text: 'nice one' } });
+  ok(r.status === 200 && !!r.data.threadId, 'a friend replies to the story', r.data.error || r.data.ok);
   const replyMsg = r.data.message;
-  ok(replyMsg.storyId === pubView.id && replyMsg.content === 'nice one', 'DM carries the text + story id', { s: replyMsg.storyId, c: replyMsg.content });
-  ok(replyMsg.attachments.length === 1 && replyMsg.attachments[0].url !== pubView.url, 'preview is a copy of the story media', replyMsg.attachments);
+  ok(replyMsg.storyId === multiStory.id && replyMsg.content === 'nice one', 'DM carries the text + story id', { s: replyMsg.storyId, c: replyMsg.content });
+  ok(replyMsg.attachments.length === 1 && replyMsg.attachments[0].url !== multiStory.url, 'preview is a copy of the story media', replyMsg.attachments);
   const previewUrl = replyMsg.attachments[0].url;
   ok((await fetch(BASE + previewUrl)).status === 200, 'preview bytes are servable now');
-  // A friends-only post: a stranger must not be able to reply to it.
-  const multiStory = (await req('GET', '/api/stories', { token: ta })).data.mine.items.find((i) => i.caption === 'multi');
+  // The stranger is in neither audience of that post: no reply, no view.
   r = await req('POST', '/api/stories/' + multiStory.id + '/reply', { token: td, body: { text: 'nope' } });
   ok(r.status === 404, 'a stranger cannot reply to a post they cannot see', r.data);
-  r = await req('POST', '/api/stories/' + multiStory.id + '/reply', { token: tb, body: { text: 'noticed it' } });
-  ok(r.status === 200, 'a friend can reply to it', r.data.error || r.data.ok);
-  r = await req('POST', '/api/stories/' + pubView.id + '/reply', { token: ta, body: { text: 'me' } });
+  r = await req('POST', '/api/stories/' + multiStory.id + '/reply', { token: ta, body: { text: 'me' } });
   ok(r.status === 400 && r.data.error === 'own_story', 'no replies to your own story', r.data);
-  r = await req('POST', '/api/stories/' + pubView.id + '/reply', { token: td, body: { text: '  ' } });
+  r = await req('POST', '/api/stories/' + multiStory.id + '/reply', { token: tb, body: { text: '  ' } });
   ok(r.status === 400, 'empty replies rejected', r.data);
-  r = await req('DELETE', '/api/stories/' + pubView.id, { token: ta });
+  r = await req('DELETE', '/api/stories/' + multiStory.id, { token: ta });
   ok(r.status === 200, 'author deletes the replied-to story');
   ok((await fetch(BASE + previewUrl)).status === 200, 'the DM preview survives the story being deleted');
 

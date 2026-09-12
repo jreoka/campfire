@@ -237,6 +237,7 @@ function prettyError(e) {
     cannot_reset_own_2fa: 'Manage your own 2FA in Settings instead.', '2fa_not_enabled': 'That user does not have 2FA enabled.',
     nsfw_confirm_required: 'Confirm you are 18 or older to view this channel.',
     group_full: 'Group chats fit up to 9 friends.',
+    pick_audience: 'Pick who can see it — friends, a server, or specific friends.',
   };
   return map[e] || e.replace(/_/g, ' ');
 }

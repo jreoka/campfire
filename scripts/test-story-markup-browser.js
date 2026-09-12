@@ -645,7 +645,7 @@ async function main() {
       inp.value = 'for your eyes';
       inp.dispatchEvent(new Event('input', { bubbles: true }));
       document.querySelector('#sc-te-done').click();
-      sc.audFriends = false; sc.audEveryone = false; sc.audServers = []; sc.audUsers = [bId];
+      sc.audFriends = false; sc.audServers = []; sc.audUsers = [bId];
       renderStoryAudience();
       storySetStep('audience');
       storyPostNow();

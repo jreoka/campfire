@@ -294,7 +294,33 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   pill, the me bar renders the name with a tag-returning `tagHTML` stubbed (so a
   regression shows up), clicking the story avatar opens that user's story and
   closes the card (Enter too), a seen story is still labelled "(seen)", no story
-  leaves the pfp a plain picture, and your own card never becomes a button.
+  leaves the pfp a plain picture, your own card never becomes a button, and the
+  full profile screen's picture behaves the same way (it is reused for every
+  profile, so an expired story has to leave it clean).
+  `node scripts/test-story-viewer-profile.js` covers the story viewer's header
+  (offline checks, then the real `#story-view` markup + stylesheet in headless
+  Chrome, skipping without Chrome): the header is ONE real `<button>` wrapping
+  the picture, name and sub (not loose spans), a tap on the picture's own pixels
+  hit-tests into it, it fits beside sound/more/close at a phone viewport, and
+  clicking it closes the viewer *then* opens that author's profile — the profile
+  sits under the viewer in the stack, and a viewer left running behind it would
+  close itself mid-look; `svShow` arms the header with the current item's author
+  and disables it when there is none, and `openProfileScreen` takes a fallback
+  user for a poster who is in no loaded roster.
+  `node scripts/test-story-audience.js` covers the removal of the instance-wide
+  story audience (offline for the server half — it runs the real
+  `normStoryAudiences` out of `server.js` — then the real `renderStoryAudience`
+  against the real `#sc-pick` markup + stylesheet in headless Chrome, skipping
+  without Chrome): `{everyone:true}` and the oldest `{audience:'everyone'}` shape
+  both normalise to NOTHING (so the route answers 400 `pick_audience` instead of
+  silently re-targeting friends), friends / servers / specific friends still
+  normalise, a modern body with nothing selected never falls back to friends
+  while the two legacy shapes still work, the route writes no `everyone` share
+  row, the client sends no `everyone` key, and the menu's rows are exactly
+  friends + the servers + the friends list with no instance-wide row. The read
+  side is deliberately kept (the client's `storyData.everyone` merge, the
+  server's tray query and visibility check) so a post from before the change
+  finishes its 24h instead of vanishing early.
   `node scripts/test-pin-badge.js` covers the pin button's badge offline (it
   runs the real helpers pulled out of `pins.js` against stub globals): a pin is
   "new" until this account opens the panel in that conversation, pinning
@@ -698,8 +724,8 @@ replies/threads/reactions/edits/mentions/markdown, presence + statuses, user
 cards, tabbed settings, rail folders + DnD, B&W theme, ctx menus, auto-update,
 TOTP 2FA + passkeys + sessions, notification inbox, link previews (server-side
 OpenGraph/oEmbed unfurl → cached card with thumbnail, SSRF-guarded), stories
-(24h photo/video posts with an in-app camera, friend + server + everyone
-audiences, thumbnails cropped into the rings), view-once messages (one view +
+(24h photo/video posts with an in-app camera, friend + server audiences,
+thumbnails cropped into the rings), view-once messages (one view +
 one replay, per-friend DMs, media gated until opened and deleted after use).
 The story camera is a Snapchat-style composer: tap the shutter for a photo, hold
 it to record (release to stop), pinch to zoom the viewfinder (the capture crops
@@ -837,10 +863,18 @@ fit never pushes the me bar off the bottom.
 The me bar's only click target is `#me-open` (the avatar + name), which outlines
 itself on hover; the space around mute/deafen/settings is dead, and it never
 shows your own active server tag (`paintMe` used to insert one — other people's
-rows still carry theirs). On someone else's card the picture IS the story button:
-`paintUserCardStory` rings it, drops the cropped thumb in and makes the avatar
-itself the click/Enter target — there is no separate "Watch story" button to
-re-add. That card's actions are a vertical tab list, not a wrapped row of pills:
+rows still carry theirs). On someone else's card — and on their full profile
+screen — the picture IS the story button: `paintStoryAvatar` (via
+`paintUserCardStory` / `paintProfileStory`) rings it, drops the cropped thumb in
+and makes the avatar itself the click/Enter target, and there is no separate
+"Watch story" button to re-add on either surface. The profile screen reuses one
+`#pf-avatar` element for every profile, so the affordance has to be cleared when
+that person has no live story. The story viewer's own header is one real
+`<button id="sv-who">` (picture + name + sub): clicking the poster opens *their*
+profile — `svClose()` first, because `#profile-backdrop` sits under
+`#story-view` in the stack — and `openProfileScreen(uid, fallback)` takes the
+story's author object for a poster who is in no loaded roster. That card's
+actions are a vertical tab list, not a wrapped row of pills:
 build new ones with `ucTabHTML(id, icon, label, ' primary'|' danger')` (`UC_ICONS`
 in `pickers.js`, inline SVG — no emoji), and the container is `.uc-tabs`; the
 voice-call controls keep the older `.uc-actions` pill row. `friendBtnHTML` takes a
@@ -933,6 +967,15 @@ ring crops) — without it a text-only story previews as a bare gradient. A stor
 posted seconds ago is not servable yet (the /uploads gate answers 423 until the
 scan verdict lands), which an `<img>` reads as an error: `storyThumbRetry` gives
 it two tries before falling back to the avatar.
+Story audiences are friends / whole servers / specific friends only. The
+instance-wide `everyone` target was removed on the owner's request: the composer
+has no row for it, `normStoryAudiences` (server.js) no longer produces it, and a
+client that still asks for it gets a 400 `pick_audience` rather than being
+silently re-targeted at friends. The READ side stays on purpose —
+`storyVisibleTo`, the tray query, `storyAudienceIds`, the notify fan-out and the
+client's `storyData.everyone` merge still understand the kind — so a row posted
+before the change keeps reaching its viewers until its 24h expires. Delete that
+half only together with a migration for any live `story_audiences` rows.
 
 NEXT: iterate per owner feedback on the live site.
 

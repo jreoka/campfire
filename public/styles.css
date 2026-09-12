@@ -1962,8 +1962,6 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 .story-row-go{color:var(--faint);display:inline-flex;flex-shrink:0}
 .story-empty{margin:.5rem .1rem 0}
 /* Profile screen: watch-story affordance above the action row. */
-.pf-story{display:flex;gap:.5rem;margin-top:.8rem}
-.pf-story:empty{display:none}
 .st-tile:hover .st-ring{filter:brightness(1.1)}
 /* The story itself, cropped into the ring behind the avatar (cookie cutter). */
 /* The gap between the photo and the ring stroke is painted by the avatar's own
@@ -2034,9 +2032,13 @@ body.story-open{overflow:hidden}
 .sv-bar{flex:1;height:3px;border-radius:99px;background:rgba(255,255,255,.22);overflow:hidden}
 .sv-bar i{display:block;height:100%;width:0;background:#fff;border-radius:99px}
 .sv-head{display:flex;align-items:center;gap:.5rem;flex-shrink:0}
+.sv-who{display:flex;align-items:center;gap:.5rem;min-width:0;flex:1;border:0;background:transparent;color:#fff;font:inherit;text-align:left;padding:0;cursor:pointer}
+.sv-who:disabled{cursor:default}
+.sv-who-txt{display:flex;flex-direction:column;line-height:1.25;min-width:0}
 #sv-av{width:34px;height:34px;flex-shrink:0;font-size:.85rem}
-.sv-who{display:flex;flex-direction:column;line-height:1.25;min-width:0;flex:1}
 .sv-who b{font-size:.9rem;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sv-who:not(:disabled):hover b{text-decoration:underline}
+.sv-who:focus-visible{outline:2px solid #fff;outline-offset:3px;border-radius:9px}
 .sv-sub{font-size:.72rem;color:rgba(255,255,255,.62);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sv-ico{width:36px;height:36px;border-radius:50%;border:0;background:transparent;color:#fff;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;padding:0;transition:background var(--t-fast)}
 .sv-ico:hover{background:rgba(255,255,255,.13)}
