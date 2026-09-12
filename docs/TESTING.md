@@ -172,6 +172,20 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   its messages still in their chats with no author; the instance owner's account
   is refused 'owner_protected' for both. Re-run after touching the account pane,
   `/api/me/disable`, `/api/me/delete`, `purgeAccount` or the admin delete route.
+  `node scripts/test-user-card-layer.js` covers where the floating person
+  popovers sit in the stack (static checks, then the real layers + stylesheet in
+  headless Chrome, skipping without Chrome): the user card must beat the dialog
+  layer — a card opened from the story "who watched" list was landing BEHIND that
+  panel — while staying under the lightbox, the context menus and the toast, with
+  the tag mini-panel one step above the card it opens from. It also pins what
+  makes the tap work at all: `openUserCard` takes a fallback user (a viewer can be
+  in no loaded roster), the viewers rows own their click and hand over the object
+  they already have (`data-ownclick`, which the member-row delegate now respects),
+  and a backdrop click dismisses the floating card before the panel underneath.
+  The browser half asserts the card/tag panel are what a click at their centre
+  actually hits with a dialog open, and that the panel needs the second click.
+  Re-run after touching the card/tag z-index, the `[data-uid]` delegate or the
+  story viewers list.
   `node scripts/test-user-card-actions.js` covers the card's action tabs, the
   me bar's missing server tag and the avatar-as-story-button (offline for the tab
   builders — it runs the real `ucTabHTML`/`UC_ICONS` out of `pickers.js` and

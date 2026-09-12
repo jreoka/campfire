@@ -718,7 +718,10 @@ document.addEventListener('keydown', (e) => {
   // the tag inside an open user card), and plain clicks inside the open card
   // (whose own container carries data-uid) must not rebuild it either.
   if (e.target.closest && e.target.closest('.usertag[data-tag-sid]')) return;
-  if (memberEl?.dataset.uid) { openMemberCard(memberEl.dataset.uid, memberEl); return; }
+  // A member row with its own click handler (the story viewers list, which
+  // carries the person it just rendered) keeps it — anchoring that card to the
+  // member rail would be wrong anyway, since the row is not in the rail.
+  if (memberEl?.dataset.uid && !memberEl.dataset.ownclick) { openMemberCard(memberEl.dataset.uid, memberEl); return; }
   // data-ownclick rows (friends list, voice occupants) already handled the click
   // themselves — opening the card here too would put it on top of the DM (or
   // re-anchor it) the moment they clicked.
@@ -1215,9 +1218,13 @@ function openMemberCard(uid, rowEl, y) {
   const w = Math.min(300, innerWidth - 16);
   openUserCard(uid, (p && p.width ? p.left : (r ? r.left : innerWidth)) - w - 8, r ? r.top : y);
 }
-async function openUserCard(uid, x, y) {
+async function openUserCard(uid, x, y, fallback) {
   if (S.me && uid !== S.me.id) await ensureFriends();
-  const u = memberById(uid);
+  // `fallback` is for rows that already hold the person: a story's viewers list
+  // can name someone in no loaded roster (a viewer who shares a server you do
+  // not have open, or no server at all), and the card is the whole point of the
+  // tap. Same contract as openProfileScreen below.
+  const u = memberById(uid) || (fallback && fallback.id === uid ? fallback : null);
   if (!u) return;
   const card = $('#usercard');
   const canMod = S.view === 'server' && S.serverDetail && canManage() && uid !== S.me.id && uid !== S.serverDetail.owner_id;
@@ -1285,7 +1292,7 @@ async function openUserCard(uid, x, y) {
   card.style.top = Math.max(8, Math.min(y || 8, innerHeight - h - 8)) + 'px';
   $('#uc-close').onclick = closeUserCard;
   const pr = $('#uc-profile');
-  if (pr) pr.onclick = () => { closeUserCard(); openProfileScreen(uid); };
+  if (pr) pr.onclick = () => { closeUserCard(); openProfileScreen(uid, u); };
   const men = $('#uc-mention');
   if (men) men.onclick = () => { insertAtCursor($('#in-message'), '@' + u.username + ' '); closeUserCard(); $('#in-message').focus(); };
   const msg = $('#uc-message');

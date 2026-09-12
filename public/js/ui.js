@@ -25,7 +25,16 @@ function cancelModal() {
   if (fn) { try { fn(); } catch {} }
 }
 $('#modal-close').onclick = () => cancelModal();
-$('#modal-backdrop').addEventListener('click', (e) => { if (e.target.id === 'modal-backdrop') cancelModal(); });
+$('#modal-backdrop').addEventListener('click', (e) => {
+  if (e.target.id !== 'modal-backdrop') return;
+  // A person card floats ABOVE the dialog layer (see the layer contract in
+  // styles.css), so a click on the backdrop is usually aimed at the card: the
+  // card's own closer (final.js) takes that click, and the panel underneath
+  // stays put. Dismiss the panel only when nothing is floating over it.
+  const floating = ['#usercard', '#tagcard'].some((sel) => { const el = $(sel); return el && !el.classList.contains('hidden'); });
+  if (floating) return;
+  cancelModal();
+});
 $('#modal-ok').onclick = async () => {
   $('#modal-backdrop').classList.add('hidden');
   modalCancelFn = null;

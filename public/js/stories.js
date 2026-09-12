@@ -1580,7 +1580,13 @@ async function storyViewersModal(it) {
   const box = $('#modal-body');
   viewers.forEach((u) => {
     const row = box.querySelector(`.member[data-uid="${u.id}"]`);
-    if (row) paintAvatar(row.querySelector('.avatar'), u);
+    if (!row) return;
+    paintAvatar(row.querySelector('.avatar'), u);
+    // The row owns its click: it already holds the person, who may be in no
+    // loaded roster, and the card has to open at the tap (not anchored to the
+    // member rail) and above this panel — see the layer contract in styles.css.
+    row.dataset.ownclick = '1';
+    row.onclick = (e) => { openUserCard(u.id, e.clientX, e.clientY, u); };
   });
   return true;
 }

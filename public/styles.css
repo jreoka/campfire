@@ -1021,7 +1021,13 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 @media (hover:none){
   .msg-actions{display:none!important}
 }
-#usercard{position:fixed;z-index:120;width:300px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;overflow:hidden}
+/* Layer contract for the floating person popovers: they have to beat the
+   dialog layer (#modal-backdrop / #story-new at 160), because a card is opened
+   from INSIDE dialogs too — the story "who watched" list is a modal and its
+   rows are people, and a card behind that backdrop is a card you cannot read.
+   They stay under #lightbox (200), the ctx/folder menus (400) and the toast
+   (500). #tagcard is one step above #usercard: it opens FROM a card. */
+#usercard{position:fixed;z-index:170;width:300px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;overflow:hidden}
 /* Mobile me bar: your own card is a full-height sheet sliding up from the
    bottom (see openOwnCard) — nothing to dim behind it, so no scrim. */
 @media (max-width:700px),(max-height:560px) and (pointer:coarse){
@@ -1053,8 +1059,10 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .msg .head .usertag{margin-left:-.15rem}
 .usertag.clickable{cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
 .usertag.clickable:hover{background:var(--panel-4);color:var(--text)}
-/* Server tag mini-panel (banner + icon + name + description). */
-#tagcard{position:fixed;z-index:125;width:280px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;overflow:hidden}
+/* Server tag mini-panel (banner + icon + name + description). Sits one step
+   above #usercard (it is opened from a card, and from tags inside dialogs —
+   see the layer contract above #usercard). */
+#tagcard{position:fixed;z-index:171;width:280px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;overflow:hidden}
 .tc-banner{height:76px;background:var(--panel-3);background-size:cover;background-position:center}
 .tc-body{padding:0 1rem 1rem}
 .tc-icon{width:48px;height:48px;border-radius:14px;margin-top:-24px;border:3px solid var(--panel-2);background:var(--panel-3);display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:1.1rem;overflow:hidden;flex-shrink:0}
