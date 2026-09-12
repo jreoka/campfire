@@ -13,8 +13,10 @@
 // headless Chrome with a fake camera and asserts that hand-off: the shot is on
 // screen in the same frame as the tap, and it is a real image/jpeg blob (not a
 // stand-in that never resolves) once the encoder calls back. It also covers the
-// race the old code had no answer for — Retake while the encode is in flight
-// must not resurrect the stale shot.
+// race the old code had no answer for — a reset while the encode is in flight
+// (storyRetake(), which the failed-encode fallback still calls) must not
+// resurrect the stale shot. The composer no longer offers a Retake button at
+// all, so the reset is driven as the function the app itself calls.
 //
 // Boots a real server against a throwaway database and drives Chrome over the
 // DevTools protocol (no puppeteer — plain CDP over ws, same harness as
@@ -204,6 +206,17 @@ async function main() {
     })()`);
     if (opened.camFailed || opened.timeout) return skip('no fake camera frames in this Chrome/OS (' + JSON.stringify(opened) + ')');
     check(opened.camReady && opened.w > 0, 'the fake camera paints a frame', opened);
+    // The Retake button is gone (owner request): the preview bar carries Next
+    // alone, and nothing in the composer wires a retake any more. storyRetake()
+    // itself stays — a capture that encodes to nothing falls back to it.
+    const bar = await evaluate(`(() => ({
+      retake: !!document.querySelector('#sc-retake'),
+      barButtons: [...document.querySelectorAll('#sc-bar button')].map((b) => b.textContent.trim()),
+      wiring: typeof storyRetake,
+    }))()`);
+    check(bar.retake === false && bar.barButtons.join('|') === 'Next',
+      'the preview bar has no Retake button, just Next', bar);
+    check(bar.wiring === 'function', 'while storyRetake() stays for the failed-encode fallback', bar);
 
     console.log('\n[3] the shutter answers the tap, not the encoder');
     const shot = await evaluate(`(() => {
@@ -261,7 +274,7 @@ async function main() {
       check(done.label === 'Next', 'Next is live once the shot exists', done);
     }
 
-    console.log('\n[5] Retake during the encode must not resurrect the shot');
+    console.log('\n[5] a reset during the encode must not resurrect the shot');
     const race = await evaluate(`(async () => {
       const wait = (fn, ms) => new Promise((res) => {
         const t0 = performance.now();
@@ -271,11 +284,11 @@ async function main() {
           setTimeout(tick, 50);
         })();
       });
-      document.querySelector('#sc-retake').click();          // back to the camera
+      storyRetake();                                          // back to the camera
       const backToCam = await wait(() => sc && sc.camReady, 12000);
       if (!backToCam) return { backToCam: false };
       document.querySelector('#sc-shutter').click();          // encode in flight…
-      document.querySelector('#sc-retake').click();           // …and retake mid-flight
+      storyRetake();                                          // …and a reset mid-flight
       const shortly = { step: sc.step, blob: !!sc.blob, freeze: !!document.querySelector('.sc-stage .sc-freeze') };
       await new Promise((r) => setTimeout(r, 2500));          // let the stale encode land
       return {
@@ -288,9 +301,9 @@ async function main() {
         shutterEnabled: !document.querySelector('#sc-shutter').disabled,
       };
     })()`);
-    check(!!race.backToCam, 'the camera comes back after a retake', race);
+    check(!!race.backToCam, 'the camera comes back after the reset', race);
     if (race.backToCam) {
-      check(race.shortly.step === 'capture' && !race.shortly.freeze, 'the retake drops the pending stand-in at once', race.shortly);
+      check(race.shortly.step === 'capture' && !race.shortly.freeze, 'the reset drops the pending stand-in at once', race.shortly);
       check(race.step === 'capture' && !race.blob && !race.kind, 'the stale encode is discarded, not shown', race);
       check(!race.shotSrc, 'no ghost shot is left on the preview element', race);
       check(!race.nextDisabled, 'Next is reset for the next shot', race);
@@ -322,7 +335,7 @@ async function main() {
           setTimeout(tick, 50);
         })();
       });
-      document.querySelector('#sc-retake').click();
+      storyRetake();
       if (!(await wait(() => sc && sc.camReady, 12000))) return { camReady: false };
       document.querySelector('#sc-shutter').click();
       const raced = { blobYet: !!sc.blob, step: sc.step, nextLabel: document.querySelector('#sc-next').textContent };

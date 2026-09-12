@@ -422,15 +422,15 @@ async function main() {
       check(d.foot.t <= d.shutter.t && d.foot.b >= d.shutter.b, `${tag}: the shutter sits inside its foot row`, { shutter: d.shutter, foot: d.foot });
       await state({ compose: true, step: 'preview' });
       d = await dump();
-      check(inside(d.tools, d.vw, d.vh) && inside(d.scBar, d.vw, d.vh), `${tag}: the markup tool rail and the Retake/Next bar fit`, { tools: d.tools, bar: d.scBar });
+      check(inside(d.tools, d.vw, d.vh) && inside(d.scBar, d.vw, d.vh), `${tag}: the markup tool rail and the Next bar fit`, { tools: d.tools, bar: d.scBar });
       check(inside(d.edit, d.vw, d.vh) && inside(d.scNext, d.vw, d.vh), `${tag}: the caption slot and Next fit`, { edit: d.edit, next: d.scNext });
       check(d.editVisible === true && d.colorsVisible === false, `${tag}: the caption owns the slot when no colour tool is up`);
       check(!overlaps(d.tools, d.caption) && !overlaps(d.tools, d.scBar), `${tag}: the tool rail collides with neither the caption nor the bar`, { tools: d.tools, caption: d.caption, bar: d.scBar });
       await state({ compose: true, step: 'preview', colors: true });
       d = await dump();
       check(d.colorsVisible === true && d.editVisible === false, `${tag}: the colour row takes the caption slot (they never stack)`, { colors: d.colorsVisible, edit: d.editVisible });
-      check(inside(d.colors, d.vw, d.vh) && inside(d.scBar, d.vw, d.vh), `${tag}: the colour row and the Retake/Next bar fit`, { colors: d.colors, bar: d.scBar });
-      check(!overlaps(d.colors, d.scBar), `${tag}: the colour row does not sit on the Retake/Next bar`, { colors: d.colors, bar: d.scBar });
+      check(inside(d.colors, d.vw, d.vh) && inside(d.scBar, d.vw, d.vh), `${tag}: the colour row and the Next bar fit`, { colors: d.colors, bar: d.scBar });
+      check(!overlaps(d.colors, d.scBar), `${tag}: the colour row does not sit on the Next bar`, { colors: d.colors, bar: d.scBar });
     }
 
     console.log('\n[5] the auth screen scrolls instead of hiding its submit button');

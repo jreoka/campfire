@@ -310,7 +310,7 @@ async function main() {
 
     console.log('\n[6] markup: text, an emoji sticker and a drawing');
     const markup = await evaluate(`(async () => {
-      document.querySelector('#sc-retake').click();
+      storyRetake(); // no Retake button in the composer any more — same reset
       const t0 = performance.now();
       while (performance.now() - t0 < 12000 && !(sc && sc.camReady)) await new Promise((r) => setTimeout(r, 80));
       document.querySelector('#sc-shutter').click();

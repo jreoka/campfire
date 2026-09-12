@@ -491,7 +491,7 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
   the members panel an off-screen right drawer (never a static column), header
   buttons unclipped and non-overlapping, every bottom sheet/modal/profile
   fitting the short viewport, and the story composer's tool rail clearing the
-  caption slot and the Retake/Next bar. It also fills the sidebar with more
+  caption slot and the Next bar. It also fills the sidebar with more
   channels than fit and proves the list scrolls (with a sticky server header)
   while the me bar stays pinned on screen — it used to be pushed off the bottom.
   It also pins that the auth screen
@@ -560,7 +560,9 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   shutter answers the tap instead of the JPEG encoder: the captured frame is on
   screen in the same frame as the click (`.sc-freeze` = the capture canvas, the
   camera released, Next live immediately), a real `image/jpeg` blob takes over
-  once the encoder answers, Retake during an in-flight encode discards the
+  once the encoder answers, a reset while an encode is in flight (`storyRetake`,
+  which the failed-encode fallback still calls — there is no Retake button in the
+  composer, and the test pins that too) discards the
   stale shot instead of resurrecting it, and posting before the bytes land
   waits for them (Post says "Saving…") and then posts. Skips when Chrome has no
   fake video device. Re-run it after touching the story composer's capture or
@@ -808,8 +810,10 @@ one replay, per-friend DMs, media gated until opened and deleted after use).
 The story camera is a Snapchat-style composer: tap the shutter for a photo, hold
 it to record (release to stop), pinch to zoom the viewfinder (the capture crops
 to what you saw, and a zoomed recording is composited so it matches), double-tap
-the picture to flip, text-only stories on a picked gradient, and markup over the
-shot — draggable/rotatable/scalable text and emoji stickers plus freehand
+the picture to flip, no Retake button at all (owner request: the flow is
+shoot → preview → next, and `storyRetake()` survives only as the fallback for a
+capture whose encode produced no bytes), text-only stories on a picked gradient,
+and markup over the shot — draggable/rotatable/scalable text and emoji stickers plus freehand
 drawing with colours and undo, all rendered over the media by the viewer and by
 the view-once player (the markup travels with the post, not in the pixels).
 A story sent to an individual friend is delivered as a view-once DM instead of

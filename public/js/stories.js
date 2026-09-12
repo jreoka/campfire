@@ -2262,7 +2262,8 @@ function captureStoryPhoto() {
   // The encode runs behind the frozen frame (see storyJpegBlob) and the reader
   // may walk the audience step while it does; storyPostNow is what waits for it.
   sc.encodePromise = storyJpegBlob(c, 0.86).then((blob) => {
-    // Retaken or closed while the encoder ran — the shot is stale, drop it (and
+    // Superseded while the encoder ran — a newly picked shot bumped the
+    // sequence, or the composer closed — so this one is stale: drop it (and
     // leave scCapBusy alone: a newer frame owns the flag now).
     if (!sc || sc.shotSeq !== seq) return;
     scCapBusy = false;
@@ -2998,6 +2999,10 @@ function storyRevealPreview(kind, showImg) {
   renderStoryAudience();
   storyProgress(null);
 }
+// Back to the camera with an empty shot — the reset a capture that produced no
+// bytes falls back to (see captureStoryPhoto). There is deliberately no Retake
+// button in the composer: the flow is shoot → preview → next, and a reader who
+// wants a different shot closes the composer and starts again.
 function storyRetake() {
   if (!sc) return;
   if (sc.previewUrl) { try { URL.revokeObjectURL(sc.previewUrl); } catch {} }
@@ -3643,7 +3648,6 @@ $('#sc-te-bg').onclick = () => {
 };
 $('#sc-emoji-close').onclick = () => storyCloseEmoji();
 $('#sc-emoji-search').addEventListener('input', (e) => storyRenderEmoji(e.target.value));
-$('#sc-retake').onclick = () => storyRetake();
 $('#sc-post').onclick = () => storyPostNow();
 $('#sc-next').onclick = () => { if (sc && !sc.busy) storySetStep('audience'); };
 $('#sc-back').onclick = () => { if (sc && !sc.busy) storySetStep('preview'); };

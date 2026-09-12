@@ -193,6 +193,17 @@ console.log('\n[6] the surfaces and the wiring are all present');
   for (const fn of ['storyShutterDown', 'storyShutterUp', 'storyDrawFrame', 'storyNeedsComposite', 'storyRecordStream', 'storyPaintOv', 'storyOpenTextEditor', 'storyAddSticker', 'storyStartTextOnly', 'svPaintOverlays']) {
     check(js.includes('function ' + fn + '('), 'stories.js defines ' + fn, null);
   }
+  // The Retake button is gone from the composer on the owner's request: the
+  // flow is shoot → preview → next, and the preview bar carries Next alone.
+  // storyRetake() itself stays — a capture whose encode yields no bytes falls
+  // back to it (and the shotSeq guard it bumps is what the camera race test
+  // drives), so it must not be deleted with the button.
+  check(!html.includes('id="sc-retake"') && !js.includes('#sc-retake'),
+    'the Retake button is gone from the markup and the wiring', null);
+  check(/<div class="sc-bar hidden" id="sc-bar">\s*<span class="spacer"><\/span>\s*<button id="sc-next"/.test(html),
+    'and the preview bar is the spacer plus Next', null);
+  check(/function storyRetake\(\)/.test(js) && /storyRetake\(\); return; \}/.test(js),
+    'storyRetake() stays as the internal reset a failed encode falls back to', null);
   const vo = fs.readFileSync(path.join(ROOT, 'public/js/viewonce.js'), 'utf8');
   check(vo.includes('function voPaintOverlays('), 'view-once paints overlays too', null);
   // Removing the media must not take the overlay layer's custom emoji with it.
