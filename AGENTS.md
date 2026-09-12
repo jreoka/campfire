@@ -545,6 +545,21 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   delimiters stay in the flow (dimmed), message rendering is unchanged, and
   the `#in-render` rules stay metric-neutral (no padding/size/weight/font
   changes — `.spoiler` and `<code>` have to override the generic rules).
+  `node scripts/test-composer-field.js` covers the composer's field itself
+  (offline checks, then the real `index.html` + `styles.css` in headless Chrome,
+  skipping without Chrome): the field has its own `--field`/`--field-line` pair
+  in all four themes and is no longer painted with the login-input `--inset`
+  well; the textarea's and the backdrop's computed padding stay IDENTICAL (any
+  drift there puts the caret off the glyphs); the leading `+` sits fully inside
+  the field and centred on a one-line box while its thumb target comes from a
+  `::after` hit box (it used to be thumbs-sized itself, which made it overflow a
+  47px field and get clipped by the corner); `#composer` bottom-aligns its
+  children so a box grown to four lines keeps every control on the bar; the `+`
+  menu's seven rows all carry an icon; and the send key reads the box through
+  the real `paintComposerSend()` — muted and disabled when empty, whitespace-only
+  or with no conversation behind it, lit for text or an attachment-only send.
+  It also pins that the send key and the `+` are hover-styled only inside the
+  one `@media (hover:hover)` block.
   `node scripts/test-friend-click.js` drives the same harness and counts
   `openUserCard` calls: a friend row under All/Online opens the DM and nothing
   else (the row carries `data-uid` for the story ring, and the global
@@ -1085,6 +1100,22 @@ first paint, so the installed app can be styled with no flash).
   only; firing it on every re-render would flicker the chat.
 - Empty states are hairline `--line-soft` surfaces, never dashed borders: a
   dashed outline reads as an unfinished placeholder.
+- The composer field is its own surface (`--field`/`--field-line`, one tonal
+  step above the bar), never `--inset` — that is the app's LOGIN-input well and
+  it read as a hole punched in the chat. `#in-message` (the transparent
+  textarea that owns the caret) and `#in-render` (the backdrop you actually
+  see) must keep IDENTICAL padding at every breakpoint or the caret drifts off
+  the glyphs; only the surface lives on the backdrop. The leading `+` and the
+  tool rail ride the BOTTOM of the box (`#composer` is `align-items:flex-end`)
+  so a box grown to several lines keeps every control on one bar, and the `+` is
+  32px — small enough to fit its field — with its thumb target coming from a
+  `::after` hit box like every other small phone control. The send key reads the
+  box (`paintComposerSend`, core.js): muted and disabled when there is nothing
+  to send, accent the moment there is. It stays cosmetic — `requestSubmit()`
+  still fires with the key disabled, which is how the empty-box draft tests
+  exercise the submit path. Repaint it from whatever changes the box: input,
+  `renderComposerMeta`, the submit path, and `applyComposerDraft` (every
+  channel / DM / thread switch).
 Settings is responsive in two shapes:
 desktop keeps the side rail, a phone (`max-width:700px`) gets a menu of section
 rows (`.settings.menu`) and picking one shows that section alone

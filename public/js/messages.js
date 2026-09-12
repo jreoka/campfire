@@ -1142,6 +1142,7 @@ function renderComposerMeta() {
     chip.appendChild(x); box.appendChild(chip);
   });
   syncComposerRender();
+  try { paintComposerSend(); } catch {}
 }
 // Reply chip for the thread composer (mirrors the main-composer reply meta).
 function renderThreadComposerMeta() {
@@ -1443,6 +1444,7 @@ $('#composer').addEventListener('submit', (e) => {
     syncComposerRender();
     composerAutoGrow(inp);
     if (!content) draftClear(ctx); // nothing left to restore — kill the phantom draft
+    try { paintComposerSend(); } catch {}
     return;
   }
   if (S.view === 'home') sendDm(content, { attachments: S.pendingAtts, replyTo: S.replyTo?.id || null });

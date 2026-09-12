@@ -9,6 +9,12 @@
   --panel-4:#273048;
   --inset:#030509;
   --rail:#04070c;
+  /* The composer's input field. Deliberately NOT --inset: a chat composer is a
+     surface you write on, not a form field carved into the page, and the black
+     well read as exactly that. One tonal step above the bar it sits on, with
+     its own hairline so it stays defined in every theme. */
+  --field:#171f2f;
+  --field-line:#232d44;
   --line:#263046;
   --line-soft:#1d2537;
   --text:#eef1f8;
@@ -71,6 +77,8 @@
   --panel-4:#cbd3e3;
   --inset:#e7ebf2;
   --rail:#e2e7f0;
+  --field:#f4f7fb;
+  --field-line:#dbe2ee;
   --line:#cfd6e4;
   --line-soft:#dde2ec;
   --text:#141a26;
@@ -103,6 +111,8 @@
   --panel-4:#52566e;
   --inset:#1e1f29;
   --rail:#1e1f29;
+  --field:#30323f;
+  --field-line:#4a4e63;
   --line:#44475a;
   --line-soft:#343746;
   --text:#f8f8f2;
@@ -136,6 +146,10 @@
   --panel-4:#2c2c34;
   --inset:#000000;
   --rail:#000000;
+  /* OLED is pure black behind and beside the bar, so the field is the one
+     surface that has to carry the composer. */
+  --field:#15151a;
+  --field-line:#2f2f38;
   --line:#2a2a31;
   --line-soft:#1b1b20;
   --text:#f2f3f7;
@@ -504,7 +518,10 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .msg .text{overflow-wrap:anywhere;white-space:pre-wrap;font-size:.93rem;color:var(--text)}
 .msg .text a{color:var(--accent-hover)}
 .msg.sys{justify-content:center;color:var(--faint);font-size:.83rem}
-#composer{display:flex;gap:.55rem;align-items:center;padding:.7rem .9rem .7rem;padding-bottom:calc(.7rem + var(--safe-b));background:var(--panel);min-width:0;position:relative}
+/* flex-end, not center: the send key rides the bottom edge so it stays on the
+   same line as the field's own controls when the box grows to several lines.
+   On a one-line box the two are within a pixel of each other either way. */
+#composer{display:flex;gap:.55rem;align-items:flex-end;padding:.7rem .9rem .7rem;padding-bottom:calc(.7rem + var(--safe-b));background:var(--panel);min-width:0;position:relative}
 /* The strip keeps its slot at all times — only its contents fade. It used to be
    display:none when idle, so every indicator appearing/disappearing resized
    #messages and shoved the whole conversation up and down (and made the
@@ -521,25 +538,53 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #slowmode-hint{display:inline-flex;align-items:center;gap:.32rem;font-size:.74rem;font-weight:700;color:var(--amber);white-space:nowrap}
 #slowmode-hint.hidden{display:none}
 /* Rounded square, not a circle — it reads as a key in the composer row and
-   matches the 14px radius the composer input/backdrop use. */
-.send-btn{width:46px;height:46px;border-radius:14px;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:background var(--t-fast),transform .1s ease}
-.send-btn:hover{background:var(--accent-hover)}
+   matches the 16px radius the composer field uses. */
+.send-btn{width:46px;height:46px;border-radius:16px;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:background var(--t-fast),color var(--t-fast),transform .1s ease}
 .send-btn:active{transform:scale(.94)}
 .send-btn svg{display:block;transition:transform .15s ease}
-.send-btn:hover svg{transform:translateX(2px)}
+/* Nothing to send: an empty box. A permanently lit accent button invited a tap
+   that did nothing, which is the loudest "this is a web form" tell in the row.
+   It keeps its size and place so the box never reflows as you type. */
+.send-btn.is-off{background:var(--panel-3);color:var(--faint);cursor:default}
+.send-btn.is-off:active{transform:none}
 #btn-more{display:none}
-#composer-more{position:absolute;left:0;bottom:calc(100% + .4rem);z-index:60;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);padding:.35rem;min-width:210px}
+#composer-more{position:absolute;left:0;bottom:calc(100% + .5rem);z-index:60;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-lg);padding:.4rem;min-width:236px}
+/* The + menu is the phone's only way into attach / emoji / GIF / voice, so it
+   gets the same icon-row treatment as the ctx menu on the desktop rather than
+   a column of bare labels. */
+#composer-more .ctx-item{padding:.6rem .7rem;font-size:.89rem;border-radius:10px}
+#composer-more .ctx-ic{color:var(--muted)}
+#composer-more .ctx-item:active .ctx-ic{color:var(--text)}
+.ctx-sep{height:1px;background:var(--line-soft);margin:.35rem .2rem}
 #composer .tool-btn,#composer .gif-btn,#composer .btn{flex-shrink:0}
 #composer-box{position:relative;flex:1;min-width:0;display:flex}
-#composer-box #in-message{width:100%;padding-right:4.2rem;padding-left:2.8rem}
-#btn-plus{display:inline-flex;align-items:center;justify-content:center;position:absolute;left:.35rem;top:50%;transform:translateY(-50%)}
+#composer-box #in-message{width:100%;padding-right:4.2rem;padding-left:3.1rem}
+/* The field's own controls ride the BOTTOM of the box, not its middle: on one
+   line that is the same optical centre it always had, and when the box grows to
+   four lines they stay on the bar instead of floating in the middle of a block
+   of text. Both offsets are tuned so a one-line box is unchanged. */
+#btn-plus{display:inline-flex;align-items:center;justify-content:center;position:absolute;left:.4rem;bottom:7px}
 #btn-attach{display:none}
-#composer-tools{position:absolute;right:.35rem;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:.15rem}
+#composer-tools{position:absolute;right:.4rem;bottom:7px;display:flex;align-items:center;gap:.15rem}
 #composer-tools .tool-btn{padding:.45rem}
-#in-message{flex:1;min-width:0;background:transparent;border:1px solid transparent;color:transparent;caret-color:var(--text);border-radius:14px;padding:.65rem 1rem;outline:none;position:relative;font:inherit;font-size:.93rem;resize:none;overflow-y:auto;overflow-wrap:anywhere}
+/* The + is 32px so it fits inside the field; its thumb target is grown to the
+   full 44px by the ::after hit box in the coarse-pointer block below. */
+/* The composer's leading affordance. It used to be a bare transparent glyph
+   floating in the field's left gutter; a soft resting surface makes it read as
+   the button it is, and gives the gutter a reason to exist. Mixed off --text so
+   it lifts in every theme rather than only on the dark ones. */
+#btn-plus,#btn-more{
+  width:32px;height:32px;padding:0;border-radius:50%;
+  background:color-mix(in srgb, var(--text) 8%, transparent);color:var(--muted);
+}
+#btn-plus:active,#btn-more:active{background:color-mix(in srgb, var(--text) 20%, transparent);transform:scale(.9)}#in-message{flex:1;min-width:0;background:transparent;border:1px solid transparent;color:transparent;caret-color:var(--text);border-radius:16px;padding:.65rem 1rem;outline:none;position:relative;font:inherit;font-size:.93rem;resize:none;overflow-y:auto;overflow-wrap:anywhere}
 #in-message:focus{border-color:transparent}
 #composer-box:focus-within #in-render{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
-#in-render{position:absolute;inset:0;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;background:var(--inset);border:1px solid var(--line);border-radius:14px;padding:.65rem 4.2rem .65rem 2.8rem;font:inherit;font-size:.93rem;color:var(--text);transition:border-color var(--t-fast),box-shadow var(--t-fast)}
+/* The field the reader actually sees: the textarea on top is transparent and
+   only carries the caret. Metrics (padding, font, line-height) must stay
+   identical between the two or the caret drifts off the glyphs — only the
+   surface lives here. */
+#in-render{position:absolute;inset:0;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;background:var(--field);border:1px solid var(--field-line);border-radius:16px;padding:.65rem 4.2rem .65rem 3.1rem;font:inherit;font-size:.93rem;color:var(--text);transition:border-color var(--t-fast),box-shadow var(--t-fast)}
 #in-render-inner{white-space:pre-wrap;overflow-wrap:anywhere}
 /* The backdrop must not move a single glyph: markdown is shown by colour and
    background only. No padding, no weight/size/font changes — any of those
@@ -554,7 +599,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #in-render .md-tok{color:var(--faint)}
 #in-render .md-quote{color:var(--muted)}
 #in-render a{color:var(--accent-hover)}
-#in-message::placeholder{color:var(--faint)}
+#in-message::placeholder{color:var(--muted)}
 
 #members{width:244px;background:var(--panel);border-left:1px solid var(--line-soft);overscroll-behavior:contain;flex-shrink:0;order:5;display:flex;flex-direction:column;min-height:0}
 #member-list{flex:1;overflow-y:auto;min-height:0;padding:.4rem .55rem .9rem}
@@ -1310,9 +1355,9 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 #thread-composer{display:flex;flex-direction:column;gap:.5rem;padding:.7rem;border-top:1px solid var(--line-soft)}
 #thread-reply-meta{display:flex;gap:.5rem;flex-wrap:wrap}
 #thread-composer-row{display:flex;gap:.5rem;align-items:center}
-#in-thread{flex:1;min-width:0;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:14px;padding:.62rem .95rem;font-size:.9rem;outline:none;resize:none;overflow-y:auto;overflow-wrap:anywhere;transition:border-color var(--t-fast),box-shadow var(--t-fast)}
+#in-thread{flex:1;min-width:0;background:var(--field);border:1px solid var(--field-line);color:var(--text);border-radius:16px;padding:.62rem .95rem;font-size:.9rem;outline:none;resize:none;overflow-y:auto;overflow-wrap:anywhere;transition:border-color var(--t-fast),box-shadow var(--t-fast)}
 #in-thread:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
-#in-thread::placeholder{color:var(--faint)}
+#in-thread::placeholder{color:var(--muted)}
 @media (max-width:1100px){
   #thread-panel{position:fixed;top:var(--safe-t);bottom:var(--safe-b);right:0;z-index:40;border-left:1px solid var(--line)}
 }
@@ -1775,10 +1820,13 @@ body{touch-action:manipulation}
   #in-render{font-size:16px}
   #composer{gap:.4rem;padding:.6rem;padding-bottom:calc(.6rem + var(--safe-b))}
   #composer .btn{padding:.7rem .9rem;min-height:44px}
-  #composer .tool-btn,#composer .gif-btn{min-height:44px;min-width:44px;justify-content:center}
-  #composer-tools{right:auto;left:.35rem}
-  #composer-box #in-message{padding-right:.35rem;padding-left:3.4rem}
-  #in-render{padding:.65rem .35rem .65rem 3.4rem}
+  /* Thumb-sized tool keys — except the field's own leading +, which has to stay
+     smaller than the field it sits in (a 44px disc in a 47px box has nowhere to
+     sit) and gets its touch target from the ::after hit box below instead. */
+  #composer .tool-btn:not(#btn-plus):not(#btn-more),#composer .gif-btn{min-height:44px;min-width:44px;justify-content:center}
+  #composer-tools{right:auto;left:.4rem}
+  #composer-box #in-message{padding-right:.5rem;padding-left:2.95rem}
+  #in-render{padding:.65rem .5rem .65rem 2.95rem}
   #btn-attach,#btn-emoji,#btn-gif{display:none}
   #btn-plus{display:none}
   #btn-more{display:inline-flex;align-items:center;justify-content:center}
@@ -2472,6 +2520,10 @@ body.story-open{overflow:hidden}
     content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
     width:max(100%,var(--tap));height:max(100%,var(--tap));
   }
+  /* The composer's + is deliberately smaller than the field it sits in, so its
+     thumb target comes from a hit box that may overhang the field. */
+  #btn-plus,#btn-more{position:relative}
+  #btn-plus::after,#btn-more::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--tap);height:var(--tap)}
   /* A hit box may only grow into space that is actually empty. The row's ✕ sits
      in a tight list, so it takes the row's own height and no more. */
   .dm-close::after{content:'';position:absolute;inset:0}
@@ -2605,4 +2657,13 @@ html.standalone .msg .text,html.standalone .msg .text *,html.standalone input,ht
   .home-btn:hover img{opacity:0}
   .home-btn:hover .home-fire{opacity:1}
   #btn-group-new:hover{background:var(--accent-hover)}
+  #composer-more .ctx-item:hover .ctx-ic{color:var(--text)}
+  /* The composer's own keys. The send key is the most-tapped control in the
+     app, so a synthetic hover left stuck on it after a tap is the artifact
+     people notice first. */
+  .send-btn:hover{background:var(--accent-hover)}
+  .send-btn:hover svg{transform:translateX(2px)}
+  .send-btn.is-off:hover{background:var(--panel-3)}
+  .send-btn.is-off:hover svg{transform:none}
+  #btn-plus:hover,#btn-more:hover{background:color-mix(in srgb, var(--text) 15%, transparent);color:var(--text)}
 }

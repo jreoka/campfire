@@ -242,6 +242,9 @@ function syncComposerRender() {
   r.style.marginLeft = (-inp.scrollLeft) + 'px';
 }
 $('#in-message').addEventListener('input', syncComposerRender);
+// The send key follows the box (see paintComposerSend): lit as soon as there is
+// something to send, muted again when it is emptied.
+$('#in-message').addEventListener('input', () => { try { paintComposerSend(); } catch {} });
 $('#in-message').addEventListener('input', (e) => composerAutoGrow(e.target));
 $('#in-thread').addEventListener('input', (e) => composerAutoGrow(e.target));
 // Drafts: keep what you're typing for the conversation you're typing it in, so

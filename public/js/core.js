@@ -558,5 +558,24 @@ function applyComposerDraft() {
     if (ti.value !== t) ti.value = t;
     try { composerAutoGrow(ti); } catch {}
   }
+  try { paintComposerSend(); } catch {}
+}
+// The send key reads the box: lit when there is something to send, muted when
+// there is not. A composer whose send button is permanently lit invites a tap
+// that quietly does nothing, which is the loudest form-field tell in the row.
+// It keeps its size and position either way, so nothing reflows as you type —
+// and it is only ever cosmetic, the submit handler still decides what sends.
+function paintComposerSend() {
+  const btn = document.querySelector('#composer .send-btn');
+  if (!btn) return;
+  let sendable = false;
+  try {
+    const text = ($('#in-message')?.value || '').trim();
+    const noChat = S.view === 'home' ? !S.dmThreadId : (!S.serverId || !S.channelId);
+    sendable = !noChat && (!!text || (S.pendingAtts || []).length > 0);
+  } catch {}
+  btn.classList.toggle('is-off', !sendable);
+  btn.disabled = !sendable;
+  btn.title = sendable ? 'Send' : 'Nothing to send yet';
 }
 

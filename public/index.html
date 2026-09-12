@@ -261,13 +261,14 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
         <button type="button" id="btn-more" class="tool-btn" title="More options"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
         </div>
         <div id="composer-more" class="hidden">
-          <button type="button" class="ctx-item" id="cm-attach">Attach a file</button>
-          <button type="button" class="ctx-item" id="cm-emoji">Add emoji</button>
-          <button type="button" class="ctx-item" id="cm-gif">Send a GIF</button>
-          <button type="button" class="ctx-item" id="cm-voice">Record a voice message</button>
-          <button type="button" class="ctx-item" id="cm-viewonce">Send a view-once</button>
-          <button type="button" class="ctx-item" id="cm-story">Post to your story</button>
-          <button type="button" class="ctx-item" id="cm-poll">Create a poll</button>
+          <button type="button" class="ctx-item" id="cm-attach"><span class="ctx-ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></span>Attach a file</button>
+          <button type="button" class="ctx-item" id="cm-emoji"><span class="ctx-ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.2 1.8 3.5 1.8 3.5-1.8 3.5-1.8"/><line x1="9" y1="9.5" x2="9" y2="9.6"/><line x1="15" y1="9.5" x2="15" y2="9.6"/></svg></span>Add emoji</button>
+          <button type="button" class="ctx-item" id="cm-gif"><span class="ctx-ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M9.5 10.2H7.8a1.6 1.6 0 0 0-1.6 1.6v.9a1.6 1.6 0 0 0 1.6 1.6h1.4v-1.7"/><path d="M13 14.3v-4.1h2.1M13 12.4h1.7M17.6 14.3v-4.1h2.3"/></svg></span>Send a GIF</button>
+          <button type="button" class="ctx-item" id="cm-voice"><span class="ctx-ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/></svg></span>Record a voice message</button>
+          <div class="ctx-sep"></div>
+          <button type="button" class="ctx-item" id="cm-viewonce"><span class="ctx-ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/><path d="M4 20 20 4"/></svg></span>Send a view-once</button>
+          <button type="button" class="ctx-item" id="cm-story"><span class="ctx-ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" stroke-dasharray="2.6 3.4"/><path d="M12 8.4v7.2M8.4 12h7.2"/></svg></span>Post to your story</button>
+          <button type="button" class="ctx-item" id="cm-poll"><span class="ctx-ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20V10M12 20V4M19 20v-6"/></svg></span>Create a poll</button>
         </div>
         </div>
         <button class="send-btn" type="submit" title="Send" aria-label="Send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
