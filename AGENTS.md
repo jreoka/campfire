@@ -52,7 +52,8 @@ campfire/
                      # Postgres cache, signed thumbnail proxy (/api/unfurl, /api/unfurl/img)
   virus-scan.js      # ClamAV scanning + gated serving (+ inline media compression per upload)
   media-compress.js  # ffmpeg re-encode of over-large media: single-pass in the scan slot,
-                     # plus the sweeper that drains anything the pipeline missed
+                     # the flag-driven queue (chat/DM/stories), the bucket reconciler
+                     # (profile media + anything the flags never saw), and the key ledger
   package.json       # deps (express, ws, jsonwebtoken, bcryptjs, cookie-parser)
   Dockerfile         # node:22-alpine, no build tools needed
   docker-compose.yml # one service, ./data volume, requires JWT_SECRET in .env
@@ -212,10 +213,16 @@ NOT depend on it: the `virus-scan` slot runs with no engine as a
 compress-and-publish slot, so an upload the compressor would rewrite waits
 (gated, "Processing file") until its encode lands and clients still get exactly
 one `pending -> final` transition. What it will never touch is served the moment
-it lands. `MAX_FILE_MB=50`, because S3 mode buffers every upload in RAM, and
-`VIRUS_SCAN_CONCURRENCY=1` keeps one download + one ffmpeg in flight on a box
-this small. To get scanning back, run one clamd anywhere and set `CLAM_HOST` —
-that is config, not code.
+it lands. Coverage is the whole media tree: chat/DM attachments and **stories**
+through the flag-driven queue, and **profile media** (avatars, banners, sidebar
+banners, server icons, custom emoji, webhook avatars, the profile picker's
+history) through the same compressor, which lists the bucket hourly
+(`MEDIA_SWEEP_EVERY_MS`) and settles a fresh profile upload within a second of
+it landing. A per-key ledger (`media_compress_keys`) is what keeps any of that
+from being re-encoded twice. `MAX_FILE_MB=50`, because S3 mode buffers every
+upload in RAM, and `VIRUS_SCAN_CONCURRENCY=1` keeps one download + one ffmpeg in
+flight on a box this small. To get scanning back, run one clamd anywhere and set
+`CLAM_HOST` — that is config, not code.
 
 **Uploads live in the Civo object store** (`objectstore.nyc1.civo.com`, bucket
 `campfire`, path-style addressing), not on disk — so replicas need no shared
@@ -691,8 +698,13 @@ NEXT: iterate per owner feedback on the live site.
   for the scan-integrated path, then **restarts it with `VIRUS_SCAN=0`** to
   assert the compression-only shape the cluster runs (gated candidate -> one
   transition with no clamd, immediate serving for non-candidates, and a
-  sweeper rewrite landing on a fresh key with the old bytes untouched). Re-run
-  it after touching `virus-scan.js`, `media-compress.js`, or the upload routes.
+  sweeper rewrite landing on a fresh key with the old bytes untouched), and
+  finally covers **story media** and the **bucket reconciliation** (a dry pass
+  lists candidates and changes nothing; a real pass repoints a flagless
+  avatar to a smaller object; an unreferenced object and a pasted-link-only
+  object come back byte-identical; a second pass finds nothing left, which is
+  the ledger doing its job). Re-run it after touching `virus-scan.js`,
+  `media-compress.js`, `storage-sweep.js`, or the upload routes.
   On Windows run it from Git Bash: its `haveBinaries()` probe shells out to `sh`,
   which a PowerShell session has no PATH entry for, and the scan-mode phase then
   silently exercises the no-engine path instead.
@@ -746,16 +758,42 @@ are load-bearing:
   `clean` immediately, exactly as it is with compression off. Keep those two
   halves in step: gating a file the slot would never settle parks it at 423.
 - **What the sweeper touches is already visible, so it republishes on a NEW
-  key.** `media-compress.processRow` passes `{freshKey: true}`, so even a
-  same-format result lands beside the old object instead of overwriting it, the
-  attachment's url is updated (the client repaints from the emitted
-  `message-updated`), and the old key is left for the orphan sweep: nothing is
-  ever rewritten behind a URL someone may be streaming. That is also the safety
-  net for the one race the slot cannot close — the slot can settle an upload
-  before the message insert creates its attachment row (then the file is served
-  uncompressed and upgraded seconds later, under a new key, instead of being
-  swapped). The format-change case in the slot itself still deletes the old
-  bytes, because that file was never servable.
+  key.** The queue's `processRow` passes `{visible: true}`, and
+  `compressLocked` then mints a fresh key for every commit (`freshKey = !sameFormat
+  || visible`): the row (attachment, DM, or story) gets the new url, the client
+  repaints from the emitted `message-updated`, and the old key is left for the
+  orphan sweep. Nothing is ever rewritten behind a URL someone may be streaming.
+  Only the slot keeps the key, because it compresses before anything can fetch
+  the bytes. That is also the safety net for the one race the slot cannot close —
+  the slot can settle an upload before the message insert creates its
+  attachment row (then the file is served uncompressed and upgraded seconds
+  later, under a new key, instead of being swapped).
+- **The queue is flag-driven, so a scheduled pass lists the bucket.**
+  `compressed = 0` on `attachments`/`dm_attachments`/`stories` is the whole
+  queue: a table nobody gave a flag to (profile media — avatars, banners,
+  sidebar banners, server icons, custom emoji, webhook avatars, the picker's
+  `media_history`), an object only a pasted link mentions, and anything an older
+  build left behind are all invisible to it. `reconcileBucket()`
+  (`MEDIA_SWEEP_EVERY_MS`, hourly on the cluster, leader-locked) lists the
+  bucket, and for every object that is referenced, above the size floor, past
+  `MEDIA_SWEEP_MIN_AGE_MS`, and **absent from the key ledger** it either runs the
+  row path (a flag table points at it) or `compressStandalone` (repoint the
+  referencing columns). A profile upload also kicks its own key
+  (`kickProfileMedia`), so a new avatar settles in about a second. Two things it
+  deliberately does NOT do: compress an unreferenced object (the orphan sweep
+  owns those bytes), or repoint an object whose only reference is message text —
+  that object is reported as `skippedText` and left byte-for-byte alone, because
+  a pasted link has to keep resolving and nothing gets to edit what someone
+  typed.
+- **`media_compress_keys` is the ledger, and the bucket scan depends on it.**
+  One row per storage key the compressor reached a terminal verdict on
+  (`compressed` or `kept` — examined and declined); `media_compress_log` cannot
+  serve this role, it is a rolling 300-row panel feed. Without the ledger a scan
+  would re-encode every object every pass, and re-encoding an already-compressed
+  photo costs quality, not just CPU. It is seeded at migration time from the
+  existing `compressed = 1` rows so the first pass after an upgrade does not
+  re-encode the whole chat history. A transient failure is deliberately NOT
+  recorded, so a later pass can retry the object.
 - **One ffmpeg at a time, process-wide.** The sweeper and the scan pipeline
   share `withCompressLock`/the `inflight` key set; the sweeper skips keys with a
   pass in flight and `virus-scan`'s `reapStuckClaims` leaves a claim alone while
@@ -764,7 +802,9 @@ are load-bearing:
 - Scan keys are the storage key (`files/<hex>.png`), derived from the URL — NOT
   the `attachments.id` uid. They are not interchangeable.
 - The virus serving gate only covers `files/` (chat attachments); profile media
-  (avatars, banners, emoji, icons) is scanned but not gated.
+  (avatars, banners, emoji, icons) is scanned but not gated — which is why its
+  compression has to happen after publication (the bucket scan / profile kick),
+  under a new key, instead of in the slot.
 - **`canvas.toBlob` is not background work on Android.** Blink's
   `canvas_async_blob_creator` encodes on the main thread during idle slices
   whenever `IS_ANDROID`, so a shutter that waits for that callback looks hung

@@ -229,6 +229,14 @@ spec:
               value: "0"
             - name: MEDIA_COMPRESS
               value: "1"
+            # Bucket reconciliation: the flag-driven queue covers chat/DM
+            # attachments and stories, but profile media (avatars/banners/icons/
+            # emoji) has no flag anywhere, so the compressor also lists the
+            # bucket itself — hourly here, with every new avatar/banner/icon
+            # kicked individually on upload. A per-key ledger
+            # (media_compress_keys) stops it re-encoding what it already did.
+            - name: MEDIA_SWEEP_EVERY_MS
+              value: "3600000"
             # One slot: S3 mode buffers each download in RAM (up to MAX_FILE_MB)
             # and compressions are serialized process-wide anyway, so parallel
             # slots would only hold more copies of a file on a 640Mi limit.

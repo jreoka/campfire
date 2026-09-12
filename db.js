@@ -844,6 +844,7 @@ const LOCKS = {
   backups: 771010,        // nightly pg_dump
   busSweep: 771011,       // bus.js event retention sweep
   stateReconcile: 771012, // drop voice_occupants + live_sessions rows left by dead replicas
+  mediaBucketScan: 771013, // media-compress bucket reconciliation (list the bucket, compress what the flags missed)
   beaconSweep: 771014,    // watcher stale-beacon cleanup (playing_game) — one replica
 };
 

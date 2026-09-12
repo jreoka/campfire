@@ -414,11 +414,38 @@ under a player — without a scanner to ask. Anything the compressor would never
 touch (a zip, a PDF, a 100 KB screenshot) is marked `clean` at upload time and
 served immediately, so only real candidates wait.
 
-What the *sweeper* compresses is different: those files are already visible, so
-it publishes the smaller bytes under a NEW key and leaves the old object for the
-orphan sweep. The attachment's url moves and the client repaints from the
-`message-updated` push; nothing is ever rewritten behind a URL someone may be
-streaming.
+Coverage is the whole media tree, in three layers:
+
+- **The queue.** `compressed = 0` on `attachments`, `dm_attachments` and
+  `stories` — chat, DMs, and story photos/videos. A story's row is what makes
+  its bytes a candidate at all.
+- **The bucket reconciliation** (`reconcileBucket`, hourly here via
+  `MEDIA_SWEEP_EVERY_MS`). The queue can only see tables that carry a flag, so
+  the compressor also lists the bucket itself: profile media (avatars, banners,
+  sidebar banners, server icons, custom emoji, webhook avatars, the profile
+  picker's `media_history`), anything an older build left behind, and any object
+  whose row never got queued. A newly uploaded avatar/banner/icon is also kicked
+  individually (`kickProfileMedia`) so it settles in about a second rather than
+  waiting for the next pass.
+- **A ledger** (`media_compress_keys`) — one row per key the compressor reached
+  a verdict on. Without it every pass would re-encode every object, and
+  re-encoding an already-compressed photo costs quality, not just CPU. It is
+  seeded from the existing `compressed = 1` rows on the first boot after this
+  upgrade.
+
+Two things the pass deliberately never does: compress an unreferenced object
+(the orphan sweep is about to delete those bytes), or repoint an object whose
+only reference is a pasted `/uploads/...` link inside a message — those are
+reported as `skippedText` and left byte-for-byte alone, because a pasted link
+has to keep resolving and nothing rewrites what someone typed. The admin Media
+tab shows the pass: cadence, last result, deferred count, ledger size, plus
+"Check bucket" (dry pass) and "Compress now" buttons.
+
+What the *sweeper* compresses is different from all of the above: those files
+are already visible, so it publishes the smaller bytes under a NEW key and
+leaves the old object for the orphan sweep. The row (attachment, DM or story)
+moves to the new url and the client repaints from the `message-updated` push;
+nothing is ever rewritten behind a URL someone may be streaming.
 
 `VIRUS_SCAN_CONCURRENCY=1` on this node: S3 mode buffers each download in RAM
 (up to `MAX_FILE_MB`) and compressions are serialized process-wide anyway, so

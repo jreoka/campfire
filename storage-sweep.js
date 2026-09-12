@@ -43,45 +43,65 @@ let running = false;
 let timer = null;
 const stats = { lastRunAt: 0, lastResult: null, lastError: null, runs: 0 };
 
-// '/uploads/files/abc.jpg?v=k' -> 'files/abc.jpg' (null for backups/remote)
-function addUrl(set, url) {
-  try {
-    const key = storage.s3KeyFromUrl(String(url || '').split('?')[0]);
-    if (key) set.add(key);
-  } catch {}
-}
-function addContentKeys(set, text) {
-  if (!text || typeof text !== 'string' || text.indexOf('/uploads/') < 0) return;
-  const re = /\/uploads\/[A-Za-z0-9._\/-]+/g;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    try {
-      const key = storage.s3KeyFromUrl(m[0].split('?')[0]);
-      if (key) set.add(key);
-    } catch {}
-  }
+// Every DB reference to an uploaded object, in one pass. Two consumers:
+//   - the orphan sweep needs `keys`: anything in here must never be deleted;
+//   - media-compress's bucket scan needs `refs` — the rows and columns that can
+//     be repointed when the bytes move to a new key — plus `textKeys`, the keys
+//     that appear in message text (a pasted /uploads/ link). Those are kept (the
+//     object must stay fetchable) but never rewritten: nothing gets to edit what
+//     someone typed.
+// Every table here has a TEXT `id` primary key, so a ref is addressable.
+async function collectReferenceIndex() {
+  const keys = new Set();
+  const textKeys = new Set();
+  const refs = new Map(); // key -> [{ table, col, id }]
+  const addUrl = (key, ref) => {
+    keys.add(key);
+    if (!ref) return;
+    const list = refs.get(key);
+    if (list) list.push(ref);
+    else refs.set(key, [ref]);
+  };
+  const scanCols = async (table, cols) => {
+    const rows = await db.prepare(`SELECT id, ${cols.join(', ')} FROM ${table}`).all();
+    for (const r of rows) {
+      for (const c of cols) {
+        if (!r[c]) continue;
+        const key = storage.s3KeyFromUrl(String(r[c]).split('?')[0]);
+        if (key) addUrl(key, { table, col: c, id: r.id });
+      }
+    }
+  };
+  await scanCols('attachments', ['url']);
+  await scanCols('dm_attachments', ['url']);
+  await scanCols('stories', ['url']);
+  await scanCols('users', ['avatar_url', 'banner_url', 'sidebar_banner_url']);
+  await scanCols('servers', ['icon_url', 'banner_url']);
+  await scanCols('custom_emoji', ['url']);
+  await scanCols('webhooks', ['avatar_url']);
+  await scanCols('media_history', ['url']);
+  // Pasted /uploads/ links inside message text (rare, but deleting the
+  // file out from under a pasted link would break it).
+  const scanText = async (sql) => {
+    for (const r of await db.prepare(sql).all()) {
+      if (!r.content || r.content.indexOf('/uploads/') < 0) continue;
+      const re = /\/uploads\/[A-Za-z0-9._\/-]+/g;
+      let m;
+      while ((m = re.exec(r.content)) !== null) {
+        const key = storage.s3KeyFromUrl(m[0].split('?')[0]);
+        if (key) { keys.add(key); textKeys.add(key); }
+      }
+    }
+  };
+  await scanText("SELECT content FROM messages WHERE content LIKE '%/uploads/%'");
+  await scanText("SELECT content FROM dm_messages WHERE content LIKE '%/uploads/%'");
+  return { keys, textKeys, refs };
 }
 
 async function collectReferenced() {
-  const set = new Set();
-  const col = async (sql, cols) => {
-    const rows = await db.prepare(sql).all();
-    for (const r of rows) for (const c of cols) { if (r[c]) addUrl(set, r[c]); }
-  };
-  await col('SELECT url FROM attachments', ['url']);
-  await col('SELECT url FROM dm_attachments', ['url']);
-  await col('SELECT url FROM stories', ['url']);
-  await col('SELECT avatar_url, banner_url, sidebar_banner_url FROM users', ['avatar_url', 'banner_url', 'sidebar_banner_url']);
-  await col('SELECT icon_url, banner_url FROM servers', ['icon_url', 'banner_url']);
-  await col('SELECT url FROM custom_emoji', ['url']);
-  await col('SELECT avatar_url FROM webhooks', ['avatar_url']);
-  await col('SELECT url FROM media_history', ['url']);
-  // Pasted /uploads/ links inside message text (rare, but deleting the
-  // file out from under a pasted link would break it).
-  for (const r of await db.prepare("SELECT content FROM messages WHERE content LIKE '%/uploads/%'").all()) addContentKeys(set, r.content);
-  for (const r of await db.prepare("SELECT content FROM dm_messages WHERE content LIKE '%/uploads/%'").all()) addContentKeys(set, r.content);
-  return set;
+  return (await collectReferenceIndex()).keys;
 }
+
 
 async function pendingScanKeys() {
   const set = new Set();
@@ -95,10 +115,12 @@ async function pendingScanKeys() {
 // files/, avatars/, banners/, emoji/, icons/, sidebar/ — never a shared
 // 'uploads/' prefix; listing that used to match nothing) + recursive local
 // walk (covers pre-S3-migration leftovers in S3 mode).
-async function listStored() {
+// `opts.maxPages` bounds the bucket listing for callers that would rather report
+// a partial pass than hang (media-compress's reconciliation does).
+async function listStored(opts) {
   const out = []; // {key, mtime, size, where:'s3'|'local'}
   if (storage.s3Enabled()) {
-    const objs = await storage.s3List('');
+    const objs = await storage.s3List('', { maxPages: (opts && opts.maxPages) || undefined });
     for (const o of objs) {
       if (!o.key || o.key.endsWith('/')) continue;
       // Database dumps live under backups/ and are never listed as sweepable.
@@ -156,7 +178,8 @@ async function runOnce(opts) {
   try {
     // Fail closed: the referenced set must be complete before anything
     // is deleted. Any throw below aborts the run with zero deletes.
-    const [referenced, pending, stored] = await Promise.all([collectReferenced(), pendingScanKeys(), listStored()]);
+    const [index, pending, stored] = await Promise.all([collectReferenceIndex(), pendingScanKeys(), listStored()]);
+    const referenced = index.keys;
     result.scanned = stored.length;
     result.referenced = referenced.size;
     const storedKeys = new Set(stored.map((f) => f.key));
@@ -229,4 +252,4 @@ function startStorageSweep() {
   schedule(FIRST_RUN_MS);
 }
 
-module.exports = { startStorageSweep, runSweepOnce: runOnce, getSweepStats };
+module.exports = { startStorageSweep, runSweepOnce: runOnce, getSweepStats, collectReferenceIndex, listStored };

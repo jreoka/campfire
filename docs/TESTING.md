@@ -401,10 +401,19 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   no clamd contacted, a file below `MIN_BYTES` is served the instant it lands,
   and a sweeper-compressed file that clients could already fetch lands on a NEW
   key with the old object left intact (never rewritten in place, nothing
-  referencing it, so the orphan sweep reaps it). Skips without ffmpeg or
-  Postgres. On Windows run it from Git Bash: `haveBinaries()` probes with `sh`,
-  and a PowerShell session has no `sh` on PATH, so the scan-mode phase silently
-  falls back to the no-engine path and its checks fail.
+  referencing it, so the orphan sweep reaps it). Then the coverage the flags
+  cannot reach: **story media** (a story row is created with `compressed = 0`,
+  the queue settles it — either in the slot before publication or under a fresh
+  key after — and the row's url/size/mime follow), and the **bucket
+  reconciliation** (a dry pass finds the flagless avatar candidate and changes
+  nothing; a real pass repoints that avatar to a smaller new object and ledgers
+  both keys; an unreferenced object and an object only a pasted link mentions
+  come back byte-identical, the second counted as `skippedText`; a second dry
+  pass reports zero candidates, which is the ledger doing its job; the admin
+  payload carries the scan state). Skips without ffmpeg or Postgres. On Windows
+  run it from Git Bash: `haveBinaries()` probes with `sh`, and a PowerShell
+  session has no `sh` on PATH, so the scan-mode phase silently falls back to the
+  no-engine path and its checks fail.
   `node scripts/test-viewonce-pick.js` covers "Send a view-once" arriving with
   the DM you clicked it in already picked (offline for the two real helpers —
   `viewOnceDmPeerId`/`viewOncePrePick` sliced out of `stories.js` — then the

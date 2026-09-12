@@ -79,6 +79,20 @@ const MIN_SAVING = 0.08; // replace only when the output is >=8% smaller
 // Skip files below these sizes (CPU would buy almost nothing).
 const MIN_BYTES = { image: 400 * 1024, gif: 800 * 1024, video: 2 * 1024 * 1024, audio: 1024 * 1024 };
 
+// Bucket reconciliation. The queue above is flag-driven, which covers the chat
+// tables and stories — but a flag only exists for a table someone remembered to
+// give one, and an object whose row was written before a table had a flag (or by
+// a path that never queued it at all) would sit at full size forever. So a
+// scheduled pass lists the bucket itself, and anything referenced, above the
+// size floor, and not already accounted for in the key ledger gets compressed.
+// See reconcileBucket().
+const SWEEP_ENABLED = process.env.MEDIA_BUCKET_SWEEP !== '0';
+const SWEEP_EVERY_MS = Math.max(10 * 60 * 1000, parseInt(process.env.MEDIA_SWEEP_EVERY_MS || String(6 * 3600 * 1000), 10) || 6 * 3600 * 1000);
+const SWEEP_FIRST_MS = Math.max(30 * 1000, parseInt(process.env.MEDIA_SWEEP_FIRST_MS || String(10 * 60 * 1000), 10) || 10 * 60 * 1000);
+const SWEEP_BUSY_MS = Math.max(30 * 1000, parseInt(process.env.MEDIA_SWEEP_BUSY_MS || String(2 * 60 * 1000), 10) || 2 * 60 * 1000);
+const SWEEP_MAX_JOBS = Math.max(1, parseInt(process.env.MEDIA_SWEEP_MAX_JOBS || '100', 10) || 100); // per pass
+const SWEEP_MAX_MS = Math.max(30 * 1000, parseInt(process.env.MEDIA_SWEEP_MAX_MS || String(20 * 60 * 1000), 10) || 20 * 60 * 1000);
+
 const log = (...a) => console.log('[media]', ...a);
 const warn = (...a) => console.warn('[media]', ...a);
 
@@ -96,6 +110,13 @@ const stats = {
   savedBytes: 0, lastTickAt: 0, lastJob: null, lastError: null,
 };
 const LOG_KEEP = 300; // recent job rows kept for the admin panel
+// Bucket-scan state (see reconcileBucket). `pendingKeys` holds profile uploads
+// that asked to be settled now — they belong to no flag table, so the queue's
+// candidate query can never surface them.
+let sweeping = false;
+let sweepTimer = null;
+const pendingKeys = [];
+const sweepStats = { startedAt: 0, runs: 0, lastRunAt: 0, lastResult: null, lastError: null, checks: 0, lastCheckAt: 0, lastCheckResult: null };
 
 // ---------- intake ----------
 
@@ -103,6 +124,11 @@ const LOG_KEEP = 300; // recent job rows kept for the admin panel
 async function ensureColumns() {
   await db.exec('ALTER TABLE attachments ADD COLUMN IF NOT EXISTS compressed BIGINT NOT NULL DEFAULT 0');
   await db.exec('ALTER TABLE dm_attachments ADD COLUMN IF NOT EXISTS compressed BIGINT NOT NULL DEFAULT 0');
+  // Stories are media too: they carry their own flag (the queue is flag-driven)
+  // and their own size, because a story row is the only place that records how
+  // big its upload was.
+  await db.exec('ALTER TABLE stories ADD COLUMN IF NOT EXISTS compressed BIGINT NOT NULL DEFAULT 0');
+  await db.exec('ALTER TABLE stories ADD COLUMN IF NOT EXISTS size BIGINT NOT NULL DEFAULT 0');
   await db.exec(`CREATE TABLE IF NOT EXISTS media_compress_log (
   id TEXT PRIMARY KEY,
   tbl TEXT NOT NULL DEFAULT '',
@@ -117,6 +143,74 @@ async function ensureColumns() {
   created_at BIGINT NOT NULL
 )`);
   await db.exec('CREATE INDEX IF NOT EXISTS idx_media_compress_log_created ON media_compress_log(created_at DESC)');
+  // One row per storage key the compressor has ever reached a verdict on.
+  // `media_compress_log` cannot serve this purpose: it is a rolling 300-row
+  // panel feed, so "have I already handled these bytes?" would be answered
+  // "no" for everything older — and re-encoding an already-compressed photo
+  // costs quality, not just CPU. The ledger is what lets the bucket scan skip
+  // what is done without asking the (flag-less) tables it came from.
+  await db.exec(`CREATE TABLE IF NOT EXISTS media_compress_keys (
+  key TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT '',
+  mode TEXT NOT NULL DEFAULT '',
+  orig_size BIGINT NOT NULL DEFAULT 0,
+  new_size BIGINT NOT NULL DEFAULT 0,
+  at BIGINT NOT NULL
+)`);
+  await db.exec('CREATE INDEX IF NOT EXISTS idx_media_compress_keys_at ON media_compress_keys(at DESC)');
+  // Seed from the flags that predate the ledger, so the first bucket scan does
+  // not re-encode files this pipeline already handled. Rows left at
+  // compressed = 1 without real savings (too small, no win) are deliberately
+  // seeded too: those exact bytes were examined and declined.
+  try {
+    await db.exec(`INSERT INTO media_compress_keys (key,status,mode,orig_size,new_size,at)
+      SELECT regexp_replace(split_part(url,'?',1), '^/uploads/', ''), 'compressed', 'legacy', size, size, ${now()}
+        FROM attachments WHERE compressed = 1 AND url LIKE '/uploads/files/%'
+      ON CONFLICT (key) DO NOTHING`);
+    await db.exec(`INSERT INTO media_compress_keys (key,status,mode,orig_size,new_size,at)
+      SELECT regexp_replace(split_part(url,'?',1), '^/uploads/', ''), 'compressed', 'legacy', size, size, ${now()}
+        FROM dm_attachments WHERE compressed = 1 AND url LIKE '/uploads/files/%'
+      ON CONFLICT (key) DO NOTHING`);
+  } catch (e) { warn('ledger seed skipped:', String((e && e.message) || e).slice(0, 120)); }
+}
+
+// ---------- the key ledger ----------
+
+// Record a verdict for a storage key. Only terminal ones are worth recording:
+// committed, or examined-and-declined (too small, no pipeline, no saving). A
+// transient failure is deliberately NOT recorded, so a later pass — the queue
+// or the bucket scan — can still pick the object up.
+async function recordKey(key, status, mode, origSize, newSize) {
+  if (!key) return;
+  try {
+    await db.prepare(`INSERT INTO media_compress_keys (key,status,mode,orig_size,new_size,at) VALUES (?,?,?,?,?,?)
+      ON CONFLICT (key) DO UPDATE SET status = excluded.status, mode = excluded.mode,
+        orig_size = excluded.orig_size, new_size = excluded.new_size, at = excluded.at`)
+      .run(key, String(status || '').slice(0, 24), String(mode || '').slice(0, 40),
+        Math.max(0, Math.floor(Number(origSize) || 0)), Math.max(0, Math.floor(Number(newSize) || 0)), now());
+  } catch (e) { warn('ledger write failed for ' + key + ': ' + String((e && e.message) || e).slice(0, 100)); }
+}
+
+// Every key the ledger knows about, as a Set — one query, then a lookup per
+// object while walking a bucket listing.
+async function recordedKeys() {
+  const out = new Set();
+  try {
+    for (const r of await db.prepare('SELECT key FROM media_compress_keys').all()) out.add(r.key);
+  } catch {}
+  return out;
+}
+
+async function ledgerStats() {
+  const out = { keys: 0, compressed: 0, bytes: 0 };
+  try {
+    const r = await db.prepare("SELECT COUNT(*) n, COALESCE(SUM(GREATEST(orig_size - new_size, 0)),0) saved FROM media_compress_keys").get();
+    out.keys = Number(r && r.n) || 0;
+    out.bytes = Number(r && r.saved) || 0;
+    const c = await db.prepare("SELECT COUNT(*) n FROM media_compress_keys WHERE status = 'compressed'").get();
+    out.compressed = Number(c && c.n) || 0;
+  } catch {}
+  return out;
 }
 
 // One row per finished file (compressed or failed). Skips are too noisy to
@@ -369,6 +463,21 @@ async function keyExists(key) {
   } catch { return false; }
 }
 
+// How big is the stored object? The bucket scan reads this from the listing, but
+// a key with no row behind it (profile media) has no size in the database.
+async function keySize(key) {
+  if (storage.s3Enabled()) {
+    try {
+      const head = await storage.s3Head(key);
+      return Number(head && head.ContentLength) || 0;
+    } catch {}
+  }
+  try {
+    const st = await fs.promises.stat(path.join(UPLOAD_DIR, key));
+    return st.isFile() ? st.size : 0;
+  } catch { return 0; }
+}
+
 const cacheBust = (cleanUrl) => `${cleanUrl}?v=${Date.now().toString(36)}`;
 const MIME_BY_OUT = { '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.webm': 'audio/webm' };
 
@@ -390,39 +499,51 @@ function withCompressLock(fn) {
 const inflight = new Set();
 function isCompressing(key) { return inflight.has(key); }
 
-async function markDone(table, id) {
-  await db.prepare(`UPDATE ${table} SET compressed = 1 WHERE id = ?`).run(id);
+const TABLE_BY_TBL = { att: 'attachments', dm: 'dm_attachments', story: 'stories' };
+const tableFor = (tbl) => TABLE_BY_TBL[tbl] || 'attachments';
+
+async function markDone(tbl, id) {
+  await db.prepare(`UPDATE ${tableFor(tbl)} SET compressed = 1 WHERE id = ?`).run(id);
 }
 
 async function markRowsDone(rows) {
-  for (const r of rows) await markDone(r.tbl === 'dm' ? 'dm_attachments' : 'attachments', r.id);
+  for (const r of rows) await markDone(r.tbl, r.id);
 }
 
-// Every chat/DM attachment row still awaiting compression that points at this
-// key (the same upload can be attached to more than one message).
-async function pendingRowsForKey(key) {
+// Every row still awaiting compression that points at this key (the same upload
+// can be attached to more than one message, and story media lives in its own
+// table). `opts.any` ignores the flag: the bucket scan found the bytes by
+// listing the bucket, so a row that claims to be done but still points at an
+// oversized object has to be repointed too.
+async function pendingRowsForKey(key, opts) {
   const url = '/uploads/' + key;
+  const any = !!(opts && opts.any);
   const out = [];
-  for (const [tbl, table] of [['att', 'attachments'], ['dm', 'dm_attachments']]) {
+  for (const [tbl, table] of [['att', 'attachments'], ['dm', 'dm_attachments'], ['story', 'stories']]) {
     let rows = [];
     try {
-      rows = await db.prepare(`SELECT id, url, filename, mime, size, kind, '${tbl}' AS tbl FROM ${table}
-        WHERE compressed = 0 AND kind IN ('image','video','audio') AND split_part(url, '?', 1) = ?`).all(url);
+      rows = await db.prepare(`SELECT id, url, ${table === 'stories' ? "'' AS filename" : 'filename'}, mime, size, kind, '${tbl}' AS tbl FROM ${table}
+        WHERE ${any ? '' : 'compressed = 0 AND '}kind IN ('image','video','audio') AND split_part(url, '?', 1) = ?`).all(url);
     } catch { continue; }
     for (const r of rows) out.push(r);
   }
   return out;
 }
 
-// Single-pass upload processing, shared by both callers:
-//   - this sweeper (inspect = null, freshKey: true): the file is already
-//     visible, so the smaller bytes are published under a NEW key and the old
-//     bytes are left for the orphan sweep, then a scan is re-queued for them
-//     (where a scanner exists);
-//   - virus-scan.js: hand each candidate output to `inspect({path,size})` and
-//     only commit when the scanner approves it, so the verdict that reaches
-//     clients describes the bytes they will actually play. The file is not
-//     servable yet, so a same-format result keeps its key (`freshKey` false).
+// Single-pass media processing, shared by every caller:
+//   - virus-scan.js (the pre-publication slot): hand each candidate output to
+//     `inspect({path,size})` and only commit when the scanner approves it, so
+//     the verdict that reaches clients describes the bytes they will actually
+//     play. Nothing can be serving this file yet, so it is committed in place
+//     (same key) whenever the format does not change.
+//   - this sweeper's queue, and the bucket scan: `opts.visible` — the bytes are
+//     already being served. An image is still committed in place (see below);
+//     video/audio moves to a NEW key, so a player reading ranges out of it can
+//     never see the bytes change underneath it.
+//   - `opts.any` ignores the `compressed` flag when looking up the rows that
+//     point at this key (the bucket scan found the object by listing the bucket,
+//     so a row that claims to be done but still points at oversized bytes has to
+//     be repointed too).
 // Returns null when there is nothing to do (rows are marked done), else
 // { key, url, size, origSize, mime, group, pipeline, renamed }.
 async function processUpload(key, inspect, opts) {
@@ -442,18 +563,27 @@ async function processUpload(key, inspect, opts) {
 }
 
 async function compressLocked(key, inspect, opts) {
-  const forceFresh = !!(opts && opts.freshKey);
-  const rows = await pendingRowsForKey(key);
-  if (!rows.length) return null; // not a pending chat upload (avatar, emoji, …)
-  const done = async () => { await markRowsDone(rows); return null; };
+  const visible = !!(opts && opts.visible);
+  const mode = visible ? 'sweep' : 'slot';
+  const rows = await pendingRowsForKey(key, opts);
+  if (!rows.length) return null; // no chat/story row points here (profile media, an abandoned upload, …)
+  // Verdicts are recorded for keys we actually examined: the bucket scan uses
+  // the ledger to skip them, and a missing row here (the file was uploaded but
+  // nothing references it yet) is deliberately left unrecorded so a later pass
+  // can still adopt the object.
+  const done = async (why, origSize) => {
+    await recordKey(key, 'kept', why || '', Number(origSize) || 0, 0);
+    await markRowsDone(rows);
+    return null;
+  };
   const row = rows[0];
   const plan = planFor(row.mime, key);
-  if (!plan) return done();
+  if (!plan) return done('no_pipeline');
   const minSize = MIN_BYTES[plan.group] || MIN_BYTES.image;
   let dbSize = 0;
   for (const r of rows) dbSize = Math.max(dbSize, Number(r.size) || 0);
-  if (dbSize < minSize) return done();
-  if (!(await keyExists(key))) return done();
+  if (dbSize < minSize) return done('below_floor', dbSize);
+  if (!(await keyExists(key))) return done('gone', dbSize);
 
   const rand = crypto.randomBytes(8).toString('hex');
   const tmpIn = path.join(os.tmpdir(), `cfc-in-${rand}${extOf(key) || '.bin'}`);
@@ -463,7 +593,7 @@ async function compressLocked(key, inspect, opts) {
   try {
     await downloadToTemp(key, tmpIn);
     const inStat = await fs.promises.stat(tmpIn).catch(() => null);
-    if (!inStat || !inStat.size) return done();
+    if (!inStat || !inStat.size) return done('empty_input', dbSize);
 
     const r = await runFfmpeg(buildArgs(plan.pipeline, tmpIn, tmpOut));
     if (!r.ok) {
@@ -472,11 +602,11 @@ async function compressLocked(key, inspect, opts) {
       stats.lastError = { key, error: err, at: now() };
       warn('encode failed, keeping original:', key, err);
       await logJob({ tbl: row.tbl, url: row.url, filename: row.filename, kind: plan.group, pipeline: plan.pipeline, result: 'error', origSize: inStat.size, newSize: 0, error: err });
-      return done();
+      return done('encode_failed', inStat.size);
     }
     const outStat = await fs.promises.stat(tmpOut).catch(() => null);
-    if (!outStat || !outStat.size) return done();
-    if (outStat.size >= inStat.size * (1 - MIN_SAVING)) return done();
+    if (!outStat || !outStat.size) return done('no_output', inStat.size);
+    if (outStat.size >= inStat.size * (1 - MIN_SAVING)) return done('no_saving', inStat.size);
 
     // Nothing is published until the caller's scanner approves the candidate.
     // A rejected one leaves the original (already verified) file alone and
@@ -486,42 +616,46 @@ async function compressLocked(key, inspect, opts) {
       inScan = false;
       if (!publish) {
         await logJob({ tbl: row.tbl, url: row.url, filename: row.filename, kind: plan.group, pipeline: plan.pipeline, result: 'error', origSize: inStat.size, newSize: 0, error: 'candidate_output_flagged' });
-        return done();
+        return done('candidate_flagged', inStat.size);
       }
     }
 
     const sameFormat = extOf(key) === outExt;
     const newMime = sameFormat ? String(row.mime) : (MIME_BY_OUT[outExt] || String(row.mime));
-    // `forceFresh` = these bytes are already being served (the sweeper's path),
-    // so the smaller version has to land on a NEW key. Rewriting the bytes
-    // behind a live URL is the swap that broke a playing <video> — a fresh key
-    // just changes the attachment's url, and the old bytes stay until the
-    // orphan sweep's grace period is up. The scan slot compresses before
-    // publication, so there a same-format result keeps its key.
-    const freshKey = forceFresh || !sameFormat;
+    // A file that is already being served moves to a NEW key: rewriting bytes
+    // behind a live URL is what swaps a file out from under a reader (a player
+    // reading ranges is only the worst case). The row — and, for stories, the
+    // story row — gets the new URL plus a fresh cache-buster, and the old object
+    // stays until the orphan sweep's grace period is up. Only the slot, which
+    // compresses before anything can fetch the bytes, keeps the key.
+    const freshKey = !sameFormat || visible;
     let newKey = key;
     if (freshKey) {
-      // Format change (wav->mp3, mov/webm video->mp4) or a post-publication
-      // rewrite: mint a fresh name.
+      // Format change (wav->mp3, mov/webm video->mp4), or a post-publication
+      // rewrite of bytes something could be streaming: mint a fresh name.
       const dir = key.slice(0, key.lastIndexOf('/') + 1);
       newKey = dir + crypto.randomBytes(16).toString('hex') + outExt;
     }
     await replaceBytes(newKey, tmpOut, newMime);
     const newUrl = cacheBust('/uploads/' + newKey);
     for (const rr of rows) {
-      const table = rr.tbl === 'dm' ? 'dm_attachments' : 'attachments';
+      const table = tableFor(rr.tbl);
       try {
         if (sameFormat) await db.prepare('UPDATE ' + table + ' SET size = ?, url = ?, compressed = 1 WHERE id = ?').run(outStat.size, newUrl, rr.id);
         else await db.prepare('UPDATE ' + table + ' SET size = ?, url = ?, mime = ?, compressed = 1 WHERE id = ?').run(outStat.size, newUrl, newMime, rr.id);
       } catch (e) { warn('row update failed:', String((e && e.message) || e).slice(0, 120)); }
     }
-    if (newKey !== key && !forceFresh) {
+    if (newKey !== key && !visible) {
       // Only the not-yet-visible copy is dropped. A published one is left in
       // place: something may still be streaming it, and the orphan sweep knows
       // how to reap it once nothing references it any more.
       await removeKey(key);
       try { require('./virus-scan').dropScan(key); } catch {}
     }
+    // Terminal verdicts, both keys: the old one is settled (its bytes are gone
+    // or superseded) and the new one must never be re-encoded by the bucket scan.
+    await recordKey(key, 'compressed', `${mode}:${plan.pipeline}`, inStat.size, outStat.size);
+    if (newKey !== key) await recordKey(newKey, 'compressed', `${mode}:${plan.pipeline}`, outStat.size, outStat.size);
     stats.processed++;
     stats.savedBytes += inStat.size - outStat.size;
     stats.lastJob = { key, group: plan.group, pipeline: plan.pipeline, origSize: inStat.size, newSize: outStat.size, at: now() };
@@ -555,12 +689,13 @@ async function compressLocked(key, inspect, opts) {
 // this row again). The scan-integrated path is the primary one; this is
 // the safety net for files it missed — the backlog from before the single-pass
 // change, a file that was published before its encode finished (the slot and
-// the message insert can race), a failed candidate scan. Everything it touches
-// is already visible, hence freshKey.
+// the message insert can race), a story whose row landed after the slot ran.
+// Everything it touches is already visible (`visible: true`), and a story row
+// is queued exactly like an attachment.
 async function processRow(row) {
   const key = cleanKey(row.url);
-  if (!key) { stats.skipped++; await markDone(row.tbl === 'dm' ? 'dm_attachments' : 'attachments', row.id); return 'skipped'; } // remote GIF URL etc.
-  const out = await processUpload(key, null, { freshKey: true });
+  if (!key) { stats.skipped++; await markDone(row.tbl, row.id); return 'skipped'; } // remote GIF URL etc.
+  const out = await processUpload(key, null, { visible: true });
   if (!out) { stats.skipped++; return 'skipped'; }
   try {
     const vs = require('./virus-scan');
@@ -578,14 +713,268 @@ async function processRow(row) {
 async function fetchCandidates(limit) {
   // Oldest first so the pre-existing backlog drains in upload order.
   // Candidates are rows the compressor has not already handled; the scan key a
-  // virus verdict hangs off is derived from the URL, never the row id.
+  // virus verdict hangs off is derived from the URL, never the row id. Stories
+  // are media too: they live in their own table with their own flag.
   return await db.prepare(`
     SELECT a.id, a.url, a.filename, a.mime, a.size, a.kind, a.created_at, 'att' AS tbl FROM attachments a
     WHERE a.compressed = 0 AND a.kind IN ('image','video','audio')
     UNION ALL
     SELECT d.id, d.url, d.filename, d.mime, d.size, d.kind, d.created_at, 'dm' AS tbl FROM dm_attachments d
     WHERE d.compressed = 0 AND d.kind IN ('image','video','audio')
+    UNION ALL
+    SELECT s.id, s.url, '' AS filename, s.mime, s.size, s.kind, s.created_at, 'story' AS tbl FROM stories s
+    WHERE s.compressed = 0 AND s.kind IN ('image','video')
     ORDER BY created_at ASC LIMIT ?`).all(limit);
+}
+
+// ---------- everything else: profile media + the bucket scan ----------
+//
+// The queue above is flag-driven, so it only ever sees tables that carry a
+// `compressed` column (chat attachments, DMs, stories). Profile media —
+// avatars, banners, sidebar banners, server icons, custom emoji, webhook
+// avatars, the profile-media picker's history — has no flag and is served
+// ungated the moment it is uploaded, so it is handled from the other end:
+// find the object, find every row that points at it, compress, republish under
+// a new key, and repoint those rows. Two triggers:
+//   - a profile upload kicks its own key (kickProfileMedia), so a new avatar is
+//     settled within a second or two;
+//   - a scheduled pass lists the bucket and adopts everything else that is
+//     referenced, above the size floor, and absent from the key ledger
+//     (reconcileBucket) — the backlog, and anything a future code path forgets
+//     to queue.
+
+const FLAG_TABLES = new Set(['attachments', 'dm_attachments', 'stories']);
+const SWEEP_MIN_AGE_MS = Math.max(0, parseInt(process.env.MEDIA_SWEEP_MIN_AGE_MS || String(10 * 60 * 1000), 10) || 0);
+const SWEEP_MAX_PAGES = Math.max(1, parseInt(process.env.MEDIA_SWEEP_MAX_PAGES || '100', 10) || 100);
+
+// Rows in any table that point at this key, looked up directly rather than by
+// walking every reference in the database (what a single upload needs).
+async function refsForKey(key) {
+  const like = '/uploads/' + key + '%';
+  const exact = '/uploads/' + key;
+  const out = [];
+  const scan = async (table, cols) => {
+    let rows = [];
+    try {
+      rows = await db.prepare(`SELECT id, ${cols.join(', ')} FROM ${table} WHERE ${cols.map((c) => c + ' LIKE ?').join(' OR ')}`)
+        .all(...cols.map(() => like));
+    } catch { return; }
+    for (const r of rows) {
+      for (const c of cols) {
+        if (r[c] && String(r[c]).split('?')[0] === exact) out.push({ table, col: c, id: r.id });
+      }
+    }
+  };
+  await scan('attachments', ['url']);
+  await scan('dm_attachments', ['url']);
+  await scan('stories', ['url']);
+  await scan('users', ['avatar_url', 'banner_url', 'sidebar_banner_url']);
+  await scan('servers', ['icon_url', 'banner_url']);
+  await scan('custom_emoji', ['url']);
+  await scan('webhooks', ['avatar_url']);
+  await scan('media_history', ['url']);
+  return out;
+}
+
+// Compress an object the queue can never see. Its bytes are already being
+// served, so the result is published under a NEW key and every row that can be
+// rewritten is repointed; the old object stays for the orphan sweep's grace
+// period, so anything still holding the old URL keeps working.
+async function compressStandalone(key, refs, opts) {
+  if (!ENABLED || !key || !refs || !refs.length || inflight.has(key)) return null;
+  inflight.add(key);
+  try {
+    const r = await db.withKeyLock('media:' + key, () => withCompressLock(() => commitStandaloneLocked(key, refs, opts || {})));
+    return r.ran ? r.value : null;
+  } finally { inflight.delete(key); }
+}
+
+async function commitStandaloneLocked(key, refs, opts) {
+  const done = async (why, origSize) => { await recordKey(key, 'kept', why || '', Number(origSize) || 0, 0); return null; };
+  const plan = planFor(storage.mimeForFilename(key), key);
+  if (!plan) return done('no_pipeline');
+  const origSize = Number(opts.size) || (await keySize(key));
+  if (!origSize) return done('gone');
+  const minSize = MIN_BYTES[plan.group] || MIN_BYTES.image;
+  if (origSize < minSize) return done('below_floor', origSize);
+
+  const rand = crypto.randomBytes(8).toString('hex');
+  const tmpIn = path.join(os.tmpdir(), `cfs-in-${rand}${extOf(key) || '.bin'}`);
+  const tmpOut = path.join(os.tmpdir(), `cfs-out-${rand}${plan.outExt}`);
+  try {
+    await downloadToTemp(key, tmpIn);
+    const inStat = await fs.promises.stat(tmpIn).catch(() => null);
+    if (!inStat || !inStat.size) return done('empty_input', origSize);
+    const r = await runFfmpeg(buildArgs(plan.pipeline, tmpIn, tmpOut));
+    if (!r.ok) {
+      const err = String(r.error || 'encode_failed').slice(0, 160);
+      stats.errors++;
+      stats.lastError = { key, error: err, at: now() };
+      warn('encode failed, keeping original:', key, err);
+      return null; // no ledger entry: a later pass may succeed
+    }
+    const outStat = await fs.promises.stat(tmpOut).catch(() => null);
+    if (!outStat || !outStat.size) return done('no_output', inStat.size);
+    if (outStat.size >= inStat.size * (1 - MIN_SAVING)) return done('no_saving', inStat.size);
+
+    const dir = key.slice(0, key.lastIndexOf('/') + 1);
+    const newKey = dir + crypto.randomBytes(16).toString('hex') + plan.outExt;
+    const newMime = MIME_BY_OUT[plan.outExt] || storage.mimeForFilename(newKey);
+    await replaceBytes(newKey, tmpOut, newMime);
+    const newUrl = cacheBust('/uploads/' + newKey);
+    for (const r2 of refs) {
+      // table/col come from this module's own list, never from a request.
+      const setFlag = FLAG_TABLES.has(r2.table) ? ', compressed = 1' : '';
+      try { await db.prepare(`UPDATE ${r2.table} SET ${r2.col} = ?${setFlag} WHERE id = ?`).run(newUrl, r2.id); }
+      catch (e) { warn('repoint failed (' + r2.table + '.' + r2.col + '):', String((e && e.message) || e).slice(0, 120)); }
+    }
+    await recordKey(key, 'compressed', 'scan:' + plan.pipeline, inStat.size, outStat.size);
+    await recordKey(newKey, 'compressed', 'scan:' + plan.pipeline, outStat.size, outStat.size);
+    stats.processed++;
+    stats.savedBytes += inStat.size - outStat.size;
+    stats.lastJob = { key, group: plan.group, pipeline: plan.pipeline, origSize: inStat.size, newSize: outStat.size, at: now() };
+    await logJob({ tbl: '', url: newUrl, filename: key.split('/').pop(), kind: plan.group, pipeline: plan.pipeline, result: 'compressed', origSize: inStat.size, newSize: outStat.size });
+    const pct = Math.round((1 - outStat.size / inStat.size) * 100);
+    log(`${plan.group} ${key}: ${Math.round(inStat.size / 1024)}KB -> ${Math.round(outStat.size / 1024)}KB (-${pct}%)${refs.length ? ' [' + refs.length + ' ref' + (refs.length === 1 ? '' : 's') + ']' : ''}`);
+    return { key: newKey, url: newUrl, size: outStat.size, origSize: inStat.size, group: plan.group, pipeline: plan.pipeline };
+  } catch (e) {
+    stats.errors++;
+    stats.lastError = { key, error: String((e && e.message) || e).slice(0, 160), at: now() };
+    warn('standalone job failed, keeping original:', key, String((e && e.message) || e).slice(0, 160));
+    return null;
+  } finally {
+    for (const f of [tmpIn, tmpOut]) { try { await fs.promises.unlink(f); } catch {} }
+  }
+}
+
+// Compress one key right now (an upload that has no flag table behind it).
+async function processKeyNow(key) {
+  if (!ENABLED || !key) return null;
+  let refs = [];
+  try { refs = await refsForKey(key); } catch { return null; }
+  if (!refs.length) return null;
+  return compressStandalone(key, refs, {});
+}
+
+// The scheduled reconciliation pass: list the bucket, and compress what the
+// flags never saw. Anything unreferenced is left alone (the orphan sweep owns
+// those bytes), anything whose only reference is a pasted link is reported
+// rather than rewritten — the link must keep resolving, and rewriting what
+// somebody typed is not ours to do.
+async function reconcileBucket(opts) {
+  if (!ENABLED || !SWEEP_ENABLED || sweeping || !ready) return null;
+  const dry = !!(opts && opts.dry);
+  sweeping = true;
+  const t0 = now();
+  const result = {
+    startedAt: t0, dry, objects: 0, referenced: 0, ledger: 0, candidates: 0,
+    compressed: 0, savedBytes: 0, jobs: 0, skippedOrphan: 0, skippedText: 0,
+    skippedFloor: 0, skippedFresh: 0, deferred: 0, errors: 0, ms: 0,
+  };
+  try {
+    const [stored, index, ledger] = await Promise.all([
+      require('./storage-sweep').listStored({ maxPages: SWEEP_MAX_PAGES }),
+      require('./storage-sweep').collectReferenceIndex(),
+      recordedKeys(),
+    ]);
+    result.objects = stored.length;
+    result.referenced = index.keys.size;
+    result.ledger = ledger.size;
+    const cutoff = now() - SWEEP_MIN_AGE_MS;
+    const jobs = [];
+    for (const o of stored) {
+      if (!o.key) continue;
+      if (!index.keys.has(o.key)) { result.skippedOrphan++; continue; }
+      if (ledger.has(o.key)) continue;
+      const plan = planFor(storage.mimeForFilename(o.key), o.key);
+      if (!plan) continue;
+      if ((o.size || 0) < (MIN_BYTES[plan.group] || MIN_BYTES.image)) { result.skippedFloor++; continue; }
+      if (o.mtime && o.mtime > cutoff) { result.skippedFresh++; continue; } // let the upload's own path settle it first
+      const refs = index.refs.get(o.key) || [];
+      if (!refs.length) { result.skippedText++; continue; } // a pasted link and nothing else
+      if (jobs.length >= SWEEP_MAX_JOBS) { result.deferred++; continue; }
+      jobs.push({ key: o.key, size: o.size || 0, refs, where: o.where });
+    }
+    result.candidates = jobs.length;
+    if (dry) { result.ms = now() - t0; return result; }
+    for (const j of jobs) {
+      if (now() - t0 > SWEEP_MAX_MS) { result.deferred++; continue; }
+      try {
+        // A key the flag tables point at goes through the row path: it repoints
+        // them and re-broadcasts the affected messages. Everything else (profile
+        // media) is committed standalone.
+        const out = j.refs.some((r) => FLAG_TABLES.has(r.table))
+          ? await processUpload(j.key, null, { visible: true, any: true })
+          : await compressStandalone(j.key, j.refs, { size: j.size });
+        if (out) {
+          result.compressed++;
+          result.jobs++;
+          result.savedBytes += Math.max(0, (Number(out.origSize) || 0) - (Number(out.size) || 0));
+        }
+      } catch (e) {
+        result.errors++;
+        warn('scan failed for ' + j.key + ': ' + String((e && e.message) || e).slice(0, 140));
+      }
+    }
+    result.ms = now() - t0;
+    log(`bucket scan: ${result.objects} objects, ${result.candidates} candidates, ${result.compressed} compressed (${Math.round(result.savedBytes / 1024)}KB), ${result.deferred} deferred, ${result.errors} errors in ${Math.round(result.ms / 1000)}s`);
+    return result;
+  } catch (e) {
+    result.errors++;
+    result.ms = now() - t0;
+    const err = String((e && e.message) || e).slice(0, 200);
+    warn('bucket scan aborted: ' + err);
+    sweepStats.lastError = { error: err, at: now() };
+    return result;
+  } finally {
+    sweeping = false;
+    // A dry check is bookkeeping, not a pass: it must not overwrite what the
+    // last real pass did (the panel reads that number).
+    if (dry) { sweepStats.checks++; sweepStats.lastCheckAt = now(); sweepStats.lastCheckResult = result; }
+    else { sweepStats.runs++; sweepStats.lastRunAt = now(); sweepStats.lastResult = result; }
+  }
+}
+
+function scheduleSweep(ms) {
+  if (!SWEEP_ENABLED || !started) return;
+  if (sweepTimer) clearTimeout(sweepTimer);
+  sweepTimer = setTimeout(async () => {
+    sweepTimer = null;
+    let next = SWEEP_EVERY_MS;
+    try {
+      // Leader-only: two replicas listing the same bucket and compressing the
+      // same objects is wasted work and double the ffmpeg.
+      const r = await db.withLock(db.LOCKS.mediaBucketScan, () => reconcileBucket());
+      if (r && (r.deferred > 0 || r.errors > 0)) next = SWEEP_BUSY_MS;
+    } catch (e) { warn('bucket scan failed: ' + String((e && e.message) || e).slice(0, 200)); }
+    scheduleSweep(next);
+  }, ms);
+  try { sweepTimer.unref(); } catch {}
+}
+
+// Called after a profile-media upload: settle that key within the second,
+// rather than waiting for the next scheduled pass.
+function kickProfileMedia(key) {
+  if (!started || !ENABLED || !ready || !key) return;
+  if (!pendingKeys.includes(key)) pendingKeys.push(key);
+  schedule(KICK_MS);
+}
+
+// Ask for a reconciliation pass soon (admin button, or a caller that knows the
+// bucket changed).
+function kickBucketScan() {
+  if (!started || !SWEEP_ENABLED || !ready) return;
+  scheduleSweep(1500);
+}
+
+async function getBucketScanStats() {
+  return {
+    enabled: SWEEP_ENABLED && ENABLED, everyMs: SWEEP_EVERY_MS, firstMs: SWEEP_FIRST_MS,
+    minAgeMs: SWEEP_MIN_AGE_MS, jobsPerPass: SWEEP_MAX_JOBS, maxMs: SWEEP_MAX_MS,
+    maxPages: SWEEP_MAX_PAGES, pendingKeys: pendingKeys.length, running: sweeping,
+    ledger: await ledgerStats(),
+    ...sweepStats,
+  };
 }
 
 // 'more' = queue still has pending files (keep running hot),
@@ -607,10 +996,21 @@ async function tick() {
   stats.ticks++;
   stats.lastTickAt = now();
   try {
+    // Profile uploads asked to be settled now (kickProfileMedia): no flag table
+    // points at those bytes, so the candidate query can never surface them.
+    // A couple per tick, before the queue — an avatar is small and the user is
+    // looking at it.
+    let kicked = 0;
+    while (pendingKeys.length && kicked < 3) {
+      const key = pendingKeys.shift();
+      kicked++;
+      try { await processKeyNow(key); }
+      catch (e) { warn('profile key failed (' + key + '): ' + String((e && e.message) || e).slice(0, 140)); }
+    }
     // Skips (tiny/foreign/missing files) are cheap: burn through a few per
     // tick looking for real work, but cap compressions at BATCH.
     const rows = await fetchCandidates(BATCH + 25);
-    if (!rows.length) return 'idle';
+    if (!rows.length) return pendingKeys.length ? 'more' : 'idle';
     // Virus-scan gate: only compress scan-clean files. Anything else stays
     // queued (compressed = 0); the scan worker's clean verdict kicks us
     // back, and rewritten bytes get rescanned anyway (see processRow).
@@ -633,7 +1033,7 @@ async function tick() {
     // Anything left? A cheap 1-row probe decides hot-loop vs idle poll.
     try {
       const rest = await fetchCandidates(1);
-      return rest.length ? 'more' : 'idle';
+      return (rest.length || pendingKeys.length) ? 'more' : 'idle';
     } catch { return 'more'; }
   } catch (e) {
     warn('tick failed:', String((e && e.message) || e).slice(0, 200));
@@ -683,11 +1083,11 @@ function getMediaStats() {
   };
 }
 
-// Pending vs finished files (both attachment tables), with byte totals.
+// Pending vs finished files (attachment tables + stories), with byte totals.
 // COUNT/SUM come back as numeric strings from Postgres — coerce them.
 async function mediaQueueCounts() {
   const out = { pending: {}, done: {} };
-  for (const table of ['attachments', 'dm_attachments']) {
+  for (const table of ['attachments', 'dm_attachments', 'stories']) {
     let rows = [];
     try {
       rows = await db.prepare(`SELECT kind, compressed, COUNT(*) c, COALESCE(SUM(size),0) bytes FROM ${table} WHERE kind IN ('image','video','audio') GROUP BY kind, compressed`).all();
@@ -740,11 +1140,25 @@ function startMediaCompress() {
     const enc = probeEncoders();
     const missing = Object.entries(enc).filter(([, v]) => !v).map(([k]) => k);
     stats.startedAt = now();
+    sweepStats.startedAt = now();
     ready = true;
     log(`worker on: continuous while queued (every ~${Math.round(ACTIVE_MS / 100) / 10}s), idle poll every ${Math.round(EVERY_MS / 1000)}s, ${BATCH}/tick, 1 thread${checkNice() ? ', nice 19' : ''}` +
       (missing.length ? ` (encoders missing, related types skipped: ${missing.join(', ')})` : ' (all encoders present)'));
+    if (SWEEP_ENABLED) {
+      const every = SWEEP_EVERY_MS < 3600000 ? `${Math.round(SWEEP_EVERY_MS / 60000)}min` : `${Math.round(SWEEP_EVERY_MS / 3600000)}h`;
+      log(`bucket scan on: every ${every} (first in ${Math.round(SWEEP_FIRST_MS / 60000)}min), up to ${SWEEP_MAX_JOBS} files/pass, skips anything under ${Math.round(SWEEP_MIN_AGE_MS / 60000)}min old`);
+      scheduleSweep(SWEEP_FIRST_MS);
+    } else {
+      log('bucket scan off (MEDIA_BUCKET_SWEEP=0)');
+    }
     if (!timer) schedule(10000); // first pass after boot settles; kicks pull it forward
   }).catch((e) => warn('migration failed:', String((e && e.message) || e).slice(0, 200)));
 }
 
-module.exports = { startMediaCompress, tickMediaCompress: tick, kickMediaCompress, ensureColumns, planFor, buildArgs, cleanKey, MIN_BYTES, getMediaStats, mediaQueueCounts, mediaTotals, mediaRecentJobs, processUpload, isCompressing, isCandidate, compressionEnabled };
+module.exports = {
+  startMediaCompress, tickMediaCompress: tick, kickMediaCompress, ensureColumns, planFor, buildArgs, cleanKey,
+  MIN_BYTES, getMediaStats, mediaQueueCounts, mediaTotals, mediaRecentJobs, processUpload, isCompressing,
+  isCandidate, compressionEnabled,
+  // profile media + the scheduled bucket reconciliation
+  kickProfileMedia, kickBucketScan, reconcileBucket, getBucketScanStats, refsForKey, compressStandalone, keySize,
+};

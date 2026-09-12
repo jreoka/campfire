@@ -445,6 +445,26 @@ function storageCard(usage, tracked) {
     </div>
     <div id="adm-sweep-out" class="muted small"></div>`;
 }
+// The bucket reconciliation pass: it lists the bucket itself and compresses
+// what the flag-driven queue never saw (profile media, a story whose row landed
+// late, anything an older build left behind). The ledger is what stops it
+// re-encoding a file it already handled.
+function bucketScanLine(b) {
+  if (!b) return '';
+  if (!b.enabled) return ' · Bucket scan: OFF';
+  const every = (b.everyMs || 0) < 3600000 ? `${Math.round((b.everyMs || 0) / 60000)}min` : `${Math.round((b.everyMs || 0) / 3600000)}h`;
+  const last = b.lastRunAt ? agoStr(b.lastRunAt) : 'not yet';
+  const r = b.lastResult;
+  const did = r
+    ? `${r.compressed} compressed${r.savedBytes ? ' (' + fmtSize(r.savedBytes) + ')' : ''} of ${r.candidates} candidate${r.candidates === 1 ? '' : 's'} · ${r.objects} object${r.objects === 1 ? '' : 's'} listed`
+    : 'no pass yet';
+  const extra = [];
+  if (r && r.deferred) extra.push(`${r.deferred} deferred`);
+  if (r && r.skippedText) extra.push(`${r.skippedText} pasted-link only`);
+  if (r && r.errors) extra.push(`${r.errors} errors`);
+  const led = b.ledger ? ` · ledger ${b.ledger.keys} key${b.ledger.keys === 1 ? '' : 's'}` : '';
+  return ` · Bucket scan: every ${every}, last ${esc(last)} — ${esc(did)}${extra.length ? ' · ' + esc(extra.join(' · ')) : ''}${led}`;
+}
 async function loadAdminMedia() {
   const box = $('#adm-media');
   if (!box) return;
@@ -487,14 +507,47 @@ async function loadAdminMedia() {
       </div>
       ${!w.ffmpeg ? '<div class="muted small">ffmpeg is not on PATH — uploads work, they just stay uncompressed.</div>' : ''}
       <div class="muted small" style="margin-top:.4rem">${scanLine(m.scan)}${sweepLine(m.sweep)}</div>
+      <div class="muted small" style="margin-top:.25rem">${bucketScanLine(m.bucketScan)}</div>
       <div class="pf-sec-label" style="margin-top:1rem">Recent files</div>
       ${jobs.length
         ? `<div class="adm-scroll">${jobs.map(jobRow).join('')}</div>`
           + (capped ? `<div class="muted small adm-recent-note">Newest ${ADMIN_MEDIA_RECENT} · the log keeps more</div>` : '')
         : '<p class="muted small">Nothing compressed yet.</p>'}
-      <div class="adm-actions"><button class="mini" id="adm-media-refresh">Refresh</button></div>`;
+      <div class="adm-actions">
+        <button class="mini" id="adm-media-refresh">Refresh</button>
+        <button class="mini" id="adm-bucket-check">Check bucket</button>
+        <button class="mini" id="adm-bucket-run">Compress now</button>
+      </div>
+      <div id="adm-bucket-out" class="muted small"></div>`;
     const rb = $('#adm-media-refresh');
     if (rb) rb.onclick = () => { box.innerHTML = '<p class="muted small">Loading…</p>'; loadAdminMedia(); };
+    const bc = $('#adm-bucket-check');
+    if (bc) bc.onclick = async () => {
+      const out = $('#adm-bucket-out');
+      bc.disabled = true;
+      out.textContent = 'Listing the bucket…';
+      try {
+        const res = await api('/api/admin/media/scan?dry=1', { method: 'POST' });
+        const x = res.result || {};
+        out.textContent = `${x.objects || 0} objects · ${x.referenced || 0} referenced keys · ${x.candidates || 0} would be compressed`
+          + (x.skippedOrphan ? ` · ${x.skippedOrphan} unreferenced (orphan sweep has them)` : '')
+          + (x.skippedText ? ` · ${x.skippedText} pasted-link only` : '')
+          + (x.skippedFloor ? ` · ${x.skippedFloor} under the size floor` : '')
+          + (x.skippedFresh ? ` · ${x.skippedFresh} too new` : '');
+      } catch (e) { out.textContent = prettyError(e.message); }
+      bc.disabled = false;
+    };
+    const br = $('#adm-bucket-run');
+    if (br) br.onclick = async () => {
+      const out = $('#adm-bucket-out');
+      br.disabled = true;
+      try {
+        await api('/api/admin/media/scan', { method: 'POST' });
+        out.textContent = 'Pass started — it runs in the background (watch the line above).';
+        setTimeout(() => { if ($('#adm-media')) loadAdminMedia(); }, 5000);
+      } catch (e) { out.textContent = prettyError(e.message); }
+      br.disabled = false;
+    };
     const sb = $('#adm-storage-refresh');
     if (sb) sb.onclick = async () => {
       sb.disabled = true;

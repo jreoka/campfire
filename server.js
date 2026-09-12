@@ -2180,6 +2180,10 @@ function imgSingle(up) {
     catch { return res.status(500).json({ error: 'storage_failed' }); }
     const ikey = up._sub + '/' + req.file.filename;
     try { require('./virus-scan').queueFileScan(ikey); } catch {}
+    // Profile media is served ungated, so the compressor cannot hold it back the
+    // way it holds a chat upload: it is settled just after the row that points
+    // at it is written (the route handler runs next), under a new key.
+    try { require('./media-compress').kickProfileMedia(ikey); } catch {}
     next();
   });
 }
@@ -2599,9 +2603,16 @@ app.post('/api/stories', authRequired, async (req, res) => {
   const overlays = overlaysToJson(req.body?.overlays);
   const id = uid();
   const created = now();
+  // The upload's size is what the compressor's floor check reads (a story row is
+  // the only place it is recorded), and the row is what makes this media a
+  // candidate at all: a story's bytes go through the same files/ upload path as
+  // chat, so without the row they would sit at full size forever.
+  let size = 0;
+  try { size = await require('./media-compress').keySize('files/' + url.split('?')[0].split('/').pop()); } catch {}
   // Legacy columns hold a coarse summary (audiences are read from the shares).
-  await db.prepare('INSERT INTO stories (id,user_id,audience,server_id,url,mime,kind,caption,duration_ms,created_at,expires_at,overlays) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
-    .run(id, me.id, aud.friends ? 'friends' : 'server', servers.length === 1 && !aud.friends ? servers[0] : null, url, mime, kind, caption, durationMs, created, created + STORY_TTL_MS, overlays);
+  await db.prepare('INSERT INTO stories (id,user_id,audience,server_id,url,mime,kind,caption,duration_ms,created_at,expires_at,overlays,size) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(id, me.id, aud.friends ? 'friends' : 'server', servers.length === 1 && !aud.friends ? servers[0] : null, url, mime, kind, caption, durationMs, created, created + STORY_TTL_MS, overlays, Math.max(0, Number(size) || 0));
+  try { require('./media-compress').kickMediaCompress(); } catch {}
   const insShare = db.prepare('INSERT INTO story_audiences (id,story_id,kind,server_id,created_at) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING');
   if (aud.friends) await insShare.run(uid(), id, 'friends', null, created);
   for (const sid of servers) await insShare.run(uid(), id, 'server', sid, created);
@@ -3602,15 +3613,26 @@ async function trackedMediaBytes() {
 }
 app.get('/api/admin/media', authRequired, requireSiteAdmin, async (req, res) => {
   const mc = require('./media-compress');
-  const [queue, totals, scan, sweep, tracked] = await Promise.all([
+  const [queue, totals, scan, sweep, tracked, bucketScan] = await Promise.all([
     mc.mediaQueueCounts(), mc.mediaTotals(),
     require('./virus-scan').getScanStats().catch(() => null),
     require('./storage-sweep').getSweepStats(),
     trackedMediaBytes().catch(() => null),
+    mc.getBucketScanStats().catch(() => null),
   ]);
   // Cached listing (10 min); ?refresh=1 forces a fresh walk of the bucket.
   const usage = await require('./storage').storageStats({ refresh: req.query.refresh === '1' }).catch(() => null);
-  res.json({ worker: mc.getMediaStats(), queue, totals, scan, sweep, usage, tracked });
+  res.json({ worker: mc.getMediaStats(), queue, totals, scan, sweep, bucketScan, usage, tracked });
+});
+// Site admin: reconcile the bucket now. ?dry=1 answers what the pass would
+// compress (it lists the bucket and walks the reference index, but touches
+// nothing); without it the pass runs in the background like the scheduled one —
+// it can take minutes, so the panel polls /api/admin/media for the result.
+app.post('/api/admin/media/scan', authRequired, requireSiteAdmin, async (req, res) => {
+  const mc = require('./media-compress');
+  if (req.query.dry === '1') return res.json({ result: await mc.reconcileBucket({ dry: true }) });
+  mc.kickBucketScan();
+  res.json({ queued: true });
 });
 app.get('/api/admin/media/storage', authRequired, requireSiteAdmin, async (req, res) => {
   const [usage, tracked] = await Promise.all([

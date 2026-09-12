@@ -147,6 +147,20 @@ async function waitFor(fn, ms) {
   }
 }
 
+// Same, for a predicate that has to hit the database or the network.
+async function waitForAsync(fn, ms) {
+  const t0 = Date.now();
+  for (;;) {
+    let v = null;
+    try { v = await fn(); } catch {}
+    if (v) return v;
+    if (Date.now() - t0 > ms) return null;
+    await sleep(250);
+  }
+}
+
+const sha256Of = (p) => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+
 async function waitForHttp(p, ms) {
   const t0 = Date.now();
   for (;;) {
@@ -437,7 +451,13 @@ async function main() {
     console.log('\n-- compression-only slot: VIRUS_SCAN=0, MEDIA_COMPRESS=1 --');
     const scansBefore = fake.state.scans;
     await stopServer();
-    child = startServer({ VIRUS_SCAN: '0' });
+    // The bucket scan is driven explicitly below (POST /api/admin/media/scan), so
+    // the scheduled pass is parked well beyond this run — but the age floor is
+    // zeroed, because a test plants its fixtures now and expects them adopted.
+    child = startServer({
+      VIRUS_SCAN: '0',
+      MEDIA_SWEEP_FIRST_MS: '900000', MEDIA_SWEEP_EVERY_MS: '900000', MEDIA_SWEEP_MIN_AGE_MS: '0',
+    });
     if (!(await waitForHttp('/api/config', 30000))) return fail('server did not come back up without a scanner');
 
     await db.query('UPDATE users SET is_admin = 1 WHERE id = $1', [reg.user.id]);
@@ -513,6 +533,97 @@ async function main() {
       JSON.stringify({ old: oldRows.length, now: newRows.length }));
     const newServed = await fetch(`http://127.0.0.1:${PORT}${swAtt ? swAtt.url : ''}`);
     check('the re-published file is servable', newServed.status === 200, 'status=' + newServed.status);
+
+    // ---------- stories ----------
+    // Story media is uploaded through the same /api/upload path as chat, but its
+    // only "row" is the story itself — so without stories in the queue a story
+    // photo or video sits at full size forever.
+    console.log('\n-- stories: story media is compression media too --');
+    const stUp = await uploadFile(media.jpg, 'story-photo.jpg', 'image/jpeg', token);
+    const stRes = await api('POST', '/api/stories', {
+      url: stUp.url, mime: stUp.mime, kind: 'image', caption: 'pipeline test', audience: 'friends', durationMs: 5000,
+    }, token);
+    const storyId = stRes.story && stRes.story.id;
+    check('story posted', !!storyId, JSON.stringify(stRes).slice(0, 200));
+    const stRow = await waitForAsync(async () => {
+      if (!storyId) return null;
+      const r = await db.query('SELECT compressed, size, url, mime FROM stories WHERE id = $1', [storyId]);
+      const row = r.rows[0];
+      return row && Number(row.compressed) === 1 ? row : null;
+    }, 40000);
+    check('story media compressed without anyone posting a message', !!stRow, 'the story row never settled');
+    if (stRow) {
+      const oldKey = stUp.url.split('?')[0].replace('/uploads/', '');
+      const storyKey = stRow.url.split('?')[0].replace('/uploads/', '');
+      // Either path is correct: the slot may have compressed it before the story
+      // row existed (same key, nothing was servable yet), or the queue picked the
+      // new row up seconds later (a fresh key, the old bytes left for the sweep).
+      check('the story points at the compressed bytes', fs.existsSync(path.join(uploads, storyKey))
+        && fs.statSync(path.join(uploads, storyKey)).size === Number(stRow.size)
+        && Number(stRow.size) < fs.statSync(media.jpg).size, storyKey + ' ' + stRow.size + ' vs ' + fs.statSync(media.jpg).size);
+      check('the story url carries a fresh cache key', /\?v=/.test(stRow.url), stRow.url);
+      check('the story key is in the ledger', ((await db.query("SELECT status FROM media_compress_keys WHERE key = $1", [storyKey])).rows[0] || {}).status === 'compressed');
+      if (storyKey !== oldKey) check('the superseded upload is left for the orphan sweep', fs.existsSync(path.join(uploads, oldKey)));
+      check('the compressed story bytes are what is served', (await fetch(`http://127.0.0.1:${PORT}${stRow.url}`)).status === 200);
+    }
+
+    // ---------- the scheduled bucket reconciliation ----------
+    // The queue is flag-driven, so a flagless table (profile media), an object
+    // only a pasted link mentions, and anything an older build left behind are
+    // all invisible to it. The bucket scan is the answer to those, and the key
+    // ledger is what keeps it from re-encoding what it already handled.
+    console.log('\n-- bucket scan: profile media, the ledger, and what it must not touch --');
+    await db.query('UPDATE users SET is_admin = 1 WHERE id = $1', [reg.user.id]);
+    const avKey = 'avatars/' + crypto.randomBytes(16).toString('hex') + '.jpg';
+    const avPath = path.join(uploads, avKey);
+    fs.mkdirSync(path.dirname(avPath), { recursive: true }); // disk mode creates this on a real avatar upload
+    fs.copyFileSync(media.jpg, avPath);
+    const avOld = '/uploads/' + avKey + '?v=old';
+    await db.query('UPDATE users SET avatar_url = $1 WHERE id = $2', [avOld, reg.user.id]);
+    // (a) an object nothing references: the orphan sweep owns those bytes
+    const orphan2 = 'files/' + crypto.randomBytes(16).toString('hex') + '.jpg';
+    fs.copyFileSync(media.jpg, path.join(uploads, orphan2));
+    const orphan2Hash = sha256Of(path.join(uploads, orphan2));
+    // (b) an object only message TEXT mentions: a pasted link must keep working,
+    //     so it is never repointed (and never compressed into a new key)
+    const textKey = 'files/' + crypto.randomBytes(16).toString('hex') + '.jpg';
+    fs.copyFileSync(media.jpg, path.join(uploads, textKey));
+    const textHash = sha256Of(path.join(uploads, textKey));
+    await db.query('INSERT INTO messages (id,server_id,channel_id,user_id,content,created_at) VALUES ($1,$2,$3,$4,$5,$6)',
+      ['msg-' + crypto.randomBytes(8).toString('hex'), srv.server.id, channelId, reg.user.id, 'pasted /uploads/' + textKey, Date.now()]);
+
+    const dry1 = await api('POST', '/api/admin/media/scan?dry=1', undefined, token);
+    check('a dry pass reports the avatar as a candidate', (dry1.result.candidates || 0) >= 1, JSON.stringify(dry1.result));
+    check('...and nothing was compressed by it', fs.statSync(avPath).size === fs.statSync(media.jpg).size);
+    check('the unreferenced object is reported, not queued', (dry1.result.skippedOrphan || 0) >= 1, 'skippedOrphan=' + dry1.result.skippedOrphan);
+    check('the pasted-link object is reported separately', (dry1.result.skippedText || 0) >= 1, 'skippedText=' + dry1.result.skippedText);
+
+    await api('POST', '/api/admin/media/scan', undefined, token);
+    const avNew = await waitForAsync(async () => {
+      const r = await db.query('SELECT avatar_url FROM users WHERE id = $1', [reg.user.id]);
+      const url = r.rows[0] && r.rows[0].avatar_url;
+      return url && url !== avOld ? url : null;
+    }, 90000);
+    check('the scan repointed the avatar to a new key', !!avNew && avNew.split('?')[0] !== '/uploads/' + avKey, avNew);
+    if (avNew) {
+      const avNewKey = avNew.split('?')[0].replace('/uploads/', '');
+      check('the new avatar object exists and is smaller', fs.existsSync(path.join(uploads, avNewKey)) && fs.statSync(path.join(uploads, avNewKey)).size < fs.statSync(media.jpg).size);
+      check('the old avatar object is left for the orphan sweep', fs.existsSync(avPath));
+      check('the avatar is servable at its new key', (await fetch(`http://127.0.0.1:${PORT}${avNew}`)).status === 200);
+      const led = await db.query('SELECT COUNT(*) c FROM media_compress_keys WHERE key = ANY($1)', [[avKey, avNewKey]]);
+      check('both avatar keys are in the ledger', Number(led.rows[0].c) === 2, 'ledger rows=' + led.rows[0].c);
+    }
+    check('the unreferenced object was left exactly as it was', sha256Of(path.join(uploads, orphan2)) === orphan2Hash);
+    check('the pasted-link object was left exactly as it was', sha256Of(path.join(uploads, textKey)) === textHash);
+
+    const dry2 = await api('POST', '/api/admin/media/scan?dry=1', undefined, token);
+    check('the ledger stops a second pass re-encoding anything', (dry2.result.candidates || 0) === 0,
+      JSON.stringify({ candidates: dry2.result.candidates, ledger: dry2.result.ledger, objects: dry2.result.objects }));
+    const adm = await api('GET', '/api/admin/media', undefined, token);
+    check('the admin payload carries the bucket-scan state',
+      !!(adm.bucketScan && adm.bucketScan.enabled && adm.bucketScan.lastResult && Number(adm.bucketScan.lastResult.compressed) >= 1),
+      JSON.stringify(adm.bucketScan && { enabled: adm.bucketScan.enabled, last: adm.bucketScan.lastResult }));
+    await db.query('UPDATE users SET is_admin = 0 WHERE id = $1', [reg.user.id]);
 
     await db.end();
   } finally {
