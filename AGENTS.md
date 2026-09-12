@@ -491,7 +491,10 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   `node scripts/test-friend-click.js` drives the same harness and counts
   `openUserCard` calls: a friend row under All/Online opens the DM and nothing
   else (the row carries `data-uid` for the story ring, and the global
-  `[data-uid]` click delegate in `pickers.js` used to stack the card on top),
+  `[data-uid]` click delegate in `pickers.js` used to stack the card on top;
+  the tag is rendered `tagHTML(u, true)` — decorative — so a tap on a friend's
+  server tag opens the DM and never the server mini-panel, which used to stack
+  on top of it),
   the row's Message / More → View profile affordances still work, and a
   pending request row or voice occupant opens exactly one card. Rows that own
   their click declare it with `data-ownclick` — give that attribute to any new

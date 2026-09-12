@@ -246,6 +246,49 @@ async function main() {
     check(clickOnline.dmOpen && clickOnline.name === 'Pal', 'the click opened the DM', clickOnline);
     check(clickOnline.cards === 0 && clickOnline.hidden, 'and no user card came with it', clickOnline);
 
+    console.log('\n[3b] a friend row\'s server tag goes to the DM, never the server panel');
+    const tagClick = await evaluate(`(async () => {
+      window.__tags = 0;
+      if (typeof openTagCard !== 'function') return { err: 'missing openTagCard' };
+      const realTag = window.openTagCard;
+      window.openTagCard = function (...a) { window.__tags++; return realTag.apply(this, a); };
+      // Positive control: a live tag really does reach openTagCard, so the
+      // "no panel" assertion below is not vacuous.
+      const probe = document.createElement('span');
+      probe.className = 'usertag clickable';
+      probe.setAttribute('data-tag-sid', 'probe-server');
+      document.body.appendChild(probe);
+      probe.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+      await new Promise((r) => setTimeout(r, 80));
+      const control = window.__tags;
+      probe.remove();
+      closeTagCard();
+
+      const pal = (S.friends.friends || []).find((u) => u.id === ${JSON.stringify(pair.palId)});
+      pal.active_tag = 'TST';
+      pal.active_tag_server_id = 'srv-tag';
+      S.dmThreadId = null; renderDmBlank();
+      S.presenceAll[pal.id] = 'online';
+      S.friendTab = 'online'; renderFriendLists();
+      const row = [...document.querySelectorAll('#friend-list .dmrow[data-uid]')].find((r) => r.dataset.uid === pal.id);
+      if (!row) return { err: 'no friend row' };
+      const tag = row.querySelector('.usertag');
+      if (!tag) return { err: 'no tag rendered' };
+      const decorative = !tag.dataset.tagSid && !tag.classList.contains('clickable');
+      window.__tags = 0; window.__cards = 0;
+      const r = tag.getBoundingClientRect();
+      tag.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: r.left + 2, clientY: r.top + 2 }));
+      await new Promise((res) => setTimeout(res, 700));
+      return { control, decorative, tags: window.__tags, cards: window.__cards,
+        dmOpen: document.body.classList.contains('dm-open'),
+        name: document.querySelector('#chan-name').textContent,
+        tagHidden: document.querySelector('#tagcard').classList.contains('hidden') };
+    })()`);
+    check(tagClick.control === 1, 'the tag-click probe reaches openTagCard (not vacuous)', tagClick);
+    check(tagClick.decorative === true, 'a friend row renders its tag as a decorative pill', tagClick);
+    check(tagClick.dmOpen && tagClick.name === 'Pal', 'clicking the tag opens the DM', tagClick);
+    check(tagClick.tags === 0 && tagClick.tagHidden, 'and the server tag panel never opens', tagClick);
+
     console.log('\n[4] the row\'s own card affordances still work');
     const viaMenu = await evaluate(`(async () => {
       window.__cards = 0; closeUserCard();

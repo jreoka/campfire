@@ -141,7 +141,11 @@ function friendRowEl(u, extra) {
   div.dataset.ownclick = '1';
   div.dataset.uname = u.display_name || '';
   const fPlaying = !off && !streaming && u.playing_game;
-  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="dmmain"><span class="mname-row"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u)}${fPlaying ? gameBadgeHTML(u.playing_game) : ''}</span><span class="dmlast">@${esc(u.username)}${streaming ? ` · <span class="ustream-t">Streaming ${esc(streaming)}</span>` : (u.status_text ? ' · ' + esc(u.status_text) : (fPlaying ? ` · Playing ${esc(u.playing_game)}` : ''))}</span></span>`;
+  // Plain tag: the row owns its click (friends list → DM, pending → card), so
+  // the tag must not steal the tap into the server mini-panel. Same rule as
+  // the DM sidebar rows — otherwise a tag click both opened the DM and stacked
+  // the server panel on top of it.
+  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="dmmain"><span class="mname-row"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u, true)}${fPlaying ? gameBadgeHTML(u.playing_game) : ''}</span><span class="dmlast">@${esc(u.username)}${streaming ? ` · <span class="ustream-t">Streaming ${esc(streaming)}</span>` : (u.status_text ? ' · ' + esc(u.status_text) : (fPlaying ? ` · Playing ${esc(u.playing_game)}` : ''))}</span></span>`;
   paintAvatar(div.querySelector('.avatar'), u);
   paintGameBadge(div.querySelector('.gbadge'));
   try { paintFriendStoryRing(div, u); } catch {}
