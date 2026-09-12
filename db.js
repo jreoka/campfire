@@ -148,6 +148,13 @@ async function columnExists(table, col) {
   );
   return r.rowCount > 0;
 }
+async function tableExists(table) {
+  const r = await pool.query(
+    'SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = $1',
+    [table]
+  );
+  return r.rowCount > 0;
+}
 async function addColumn(table, col, def) {
   if (!(await columnExists(table, col))) await pool.query(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
 }
@@ -463,6 +470,37 @@ CREATE TABLE IF NOT EXISTS pin_seen (
       await db.exec('ALTER TABLE dm_members ADD COLUMN last_read_at BIGINT');
       await db.prepare('UPDATE dm_members SET last_read_at = ? WHERE last_read_at IS NULL').run(Date.now());
     });
+  }
+  // ---------- channel unread is server state too ----------
+  // One last_read_at per (account, channel), the channel twin of
+  // dm_members.last_read_at: a cold start (or a reconnect after the socket
+  // dropped) reads the truth off the server instead of only counting the live
+  // pushes that happened to arrive while the app was open — which is why a
+  // phone that was closed overnight showed nothing unread.
+  //
+  // A (user, channel) with no row falls back to server_members.joined_at, so
+  // joining an old server never lights up its history. That fallback is exactly
+  // why the FIRST boot with this table has to seed every existing membership as
+  // caught up: without it, upgrading the instance would mark every channel that
+  // ever saw a message as unread, all at once. Only what arrives from here on
+  // counts for those rows; a membership created later still starts at its own
+  // joined_at.
+  const hadChannelReads = await tableExists('channel_reads');
+  await db.exec(`
+CREATE TABLE IF NOT EXISTS channel_reads (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  last_read_at BIGINT NOT NULL,
+  PRIMARY KEY (user_id, channel_id)
+);
+CREATE INDEX IF NOT EXISTS idx_channel_reads_user ON channel_reads(user_id);
+`);
+  if (!hadChannelReads) {
+    await db.exec(`
+INSERT INTO channel_reads (user_id, channel_id, last_read_at)
+SELECT m.user_id, c.id, ${Date.now()} FROM server_members m JOIN channels c ON c.server_id = m.server_id
+ON CONFLICT (user_id, channel_id) DO NOTHING
+`);
   }
   await addColumn('dm_threads', 'description', "TEXT NOT NULL DEFAULT ''");
   await addColumn('messages', 'fwd_from', 'TEXT');

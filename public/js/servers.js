@@ -248,12 +248,15 @@ setInterval(() => {
 }, 1000);
 // ---------- unread channels ----------
 // A channel gets a small dot (and a brighter name) when a message arrives while
-// you are not looking at it. Tracked per account in localStorage so it survives
-// a reload, and it also counts up a red badge on the server's rail icon (and on
-// the folder that holds it while the folder is collapsed) so an unread channel
-// in a server you are not in is still discoverable. The live push arrives for
-// every joined server (broadcastToServer), so the badge lands even when you are
-// sitting in a different one.
+// you are not looking at it. The marks are SERVER state now (channel_reads,
+// read back through /api/unread) — the channel twin of DM unread — with
+// localStorage only as a paint cache so a reload shows the dots before the
+// fetch lands. That is what makes a cold start honest: the app used to know
+// only what the live socket had seen since it was opened, so a phone that was
+// closed while messages arrived showed nothing at all. It also counts up a red
+// badge on the server's rail icon (and on the folder that holds it while the
+// folder is collapsed) so an unread channel in a server you are not in is still
+// discoverable.
 const CHAN_UNREAD_MAX = 60;             // conversations remembered per account
 const CHAN_UNREAD_TTL = 30 * 864e5;     // a month of silence forgets it
 function chanUnreadKey() { return S.me ? 'cf_chanunread_' + S.me.id : null; }
@@ -299,6 +302,26 @@ function saveChanUnread() {
     for (const ctx of keys) out[ctx] = { at: Date.now() };
     try { localStorage.setItem(k, JSON.stringify(out)); } catch {}
   }, 400);
+}
+// The truth, from the database: /api/unread answers with every text channel of
+// every server this account is in that has an unseen message. The map is
+// REPLACED rather than merged — the server owns the state, so a channel read on
+// the desktop (or by the other tab of this very app) drops its dot here too.
+// The channel you are looking at is dropped from the answer: its own read stamp
+// may still be in flight, and a dot on the open conversation is always wrong.
+async function syncChanUnread() {
+  if (!S.me || !store.token) return;
+  let out = null;
+  try { out = await api('/api/unread'); } catch { return; }
+  const next = new Map();
+  for (const [sid, cids] of Object.entries((out && out.channels) || {})) {
+    for (const cid of (cids || [])) next.set(chanUnreadCtx(sid, cid), 1);
+  }
+  if (S.view === 'server' && S.serverId && S.channelId) next.delete(chanUnreadCtx(S.serverId, S.channelId));
+  S.chanUnread = next;
+  saveChanUnread();          // the paint cache stays warm for the next boot
+  repaintUnreadSurfaces();
+  try { paintAppBadge(); } catch {}
 }
 // In-place repaint so a busy server doesn't rebuild the whole sidebar on every
 // background message (and never flickers the voice occupant rows).
@@ -347,6 +370,7 @@ function markChanUnread(serverId, channelId) {
   saveChanUnread();
   paintChanUnread(serverId, channelId);
   paintServerUnread(serverId);
+  try { paintAppBadge(); } catch {}
 }
 function clearChanUnread(serverId, channelId) {
   if (!serverId || !channelId) return;
@@ -355,11 +379,33 @@ function clearChanUnread(serverId, channelId) {
   saveChanUnread();
   paintChanUnread(serverId, channelId);
   paintServerUnread(serverId);
+  try { paintAppBadge(); } catch {}
+}
+// Reading a channel is a WRITE (channel_reads), or the next cold start brings
+// the dot straight back: opening a channel stamps immediately, a message landing
+// in the one already open coalesces into one stamp per ~second, and the same
+// helper serves the server's own chan-read push to this account's other devices.
+const chanReadTimers = new Map();
+function markChannelRead(serverId, channelId, delay = 600) {
+  if (!serverId || !channelId || !S.me) return;
+  clearChanUnread(serverId, channelId);
+  const prev = chanReadTimers.get(channelId);
+  if (prev) clearTimeout(prev);
+  chanReadTimers.set(channelId, setTimeout(() => {
+    chanReadTimers.delete(channelId);
+    api('/api/channels/' + encodeURIComponent(channelId) + '/read', { method: 'POST' }).catch(() => {});
+  }, delay));
+}
+// Everything a whole server owns, in one request (the folder case is this once
+// per server it holds). Fire-and-forget: the local marks are already gone.
+function markServerReadRemote(serverId) {
+  if (!serverId) return;
+  api('/api/servers/' + encodeURIComponent(serverId) + '/read', { method: 'POST' }).catch(() => {});
 }
 // "Mark all as read" (rail right-click / long-press): drop every mark a server
-// — or every server in a folder — owns. These marks are this account's local
-// memory (see above), so this is exactly what opening each channel does, in one
-// go; the server is never told anything.
+// — or every server in a folder — owns, and tell the server so it sticks. The
+// client memory is what paints instantly; the database is what a cold start
+// reads.
 function clearChanUnreadMatching(pred) {
   let hit = false;
   for (const k of [...S.chanUnread.keys()]) if (pred(k)) { S.chanUnread.delete(k); hit = true; }
@@ -373,7 +419,9 @@ function repaintUnreadSurfaces() {
 function markServerRead(serverId) {
   if (!serverId) return false;
   if (!clearChanUnreadMatching((k) => k.startsWith(serverId + ':'))) return false;
+  markServerReadRemote(serverId);
   repaintUnreadSurfaces();
+  try { paintAppBadge(); } catch {}
   return true;
 }
 function markFolderRead(fid) {
@@ -382,13 +430,36 @@ function markFolderRead(fid) {
   const prefixes = (f.servers || []).map((sid) => sid + ':');
   if (!prefixes.length) return false;
   if (!clearChanUnreadMatching((k) => prefixes.some((p) => k.startsWith(p)))) return false;
+  for (const sid of (f.servers || [])) markServerReadRemote(sid);
   repaintUnreadSurfaces();
+  try { paintAppBadge(); } catch {}
   return true;
 }
 // A channel opened (or already open) is read: drop its dot the moment it is
-// actually in front of the reader.
+// actually in front of the reader, and stamp it so a reload agrees.
 function clearActiveChanUnread() {
-  if (S.view === 'server' && S.serverId && S.channelId) clearChanUnread(S.serverId, S.channelId);
+  if (S.view === 'server' && S.serverId && S.channelId) markChannelRead(S.serverId, S.channelId, 0);
+}
+// The mark is gone on another device (the server pushed chan-read): drop it here
+// too, without stamping it again.
+function applyRemoteChanRead(serverId, channelId) {
+  if (!serverId) return;
+  if (channelId) { clearChanUnread(serverId, channelId); return; }
+  if (!clearChanUnreadMatching((k) => k.startsWith(serverId + ':'))) return;
+  repaintUnreadSurfaces();
+  try { paintAppBadge(); } catch {}
+}
+// One round trip that re-reads every unread surface the server owns: channels
+// and DMs. Called when a backgrounded app comes back and when the socket
+// reconnects — the two moments where live pushes were missed, which is exactly
+// how a phone showed "nothing unread" after a night in the background.
+async function refreshUnreadState() {
+  if (!S.me || !store.token) return;
+  await Promise.all([
+    syncChanUnread(),
+    refreshDms().catch(() => {}),
+    refreshNotifBadge().catch(() => {}),
+  ]).catch(() => {});
 }
 function renderChannels() {
   const d = S.serverDetail;
@@ -512,7 +583,10 @@ async function selectChannel(id, opts = {}) {
   flushDrafts(); // file the previous channel's text before its context changes
   saveScrollPos();
   S.channelId = id;
-  clearChanUnread(S.serverId, id); // it is in front of the reader now
+  // In front of the reader now: drop the dot and stamp the read watermark, or a
+  // cold start brings both back (the stamp was already in flight for a channel
+  // the server considers unread but this client never saw marked).
+  markChannelRead(S.serverId, id, 0);
   rememberView();
   S.callOpen = false;
   // Mobile: tapping a channel slides the drawer away to reveal the chat.

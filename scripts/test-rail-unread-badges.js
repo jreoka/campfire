@@ -371,6 +371,75 @@ async function main() {
     check(left.some((k) => k.startsWith(delta.id + ':')), 'and a server outside the folder is left alone', { left, delta: delta.id });
     check((await badgeOf(sels.delta)).d === '1', 'Delta still carries its own unread', await badgeOf(sels.delta));
 
+    console.log('\n[8] a COLD START paints the badge from the server, not from localStorage');
+    // The owner's bug: messages that arrived while the app was closed (or a
+    // phone asleep overnight) left no trace — no dot, no rail count — because
+    // the marks only ever came from live pushes into localStorage. This is that
+    // exact state: a webhook writes into a channel of Delta (a real message from
+    // someone else, on the server, with this client knowing nothing about it),
+    // then the local cache is wiped and the page reloaded from scratch.
+    const dupd = await (await fetch(`http://127.0.0.1:${PORT}/api/servers/${delta.id}`, { headers: jh })).json();
+    const deltaTexts = (dupd.server.channels || []).filter((c) => c.type === 'text');
+    const coldChan = deltaTexts.find((c) => c.name === 'chat') || deltaTexts[deltaTexts.length - 1];
+    check(!!coldChan, 'Delta has a second text channel to be unread', deltaTexts.map((c) => c.name));
+    const whRes = await (await fetch(`http://127.0.0.1:${PORT}/api/servers/${delta.id}/channels/${coldChan.id}/webhooks`, {
+      method: 'POST', headers: jh, body: JSON.stringify({ name: 'Alerts' }),
+    })).json();
+    const whUrl = whRes.webhook && whRes.webhook.url;
+    check(!!whUrl, 'a webhook exists to post as someone else', whRes);
+    const posted = await fetch(`http://127.0.0.1:${PORT}${whUrl}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: 'while you were away' }),
+    });
+    check(posted.ok, 'and posts into that channel', posted.status);
+    // The server knows about it; the client has never heard of it.
+    const srvUnread = await (await fetch(`http://127.0.0.1:${PORT}/api/unread`, { headers: jh })).json();
+    check(((srvUnread.channels || {})[delta.id] || []).includes(coldChan.id),
+      'the server reports that channel unread (this is what a cold start reads)', srvUnread.channels);
+
+    // Wipe the cache + the in-memory marks, then reload: only the database can
+    // put the badge back. (cf_token stays — this is a reload, not a logout.)
+    await evaluate(`(() => {
+      for (const k of Object.keys(localStorage)) if (k.startsWith('cf_chanunread_')) localStorage.removeItem(k);
+      S.chanUnread = new Map();
+      return 1;
+    })()`);
+    await send('Page.reload');
+    if (!(await waitFor(`S.me && S.me.username === 'railuser'`))) return fail('the reload boots signed in');
+    if (!(await waitFor(`S.servers.length === 4`))) return fail('the four servers did not load');
+    if (!(await waitFor(`(S.chanUnread && S.chanUnread.size) > 0`, 10000))) return fail('the cold start never learned about the unread channel');
+
+    const coldBadge = await badgeOf(sels.delta);
+    check(!!coldBadge && coldBadge.d === '1' && coldBadge.content === '"1"',
+      'Delta\'s rail icon carries the count after a cold start', coldBadge);
+    check((await badgeOf(sels.alpha)) === null || (await badgeOf(sels.alpha)).d === null,
+      'a server with nothing unread stays clean (the local-only marks are gone, and rightly so)');
+    // The channel row itself carries the dot once the server is opened.
+    await evaluate(`(async () => { await selectServer(${JSON.stringify(delta.id)}); })()`);
+    await sleep(400);
+    const rows = await evaluate(`[...document.querySelectorAll('#text-channels .chan')].map((c) => ({ n: c.textContent.trim(), u: c.classList.contains('unread') }))`);
+    check(rows.some((r) => r.u), 'the channel rows paint the dot from the same store', rows);
+    const coldRowUnread = await evaluate(`(() => {
+      const el = [...document.querySelectorAll('#text-channels .chan')].find((c) => c.classList.contains('unread'));
+      if (!el) return null;
+      const dot = el.querySelector('.unread-dot');
+      return { name: el.textContent.trim(), dot: dot ? getComputedStyle(dot).opacity : null };
+    })()`);
+    check(!!coldRowUnread && coldRowUnread.dot === '1', 'and the dot is actually visible', coldRowUnread);
+
+    // Opening that channel reads it for good: the dot goes, the badge goes, and
+    // a reload does not bring either back.
+    await evaluate(`(async () => { await selectChannel(${JSON.stringify(coldChan.id)}); })()`);
+    await sleep(500);
+    check((await badgeOf(sels.delta)).d === null, 'opening the channel clears the rail badge', await badgeOf(sels.delta));
+    await sleep(300); // the read stamp is debounced
+    await send('Page.reload');
+    if (!(await waitFor(`S.me && S.me.username === 'railuser'`))) return fail('the reload boots signed in');
+    if (!(await waitFor(`typeof S !== 'undefined' && S.chanUnread`, 10000))) return fail('the store never came back');
+    await sleep(1200); // give the boot sync a moment to land
+    const afterReload = await badgeOf(sels.delta);
+    check(afterReload.d === null && afterReload.unread === false,
+      'and a reload after reading it does NOT bring the badge back (the read is durable)', afterReload);
+
     const realErrors = pageErrors.filter((e) => e && !/favicon|Failed to load resource/i.test(e));
     check(realErrors.length === 0, 'no page exceptions', realErrors.slice(0, 3));
   } catch (e) {

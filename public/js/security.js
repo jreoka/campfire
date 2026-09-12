@@ -327,7 +327,39 @@ $('#set-sess-revoke-others').onclick = async () => {
   catch (err) { toast('Failed: ' + prettyError(err.message)); }
 };
 // ---------- notification inbox ----------
+// Everything the app considers "waiting for you", in one number: unread DM
+// messages, unread channels (one each — a channel is a conversation, not a
+// message count, matching the rail badge) and the notification inbox. This is
+// what the APP ICON shows, on every platform that can show one.
+function totalUnreadCount() {
+  let n = S.notifUnread || 0;
+  for (const c of S.dmUnread.values()) n += c || 0;
+  n += S.chanUnread.size;
+  return n;
+}
+// The icon badge is one call per platform, and it is deliberately NOT tied to
+// the inbox count any more: a DM used to land with a tray dot only if it also
+// produced an inbox row, which plain messages never do.
+//  - navigator.setAppBadge / clearAppBadge: the installed PWA (Chrome/Edge on
+//    Android and desktop) — the launcher/dock badge on the phone's home screen.
+//  - the Tauri `set_unread_count` command: the desktop app's tray icon dot,
+//    Windows taskbar overlay and macOS dock badge (unknown command on Android,
+//    where the invoke simply rejects and is swallowed).
+function paintAppBadge() {
+  const n = totalUnreadCount();
+  try {
+    if (navigator.setAppBadge) {
+      if (n > 0) { const p = navigator.setAppBadge(Math.min(n, 99)); if (p && p.catch) p.catch(() => {}); }
+      else if (navigator.clearAppBadge) { const p = navigator.clearAppBadge(); if (p && p.catch) p.catch(() => {}); }
+    }
+  } catch {}
+  try {
+    const inv = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+    if (typeof inv === 'function') inv('set_unread_count', { count: n | 0 }).catch(() => {});
+  } catch {}
+}
 function paintNotifBadge(n) {
+  S.notifUnread = n | 0;
   const txt = n > 99 ? '99+' : String(n);
   const b = $('#notifs-count');
   if (b) { b.textContent = txt; b.classList.toggle('hidden', !n); }
@@ -337,12 +369,9 @@ function paintNotifBadge(n) {
   // can never show twice.
   const more = $('#chat-more-count');
   if (more) { more.textContent = txt; more.classList.toggle('hidden', !n); }
-  // Desktop app: mirror the count onto the tray icon + taskbar badge
-  // (no-op in a browser; older app builds reject the unknown command).
-  try {
-    const inv = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
-    if (typeof inv === 'function') inv('set_unread_count', { count: n | 0 }).catch(() => {});
-  } catch {}
+  // Desktop/mobile app: mirror the app's total unread onto the app icon (no-op
+  // in a plain browser; older app builds reject the unknown command).
+  paintAppBadge();
 }
 async function refreshNotifBadge() {
   if (!store.token) return;

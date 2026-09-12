@@ -11,6 +11,10 @@ document.addEventListener('visibilitychange', sendVisibility);
 // drops, until the server is reachable again. A short grace delay keeps fast
 // blips (and the initial boot handshake) from flashing it.
 let connTimer = null, connAttempts = 0, connVisible = false, connPingSent = 0, connProbePending = false, connFadeT = null;
+// Did this page ever get a socket up? A RECONNECT is the moment live pushes were
+// missed, so it is one of the two places that re-reads unread state from the
+// server (the other is a foregrounded tab — see refreshUnreadState).
+let wsOpened = false;
 function connEl() { return document.getElementById('conn-overlay'); }
 function inMainView() { return !document.getElementById('view-main')?.classList.contains('hidden'); }
 // The overlay is the animated campfire alone — no copy, no buttons. Only the
@@ -90,7 +94,18 @@ function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(store.token)}`);
   S.ws = ws;
-  ws.onopen = () => { connAttempts = 0; connPingSent = 0; S.lastWsMsg = Date.now(); hideConn(); ws.send(JSON.stringify({ t: 'subscribe' })); sendVisibility(); checkVersion(); try { paintVoiceStatus(true); } catch {} };
+  ws.onopen = () => {
+    connAttempts = 0; connPingSent = 0; S.lastWsMsg = Date.now(); hideConn();
+    ws.send(JSON.stringify({ t: 'subscribe' }));
+    sendVisibility();
+    checkVersion();
+    try { paintVoiceStatus(true); } catch {}
+    // A reconnect means the socket was down while messages arrived: their live
+    // pushes are gone forever, so re-read the durable unread state (channels,
+    // DMs, inbox) instead of leaving last night's gaps on screen.
+    if (wsOpened) { try { refreshUnreadState(); } catch {} }
+    wsOpened = true;
+  };
   ws.onmessage = (ev) => {
     S.lastWsMsg = Date.now(); connPingSent = 0;
     let m;
@@ -210,6 +225,9 @@ function onWS(m) {
         const mine = !!(msg.user && S.me && msg.user.id === S.me.id);
         const viewing = m.serverId === S.serverId && m.channelId === S.channelId && !document.hidden;
         if (!mine && !viewing) { try { markChanUnread(m.serverId, m.channelId); } catch {} }
+        // ...and the channel that IS on screen is read up to now, so the next
+        // cold start does not hand its dot back (channel_reads is durable).
+        else if (!mine) { try { markChannelRead(m.serverId, m.channelId); } catch {} }
       }
       if (m.serverId !== S.serverId) break;
       const dnd = S.me && S.me.status === 'dnd';
@@ -359,6 +377,12 @@ function onWS(m) {
       // one echoing its own read back. One memory for the account, so the badge
       // goes away everywhere it is painted.
       if (S.dmUnread.delete(m.threadId)) paintHomeBadge();
+      break;
+    }
+    case 'chan-read': {
+      // Same for a channel: read on another device (or this one echoing its own
+      // stamp). With no channelId it is a whole server that was marked read.
+      try { applyRemoteChanRead(m.serverId, m.channelId); } catch {}
       break;
     }
     case 'dm-updated': {

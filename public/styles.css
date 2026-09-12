@@ -2682,13 +2682,19 @@ body.story-open{overflow:hidden}
 /* ---------- 4. installed-app chrome ----------
    In a standalone window there is no URL bar to scroll away and no reload
    button, so the shell can stop reserving room for one and stop treating
-   long-press as "open the browser's selection menu". */
-html.standalone body{
+   long-press as "open the browser's selection menu". The Tauri wrapper gets
+   the same treatment — on Android it is NOT `display-mode: standalone`, so
+   the `html.standalone` half never applied there and the whole app stayed
+   text-selectable. A long-press on the left of a message then started the
+   browser's own selection (the reported "it highlights the timestamp"), whose
+   gesture cancelled the 550ms hold and the message sheet never opened. */
+html.standalone body,html.wrapper-app body{
   -webkit-touch-callout:none;
   user-select:none;
   overscroll-behavior:none;
 }
-html.standalone .msg .text,html.standalone .msg .text *,html.standalone input,html.standalone textarea,html.standalone .codebox,html.standalone .backup-codes,html.standalone .codebox-inline,html.standalone .uc-bio{
+html.standalone .msg .text,html.standalone .msg .text *,html.standalone input,html.standalone textarea,html.standalone .codebox,html.standalone .backup-codes,html.standalone .codebox-inline,html.standalone .uc-bio,
+html.wrapper-app input,html.wrapper-app textarea,html.wrapper-app .codebox,html.wrapper-app .backup-codes,html.wrapper-app .codebox-inline,html.wrapper-app .uc-bio{
   user-select:text;
   -webkit-user-select:text;
 }
@@ -2696,6 +2702,34 @@ html.standalone .msg .text,html.standalone .msg .text *,html.standalone input,ht
    except a rail folder, which manages its own affordance. */
 @media (pointer:coarse){
   button,.chip,.tab,.set-tab,.ftab,.dmrow,.chan,.member,.vuser,.anow-card,.anow-tile,.st-tile,.sheet-row,.ctx-item,.uc-tab,.sv-re,.sc-tool,.sc-swatch{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-user-drag:none}
+}
+/* On a touch screen a long-press IS the message menu, so nothing in a message
+   may start a native selection: the browser recognises its own long-press
+   (~500ms, before the app's 550ms hold), highlights the nearest word and
+   cancels the touch, which killed `holdT` — the sheet never opened. That is
+   the timestamp highlight on the left of a message. The message text is
+   deliberately not selectable here; Copy text is a row in the sheet, so
+   nothing is lost, and every other surface with its own long-press menu (a
+   channel row, a member row, a story) already opted out the same way. */
+@media (pointer:coarse){
+  .msg,.msg *,
+  html.standalone .msg,html.standalone .msg *,
+  html.wrapper-app .msg,html.wrapper-app .msg *,
+  html.standalone .msg .text,html.standalone .msg .text *,
+  html.wrapper-app .msg .text,html.wrapper-app .msg .text *{
+    -webkit-touch-callout:none;
+    -webkit-user-select:none;
+    user-select:none;
+    -webkit-user-drag:none;
+  }
+  /* …except the one real field a message can hold (Edit message), which has to
+     keep behaving like a field. */
+  .msg input,.msg textarea,
+  html.standalone .msg input,html.standalone .msg textarea,
+  html.wrapper-app .msg input,html.wrapper-app .msg textarea{
+    -webkit-user-select:text;
+    user-select:text;
+  }
 }
 
 /* ---------- 5. empty states: hairline, not wireframe ----------

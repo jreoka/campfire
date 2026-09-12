@@ -129,11 +129,15 @@ function markDmRead(tid, delay = 500) {
 // counting them again here would double the badge.
 function paintHomeBadge() {
   const b = $('#home-badge');
-  if (!b) return;
-  const n = ((S.friends && S.friends.pendingIn) || []).length;
-  b.textContent = n > 99 ? '99+' : String(n);
-  b.classList.toggle('hidden', !n);
+  if (b) {
+    const n = ((S.friends && S.friends.pendingIn) || []).length;
+    b.textContent = n > 99 ? '99+' : String(n);
+    b.classList.toggle('hidden', !n);
+  }
   renderDmRail();
+  // Unread DMs are part of the app-icon badge (together with unread channels and
+  // the inbox), so every DM unread change repaints it too.
+  try { paintAppBadge(); } catch {}
 }
 // Unread DM senders park under Home: avatar + red per-thread count.
 // Clicking opens the DM, which clears the unread and dismisses the avatar.

@@ -9,9 +9,11 @@
 // while it is open). A server (or a folder) can be cleared in one go from its
 // right-click / long-press menu, which drops the marks it owns.
 //
-// The memory is per account in localStorage, so it survives a reload, and the
-// live message push arrives for every joined server, so the marks land even
-// from a server you are not in.
+// The memory is per account in localStorage — but that is only the PAINT cache
+// now: the real state is server-side (channel_reads, read back through
+// /api/unread), the channel twin of DM unread, so a cold start after messages
+// arrived while the app was closed shows them instead of only counting the live
+// pushes that happened to arrive. Sections [10]-[13] cover that half.
 //
 // Offline (no database, no browser): the real helpers are sliced out of
 // public/js/servers.js and run against a tiny fake DOM + localStorage. The
@@ -99,18 +101,31 @@ const folderOpen = (fid) => MS.layoutFolders.find((f) => f.id === fid);
 const code = slice(servers, '// ---------- unread channels ----------', 'function renderChannels() {');
 // Built with new Function so the fakes are the ONLY bindings in scope (a bare
 // eval would let this file's own names shadow them — see test-dm-unread.js).
+// `api`/`store`/`paintAppBadge`/`refreshDms`/`refreshNotifBadge` are what the
+// durable half ([10]-[13]) talks to.
 const build = new Function('S', 'localStorage', 'document', 'CSS', 'renderServerList', 'renderChannels', 'folderById', 'serverFolder',
+  'api', 'store', 'paintAppBadge', 'refreshDms', 'refreshNotifBadge',
   code + `
 return { loadChanUnread, saveChanUnread, markChanUnread, clearChanUnread, hasChanUnread, serverHasUnread,
   serverUnreadCount, folderUnreadCount, paintChanUnread, paintServerUnread, paintServerBadge, paintFolderBadge,
   paintFolderUnread, clearActiveChanUnread, clearChanUnreadMatching, markServerRead, markFolderRead,
-  chanUnreadCtx, CHAN_UNREAD_MAX, CHAN_UNREAD_TTL };`);
+  chanUnreadCtx, CHAN_UNREAD_MAX, CHAN_UNREAD_TTL,
+  syncChanUnread, markChannelRead, markServerReadRemote, applyRemoteChanRead, refreshUnreadState };`);
+const apiCalls = [];
+let unreadPayload = { channels: {} }, unreadFails = false, badgePaints = 0, dms = 0, notifs = 0;
+const fakeApi = (p, opts) => {
+  apiCalls.push({ path: p, method: (opts && opts.method) || 'GET' });
+  if (p === '/api/unread') return unreadFails ? Promise.reject(new Error('offline')) : Promise.resolve(unreadPayload);
+  return Promise.resolve({ ok: true });
+};
 const api = build(MS, fakeStorage, fakeDocument, { escape: (s) => String(s).replace(/["\\]/g, '\\$&') },
-  renderServerList, () => { channelPaints++; }, folderById, serverFolder);
+  renderServerList, () => { channelPaints++; }, folderById, serverFolder,
+  fakeApi, { token: 't' }, () => { badgePaints++; }, () => { dms++; return Promise.resolve(); }, () => { notifs++; return Promise.resolve(); });
 const {
   loadChanUnread, markChanUnread, clearChanUnread, hasChanUnread, serverHasUnread, serverUnreadCount,
   folderUnreadCount, paintChanUnread, paintServerUnread, paintServerBadge, paintFolderBadge, clearActiveChanUnread,
   markServerRead, markFolderRead, CHAN_UNREAD_MAX, CHAN_UNREAD_TTL,
+  syncChanUnread, markChannelRead, applyRemoteChanRead, refreshUnreadState,
 } = api;
 railRepaint.fn = () => {
   for (const [k, el] of els) {
@@ -295,10 +310,10 @@ function resetStorage() {
   check(/folderUnreadCount\(f\)[\s\S]{0,240}?mr\.textContent = 'Mark all as read'/.test(rail),
     'and the folder\'s desktop flyout carries the same row');
   check(/markServerRead\(sid\)/.test(actions) && /markFolderRead\(fid\)/.test(actions), 'both go through the shared clearers');
-  check(/clearChanUnread\(S\.serverId, id\);\s*\/\/ it is in front of the reader now/.test(servers), 'selectChannel clears the channel it opens');
+  check(/markChannelRead\(S\.serverId, id, 0\)/.test(servers), 'selectChannel clears the channel it opens AND stamps it read');
   check(/markChanUnread\(m\.serverId, m\.channelId\)/.test(socket) && /const viewing = m\.serverId === S\.serverId && m\.channelId === S\.channelId && !document\.hidden/.test(socket),
     'message-new marks only unviewed channels');
-  check(/if \(m\.serverId !== S\.serverId\) break;/.test(socket.slice(socket.indexOf("case 'message-new'"), socket.indexOf("case 'message-new'") + 900)),
+  check(/if \(m\.serverId !== S\.serverId\) break;/.test(socket.slice(socket.indexOf("case 'message-new'"), socket.indexOf("case 'message-new'") + 1500)),
     'the unread mark runs before the active-server early-out');
   check(/chanUnread: new Map\(\)/.test(core), 'the store lives on S');
   check(/cf_chanunread_/.test(servers) && /loadChanUnread\(\)/.test(auth), 'the store is loaded per account at boot');
@@ -319,6 +334,94 @@ function resetStorage() {
     'and the active server keeps its count (another channel can still be unread)');
   check(/class="unread-dot" aria-hidden="true"/.test(servers), 'the channel dot is decorative (not announced)');
   check(index.includes('id="server-list"'), 'the rail is the surface the badges attach to');
+
+  console.log('\n[10] a cold start paints what the SERVER says is unread');
+  resetStorage();
+  const coldBtn = fakeEl(); els.set('sid:s1', coldBtn);
+  const coldRow = fakeEl(); els.set('cid:c1', coldRow);
+  // Nothing in localStorage (a fresh profile, or a phone that was closed while
+  // the messages arrived) — the only source is /api/unread.
+  loadChanUnread();
+  check(!hasChanUnread('s1', 'c1'), 'the local cache knows nothing');
+  unreadPayload = { channels: { s1: ['c1', 'c2'], s2: ['c9'] } };
+  await syncChanUnread();
+  check(hasChanUnread('s1', 'c1') && hasChanUnread('s1', 'c2') && hasChanUnread('s2', 'c9'),
+    'every channel the server reports unread is marked', [...MS.chanUnread.keys()]);
+  check(serverUnreadCount('s1') === 2, 'so the rail badge carries the right number', coldBtn.dataset.unread);
+  check(coldBtn.classList.has('unread') && coldBtn.dataset.unread === '2', 'painted on the server icon', { d: coldBtn.dataset.unread });
+  check(channelPaints > 0, 'the channel list repainted (renderChannels reads the same store, so the rows get their dots)');
+  check(badgePaints > 0, 'the app-icon badge repainted too');
+
+  console.log('\n[11] the server is the authority');
+  unreadPayload = { channels: { s1: ['c1'] } };
+  await syncChanUnread();
+  check(hasChanUnread('s1', 'c1') && !hasChanUnread('s1', 'c2'),
+    'a channel read on another device stops being unread here');
+  check(!hasChanUnread('s2', 'c9'), 'and a server with nothing unread drops off the rail');
+  // The open conversation is never handed a dot back: its own stamp may still be
+  // in flight, and a dot on the channel you are reading is always wrong.
+  MS.view = 'server'; MS.serverId = 's1'; MS.channelId = 'c1';
+  unreadPayload = { channels: { s1: ['c1'] } };
+  await syncChanUnread();
+  check(!hasChanUnread('s1', 'c1'), 'the channel on screen is dropped from the answer');
+  // Offline / server down: the last paint stands.
+  MS.chanUnread = new Map([['s1:c5', 1]]);
+  unreadFails = true;
+  await syncChanUnread();
+  check(hasChanUnread('s1', 'c5'), 'an unreachable server does not wipe the badges');
+  unreadFails = false;
+
+  console.log('\n[12] reading a channel is a WRITE, and bursts coalesce');
+  resetStorage();
+  MS.view = 'server'; MS.serverId = 's1'; MS.channelId = null;
+  apiCalls.length = 0;
+  MS.chanUnread = new Map([['s1:c7', 1]]);
+  markChannelRead('s1', 'c7', 0);
+  check(!hasChanUnread('s1', 'c7'), 'the dot clears on the spot');
+  await sleep(30);
+  check(apiCalls.some((c) => c.path === '/api/channels/c7/read' && c.method === 'POST'),
+    'and the watermark is stamped server-side (or the next cold start brings it back)', apiCalls);
+  apiCalls.length = 0;
+  for (let i = 0; i < 4; i++) markChannelRead('s1', 'c8', 30);
+  await sleep(90);
+  check(apiCalls.filter((c) => c.path === '/api/channels/c8/read').length === 1,
+    'a burst of messages in the open channel is one write', apiCalls);
+  apiCalls.length = 0;
+  MS.channelId = 'c3';
+  clearActiveChanUnread();
+  await sleep(30);
+  check(apiCalls.some((c) => c.path === '/api/channels/c3/read'), 'returning to the tab stamps the open channel', apiCalls);
+  // Mark all as read goes out as the whole-server route, once.
+  resetStorage();
+  apiCalls.length = 0;
+  MS.chanUnread = new Map([['s1:c1', 1], ['s2:c1', 1]]);
+  markServerRead('s1');
+  await sleep(30);
+  check(apiCalls.filter((c) => c.path === '/api/servers/s1/read' && c.method === 'POST').length === 1,
+    'Mark all as read stamps the whole server in ONE request', apiCalls);
+  MS.layoutFolders = [{ id: 'f1', servers: ['s2', 's3'] }];
+  MS.chanUnread = new Map([['s2:c1', 1], ['s3:c1', 1]]);
+  apiCalls.length = 0;
+  markFolderRead('f1');
+  await sleep(30);
+  check(apiCalls.filter((c) => /^\/api\/servers\/(s2|s3)\/read$/.test(c.path)).length === 2,
+    'a folder stamps each server it holds', apiCalls.map((c) => c.path));
+
+  console.log('\n[13] the push from another device, and the refresh fan-out');
+  MS.layoutFolders = [];
+  MS.chanUnread = new Map([['s1:c1', 1], ['s1:c2', 1]]);
+  apiCalls.length = 0;
+  applyRemoteChanRead('s1', 'c1');
+  check(!hasChanUnread('s1', 'c1') && hasChanUnread('s1', 'c2'), 'chan-read drops exactly that channel');
+  applyRemoteChanRead('s1');
+  check(MS.chanUnread.size === 0, 'without a channelId it means the whole server');
+  await sleep(20);
+  check(apiCalls.length === 0, 'and a push never stamps a read back to the server', apiCalls);
+  let dms0 = dms, notifs0 = notifs;
+  unreadPayload = { channels: { s1: ['c4'] } };
+  await refreshUnreadState();
+  check(hasChanUnread('s1', 'c4'), 'one refresh re-reads the channel badges');
+  check(dms > dms0 && notifs > notifs0, 'and the DMs + the inbox with it (the two other unread surfaces)', { dms, notifs });
 
   console.log('');
   if (failures.length) {

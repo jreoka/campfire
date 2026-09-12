@@ -243,7 +243,11 @@ function clickInPath(e, sels) {
   if (folderFlyoutEl && !e.target.closest('#folder-menu')) closeFolderFlyout();
   // A folder only collapses when its own header (top part) is clicked; never
   // on outside/background clicks or when selecting one of its servers.
-  if (document.body.classList.contains('members-open') && !e.target.closest('#members') && !e.target.closest('#btn-members')) document.body.classList.remove('members-open');
+  // The ⋯ sheet is exempt for the same reason the header is: on a phone it IS
+  // the header (Members lives in it, see ui.js), so a row that toggles the
+  // drawer must not be read as a click "outside" it and close it again in the
+  // same click — which is exactly why the drawer never opened from there.
+  if (document.body.classList.contains('members-open') && !e.target.closest('#members') && !e.target.closest('#btn-members') && !e.target.closest('#sheet')) document.body.classList.remove('members-open');
   if (!e.target.closest('#composer-more') && !e.target.closest('#btn-more') && !e.target.closest('#btn-plus')) $('#composer-more')?.classList.add('hidden');
   if (!e.target.closest('#tagcard') && !e.target.closest('.usertag[data-tag-sid]')) closeTagCard();
 });
@@ -454,8 +458,17 @@ window.addEventListener('beforeunload', () => {
 // Coming back to a tab that was hidden while the open channel collected
 // background messages: that channel is being read again, so drop its dot.
 // (The composer/scroll state is untouched; this is purely the sidebar dot.)
+// A phone that slept through the night has missed every live push, so the
+// durable unread state is re-read here too — this is the "opened the app and
+// nothing looked unread" case. Throttled: the app fires visibilitychange for
+// every app switch, and each pass costs three requests.
+let unreadRefreshAt = 0;
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) { try { clearActiveChanUnread(); } catch {} }
+  if (document.hidden) return;
+  try { clearActiveChanUnread(); } catch {}
+  if (Date.now() - unreadRefreshAt < 10000) return;
+  unreadRefreshAt = Date.now();
+  try { refreshUnreadState(); } catch {}
 });
 
 // ---------- go ----------

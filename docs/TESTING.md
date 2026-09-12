@@ -702,6 +702,29 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   TTL, "Mark all as read" clears exactly the marks a server or a folder owns and
   persists that, opening a channel clears it (and a hidden-tab message on the
   open channel clears when the tab returns), and the row repaints in place.
+  Sections [10]-[13] cover the durable half against a fake `/api/unread`:
+  `syncChanUnread` replaces the marks with the server's answer (a cold start
+  with an empty cache paints the badge, a channel read elsewhere stops being
+  unread, the open conversation is never handed a dot back, an unreachable
+  server leaves the last paint alone), `markChannelRead` clears on the spot and
+  stamps the watermark server-side (a burst in the open chat coalesces into one
+  write, returning to the tab stamps the open channel), "Mark all as read" goes
+  out as ONE whole-server request (a folder stamps each server it holds), and
+  the `chan-read` push drops the mark without ever writing one back.
+  `node scripts/test-chan-unread-durable.js` covers the server side of that
+  (static wiring + the app-icon badge as a pure function, then a real server
+  against a throwaway database; skips without Postgres): `/api/unread` answers
+  the channels of the caller's servers with an unseen message, a fresh
+  membership starts caught up at `joined_at` (never the history),
+  `POST /api/channels/:chId/read` and `POST /api/servers/:id/read` are durable
+  and push `chan-read` to the account's other devices (so reading on the phone
+  clears the desktop), own / system / thread-reply messages never count, both
+  read routes are auth- and membership-guarded (404 for an unknown channel),
+  leaving forgets the read state so a rejoin is caught up again, and the
+  first-boot seed is one-shot: dropping `channel_reads` on a live database and
+  booting marks every existing membership caught up (an upgrade must not light
+  up every channel that ever saw a message) while a message after it is unread
+  and a second boot does not seed again.
   `node scripts/test-rail-unread-badges.js` drives the same badges in a real
   browser (headless Chrome against a throwaway database, desktop viewport,
   skipping without Postgres or Chrome): it marks channels unread on three
@@ -713,7 +736,29 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   anything), the active server keeping its count for another unread channel, and
   both menus end to end: a read server offers no "Mark all as read", an unread
   one offers it as the last row, and the folder's flyout clears every server in
-  it while leaving a server outside it alone.
+  it while leaving a server outside it alone. Section [8] is the owner's bug
+  end to end: a webhook writes into a channel of Delta while the client knows
+  nothing about it, the local cache and the in-memory marks are wiped and the
+  page reloaded — the rail badge and the channel dot come back from the DATABASE
+  (a server with only local-only marks stays clean), the dot is visibly opaque,
+  and opening that channel clears the badge for good (a second reload does not
+  resurrect it).
+  `node scripts/test-message-longpress.js` covers the other half of the same
+  report — "long-pressing the left side of a message highlights the timestamp
+  instead of opening the menu" (headless Chrome at a phone viewport with real
+  touch events; skips without Postgres or Chrome). Offline it pins the
+  stylesheet: the `@media (pointer:coarse)` block opts every part of a message
+  out of native selection (`-webkit-touch-callout:none` + `user-select:none`)
+  for the plain page, `html.standalone` and `html.wrapper-app` (the Tauri
+  Android shell, which is NOT `display-mode: standalone` — the reason the rules
+  never applied there), while leaving the Edit-message textarea selectable; the
+  wrapper is also asserted to inherit the standalone body rules. In the browser
+  it holds a real finger down on the row's LEFT PADDING (no text under it), on
+  the timestamp, on the avatar and on the message body: each hold slides the
+  message sheet up, never the desktop context menu, selects nothing
+  (`window.getSelection()` stays empty), and the sheet carries Copy text so
+  turning selection off costs nothing; a plain tap still does not leave a sheet
+  behind.
   `node scripts/test-touch-hold-hover.js` covers the "one row looks already
   selected" bug when a long-press slides its sheet up under a finger that is
   still down (offline; runs the real `suppressHoverFromTouch`/
@@ -759,7 +804,10 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   is small on purpose — the check is that the visible ones keep their boxes), and
   a fine pointer (desktop) pushes no history entry at all. The members drawer is
   reached the way a thumb reaches it now: the ⋯ sheet's own Members row (the
-  header button itself is hidden on a phone).
+  header button itself is hidden on a phone) — and that row really opens the
+  drawer, because the outside-click closer exempts `#sheet` the same way it
+  exempts the header (without that the row's own click was read as "outside the
+  drawer" and closed it again in the same tick).
   `node scripts/test-dm-unread.js` covers the unread-DM badges under the campfire
   (offline for the client half, then a real server against a throwaway database,
   skipping without Postgres): they used to be a per-tab tally built from live

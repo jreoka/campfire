@@ -324,8 +324,25 @@ helper, so retracting without reading restores it untouched. The live path is
 holds it — a server inside a closed folder has no button of its own. Both menus
 (the server ctx menu / sheet and the folder's desktop flyout / touch sheet)
 carry **Mark all as read** through `markServerRead`/`markFolderRead` gated on
-there being something to clear; those marks are this account's localStorage
-memory, so clearing never talks to the server.
+there being something to clear.
+Channel unread is **server state** too — the twin of DM unread — because as a
+localStorage map fed only by live pushes it left no trace of anything that
+arrived while the app was closed (the owner's "opened the app and nothing looked
+unread"). `channel_reads` holds one `last_read_at` per (account, channel),
+`GET /api/unread` answers which text channels have an unseen message, and
+`POST /api/channels/:chId/read` / `POST /api/servers/:id/read` stamp it and push
+`chan-read` to the account. `markChannelRead` (servers.js) is the only writer —
+opening a channel, a message landing in the open one, a foregrounded tab —
+`syncChanUnread` replaces `S.chanUnread` with the server's answer at boot, and
+`refreshUnreadState()` re-reads channels + DMs + inbox on a foregrounded tab and
+on a socket RECONNECT, the two moments pushes were missed. Rules: someone else's
+message (any `user_id` not mine), never a system line, never a thread reply; no
+row falls back to `joined_at`, and leaving a server forgets the watermark. The
+first boot with the table seeds every membership caught up (`tableExists`,
+one-shot) or an upgrade would light up all history. `paintAppBadge()`
+(security.js) is the app ICON — unread DMs + channels + inbox through
+`navigator.setAppBadge`/`clearAppBadge` (installed PWA, dock badges in
+Chrome/Edge) and Tauri `set_unread_count` (desktop tray/taskbar/dock).
 Detail per change lives in `git log` — don't duplicate it here.
 
 ## Deployment (owner directive)
@@ -531,7 +548,9 @@ person's card — as the full-height bottom sheet (`userCardAsSheet` via
 drawer, being a right-hand panel rather than a full-screen page, leaves by a
 right-swipe (`swipeRightToClose`) or by a tap outside it — and that tap is
 swallowed in the capture phase, so it can no longer reach the message or control
-underneath (the header stays exempt, since the members button is how it toggles).
+underneath (the header stays exempt, and so does the ⋯ `#sheet`: on a phone that
+sheet IS the header — its Members row is how the drawer opens, and reading that
+click as "outside" closed the drawer again in the same tick).
 
 **The native shell (`public/js/native.js`) is the phone's navigation contract.**
 On a touch device the first touch arms one sentinel history entry

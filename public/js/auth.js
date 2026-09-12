@@ -378,6 +378,10 @@ async function boot() {
   // Prefetch DMs + friends so the home button badge (unread DMs, incoming
   // requests) is live even before Home is opened this session.
   refreshDms().catch(() => {});
+  // The channel rail badges are server state now: the localStorage cache painted
+  // instantly (loadChanUnread above) and this corrects it, so a boot after
+  // messages arrived while the app was closed shows them on the rail.
+  syncChanUnread();
   ensureFriends().catch(() => {});
   // Stories ride alongside friends: fetched once at boot so the Home rail
   // and each server's sidebar row are warm before they're opened.

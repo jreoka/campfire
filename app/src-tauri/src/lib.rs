@@ -324,10 +324,11 @@ fn update_tray<R: Runtime>(app: &AppHandle<R>, game: Option<&str>) {
 }
 
 // ---------- unread notification badge ----------
-// The web app owns the unread count (`paintNotifBadge`) and pushes it here
-// through `set_unread_count`. Unread shows as a red dot in the tray icon's
-// bottom-right corner on every desktop platform, the same dot as the Windows
-// taskbar overlay icon, and the dock badge on macOS.
+// The web app owns the count (`paintAppBadge`) and pushes it here through
+// `set_unread_count`: unread DMs + unread channels + the notification inbox,
+// i.e. everything waiting for the reader. Unread shows as a red dot in the tray
+// icon's bottom-right corner on every desktop platform, the same dot as the
+// Windows taskbar overlay icon, and the dock badge on macOS (the count itself).
 #[cfg(desktop)]
 const BADGE_RED: [u8; 3] = [248, 113, 113]; // --red from the app's dark theme
 // Ring punched around the dot so it stays legible over the logo (or a light

@@ -1085,6 +1085,84 @@ app.get('/api/servers/:id/preview', authRequired, async (req, res) => {
   res.json({ server: { id: s.id, name: s.name, description: s.description || '', icon_url: s.icon_url || null, banner_url: s.banner_url || null, tag: s.tag || null, tag_emoji: s.tag_emoji || null } });
 });
 
+// ---------- unread channels ----------
+// The channel twin of dmUnreadCounts: which of this account's text channels
+// have a message it has not seen. Durable (channel_reads.last_read_at) rather
+// than a per-tab tally, so a phone opened after the app was closed overnight —
+// or a socket that dropped and reconnected — repaints reality instead of only
+// the live pushes that happened to arrive while a socket was up.
+//
+// The rules mirror what the live push used to do client-side: someone else's
+// message (a webhook or a message left behind by a deleted account counts, its
+// author id is just not mine), never a system line, never a thread reply (those
+// have their own surface). A row that has never been written falls back to
+// joined_at — the same "being added doesn't light up history" rule as DMs.
+async function channelUnreadFor(userId) {
+  const out = new Map(); // serverId -> [channelId]
+  let rows = [];
+  try {
+    rows = await db.prepare(`
+      SELECT c.server_id AS sid, c.id AS cid
+        FROM channels c
+        JOIN server_members sm ON sm.server_id = c.server_id AND sm.user_id = ?
+        LEFT JOIN channel_reads r ON r.channel_id = c.id AND r.user_id = ?
+       WHERE c.type = 'text'
+         AND EXISTS (
+           SELECT 1 FROM messages m
+            WHERE m.channel_id = c.id
+              AND (m.user_id IS NULL OR m.user_id <> ?)
+              AND COALESCE(m.sys, '') = ''
+              AND (m.thread_root_id IS NULL OR m.thread_root_id = '')
+              AND m.created_at > COALESCE(r.last_read_at, sm.joined_at)
+         )`).all(userId, userId, userId);
+  } catch { return out; }
+  for (const r of rows) {
+    if (!out.has(r.sid)) out.set(r.sid, []);
+    out.get(r.sid).push(r.cid);
+  }
+  return out;
+}
+// Leaving (or being kicked/banned from) a server forgets what you had read
+// there, so a rejoin is a fresh membership: it starts caught up at the new
+// joined_at instead of surfacing everything that happened while you were gone.
+// Runs next to every place a server_members row is deleted.
+async function forgetChannelReads(serverId, userId) {
+  if (!serverId || !userId) return;
+  try {
+    await db.prepare('DELETE FROM channel_reads WHERE user_id = ? AND channel_id IN (SELECT id FROM channels WHERE server_id = ?)')
+      .run(userId, serverId);
+  } catch {}
+}
+app.get('/api/unread', authRequired, async (req, res) => {
+  const m = await channelUnreadFor(req.user.id);
+  res.json({ channels: Object.fromEntries(m) });
+});
+// Stamp one channel read (opening it, or a message landing in the one already
+// open). Idempotent, and the push is what clears the badge on this account's
+// other devices — one memory, not one per tab (see dm-read above).
+app.post('/api/channels/:chId/read', authRequired, async (req, res) => {
+  const ch = await db.prepare('SELECT id, server_id FROM channels WHERE id = ?').get(req.params.chId);
+  if (!ch) return res.status(404).json({ error: 'no_channel' });
+  if (!(await isMember(ch.server_id, req.user.id))) return res.status(403).json({ error: 'not_member' });
+  await db.prepare(`INSERT INTO channel_reads (user_id, channel_id, last_read_at) VALUES (?,?,?)
+    ON CONFLICT (user_id, channel_id) DO UPDATE SET last_read_at = EXCLUDED.last_read_at`)
+    .run(req.user.id, ch.id, now());
+  notifyUser(req.user.id, { t: 'chan-read', serverId: ch.server_id, channelId: ch.id });
+  res.json({ ok: true });
+});
+// A whole server in one go (the "Mark all as read" menu row; a folder is the
+// client calling this once per server it holds).
+app.post('/api/servers/:id/read', authRequired, async (req, res) => {
+  const { id } = req.params;
+  if (!(await isMember(id, req.user.id))) return res.status(403).json({ error: 'not_member' });
+  await db.prepare(`INSERT INTO channel_reads (user_id, channel_id, last_read_at)
+    SELECT ?, c.id, ? FROM channels c WHERE c.server_id = ?
+    ON CONFLICT (user_id, channel_id) DO UPDATE SET last_read_at = EXCLUDED.last_read_at`)
+    .run(req.user.id, now(), id);
+  notifyUser(req.user.id, { t: 'chan-read', serverId: id });
+  res.json({ ok: true });
+});
+
 app.post('/api/servers/:id/channels', authRequired, async (req, res) => {
   const { id } = req.params;
   if (!(await isMember(id, req.user.id))) return res.status(403).json({ error: 'not_member' });
@@ -1398,6 +1476,7 @@ app.post('/api/servers/:id/leave', authRequired, async (req, res) => {
   if (!s) return res.status(404).json({ error: 'no_server' });
   if (s.owner_id === req.user.id) return res.status(400).json({ error: 'owner_cannot_leave_delete_instead' });
   await db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(s.id, req.user.id);
+  await forgetChannelReads(s.id, req.user.id);
   await clearTagSelection(req.user.id, s.id);
   try { const fu = await freshUser(req.user.id); await broadcastUserUpdate(fu); notifyUser(req.user.id, { t: 'user-updated', user: fu }); } catch {}
   await postServerSys(s.id, `${displayOf(req.user)} left the server`);
@@ -1557,6 +1636,7 @@ app.post('/api/servers/:id/members/:uid/kick', authRequired, async (req, res) =>
   if (!(await isMember(s.id, target))) return res.status(404).json({ error: 'not_member' });
   const u = publicUser(await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(target));
   await db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(s.id, target);
+  await forgetChannelReads(s.id, target);
   await clearTagSelection(target, s.id);
   try { const fu = await freshUser(target); await broadcastUserUpdate(fu); notifyUser(target, { t: 'user-updated', user: fu }); } catch {}
   await postServerSys(s.id, `${displayOf(u)} was kicked`);
@@ -1580,6 +1660,7 @@ app.post('/api/servers/:id/members/:uid/ban', authRequired, async (req, res) => 
     await db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(s.id, target);
     await db.prepare('INSERT INTO server_bans (server_id,user_id,reason,created_at) VALUES (?,?,?,?) ON CONFLICT DO NOTHING').run(s.id, target, reason, now());
   }));
+  await forgetChannelReads(s.id, target);
   await clearTagSelection(target, s.id);
   try { const fu = await freshUser(target); await broadcastUserUpdate(fu); notifyUser(target, { t: 'user-updated', user: fu }); } catch {}
   await postServerSys(s.id, `${displayOf(u)} was banned`);
@@ -3785,6 +3866,7 @@ app.post('/api/admin/reports/:id/resolve', authRequired, requireSiteAdmin, async
         await db.prepare('INSERT INTO server_bans (server_id,user_id,reason,created_at) VALUES (?,?,?,?) ON CONFLICT DO NOTHING').run(s.id, r.author_id, note || 'Reported by a member', now());
       });
       await clearTagSelection(r.author_id, s.id);
+      await forgetChannelReads(s.id, r.author_id);
       try { const fu = await freshUser(r.author_id); await broadcastUserUpdate(fu); notifyUser(r.author_id, { t: 'user-updated', user: fu }); } catch {}
       await postServerSys(s.id, `${displayOf(author)} was banned`);
       broadcastToServer(s.id, { t: 'member-left', serverId: s.id, userId: r.author_id });
@@ -4077,6 +4159,7 @@ app.delete('/api/admin/servers/:id/members/:uid', authRequired, requireSiteAdmin
   const targetUser = await db.prepare('SELECT id, username FROM users WHERE id = ?').get(target);
   if (blockedByOwnerLock(req, res, targetUser)) return;
   await db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(s.id, target);
+  await forgetChannelReads(s.id, target);
   broadcastToServer(s.id, { t: 'member-left', serverId: s.id, userId: target });
   evictFromServer(s.id, target);
   notifyUser(target, { t: 'removed-from-server', serverId: s.id, reason: 'kicked' });

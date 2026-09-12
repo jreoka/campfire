@@ -147,6 +147,7 @@ const S = {
   dmThreadId: null, dmMessages: new Map(), // threadId -> [msgs]
   dmUnread: new Map(), // threadId -> unread DM count (drives DM row + home button badges)
   chanUnread: new Map(), // "serverId:channelId" -> 1 while the channel has unread messages (drives channel dots)
+  notifUnread: 0, // unread notification-inbox count (mentions, friend requests) — feeds the app-icon badge
   voiceOccupancy: new Map(), // channelId -> [peers]
   voiceSince: new Map(), // channelId -> epoch ms first seen occupied (drives room timers)
   friendsVoice: new Map(), // userId -> {kind,serverId,channelId,threadId,joinable,…} (Active Now IN VOICE)
