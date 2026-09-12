@@ -24,6 +24,7 @@ on:
       - 'storage-sweep.js'
       - 'storage.js'
       - 'backup.js'
+      - 'r2.js'
       - 'public/**'
       - 'scripts/gen-icons.js'
       - 'scripts/png-util.js'

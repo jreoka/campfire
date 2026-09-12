@@ -19,6 +19,41 @@ kind: Namespace
 metadata:
   name: campfire
 ---
+# The app's own ServiceAccount. It exists so the off-site backup can include the
+# cluster's Secrets: a restore that has the database and the media but not
+# JWT_SECRET logs everyone out, and without the tunnel token there is no way back
+# in from outside. The Role is namespace-scoped and read-only -- the pod can
+# read Secrets, never write them, and only in its own namespace.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: campfire
+  namespace: campfire
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: campfire-secret-reader
+  namespace: campfire
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: campfire-secret-reader
+  namespace: campfire
+subjects:
+  - kind: ServiceAccount
+    name: campfire
+    namespace: campfire
+roleRef:
+  kind: Role
+  name: campfire-secret-reader
+  apiGroup: rbac.authorization.k8s.io
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -150,6 +185,9 @@ spec:
       # GHCR packages created by Actions are private by default.
       imagePullSecrets:
         - name: campfire-registry
+      # Carries the secret-reader Role that lets the backup include the
+      # namespace's Secrets. See the ServiceAccount above.
+      serviceAccountName: campfire
       containers:
         - name: campfire
           # Built and published by .github/workflows/container.yml to GHCR.
@@ -198,11 +236,13 @@ spec:
               value: /data/uploads
             - name: STUN_URL
               value: stun:stun.l.google.com:19302
-            # Retain only the 3 newest pg_dump snapshots in the bucket's
-            # backups/ prefix (the code default is 10). Pruning happens on each
-            # backup run: it lists backups/, then deletes all but the newest KEEP.
-            - name: BACKUP_KEEP
-              value: "3"
+            # Off-site backups: 12-hourly snapshots of the database, the whole
+            # media bucket and the cluster's Secrets, written to a Cloudflare R2
+            # bucket -- a different vendor from the store the app serves from, so
+            # a Civo account or bucket problem cannot take out the backups too.
+            # Nothing is written to the media bucket's backups/ prefix any more.
+            - name: R2_BACKUP_KEEP
+              value: "2"            # "a couple": 2 snapshots at a 12h cadence
             - name: DRAIN_WAIT_MS
               value: "5000"
             - name: JWT_SECRET
@@ -233,6 +273,20 @@ spec:
               valueFrom: { secretKeyRef: { name: campfire-s3, key: S3_ACCESS_KEY } }
             - name: S3_SECRET_KEY
               valueFrom: { secretKeyRef: { name: campfire-s3, key: S3_SECRET_KEY } }
+            # ---- off-site backup destination (Cloudflare R2) ----------------
+            # R2_*, not S3_*: these are the BACKUP bucket's credentials. They are
+            # deliberately separate from the media store's so the two can never be
+            # confused, and so a wrong backup config cannot break media serving.
+            - name: R2_ENDPOINT
+              valueFrom: { secretKeyRef: { name: campfire-r2, key: R2_ENDPOINT } }
+            - name: R2_BUCKET
+              valueFrom: { secretKeyRef: { name: campfire-r2, key: R2_BUCKET } }
+            - name: R2_REGION
+              valueFrom: { secretKeyRef: { name: campfire-r2, key: R2_REGION } }
+            - name: R2_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: campfire-r2, key: R2_ACCESS_KEY } }
+            - name: R2_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: campfire-r2, key: R2_SECRET_KEY } }
           startupProbe:
             httpGet: { path: /healthz, port: 3000 }
             failureThreshold: 30
