@@ -302,9 +302,6 @@ function spCard(t) {
   b.title = t.unseen > 0 ? `Watch ${name} — ${t.unseen} new` : `Watch ${name}'s story again`;
   const media = storyThumbEl(storyThumbItem(t.items), 'sp-card-media');
   if (media) b.appendChild(media);
-  const scrim = document.createElement('span');
-  scrim.className = 'sp-card-scrim';
-  b.appendChild(scrim);
   const ago = document.createElement('span');
   ago.className = 'sp-card-ago';
   ago.textContent = storyAgo(t.latest || ((t.items[t.items.length - 1] || {}).created_at) || Date.now());
@@ -372,9 +369,6 @@ function spHero(mineItems) {
   if (latest) {
     const media = storyThumbEl(latest, 'sp-hero-media');
     if (media) hero.appendChild(media);
-    const scrim = document.createElement('span');
-    scrim.className = 'sp-hero-scrim';
-    hero.appendChild(scrim);
   }
   const inn = document.createElement('div');
   inn.className = 'sp-hero-in';

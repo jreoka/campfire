@@ -182,6 +182,19 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   and in the real app clicking the sidebar row switches the panel, the highlight
   and the header together, with no uncaught page errors. Writes
   campfire-story-center{,-phone,-app,-app-phone}.png to the temp dir.
+  `node scripts/test-story-scrim-corner.js` covers the story center's scrim
+  corners (static checks always; the pixel half runs the REAL `spHero`/`spCard`
+  out of `stories.js` against the REAL stylesheet in headless Chrome at 8x, and
+  skips without Chrome): the scrim is a mask on the picture over the hero's own
+  dark surface — never a second element painted over it, whose independently
+  antialiased rounded clip left a hairline of the photo along the curve, loudest
+  on the dark left/bottom corners. It renders a pure-white test photo and
+  asserts no pixel inside the picture's rounded shape is brighter than the flat
+  ramp at its own coordinate (or the hairline, whichever is brighter there) —
+  the stacked version measures +42/+47, the masked one under +8 — plus that the
+  ramp still runs the right way (white reads near-black at the dark end, bright
+  at the light end). Re-run after touching the hero/card media, their scrims,
+  their radii or `.sp-hero`'s background.
   `node scripts/test-story-audience.js` covers the removal of the instance-wide
   story audience (offline for the server half — it runs the real
   `normStoryAudiences` out of `server.js` — then the real `renderStoryAudience`
