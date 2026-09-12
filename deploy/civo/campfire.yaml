@@ -4,12 +4,13 @@
 # Sized for ONE Civo Small node: ~1336 MiB allocatable after Civo's reservations
 # (kube-reserved 512 + system-reserved 100 + eviction-hard 100 of 2 GiB).
 # Budget, with AV scanning off so there is no clamd (compression IS on, and it
-# runs in-process: one niced single-threaded ffmpeg at a time):
+# runs in-process: up to MEDIA_COMPRESS_CONCURRENCY niced single-threaded
+# ffmpeg at a time, 4 here):
 #   k3s system pods (Traefik/CoreDNS/metrics-server/ServiceLB/CSI)  ~300 MiB
 #   postgres                                                        ~150-250
-#   campfire                                                        ~150-250
+#   campfire                                                        ~150-350
 #   cloudflared + coturn                                            ~50
-#   -> ~650-850 MiB of 1336, roughly 500 MiB of headroom.
+#   -> ~650-950 MiB of 1336, roughly 400 MiB of headroom.
 # REQUESTS are what get scheduled; LIMITS are only reached under load, so the
 # limits below deliberately sum above the allocatable figure.
 #
@@ -237,11 +238,25 @@ spec:
             # (media_compress_keys) stops it re-encoding what it already did.
             - name: MEDIA_SWEEP_EVERY_MS
               value: "3600000"
-            # One slot: S3 mode buffers each download in RAM (up to MAX_FILE_MB)
-            # and compressions are serialized process-wide anyway, so parallel
-            # slots would only hold more copies of a file on a 640Mi limit.
+            # Up to 4 compressions at once, 8 rows fed per tick: a burst of
+            # uploads (or a backlog draining after the size floor was removed)
+            # no longer waits one file per 2s breather. The compress semaphore is
+            # process-wide, so this is 4 for the whole pod however the work
+            # arrived. MEDIA_COMPRESS_SLOT_MB makes each encode past the first
+            # find 192Mi free in the cgroup before it starts — the pod's limit is
+            # reached by a burst of large VIDEOS, and the kernel would otherwise
+            # OOM-kill something (not necessarily ffmpeg). Measured baseline is
+            # ~55Mi idle / ~100Mi peak, so images never touch the guard.
+            - name: MEDIA_COMPRESS_CONCURRENCY
+              value: "4"
+            - name: MEDIA_COMPRESS_BATCH
+              value: "8"
+            - name: MEDIA_COMPRESS_SLOT_MB
+              value: "192"
+            # S3 mode buffers each download in RAM (up to MAX_FILE_MB), so this
+            # is how many uploads the slot may have in flight at once.
             - name: VIRUS_SCAN_CONCURRENCY
-              value: "1"
+              value: "4"
             - name: MAX_FILE_MB
               value: "50"           # S3 mode buffers uploads in RAM per upload
             # S3 mode ignores this, but without it a deployment whose S3_* is
@@ -320,7 +335,11 @@ spec:
             timeoutSeconds: 3
           resources:
             requests: { memory: "192Mi", cpu: "100m" }
-            limits:   { memory: "640Mi", cpu: "1000m" }
+            # 896Mi, not 640Mi: four concurrent encodes have to fit (the
+            # MEDIA_COMPRESS_SLOT_MB guard keeps ~192Mi free per extra one, so 4
+            # encodes + a ~55Mi node process need ~830Mi). Requests are
+            # unchanged, so this changes nothing about scheduling.
+            limits:   { memory: "896Mi", cpu: "1000m" }
       volumes:
         - name: data
           emptyDir: {}

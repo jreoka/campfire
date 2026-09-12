@@ -400,7 +400,10 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   is gated (423) until the slot publishes it and then raises ONE transition with
   no clamd contacted, a non-media upload (a zip/text file) is served the instant
   it lands while a tiny image is gated like any other and still published after
-  the encoder declines to rewrite it (`no_saving`),
+  the encoder declines to rewrite it (`no_saving`), and **concurrency** really
+  is parallel: four rows are planted at once and the worker's own high-water
+  mark (`worker.peak`, reported by `/api/admin/media`) has to show more than one
+  encode in flight and never more than `MEDIA_COMPRESS_CONCURRENCY`,
   and a sweeper-compressed file that clients could already fetch lands on a NEW
   key with the old object left intact (never rewritten in place, nothing
   referencing it, so the orphan sweep reaps it). Then the coverage the flags
@@ -428,8 +431,11 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   byte-level half: against real files it generates, `resolvePlan` keeps a PNG a
   PNG, sends an opaque BMP/TIFF/AVIF/JXL to JPEG, and leaves a multi-frame APNG
   and animated WebP alone (a still re-encode would flatten them), with each
-  resolved pipeline actually run on those bytes. Skips without ffmpeg/ffprobe.
-  Re-run it after touching `planFor`/`resolvePlan`/`MIN_BYTES` in
+  resolved pipeline actually run on those bytes. It also checks the **knobs**
+  in a child process (they are read at require time): concurrency defaults to 1
+  and batch to 1, a configured pair is reported back, and both are clamped
+  (4 encodes / 16 rows) and floored at one. Skips without ffmpeg/ffprobe.
+  Re-run it after touching `planFor`/`resolvePlan`/`MIN_BYTES`/the env knobs in
   `media-compress.js`.
   `node scripts/test-viewonce-pick.js` covers "Send a view-once" arriving with
   the DM you clicked it in already picked (offline for the two real helpers —

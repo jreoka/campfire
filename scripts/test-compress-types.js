@@ -150,6 +150,26 @@ async function main() {
 
     const direct = media.planFor('image/jpeg', 'files/a.jpg');
     check('a plan that is not deferred passes through untouched', (await media.resolvePlan(direct, f('opaque.png'))) === direct);
+
+    // The knobs are read at require time, so ask a child process what a given
+    // environment produces. Concurrency 1 is the low-CPU promise (and the
+    // default); the ceiling exists because every extra encode holds its own
+    // decoder buffers on a box that is also serving the app.
+    console.log('\n-- knobs: how many files at once, and how wide a batch --');
+    const knob = (env) => {
+      const r = spawnSync(process.execPath, ['-e',
+        "const m=require('./media-compress');const s=m.getMediaStats();process.stdout.write(JSON.stringify({c:s.concurrency,b:s.batch,k:s.minKb}))"],
+      { cwd: path.join(__dirname, '..'), env: { ...process.env, ...env }, encoding: 'utf8' });
+      try { return JSON.parse(r.stdout); } catch { return null; }
+    };
+    const dflt = knob({ MEDIA_COMPRESS_CONCURRENCY: '', MEDIA_COMPRESS_BATCH: '', MEDIA_COMPRESS_MIN_KB: '' });
+    check('defaults: 1 encode at once, 1 file per tick, no size floor', !!dflt && dflt.c === 1 && dflt.b === 1 && dflt.k === 0, JSON.stringify(dflt));
+    const two = knob({ MEDIA_COMPRESS_CONCURRENCY: '2', MEDIA_COMPRESS_BATCH: '4' });
+    check('a configured pair is what the worker reports', !!two && two.c === 2 && two.b === 4, JSON.stringify(two));
+    const hi = knob({ MEDIA_COMPRESS_CONCURRENCY: '99', MEDIA_COMPRESS_BATCH: '99' });
+    check('...and both are clamped (4 encodes, 16 per tick)', !!hi && hi.c === 4 && hi.b === 16, JSON.stringify(hi));
+    const lo = knob({ MEDIA_COMPRESS_CONCURRENCY: '0', MEDIA_COMPRESS_BATCH: '-3' });
+    check('...and cannot go below one', !!lo && lo.c === 1 && lo.b === 1, JSON.stringify(lo));
   } finally {
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
   }

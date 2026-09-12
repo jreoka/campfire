@@ -458,6 +458,8 @@ async function main() {
     // zeroed, because a test plants its fixtures now and expects them adopted.
     child = startServer({
       VIRUS_SCAN: '0',
+      VIRUS_SCAN_CONCURRENCY: '4',
+      MEDIA_COMPRESS_CONCURRENCY: '4', MEDIA_COMPRESS_BATCH: '8',
       MEDIA_SWEEP_FIRST_MS: '900000', MEDIA_SWEEP_EVERY_MS: '900000', MEDIA_SWEEP_MIN_AGE_MS: '0',
     });
     if (!(await waitForHttp('/api/config', 30000))) return fail('server did not come back up without a scanner');
@@ -518,6 +520,33 @@ async function main() {
     const txtUp = await uploadFile(media.txt, 'notes.txt', 'text/plain', token);
     check('a non-media file is NOT gated', txtUp.scan === 'clean', 'scan=' + txtUp.scan);
     check('...and is servable immediately', (await fetch(`http://127.0.0.1:${PORT}${txtUp.url}`)).status === 200);
+
+    // How many files at once: MEDIA_COMPRESS_CONCURRENCY, process-wide, over
+    // every path. Four rows land together, so one queue tick feeds all four and
+    // the worker's own high-water mark says whether they really overlapped.
+    console.log('\n-- concurrency: a burst is encoded in parallel, up to the limit --');
+    const burstMsg = 'msg-' + crypto.randomBytes(8).toString('hex');
+    await db.query('INSERT INTO messages (id,server_id,channel_id,user_id,content,created_at) VALUES ($1,$2,$3,$4,$5,$6)',
+      [burstMsg, srv.server.id, channelId, reg.user.id, 'burst', Date.now()]);
+    const burstKeys = [];
+    for (let i = 0; i < 4; i++) {
+      const k = 'files/' + crypto.randomBytes(16).toString('hex') + '.jpg';
+      fs.copyFileSync(media.jpg, path.join(uploads, k));
+      burstKeys.push(k);
+      await db.query("INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,compressed,created_at) VALUES ($1,$2,$3,'burst.jpg','image/jpeg',$4,'image',0,$5)",
+        ['att-' + crypto.randomBytes(8).toString('hex'), burstMsg, '/uploads/' + k, fs.statSync(path.join(uploads, k)).size, Date.now() + i]);
+    }
+    const bursted = await waitForAsync(async () => {
+      const r = await db.query('SELECT COUNT(*) c FROM attachments WHERE message_id = $1 AND compressed = 1', [burstMsg]);
+      return Number(r.rows[0].c) === 4 ? true : null;
+    }, 60000);
+    check('all four settled', bursted === true, 'the burst never drained');
+    await db.query('UPDATE users SET is_admin = 1 WHERE id = $1', [reg.user.id]);
+    const workerNow = (await api('GET', '/api/admin/media', undefined, token)).worker || {};
+    await db.query('UPDATE users SET is_admin = 0 WHERE id = $1', [reg.user.id]);
+    check('the worker reports the configured concurrency', Number(workerNow.concurrency) === 4, 'concurrency=' + workerNow.concurrency);
+    check('...and a burst really did encode more than one file at once', Number(workerNow.peak) >= 2, 'peak=' + workerNow.peak);
+    check('...never more than the limit', Number(workerNow.peak) <= 4, 'peak=' + workerNow.peak);
 
     console.log('\n-- sweeper: an already-visible file is republished on a NEW key --');
     // Bytes + a clean verdict + compressed = 0: exactly the state of a file

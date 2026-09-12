@@ -222,8 +222,10 @@ it landing. A per-key ledger (`media_compress_keys`) is what keeps any of that
 from being re-encoded twice. It attempts **any size, any type the image's
 ffmpeg can decode** (no floor; `MEDIA_COMPRESS_MIN_KB` restores one).
 `MAX_FILE_MB=50`, because S3 mode buffers every
-upload in RAM, and `VIRUS_SCAN_CONCURRENCY=1` keeps one download + one ffmpeg in
-flight on a box this small. To get scanning back, run one clamd anywhere and set
+upload in RAM, and `VIRUS_SCAN_CONCURRENCY=4` + `MEDIA_COMPRESS_CONCURRENCY=4`
+let a burst of uploads compress in parallel (one niced single-threaded ffmpeg
+each, memory-guarded against the pod's limit) instead of one file per 2s
+breather. To get scanning back, run one clamd anywhere and set
 `CLAM_HOST` — that is config, not code.
 
 **Uploads live in the Civo object store** (`objectstore.nyc1.civo.com`, bucket
@@ -804,11 +806,28 @@ are load-bearing:
   existing `compressed = 1` rows so the first pass after an upgrade does not
   re-encode the whole chat history. A transient failure is deliberately NOT
   recorded, so a later pass can retry the object.
-- **One ffmpeg at a time, process-wide.** The sweeper and the scan pipeline
-  share `withCompressLock`/the `inflight` key set; the sweeper skips keys with a
-  pass in flight and `virus-scan`'s `reapStuckClaims` leaves a claim alone while
-  `media-compress.isCompressing(key)` is true (a slot parked in a long encode is
-  not a stuck slot).
+- **`MEDIA_COMPRESS_CONCURRENCY` encodes at a time, process-wide (default 1).**
+  The sweeper, the scan pipeline and the bucket scan all share
+  `withCompressLock` (a semaphore, once a plain mutex) and the `inflight` key
+  set; the cluster runs 4. Nothing else may spin up an encode of its own —
+  adding a path that does would break the one accounting that the memory guard
+  and the CPU promise both rest on. `MEDIA_COMPRESS_SLOT_MB` (default 192) makes
+  every encode past the first wait until the cgroup actually has that much free,
+  because the failure mode of a burst of large videos is the kernel OOM-killing
+  the biggest process in the pod — which is not always ffmpeg. The guard reads
+  `/sys/fs/cgroup/memory.{max,current}`, is disabled when there is no cgroup to
+  read, and never blocks the *first* encode (a queue that will not start cannot
+  drain). `MEDIA_COMPRESS_BATCH` (default 1, max 16) is how many rows one tick
+  feeds in parallel; it is not the limit — the semaphore is.
+- **The queue's tick fans out (`Promise.all`), so a row must be safe to run
+  next to another one.** Per-key work is claimed by `inflight` + the DB
+  `withKeyLock`, and each job writes its own temp files, so two rows never touch
+  the same bytes; a row that throws is caught per row, not per tick.
+- **One ffmpeg per file, `-threads 1`, nice 19.** The trick: parallel work
+  across files (concurrency), never inside one encode — the box has 1 vCPU, so
+  thread count is what keeps the app responsive. `virus-scan`'s
+  `reapStuckClaims` leaves a claim alone while `media-compress.isCompressing(key)`
+  is true (a slot parked in a long encode is not a stuck slot).
 - Scan keys are the storage key (`files/<hex>.png`), derived from the URL — NOT
   the `attachments.id` uid. They are not interchangeable.
 - The virus serving gate only covers `files/` (chat attachments); profile media

@@ -10,11 +10,11 @@
 //   (MEDIA_COMPRESS_EVERY_MS, default 30s) once the queue drains. New
 //   uploads also wake it via kickMediaCompress, so files typically compress
 //   within seconds instead of waiting for the next idle poll.
-// - Low CPU by construction: ONE file at a time (process-wide lock across the
-//   sweeper and the scan pipeline), `nice -n 19`
-//   on POSIX, ffmpeg `-threads 1`, small per-tick batch, short breather
-//   between hot ticks, and a load-average check that defers ticks when
-//   the box is busy.
+// - Low CPU by construction: at most MEDIA_COMPRESS_CONCURRENCY files at a
+//   time (process-wide lock across the sweeper and the scan pipeline; default
+//   1), `nice -n 19` on POSIX, ffmpeg `-threads 1` per file, small per-tick
+//   batch, short breather between hot ticks, and a load-average check that
+//   defers ticks when the box is busy.
 // - Visually transparent settings only (see PIPELINES): quality levels where
 //   artifacts are essentially invisible in chat embeds, plus downscale caps
 //   (2048px stills / 1280px GIFs / 1080p video) that only bite oversized
@@ -57,7 +57,11 @@
 //                             (idle poll; default 30000, min 5000)
 //   MEDIA_COMPRESS_ACTIVE_MS  ms between ticks while files remain queued
 //                             (default 2000, min 250)
-//   MEDIA_COMPRESS_BATCH      files compressed per tick (default 1, max 5)
+//   MEDIA_COMPRESS_BATCH      files fed to one tick (default 1, max 16)
+//   MEDIA_COMPRESS_CONCURRENCY  encodes running at once, process-wide
+//                             (default 1 = the low-CPU promise, max 4)
+//   MEDIA_COMPRESS_SLOT_MB    free memory each extra encode must find before it
+//                             starts (default 192; 0 disables the guard)
 //   MEDIA_COMPRESS_MIN_KB     flat size floor in KB — media below it is never
 //                             attempted (default 0 = no floor at all)
 'use strict';
@@ -81,7 +85,19 @@ const EVERY_MS = Math.max(5000, parseInt(process.env.MEDIA_COMPRESS_EVERY_MS || 
 const ACTIVE_MS = Math.max(250, parseInt(process.env.MEDIA_COMPRESS_ACTIVE_MS || '2000', 10) || 2000);
 const DEFER_MS = Math.max(ACTIVE_MS, 5000); // retry delay when the box is hot
 const KICK_MS = 500; // wake-up delay after a new upload lands
-const BATCH = Math.min(5, Math.max(1, parseInt(process.env.MEDIA_COMPRESS_BATCH || '1', 10) || 1));
+const BATCH = Math.min(16, Math.max(1, parseInt(process.env.MEDIA_COMPRESS_BATCH || '1', 10) || 1));
+// How many files may be ENCODED at once, process-wide. 1 is the original
+// single-ffmpeg promise — the safest setting on a small box, and the default.
+// More drains a burst in parallel, at a cost in CPU and RAM: every encode holds
+// its own decoder buffers while the same box serves the app, so the useful
+// range is small. 4 is the ceiling.
+const CONCURRENCY = Math.min(4, Math.max(1, parseInt(process.env.MEDIA_COMPRESS_CONCURRENCY || '1', 10) || 1));
+// Memory each encode beyond the first has to find free before it starts (MB).
+// The cgroup limit is where the kernel kills something — and it picks the
+// biggest process, which is not always ffmpeg — so a burst of large videos
+// drops to fewer concurrent encodes instead of taking the app down. The first
+// encode is never held back (a queue that will not start cannot drain).
+const SLOT_MB = Math.max(32, parseInt(process.env.MEDIA_COMPRESS_SLOT_MB || '192', 10) || 192);
 const JOB_TIMEOUT_MS = 15 * 60 * 1000; // pathological inputs can't wedge the queue
 const MIN_SAVING = 0.08; // replace only when the output is >=8% smaller
 
@@ -604,14 +620,58 @@ const MIME_BY_OUT = { '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image
 
 // ---------- job ----------
 
-// One ffmpeg at a time, process-wide: this sweeper and the single-pass
-// virus-scan pipeline (processUpload below) both compress, and the low-CPU
-// promise is "one file at a time" no matter which path got there first.
-let lockTail = Promise.resolve();
+// Up to CONCURRENCY ffmpeg processes at a time, process-wide. This sweeper, the
+// single-pass virus-scan pipeline and the bucket scan all compress, and this is
+// the one place that decides how many may run at once however they arrived — so
+// a concurrency of 4 means four encodes for the whole POD, not four per queue.
+// The low-CPU promise is concurrency 1, which is also the default.
+let active = 0;
+let peak = 0;
+const slots = []; // FIFO of starters waiting for a free slot
+
+// How much memory the pod is using / allowed, from the cgroup (v2). Null when
+// there is no cgroup to read (a dev shell, or an unlimited one) — the guard is
+// then simply off.
+let memMaxCache;
+function cgroupMem() {
+  try {
+    if (memMaxCache === undefined) {
+      const raw = fs.readFileSync('/sys/fs/cgroup/memory.max', 'utf8').trim();
+      const n = Number(raw);
+      memMaxCache = Number.isFinite(n) && n > 0 ? n : 0; // "max" (unlimited) -> 0
+    }
+    if (!memMaxCache) return null;
+    const cur = Number(fs.readFileSync('/sys/fs/cgroup/memory.current', 'utf8').trim());
+    return { max: memMaxCache, cur: Number.isFinite(cur) && cur > 0 ? cur : 0 };
+  } catch { return null; }
+}
+
+// Room for one more encode? Always yes when nothing is running: the first one
+// has to start or the queue could never drain (and this runs again from the
+// finishing job, so a deferred batch resumes as soon as the memory is back).
+function roomForAnother() {
+  if (active === 0) return true;
+  const m = cgroupMem();
+  if (!m) return true;
+  return m.cur + SLOT_MB * 1024 * 1024 <= m.max;
+}
+
+function pump() {
+  while (slots.length && active < CONCURRENCY && roomForAnother()) slots.shift()();
+}
+
 function withCompressLock(fn) {
-  const run = lockTail.then(fn, fn);
-  lockTail = run.then(() => {}, () => {});
-  return run;
+  return new Promise((resolve, reject) => {
+    slots.push(() => {
+      active++;
+      if (active > peak) peak = active;
+      Promise.resolve()
+        .then(fn)
+        .then(resolve, reject)
+        .finally(() => { active--; pump(); });
+    });
+    pump();
+  });
 }
 
 // Keys with a compression pass in flight (either path). Stops a scan slot and
@@ -672,7 +732,8 @@ async function processUpload(key, inspect, opts) {
   inflight.add(key);
   try {
     // Two guards, and both are needed:
-    //   withCompressLock  — one ffmpeg per POD, the low-CPU promise.
+    //   withCompressLock  — at most MEDIA_COMPRESS_CONCURRENCY ffmpeg per POD,
+    //     the low-CPU promise.
     //   withKeyLock       — one ffmpeg per FILE across all pods. Without it a
     //     scan slot on one replica and the sweeper on another could compress the
     //     same upload simultaneously: double the CPU, two different candidate
@@ -1172,17 +1233,23 @@ async function tick() {
     try {
       scanMap = await require('./virus-scan').scanStatusMap(rows.map((r) => cleanKey(r.url)).filter(Boolean));
     } catch { scanMap = null; }
-    let done = 0;
+    // Feed up to BATCH rows into this tick, in parallel: the compress semaphore
+    // is what limits how many actually encode at once
+    // (MEDIA_COMPRESS_CONCURRENCY), so a batch wider than that still settles
+    // several files per breather instead of one per tick. Rows that are already
+    // in flight or not yet scan-clean are skipped without costing a slot.
+    const picked = [];
     for (const row of rows) {
-      if (done >= BATCH) break;
+      if (picked.length >= BATCH) break;
       const k = cleanKey(row.url);
       if (k && isCompressing(k)) continue; // the scan pipeline is already on it
       if (scanMap && k && (scanMap.get(k) || 'clean') !== 'clean') continue;
-      let r;
-      try { r = await processRow(row); }
-      catch (e) { warn('row failed:', String((e && e.message) || e).slice(0, 160)); continue; }
-      if (r === 'compressed') done++;
+      picked.push(row);
     }
+    await Promise.all(picked.map(async (row) => {
+      try { await processRow(row); }
+      catch (e) { warn('row failed:', String((e && e.message) || e).slice(0, 160)); }
+    }));
     // Anything left? A cheap 1-row probe decides hot-loop vs idle poll.
     try {
       const rest = await fetchCandidates(1);
@@ -1227,6 +1294,7 @@ function getMediaStats() {
   try { cpus = (os.cpus() || []).length || 1; load = os.loadavg()[0]; } catch {}
   return {
     enabled: ENABLED, everyMs: EVERY_MS, activeMs: ACTIVE_MS, batch: BATCH,
+    concurrency: CONCURRENCY, active, peak, slotMb: SLOT_MB, mem: cgroupMem(),
     ffmpeg: checkFfmpeg(), encoders: { ...probeEncoders() }, minKb: MIN_KB,
     busy, s3: storage.s3Enabled(), cpus, load,
     startedAt: stats.startedAt, ticks: stats.ticks,
@@ -1295,7 +1363,7 @@ function startMediaCompress() {
     stats.startedAt = now();
     sweepStats.startedAt = now();
     ready = true;
-    log(`worker on: continuous while queued (every ~${Math.round(ACTIVE_MS / 100) / 10}s), idle poll every ${Math.round(EVERY_MS / 1000)}s, ${BATCH}/tick, 1 thread${checkNice() ? ', nice 19' : ''}` +
+    log(`worker on: continuous while queued (every ~${Math.round(ACTIVE_MS / 100) / 10}s), idle poll every ${Math.round(EVERY_MS / 1000)}s, ${BATCH}/tick, ${CONCURRENCY} at once (1 thread each)${checkNice() ? ', nice 19' : ''}` +
       (missing.length ? ` (encoders missing, related types skipped: ${missing.join(', ')})` : ' (all encoders present)'));
     if (SWEEP_ENABLED) {
       const every = SWEEP_EVERY_MS < 3600000 ? `${Math.round(SWEEP_EVERY_MS / 60000)}min` : `${Math.round(SWEEP_EVERY_MS / 3600000)}h`;
