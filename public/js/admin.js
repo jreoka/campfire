@@ -394,13 +394,13 @@ function sweepLine(sw) {
   const what = r ? `${r.deleted} deleted (${fmtSize(r.bytes || 0)}) from ${r.scanned} stored` : 'no run yet';
   return ` · Orphan sweep: ${esc(what)} · last ${esc(last)} · every 24h, grace ${sw.graceH || 48}h`;
 }
-// Where the bytes went: media total (backups/ excluded), a per-prefix split
-// with share bars, and what the database still points at. Server-cached for
-// 10 minutes; Recompute forces a fresh listing.
+// Where the bytes went: media total, a per-prefix split with share bars, and
+// what the database still points at. Server-cached for 10 minutes; Recompute
+// forces a fresh listing. Off-site backups live in the R2 bucket, not this one,
+// so nothing here reports on them.
 function storageCard(usage, tracked) {
   if (!usage) return '<p class="muted small">Storage usage unavailable.</p>';
   const t = usage.total || { bytes: 0, objects: 0 };
-  const bk = usage.backups || { bytes: 0, objects: 0 };
   const card = (n, l) => `<div class="adm-stat"><b>${n}</b><span>${l}</span></div>`;
   const rows = (usage.prefixes || []).map((p) => {
     const pct = t.bytes ? Math.max(1, Math.round((p.bytes / t.bytes) * 100)) : 0;
@@ -422,16 +422,14 @@ function storageCard(usage, tracked) {
     : '';
   const cacheNote = `${usage.cached ? 'cached' : 'fresh'} · computed ${usage.cached ? agoStr(Date.now() - usage.ageMs) : 'just now'}${usage.listing ? ' · ' + usage.listing.objects + ' objects listed in ' + usage.listing.ms + 'ms' : ''}`;
   return `
-    <div class="adm-stats" style="grid-template-columns:repeat(3,1fr)">
+    <div class="adm-stats" style="grid-template-columns:repeat(2,1fr)">
       ${card(fmtSize(t.bytes), 'Media total')}
       ${card(t.objects, 'Files')}
-      ${card(fmtSize(bk.bytes), 'Backups (excluded)')}
     </div>
     ${usage.listing && usage.listing.truncated ? '<div class="muted small">Listing truncated — totals cover the first 100k objects.</div>' : ''}
     <div style="margin-top:.5rem">${rows || '<p class="muted small">Nothing stored yet.</p>'}</div>
     <div class="muted small" style="margin-top:.4rem">
-      ${chat ? `Chat attachments the database still points at: ${chat.objects} file${chat.objects === 1 ? '' : 's'} · ${fmtSize(chat.bytes)}<br/>` : ''}
-      Backups: ${bk.objects} dump${bk.objects === 1 ? '' : 's'} · ${fmtSize(bk.bytes)} — never served, never swept, not in the total above.<br/>
+      ${chat ? `Chat attachments the database still points at: ${chat.objects} file${chat.objects === 1 ? '' : 's'} · ${fmtSize(chat.bytes)}` : ''}
       ${localNote}${orphanHint}
     </div>
     <div class="muted small" style="margin-top:.35rem">${esc(cacheNote)}</div>
