@@ -169,8 +169,10 @@ The owner will iterate on features **without ever losing persistent data**.
 - Code and data are separate: Postgres data lives in the `pgdata` Docker
   volume, uploads in `./data`. Never `rm -rf data`, never drop the
   database, never write destructive one-offs without explicit confirmation.
-  Twice-daily `pg_dump` snapshots land in the bucket's `backups/` prefix
-  (`BACKUP_KEEP=3`) — see `deploy/civo/README.md` §4.
+  Twice-daily off-site snapshots (database + every media object + the cluster's
+  Secrets) go to a **Cloudflare R2** bucket, deliberately not the media bucket —
+  see `deploy/civo/README.md` §4. Nothing writes to the media bucket's
+  `backups/` prefix any more.
 - Schema changes must be **guarded migrations** (`CREATE TABLE IF NOT EXISTS`,
   `ALTER TABLE ... ADD COLUMN` only when the column is missing — see
   `columnExists`/`addColumn` in `db.js`) so existing databases upgrade in
@@ -215,7 +217,8 @@ anywhere and set `CLAM_HOST` — that is config, not code.
 **Uploads live in the Civo object store** (`objectstore.nyc1.civo.com`, bucket
 `campfire`, path-style addressing), not on disk — so replicas need no shared
 filesystem. Secrets are Kubernetes secrets (`campfire-db`, `campfire-secrets`,
-`campfire-s3`, `campfire-registry`, `campfire-tunnel`), never committed.
+`campfire-s3`, `campfire-r2`, `campfire-registry`, `campfire-tunnel`), never
+committed.
 
 Shipped: auth, servers/invites, text channels, voice rooms (mesh WebRTC, sidebar
 occupants + VAD rings), uploads, emoji (Emojibase set + custom + Klipy GIFs),
@@ -316,11 +319,19 @@ deploy → confirm the live site serves the change.
 - Postgres is a `civo-volume` PVC; media is the Civo bucket. Both survive pod
   restarts. Never delete the PVC or the bucket — the data-safety contract below
   applies unchanged.
-- Backups: `backup.js` dumps twice daily into the bucket's `backups/` prefix and
-  keeps the newest `BACKUP_KEEP` (3, set in the manifest). The prune and the
-  catch-up check both filter on `isDumpKey` (`*.dump` **only**), so an object
-  under `backups/` that is not a `.dump` — a legacy or hand-placed file — is
-  never pruned and never swept: it sits there forever until deleted by hand.
+- Backups are **off-site in Cloudflare R2** (`r2.js`, `R2_*` env), never in the
+  media bucket: 12-hourly snapshots of the pg_dump, every media object and every
+  Secret in the namespace, newest `R2_BACKUP_KEEP` (2) retained. Media is stored
+  once under `blobs/` and shared between snapshots, so a second snapshot of an
+  unchanged bucket uploads nothing. Restore with
+  `node scripts/restore-from-r2.js` (`--list` / `--show` / `--fetch` /
+  `--restore-media`). `R2_*` is deliberately separate from `S3_*`: getting the
+  backup destination wrong must not be able to break media serving, or the
+  reverse.
+- The pod runs as the `campfire` ServiceAccount, which has a namespace-scoped
+  read-only Role on Secrets — that is how a snapshot includes `JWT_SECRET` and
+  the tunnel token. The R2 bucket is therefore as sensitive as the cluster:
+  `secrets.json` is plaintext-equivalent and contains the R2 keys themselves.
 - Voice/TURN: coturn runs in-cluster (`hostNetwork`; 3478/udp+tcp, 3479/tcp,
   relay 49160-49200/udp). `turn.dill.moe` is a **DNS-only** A record to the node
   IP — Cloudflare's proxy does not carry UDP, so TURN can never use the tunnel.

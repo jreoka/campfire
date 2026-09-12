@@ -115,6 +115,17 @@ kubectl -n campfire create secret generic campfire-secrets \
 # Cloudflare Tunnel token
 kubectl -n campfire create secret generic campfire-tunnel \
   --from-literal=TUNNEL_TOKEN='<tunnel token>'
+
+# Off-site backup destination (Cloudflare R2). An R2 API token scoped to the
+# backup bucket: the Access Key ID is the token's `id` and the Secret Access Key
+# is sha256(token value) -- both shown once, at creation.
+#   endpoint: https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+kubectl -n campfire create secret generic campfire-r2 \
+  --from-literal=R2_ENDPOINT='https://<ACCOUNT_ID>.r2.cloudflarestorage.com' \
+  --from-literal=R2_BUCKET='campfire-backup' \
+  --from-literal=R2_REGION='auto' \
+  --from-literal=R2_ACCESS_KEY='<access key id>' \
+  --from-literal=R2_SECRET_KEY='<sha256 of the token value>'
 ```
 
 `JWT_SECRET` **must match production**, or every existing session is
@@ -124,6 +135,17 @@ invalidated and everyone has to log in again.
 > the credential id (`d8ab63f9-…`) as `S3_ACCESS_KEY` produces
 > `InvalidAccessKeyId` from every request, including the backup catch-up check.
 > The access key is the short alphanumeric string.
+
+The app also needs read access to this namespace's Secrets, so the snapshot can
+be self-contained. `campfire.yaml` creates a `campfire` ServiceAccount with a
+namespace-scoped read-only Role on Secrets and binds it; the Deployment runs
+under it. If the backup logs `SECRETS NOT BACKED UP`, that binding is the first
+thing to check:
+
+```bash
+kubectl -n campfire auth can-i list secrets \
+  --as=system:serviceaccount:campfire:campfire -n campfire
+```
 
 ---
 
@@ -161,21 +183,62 @@ shared filesystem.
 - **Postgres** — `pgdata` PVC, 5 Gi, `civo-volume`.
 - **Media** — the Civo bucket (`files/`, `avatars/`, `banners/`, `emoji/`,
   `icons/`, `sidebar/`, `viewonce/`). Keys are top-level; there is no shared
-  `uploads/` prefix.
-- **Backups** — `backup.js` dumps at 00:00 and 12:00 server-local into the
-  bucket's `backups/` prefix and keeps the newest **`BACKUP_KEEP` = 3**.
+  `uploads/` prefix. **There is no `backups/` prefix any more** — it was
+  emptied when backups moved to R2, and nothing writes there.
+- **Backups** — a **Cloudflare R2** bucket, a different vendor from the store
+  the app serves from. 12-hourly snapshots (00:00 / 12:00 server-local), newest
+  **`R2_BACKUP_KEEP` = 2** retained.
 
-> The prune and the catch-up check both filter on `isDumpKey` (`*.dump`
-> **only**), and `storage-sweep.js` skips `backups/` entirely. So an object
-> under `backups/` that is not a `.dump` is invisible to retention *and* immune
-> to the sweeper — it sits there until deleted by hand. Nothing may be parked
-> there.
+Each snapshot is:
+
+```
+snapshots/<stamp>/manifest.json         inventory + checksums, written LAST
+snapshots/<stamp>/db/campfire.dump      pg_dump -Fc of the whole database
+snapshots/<stamp>/secrets/secrets.json  every Secret in the namespace, verbatim
+blobs/<source key>                      the media bucket, stored once and shared
+```
+
+Media is **not** copied per snapshot: each object is stored once under
+`blobs/<its key>` and a snapshot only references it from its manifest, so a
+second snapshot of an unchanged bucket costs two manifests and no media at all.
+Measured: the first snapshot moved 109 objects / 104.3 MB in 31s, the next was
+**2 seconds and 0 bytes uploaded**. R2's free tier is 10 GB, so this sits at
+about 1% of it.
+
+**Why R2 and not the media bucket.** The dump used to live in the same Civo
+bucket the app serves from, under the same credentials. That survives a bad
+migration but not losing the bucket, the account, or a mistaken `S3_*` change —
+and it only ever covered the database, never the media.
+
+> **The R2 bucket is as sensitive as the cluster.** `secrets.json` holds
+> `JWT_SECRET`, the Postgres password, the tunnel token and the TURN credentials
+> (base64, i.e. plaintext-equivalent), and it includes the R2 credentials
+> themselves. Treat read access to that bucket as root on this deployment.
+
+Retention details worth knowing:
+
+- The manifest is written **last**, so a snapshot directory that exists is one
+  that completed. A failed run deletes its own partial objects.
+- Blob pruning only runs when **every** retained manifest was read successfully
+  and none of them references the blob. If a manifest cannot be read it skips
+  entirely, because deleting a blob a snapshot still needs would silently
+  corrupt a backup. It fails towards keeping bytes.
+- If a key's content is rewritten in place, an older snapshot references that
+  key and so restores the newer bytes for it (`media-compress` can rewrite a
+  key; it is off in production, so keys are immutable in practice).
+- The old `.dump`-only gotcha is gone: nothing is pruned by filename pattern any
+  more, and no object can sit in a backup location invisible to retention.
 
 ```bash
-# what's in there now
-kubectl -n campfire exec deploy/campfire -- node -e \
-  "require('/app/storage').s3List('backups/').then(r=>r.forEach(o=>console.log(o.key,o.size)))"
+R2=/app/scripts/restore-from-r2.js
+kubectl -n campfire exec deploy/campfire -- node $R2 --list
+kubectl -n campfire exec deploy/campfire -- node $R2 --show
 ```
+
+Use `--list` / `--show` from inside the pod (it already has both sets of
+credentials), or run it locally with `R2_*` and `S3_*` set in the environment.
+It uses the same `R2_*` / `S3_*` variable names as the app, so the environment
+is the only difference between the two.
 
 ---
 
@@ -288,37 +351,47 @@ server, so it has to resolve publicly.
 
 ## 8. Recovery
 
-**There is no fallback host any more.** The OVH VPS has been decommissioned and
-its bucket is deleted, so the cluster and the Civo bucket are the only copies of
-anything. Read this section as disaster recovery, not as a rollback.
+**There is no fallback host.** The OVH VPS has been decommissioned and its
+bucket is deleted, so the live cluster plus the R2 backups are all there is.
 
 What exists, and only this:
 
-- **Postgres** — the `pgdata` PVC on the node, plus up to three dumps under
-  `backups/`. With `BACKUP_KEEP=3` and a 00:00/12:00 cadence that is roughly
-  **36 hours of history with up to 12 hours of loss**.
-- **Media** — the Civo bucket. Nothing else. It is not in the dumps.
+- **Postgres** — the `pgdata` PVC on the node, plus the dumps in R2.
+  `R2_BACKUP_KEEP=2` at a 00:00/12:00 cadence is roughly **24 hours of history
+  with up to 12 hours of loss**.
+- **Media** — the Civo bucket, and a full copy in R2 under `blobs/`. This is the
+  one thing that got strictly better: the media used to have no copy at all.
+- **Secrets** — in R2. Without them a restore still works but logs every user
+  out, and the tunnel would have to be recreated.
 - The pre-cutover dump at `/root/campfire-predeploy/cutover.dump` went with the
   VPS.
 
-So the recovery path is: `pg_restore` the newest dump from `backups/` into a
-fresh `db-0`, and point `S3_*` at the Civo bucket.
+The whole recovery, in order:
 
 ```bash
-kubectl -n campfire exec deploy/campfire -- node -e \
-  "require('/app/storage').s3List('backups/').then(r=>r.forEach(o=>console.log(o.key,o.size)))"
-# then: pull that key, kubectl cp it into db-0, pg_restore --clean --if-exists
+# 0. what is there, and is it usable
+kubectl -n campfire exec deploy/campfire -- node /app/scripts/restore-from-r2.js --list
+kubectl -n campfire exec deploy/campfire -- node /app/scripts/restore-from-r2.js --show
+
+# 1. database -- fetch writes the dump out and prints the exact commands
+node scripts/restore-from-r2.js --fetch --out ./restore
+#    then follow the printed kubectl cp / pg_restore / TRUNCATE steps
+
+# 2. media -- copies blobs back into the media bucket, never deletes, dry-run first
+node scripts/restore-from-r2.js --restore-media --write
+
+# 3. secrets -- compare against the cluster before applying
+#    (replacing JWT_SECRET logs everyone out)
 ```
 
-Two things follow from the VPS being gone, and both are worth acting on:
+`--fetch` deliberately does not touch the database itself: `pg_restore --clean`
+drops and recreates tables in a live database, so the last step stays a command
+you run on purpose with the output in front of you.
 
-1. **The dumps are now the only point-in-time history of the database.** They
-   live in the same bucket as the media, under the same credentials — an
-   accidental `S3_*` change or a bucket mistake takes out the app's data *and*
-   its backups together. Copying `backups/` somewhere independent (R2, or
-   `pg_dump` on a laptop) is the only thing that would survive that.
-2. **`retire-bucket.js` and the OVH-era migration tooling are spent** and were
-   deleted from the repo; the source bucket no longer exists to migrate from.
+Because R2 is a different vendor from the media store, losing the Civo account
+no longer costs the media — restore it into any S3-compatible bucket and point
+`S3_*` at it. Losing R2 costs the backups, which is why the credentials for the
+two are kept separate.
 
 ---
 
