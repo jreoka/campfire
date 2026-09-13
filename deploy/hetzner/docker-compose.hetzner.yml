@@ -54,25 +54,35 @@ services:
         exec turnserver -c /tmp/turnserver.conf --pidfile= --no-cli
 
   clamd:
-    image: clamav/clamav:stable
+    image: clamav/clamav:stable_base
     container_name: campfire-clamd
     restart: unless-stopped
     volumes:
       # Signatures (~1 GB) live in a named volume, not the image layer, so a
-      # restart does not re-download the whole database.
+      # restart does not re-download the whole database. `_base` is the tag the
+      # ClamAV docs recommend for exactly this setup: it ships without
+      # signatures and the entrypoint runs freshclam into the mounted volume.
       - clamav_db:/var/lib/clamav
-      # A complete clamd.conf we control. The stock one caps StreamMaxLength at
-      # 25M, which would reject INSTREAM uploads over 25 MB outright - the app
-      # allows 50. Derived from the image's own file; see the header in it.
-      - ./deploy/hetzner/clamav/clamd.conf:/etc/clamav/clamd.conf:ro
     # No ports published: only the app needs to reach it, over the compose
-    # network, by service name. Nothing on the host or the internet can.
+    # network, by service name. Nothing on the host and nothing on the internet
+    # can - which is the whole security argument for running clamd in-cluster
+    # rather than exposing its unauthenticated TCP protocol anywhere.
+    #
+    # The stock clamd.conf is used as-is, deliberately. Its defaults already fit
+    # this app: StreamMaxLength 100M and MaxFileSize 100M against MAX_FILE_MB=50
+    # (the `#StreamMaxLength 25M` line in the file is a commented EXAMPLE, not
+    # the default), and ConcurrentDatabaseReload yes, which builds a second
+    # engine during a signature update and so briefly doubles the ~1 GB resident
+    # set. That is the reason this host has 8 GB when the old cluster had 2.
+    # scripts/verify-clamd.js proves those limits rather than assuming them, by
+    # streaming a 50 MB body and the EICAR test string to the real daemon.
     healthcheck:
       test: ["CMD-SHELL", "clamdcheck.sh || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 300s
+      # The first start downloads the entire signature set before clamd listens.
+      start_period: 900s
 
 volumes:
   clamav_db:

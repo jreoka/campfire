@@ -45,10 +45,14 @@ docker compose exec -T db psql -U "$USR" -d "$DB" -c \
   "TRUNCATE bus_replicas, bus_events, live_sessions, voice_occupants, rate_limits, webauthn_challenges;" || true
 
 echo "--- row counts ---"
+# No string literals in the SQL: it travels through a shell on both ends, and
+# quote-mangling a verification query is a silly way to lose confidence in it.
 docker compose exec -T db psql -U "$USR" -d "$DB" -tAc \
-  "select 'accounts='||(select count(*) from accounts)
-        ||' servers='||(select count(*) from servers)
-        ||' channels='||(select count(*) from channels)
-        ||' messages='||(select count(*) from messages)
-        ||' attachments='||(select count(*) from attachments)
-        ||' file_scans='||(select count(*) from file_scans);"
+  "select (select count(*) from users) as users,
+          (select count(*) from servers) as servers,
+          (select count(*) from channels) as channels,
+          (select count(*) from messages) as messages,
+          (select count(*) from attachments) as attachments,
+          (select count(*) from dm_messages) as dm_messages,
+          (select count(*) from stories) as stories,
+          (select count(*) from file_scans) as file_scans;"
