@@ -328,9 +328,12 @@ function cfRefuseLaunchFocus() {
   try { const s = window.getSelection(); if (s && s.removeAllRanges) s.removeAllRanges(); } catch {}
 }
 try {
-  const coarse = (typeof isCoarse === 'function')
-    ? isCoarse()
-    : !!(window.matchMedia && matchMedia('(hover: none)').matches);
+  // Coarse pointer OR a phone-shaped viewport: the app's own phone layout rests
+  // on `pointer:coarse` (core.js phoneLayout), so anything that gets the mobile
+  // shell gets the keyboard guard too — including a WebView that answers the
+  // hover query oddly.
+  const coarse = (typeof isCoarse === 'function' ? isCoarse() : !!(window.matchMedia && matchMedia('(hover: none)').matches))
+    || !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
   if (coarse) {
     // Capture phase, so the guard is already disarmed by the time the browser's
     // own default action focuses the field the finger landed on.

@@ -98,8 +98,8 @@ async function main() {
   console.log('\n[0] the guard is wired into the native shell');
   const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
   check(/<script src="\/js\/native\.js"><\/script>/.test(index), 'native.js is loaded by the shell');
-  check(/isCoarse\(\)/.test(guardSource) && /matchMedia\('\(hover: none\)'\)/.test(guardSource),
-    'the guard only arms on a coarse pointer (a desktop reload restoring the caret is a feature)');
+  check(/isCoarse\(\)/.test(guardSource) && /matchMedia\('\(hover: none\)'\)/.test(guardSource) && /matchMedia\('\(pointer: coarse\)'\)/.test(guardSource),
+    'the guard only arms on a coarse pointer/a phone viewport (a desktop reload restoring the caret is a feature)');
   check(/document\.addEventListener\('focusin'[\s\S]{0,220}cfEditable\(e\.target\)[\s\S]{0,80}blur\(\)/.test(guardSource),
     'while armed, any focus landing on a text field is refused');
   check(/for \(const ev of \['pointerdown', 'touchstart', 'mousedown', 'keydown', 'wheel'\]\)/.test(guardSource),
