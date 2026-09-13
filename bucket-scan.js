@@ -173,6 +173,9 @@ function schedule(ms) {
 
 // The admin panel's "Scan the bucket now": the pass can take minutes, so it runs
 // behind the response and the panel polls /api/admin/media for the result.
+// Deliberately NOT unref'd — this is work an operator just asked for, so an
+// otherwise-idle event loop must not be able to drop it (the periodic timer
+// above IS unref'd, because that one must never hold the process open).
 function kickBucketScan() {
   if (!ENABLED || kickTimer) return;
   kickTimer = setTimeout(() => {
@@ -180,7 +183,6 @@ function kickBucketScan() {
     db.withLock(db.LOCKS.bucketScan, () => runOnce())
       .catch((e) => warn('kicked run failed: ' + String((e && e.message) || e).slice(0, 200)));
   }, 50);
-  try { kickTimer.unref(); } catch {}
 }
 
 function getBucketScanStats() {

@@ -292,8 +292,8 @@ async function main() {
       check(/score 0\.\d{4}/.test(blockedPanel.verdict), 'with the score the engine gave', blockedPanel.verdict);
       check(blockedPanel.tone.includes('bad'), 'tone matches the verdict', blockedPanel.tone);
       check(blockedPanel.findings.length >= 1, 'it lists the findings the verdict was based on', blockedPanel.findings);
-      check(blockedPanel.text.includes('Harbin'), 'it names the engine that made the call', blockedPanel.rows);
       check(/removed|no longer/i.test(blockedPanel.text), 'and says the file was removed', blockedPanel.text.slice(0, 200));
+      check(!/trees|features/.test(blockedPanel.text), 'the panel carries no model trivia', blockedPanel.rows);
       check(blockedPanel.closeHidden && blockedPanel.cancelButtons === 1, 'the panel is read-only: one way out', { buttons: blockedPanel.cancelButtons });
     }
     await evaluate(`(() => { document.querySelector('#modal-ok').click(); return true; })()`);

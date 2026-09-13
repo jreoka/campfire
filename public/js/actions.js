@@ -295,9 +295,11 @@ function hbWhen(ts) {
 function hbInfoHTML(r) {
   const sc = r.scan;
   const v = hbVerdict(sc);
+  // No "Engine" row: the panel is called Harbin info and every verdict in it
+  // came from Harbin, so the row only ever repeated the title. The model's
+  // shape (trees, features) is an operator's diagnostic and lives in the admin
+  // console's engine line and scripts/verify-harbin.js instead.
   const rows = [];
-  if (sc && sc.engine) rows.push(['Engine', sc.engine]);
-  else if (r.currentEngine) rows.push(['Engine', r.currentEngine]);
   rows.push(['Scanned', sc && sc.scannedAt ? hbWhen(sc.scannedAt) : 'not yet']);
   if (sc && sc.attempts > 1) rows.push(['Attempts', String(sc.attempts)]);
   rows.push(['File', (r.key || 'not a stored upload') + (r.size ? ' · ' + fmtSize(r.size) : '')]);

@@ -2264,7 +2264,6 @@ app.get('/api/attachments/:aid/scan', authRequired, async (req, res) => {
     // that is what the reader's file actually did (see effectiveStatus).
     status: key ? await vs.scanStatus(key) : 'clean',
     scanningEnabled: vs.scanningEnabled(),
-    currentEngine: vs.engineLabel(),
     scan: d ? {
       status: d.status,
       verdict: d.verdict || null,

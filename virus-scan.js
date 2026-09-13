@@ -442,11 +442,14 @@ function verdictFrom(run) {
   return { clean: true, detail: detail('clean') };
 }
 
-// The engine's identity, captured AT SCAN TIME: a later model is a different
-// detector, and a stored verdict has to be read against the one that made it.
+// The engine's identity, captured AT SCAN TIME. Deliberately just the name: the
+// model's shape (trees, features) is an operator's diagnostic — it belongs in
+// the admin panel's engine line and in scripts/verify-harbin.js, which is where
+// "is this really the detector?" is asked — and reading it back on a file's scan
+// record was noise in a panel a reader opens to find out what happened to their
+// file. What the model WAS is fixed by the image anyway (HARBIN_REF).
 function engineLabel() {
-  const m = engineModel;
-  return (m && m.trees) ? ('Harbin · ' + m.trees + ' trees / ' + m.features + ' features') : 'Harbin';
+  return 'Harbin';
 }
 // Flatten a verdict into the row's columns.
 function detailFor(v) {
@@ -944,7 +947,7 @@ function startVirusScan() {
 module.exports = {
   startVirusScan, kickVirusScan, queueFileScan, dropScan,
   scanStatus, scanStatusMap, scanGating, setScanHooks, getScanStats,
-  scanDetail, effectiveStatus, engineLabel,
+  scanDetail, effectiveStatus,
   scanningEnabled: () => SCANNING,
   emitScanChange: emitChange,
   // exported for unit tests (the stand-in engine, the parser, and the S3
