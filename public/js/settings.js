@@ -123,7 +123,11 @@ async function renderNotifsTab() {
   box.innerHTML = '';
   const h = (t) => { const e = document.createElement('h4'); e.textContent = t; e.style.margin = '1rem 0 .4rem'; box.appendChild(e); };
   const note = (t) => { const e = document.createElement('p'); e.className = 'muted small'; e.textContent = t; box.appendChild(e); return e; };
-  const button = (label, primary, fn) => { const b = document.createElement('button'); b.className = 'btn small' + (primary ? ' primary' : ''); b.textContent = label; b.onclick = fn; box.appendChild(b); return b; };
+  const button = (label, primary, fn, parent) => { const b = document.createElement('button'); b.className = 'btn small' + (primary ? ' primary' : ''); b.textContent = label; b.onclick = fn; (parent || box).appendChild(b); return b; };
+  // Action buttons are emitted back-to-back with no whitespace between them, so
+  // two bare `.btn`s sit flush against each other. They belong in a row: a real
+  // gap between them, and they wrap together on a phone instead of overflowing.
+  const btnRow = () => { const r = document.createElement('div'); r.className = 'set-btns'; box.appendChild(r); return r; };
   h('Push notifications');
   const nb = typeof nativeBridge === 'function' ? nativeBridge() : null;
   if (nb) {
@@ -135,13 +139,14 @@ async function renderNotifsTab() {
     else if (!st.permission) note('Android is blocking notifications for Campfire. Allow them in your phone\'s Settings → Apps → Campfire → Notifications, then come back here.');
     else if (!st.running) note('Notifications are on — the background connection is starting…');
     else note('Background notifications are on. Messages, mentions and DMs ping you even with Campfire closed.');
-    if (!on) button('Enable notifications', true, async () => { nativePushEnable(); renderNotifsTab(); toast('Notifications enabled'); });
+    if (!on) { const r = btnRow(); button('Enable notifications', true, async () => { nativePushEnable(); renderNotifsTab(); toast('Notifications enabled'); }, r); }
     else {
-      if (!st.permission) button('Allow notifications', true, () => { try { nb.requestPermission(); } catch {} setTimeout(renderNotifsTab, 1500); });
+      const r = btnRow();
+      if (!st.permission) button('Allow notifications', true, () => { try { nb.requestPermission(); } catch {} setTimeout(renderNotifsTab, 1500); }, r);
       button('Send test notification', !st.permission, async () => {
         try { await api('/api/push/test', { method: 'POST' }); toast('Test notification sent'); } catch { toast('Test failed'); }
-      });
-      button('Turn off on this device', false, () => { nativePushDisable(); renderNotifsTab(); });
+      }, r);
+      button('Turn off on this device', false, () => { nativePushDisable(); renderNotifsTab(); }, r);
     }
   } else if (typeof isDesktopShell === 'function' && isDesktopShell()) {
     // Desktop app: no WebView on any of the three platforms implements the
@@ -174,14 +179,15 @@ async function renderNotifsTab() {
         if (p === 'granted') { await pushSetup(); renderNotifsTab(); toast('Notifications enabled'); }
         else { toast('Notifications blocked'); renderNotifsTab(); }
       } catch { toast('Could not enable'); }
-    });
+    }, btnRow());
   }
   if (pushOK && perm === 'granted' && !subscribed) {
-    button('Enable on this device', true, async () => { await pushSetup(); renderNotifsTab(); toast('Notifications enabled'); });
+    button('Enable on this device', true, async () => { await pushSetup(); renderNotifsTab(); toast('Notifications enabled'); }, btnRow());
   }
   if (pushOK && subscribed) {
-    button('Send test push', false, async () => { try { await api('/api/push/test', { method: 'POST' }); toast('Test push sent'); } catch { toast('Test failed'); } });
-    button('Disable on this device', false, async () => { await pushTeardown(); renderNotifsTab(); });
+    const r = btnRow();
+    button('Send test push', false, async () => { try { await api('/api/push/test', { method: 'POST' }); toast('Test push sent'); } catch { toast('Test failed'); } }, r);
+    button('Disable on this device', false, async () => { await pushTeardown(); renderNotifsTab(); }, r);
   }
   }
   h('Default for everything');

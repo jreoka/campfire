@@ -113,7 +113,7 @@ function makeDom() {
     const e = {
       tagName: String(tag || 'div').toUpperCase(),
       className: '', textContent: '', value: '', style: {}, children: [], dataset: {}, onclick: null, onchange: null,
-      appendChild(c) { e.children.push(c); return c; },
+      appendChild(c) { e.children.push(c); c.parent = e; return c; },
       get innerHTML() { return ''; },
       set innerHTML(v) { e.children.length = 0; },
       classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
@@ -124,6 +124,24 @@ function makeDom() {
   };
   const box = el('div');
   byId.set('#set-notifs', box);
+  // Buttons are emitted into a `.set-btns` row, so lookups walk the tree rather
+  // than assuming the pane's direct children are the buttons.
+  const find = (label) => {
+    let found = null;
+    const walk = (n) => {
+      if (found) return;
+      if (n.tagName === 'BUTTON' && n.textContent === label) { found = n; return; }
+      for (const c of n.children || []) walk(c);
+    };
+    for (const c of box.children || []) walk(c);
+    return found;
+  };
+  const labels = () => {
+    const out = [];
+    const walk = (n) => { if (n.tagName === 'BUTTON') out.push(n.textContent); for (const c of n.children || []) walk(c); };
+    for (const c of box.children || []) walk(c);
+    return out;
+  };
   return {
     box,
     el,
@@ -134,10 +152,14 @@ function makeDom() {
       walk(box);
       return out.join(' | ');
     },
-    labels: () => (box.children || []).filter((c) => c.tagName === 'BUTTON').map((b) => b.textContent),
+    labels,
+    find,
+    // The row a button was emitted into, so a test can assert the two actions
+    // are actually spaced apart instead of sitting flush against each other.
+    rowOf: (label) => { const b = find(label); return b ? b.parent : null; },
     press: (label) => {
-      const b = (box.children || []).find((c) => c.tagName === 'BUTTON' && c.textContent === label);
-      if (!b) throw new Error('no button "' + label + '" in [' + (box.children || []).map((c) => c.textContent).join(', ') + ']');
+      const b = find(label);
+      if (!b) throw new Error('no button "' + label + '" in [' + labels().join(', ') + ']');
       return b.onclick();
     },
   };
@@ -194,6 +216,17 @@ async function clientChecks() {
   apiCalls.length = 0;
   await android.dom.press('Send test notification');
   check(apiCalls.some((c) => c.path === '/api/push/test' && c.method === 'POST'), 'the test button posts the server test push', apiCalls);
+  // Reported from the phone: "Send test notification" and "Turn off on this
+  // device" were touching. Adjacent bare buttons are emitted with no whitespace
+  // between them, so they need a row with a real gap between them.
+  const rowTest = android.dom.rowOf('Send test notification');
+  const rowOff = android.dom.rowOf('Turn off on this device');
+  check(!!rowTest && rowTest === rowOff && rowTest.className === 'set-btns',
+    'the two action buttons share a spaced row instead of touching',
+    [rowTest && rowTest.className, rowOff && rowOff.className]);
+  const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
+  check(/\.set-btns\{[^}]*gap:/.test(css), 'and that row actually has a gap in the stylesheet',
+    (css.match(/\.set-btns\{[^}]*\}/) || [])[0]);
   bridgeCalls.length = 0;
   await android.dom.press('Turn off on this device');
   check(bridgeCalls.some((c) => c[0] === 'configure' && c[3] === false), 'turning it off stops the service', bridgeCalls);

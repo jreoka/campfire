@@ -1392,6 +1392,10 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
   .set-body{min-height:0}
 }
 .set-pane h4{font-size:.95rem;font-weight:750;letter-spacing:-.01em;margin:1.2rem 0 .55rem}
+/* Settings emits its action buttons as adjacent siblings with no whitespace
+   between them, so two bare `.btn`s sat flush against each other. A row gives
+   them a real gap and wraps them together on a phone. */
+.set-btns{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin-top:.15rem}
 .set-pane label{display:block;font-size:.8rem;font-weight:700;color:var(--muted);margin:.7rem 0;letter-spacing:.02em}
 .set-check{display:flex;align-items:center;gap:.6rem;font-size:.86rem;font-weight:550;color:var(--text);cursor:pointer;background:var(--panel);border-radius:10px;padding:.65rem .8rem;margin:.45rem 0}
 .set-check input{flex-shrink:0;margin:0;accent-color:var(--accent);width:1.1rem;height:1.1rem;cursor:pointer}
