@@ -4684,7 +4684,13 @@ async function notifMode(uid, scopes) {
   for (const s of scopes) if (map.has(s)) return map.get(s);
   return map.get('global') || 'all';
 }
-async function pushToUser(uid, payload) {
+// `opts.webPush === false` keeps a page-visible account from ALSO getting the
+// OS push (see the userVisible() call sites) — but the native push sockets are
+// addressed per DEVICE and always get the payload: a phone in someone's pocket
+// must ring whether or not another device of the same account has Campfire open.
+async function pushToUser(uid, payload, opts) {
+  notifyPushSockets(uid, payload);
+  if (opts && opts.webPush === false) return;
   let subs = [];
   try { subs = await db.prepare('SELECT endpoint, p256dh, auth FROM push_subs WHERE user_id = ?').all(uid); } catch { return; }
   for (const s of subs) {
@@ -4818,14 +4824,13 @@ async function notifyServerMessage(serverId, channelId, author, content, message
     // messages never land in the inbox, even on 'All messages' (that scope
     // still controls the OS/push ping below).
     if (isMention) await pushInbox(uid, { kind: 'mention', title, body, server_id: serverId, channel_id: channelId, message_id: messageId || null });
-    if (await userVisible(uid)) continue;
     await pushToUser(uid, {
       title,
       body,
       icon: author.avatar_url || '/icons/icon-192.png',
       tag: `ch:${channelId}`,
       url: `/?server=${serverId}&channel=${channelId}`,
-    });
+    }, { webPush: !(await userVisible(uid)) });
   }
 }
 async function notifyDmMessage(thread, author, content, messageId) {
@@ -4839,14 +4844,13 @@ async function notifyDmMessage(thread, author, content, messageId) {
     const body = thread.is_group ? `${displayOf(author)}: ${text}`.slice(0, 160) : text.slice(0, 160);
     // DMs stay out of the notification inbox (mentions + major events only) —
     // visible tabs badge via dm-new, hidden/closed devices still get a push below.
-    if (await userVisible(uid)) continue;
     await pushToUser(uid, {
       title,
       body,
       icon: author.avatar_url || '/icons/icon-192.png',
       tag: `dm:${thread.id}`,
       url: `/?dm=${thread.id}`,
-    });
+    }, { webPush: !(await userVisible(uid)) });
   }
 }
 // reactions ----------
@@ -4885,14 +4889,13 @@ async function notifyReaction(authorId, reactor, emoji, target) {
   if (now() - (reactionPingAt.get(pingKey) || 0) < 5 * 60000) return;
   reactionPingAt.set(pingKey, now());
   if (reactionPingAt.size > 5000) reactionPingAt.clear(); // bound the dedupe map
-  if (await userVisible(authorId)) return;
   await pushToUser(authorId, {
     title,
     body,
     icon: reactor.avatar_url || '/icons/icon-192.png',
     tag: target.threadId ? `dm:${target.threadId}` : `ch:${target.channelId}`,
     url,
-  });
+  }, { webPush: !(await userVisible(authorId)) });
 }
 // A friend's custom status changed: "Your friend Cross" / "Updated their
 // status to: In a meeting". Only the status text pings — presence flips
@@ -4913,8 +4916,7 @@ async function notifyFriendStatus(user, statusText) {
     try { if ((await notifMode(uid, ['global'])) === 'muted') continue; } catch {}
     try { if (await db.prepare('SELECT 1 FROM blocks WHERE user_id = ? AND blocked_id = ?').get(uid, user.id)) continue; } catch {}
     await pushInbox(uid, { kind: 'friend-status', title, body });
-    if (await userVisible(uid)) continue;
-    await pushToUser(uid, { title, body, icon: user.avatar_url || '/icons/icon-192.png', tag: `status:${user.id}`, url: '/?friends=1' });
+    await pushToUser(uid, { title, body, icon: user.avatar_url || '/icons/icon-192.png', tag: `status:${user.id}`, url: '/?friends=1' }, { webPush: !(await userVisible(uid)) });
   }
 }
 // drop a user's live sockets from a server (membership gone): stop server
@@ -5170,7 +5172,10 @@ app.delete('/api/push/unsubscribe', authRequired, async (req, res) => {
   res.json({ ok: true });
 });
 app.post('/api/push/test', authRequired, async (req, res) => {
-  await pushToUser(req.user.id, { title: 'Campfire', body: 'Test push — delivery works!', tag: 'campfire-test', url: '/' });
+  // `test` tells a native shell to show it even while its own window is in the
+  // foreground — you tap this button from the settings screen, so a
+  // foreground-suppressed notification would look like a failure.
+  await pushToUser(req.user.id, { title: 'Campfire', body: 'Test push — delivery works!', tag: 'campfire-test', url: '/', test: true });
   res.json({ ok: true });
 });
 app.get('/api/notifs/prefs', authRequired, async (req, res) => {
@@ -5833,7 +5838,11 @@ async function notifyScanChange(key, status) {
 
 // ---------- WebSocket (live chat + presence + voice signaling) ----------
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+// Two sockets share this HTTP server (the chat socket and the native push
+// socket below), so both are created `noServer` and the upgrade is routed by
+// path. ws's own `path` option ABORTS every upgrade that does not match with a
+// 400 — a second `{ server, path }` server is unreachable behind the first.
+const wss = new WebSocketServer({ noServer: true });
 
 /** ws.meta = { userId, username, display_name, avatar_color, servers:Set, voice:{kind:'server'|'dm',serverId,channelId,threadId,muted,...}|null } */
 const clients = new Set();
@@ -5843,6 +5852,95 @@ const voiceRooms = new Map(); // key `${serverId}:${channelId}` (servers) or `dm
 function safeSend(ws, obj) {
   if (ws.readyState === 1) { try { ws.send(JSON.stringify(obj)); } catch {} }
 }
+
+// ---------- native push sockets (`/ws/push`) ----------
+// The Android app has no Push API at all — Android WebView implements neither
+// `PushManager` nor `Notification` — so it cannot register a Web Push endpoint
+// the way a browser does. Its native foreground service opens this socket
+// instead and posts the notification locally from the payload the OS push would
+// have carried, which keeps every mute/mention rule and every payload ("#chat ·
+// Server", "Alex (DM)") in exactly one place: the server.
+//
+// The socket is deliberately NOT a chat session. It never touches
+// live_sessions, so a phone with the app closed neither shows up online nor
+// suppresses another device's push.
+//
+// Delivery is per-DEVICE, not per-account: the only gate is the socket's own
+// `pushVisible` flag, which the shell reports when its window comes to the
+// front. So a backgrounded phone still rings while a desktop has the page open
+// — the account-wide userVisible() gate (which web push keeps) would silence it,
+// and a phone that never rings is the whole bug this socket exists to fix.
+const pushWss = new WebSocketServer({ noServer: true });
+// The one upgrade dispatcher for both sockets (see the note on the chat socket's
+// creation — a `{ server, path }` server would abort the other path with a 400).
+server.on('upgrade', (req, socket, head) => {
+  let pathname = '';
+  try { pathname = new URL(req.url, 'http://x').pathname; } catch {}
+  const target = pathname === '/ws' ? wss : pathname === '/ws/push' ? pushWss : null;
+  if (!target) { try { socket.destroy(); } catch {} return; }
+  target.handleUpgrade(req, socket, head, (ws) => target.emit('connection', ws, req));
+});
+const pushClients = new Set();
+function notifyPushSocketsLocal(userId, payload) {
+  // The shell applies the same rule (PushService.kt): a test push from the
+  // settings screen must reach a device whose app is on screen, or the button
+  // looks broken while you are looking at it.
+  const force = !!(payload && payload.test);
+  for (const c of pushClients) {
+    if (c.pushUserId !== userId) continue;
+    if (c.pushVisible && !force) continue;
+    safeSend(c, { t: 'push', payload });
+  }
+}
+function notifyPushSockets(userId, payload) {
+  notifyPushSocketsLocal(userId, payload);
+  // The publisher delivers to its own sockets and the bus to every OTHER
+  // replica, so one replica answers the message and every replica rings the
+  // phones it holds (see the delivery contract in bus.js).
+  busPublish('push', { userId, payload });
+}
+
+// Token + account checks shared by the chat socket and the native push socket:
+// one auth path, so the two can never drift apart on what "a valid socket" is.
+// Closes the socket itself and returns null when it is not one.
+async function socketAuth(ws, req) {
+  try {
+    const url = new URL(req.url, 'http://x');
+    const token = url.searchParams.get('token') || '';
+    let p;
+    try { p = jwt.verify(token, JWT_SECRET); } catch { ws.close(4401, 'bad token'); return null; }
+    const u = await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(p.sub);
+    if (!u) { ws.close(4401, 'no user'); return null; }
+    if (u.disabled) { ws.close(4401, 'disabled'); return null; }
+    if ((p.iat || 0) * 1000 < (u.token_valid_after || 0) - 2000) { ws.close(4401, 'bad token'); return null; }
+    if (p.sid) {
+      const s = await db.prepare('SELECT id,user_id,revoked FROM sessions WHERE id = ?').get(p.sid);
+      if (!s || s.user_id !== u.id || s.revoked) { ws.close(4401, 'bad token'); return null; }
+    }
+    return { u, p };
+  } catch { try { ws.close(1011, 'error'); } catch {} return null; }
+}
+
+pushWss.on('connection', async (ws, req) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+  ws.on('close', () => { pushClients.delete(ws); ws.pushUserId = null; });
+  ws.on('error', () => {});
+  ws.on('message', (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
+    // The shell tells us whether its window is in front. Hidden (the default —
+    // a cold service has no window at all) is what lets a notification through.
+    if (msg.t === 'visibility') { ws.pushVisible = msg.visible !== false; return; }
+    if (msg.t === 'ping') { safeSend(ws, { t: 'pong' }); return; }
+  });
+  const auth = await socketAuth(ws, req);
+  if (!auth) return;
+  ws.pushUserId = auth.u.id;
+  ws.pushVisible = false;
+  pushClients.add(ws);
+  safeSend(ws, { t: 'push-ready' });
+});
 function broadcastToServer(serverId, obj, except) {
   broadcastToServerLocal(serverId, obj, except);
   // `except` is a socket on THIS replica (the originator). Peers hold no such
@@ -6211,18 +6309,10 @@ wss.on('connection', async (ws, req) => {
   // session with an empty presence roster. Queue instead, flush after auth.
   const earlyFrames = [];
   ws.on('message', (raw) => { if (!ws.meta) { earlyFrames.push(raw); return; } onMessage(raw); });
-  const url = new URL(req.url, 'http://x');
-  const token = url.searchParams.get('token') || '';
-  let p;
-  try { p = jwt.verify(token, JWT_SECRET); } catch { ws.close(4401, 'bad token'); return; }
-  const u = await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(p.sub);
-  if (!u) { ws.close(4401, 'no user'); return; }
-  if (u.disabled) { ws.close(4401, 'disabled'); return; }
-  if ((p.iat || 0) * 1000 < (u.token_valid_after || 0) - 2000) { ws.close(4401, 'bad token'); return; }
-  if (p.sid) {
-    const s = await db.prepare('SELECT id,user_id,revoked FROM sessions WHERE id = ?').get(p.sid);
-    if (!s || s.user_id !== u.id || s.revoked) { ws.close(4401, 'bad token'); return; }
-  }
+  const auth = await socketAuth(ws, req);
+  if (!auth) return;
+  const p = auth.p;
+  const u = auth.u;
   const memberRows = await db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(u.id);
   ws.meta = {
     userId: u.id, username: u.username, display_name: u.display_name, avatar_color: u.avatar_color,
@@ -6615,6 +6705,15 @@ const wsHeartbeat = setInterval(() => {
     ws.isAlive = false;
     try { ws.ping(); } catch {}
   }
+  // The native push sockets need the same sweep: a phone that lost signal
+  // silently must be dropped so the next notification opens a fresh socket
+  // instead of being written into a half-open one. OkHttp answers a protocol
+  // ping by itself, so the client side needs no code for this.
+  for (const ws of pushWss.clients) {
+    if (ws.isAlive === false) { try { ws.terminate(); } catch {} continue; }
+    ws.isAlive = false;
+    try { ws.ping(); } catch {}
+  }
 }, 30000);
 try { wsHeartbeat.unref(); } catch {}
 
@@ -6653,6 +6752,9 @@ function busPublish(topic, payload) {
 // changes nothing until a second replica appears.
 function wireBus() {
   bus.subscribe('user', (p) => notifyUserLocal(p.userId, p.obj));
+  // A notification payload for the native shells (the Android push socket) held
+  // by this replica; the publisher already delivered to its own.
+  bus.subscribe('push', (p) => { if (p && p.userId) notifyPushSocketsLocal(p.userId, p.payload); });
   bus.subscribe('server', (p) => broadcastToServerLocal(p.serverId, p.obj));
   bus.subscribe('friends', (p) => notifyFriendsLocal(p.userId, p.obj));
   bus.subscribe('all', (p) => notifyAllClientsLocal(p.obj));

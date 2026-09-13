@@ -776,9 +776,16 @@ function chanName(id) {
 }
 function notifyMsg(m) {
   if (!m.user) return;
+  const title = m.threadId ? `${m.user.display_name} (DM)` : `${m.user.display_name} (#${chanName(m.channelId)})`;
+  const body = (m.content || '[attachment]').slice(0, 120);
+  // Desktop app: WebView2 has no Notification API to fall back on, so the shell
+  // shows it (final.js nativeNotify). The Android shell never takes this path —
+  // its background service owns notifications, and a page-led one would double
+  // up with whatever it already posted.
+  if (typeof nativeNotify === 'function' && nativeNotify(title, body)) { sfx.msg(); return; }
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   sfx.msg();
-  try { new Notification(m.threadId ? `${m.user.display_name} (DM)` : `${m.user.display_name} (#${chanName(m.channelId)})`, { body: (m.content || '[attachment]').slice(0, 120) }); } catch {}
+  try { new Notification(title, { body }); } catch {}
 }
 if ('Notification' in window && Notification.permission === 'default') {
   document.addEventListener('click', function once() {

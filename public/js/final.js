@@ -26,6 +26,97 @@ function tauriExternalLink(e) {
 }
 document.addEventListener('click', tauriExternalLink);
 document.addEventListener('auxclick', tauriExternalLink);
+// ---------- native notification bridges ----------
+// Two shells have a WebView with no usable notification stack, and they are
+// different problems:
+//
+// - Desktop (Windows/WebView2 implements no Notification API): the app is
+//   always running with a live socket, so the page just hands each message it
+//   would have shown to the native `notify` command. Nothing to keep alive.
+// - Android (Android WebView implements neither PushManager nor Notification,
+//   and the shell pauses the WebView whenever the app is backgrounded): the page
+//   cannot be the notification path at all. The native PushService
+//   (gen/android .../PushService.kt) holds its own socket to the server's
+//   /ws/push instead, surviving both backgrounding and the task being swiped
+//   away. All the page does is hand that service the session, read its state
+//   back for Settings, and route the conversation a tapped notification asks
+//   for.
+function isAndroidShell() {
+  try { return !!(window.__TAURI__ && /android/i.test(navigator.userAgent || '')); } catch { return false; }
+}
+// The desktop shells (Windows/macOS/Linux) — the page is the notification path
+// there, because the app is always running.
+function isDesktopShell() {
+  try { return !!window.__TAURI__ && !isAndroidShell(); } catch { return false; }
+}
+// window.CampfireNative is installed by the Android shell's MainActivity.
+function nativeBridge() {
+  try {
+    const b = window.CampfireNative;
+    return (b && typeof b.configure === 'function') ? b : null;
+  } catch { return null; }
+}
+function nativePushKey() { return 'cf_native_push:' + ((S.me && S.me.id) || 'anon'); }
+function nativePushEnabled() {
+  try { return localStorage.getItem(nativePushKey()) !== '0'; } catch { return true; }
+}
+function setNativePushEnabled(on) {
+  try { if (on) localStorage.removeItem(nativePushKey()); else localStorage.setItem(nativePushKey(), '0'); } catch {}
+}
+function nativePushState() {
+  const b = nativeBridge();
+  if (!b) return null;
+  try { return JSON.parse(b.status() || '{}'); } catch { return {}; }
+}
+// Hand the shell the session, or take it away on sign-out. Called at boot (via
+// pushSetup, which every session runs), and whenever the Settings switch flips.
+function syncNativePush(on) {
+  const b = nativeBridge();
+  if (!b) return;
+  const want = (on === undefined ? nativePushEnabled() : !!on) && !!store.token;
+  try { b.configure(store.token || '', location.origin, want); } catch {}
+}
+function nativePushEnable() {
+  const b = nativeBridge();
+  if (b) { try { b.requestPermission(); } catch {} }
+  setNativePushEnabled(true);
+  syncNativePush(true);
+}
+function nativePushDisable() {
+  setNativePushEnabled(false);
+  syncNativePush(false);
+}
+// Desktop shell only: on Android the service owns notifications, and a page-led
+// one would double up with it.
+function nativeNotify(title, body) {
+  if (!isDesktopShell()) return false;
+  const inv = window.__TAURI__.core && window.__TAURI__.core.invoke;
+  if (typeof inv !== 'function') return false;
+  try {
+    inv('notify', { title: String(title || 'Campfire'), body: String(body || '') }).catch(() => {});
+    return true;
+  } catch { return false; }
+}
+// A tapped notification carries the conversation it came from (the server's
+// payload url: /?dm=ID, /?server=ID&channel=ID, …). The URL routing itself lives
+// in auth.js's handleDeepLinkQuery, shared with a normal page load.
+function routeDeepLink(url) {
+  try {
+    if (typeof handleDeepLinkQuery !== 'function') return;
+    return handleDeepLinkQuery(new URL(url, location.origin).searchParams);
+  } catch {}
+}
+// The Android shell calls this when its window is already up.
+window.__cfDeepLink = function (url) {
+  try { routeDeepLink(url); return true; } catch { return false; }
+};
+function takeNativeDeepLink() {
+  const b = nativeBridge();
+  if (!b || typeof b.takeUrl !== 'function') return;
+  let url = '';
+  try { url = b.takeUrl() || ''; } catch { return; }
+  if (url) routeDeepLink(url);
+}
 // ---------- presence: idle auto-away + the state setter ----------
 // The quick-switch menu that used to hang off the avatar is gone: the states
 // live on your own user card now (see presenceWidgetHTML in pickers.js), and
@@ -474,6 +565,9 @@ window.addEventListener('beforeunload', () => {
 let unreadRefreshAt = 0;
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
+  // Foregrounding is also when a tapped notification is waiting to be routed
+  // (the Android shell parks it until the page is up).
+  try { takeNativeDeepLink(); } catch {}
   try { clearActiveChanUnread(); } catch {}
   if (Date.now() - unreadRefreshAt < 10000) return;
   unreadRefreshAt = Date.now();

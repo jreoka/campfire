@@ -288,6 +288,23 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   sockets get the `pin-seen` push, other accounts hear nothing, an emptied list
   deletes the row, ids are deduped/capped and contexts and auth are validated,
   and the table stays bounded (200 conversations per account).
+  `node scripts/test-push-native.js` covers the native push socket the Android
+  app's notifications ride on (`/ws/push`) — it exists because Android WebView
+  implements neither `PushManager` nor `Notification`, and the shell pauses the
+  WebView the moment the app is backgrounded. Source checks first (every payload
+  reaches the device sockets from `pushToUser`, a peer replica's fan-out rides
+  the bus, web push keeps the account-wide page-visible gate, the service is
+  declared `stopWithTask=false` + `specialUse` + `POST_NOTIFICATIONS`, its url is
+  `/ws/push`, and the page's bridge + deep-link routing are wired), then a real
+  server and a real socket: a DM pushes the exact OS payload (title/body/tag/url)
+  web push would have carried, the payload never rides a chat socket, the device
+  socket registers no `live_sessions` row (the phone stays offline while its
+  service is connected), that socket's own visibility is the only suppression, a
+  visible page on another device does NOT silence the phone, mute prefs still
+  suppress everything, the settings test push arrives while the app is on screen
+  and carries `test`, and a bad token is closed 4401. Skips when Postgres is
+  missing. Re-run after touching `pushToUser`/`notifyPushSockets`, the `/ws`
+  upgrade routing, or `public/js/final.js`'s native bridges.
   `node scripts/test-games-manager.js` covers Settings → Games' server routes
   against a throwaway database: the manager payload (totals, per-game level +
   streak, live game), ignore / un-ignore one game by name, an ignored game that

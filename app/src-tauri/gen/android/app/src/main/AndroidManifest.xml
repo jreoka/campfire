@@ -7,6 +7,13 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- haptic feedback (navigator.vibrate in the web app) -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- background notifications: Android WebView has no Push/Notification API,
+         so PushService holds the connection itself and posts notifications
+         locally. POST_NOTIFICATIONS is requested at runtime (Android 13+). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -31,14 +38,29 @@
             </intent-filter>
         </activity>
 
+        <!-- The notification connection. `specialUse` (not dataSync) is the right
+             type for a long-lived chat socket: Android 15 caps dataSync services
+             at ~6 hours a day, which would silently kill notifications.
+             stopWithTask=false is load-bearing — swiping the app away must not
+             take the connection with it. -->
+        <service
+            android:name=".PushService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Holds a realtime connection open so chat messages and DMs raise notifications while the app is in the background" />
+        </service>
+
         <provider
           android:name="androidx.core.content.FileProvider"
           android:authorities="${applicationId}.fileprovider"
           android:exported="false"
           android:grantUriPermissions="true">
           <meta-data
-            android:name="android.support.FILE_PROVIDER_PATHS"
-            android:resource="@xml/file_paths" />
+              android:name="android.support.FILE_PROVIDER_PATHS"
+              android:resource="@xml/file_paths" />
         </provider>
     </application>
 </manifest>

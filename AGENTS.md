@@ -116,6 +116,23 @@ declared in the manifest); no tray/watcher on mobile — that Rust code is
   capability. Adding an app command means adding it to `build.rs`, the
   capability, and the frontend caller's `.catch(() => {})`.
 
+- **Notifications:** one payload per notification, built by the server
+  (`pushToUser`), delivered three ways: Web Push in a browser, a native push
+  socket (`/ws/push`) for the Android app, and the page's own `notify` command on
+  desktop — no desktop WebView implements the Notification API. The socket
+  fan-out runs BEFORE the `userVisible` gate (web push keeps it via
+  `{ webPush: !(await userVisible(uid)) }`; a phone in a pocket must still ring)
+  and is NOT a chat session: never in `live_sessions`, so the phone stays offline
+  in presence and the socket's own `pushVisible` is the only suppression. `/ws`
+  and `/ws/push` share ONE `server.on('upgrade')` dispatcher — ws's `path` option
+  aborts the other path with a 400. Android is `gen/android/.../PushService.kt`
+  (OkHttp socket + notifications, `stopWithTask="false"`,
+  `foregroundServiceType="specialUse"` — dataSync is capped at 6h/day on Android
+  15), driven by the `CampfireNative` JS interface (`PushBridge.kt`, installed in
+  `MainActivity.onWebViewCreate`) from `public/js/final.js`; a tapped
+  notification parks its url on the activity and `window.__cfDeepLink` routes it
+  through `handleDeepLinkQuery` (auth.js).
+
 - **Icons:** `public/icons/campfire-logo.png` is the single source of truth,
   rendered from the in-app animated fire's vectors via `node
   scripts/render-logo.js` (also writes `favicon-32.png` + `favicon.ico`).

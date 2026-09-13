@@ -23,3 +23,9 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 chrono = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# OS notifications for the desktop shells only — the Android shell has its own
+# Kotlin notification service (gen/android .../PushService.kt), so the plugin
+# stays out of the APK.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-notification = "2"

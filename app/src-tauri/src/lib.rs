@@ -520,6 +520,23 @@ fn set_unread_count(app: AppHandle, count: u32) {
     apply_unread(&app, count);
 }
 
+// Show an OS notification. The desktop WebViews implement no Notification API
+// (WebView2 has never shipped one), so a backgrounded window's messages used to
+// arrive silently — the page hands the title/body here instead (final.js
+// `nativeNotify`). The app is always running with a live socket, so there is
+// nothing to keep alive: this is the whole desktop story.
+#[cfg(desktop)]
+#[tauri::command]
+fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(desktop)]
 #[tauri::command]
 fn get_running_games(app: AppHandle) -> Vec<String> {
@@ -602,6 +619,9 @@ pub fn run() {
         }))
         // Remember window size/position across restarts (desktop only).
         .plugin(tauri_plugin_window_state::Builder::new().build())
+        // OS notifications for a backgrounded window (no Notification API in
+        // any of the desktop WebViews).
+        .plugin(tauri_plugin_notification::init())
         .manage(State {
             token: Mutex::new(None),
             games: Mutex::new(Vec::new()),
@@ -621,6 +641,7 @@ pub fn run() {
             get_watch_state,
             get_current_game,
             get_running_games,
+            notify,
             open_external
         ])
         .on_window_event(|window, event| {

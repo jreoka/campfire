@@ -13,6 +13,7 @@ fn main() {
                 "get_start_minimized",
                 "set_start_minimized",
                 "set_unread_count",
+                "notify",
                 "get_running_games",
                 "get_current_game",
                 "get_watch_state",

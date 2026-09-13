@@ -118,14 +118,42 @@ function notifSelect(scope, val, small) {
 async function renderNotifsTab() {
   const box = $('#set-notifs');
   box.innerHTML = '<p class="muted small">Loading…</p>';
-  const pushOK = ('serviceWorker' in navigator) && ('PushManager' in window);
-  const perm = ('Notification' in window) ? Notification.permission : 'unsupported';
   try { const { prefs } = await api('/api/notifs/prefs'); notifPrefsCache = prefs || {}; } catch { notifPrefsCache = {}; }
   if (!$('#set-notifs')) return;
   box.innerHTML = '';
   const h = (t) => { const e = document.createElement('h4'); e.textContent = t; e.style.margin = '1rem 0 .4rem'; box.appendChild(e); };
+  const note = (t) => { const e = document.createElement('p'); e.className = 'muted small'; e.textContent = t; box.appendChild(e); return e; };
+  const button = (label, primary, fn) => { const b = document.createElement('button'); b.className = 'btn small' + (primary ? ' primary' : ''); b.textContent = label; b.onclick = fn; box.appendChild(b); return b; };
   h('Push notifications');
-  const st = document.createElement('p'); st.className = 'muted small';
+  const nb = typeof nativeBridge === 'function' ? nativeBridge() : null;
+  if (nb) {
+    // Android app: notifications come from the native background service, not
+    // from the browser — this WebView has neither PushManager nor Notification.
+    const st = (typeof nativePushState === 'function' && nativePushState()) || {};
+    const on = !!st.enabled && !!store.token;
+    if (!on) note('Background notifications are off on this device. Turn them on to get pings for messages and DMs even when Campfire is closed.');
+    else if (!st.permission) note('Android is blocking notifications for Campfire. Allow them in your phone\'s Settings → Apps → Campfire → Notifications, then come back here.');
+    else if (!st.running) note('Notifications are on — the background connection is starting…');
+    else note('Background notifications are on. Messages, mentions and DMs ping you even with Campfire closed.');
+    if (!on) button('Enable notifications', true, async () => { nativePushEnable(); renderNotifsTab(); toast('Notifications enabled'); });
+    else {
+      if (!st.permission) button('Allow notifications', true, () => { try { nb.requestPermission(); } catch {} setTimeout(renderNotifsTab, 1500); });
+      button('Send test notification', !st.permission, async () => {
+        try { await api('/api/push/test', { method: 'POST' }); toast('Test notification sent'); } catch { toast('Test failed'); }
+      });
+      button('Turn off on this device', false, () => { nativePushDisable(); renderNotifsTab(); });
+    }
+  } else if (typeof isDesktopShell === 'function' && isDesktopShell()) {
+    // Desktop app: no WebView on any of the three platforms implements the
+    // Notification API, so the shell itself shows what the page would have
+    // (socket.js notifyMsg → nativeNotify). Nothing to subscribe to.
+    note('The Campfire app shows message and DM notifications whenever its window is not in front. Nothing to set up.');
+    button('Send test notification', false, () => {
+      if (!nativeNotify('Campfire', 'Test notification — delivery works!')) toast('Could not show it');
+    });
+  } else {
+  const pushOK = ('serviceWorker' in navigator) && ('PushManager' in window);
+  const perm = ('Notification' in window) ? Notification.permission : 'unsupported';
   let subscribed = false;
   if (pushOK && perm === 'granted') {
     try {
@@ -133,41 +161,34 @@ async function renderNotifsTab() {
       subscribed = !!(await reg.pushManager.getSubscription());
     } catch {}
   }
+  const st = note('');
   if (!pushOK) st.textContent = 'Push is not supported in this browser.';
   else if (subscribed) st.textContent = 'Push notifications are enabled on this device — you will get pings even with Campfire closed.';
   else if (perm === 'denied') st.textContent = 'Notifications are blocked. Allow them in your browser or OS settings, then return here.';
   else if (perm === 'granted') st.textContent = 'Push is off on this device. Turn it back on below.';
   else st.textContent = 'Get pings on desktop and mobile, even with Campfire closed.';
-  box.appendChild(st);
   if (pushOK && !subscribed && perm !== 'granted' && perm !== 'denied') {
-    const en = document.createElement('button'); en.className = 'btn small primary'; en.textContent = 'Enable notifications';
-    en.onclick = async () => {
+    button('Enable notifications', true, async () => {
       try {
         const p = await Notification.requestPermission();
         if (p === 'granted') { await pushSetup(); renderNotifsTab(); toast('Notifications enabled'); }
         else { toast('Notifications blocked'); renderNotifsTab(); }
       } catch { toast('Could not enable'); }
-    };
-    box.appendChild(en);
+    });
   }
   if (pushOK && perm === 'granted' && !subscribed) {
-    const en = document.createElement('button'); en.className = 'btn small primary'; en.textContent = 'Enable on this device';
-    en.onclick = async () => { await pushSetup(); renderNotifsTab(); toast('Notifications enabled'); };
-    box.appendChild(en);
+    button('Enable on this device', true, async () => { await pushSetup(); renderNotifsTab(); toast('Notifications enabled'); });
   }
   if (pushOK && subscribed) {
-    const test = document.createElement('button'); test.className = 'btn small'; test.textContent = 'Send test push';
-    test.onclick = async () => { try { await api('/api/push/test', { method: 'POST' }); toast('Test push sent'); } catch { toast('Test failed'); } };
-    box.appendChild(test);
-    const off = document.createElement('button'); off.className = 'btn small'; off.textContent = 'Disable on this device';
-    off.onclick = async () => { await pushTeardown(); renderNotifsTab(); };
-    box.appendChild(off);
+    button('Send test push', false, async () => { try { await api('/api/push/test', { method: 'POST' }); toast('Test push sent'); } catch { toast('Test failed'); } });
+    button('Disable on this device', false, async () => { await pushTeardown(); renderNotifsTab(); });
+  }
   }
   h('Default for everything');
   box.appendChild(notifSelect('global', notifPrefsCache.global || 'all'));
-  const note = document.createElement('p'); note.className = 'muted small';
-  note.textContent = 'Right-click (or long-press) a server or channel for its own rules. DM threads follow the default rule.';
-  box.appendChild(note);
+  const note2 = document.createElement('p'); note2.className = 'muted small';
+  note2.textContent = 'Right-click (or long-press) a server or channel for its own rules. DM threads follow the default rule.';
+  box.appendChild(note2);
 }
 function urlB64ToU8(s) {
   const pad = '='.repeat((4 - (s.length % 4)) % 4);
@@ -178,6 +199,9 @@ function urlB64ToU8(s) {
 }
 async function pushSetup() {
   try {
+    // Android app: there is no Push API in that WebView at all, so the session
+    // goes to the native background service instead (final.js).
+    if (typeof nativeBridge === 'function' && nativeBridge()) { syncNativePush(); return; }
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
     if (!store.token || Notification.permission !== 'granted') return;
     const { publicKey } = await api('/api/push/config');
@@ -191,6 +215,8 @@ async function pushSetup() {
 }
 async function pushTeardown() {
   try {
+    // Sign-out must not leave the phone's service holding a dead session.
+    if (typeof nativeBridge === 'function' && nativeBridge()) { syncNativePush(false); return; }
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
     if (sub) {

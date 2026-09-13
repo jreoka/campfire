@@ -269,6 +269,42 @@ function consumeInvite() {
   if (code) { try { history.replaceState(null, '', u.pathname + u.search + u.hash); } catch {} }
   return code;
 }
+// Where a notification lands: ?dm=ID, ?server=ID&channel=ID, ?friends=1,
+// ?admin=reports, ?story=1. Shared by a normal page load (the boot path below,
+// which also cleans the url) and by the Android shell handing over a tapped
+// notification's url (final.js routeDeepLink) — one router, so a deep link
+// behaves identically however it arrived.
+async function handleDeepLinkQuery(qs) {
+  try {
+    if (!qs) return;
+    const qdm = qs.get('dm'), qserv = qs.get('server'), qchan = qs.get('channel'), qfriends = qs.get('friends'), qadmin = qs.get('admin'), qstory = qs.get('story');
+    if (qadmin === 'reports' && isSiteAdmin()) openAdminConsole('reports');
+    else if (qdm) {
+      await openHome();
+      if (S.dms.some((t) => t.id === qdm)) selectDmThread(qdm);
+      else {
+        // dismissed (hidden) thread from a notification link — reopen it
+        try {
+          const { thread } = await api(`/api/dms/${qdm}/open`, { method: 'POST' });
+          await refreshDms();
+          selectDmThread(thread.id);
+        } catch {}
+      }
+    } else if (qserv && S.servers.some((s) => s.id === qserv)) {
+      await selectServer(qserv);
+      if (S.serverDetail?.channels.some((c) => c.id === qchan && c.type === 'text')) await selectChannel(qchan);
+    } else if (qfriends) {
+      await openHome();
+      showFriendsPanel();
+    } else if (qstory) {
+      // The home-screen "Add to your story" shortcut (manifest shortcuts → /?story=1)
+      // lands straight in the story camera. This runs at the end of boot, so every
+      // module — stories.js included — is parsed and loaded; the URL was cleaned
+      // above, so a refresh does not reopen the camera.
+      await openStoryComposer({}).catch(() => {});
+    }
+  } catch {}
+}
 // ---------- boot ----------
 async function boot() {
   try {
@@ -403,34 +439,12 @@ async function boot() {
   // and from the installed app's "Add to your story" shortcut (?story=1)
   try {
     const qs = new URLSearchParams(location.search);
-    const qdm = qs.get('dm'), qserv = qs.get('server'), qchan = qs.get('channel'), qfriends = qs.get('friends'), qadmin = qs.get('admin'), qstory = qs.get('story');
-    if (qdm || qserv || qfriends || qadmin || qstory) history.replaceState(null, '', location.pathname);
-    if (qadmin === 'reports' && isSiteAdmin()) openAdminConsole('reports');
-    else if (qdm) {
-      await openHome();
-      if (S.dms.some((t) => t.id === qdm)) selectDmThread(qdm);
-      else {
-        // dismissed (hidden) thread from a notification link — reopen it
-        try {
-          const { thread } = await api(`/api/dms/${qdm}/open`, { method: 'POST' });
-          await refreshDms();
-          selectDmThread(thread.id);
-        } catch {}
-      }
-    } else if (qserv && S.servers.some((s) => s.id === qserv)) {
-      await selectServer(qserv);
-      if (S.serverDetail?.channels.some((c) => c.id === qchan && c.type === 'text')) await selectChannel(qchan);
-    } else if (qfriends) {
-      await openHome();
-      showFriendsPanel();
-    } else if (qstory) {
-      // The home-screen "Add to your story" shortcut (manifest shortcuts → /?story=1)
-      // lands straight in the story camera. This runs at the end of boot, so every
-      // module — stories.js included — is parsed and loaded; the URL was cleaned
-      // above, so a refresh does not reopen the camera.
-      await openStoryComposer({}).catch(() => {});
-    }
+    if (qs.get('dm') || qs.get('server') || qs.get('friends') || qs.get('admin') || qs.get('story')) history.replaceState(null, '', location.pathname);
+    await handleDeepLinkQuery(qs);
   } catch {}
+  // A tapped Android notification is the same routing, one step later: the shell
+  // parks the url until the page can act on it (final.js takeNativeDeepLink).
+  try { if (typeof takeNativeDeepLink === 'function') takeNativeDeepLink(); } catch {}
   // shared from the Android system share sheet (/share?title=&text=&url=)
   try {
     const sh = consumeShare() || takeShare();

@@ -11,6 +11,7 @@
     "allow-get-start-minimized",
     "allow-set-start-minimized",
     "allow-set-unread-count",
+    "allow-notify",
     "allow-get-running-games",
     "allow-open-external"
   ],
