@@ -179,41 +179,31 @@ function esc(s) {
 function popupBox(el) {
   return { w: el.offsetWidth, h: el.offsetHeight };
 }
-// A tab whose pane has to be fetched marks itself busy until that fetch lands.
-// The tab row is the only thing that can say the section is on its way — without
-// it a slow round trip reads as a click that did nothing. The mark is a COUNT,
-// not a flag: two overlapping loads of one row must not clear it when the first
+// A tab whose pane has to be fetched says so IN the pane, not in the rail: the
+// rail is where you choose, the page is where you wait, and a mark beside a
+// label is easy to miss — on a phone the rail is not even on screen once the
+// section opens. The pane carries `.loading` (styles.css draws the ring and
+// stands the stale content down) until the fetch lands. The mark is a COUNT, not
+// a flag: two overlapping loads of one pane must not clear it when the first
 // finishes. Short waits deliberately show nothing (a spinner that flashes for
 // 60ms on a fast answer is worse than no spinner at all), so the mark only
 // appears once the load has outlived TAB_SPIN_DELAY_MS.
 const TAB_SPIN_DELAY_MS = 180;
 const tabSpinN = new WeakMap();
-function tabSpin(btn, on) {
-  if (!btn) return 0;
-  const n = Math.max(0, (tabSpinN.get(btn) || 0) + (on ? 1 : -1));
-  if (n) tabSpinN.set(btn, n); else tabSpinN.delete(btn);
-  btn.classList.toggle('busy', n > 0);
-  if (n) btn.setAttribute('aria-busy', 'true'); else btn.removeAttribute('aria-busy');
-  // The spinner is a real element in the row's own flow, never a pseudo-element:
-  // the mobile settings row already spends ::after on its chevron, and an
-  // absolutely positioned ring would sit on top of the label in a narrow
-  // horizontal admin strip. The label therefore never moves and never gets
-  // covered.
-  let sp = btn.querySelector('.set-tab-spin');
-  if (n && !sp) {
-    sp = document.createElement('span');
-    sp.className = 'set-tab-spin';
-    sp.setAttribute('aria-hidden', 'true');
-    btn.appendChild(sp);
-  } else if (!n && sp) sp.remove();
+function tabSpin(pane, on) {
+  if (!pane) return 0;
+  const n = Math.max(0, (tabSpinN.get(pane) || 0) + (on ? 1 : -1));
+  if (n) tabSpinN.set(pane, n); else tabSpinN.delete(pane);
+  pane.classList.toggle('loading', n > 0);
+  if (n) pane.setAttribute('aria-busy', 'true'); else pane.removeAttribute('aria-busy');
   return n;
 }
-// Keep `btn` busy for as long as `p` (a promise) takes. The task's own promise
-// is handed back, so a caller that wants to await the pane still can.
-function tabSpinWhile(btn, p) {
+// Keep `pane` loading for as long as `p` (a promise) takes. The task's own
+// promise is handed back, so a caller that wants to await the pane still can.
+function tabSpinWhile(pane, p) {
   let shown = false;
-  const t = setTimeout(() => { shown = true; tabSpin(btn, true); }, TAB_SPIN_DELAY_MS);
-  const done = () => { clearTimeout(t); if (shown) tabSpin(btn, false); };
+  const t = setTimeout(() => { shown = true; tabSpin(pane, true); }, TAB_SPIN_DELAY_MS);
+  const done = () => { clearTimeout(t); if (shown) tabSpin(pane, false); };
   return Promise.resolve(p).then(
     (v) => { done(); return v; },
     (err) => { done(); throw err; },

@@ -1,18 +1,20 @@
-// The loading spinner on the settings rail and the admin console's tab strip
-// (see AGENTS.md → design language: a pick that has to wait must say so).
+// The loading spinner for the settings and admin-console tab panes (see
+// AGENTS.md → design language: a pick that has to wait must say so).
 //
-// Both rails are `.set-tab` rows built from index.html and styled by styles.css,
-// and both drive one shared helper: `tabSpin`/`tabSpinWhile` (core.js). The
-// contract this test protects:
-//   - a pane that fetches marks its OWN row busy until the fetch lands, and the
-//     synchronous panes (Profile, Themes) never spin;
-//   - the mark is a COUNT, so two overlapping loads of one row cannot clear it
+// Both consoles are a `.set-tab` rail over `.set-pane` pages, and both drive one
+// shared helper: `tabSpin`/`tabSpinWhile` (core.js). The contract this test
+// protects:
+//   - the mark is on the PANE the reader is looking at, never beside the tab
+//     button — it has to survive the phone layout, where picking a section hides
+//     the rail entirely;
+//   - a pane that fetches marks its OWN page, and the synchronous panes
+//     (Profile, Themes) never spin;
+//   - the mark is a COUNT, so two overlapping loads of one pane cannot clear it
 //     when the first one finishes;
 //   - a fast answer never flashes a spinner (the delay threshold), because a
 //     60ms flash reads as a glitch;
-//   - the spinner is an in-flow element, never a pseudo-element: the mobile
-//     settings row spends ::after on its chevron and a narrow admin strip would
-//     put an absolutely positioned ring on top of the label.
+//   - while it waits, the stale content stands down and the ring holds the page,
+//     so a refresh never shows the old rows as if they were the answer.
 //
 // Static checks run everywhere; the browser half drives the REAL extracted
 // helper against the REAL markup + stylesheet in headless Chrome and skips
@@ -54,7 +56,7 @@ const settings = fs.readFileSync(path.join(ROOT, 'public/js/settings.js'), 'utf8
 const admin = fs.readFileSync(path.join(ROOT, 'public/js/admin.js'), 'utf8');
 const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
 
-const SPIN_FROM = '// A tab whose pane has to be fetched marks itself busy';
+const SPIN_FROM = '// A tab whose pane has to be fetched says so IN the pane';
 const SPIN_TO = '/* Default avatar color';
 const spinSrc = core.slice(core.indexOf(SPIN_FROM), core.indexOf(SPIN_TO));
 // Both rails live between the settings block and the server-settings one.
@@ -68,60 +70,74 @@ ${railsMarkup}
 <script>
 ${spinSrc}
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-const rowHtml = (el) => el.outerHTML;
 (async () => {
   const out = {};
   const sr = document.querySelector('#settings-backdrop .set-tab[data-tab="games"]');
   const ar = document.querySelector('#admin-backdrop .set-tab[data-atab="reports"]');
+  const spane = document.getElementById('set-games');
+  const apane = document.getElementById('adm-reports');
   document.getElementById('settings-backdrop').classList.remove('hidden');
   document.getElementById('admin-backdrop').classList.remove('hidden');
-  out.rows = { settings: !!sr, admin: !!ar, settingsLabel: sr && sr.textContent.trim(), adminLabel: ar && ar.textContent.trim() };
-  const h0 = Math.round(sr.getBoundingClientRect().height);
+  // The shown pane, exactly as setSettingsTab/setAdminTab leave it.
+  spane.classList.remove('hidden');
+  apane.classList.remove('hidden');
+  // Stale content a refresh has to stand down.
+  spane.innerHTML = '<p class="muted small">stale rows</p>';
+  apane.innerHTML = '<p class="muted small">stale rows</p>';
+  const stale = spane.firstElementChild;
+  const ring = (pane) => {
+    const cs = getComputedStyle(pane, '::before');
+    return { content: cs.content, width: cs.width, height: cs.height, radius: cs.borderTopLeftRadius, anim: cs.animationName, top: cs.borderTopColor };
+  };
+  out.rows = { settings: !!sr, admin: !!ar, panes: !!spane && !!apane };
+  out.tabButtons = { spinChild: !!document.querySelector('.set-tab .set-tab-spin'), busy: sr.classList.contains('busy'), busyAttr: sr.hasAttribute('aria-busy') };
 
   // [1] a fast pane never flashes a spinner
-  tabSpinWhile(sr, wait(20));
+  tabSpinWhile(spane, wait(20));
   await wait(400);
-  out.fast = { spin: !!sr.querySelector('.set-tab-spin'), busy: sr.classList.contains('busy'), aria: sr.getAttribute('aria-busy'), label: sr.textContent.trim() };
+  out.fast = { loading: spane.classList.contains('loading'), aria: spane.getAttribute('aria-busy'), staleShown: getComputedStyle(stale).display };
 
-  // [2] a slow pane spins for exactly as long as it waits
+  // [2] a slow pane holds the page with the ring
   let release;
-  tabSpinWhile(sr, new Promise((r) => { release = r; }));
+  tabSpinWhile(spane, new Promise((r) => { release = r; }));
   await wait(60);
-  out.beforeDelay = !!sr.querySelector('.set-tab-spin');
+  out.beforeDelay = spane.classList.contains('loading');
   await wait(300);
-  const sp = sr.querySelector('.set-tab-spin');
-  const cs = sp ? getComputedStyle(sp) : null;
   out.during = {
-    spin: !!sp, busy: sr.classList.contains('busy'), aria: sr.getAttribute('aria-busy'),
-    label: sr.textContent.trim(), markup: sp ? rowHtml(sp) : '',
-    style: cs ? { display: cs.display, position: cs.position, width: cs.width, height: cs.height, radius: cs.borderTopLeftRadius, anim: cs.animationName, margin: cs.marginLeft } : null,
-    heightDelta: Math.round(sr.getBoundingClientRect().height) - h0,
+    loading: spane.classList.contains('loading'),
+    aria: spane.getAttribute('aria-busy'),
+    display: getComputedStyle(spane).display,
+    align: getComputedStyle(spane).alignItems,
+    minH: getComputedStyle(spane).minHeight,
+    staleDisplay: getComputedStyle(stale).display,
+    ring: ring(spane),
+    tabStillClean: !sr.querySelector('.set-tab-spin') && !sr.classList.contains('busy'),
   };
   release();
   await wait(40);
-  out.after = { spin: !!sr.querySelector('.set-tab-spin'), busy: sr.classList.contains('busy'), aria: sr.getAttribute('aria-busy'), label: sr.textContent.trim() };
+  out.after = { loading: spane.classList.contains('loading'), aria: spane.getAttribute('aria-busy'), staleDisplay: getComputedStyle(stale).display };
 
   // [3] two overlapping loads hold the mark until the LAST one settles
   let a, b;
-  tabSpinWhile(ar, new Promise((r) => { a = r; }));
-  tabSpinWhile(ar, new Promise((r) => { b = r; }));
+  tabSpinWhile(apane, new Promise((r) => { a = r; }));
+  tabSpinWhile(apane, new Promise((r) => { b = r; }));
   await wait(260);
-  out.overlapDuring = !!ar.querySelector('.set-tab-spin');
+  out.overlapDuring = apane.classList.contains('loading');
   a();
   await wait(40);
-  out.overlapHalf = !!ar.querySelector('.set-tab-spin');
+  out.overlapHalf = apane.classList.contains('loading');
   b();
   await wait(40);
-  out.overlapDone = { spin: !!ar.querySelector('.set-tab-spin'), busy: ar.classList.contains('busy') };
+  out.overlapDone = { loading: apane.classList.contains('loading'), aria: apane.getAttribute('aria-busy') };
 
-  // [4] a pane that rejects still clears the mark (no spinner parks forever)
+  // [4] a pane that rejects still clears the mark (no ring parks forever)
   let fail;
-  tabSpinWhile(sr, new Promise((_, rej) => { fail = rej; })).catch(() => {});
+  tabSpinWhile(spane, new Promise((_, rej) => { fail = rej; })).catch(() => {});
   await wait(260);
-  out.rejectDuring = !!sr.querySelector('.set-tab-spin');
+  out.rejectDuring = spane.classList.contains('loading');
   fail(new Error('nope'));
   await wait(40);
-  out.rejectAfter = { spin: !!sr.querySelector('.set-tab-spin'), busy: sr.classList.contains('busy') };
+  out.rejectAfter = { loading: spane.classList.contains('loading'), aria: spane.getAttribute('aria-busy') };
 
   document.title = JSON.stringify(out);
 })();
@@ -148,34 +164,41 @@ function run(chrome, html) {
 function main() {
   console.log('\n[1] the helper is the shared one, and it counts');
   check(/const TAB_SPIN_DELAY_MS = \d+;/.test(core), 'the flash threshold is a named constant');
-  check(/const tabSpinN = new WeakMap\(\)/.test(core) && /tabSpinN\.get\(btn\) \|\| 0\) \+ \(on \? 1 : -1\)/.test(core),
-    'tabSpin holds a per-row count, not a boolean (overlapping loads cannot clear it early)');
-  check(/function tabSpinWhile\(btn, p\)[\s\S]{0,320}setTimeout\([\s\S]{0,120}clearTimeout\(t\)/.test(core),
+  check(/function tabSpin\(pane, on\)/.test(core) && /pane\.classList\.toggle\('loading', n > 0\)/.test(core),
+    'tabSpin marks the PANE, not the tab button');
+  check(/const tabSpinN = new WeakMap\(\)/.test(core) && /tabSpinN\.get\(pane\) \|\| 0\) \+ \(on \? 1 : -1\)/.test(core),
+    'it holds a per-pane count, not a boolean (overlapping loads cannot clear it early)');
+  check(/if \(n\) pane\.setAttribute\('aria-busy', 'true'\); else pane\.removeAttribute\('aria-busy'\)/.test(core),
+    'and says so to assistive tech on the page it is updating');
+  check(/function tabSpinWhile\(pane, p\)[\s\S]{0,320}setTimeout\([\s\S]{0,120}clearTimeout\(t\)/.test(core),
     'tabSpinWhile arms the visible mark on a timer and clears it when the promise settles');
-  check(/sp = btn\.querySelector\('\.set-tab-spin'\)/.test(spinSrc) && /btn\.appendChild\(sp\)/.test(spinSrc),
-    'the spinner is a real child of the row, appended inside it');
+  check(!/set-tab-spin/.test(core), 'nothing is injected into the tab row any more');
 
-  console.log('\n[2] every fetching tab is wired, and the synchronous ones are not');
+  console.log('\n[2] every fetching pane is wired, and the synchronous ones are not');
+  check(/const pane = \$\(('#set-' \+ t)\);/.test(settings), 'the settings pane is looked up from the tab id');
   for (const [tab, fn] of [['account', 'Promise.all\\(\\[renderSecurityTab\\(\\), renderDesktopApp\\(\\)\\]\\)'], ['notifs', 'renderNotifsTab\\(\\)'], ['blocked', 'renderBlockedTab\\(\\)'], ['games', 'renderGamesTab\\(\\)'], ['media', 'renderMediaTab\\(\\)']]) {
-    check(new RegExp(`if \\(t === '${tab}'\\) tabSpinWhile\\(row, ${fn}\\);`).test(settings), `Settings → ${tab} marks its row while the pane loads`);
+    check(new RegExp(`if \\(t === '${tab}'\\) tabSpinWhile\\(pane, ${fn}\\);`).test(settings), `Settings → ${tab} marks its own page while the pane loads`);
   }
   check(/if \(t === 'themes'\) renderThemesTab\(\);/.test(settings), 'the synchronous Themes pane paints without a spinner');
-  check(/const row = document\.querySelector\('#settings-backdrop \.set-tab\[data-tab="/.test(settings), 'the settings row is looked up from the tab id');
+  check(/let pane = null;[\s\S]{0,320}if \(key === t\) pane = p;/.test(admin), 'the admin pane is the one being shown');
   for (const [tab, fn] of [['overview', 'loadAdminStats\\(\\)'], ['reports', 'loadAdminReports\\(\\)'], ['media', 'loadAdminMedia\\(\\)'], ['users', 'loadAdminUsers\\(\\)'], ['servers', 'loadAdminServers\\(\\)']]) {
-    check(new RegExp(`tabSpinWhile\\(row, ${fn}\\);`).test(admin) && new RegExp(`t === '${tab}'`).test(admin), `Admin → ${tab} marks its row while the pane loads`);
+    check(new RegExp(`tabSpinWhile\\(pane, ${fn}\\);`).test(admin) && new RegExp(`t === '${tab}'`).test(admin), `Admin → ${tab} marks its own page while the pane loads`);
   }
-  check(/const row = document\.querySelector\('#admin-backdrop \.set-tab\[data-atab="/.test(admin), 'the admin row is looked up from the tab id');
+  check(!/tabSpinWhile\(row/.test(settings) && !/tabSpinWhile\(row/.test(admin), 'no caller marks a tab row');
 
-  console.log('\n[3] the spinner is the app\'s one ring, in the row\'s own flow');
-  const spinRule = /\.set-tab-spin\{([^}]*)\}/.exec(css);
-  check(!!spinRule, 'styles.css has a .set-tab-spin rule');
-  if (spinRule) {
-    check(/border-radius:50%/.test(spinRule[1]) && /border-top-color:var\(--accent\)/.test(spinRule[1]), 'it is a circle with an accent arc', spinRule[1]);
-    check(/animation:up-spin/.test(spinRule[1]), 'it rides the app\'s existing spin keyframes');
-    check(/display:inline-block/.test(spinRule[1]) && !/position:absolute/.test(spinRule[1]), 'it sits in the row flow, never absolutely positioned');
-  }
-  check(/prefers-reduced-motion:reduce\)\{[^}]*\.set-tab-spin/.test(css), 'reduced motion turns the animation off');
-  check(/#settings-backdrop \.set-tab \.set-tab-spin\{margin-left:0\}/.test(css), 'the mobile menu row lets its own flex gap do the spacing');
+  console.log('\n[3] the ring lives on the page, and the stale content stands down');
+  const paneRule = /\.set-pane\.loading\{([^}]*)\}/.exec(css);
+  check(!!paneRule && /display:flex/.test(paneRule[1]) && /align-items:center/.test(paneRule[1]) && /justify-content:center/.test(paneRule[1]),
+    'the loading pane centres its ring', paneRule && paneRule[1]);
+  check(!!paneRule && /min-height:min\(240px,45vh\)/.test(paneRule[1]), 'in a block tall enough to read as a page', paneRule && paneRule[1]);
+  check(/\.set-pane\.loading>\*\{display:none\}/.test(css), 'the stale rows stand down while it waits');
+  const beforeRule = /\.set-pane\.loading::before\{([^}]*)\}/.exec(css);
+  check(!!beforeRule && /width:26px/.test(beforeRule[1]) && /height:26px/.test(beforeRule[1]) && /border-radius:50%/.test(beforeRule[1]),
+    'the ring is a 26px circle', beforeRule && beforeRule[1]);
+  check(!!beforeRule && /border-top-color:var\(--accent\)/.test(beforeRule[1]) && /animation:up-spin/.test(beforeRule[1]),
+    'an accent arc on the app\'s existing spin keyframes', beforeRule && beforeRule[1]);
+  check(/prefers-reduced-motion:reduce\)\{[^}]*\.set-pane\.loading::before/.test(css), 'reduced motion turns the animation off');
+  check(!/\.set-tab-spin\{/.test(css), 'the tab-row ring is gone from the stylesheet');
 
   const chrome = findChrome();
   if (!chrome) return skip('no Chrome/Edge found — set CHROME_PATH');
@@ -184,24 +207,24 @@ function main() {
   const out = run(chrome, pageHtml());
   if (out.err) { check(false, 'the harness ran', out.err); }
   else {
-    check(out.rows.settings && out.rows.admin, 'both rails rendered', out.rows);
-    check(out.rows.settingsLabel === 'Games' && out.rows.adminLabel === 'Reports', 'the rows carry their labels', out.rows);
-    check(out.fast.spin === false && out.fast.busy === false && out.fast.aria === null, 'a fast answer never flashes a spinner', out.fast);
-    check(out.fast.label === 'Games', 'and leaves the label alone', out.fast);
+    check(out.rows.settings && out.rows.admin && out.rows.panes, 'both consoles and their panes rendered', out.rows);
+    check(out.fast.loading === false && out.fast.aria === null, 'a fast answer never flashes a spinner', out.fast);
+    check(out.fast.staleShown !== 'none', 'and leaves the pane exactly as it was', out.fast);
     check(out.beforeDelay === false, 'nothing shows before the threshold', out.beforeDelay);
-    check(out.during.spin === true, 'a slow answer puts the spinner in the row', out.during);
-    check(out.during.busy === true && out.during.aria === 'true', 'the row is marked busy for assistive tech too', out.during);
-    check(out.during.label === 'Games', 'the label text survives the extra child', out.during);
-    check(out.during.markup === '<span class="set-tab-spin" aria-hidden="true"></span>', 'the mark is one empty decorative span', out.during.markup);
-    check(out.during.style && out.during.style.display === 'inline-block' && out.during.style.position === 'static', 'it is laid out in the row, not over it', out.during.style);
-    check(out.during.style && out.during.style.width === '12px' && out.during.style.height === '12px' && out.during.style.radius === '50%', 'a 12px ring', out.during.style);
-    check(out.during.style && out.during.style.anim === 'up-spin', 'and it is the animated one', out.during.style);
-    check(Math.abs(out.during.heightDelta) <= 1, 'the row does not change height when the ring appears', out.during.heightDelta);
-    check(out.after.spin === false && out.after.busy === false && out.after.aria === null && out.after.label === 'Games', 'it clears when the pane lands', out.after);
+    check(out.during.loading === true, 'a slow answer marks the page, not the rail', out.during);
+    check(out.during.aria === 'true', 'and says so to assistive tech', out.during);
+    check(out.during.display === 'flex' && out.during.align === 'center', 'the page centres its ring', out.during);
+    check(/45vh|240px/.test(out.during.minH), 'in a page-tall block', out.during.minH);
+    check(out.during.staleDisplay === 'none', 'the stale rows stand down while it waits', out.during);
+    check(out.during.ring.width === '26px' && out.during.ring.height === '26px' && out.during.ring.radius === '50%', 'a 26px ring', out.during.ring);
+    check(out.during.ring.anim === 'up-spin', 'and it is the animated one', out.during.ring);
+    check(out.during.tabStillClean === true && out.tabButtons.spinChild === false && out.tabButtons.busy === false && !out.tabButtons.busyAttr,
+      'the tab button carries no mark at all', out.tabButtons);
+    check(out.after.loading === false && out.after.aria === null && out.after.staleDisplay !== 'none', 'the page is handed back when the pane lands', out.after);
     check(out.overlapDuring === true, 'two overlapping loads spin', out.overlapDuring);
     check(out.overlapHalf === true, 'and the first one settling does not clear the second', out.overlapHalf);
-    check(out.overlapDone.spin === false && out.overlapDone.busy === false, 'the last one settling clears it', out.overlapDone);
-    check(out.rejectDuring === true && out.rejectAfter.spin === false && out.rejectAfter.busy === false, 'a rejected pane clears the mark instead of parking on it', out);
+    check(out.overlapDone.loading === false && out.overlapDone.aria === null, 'the last one settling clears it', out.overlapDone);
+    check(out.rejectDuring === true && out.rejectAfter.loading === false && out.rejectAfter.aria === null, 'a rejected pane clears the mark instead of parking on it', out);
   }
 
   console.log('');

@@ -47,20 +47,21 @@ function setAdminTab(t) {
   if (!isSiteAdmin()) return;
   Admin.tab = t;
   document.querySelectorAll('#admin-backdrop .set-tab').forEach((b) => b.classList.toggle('active', b.dataset.atab === t));
+  let pane = null;
   for (const key of ['overview', 'reports', 'media', 'users', 'servers']) {
-    const pane = document.getElementById('adm-' + key);
-    if (pane) pane.classList.toggle('hidden', key !== t);
+    const p = document.getElementById('adm-' + key);
+    if (!p) continue;
+    p.classList.toggle('hidden', key !== t);
+    if (key === t) pane = p;
   }
-  // Every pane in the console fetches, so the tab that was picked keeps a
-  // spinner until its load lands (tabSpinWhile, core.js) — the strip is the
-  // only progress the console can show. Overview included: its first paint is a
+  // Every pane in the console fetches, so the page itself says so until the load
+  // lands (tabSpinWhile, core.js) — Overview included: its first paint is a
   // round trip too.
-  const row = document.querySelector('#admin-backdrop .set-tab[data-atab="' + t + '"]');
-  if (t === 'overview') { ensureAdminOverviewPane(); tabSpinWhile(row, loadAdminStats()); startAdminStatsLive(); }
-  else if (t === 'reports') { ensureAdminReportsPane(); tabSpinWhile(row, loadAdminReports()); }
-  else if (t === 'media') tabSpinWhile(row, loadAdminMedia());
-  else if (t === 'users') { ensureAdminUsersPane(); tabSpinWhile(row, loadAdminUsers()); }
-  else if (t === 'servers') { ensureAdminServersPane(); tabSpinWhile(row, loadAdminServers()); }
+  if (t === 'overview') { ensureAdminOverviewPane(); tabSpinWhile(pane, loadAdminStats()); startAdminStatsLive(); }
+  else if (t === 'reports') { ensureAdminReportsPane(); tabSpinWhile(pane, loadAdminReports()); }
+  else if (t === 'media') tabSpinWhile(pane, loadAdminMedia());
+  else if (t === 'users') { ensureAdminUsersPane(); tabSpinWhile(pane, loadAdminUsers()); }
+  else if (t === 'servers') { ensureAdminServersPane(); tabSpinWhile(pane, loadAdminServers()); }
   if (t !== 'overview') stopAdminStatsLive();
 }
 

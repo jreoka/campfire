@@ -241,16 +241,16 @@ function setSettingsTab(t) {
   $('#set-notifs').classList.toggle('hidden', t !== 'notifs');
   $('#set-blocked').classList.toggle('hidden', t !== 'blocked');
   $('#set-themes').classList.toggle('hidden', t !== 'themes');
-  // Every pane that has to ask the server marks its own rail row busy until the
+  // Every pane that has to ask the server says so on the page itself until the
   // answer is painted (tabSpinWhile, core.js). Profile and Themes paint from
   // state they already have, so they never spin.
-  const row = document.querySelector('#settings-backdrop .set-tab[data-tab="' + t + '"]');
-  if (t === 'account') tabSpinWhile(row, Promise.all([renderSecurityTab(), renderDesktopApp()]));
-  if (t === 'notifs') tabSpinWhile(row, renderNotifsTab());
-  if (t === 'blocked') tabSpinWhile(row, renderBlockedTab());
+  const pane = $('#set-' + t);
+  if (t === 'account') tabSpinWhile(pane, Promise.all([renderSecurityTab(), renderDesktopApp()]));
+  if (t === 'notifs') tabSpinWhile(pane, renderNotifsTab());
+  if (t === 'blocked') tabSpinWhile(pane, renderBlockedTab());
   if (t === 'themes') renderThemesTab();
-  if (t === 'games') tabSpinWhile(row, renderGamesTab());
-  if (t === 'media') tabSpinWhile(row, renderMediaTab());
+  if (t === 'games') tabSpinWhile(pane, renderGamesTab());
+  if (t === 'media') tabSpinWhile(pane, renderMediaTab());
   else if (typeof stopMediaPreview === 'function') stopMediaPreview();
 }
 // ---------- blocked users (moved here from the Home friends tabs) ----------
