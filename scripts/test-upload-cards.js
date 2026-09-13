@@ -62,11 +62,16 @@ const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
 // The real block: the per-conversation attachment store through removeUpload.
 const UP_START = messages.indexOf('// ---------- attachments belong to a conversation ----------');
 const UP_END = messages.indexOf("$('#btn-attach').onclick", UP_START);
-if (UP_START < 0 || UP_END < 0) {
+const META_START = messages.indexOf('const CHIP_IMG_ICON');
+if (UP_START < 0 || UP_END < 0 || META_START < 0) {
   console.error('[test] could not locate the upload block in public/js/messages.js');
   process.exit(1);
 }
+// Through removeUpload (the progress cards) …
 const upSource = messages.slice(UP_START, UP_END);
+// … and, ahead of it, attChipHTML + renderComposerMeta so the chip and the card
+// can be observed in ONE page (that pairing is the reported bug).
+const metaSource = messages.slice(META_START, UP_START);
 if (!/function syncPendingAttsCtx/.test(upSource) || !/function startUpload/.test(upSource) || !/function removeUpload/.test(upSource)) {
   console.error('[test] the extracted block is incomplete');
   process.exit(1);
@@ -77,11 +82,17 @@ const uploadListMarkup = (() => {
   const b = index.indexOf('</div>', index.indexOf('>', a));
   return index.slice(a, b + 6);
 })();
+const attachPreviewMarkup = (() => {
+  const a = index.indexOf('<div id="attach-preview"');
+  if (a < 0) return '<div id="attach-preview"></div>';
+  const b = index.indexOf('</div>', index.indexOf('>', a));
+  return index.slice(a, b + 6);
+})();
 
 function pageHtml() {
   return `<!doctype html><html><head><meta charset="utf-8">
 <style>body{margin:0;font:14px system-ui}</style></head><body>
-<div id="composer">${uploadListMarkup}<div id="attach-preview"></div></div>
+<div id="composer">${attachPreviewMarkup}${uploadListMarkup}</div>
 <script>
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 window.__toasts = [];
@@ -93,9 +104,17 @@ function setAttPreview(url, src) { attPreviews.set(url, { src: src }); return tr
 function whenVideoPoster(url, cb) { if (cb) cb(null); }
 function $(sel) { return document.querySelector(sel); }
 window.__metaRenders = 0;
-function renderComposerMeta() { window.__metaRenders++; }
 // The composer "has a conversation" whenever the page says so.
 function composerTargetReady() { return !!window.__ready; }
+// renderComposerMeta's own helpers (the app's versions live in servers.js /
+// core.js); nothing here changes what the meta block itself does.
+function msgAuthor() { return { display_name: 'someone' }; }
+function replyPreviewOf() { return 'x'; }
+function syncComposerRender() {}
+function paintComposerSend() {}
+function pruneAttPreviews() {}
+function releaseAttPreview() {}
+function attPreviewSrc(a) { const hit = attPreviews.get(a.url); return hit ? hit.src : (a.kind === 'image' && a.scan !== 'pending' && a.scan !== 'infected' ? a.url : ''); }
 const store = { token: 'test' };
 const S = { view: 'server', serverId: 's1', channelId: 'c1', dmThreadId: null, dms: [], uploads: [], pendingAtts: [], maxUploadMb: 50 };
 // The same key shape core.js uses ('s:<serverId>:<channelId>' / 'd:<threadId>').
@@ -112,6 +131,7 @@ class FakeXHR {
   abort() { this.aborted = true; if (this.onabort) this.onabort(); }
 }
 window.XMLHttpRequest = FakeXHR;
+${metaSource}
 ${upSource}
 window.__S = S;
 window.__entry = (ctx) => S.uploads.find((u) => u.ctx === ctx) || null;
@@ -129,15 +149,36 @@ window.__card = () => {
     failed: el.classList.contains('failed'),
   };
 };
+window.__cardDone = () => {
+  const el = document.querySelector('#upload-list .up-card');
+  return !!(el && el.classList.contains('done'));
+};
+// The chip and its Spoiler toggle: the "second stage" the reports are about.
+// The chips and their Spoiler toggles: the "second stage" the reports are about.
+window.__chips = () => [...document.querySelectorAll('#attach-preview .att-chip')].map((el) => ({
+  name: (el.querySelector('.chip-name') || {}).textContent || '',
+  spoiler: !!el.querySelector('button[title="Mark as spoiler"]'),
+  buttons: [...el.querySelectorAll('button')].map((b) => b.textContent.trim()),
+}));
+window.__chip = () => window.__chips()[0] || null;
 window.__cards = () => document.querySelectorAll('#upload-list .up-card').length;
 window.__hidden = () => document.querySelector('#upload-list').classList.contains('hidden');
-window.__upload = (name, size) => {
-  const f = new File([new Uint8Array(8)], name, { type: 'application/octet-stream' });
+window.__upload = (name, size, mime) => {
+  const f = new File([new Uint8Array(8)], name, { type: mime || 'application/octet-stream' });
   Object.defineProperty(f, 'size', { value: size || 2048 });
   uploadAndAttach(f);
   return S.uploads.length;
 };
 window.__progress = (ctx, loaded, total) => { window.__entry(ctx).xhr.upload.onprogress({ lengthComputable: true, loaded, total }); };
+window.__attachStart = (name, size, mime) => {
+  window.__ready = true;
+  const n = window.__upload(name, size, mime);
+  if (S.uploads.length !== n) throw new Error('upload rejected: ' + (window.__toasts.slice(-1)[0] || '?'));
+  // The real app repaints the composer meta from the XHR's progress events; a
+  // fake XHR sends none, so ask for the repaint the card's first frame triggers.
+  renderComposerMeta();
+  return n;
+};
 window.__finish = (ctx, body, status) => { const x = window.__entry(ctx).xhr; x.status = status || 200; x.responseText = JSON.stringify(body); x.onload(); };
 window.__fail = (ctx, why) => { failUpload(window.__entry(ctx), why); };
 window.__switchTo = (serverId, channelId) => { S.view = 'server'; S.serverId = serverId; S.channelId = channelId; syncPendingAttsCtx(); };
@@ -187,10 +228,14 @@ async function main() {
     'and goes indeterminate instead of freezing at 99% (leaving the % cell EMPTY — a bare "…" beside the ✕ read as a menu button)');
 
   console.log('\n[2b] the Spoiler toggle belongs to the chip, not to the upload');
-  check(/const uploadsInFlight = activeUploadCount\(pendingCtxKey\) > 0;/.test(messages),
-    'the composer knows whether this conversation still has an upload running');
-  check(/if \(\(a\.kind === 'image' \|\| a\.kind === 'video'\) && !uploadsInFlight\) \{/.test(messages),
-    'and offers "Mark as spoiler" only once every card has finished and left the list');
+  check(/function attCardOnStage\(\) \{[\s\S]{0,160}box\.querySelector\('\.up-card'\)/.test(messages),
+    'the stage test is the card still standing in #upload-list (DOM, not just "still uploading")');
+  check(/const cardOnStage = attCardOnStage\(\);/.test(messages),
+    'the composer asks it while painting the chips');
+  check(/if \(\(a\.kind === 'image' \|\| a\.kind === 'video'\) && !cardOnStage\) \{/.test(messages),
+    'and offers "Mark as spoiler" only once no card is left on stage');
+  check(!/uploadsInFlight/.test(messages),
+    'it must NOT key on activeUploadCount: the answered card stays on screen in its green done state for the 650ms exit, so counting in-flight uploads painted the toggle while that card was still the thing being looked at');
   check(/setTimeout\(\(\) => removeUpload\(u\.id\), 650\)/.test(messages),
     'the green done card still holds the stage for its ~650ms exit before the chip owns it');
   check(/sent \? ' · Finishing…' : ' · Uploading…'/.test(upSource), 'with a readout that says what it is waiting for');
@@ -294,8 +339,27 @@ async function main() {
     parked = await ev('JSON.stringify(window.__parked())');
     check(!/s:s1:c1/.test(parked), 'and it is no longer parked', parked);
 
-    console.log('\n[6] two conversations upload at the same time without mixing');
-    await ev("window.__upload('mine.jpg', 1024)");
+    console.log('\n[5b] the Spoiler stage waits for the green card to leave the stage');
+    await ev('window.__attachStart("pic.jpg", 4096, "image/png")');
+    await sleep(30);
+    let chips = await ev('window.__chips()');
+    check(chips.length === 1 && chips[0].name === 'photo.jpg' && chips[0].spoiler === false,
+      'a finished chip is in the composer and offers no toggle yet', chips);
+    check((await ev('window.__cardDone()')) === false, 'while the new file is still working on its card');
+    await ev(`window.__finish('s:s1:c1', { url: '/uploads/files/b.png', name: 'pic.jpg', mime: 'image/png', size: 4096, kind: 'image', scan: 'clean' })`);
+    await sleep(40);
+    chips = await ev('window.__chips()');
+    check(chips.length === 2 && chips[1].name === 'pic.jpg' && chips.every((c) => c.spoiler === false),
+      'its chip arrives as the card goes green, and NEITHER chip has grown a toggle', chips);
+    check((await ev('window.__cardDone()')) === true, 'the finished card is on screen in its done state');
+    check((await ev('window.__cards()')) === 1, 'and it has not left the list yet');
+    await sleep(750); // the done card holds the stage ~650ms, then removes itself
+    chips = await ev('window.__chips()');
+    check(chips.length === 2 && chips.every((c) => c.spoiler === true),
+      'once the card is gone, both chips finally offer it', chips);
+    check((await ev('window.__cards()')) === 0, 'with no card left above them');
+
+    console.log('\n[6] two conversations upload at the same time without mixing');    await ev("window.__upload('mine.jpg', 1024)");
     await sleep(20);
     await ev("window.__switchTo('s2', 'c9')");
     await ev("window.__upload('theirs.jpg', 1024)");

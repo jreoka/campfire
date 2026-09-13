@@ -522,7 +522,14 @@ send — and its ceiling drops to 90s once the body is out, because a phone that
 slept or a half-open connection leaves the XHR pending with no event at all
 (`sweepStalledUploads()` re-judges it when the page is foregrounded again, and
 `storage.js`'s S3 client needs `throwOnRequestTimeout` — a bare `requestTimeout`
-only warns — so a silent object store cannot hold the route open either). The typing strip above the
+only warns — so a silent object store cannot hold the route open either). The
+upload card's two stages hand over in order: the chip's **Spoiler** toggle is
+gated on `attCardOnStage()` (a card still standing in `#upload-list`), never on
+`activeUploadCount` — the card the server has already answered sits on screen in
+its green `done` state for a 650ms exit, so counting in-flight uploads painted
+the toggle into the chip ABOVE a card that was still the thing being looked at
+(reported twice), and `removeUpload` repainting the composer when the departing
+card empties the list is what reveals it. The typing strip above the
 composer always keeps its slot (`--strip-h`, one text line, transparent, text
 fades) — hiding it resizes `#messages` and shoves the conversation up/down.
 `#messages` pays for that slot by giving up its bottom padding, and anything

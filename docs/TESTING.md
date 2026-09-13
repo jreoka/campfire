@@ -856,11 +856,22 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   clears it. It also pins the two owner-reported follow-ups on that card: the
   readout no longer prints a bare "…" while the bar is indeterminate (it read as
   a "more options" menu button next to the ✕, so the % cell goes empty), and the
-  chip's **Spoiler** toggle is held back while any upload for the conversation is
-  still in flight — it appears only once the green "done" card has finished its
-  ~650ms exit (`activeUploadCount` in `renderComposerMeta`). Re-run it after
-  touching `messages.js`'s upload block, `renderComposerMeta`, the conversation
-  switchers, or the paths that leave a conversation. Anything that changes
+  chip's **Spoiler** toggle waits for the card to LEAVE the stage. That gate is
+  `attCardOnStage()` — a card still standing in `#upload-list` — NOT
+  `activeUploadCount`, because the card the server has already answered stays on
+  screen in its green `done` state for the 650ms exit, and the first cut (which
+  counted only `state === 'uploading'`) therefore painted the toggle into the
+  chip ABOVE a card that was still the thing being looked at (reported live:
+  "the spoiler mark stage still comes up above the first stage before it
+  disappears"). `removeUpload` is what finishes the handover: when the departing
+  card empties the list it repaints the composer, which is the moment the toggle
+  appears. The browser half drives that order for real: a second image upload
+  starts with a finished chip already in the composer (no toggle) and a live card
+  (no toggle), the green card is asserted present with `done`, and only after the
+  ~650ms exit are BOTH chips asserted to carry the toggle. Re-run it after
+  touching `messages.js`'s upload block, `renderComposerMeta`, `removeUpload`,
+  the conversation switchers, or the paths that leave a conversation. Anything
+  that changes
   `storage.js`'s S3 client (its timeout/retry config is what stops a silent
   object store from holding an upload request open forever) wants the upload
   routes re-checked with `scripts/test-upload-pipeline.js`.

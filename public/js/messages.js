@@ -1297,18 +1297,19 @@ function renderComposerMeta() {
   }
   pruneAttPreviews();
   // The Spoiler toggle belongs to the SECOND stage of an attachment's life: the
-  // chip only. While any upload for this conversation is still in flight the
-  // green "done" card (upload-list) is what the reader is looking at, so the
-  // toggle is held back until every card has finished and left the list — the
-  // render at the end of that ~650ms green exit is what reveals it.
-  const uploadsInFlight = activeUploadCount(pendingCtxKey) > 0;
+  // chip only. While an upload card is still on stage (see attCardOnStage — it
+  // covers the green `done` card during its 650ms exit, not just an in-flight
+  // transfer) that card is what the reader is looking at, and painting the
+  // toggle into the chip ABOVE it read as the second stage arriving before the
+  // first had finished. The render at the end of removeUpload reveals it.
+  const cardOnStage = attCardOnStage();
   S.pendingAtts.forEach((a, i) => {
     const chip = document.createElement('div');
     chip.className = 'att-chip' + (a.scan === 'pending' ? ' scanning' : '');
     chip.innerHTML = attChipHTML(a);
     const x = document.createElement('button'); x.className = 'mini'; x.type = 'button'; x.textContent = '✕';
     x.onclick = () => { S.pendingAtts.splice(i, 1); renderComposerMeta(); };
-    if ((a.kind === 'image' || a.kind === 'video') && !uploadsInFlight) {
+    if ((a.kind === 'image' || a.kind === 'video') && !cardOnStage) {
       const sp = document.createElement('button');
       sp.type = 'button'; sp.className = 'mini' + (a.spoiler ? ' on' : ''); sp.textContent = 'Spoiler'; sp.title = 'Mark as spoiler';
       sp.onclick = () => { a.spoiler = !a.spoiler; renderComposerMeta(); };
@@ -1410,6 +1411,17 @@ function activeUploadCount(ctx) {
 // with a Retry button instead of vanishing into a toast.
 let uploadSeq = 0;
 function uploadCardEl(id) { const box = $('#upload-list'); return box ? box.querySelector('[data-up="' + id + '"]') : null; }
+// Is an upload card still on stage? NOT the same question as "is an upload
+// running": a card the server has answered stays in the list in its green `done`
+// state for a 650ms exit (and a failed one stays until it is dismissed), and the
+// chip below it must not grow its Spoiler toggle under the reader's eyes while
+// that card is still the thing they are looking at. Counted from the DOM —
+// exactly the element the reader sees — so the toggle appears the moment the
+// list is empty, whichever way the last card left it.
+function attCardOnStage() {
+  const box = $('#upload-list');
+  return !!(box && box.querySelector('.up-card'));
+}
 function renderUploads() {
   const box = $('#upload-list');
   if (!box) return;
@@ -1663,11 +1675,17 @@ function retryUpload(id) {
 function removeUpload(id) {
   const i = (S.uploads || []).findIndex((x) => x.id === id);
   if (i < 0) return;
+  // Whether the stage was OCCUPIED before this one left: only the card that
+  // empties the list has to repaint the composer (see the Spoiler gate in
+  // renderComposerMeta — a done card sits in the list for 650ms after the
+  // server answers, and the chip's toggle appears the moment it goes).
+  const hadCards = attCardOnStage();
   const [u] = S.uploads.splice(i, 1);
   if (u) { clearTimeout(u.watch); u.watch = null; }
   if (u && u.thumb && u.thumb.startsWith('blob:')) { try { URL.revokeObjectURL(u.thumb); } catch {} }
   if (u && u.vthumbSrc) { try { URL.revokeObjectURL(u.vthumbSrc); } catch {} }
   renderUploads();
+  if (hadCards && !attCardOnStage()) renderComposerMeta();
 }
 
 $('#btn-attach').onclick = () => $('#in-attach').click();
