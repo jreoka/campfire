@@ -123,7 +123,16 @@ declared in the manifest); no tray/watcher on mobile — that Rust code is
   fan-out runs BEFORE the `userVisible` gate (web push keeps it via
   `{ webPush: !(await userVisible(uid)) }`; a phone in a pocket must still ring)
   and is NOT a chat session: never in `live_sessions`, so the phone stays offline
-  in presence and the socket's own `pushVisible` is the only suppression. `/ws`
+  in presence and the socket's own visibility report is the only suppression —
+  and it is a **lease** (`VISIBILITY_TTL_MS`, 75s), not a latch, because a latch
+  is only as reliable as the single frame that set it: lose the matching
+  `visible:false` and that device's notifications are skipped forever, silently.
+  The shell re-asserts its window state every ~25s
+  (`PushService.VISIBILITY_EVERY_MS`) to keep the lease alive. Beware the
+  reconnect trap in `PushService.connect()`: it cancels the socket it replaces
+  and OkHttp reports a cancelled call as `onFailure`, so an unguarded listener
+  reconnects three seconds later, forever — a listener that may only reconnect
+  for the connection generation it was opened with. `/ws`
   and `/ws/push` share ONE `server.on('upgrade')` dispatcher — ws's `path` option
   aborts the other path with a 400. Android is `gen/android/.../PushService.kt`
   (OkHttp socket + notifications, `stopWithTask="false"`,

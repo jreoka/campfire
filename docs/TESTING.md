@@ -295,24 +295,34 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   reaches the device sockets from `pushToUser`, a peer replica's fan-out rides
   the bus, web push keeps the account-wide page-visible gate, the service is
   declared `stopWithTask=false` + `specialUse` + `POST_NOTIFICATIONS`, its url is
-  `/ws/push`, and the page's bridge + deep-link routing are wired), then a real
+  `/ws/push`, and the page's bridge + deep-link routing are wired — plus the
+  cancel-loop guards: `connect()` replaces the live socket, OkHttp reports a
+  cancelled call as `onFailure`, and an unguarded listener turns that into a
+  reconnect every three seconds forever, so the listener must be
+  generation-guarded and a deliberate teardown must not schedule a reconnect),
+  then a real
   server and a real socket: a DM pushes the exact OS payload (title/body/tag/url)
   web push would have carried, the payload never rides a chat socket, the device
   socket registers no `live_sessions` row (the phone stays offline while its
   service is connected), that socket's own visibility is the only suppression, a
   visible page on another device does NOT silence the phone, mute prefs still
   suppress everything, the settings test push arrives while the app is on screen
-  and carries `test`, and a bad token is closed 4401; then the page side runs the
+  and carries `test`, a device that reported itself visible and then stopped
+  reporting is delivered to again once its visibility lease lapses (this run
+  shortens `PUSH_VISIBILITY_TTL_MS`; the cluster runs 75s), and a bad token is
+  closed 4401; then the page side runs the
   REAL `renderNotifsTab`/`pushSetup`/`pushTeardown` against a minimal DOM in all
   three shells — the Android bridge (off by default, enabling asks for the
   permission and hands over the session, the enabled state reads back, the test
-  button posts `/api/push/test`, turning it off stops the service, and boot/
+  button posts `/api/push/test`, the two action buttons share a spaced
+  `.set-btns` row instead of touching, turning it off stops the service, and boot/
   sign-out configure it without ever trying a browser subscription), the desktop
   shell (the "app handles them" copy, and a test button that calls the native
   `notify` command), and a plain browser (still the web-push copy). Skips when
   Postgres is missing for the socket half; the source/client checks always run.
   Re-run after touching `pushToUser`/`notifyPushSockets`, the `/ws` upgrade
-  routing, `public/js/final.js`'s native bridges, or Settings → Notifications.
+  routing, `public/js/final.js`'s native bridges, `PushService.kt`'s connection
+  handling, or Settings → Notifications.
   `node scripts/test-upload-stall.js` covers a stalled upload (reported live: a
   36 KB PNG's card sat on "Finishing…", the bytes were in the bucket and the
   compression verdict landed 0.5 s later, so the answer had simply been lost —
