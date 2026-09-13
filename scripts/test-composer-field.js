@@ -164,13 +164,8 @@ function main() {
 
   console.log('\n[2] the field\'s own controls are wired and styled');
   check(/align-items:flex-end/.test(ruleBody('#composer') || ''), '#composer bottom-aligns its children (send key stays on the bar when the box grows)');
-  // The two offsets are the centred rest position for a 32px control inside the
-  // one-line field — (field height - 32) / 2 — so they move with the field's
-  // padding and must agree with each other. [5]/[7] measure the result.
-  const plusBottom = /bottom:([\d.]+)px/.exec(ruleBody('#btn-plus') || '');
-  const toolsBottom = /bottom:([\d.]+)px/.exec(ruleBody('#composer-tools') || '');
-  check(!!plusBottom && Number(plusBottom[1]) > 2, 'the leading + rides the bottom of the box', plusBottom && plusBottom[1]);
-  check(!!toolsBottom && !!plusBottom && toolsBottom[1] === plusBottom[1], 'and the tool rail sits on the same optical line', toolsBottom && toolsBottom[1]);
+  check(/bottom:7px/.test(ruleBody('#btn-plus') || ''), 'the leading + rides the bottom of the box');
+  check(/bottom:7px/.test(ruleBody('#composer-tools') || ''), 'and so does the tool rail');
   check(/color-mix\(in srgb, var\(--text\) 8%, transparent\)/.test(ruleBody('#btn-plus,#btn-more') || ''), 'the + has a resting surface mixed off --text (so it lifts in light mode too)');
   check(/#composer \.tool-btn:not\(#btn-plus\):not\(#btn-more\)/.test(css), 'the phone thumbs-size rule exempts the +, which must stay smaller than its field');
   const tap = /--tap:\s*(\d+)px/.exec(css);
