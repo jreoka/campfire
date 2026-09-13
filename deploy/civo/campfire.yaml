@@ -238,17 +238,21 @@ spec:
             # (media_compress_keys) stops it re-encoding what it already did.
             - name: MEDIA_SWEEP_EVERY_MS
               value: "3600000"
-            # Up to 4 compressions at once, 8 rows fed per tick: a burst of
+            # Up to 2 compressions at once, 8 rows fed per tick: a burst of
             # uploads (or a backlog draining after the size floor was removed)
             # no longer waits one file per 2s breather. The compress semaphore is
-            # process-wide, so this is 4 for the whole pod however the work
-            # arrived. MEDIA_COMPRESS_SLOT_MB makes each encode past the first
+            # process-wide, so this is 2 for the whole pod however the work
+            # arrived. Two, not four (owner request): the node has 1 vCPU, and
+            # four niced ffmpeg at once still showed up as the app feeling
+            # sluggish while a backlog drained — two keeps the box responsive
+            # while a burst still clears far faster than one-at-a-time.
+            # MEDIA_COMPRESS_SLOT_MB makes each encode past the first
             # find 192Mi free in the cgroup before it starts — the pod's limit is
             # reached by a burst of large VIDEOS, and the kernel would otherwise
             # OOM-kill something (not necessarily ffmpeg). Measured baseline is
             # ~55Mi idle / ~100Mi peak, so images never touch the guard.
             - name: MEDIA_COMPRESS_CONCURRENCY
-              value: "4"
+              value: "2"
             - name: MEDIA_COMPRESS_BATCH
               value: "8"
             - name: MEDIA_COMPRESS_SLOT_MB
@@ -335,10 +339,11 @@ spec:
             timeoutSeconds: 3
           resources:
             requests: { memory: "192Mi", cpu: "100m" }
-            # 896Mi, not 640Mi: four concurrent encodes have to fit (the
-            # MEDIA_COMPRESS_SLOT_MB guard keeps ~192Mi free per extra one, so 4
-            # encodes + a ~55Mi node process need ~830Mi). Requests are
-            # unchanged, so this changes nothing about scheduling.
+            # 896Mi, not 640Mi: concurrent encodes have to fit (the
+            # MEDIA_COMPRESS_SLOT_MB guard keeps ~192Mi free per extra one, so
+            # even the compressor's hard cap of 4 encodes + a ~55Mi node process
+            # would need ~830Mi). Requests are unchanged, so this changes
+            # nothing about scheduling; the cluster runs 2, not 4.
             limits:   { memory: "896Mi", cpu: "1000m" }
       volumes:
         - name: data

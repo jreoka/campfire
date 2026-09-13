@@ -248,10 +248,12 @@ it landing. A per-key ledger (`media_compress_keys`) is what keeps any of that
 from being re-encoded twice. It attempts **any size, any type the image's
 ffmpeg can decode** (no floor; `MEDIA_COMPRESS_MIN_KB` restores one).
 `MAX_FILE_MB=50`, because S3 mode buffers every
-upload in RAM, and `VIRUS_SCAN_CONCURRENCY=4` + `MEDIA_COMPRESS_CONCURRENCY=4`
+upload in RAM, and `VIRUS_SCAN_CONCURRENCY=4` + `MEDIA_COMPRESS_CONCURRENCY=2`
 let a burst of uploads compress in parallel (one niced single-threaded ffmpeg
 each, memory-guarded against the pod's limit) instead of one file per 2s
-breather. To get scanning back, run one clamd anywhere and set
+breather. Two, not more (owner request): the node has 1 vCPU, and the app
+felt sluggish while a backlog drained. To get scanning back, run one clamd
+anywhere and set
 `CLAM_HOST` — that is config, not code.
 
 **Uploads live in the Civo object store** (`objectstore.nyc1.civo.com`, bucket
@@ -892,7 +894,7 @@ are load-bearing:
 - **`MEDIA_COMPRESS_CONCURRENCY` encodes at a time, process-wide (default 1).**
   The sweeper, the scan pipeline and the bucket scan all share
   `withCompressLock` (a semaphore, once a plain mutex) and the `inflight` key
-  set; the cluster runs 4. Nothing else may spin up an encode of its own —
+  set; the cluster runs 2. Nothing else may spin up an encode of its own —
   adding a path that does would break the one accounting that the memory guard
   and the CPU promise both rest on. `MEDIA_COMPRESS_SLOT_MB` (default 192) makes
   every encode past the first wait until the cgroup actually has that much free,
