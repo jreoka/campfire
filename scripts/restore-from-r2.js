@@ -42,6 +42,21 @@ function arg(name, fallback) {
   return (!v || v.startsWith('--')) ? true : v;
 }
 
+// The usage lines put the stamp in the positional slot (`--fetch 20260101T000000Z`),
+// and reading only `--stamp` meant that form silently fell back to the newest --
+// the one behaviour a restore must never have, since restoring the wrong snapshot
+// looks exactly like a restore. `--out DIR` is the one flag that takes a value,
+// so its argument is skipped rather than read as a stamp.
+function positionalStamp() {
+  const argv = process.argv.slice(2);
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--out') { i++; continue; }
+    if (argv[i].startsWith('--')) continue;
+    return argv[i];
+  }
+  return null;
+}
+
 function human(n) {
   if (n < 1024) return n + 'B';
   if (n < 1048576) return (n / 1024).toFixed(1) + 'KB';
@@ -139,7 +154,7 @@ async function main() {
     return;
   }
 
-  const stamp = typeof stampArg === 'string' ? stampArg : newest;
+  const stamp = typeof stampArg === 'string' ? stampArg : (positionalStamp() || newest);
   if (!stamps.includes(stamp)) {
     console.error(`No such snapshot: ${stamp}\nAvailable: ${stamps.join(', ')}`);
     process.exit(1);

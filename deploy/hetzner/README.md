@@ -242,13 +242,24 @@ Expect allocation, 16/16 messages relayed, 0% packet loss.
 ## Backups (the doomsday copy)
 
 Still **Cloudflare R2**, bucket `campfire-backup`, by `backup.js`: a 12-hourly
-snapshot of the pg_dump, every Secret in the namespace and a **media inventory**
+snapshot of the pg_dump, the Secrets it can reach and a **media inventory**
 (key + size per object). `R2_BACKUP_KEEP=2`.
 
-**The media bytes are not in there, on purpose.** They used to be, mirrored
-under `blobs/` and deduplicated across snapshots — which doubled what the
-Cloudflare account stored, in the same account that held the media it copied, so
-it could not survive losing that account and bought nothing but the bill.
+**Secrets are NOT in these snapshots on this host.** `collectSecrets()` reads
+them from the Kubernetes API with the pod's ServiceAccount — the mechanism the
+Civo deploy had and this one does not, so every snapshot here carries
+`WARNING secrets not backed up: not running in-cluster` and `--show` says
+`secrets NOT INCLUDED`. `/opt/campfire/app/.env` (mode 600) is therefore **not
+covered by the backup**: keep your own copy of it, because a rebuild without
+`JWT_SECRET` logs every user out and without `TURN_*`/`R2_*` the site comes back
+half-configured. Making the snapshot self-contained means teaching `backup.js`
+to capture the Compose env (a mounted env file, or the secret-shaped subset of
+`process.env`) — worth doing, not done.
+
+**The media bytes are not in there either, on purpose.** They used to be,
+mirrored under `blobs/` and deduplicated across snapshots — which doubled what
+the Cloudflare account stored, in the same account that held the media it copied,
+so it could not survive losing that account and bought nothing but the bill.
 Version-2 manifests say `media.included: false`. The trade, stated plainly: the
 media bucket is now the **only** copy of the media, and a restore can name the
 media it is missing but cannot bring a byte back. The one-time cleanup:

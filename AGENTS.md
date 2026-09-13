@@ -223,6 +223,12 @@ The owner will iterate on features **without ever losing persistent data**.
   media byte from the backup bucket, and `--restore-media` is an audit that
   names what is unaccounted for. `scripts/purge-backup-blobs.js` deleted the old
   mirror (dry-run first); `prune()` in `backup.js` reaps whatever is left.
+  **And the Secret half is inert on the Compose deploy**: `collectSecrets()`
+  talks to the Kubernetes API, which the Hetzner host has no equivalent of, so
+  its snapshots say `secrets NOT INCLUDED` and `/opt/campfire/app/.env` (mode
+  600, holding `JWT_SECRET`/`TURN_*`/`R2_*`) is not captured by anything. Keep a
+  copy of that file off the host; teaching `backup.js` the Compose env is an
+  open item (runbook §Backups).
   **Open risk, stated plainly:** media and backups live in ONE Cloudflare
   account, so losing that account costs the live media and the only copies of
   everything else at once. The old Civo/R2 split existed to prevent exactly
