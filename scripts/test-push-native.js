@@ -87,6 +87,127 @@ function sourceChecks() {
   check(/window\.__cfDeepLink/.test(final), 'a tapped notification routes to its conversation');
 }
 
+// ---------- [C] the page side, offline ----------
+// Settings -> Notifications and the session handoff are the only places that
+// know which shell is asking, so the REAL functions run here against a minimal
+// DOM: the Android bridge, the desktop shell, and a plain browser.
+function makeDom() {
+  const byId = new Map();
+  const el = (tag) => {
+    const e = {
+      tagName: String(tag || 'div').toUpperCase(),
+      className: '', textContent: '', value: '', style: {}, children: [], dataset: {}, onclick: null, onchange: null,
+      appendChild(c) { e.children.push(c); return c; },
+      get innerHTML() { return ''; },
+      set innerHTML(v) { e.children.length = 0; },
+      classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+      setAttribute() {}, getAttribute() { return null; },
+      addEventListener() {}, removeEventListener() {},
+    };
+    return e;
+  };
+  const box = el('div');
+  byId.set('#set-notifs', box);
+  return {
+    box,
+    el,
+    document: { createElement: el, querySelector: (s) => byId.get(s) || null, addEventListener() {}, removeEventListener() {} },
+    text: () => {
+      const out = [];
+      const walk = (n) => { if (n.textContent) out.push(n.textContent); for (const c of n.children || []) walk(c); };
+      walk(box);
+      return out.join(' | ');
+    },
+    labels: () => (box.children || []).filter((c) => c.tagName === 'BUTTON').map((b) => b.textContent),
+    press: (label) => {
+      const b = (box.children || []).find((c) => c.tagName === 'BUTTON' && c.textContent === label);
+      if (!b) throw new Error('no button "' + label + '" in [' + (box.children || []).map((c) => c.textContent).join(', ') + ']');
+      return b.onclick();
+    },
+  };
+}
+
+async function clientChecks() {
+  const settings = fs.readFileSync(path.join(ROOT, 'public/js/settings.js'), 'utf8');
+  const final = fs.readFileSync(path.join(ROOT, 'public/js/final.js'), 'utf8');
+  const tabSrc = settings.slice(settings.indexOf('async function renderNotifsTab()'), settings.indexOf('function urlB64ToU8'));
+  const setupSrc = settings.slice(settings.indexOf('async function pushSetup()'), settings.indexOf('function setSettingsTab('));
+  const helpers = final.slice(final.indexOf('function isAndroidShell()'), final.indexOf('function takeNativeDeepLink()'));
+  const apiCalls = [];
+  const toasts = [];
+
+  const build = (windowObj, nav) => {
+    const dom = makeDom();
+    const api = (p, opts) => {
+      apiCalls.push({ path: p, method: (opts && opts.method) || 'GET' });
+      return Promise.resolve(p === '/api/notifs/prefs' ? { prefs: {} } : { ok: true });
+    };
+    const fn = new Function(
+      'window', 'document', 'navigator', 'localStorage', 'location', 'api', 'toast', 'store', 'S', 'notifPrefsCache', '$', 'NOTIF_OPTS', 'notifSelect',
+      helpers + '\n' + tabSrc + '\n' + setupSrc + '\nreturn { renderNotifsTab, pushSetup, pushTeardown, nativePushState };'
+    );
+    const lib = fn(
+      windowObj, dom.document, nav || {}, { getItem: () => null, setItem() {}, removeItem() {} },
+      { origin: 'https://campfire.dill.moe' },
+      api, (m) => toasts.push(m), { token: 'TOK' }, { me: { id: 'u1' } }, {}, (s) => dom.document.querySelector(s),
+      [['all', 'All messages']], () => dom.el('select')
+    );
+    return { dom, lib };
+  };
+
+  console.log('\n[C1] the Android shell drives the native service');
+  const bridgeCalls = [];
+  let status = { enabled: false, running: false, permission: true };
+  const bridge = {
+    configure: (t, o, e) => { bridgeCalls.push(['configure', t, o, e]); return true; },
+    status: () => JSON.stringify(status),
+    requestPermission: () => { bridgeCalls.push(['requestPermission']); return true; },
+    takeUrl: () => '',
+  };
+  const android = build({ CampfireNative: bridge }, { userAgent: 'Linux; Android 14' });
+  await android.lib.renderNotifsTab();
+  check(/Background notifications are off/.test(android.dom.text()), 'off by default, and it says so', android.dom.text());
+  check(android.dom.labels().includes('Enable notifications'), 'an enable button is offered', android.dom.labels());
+  await android.dom.press('Enable notifications');
+  check(bridgeCalls.some((c) => c[0] === 'requestPermission'), 'enabling asks Android for the notification permission', bridgeCalls);
+  check(bridgeCalls.some((c) => c[0] === 'configure' && c[1] === 'TOK' && c[3] === true),
+    'and hands the signed-in session to the service', bridgeCalls);
+  status = { enabled: true, running: true, permission: true };
+  await android.lib.renderNotifsTab();
+  check(/Background notifications are on/.test(android.dom.text()), 'the enabled state reads back', android.dom.text());
+  apiCalls.length = 0;
+  await android.dom.press('Send test notification');
+  check(apiCalls.some((c) => c.path === '/api/push/test' && c.method === 'POST'), 'the test button posts the server test push', apiCalls);
+  bridgeCalls.length = 0;
+  await android.dom.press('Turn off on this device');
+  check(bridgeCalls.some((c) => c[0] === 'configure' && c[3] === false), 'turning it off stops the service', bridgeCalls);
+
+  console.log('\n[C2] boot hands the session over instead of subscribing');
+  bridgeCalls.length = 0;
+  await android.lib.pushSetup();
+  check(bridgeCalls.some((c) => c[0] === 'configure' && c[1] === 'TOK' && c[3] === true),
+    'pushSetup configures the native service', bridgeCalls);
+  bridgeCalls.length = 0;
+  await android.lib.pushTeardown();
+  check(bridgeCalls.some((c) => c[0] === 'configure' && c[1] === 'TOK' && c[3] === false),
+    'signing out tears it down with the token gone... ', bridgeCalls);
+  check(bridgeCalls.every((c) => c[0] !== 'subscribe'), '...and never tries a browser push subscription');
+
+  console.log('\n[C3] the desktop shell explains itself and tests natively');
+  const invoked = [];
+  const desktop = build({ __TAURI__: { core: { invoke: (cmd, args) => { invoked.push([cmd, args]); return Promise.resolve(); } } } }, { userAgent: 'Mozilla/5.0 (Windows NT 10.0)' });
+  await desktop.lib.renderNotifsTab();
+  check(/notifications whenever its window is not in front/.test(desktop.dom.text()), 'it says the app handles them', desktop.dom.text());
+  await desktop.dom.press('Send test notification');
+  check(invoked.some((c) => c[0] === 'notify'), 'the test button calls the native notify command', invoked);
+
+  console.log('\n[C4] a browser keeps the web push path');
+  const browser = build({}, { userAgent: 'Mozilla/5.0 (Macintosh)' });
+  await browser.lib.renderNotifsTab();
+  check(/Push is not supported in this browser\./.test(browser.dom.text()),
+    'without PushManager it says so (this is what Android used to show)', browser.dom.text());
+}
+
 function apiFactory(tokenRef) {
   return async function api(method, p, opts = {}) {
     const headers = {};
@@ -148,6 +269,7 @@ function connectChat(token) {
 
 async function main() {
   sourceChecks();
+  await clientChecks();
 
   const envFile = readEnvFile();
   const pg = {

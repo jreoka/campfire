@@ -302,9 +302,17 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   service is connected), that socket's own visibility is the only suppression, a
   visible page on another device does NOT silence the phone, mute prefs still
   suppress everything, the settings test push arrives while the app is on screen
-  and carries `test`, and a bad token is closed 4401. Skips when Postgres is
-  missing. Re-run after touching `pushToUser`/`notifyPushSockets`, the `/ws`
-  upgrade routing, or `public/js/final.js`'s native bridges.
+  and carries `test`, and a bad token is closed 4401; then the page side runs the
+  REAL `renderNotifsTab`/`pushSetup`/`pushTeardown` against a minimal DOM in all
+  three shells — the Android bridge (off by default, enabling asks for the
+  permission and hands over the session, the enabled state reads back, the test
+  button posts `/api/push/test`, turning it off stops the service, and boot/
+  sign-out configure it without ever trying a browser subscription), the desktop
+  shell (the "app handles them" copy, and a test button that calls the native
+  `notify` command), and a plain browser (still the web-push copy). Skips when
+  Postgres is missing for the socket half; the source/client checks always run.
+  Re-run after touching `pushToUser`/`notifyPushSockets`, the `/ws` upgrade
+  routing, `public/js/final.js`'s native bridges, or Settings → Notifications.
   `node scripts/test-games-manager.js` covers Settings → Games' server routes
   against a throwaway database: the manager payload (totals, per-game level +
   streak, live game), ignore / un-ignore one game by name, an ignored game that
