@@ -108,6 +108,10 @@ window.__report = function () {
     leadRight: +(field.r - lead.r).toFixed(1),
     leadAfter: afterW,
     composerAlign: cs('#composer', 'align-items'),
+    // The composer's own height and the variable popovers anchor on: they must
+    // agree at every breakpoint (the phone tightens its padding and re-states it).
+    composerH: R('#composer').h,
+    composerVar: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--composer-h')) || 0,
     menuRows: menuRows.length,
     menuRowsWithIcon: menuRows.filter((r) => r.querySelector('.ctx-ic svg')).length,
     menuSeps: document.querySelectorAll('#composer-more .ctx-sep').length,
@@ -213,6 +217,8 @@ function main() {
     check(Math.abs(phone.leadTop - phone.leadBottom) <= 3, 'and it is centred on the one-line field', { top: phone.leadTop, bottom: phone.leadBottom });
     check(phone.lead.h >= 30 && phone.lead.h <= 34, 'at 32px, small enough to fit the field', phone.lead.h);
     check(phone.composerAlign === 'flex-end', 'the send key rides the bottom of the row', phone.composerAlign);
+    check(Math.abs(phone.composerH - phone.composerVar) <= 1.5, 'the phone composer is the height --composer-h claims (the popovers above it anchor on it)',
+      { h: phone.composerH, v: phone.composerVar });
     check(phone.menuRows === 7 && phone.menuRowsWithIcon === 7, 'the + menu rows render with their icons', { rows: phone.menuRows, icons: phone.menuRowsWithIcon });
     check(phone.menuSeps === 1, 'and the separator renders', phone.menuSeps);
 
@@ -228,6 +234,7 @@ function main() {
     desktop = probe(chrome, base, { width: 1200, height: 820, dpr: 2, touch: false });
     check(!desktop.phone, 'the desktop shell is active', desktop.phone);
     check(desktop.inputPad === desktop.renderPad, 'paddings still match on the desktop rule', { input: desktop.inputPad, render: desktop.renderPad });
+    check(Math.abs(desktop.composerH - desktop.composerVar) <= 1.5, 'and the desktop composer matches its own --composer-h', { h: desktop.composerH, v: desktop.composerVar });
     check(desktop.leadTop > 2 && desktop.leadBottom > 2, 'the + is inside the field there too', { top: desktop.leadTop, bottom: desktop.leadBottom, lead: desktop.lead, field: desktop.field });
     check(desktop.fieldBg === phone.fieldBg, 'same field surface on both layouts', { phone: phone.fieldBg, desktop: desktop.fieldBg });
   } finally {
