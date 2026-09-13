@@ -904,6 +904,20 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   back on the left half and close on the right half (and the header fits, so the
   close is never clipped), back returns to the menu, the detail title comes off
   the row label, and the view classes are inert on desktop.
+  `node scripts/test-tab-spinner.js` covers the loading spinner on the settings
+  rail and the admin console's tab strip (static checks plus a headless-Chrome
+  run against the real markup + `styles.css`; skips without Chrome). The shared
+  helper is `tabSpin`/`tabSpinWhile` (`core.js`), so it asserts the mark is a
+  COUNT on a WeakMap (two overlapping loads of one row cannot clear it when the
+  first settles), that a rejected pane clears it instead of parking on it, and
+  that the flash threshold keeps a fast answer from showing anything at all. In
+  the browser the spinner must be one empty `aria-hidden` span inside the row
+  (in flow — the mobile settings row already spends `::after` on its chevron),
+  a 12px accent-arc ring on the app's `up-spin` keyframes, with `aria-busy` and
+  `.busy` on the row while it is up, the label text untouched, and the row's
+  height unchanged. Statically it pins which panes spin (settings: account /
+  notifications / blocked / games / media; admin: all five) and that the
+  synchronous Themes pane does not, plus the reduced-motion off switch.
   `node scripts/test-native-back.js` covers the native shell (`js/native.js`)
   against a throwaway database with a real phone viewport and real touch input,
   skipping without Postgres or Chrome: on a touch device the first touch arms

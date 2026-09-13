@@ -51,11 +51,16 @@ function setAdminTab(t) {
     const pane = document.getElementById('adm-' + key);
     if (pane) pane.classList.toggle('hidden', key !== t);
   }
-  if (t === 'overview') { ensureAdminOverviewPane(); loadAdminStats(); startAdminStatsLive(); }
-  else if (t === 'reports') { ensureAdminReportsPane(); loadAdminReports(); }
-  else if (t === 'media') loadAdminMedia();
-  else if (t === 'users') { ensureAdminUsersPane(); loadAdminUsers(); }
-  else if (t === 'servers') { ensureAdminServersPane(); loadAdminServers(); }
+  // Every pane in the console fetches, so the tab that was picked keeps a
+  // spinner until its load lands (tabSpinWhile, core.js) — the strip is the
+  // only progress the console can show. Overview included: its first paint is a
+  // round trip too.
+  const row = document.querySelector('#admin-backdrop .set-tab[data-atab="' + t + '"]');
+  if (t === 'overview') { ensureAdminOverviewPane(); tabSpinWhile(row, loadAdminStats()); startAdminStatsLive(); }
+  else if (t === 'reports') { ensureAdminReportsPane(); tabSpinWhile(row, loadAdminReports()); }
+  else if (t === 'media') tabSpinWhile(row, loadAdminMedia());
+  else if (t === 'users') { ensureAdminUsersPane(); tabSpinWhile(row, loadAdminUsers()); }
+  else if (t === 'servers') { ensureAdminServersPane(); tabSpinWhile(row, loadAdminServers()); }
   if (t !== 'overview') stopAdminStatsLive();
 }
 

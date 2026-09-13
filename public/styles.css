@@ -864,7 +864,7 @@ body.ub-open #lightbox #lb-stage{padding-top:calc(4.4rem + var(--safe-t) + var(-
 .up-sub{font-size:.7rem;color:var(--faint);margin-top:.25rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .up-card.failed .up-sub{color:var(--red)}
 .up-x,.up-retry{flex-shrink:0}
-@media (prefers-reduced-motion:reduce){.up-card,.up-spin,.sv-spin,.att-spin,.vb-btn.busy::after,.up-fill.indet{animation:none}
+@media (prefers-reduced-motion:reduce){.up-card,.up-spin,.sv-spin,.att-spin,.set-tab-spin,.vb-btn.busy::after,.up-fill.indet{animation:none}
 /* The reaction still appears and fades — just without the long rise. */
 .sv-float{animation:sv-float-reduced .9s ease-out forwards}}
 @keyframes sv-float-reduced{0%{opacity:0}20%{opacity:1}100%{opacity:0}}
@@ -1431,6 +1431,12 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .set-tabs{display:flex;flex-direction:column;gap:.3rem;align-items:stretch;padding:.9rem .7rem;min-width:158px;flex-shrink:0;min-height:0;overflow-y:auto;background:var(--panel);border-right:1px solid var(--line-soft)}
 .set-tab{text-align:left}
 .set-tab{border:0;background:transparent;color:var(--muted);font-weight:650;font-size:.88rem;padding:.6rem .95rem;border-radius:8px;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
+/* A rail row whose pane is still fetching carries a spinner beside its label.
+   It sits in the row's own flow (never absolutely positioned) and is added by
+   tabSpin() in core.js only once the wait is worth reporting, so a fast answer
+   never flashes one. The ring is the app's one spinner: a faint full circle
+   with an accent arc. */
+.set-tab-spin{display:inline-block;width:12px;height:12px;margin-left:.5rem;vertical-align:-2px;flex-shrink:0;border-radius:50%;border:2px solid rgba(153,162,184,.3);border-top-color:var(--accent);animation:up-spin .8s linear infinite}
 
 .set-tab.active{background:var(--accent-dim);color:var(--on-container)}
 .set-body{flex:1;min-width:0;overflow-y:auto;overflow-anchor:none;padding:1.35rem 1.45rem 1.5rem}
@@ -2847,6 +2853,9 @@ html.wrapper-app input,html.wrapper-app textarea,html.wrapper-app .codebox,html.
   #settings-backdrop .set-tab.active{background:var(--accent-dim);color:var(--on-container)}
   #settings-backdrop .set-tab .set-tab-ic{display:flex;flex-shrink:0;color:var(--muted)}
   #settings-backdrop .set-tab.active .set-tab-ic{color:var(--on-container)}
+  /* The row is a flex line with its own .85rem gap, so the spinner needs no
+     margin of its own here (double spacing reads as a hole in the label). */
+  #settings-backdrop .set-tab .set-tab-spin{margin-left:0}
   #settings-backdrop .set-tab::after{
     content:'';flex-shrink:0;width:8px;height:8px;margin-left:auto;
     border-right:2px solid var(--faint);border-bottom:2px solid var(--faint);

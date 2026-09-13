@@ -241,11 +241,16 @@ function setSettingsTab(t) {
   $('#set-notifs').classList.toggle('hidden', t !== 'notifs');
   $('#set-blocked').classList.toggle('hidden', t !== 'blocked');
   $('#set-themes').classList.toggle('hidden', t !== 'themes');
-  if (t === 'notifs') renderNotifsTab();
-  if (t === 'blocked') renderBlockedTab();
+  // Every pane that has to ask the server marks its own rail row busy until the
+  // answer is painted (tabSpinWhile, core.js). Profile and Themes paint from
+  // state they already have, so they never spin.
+  const row = document.querySelector('#settings-backdrop .set-tab[data-tab="' + t + '"]');
+  if (t === 'account') tabSpinWhile(row, Promise.all([renderSecurityTab(), renderDesktopApp()]));
+  if (t === 'notifs') tabSpinWhile(row, renderNotifsTab());
+  if (t === 'blocked') tabSpinWhile(row, renderBlockedTab());
   if (t === 'themes') renderThemesTab();
-  if (t === 'games') renderGamesTab();
-  if (t === 'media') renderMediaTab();
+  if (t === 'games') tabSpinWhile(row, renderGamesTab());
+  if (t === 'media') tabSpinWhile(row, renderMediaTab());
   else if (typeof stopMediaPreview === 'function') stopMediaPreview();
 }
 // ---------- blocked users (moved here from the Home friends tabs) ----------
@@ -313,8 +318,10 @@ function renderThemesTab() {
   box.appendChild(grid);
 }
 document.querySelectorAll('#settings-backdrop .set-tab').forEach((b) => (b.onclick = () => {
+  // The account pane's own render rides inside setSettingsTab, so a caller-named
+  // openSettings('account') and a tap on the row load it the same way (and the
+  // row spins either way).
   setSettingsTab(b.dataset.tab);
-  if (b.dataset.tab === 'account') { renderSecurityTab(); renderDesktopApp(); }
   const title = $('#settings-title');
   if (title) title.textContent = b.textContent.trim();
   setSettingsView('section');
