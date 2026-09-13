@@ -459,6 +459,29 @@ function storageCard(usage, tracked) {
     </div>
     <div id="adm-sweep-out" class="muted small"></div>`;
 }
+// The malware sweep: it adopts every stored object no Harbin verdict covers —
+// what was uploaded while scanning was off, or before the engine existed — and
+// lets the scan queue judge them. A key Harbin has already judged is never
+// re-queued (the row is the ledger), so a pass is bounded by what is genuinely
+// unjudged. Adopted objects are queued UNGATED: they stay servable while the
+// verdict is pending, so the sweep can only ever remove malware, never briefly
+// take a working file away from a reader.
+function scanSweepLine(s) {
+  if (!s) return '';
+  if (!s.enabled) return ' · Malware sweep: OFF';
+  const every = (s.everyMs || 0) < 3600000 ? `${Math.round((s.everyMs || 0) / 60000)}min` : `${Math.round((s.everyMs || 0) / 3600000)}h`;
+  const last = s.lastRunAt ? agoStr(s.lastRunAt) : 'not yet';
+  const r = s.lastResult;
+  let did = 'no pass yet';
+  if (r && r.skipped === 'scanning_off') did = 'skipped — scanning is off';
+  else if (r) {
+    did = `${r.queued} queued of ${r.candidates} without a verdict · ${r.listed} object${r.listed === 1 ? '' : 's'} listed · ${r.judged} already judged`;
+    if (r.capped) did += ` (capped at ${s.maxJobs}, rest next pass)`;
+    if (r.errored) did += ` · ${r.errored} in error`;
+  }
+  const err = s.lastError ? ` · last error: ${s.lastError.error}` : '';
+  return ` · Malware sweep: every ${esc(every)}, last ${esc(last)} — ${esc(did)}${esc(err)}`;
+}
 // The bucket reconciliation pass: it lists the bucket itself and compresses
 // what the flag-driven queue never saw (profile media, a story whose row landed
 // late, anything an older build left behind). The ledger is what stops it
@@ -535,7 +558,7 @@ async function loadAdminMedia() {
       ${!w.ffmpeg ? '<div class="muted small">ffmpeg is not on PATH — uploads work, they just stay uncompressed.</div>' : ''}
       <div class="muted small" style="margin-top:.4rem">${m.totals?.kept ? `${m.totals.kept} examined and kept as-is (already small, or nothing to gain) — every one is listed below.` : 'Every upload is examined, whatever its size or type.'}</div>
       <div class="muted small" style="margin-top:.4rem">${scanLine(m.scan)}${sweepLine(m.sweep)}</div>
-      <div class="muted small" style="margin-top:.25rem">${bucketScanLine(m.bucketScan)}</div>
+      <div class="muted small" style="margin-top:.25rem">${bucketScanLine(m.bucketScan)}${scanSweepLine(m.scanSweep)}</div>
       <div class="pf-sec-label" style="margin-top:1rem">Recent files</div>
       ${jobs.length
         ? `<div class="adm-scroll">${jobs.map(jobRow).join('')}</div>`
@@ -545,6 +568,8 @@ async function loadAdminMedia() {
         <button class="mini" id="adm-media-refresh">Refresh</button>
         <button class="mini" id="adm-bucket-check">Check bucket</button>
         <button class="mini" id="adm-bucket-run">Compress now</button>
+        <button class="mini" id="adm-scan-check">Check scan coverage</button>
+        <button class="mini" id="adm-scan-run">Scan bucket now</button>
       </div>
       <div id="adm-bucket-out" class="muted small"></div>`;
     const rb = $('#adm-media-refresh');
@@ -585,6 +610,35 @@ async function loadAdminMedia() {
     };
     const ck = $('#adm-sweep-check');
     if (ck) ck.onclick = () => adminSweepCheck();
+    // The malware sweep's dry run is the honest way to size a first pass against
+    // a real bucket: it lists and classifies, and queues nothing.
+    const sc = $('#adm-scan-check');
+    if (sc) sc.onclick = async () => {
+      const out = $('#adm-bucket-out');
+      sc.disabled = true;
+      out.textContent = 'Listing the bucket…';
+      try {
+        const res = await api('/api/admin/scan/run?dry=1', { method: 'POST' });
+        const x = res.result || {};
+        out.textContent = x.skipped === 'scanning_off'
+          ? 'Scanning is off (VIRUS_SCAN=0) — there is no engine to sweep with.'
+          : `${x.listed || 0} objects · ${x.judged || 0} already judged by Harbin · ${x.candidates || 0} would be scanned`
+            + (x.errored ? ` · ${x.errored} in error` : '')
+            + (x.would && x.would.length ? ` · first: ${x.would.slice(0, 3).map((w) => w.key.split('/').pop()).join(', ')}` : '');
+      } catch (e) { out.textContent = prettyError(e.message); }
+      sc.disabled = false;
+    };
+    const sr = $('#adm-scan-run');
+    if (sr) sr.onclick = async () => {
+      const out = $('#adm-bucket-out');
+      sr.disabled = true;
+      try {
+        await api('/api/admin/scan/run', { method: 'POST' });
+        out.textContent = 'Sweep started — it queues the unjudged objects and runs in the background (watch the line above).';
+        setTimeout(() => { if ($('#adm-media')) loadAdminMedia(); }, 5000);
+      } catch (e) { out.textContent = prettyError(e.message); }
+      sr.disabled = false;
+    };
   } catch { box.innerHTML = '<p class="muted small">Could not load media info.</p>'; }
 }
 // Dry-run the orphan sweep: what would be deleted right now, without deleting.

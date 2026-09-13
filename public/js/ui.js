@@ -10,6 +10,9 @@ function openModal(title, bodyHTML, okLabel, onOk, opts = {}) {
   ok.classList.toggle('danger', !!opts.danger);
   ok.classList.toggle('primary', !opts.danger);
   $('#modal-close').textContent = opts.cancelLabel || 'Cancel';
+  // A read-only panel has one way out, not two: the second button would be a
+  // second "Close" that does exactly the same nothing.
+  $('#modal-close').style.display = opts.hideCancel ? 'none' : '';
   modalOkFn = onOk || null;
   modalCancelFn = opts.onCancel || null;
   document.querySelector('#modal-backdrop .modal').classList.toggle('wide', !!opts.wide);

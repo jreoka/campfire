@@ -52,6 +52,9 @@ campfire/
                      # Postgres cache, signed thumbnail proxy (/api/unfurl, /api/unfurl/img)
   virus-scan.js      # Harbin (machine-learned) scanning + gated serving
                      # (+ inline media compression per upload)
+  bucket-scan.js     # whole-bucket malware sweep: adopts stored objects no
+                     # Harbin verdict covers and feeds them to the scan queue
+                     # (ungated, so it can only ever remove malware)
   media-compress.js  # ffmpeg re-encode of over-large media: single-pass in the scan slot,
                      # the flag-driven queue (chat/DM/stories), the bucket reconciler
                      # (profile media + anything the flags never saw), and the key ledger
@@ -64,6 +67,7 @@ campfire/
                      # not a virus signature (Harbin's tier-1 precision anchor)
   scripts/fake-harbin.js   # stand-in engine (HARBIN_BIN): the pipeline's test harness
   scripts/verify-harbin.js # acceptance check against a REAL engine
+  scripts/test-virus-scan.js # offline unit tests for the scan module
   docker-compose.yml # one service, ./data volume, requires JWT_SECRET in .env
   .env.example       # template (copy to .env)
   app/               # Windows Tauri app (Tauri v2, WebView2) — release-built on
@@ -300,6 +304,31 @@ scanned in place), and its **`suspicious` band (>= 0.60) is served, not blocked*
 — the shipped operating point is the malicious threshold (0.95), so the band is
 counted, logged and shown in the admin panel, and `HARBIN_BLOCK_SUSPICIOUS=1`
 refuses it too at a real false-positive cost.
+Two surfaces sit on top of that verdict, both new with the engine swap.
+**`bucket-scan.js`** closes the hole the upload path cannot: it lists the stored
+tree and queues the keys NO Harbin verdict covers (the era scanning was off,
+files from before the engine existed), because the gate serves an unknown key.
+The row IS the ledger — `engine` is set exactly when a Harbin verdict was
+recorded, so a key already judged is never re-queued and a pass is bounded by
+what is genuinely unjudged; an `infected` key is never touched (its bytes are
+gone and the row is the record the chat card reads); a row in `error` is retried,
+but only while the engine is answering, so a broken engine cannot turn every pass
+into the same pile of failures. Adopted keys are queued **ungated** (`gated = 0`),
+which is the load-bearing part: `effectiveStatus` reports a pending ungated row
+as `clean`, so a background verdict can only ever REMOVE malware — it can never
+421/423 a file a reader can already fetch, or blink a chat card back to
+"Processing". An upload's own row keeps `gated = 1`, because that promise is
+about bytes nobody has been handed yet. Leader-locked, `BUCKET_SCAN_*` env,
+`backups/` and `thumbs/` never listed, admin routes
+`POST /api/admin/scan/run[?dry=1]` and the Media tab's two buttons.
+**"Harbin info"** is the reader's side of it: every attachment rendering carries
+`data-att-id`, and the attachment menu's item opens a read-only panel
+(`GET /api/attachments/:aid/scan`, membership-checked exactly like the message it
+hangs off) showing the STORED verdict — words, score, tone, the engine that made
+it, when, the findings, and why the file was removed or kept. It reads no bytes,
+which is the point: an infected file's bytes are gone and explaining that is the
+whole job. The verdict is never recomputed, so the panel can never disagree with
+what actually happened to the file.
 Coverage is the whole media tree: chat/DM attachments and **stories**
 through the flag-driven queue, and **profile media** (avatars, banners, sidebar
 banners, server icons, custom emoji, webhook avatars, the profile picker's
@@ -371,12 +400,19 @@ references and where it happened, pushes every site admin live, drops an inbox
 entry, and puts a badge on the console's Reports tab + rail shield; admins
 search/filter the queue and dismiss, delete the message, disable the author,
 delete + disable, or ban from the server (one decision closes every open report
-on that message). Menus are content-aware: a right-click/long-press ON a picture
-or a video (`attFromEl` reads the `data-fb-*` identity off the `.att-wrap`) gets
-the PICTURE's own menu — Copy image, Save image, Copy image link, Open image
-link, and for a video the link flavour plus Save video (a browser cannot put
-video bytes on the clipboard, so it is never offered) — checked BEFORE the
-`[data-mid]` message branch in `ctxFor`. The message menu adds Mark unread,
+on that message). Menus are content-aware: an attachment carries its own identity
+(`data-att-id` + the `data-fb-*` media pair, painted by `attMeta` in
+messages.js on EVERY rendering — the `.att-wrap`, the audio player, the text
+preview, the plain file card, and the `scan-block` card standing in for a
+pending or removed file), so a right-click/long-press anywhere on it gets the
+ATTACHMENT's menu — Copy image / Save image / Copy image link / Open image link
+for media (a browser cannot put video bytes on the clipboard, so that flavour is
+never offered), Save file / Copy link for the rest, and **Harbin info** on all of
+them — checked BEFORE the `[data-mid]` message branch in `ctxFor`. `attFromEl`
+reads that identity and the `a:not([data-att-id])` exemption in the contextmenu
+guard is what lets a file card through without taking the browser's own link menu
+away from ordinary links. A blocked file's card offers ONLY "Harbin info",
+because there is nothing left to save. The message menu adds Mark unread,
 Bookmark message and Create reminder… beside Copy text, and View reactions
 whenever the message has any. Mark unread moves the WATERMARK
 (`channel_reads`/`dm_members.last_read_at`) to one millisecond before the

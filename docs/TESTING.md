@@ -562,6 +562,33 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   is a precision anchor rather than a virus signature. Run it on the server, where
   nothing else watches the temp dir, after touching `virus-scan.js` or bumping
   `HARBIN_REF` in the Dockerfile.
+  `node scripts/test-virus-scan.js` covers the scan module offline (no server,
+  no database, no network): `materialize` turning a stored object into the PATH
+  the engine takes — the local-disk branch, the S3 branch production actually
+  runs (stubbed here rather than left to a deploy to discover), a missing object
+  answering null, and a key that tries to escape the upload dir; `verdictFrom`
+  mapping a report line and an exit code to a verdict, including the trap that a
+  killed process has a null exit status and `Number(null)` is 0, so "no numeric
+  status" must never read as clean; `probeEngine` refusing a model-less build
+  (which would answer CLEAN to everything) and a missing binary; and the
+  **bucket sweep's classification**, which is the one piece of it that must never
+  be wrong — a key Harbin already judged is never re-queued, a key an earlier
+  engine judged IS adopted, an infected key is left alone (its row is the record
+  of the removal the chat card reads), and a row that never got a verdict is
+  retried only while the engine is answering.
+  `node scripts/test-harbin-info.js` drives the attachment menu and the panel
+  behind it in headless Chrome against a real server (skips without Chrome or
+  Postgres), with the stand-in engine: a right-click offers "Harbin info" on a
+  picture, a text preview, a plain file card and the card standing in for a
+  removed file, offers nothing that could not work when the bytes are gone, and
+  still leaves the message menu to the message's own pixels; picking it paints
+  the STORED verdict (words, score, tone, engine, findings, and why the file was
+  removed or kept) with one way out rather than two; and a long-press on an
+  emulated touch device gets the same item in the phone's sheet.
+  Both it and the pipeline test run the engine through
+  `HARBIN_BIN=scripts/fake-harbin.js` — a `.js` value is invoked with the current
+  Node binary (see `harbinCommand` in virus-scan.js), so neither needs a Rust
+  toolchain and both behave the same on Windows, macOS and Linux.
   `node scripts/test-compress-types.js` covers the compressor's **coverage
   contract** offline (no server, no database): that there is no size floor
   (`MIN_BYTES` all zero, so a 174-byte png / 300-byte mp4 / 2 KB wav are all

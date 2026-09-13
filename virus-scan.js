@@ -166,6 +166,21 @@ async function ensureTables() {
   await db.exec('ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS claimed_by TEXT');
   await db.exec('ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS claimed_at BIGINT');
   await db.exec('CREATE INDEX IF NOT EXISTS idx_file_scans_claim ON file_scans(status, claimed_at)');
+  // What the ENGINE said, kept so a verdict can be explained later instead of
+  // being a status with no reasoning behind it (the attachment menu's "Harbin
+  // info" reads these; the label in `error` alone cannot say what was found or
+  // how sure the engine was).
+  await db.exec("ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS verdict TEXT");
+  await db.exec('ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS score REAL');
+  await db.exec("ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS evidence TEXT NOT NULL DEFAULT ''");
+  await db.exec("ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS engine TEXT NOT NULL DEFAULT ''");
+  // Whether a `pending` row holds serving back. 1 = yes, which is every upload:
+  // the bytes must not be published before the verdict lands. 0 = a BACKGROUND
+  // re-scan (bucket-scan.js adopting an object nothing ever judged) — a file a
+  // reader can already fetch must never be taken away from them by a scan they
+  // did not ask for, so those are served while they wait and only an actual
+  // detection changes anything.
+  await db.exec('ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS gated INTEGER NOT NULL DEFAULT 1');
   ready = true;
 }
 
@@ -183,19 +198,27 @@ async function ensureTables() {
 async function queueFileScan(key, opts) {
   if (!key) return 'clean';
   try { await ensureTables(); } catch {}
+  const retro = !!(opts && opts.retro);
   const gate = SCANNING || (compressing() && !!(opts && opts.compress));
   if (!gate) {
     try {
-      await db.prepare(`INSERT INTO file_scans (key,status,attempts,error,created_at,scanned_at)
-        VALUES (?,'clean',0,'',?,?) ON CONFLICT(key) DO NOTHING`).run(key, now(), now());
+      await db.prepare(`INSERT INTO file_scans (key,status,attempts,error,created_at,scanned_at,gated)
+        VALUES (?,'clean',0,'',?,?,?) ON CONFLICT(key) DO NOTHING`).run(key, now(), now(), retro ? 0 : 1);
     } catch {}
     return 'clean';
   }
   try {
-    await db.prepare(`INSERT INTO file_scans (key,status,attempts,error,created_at,scanned_at)
-      VALUES (?,'pending',0,'',?,NULL) ON CONFLICT(key) DO UPDATE SET
+    // On conflict `gated` only ever moves toward "not gated": a background
+    // re-scan adopts a key whose row was written by an earlier era (or an
+    // earlier engine) and that a reader may already be fetching, so adopting it
+    // must not start holding it back. A normal upload's rows keep whatever they
+    // had, which for every upload row is 1.
+    await db.prepare(`INSERT INTO file_scans (key,status,attempts,error,created_at,scanned_at,gated)
+      VALUES (?,'pending',0,'',?,NULL,?) ON CONFLICT(key) DO UPDATE SET
       status = CASE WHEN file_scans.status = 'infected' THEN 'infected' ELSE 'pending' END,
-      attempts = 0, error = '', scanned_at = NULL`).run(key, now());
+      attempts = 0, error = '', scanned_at = NULL,
+      verdict = NULL, score = NULL, evidence = '', engine = '',
+      gated = CASE WHEN EXCLUDED.gated = 0 THEN 0 ELSE file_scans.gated END`).run(key, now(), retro ? 0 : 1);
   } catch (e) {
     warn('queue failed for ' + key + ': ' + String((e && e.message) || e).slice(0, 120));
     return 'clean'; // fail open: never wedge an upload on a DB hiccup
@@ -209,13 +232,25 @@ async function dropScan(key) {
   try { await db.prepare('DELETE FROM file_scans WHERE key = ?').run(key); } catch {}
 }
 
+// What serving and the clients are told. This is the RAW status except for one
+// case: a `pending` row that is NOT gated is a background re-scan of a file that
+// was already servable, so it reports `clean` — the reader keeps their file, the
+// chat card stays the real file instead of blinking back to "Processing", and
+// only an actual detection changes anything. A `pending` row that IS gated is an
+// upload waiting for its verdict, which is the promise the 423 exists to keep.
+function effectiveStatus(status, gated) {
+  if (!status) return 'clean';
+  if (status === 'pending' && Number(gated) === 0) return 'clean';
+  return status;
+}
+
 // Single status; unknown keys (pre-feature uploads, non-chat prefixes)
 // are `clean` — only rows say otherwise.
 async function scanStatus(key) {
   if (!key || !slotOn()) return 'clean';
   try {
-    const r = await db.prepare('SELECT status FROM file_scans WHERE key = ?').get(key);
-    return (r && r.status) || 'clean';
+    const r = await db.prepare('SELECT status, gated FROM file_scans WHERE key = ?').get(key);
+    return r ? effectiveStatus(r.status, r.gated) : 'clean';
   } catch { return 'clean'; }
 }
 
@@ -226,10 +261,22 @@ async function scanStatusMap(keys) {
   if (!uniq.length || !slotOn()) return out;
   try {
     const ph = uniq.map(() => '?').join(',');
-    const rows = await db.prepare(`SELECT key, status FROM file_scans WHERE key IN (${ph})`).all(...uniq);
-    for (const r of rows) out.set(r.key, r.status || 'clean');
+    const rows = await db.prepare(`SELECT key, status, gated FROM file_scans WHERE key IN (${ph})`).all(...uniq);
+    for (const r of rows) out.set(r.key, effectiveStatus(r.status, r.gated));
   } catch {}
   return out;
+}
+
+// The RAW record, for the "Harbin info" panel: the effective status hides the
+// fact that a background re-scan is queued, and hides `attempts`/`error`
+// entirely, and this view exists to show the reader exactly that.
+async function scanDetail(key) {
+  if (!key) return null;
+  try { await ensureTables(); } catch {}
+  try {
+    return await db.prepare(`SELECT key, status, attempts, error, created_at, scanned_at,
+      verdict, score, evidence, engine, gated FROM file_scans WHERE key = ?`).get(key) || null;
+  } catch { return null; }
 }
 
 // Whether the /uploads gate should enforce verdicts at all: it must, whenever
@@ -361,20 +408,23 @@ async function ensureEngine() {
 // `[CLEAN|SUSPECT|MALWARE|ERROR] <path>  score N.NNNN  (size)` and follows it
 // with evidence lines. The tag is authoritative — a `SUSPECT` file exits 0 —
 // so the exit code is only the fallback when no report line is readable.
-//   { clean: true }                          nothing found
-//   { clean: true, suspicious: '...' }       the suspicious band, served
-//   { clean: false, virus: '...' }           a threat
+//   { clean: true,  detail }                  nothing found
+//   { clean: true,  suspicious, detail }      the suspicious band, served
+//   { clean: false, virus, detail }           a threat
+// `detail` carries what the engine actually said (verdict, score, findings) so
+// it can be stored and explained later rather than being a bare status.
 // Throws on anything that means "the engine did not answer".
 function verdictFrom(run) {
   const out = run.stdout + '\n' + run.stderr;
   const tag = /^\s*\[(CLEAN|SUSPECT|MALWARE|ERROR)\]/m.exec(out);
-  const score = (/score\s+([0-9.]+)/.exec(out) || [])[1] || '';
-  const detail = (() => {
-    const m = /^\s*(?:indicator|evidence):\s*(.+)$/m.exec(out);
-    if (!m) return '';
-    return m[1].trim().replace(/\s+/g, ' ').slice(0, 90);
-  })();
-  const label = (kind) => ('Harbin: ' + (detail || kind) + (score ? ' (' + score + ')' : '')).slice(0, 120);
+  const rawScore = (/score\s+([0-9.]+)/.exec(out) || [])[1] || '';
+  const score = rawScore === '' ? null : Number(rawScore);
+  const findings = (out.match(/^\s*(?:indicator|evidence):\s*(.+)$/gm) || [])
+    .map((l) => l.replace(/^\s*(?:indicator|evidence):\s*/, '').trim().replace(/\s+/g, ' ').slice(0, 160))
+    .filter(Boolean)
+    .slice(0, 8);
+  const label = (kind) => ('Harbin: ' + (findings[0] || kind) + (rawScore ? ' (' + rawScore + ')' : '')).slice(0, 120);
+  const detail = (verdict) => ({ verdict, score: Number.isFinite(score) ? score : null, findings });
 
   if (run.error) throw new Error(run.error);
   const kind = tag ? tag[1] : null;
@@ -384,12 +434,29 @@ function verdictFrom(run) {
     const why = (/cannot read:\s*(.+)$/m.exec(out) || [])[1];
     throw new Error('harbin_unreadable' + (why ? ':' + why.trim().slice(0, 100) : ''));
   }
-  if (kind === 'MALWARE' || (!kind && run.code === 1)) return { clean: false, virus: label('malware detected') };
-  if (kind === 'SUSPECT') return { clean: true, suspicious: label('suspicious') };
-  if (kind === 'CLEAN') return { clean: true };
+  if (kind === 'MALWARE' || (!kind && run.code === 1)) return { clean: false, virus: label('malware detected'), detail: detail('malicious') };
+  if (kind === 'SUSPECT') return { clean: true, suspicious: label('suspicious'), detail: detail('suspicious') };
+  if (kind === 'CLEAN') return { clean: true, detail: detail('clean') };
   if (run.code === 2) throw new Error('harbin_could_not_run');
   // No report line at all and a clean exit: nothing was found worth printing.
-  return { clean: true };
+  return { clean: true, detail: detail('clean') };
+}
+
+// The engine's identity, captured AT SCAN TIME: a later model is a different
+// detector, and a stored verdict has to be read against the one that made it.
+function engineLabel() {
+  const m = engineModel;
+  return (m && m.trees) ? ('Harbin · ' + m.trees + ' trees / ' + m.features + ' features') : 'Harbin';
+}
+// Flatten a verdict into the row's columns.
+function detailFor(v) {
+  const d = (v && v.detail) || {};
+  return {
+    verdict: String(d.verdict || 'clean').slice(0, 20),
+    score: Number.isFinite(d.score) ? d.score : null,
+    evidence: ((d.findings || []).join('\n')).slice(0, 600),
+    engine: engineLabel().slice(0, 120),
+  };
 }
 
 // ---------- file access ----------
@@ -503,10 +570,16 @@ async function scanPath(p, size) {
 
 // ---------- worker ----------
 
-async function markRow(key, status, error) {
+async function markRow(key, status, error, detail) {
+  const d = detail || {};
   try {
-    await db.prepare('UPDATE file_scans SET status = ?, attempts = attempts + 1, error = ?, scanned_at = ? WHERE key = ?')
-      .run(status, String(error || '').slice(0, 200), now(), key);
+    await db.prepare(`UPDATE file_scans SET status = ?, attempts = attempts + 1, error = ?, scanned_at = ?,
+        verdict = ?, score = ?, evidence = ?, engine = ? WHERE key = ?`)
+      .run(status, String(error || '').slice(0, 200), now(),
+        d.verdict ? String(d.verdict).slice(0, 20) : null,
+        Number.isFinite(d.score) ? d.score : null,
+        String(d.evidence || '').slice(0, 600),
+        String(d.engine || '').slice(0, 120), key);
   } catch {}
 }
 
@@ -631,12 +704,17 @@ async function processMedia(key, inspect) {
   }
   if (!out || !out.key || out.key === key) return key;
   // Bytes moved to a fresh key: carry the verdict over, drop the row for the
-  // old (deleted) key so nothing lingers behind the sweep.
+  // old (deleted) key so nothing lingers behind the sweep. The engine's own
+  // record travels with it — the new key was never judged by anything else.
+  let old = null;
+  try { old = await db.prepare('SELECT verdict, score, evidence, engine FROM file_scans WHERE key = ?').get(key); } catch {}
   try { await db.prepare('DELETE FROM file_scans WHERE key = ?').run(key); } catch {}
   try {
-    await db.prepare(`INSERT INTO file_scans (key,status,attempts,error,created_at,scanned_at)
-      VALUES (?,'clean',0,'',?,?) ON CONFLICT(key) DO UPDATE SET status = 'clean', error = '', scanned_at = ?`)
-      .run(out.key, now(), now(), now());
+    await db.prepare(`INSERT INTO file_scans (key,status,attempts,error,created_at,scanned_at,verdict,score,evidence,engine)
+      VALUES (?,'clean',0,'',?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET status = 'clean', error = '', scanned_at = ?`)
+      .run(out.key, now(), now(),
+        old ? old.verdict : null, old ? old.score : null,
+        (old && old.evidence) || '', (old && old.engine) || '', now());
   } catch {}
   return out.key;
 }
@@ -710,7 +788,7 @@ async function processRow(row) {
       stats.suspicious++;
       stats.lastScan = { key: row.key, result: 'suspicious:' + verdict.suspicious, at: now() };
       if (BLOCK_SUSPICIOUS) {
-        await markRow(row.key, 'infected', verdict.suspicious);
+        await markRow(row.key, 'infected', verdict.suspicious, detailFor(verdict));
         stats.infected++;
         await deleteBytes(row.key);
         warn('SUSPICIOUS (HARBIN_BLOCK_SUSPICIOUS=1): deleted bytes for ' + row.key + ' — ' + verdict.suspicious);
@@ -723,14 +801,14 @@ async function processRow(row) {
       // The bytes the client will actually get are verified before this
       // verdict is published (see processMedia): scan -> compress -> scan.
       const finalKey = await processMedia(row.key, scanCandidate);
-      await markRow(finalKey, 'clean', '');
+      await markRow(finalKey, 'clean', '', detailFor(verdict));
       stats.clean++;
       stats.lastScan = { key: finalKey, result: 'clean', at: now() };
       await emitChange(finalKey, 'clean');
       log('clean: ' + finalKey);
     } else {
       const virus = String(verdict.virus || 'malware').slice(0, 120);
-      await markRow(row.key, 'infected', virus);
+      await markRow(row.key, 'infected', virus, detailFor(verdict));
       stats.infected++;
       stats.lastScan = { key: row.key, result: 'infected:' + virus, at: now() };
       await deleteBytes(row.key);
@@ -866,6 +944,7 @@ function startVirusScan() {
 module.exports = {
   startVirusScan, kickVirusScan, queueFileScan, dropScan,
   scanStatus, scanStatusMap, scanGating, setScanHooks, getScanStats,
+  scanDetail, effectiveStatus, engineLabel,
   scanningEnabled: () => SCANNING,
   emitScanChange: emitChange,
   // exported for unit tests (the stand-in engine, the parser, and the S3

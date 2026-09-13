@@ -148,6 +148,33 @@ const verdict = (over) => { try { return vs._verdictFrom(run(over)); } catch (e)
   check('the engine answers a staged object', scanVerdict.clean === true, JSON.stringify(scanVerdict));
   s3Mode = false;
 
+  // The bucket sweep's classification decides which stored objects get
+  // re-judged, so it is the one piece of it that must never be wrong: queueing a
+  // key that was already judged re-scans it, and queueing an infected one would
+  // drop the row that tells the chat a file was removed.
+  console.log('\n[6] the bucket sweep only adopts keys no Harbin verdict covers');
+  const bs = require(path.join(ROOT, 'bucket-scan'));
+  const rows = [
+    { key: 'files/clean-harbin.jpg', status: 'clean', engine: 'Harbin · 258 trees / 4117 features' },
+    { key: 'files/clean-old-engine.jpg', status: 'clean', engine: '' },   // judged before Harbin existed
+    { key: 'files/infected.exe', status: 'infected', engine: 'Harbin · 258 trees / 4117 features' },
+    { key: 'files/inflight.jpg', status: 'pending', engine: '' },
+    { key: 'files/broken.bin', status: 'error', engine: '' },
+    { key: 'files/gone.bin', status: null, engine: '' },
+  ];
+  const c1 = bs._classify(rows, true);
+  check('a key Harbin already judged is never re-queued', c1.skip.has('files/clean-harbin.jpg'));
+  check('a key an earlier engine judged IS adopted (it has no Harbin verdict)',
+    !c1.skip.has('files/clean-old-engine.jpg'));
+  check('an infected key is never touched — its row is the record of the removal',
+    c1.skip.has('files/infected.exe'));
+  check('a key already in flight is left to the queue', c1.skip.has('files/inflight.jpg'));
+  check('a row that never got a verdict is retried while the engine answers',
+    !c1.skip.has('files/broken.bin') && c1.errored === 1);
+  check('...and is left alone when the engine is not answering',
+    bs._classify(rows, false).skip.has('files/broken.bin'));
+  check('the judged count is reported for the panel', c1.judged === 1, String(c1.judged));
+
   try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}
   console.log(`\n${passed} checks passed, ${failures.length} failed`);
   if (failures.length) { for (const f of failures) console.log('  - ' + f); process.exit(1); }

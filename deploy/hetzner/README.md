@@ -209,6 +209,19 @@ takes a path. On a dev machine with endpoint antivirus the file is quarantined
 before Harbin can read it and the check reports SKIPPED with that reason; on this
 host nothing else is watching the temp dir, so it runs for real.
 
+**The whole bucket is swept daily** (`bucket-scan.js`): the upload path only ever
+judges what it just received, so anything stored while the cluster ran
+`VIRUS_SCAN=0` — or before Harbin existed — has no verdict at all, and the
+`/uploads` gate serves an unknown key. The sweep lists the stored tree and queues
+the keys no Harbin verdict covers. A key it has already judged is never
+re-queued (the row is the ledger, so the first pass is the big one and later ones
+only pick up what is genuinely new), `backups/` and `thumbs/` are never listed,
+and an adopted key is queued **ungated** — it stays servable while its background
+verdict is pending, so the sweep can only ever remove malware, never briefly take
+a working file away from a reader. Size a first pass from the admin console's
+Media tab ("Check scan coverage" is a dry run, "Scan bucket now" runs it) before
+trusting it, and read the `Malware sweep:` line for what the last pass did.
+
 ## Voice / TURN
 
 `coturn` runs on the host network and binds the public IP directly, so no

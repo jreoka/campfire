@@ -158,12 +158,25 @@ function imageSrcFor(a) {
   const q = url.indexOf('?');
   return thumb + (q >= 0 ? url.slice(q) : '');
 }
+// The attachment's OWN identity, on every element that represents it. The menus
+// (desktop right-click, the phone's long-press sheet) resolve from the element
+// the pointer is actually over, so a rendering that does not carry this is an
+// attachment nothing can act on. `data-att-id` is what the attachment menus look
+// up (and what the "Harbin info" panel asks the server about); `data-fb-*` is
+// the media identity the copy/save/link items and the lightbox already read.
+// The scanning and infected CARDS carry it too — those are the ones a reader
+// most wants explained, and they have no `.att-wrap` to inherit it from.
+function attMeta(a, kind) {
+  const k = kind || (a && a.kind) || 'file';
+  return ` data-att-id="${esc((a && a.id) || '')}" data-fb-url="${esc((a && a.url) || '')}"`
+    + ` data-fb-name="${esc((a && a.name) || '')}" data-fb-kind="${esc(k)}" data-fb-scan="${esc((a && a.scan) || 'clean')}"`;
+}
 function attachmentHTML(a) {
   // Virus-scan states (see virus-scan.js): pending files render an
   // animated scanning card and infected files a greyed-out warning —
   // never the bytes, no preview, no download link anywhere.
-  if (a.scan === 'infected') return `<div class="scan-block infected"><span class="scan-ic">${SCAN_SHIELD_SVG}</span><span class="scan-tx"><b>${esc(a.name)}</b><span>Virus detected — this file was removed and can't be downloaded.</span></span></div>`;
-  if (a.scan === 'pending') return `<div class="scan-block scanning"><span class="scan-tx"><b>${esc(a.name)} (${fmtSize(a.size)})</b><span>Processing file<span class="scan-dots"></span></span><span class="scan-track"><span class="scan-fill"></span></span></span></div>`;
+  if (a.scan === 'infected') return `<div class="scan-block infected"${attMeta(a)}><span class="scan-ic">${SCAN_SHIELD_SVG}</span><span class="scan-tx"><b>${esc(a.name)}</b><span>Virus detected — this file was removed and can't be downloaded.</span></span></div>`;
+  if (a.scan === 'pending') return `<div class="scan-block scanning"${attMeta(a)}><span class="scan-tx"><b>${esc(a.name)} (${fmtSize(a.size)})</b><span>Processing file<span class="scan-dots"></span></span><span class="scan-track"><span class="scan-fill"></span></span></span></div>`;
   if (a.kind === 'image') {
     // data-fb-url is the ORIGINAL: the lightbox and the download link use it, and
     // it is where the preview falls back to. data-fb-thumb marks a src that may
@@ -184,13 +197,13 @@ function attachmentHTML(a) {
     // long-press and right-click menus are opened on whatever the finger is
     // over, which is the wrap, the image, the download chip or the star — one
     // read from the wrap covers all of them (see attFromEl in actions.js).
-    const meta = ` data-fb-url="${esc(a.url)}" data-fb-name="${esc(a.name)}" data-fb-kind="image"`;
+    const meta = attMeta(a, 'image');
     return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}${d ? ' ar' : ' no-ar'}"${style}${meta}><span class="att-ph" aria-hidden="true"><span class="att-spin"></span></span><img class="att-img" src="${esc(thumb || a.url)}" alt="${esc(a.name)}" loading="lazy" decoding="async"${d ? ` width="${d.w}" height="${d.h}"` : ''}${thumb ? ' data-fb-thumb="1"' : ''} data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${attFavHTML(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   }
-  if (a.kind === 'video') return `<span class="att-wrap loading${a.spoiler ? ' spoiler' : ''}" data-fb-url="${esc(a.url)}" data-fb-name="${esc(a.name)}" data-fb-kind="video"><video class="att-vid" src="${esc(a.url)}" controls preload="metadata" playsinline></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+  if (a.kind === 'video') return `<span class="att-wrap loading${a.spoiler ? ' spoiler' : ''}"${attMeta(a, 'video')}><video class="att-vid" src="${esc(a.url)}" controls preload="metadata" playsinline></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'audio') return audioPlayerHTML(a);
   if (textPreviewable(a)) return textFileHTML(a);
-  return `<a class="file-card" href="${esc(a.url)}" target="_blank" rel="noopener"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span><span class="fname">${esc(a.name)}</span><br/><span class="fsize">${fmtSize(a.size)}</span></span></a>`;
+  return `<a class="file-card" href="${esc(a.url)}" target="_blank" rel="noopener"${attMeta(a, 'file')}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span><span class="fname">${esc(a.name)}</span><br/><span class="fsize">${fmtSize(a.size)}</span></span></a>`;
 }
 // ---------- video posters: desktop shows the first frame natively, but the
 // Android WebView shows a black box + giant play button until playback
@@ -485,7 +498,7 @@ function textFileHTML(a) {
   const prev = c && c.status === 'ready'
     ? (c.preview || '(empty file)')
     : (c && c.status === 'err' ? 'Preview unavailable — download to view.' : 'Loading preview…');
-  return `<div class="txtfile" data-turl="${esc(a.url)}" data-tname="${esc(a.name)}">`
+  return `<div class="txtfile" data-turl="${esc(a.url)}" data-tname="${esc(a.name)}"${attMeta(a, 'file')}>`
     + `<div class="txt-head"><span class="txt-ic">&lt;/&gt;</span><span class="txt-name">${esc(a.name)}</span><span class="txt-size">${fmtSize(a.size)}</span><span class="spacer"></span>${attDl(a)}</div>`
     + `<pre class="txt-prev">${esc(prev)}</pre>`
     + `<button type="button" class="mini" data-act="expand-file">Expand</button></div>`;
@@ -561,7 +574,7 @@ function vpVolIcon() {
 }
 function audioPlayerHTML(a) {
   const tag = 'vp' + (++vpSeq).toString(36) + Date.now().toString(36).slice(-3);
-  return `<div class="vplayer" data-vp="${tag}" data-url="${esc(a.url)}" data-size="${a.size || 0}">`
+  return `<div class="vplayer" data-vp="${tag}" data-url="${esc(a.url)}" data-size="${a.size || 0}"${attMeta(a, 'audio')}>`
     + `<button type="button" class="vp-play" data-vp-toggle title="Play"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path class="vp-ic-play" d="M8 5v14l11-7z"/><path class="vp-ic-pause" d="M7 5h4v14H7zM13 5h4v14h-4z" style="display:none"/></svg></button>`
     + `<audio src="${esc(a.url)}" preload="metadata"></audio>`
     + `<div class="vp-body"><div class="vp-name" title="${esc(a.name)}">${esc(a.name)}</div><div class="vp-bars" data-vp-seek>${'<i></i>'.repeat(VP_BARS)}</div>`

@@ -1009,6 +1009,7 @@ const LOCKS = {
   beaconSweep: 771014,    // watcher stale-beacon cleanup (playing_game) — one replica
   attDims: 771015,        // att-dims.js: measure images that predate the shape record
   reminders: 771016,      // deliver due reminders (one replica rings, never N)
+  bucketScan: 771017,     // bucket-scan.js: adopt stored objects no verdict covers
 };
 
 // Try to take the lock without waiting. Resolves { ran: false } when another

@@ -88,19 +88,26 @@ const SAVE_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" st
 const LINK_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>';
 const OPEN_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>';
 
-/* ================= attachment (image / video) menus =================
- * A long-press or right-click ON the picture itself is about the picture, not
+/* ================= attachment menus =================
+ * A long-press or right-click ON the attachment is about the attachment, not
  * about the message that carries it: copy it, save it, copy its link, open its
- * link. The attachment's identity lives on the .att-wrap (see attachmentHTML in
- * messages.js), so every target inside the wrap — the image, the download chip,
- * the GIF star, the spoiler veil — resolves to the same menu. */
+ * link — and ask what the scanner made of it. Every rendering carries the
+ * attachment's identity (see attMeta in messages.js), so one read from whatever
+ * the pointer is over — the wrap, the image, the download chip, the GIF star,
+ * the spoiler veil, the audio player, a file card, or the scanning/infected
+ * card that stands in for a file — resolves to the same menu. */
 function attFromEl(el) {
-  const w = el && el.closest ? el.closest('.att-wrap[data-fb-url]') : null;
+  const w = el && el.closest ? el.closest('[data-att-id]') : null;
   if (!w) return null;
   const url = w.dataset.fbUrl || '';
-  if (!url) return null;
-  const video = w.dataset.fbKind === 'video';
-  return { url, name: w.dataset.fbName || (video ? 'video' : 'image'), kind: video ? 'video' : 'image' };
+  const kind = w.dataset.fbKind || 'file';
+  return {
+    id: w.dataset.attId || '',
+    url,
+    name: w.dataset.fbName || (kind === 'video' ? 'video' : 'file'),
+    kind,
+    scan: w.dataset.fbScan || 'clean',
+  };
 }
 function absUrl(u) { try { return new URL(u, location.origin).href; } catch { return String(u || ''); } }
 function sameOriginUrl(u) { try { return new URL(u, location.origin).origin === location.origin; } catch { return false; } }
@@ -187,18 +194,138 @@ function mediaMenuItems(el) {
   const a = attFromEl(el);
   if (!a) return null;
   const img = a.kind === 'image';
+  const video = a.kind === 'video';
+  if (!img && !video) return null;
   const url = absUrl(a.url);
   const items = [];
   if (img) items.push({ label: 'Copy image', icon: IMG_COPY_SVG, fn: () => copyImageToClipboard(a) });
   items.push({ label: img ? 'Save image' : 'Save video', icon: SAVE_SVG, fn: () => saveMediaFile(a) });
   items.push({ label: img ? 'Copy image link' : 'Copy video link', icon: LINK_SVG, fn: () => { copyTextNow(url); toast('Link copied'); } });
   items.push({ label: img ? 'Open image link' : 'Open video link', icon: OPEN_SVG, fn: () => openMediaLink(url) });
+  const hb = harbinInfoItem(a);
+  if (hb) items.push(hb);
   return items;
+}
+// Everything that is not a picture or a video gets the same menu shape without
+// the clipboard-image flavour, plus the scanner panel. A file card is an <a>, so
+// the contextmenu guard lets it through only because it carries an attachment
+// identity — a plain link still gets the browser's own menu.
+function fileMenuItems(el) {
+  const a = attFromEl(el);
+  if (!a) return null;
+  if (a.kind === 'image' || a.kind === 'video') return null;
+  const url = absUrl(a.url);
+  const items = [];
+  // Nothing to save or link to when the bytes were removed or are not published
+  // yet: the reader gets the explanation, and nothing that would 404 at them.
+  if (a.scan !== 'infected' && a.scan !== 'pending' && a.url) {
+    items.push({ label: a.kind === 'audio' ? 'Save audio' : 'Save file', icon: SAVE_SVG, fn: () => saveMediaFile(a) });
+    items.push({ label: 'Copy link', icon: LINK_SVG, fn: () => { copyTextNow(url); toast('Link copied'); } });
+  }
+  const hb = harbinInfoItem(a);
+  if (hb) items.push(hb);
+  return items.length ? items : null;
+}
+// The attachment menu, whatever the attachment is. Media first (its own
+// flavour), then the general one.
+function attMenuItems(el) {
+  return mediaMenuItems(el) || fileMenuItems(el);
 }
 function mediaSheetHead(el) {
   const a = attFromEl(el);
   if (!a) return null;
-  return { title: a.name, sub: a.kind === 'video' ? 'Video' : 'Image', glyph: a.kind === 'video' ? '▶' : '■', color: 'var(--panel-3)' };
+  const label = { image: 'Image', video: 'Video', audio: 'Audio' }[a.kind] || 'File';
+  return { title: a.name, sub: label, glyph: a.kind === 'video' ? '▶' : a.kind === 'audio' ? '♪' : '■', color: 'var(--panel-3)' };
+}
+
+/* ================= "Harbin info" =================
+ * What the scanner concluded about one attachment, and why.
+ *
+ * The verdict is READ, never recomputed: it is stored when the scan runs (see
+ * virus-scan.js), which is the only way to explain a file whose bytes are
+ * already gone, and the only honest way to show a verdict beside the model that
+ * actually made it. The chat card can only ever say a file was blocked — the
+ * reason lives here.
+ */
+const HB_SHIELD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.3-2.9 7.7-7 9-4.1-1.3-7-4.7-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>';
+function harbinInfoItem(a) {
+  // No attachment id means nothing the server could look up — an optimistic
+  // local attachment, say. The rest of the menu still applies.
+  if (!a || !a.id) return null;
+  return { label: 'Harbin info', icon: HB_SHIELD, fn: () => openHarbinInfo(a) };
+}
+// The verdict, as a tone (`ok`/`warn`/`bad`, which is all the CSS needs) and the
+// words for it. `status` is the operational state and wins where it exists: a
+// row can be `infected` or in `error` whatever the engine's own band was.
+function hbVerdict(sc) {
+  if (!sc) return { tone: '', text: 'No verdict recorded' };
+  const score = sc.score == null ? '' : ' · score ' + Number(sc.score).toFixed(4);
+  if (sc.status === 'infected') return { tone: 'bad', text: 'Malware detected' + score };
+  if (sc.status === 'error') return { tone: 'warn', text: 'Could not be judged' };
+  if (sc.status === 'pending') return { tone: '', text: 'Scanning…' };
+  if (sc.verdict === 'suspicious') return { tone: 'warn', text: 'Suspicious' + score };
+  if (sc.verdict === 'malicious') return { tone: 'bad', text: 'Malware detected' + score };
+  if (sc.verdict === 'clean') return { tone: 'ok', text: 'Clean' + score };
+  return { tone: '', text: 'No verdict recorded' };
+}
+function hbNote(r, v) {
+  const sc = r.scan;
+  if (!r.local) return 'This attachment is not a stored upload, so there was nothing to scan.';
+  if (!sc) {
+    if (!r.scanningEnabled) return 'Scanning is off on this server right now, and no verdict was recorded for this file.';
+    return 'No verdict is recorded for this file yet — it was stored before this scanner started judging uploads. '
+      + 'The background bucket scan will pick it up on its next pass; until then it is served as it always was.';
+  }
+  if (sc.status === 'infected') return 'The file was removed and can no longer be downloaded.';
+  if (sc.status === 'error') {
+    return 'The scanner did not answer for this file' + (sc.attempts > 1 ? ` after ${sc.attempts} attempts` : '')
+      + ', so it is served anyway — uploads fail open rather than being held back.'
+      + (sc.error ? ` Last error: ${sc.error}` : '');
+  }
+  if (sc.background) return 'A background re-scan of the stored bucket is queued for this file. It stays available while the verdict is pending.';
+  if (sc.status === 'pending') return 'Waiting for the verdict.';
+  if (v.tone === 'warn') return 'Harbin placed this above its suspicious threshold but below the level this server blocks, so it was served.';
+  if (!r.scanningEnabled) return 'Scanning is off on this server right now; this is the verdict it recorded when it was on.';
+  return '';
+}
+function hbWhen(ts) {
+  if (!ts) return '—';
+  try { return agoStr(ts); } catch { return new Date(ts).toLocaleString(); }
+}
+function hbInfoHTML(r) {
+  const sc = r.scan;
+  const v = hbVerdict(sc);
+  const rows = [];
+  if (sc && sc.engine) rows.push(['Engine', sc.engine]);
+  else if (r.currentEngine) rows.push(['Engine', r.currentEngine]);
+  rows.push(['Scanned', sc && sc.scannedAt ? hbWhen(sc.scannedAt) : 'not yet']);
+  if (sc && sc.attempts > 1) rows.push(['Attempts', String(sc.attempts)]);
+  rows.push(['File', (r.key || 'not a stored upload') + (r.size ? ' · ' + fmtSize(r.size) : '')]);
+  const findings = (sc && sc.evidence) || [];
+  return `<div class="hb-head">
+    <span class="hb-ic${v.tone ? ' ' + v.tone : ''}">${HB_SHIELD}</span>
+    <span class="hb-t"><b>${esc(r.name || 'file')}</b><span class="hb-v${v.tone ? ' ' + v.tone : ''}">${esc(v.text)}</span></span>
+  </div>
+  <div class="hb-rows">${rows.map(([k, val]) => `<div class="hb-row"><span>${esc(k)}</span><span class="hb-val">${esc(val)}</span></div>`).join('')}</div>
+  ${findings.length ? `<div class="hb-sect">Findings</div><ul class="hb-find">${findings.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
+  ${(() => { const n = hbNote(r, v); return n ? `<div class="hb-note">${esc(n)}</div>` : ''; })()}`;
+}
+// One request per open, and the panel is dismissed (or replaced) freely while it
+// is in flight: the sequence number is what stops a late answer painting into a
+// dialog somebody else now owns.
+let hbSeq = 0;
+async function openHarbinInfo(a) {
+  const seq = ++hbSeq;
+  openModal('Harbin info', '<p class="muted small">Reading the scan record…</p>', 'Close', null, { hideCancel: true });
+  let r = null;
+  try { r = await api('/api/attachments/' + encodeURIComponent(a.id) + '/scan'); }
+  catch (e) {
+    if (seq !== hbSeq) return;
+    $('#modal-body').innerHTML = `<p class="muted small">Could not read the scan record (${esc(prettyError(e.message))}).</p>`;
+    return;
+  }
+  if (seq !== hbSeq || $('#modal-backdrop').classList.contains('hidden')) return;
+  $('#modal-body').innerHTML = hbInfoHTML(r);
 }
 
 function messageMenuItems(m, mid, x, y) {
@@ -1125,10 +1252,12 @@ function channelMenuItems(cid, ctype) {
 function channelCtxMenu(cid, ctype, x, y) { openCtx(x, y, channelMenuItems(cid, ctype)); }
 function ctxFor(el, x, y) {
   if (!el || !el.closest) return false;
-  // Media first: a right-click on a picture belongs to the picture (copy, save,
-  // link), and only the message's other pixels open the message menu.
-  const media = mediaMenuItems(el);
-  if (media) { openCtx(x, y, media); return true; }
+  // The attachment first: a right-click on a picture, a player, a file card or
+  // the card standing in for a blocked file belongs to THAT attachment (copy,
+  // save, link, and what the scanner made of it), and only the message's other
+  // pixels open the message menu.
+  const att = attMenuItems(el);
+  if (att) { openCtx(x, y, att); return true; }
   const msg = el.closest('.msg[data-mid]');
   if (msg) { messageCtxMenu(msg.dataset.mid, x, y); return true; }
   const vu = el.closest('.vuser[data-uid]');
@@ -1144,7 +1273,9 @@ function ctxFor(el, x, y) {
   return false;
 }
 document.addEventListener('contextmenu', (e) => {
-  if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"], a')) return;
+  // A link is the browser's (open in new tab, copy link) — except an attachment,
+  // which carries its own identity and has its own menu.
+  if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"], a:not([data-att-id])')) return;
   // On touch-primary devices the long-press is owned by the bottom-sheet/popup
   // handler below. Suppress the native menu AND the desktop-style popup here so
   // they don't both appear alongside the slide-up sheet. Desktop right-click
@@ -1165,7 +1296,7 @@ document.addEventListener('touchend', (e) => {
 document.addEventListener('touchstart', (e) => {
   noteTouchStart();
   if (!e.target.closest || e.target.closest('input, textarea, select, a')) return;
-  const t = e.target.closest('.msg,.chan,.member,.server-btn,.folder-btn,.vuser,[data-dmthread],.att-wrap');
+  const t = e.target.closest('.msg,.chan,.member,.server-btn,.folder-btn,.vuser,[data-dmthread],.att-wrap,[data-att-id]');
   if (!t) return;
   const touch = e.touches[0];
   const x = touch.clientX, y = touch.clientY;
@@ -1174,12 +1305,13 @@ document.addEventListener('touchstart', (e) => {
   holdT = setTimeout(() => {
     holdT = null;
     haptic(12); // the long-press that opens a menu is one of the few beats left
-    // A picture holds its own menu (copy / save / link) — the same rows the
-    // desktop right-click gets, in the sheet this device uses for everything.
-    const aw = t.closest('.att-wrap');
+    // An attachment holds its own menu (copy / save / link, and what the scanner
+    // made of it) — the same rows the desktop right-click gets, in the sheet this
+    // device uses for everything.
+    const aw = t.closest('[data-att-id]');
     if (aw && isCoarse()) {
-      const media = mediaMenuItems(aw);
-      if (media) { holdSheet = true; openCtxSheet(media, mediaSheetHead(aw)); return; }
+      const att = attMenuItems(aw);
+      if (att) { holdSheet = true; openCtxSheet(att, mediaSheetHead(aw)); return; }
     }
     const mt = t.closest('.msg[data-mid]');
     if (mt && isCoarse()) { holdSheet = true; openMsgSheet(mt.dataset.mid); return; }

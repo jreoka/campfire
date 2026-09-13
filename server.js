@@ -2224,6 +2224,63 @@ app.post('/api/messages/:mid/unread', authRequired, async (req, res) => {
   res.json({ ok: true, kind: 'dm', threadId: t.id, unread });
 });
 
+// ---------- "Harbin info": what the scanner said about one attachment ----------
+// The verdict is already stored (file_scans), so this route only has to decide
+// whether the asker may see it — the same rule the message it hangs off was
+// served under: a server attachment needs membership of that server, a DM
+// attachment needs to be in the thread.
+//
+// Deliberately reads NO bytes: an infected file's bytes are deleted, and the
+// whole point of the panel is to explain a file that is no longer there. An
+// attachment that is not a local upload (a Klipy gif, a pasted link) has no key
+// at all, and says so rather than 404ing — "nothing was scanned" is the honest
+// answer, not an error.
+app.get('/api/attachments/:aid/scan', authRequired, async (req, res) => {
+  const aid = String(req.params.aid || '');
+  if (!aid) return res.status(400).json({ error: 'bad_request' });
+  const cols = 'id, message_id, url, filename, mime, size, kind';
+  let row = null;
+  let origin = null;
+  const a = await db.prepare(`SELECT ${cols} FROM attachments WHERE id = ?`).get(aid);
+  if (a) {
+    const m = await db.prepare('SELECT server_id FROM messages WHERE id = ?').get(a.message_id);
+    if (!m || !(await isMember(m.server_id, req.user.id))) return res.status(404).json({ error: 'no_attachment' });
+    row = a; origin = 'server';
+  } else {
+    const d = await db.prepare(`SELECT ${cols} FROM dm_attachments WHERE id = ?`).get(aid);
+    if (!d) return res.status(404).json({ error: 'no_attachment' });
+    const dm = await dmMsg(d.message_id);
+    if (!dm || !(await dmThreadFor(req.user.id, dm.thread_id))) return res.status(404).json({ error: 'no_attachment' });
+    row = d; origin = 'dm';
+  }
+  const vs = require('./virus-scan');
+  const key = scanKeyForUrl(row.url);
+  const d = key ? await vs.scanDetail(key) : null;
+  res.json({
+    id: row.id, origin, name: row.filename, url: row.url, mime: row.mime,
+    size: Number(row.size) || 0, kind: row.kind,
+    local: !!key,
+    // Effective, not raw: a pending background re-scan reports `clean` because
+    // that is what the reader's file actually did (see effectiveStatus).
+    status: key ? await vs.scanStatus(key) : 'clean',
+    scanningEnabled: vs.scanningEnabled(),
+    currentEngine: vs.engineLabel(),
+    scan: d ? {
+      status: d.status,
+      verdict: d.verdict || null,
+      score: d.score == null ? null : Number(d.score),
+      evidence: d.evidence ? String(d.evidence).split('\n').filter(Boolean) : [],
+      engine: d.engine || '',
+      error: d.error || '',
+      attempts: Number(d.attempts) || 0,
+      background: d.status === 'pending' && Number(d.gated) === 0,
+      retried: Number(d.attempts) > 1,
+      createdAt: Number(d.created_at) || 0,
+      scannedAt: d.scanned_at == null ? null : Number(d.scanned_at),
+    } : null,
+  });
+});
+
 // ---------- bookmarks ("save for later") ----------
 // The account's own private list, and the same shape as a report snapshot: the
 // author, the text, where it happened and the media references are captured at
@@ -4062,7 +4119,7 @@ app.get('/api/admin/media', authRequired, requireSiteAdmin, async (req, res) => 
   ]);
   // Cached listing (10 min); ?refresh=1 forces a fresh walk of the bucket.
   const usage = await require('./storage').storageStats({ refresh: req.query.refresh === '1' }).catch(() => null);
-  res.json({ worker: mc.getMediaStats(), queue, totals, scan, sweep, bucketScan, usage, tracked });
+  res.json({ worker: mc.getMediaStats(), queue, totals, scan, sweep, bucketScan, scanSweep: require('./bucket-scan').getBucketScanStats(), usage, tracked });
 });
 // Site admin: reconcile the bucket now. ?dry=1 answers what the pass would
 // compress (it lists the bucket and walks the reference index, but touches
@@ -4090,6 +4147,15 @@ app.get('/api/admin/media/recent', authRequired, requireSiteAdmin, async (req, r
 app.post('/api/admin/sweep/run', authRequired, requireSiteAdmin, async (req, res) => {
   const sw = require('./storage-sweep');
   res.json({ result: await sw.runSweepOnce({ dry: req.query.dry === '1' }) });
+});
+// Site admin: run the whole-bucket malware scan on demand (the daily schedule
+// runs anyway). ?dry=1 reports what a pass would adopt without queueing
+// anything — the way to size a first pass against a real bucket.
+app.post('/api/admin/scan/run', authRequired, requireSiteAdmin, async (req, res) => {
+  const bs = require('./bucket-scan');
+  if (req.query.dry === '1') return res.json({ result: await bs.runBucketScanOnce({ dry: true }) });
+  bs.kickBucketScan();
+  res.json({ queued: true });
 });
 // ---------- site admin: message reports ----------
 // The queue behind the Report action in chat. Reports are kept after they are
@@ -7408,6 +7474,11 @@ async function boot() {
     vs.startVirusScan();
   } catch (e) { console.error('[virusscan] scheduler failed to start:', (e && e.message) || e); }
   try { require('./storage-sweep').startStorageSweep(); } catch (e) { console.error('[sweep] scheduler failed to start:', (e && e.message) || e); }
+  // Whole-bucket malware scan: adopt every stored object no Harbin verdict
+  // covers (the era scanning was off, files from before the engine existed) and
+  // let the scan queue judge them. Ungated, so a background verdict can only
+  // ever remove malware — never briefly take a working file from a reader.
+  try { require('./bucket-scan').startBucketScan(); } catch (e) { console.error('[scansweep] scheduler failed to start:', (e && e.message) || e); }
   // Shapes for the images that predate `w`/`h` (see att-dims.js): newest first,
   // a small bounded batch per tick, so a channel backlog reserves its boxes
   // instead of collapsing and shoving as pictures land.
