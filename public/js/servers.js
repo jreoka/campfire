@@ -691,6 +691,24 @@ function statusOf(id) {
 // from everyone else, who just see you as offline.)
 function isOff(st) { return st === 'offline' || st === 'invisible'; }
 function dotOf(st, streaming) { if (streaming && !isOff(st)) return 'streaming'; return st === 'invisible' ? 'offline' : st; }
+// ---------- the avatar-corner indicator ----------
+// The dot keeps its status colour in every case; when the person has a live
+// socket on a phone (server truth, pushed as `mobile` maps — see
+// mobileUsersFor in server.js) it becomes a little phone glyph instead. Your
+// own indicator answers from the device you are holding as well as the server's
+// roster, so a phone shows a phone on its own me bar.
+function onMobileNow(uid) {
+  const id = uid == null ? '' : String(uid);
+  if (!id) return false;
+  if (S.presenceMobile && S.presenceMobile[id]) return true;
+  return !!(S.me && id === String(S.me.id) && deviceIsMobile());
+}
+function dotHTML(uid, dot) {
+  // Offline never gets one: there is no active mobile session to speak of, and
+  // a stale flag must not outlive the session that set it.
+  if (dot === 'offline' || !onMobileNow(uid)) return `<span class="status-dot ${dot}"></span>`;
+  return `<span class="status-dot ${dot} phone" title="On mobile"></span>`;
+}
 // ---------- game activity badge (Discord-style) ----------
 // Rows stay exactly one sub-line tall: custom status wins the line, the
 // game gets a controller icon that upgrades to its artwork thumbnail once
@@ -757,7 +775,10 @@ function paintMe() {
   const streaming = !off && S.me.streaming_game;
   const dot = dotOf(st, streaming);
   $('#me-avwrap').className = 'avwrap st-' + dot;
-  $('#me-dot').className = 'status-dot ' + dot;
+  const meDot = $('#me-dot');
+  const meMobile = dot !== 'offline' && onMobileNow(S.me.id);
+  meDot.className = 'status-dot ' + dot + (meMobile ? ' phone' : '');
+  meDot.title = meMobile ? 'On mobile' : '';
   // No server tag on the me bar: the tag beside your own name was noise (it is
   // already the server you are looking at). Other people's rows still carry it.
   const name = $('#me-name');
@@ -806,7 +827,7 @@ function memberRowEl(m) {
   div.className = 'member' + (off ? ' off' : '') + (hasBanner ? ' has-banner' : '');
   div.dataset.uid = m.id;
   if (hasBanner) paintSidebarBanner(div, m.sidebar_banner_url, 'var(--panel)');
-  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="mnames"><span class="mname-row"><span class="mname" style="${nameStyleFor(m)}">${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${tagHTML(m)}${!off && m.playing_game ? gameBadgeHTML(m.playing_game) : ''}</span>${streaming ? `<span class="mstatus ustream" title="Streaming ${esc(streaming)}">Streaming ${esc(streaming)}</span>` : ((!off && m.status_text) ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ((!off && m.playing_game) ? `<span class="mstatus ugame" title="Playing ${esc(m.playing_game)}">Playing ${esc(m.playing_game)}</span>` : ''))}</span>`;
+  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span>${dotHTML(m.id, dot)}</span><span class="mnames"><span class="mname-row"><span class="mname" style="${nameStyleFor(m)}">${esc(m.display_name)}${m.role === 'owner' ? ' ★' : ''}</span>${tagHTML(m)}${!off && m.playing_game ? gameBadgeHTML(m.playing_game) : ''}</span>${streaming ? `<span class="mstatus ustream" title="Streaming ${esc(streaming)}">Streaming ${esc(streaming)}</span>` : ((!off && m.status_text) ? `<span class="mstatus" title="${esc(m.status_text)}">${esc(m.status_text)}</span>` : ((!off && m.playing_game) ? `<span class="mstatus ugame" title="Playing ${esc(m.playing_game)}">Playing ${esc(m.playing_game)}</span>` : ''))}</span>`;
   paintAvatar(div.querySelector('.avatar'), m);
   paintGameBadge(div.querySelector('.gbadge'));
   try { paintMemberStoryRing(div, m); } catch {}

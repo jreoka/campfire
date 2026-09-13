@@ -152,6 +152,39 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   a reload keeps an idle Away revertible), and a timed Away keeps its own revert.
   Note the timer labels are the full "For 15 Minutes … Forever" ladder, straight
   from Discord's menu.
+  `node scripts/test-mobile-indicator.js` covers the avatar-corner status dot
+  turning into a little phone for someone who is live on a phone (static checks
+  run offline; the pixel half needs Chrome/Edge). The device is claimed once, at
+  connect (`/ws?device=mobile`, whitelisted in `socketAuth`, never a viewport
+  test — a narrow desktop window is not a phone, and an iPad reporting itself as
+  a Macintosh is caught by its touchscreen). `live_sessions.device` is a guarded
+  migration; the flag rides every presence roster as a second `mobile` map beside
+  `online` — server- and friend-scoped, and read from the shared registry, so a
+  phone on another replica counts — plus `user-online`, a `user-mobile` push when
+  a phone socket goes away (`mobile: 0` while a desktop socket still holds the
+  account), and the same recomputation for the rows the dead-replica reconciler
+  reaps. The client replaces the flag for every id in a roster frame, drops it on
+  `user-offline`, and paints every avatar-corner dot through the ONE `dotHTML`
+  helper — an inlined `<span class="status-dot …">` left in a row builder fails
+  the test, which is the regression it exists for. The phone rides the status
+  colour (green online, amber away, red dnd, purple streaming), never appears on
+  an offline row, and is knocked out of the dot by a `::after` mask filled with
+  `--panel`, so the dot's size, colour and halo are untouched; Chrome proves the
+  mask resolved to the glyph (and that the control has none) and, by sampling the
+  middle of the dot at dpr 1 and 3, that the phone is really punched out of a disc
+  that is otherwise solid. A live phase (two real sockets against a throwaway
+  database, giving up quietly without Postgres) then proves the protocol: a phone
+  socket announces `mobile: 1` in `user-online` and in both the server and the
+  friend roster, an unknown device claim never reaches `live_sessions.device`, a
+  desktop socket arriving does not clear the account's flag, a desktop socket
+  closing pushes nothing, and the phone closing while that desktop socket still
+  holds the account pushes `user-mobile: 0` — plus that a socket which dies
+  mid-handshake leaves no registry row behind (a zombie `mobile` row would paint
+  a phone on someone who is not on one for as long as the replica lives, so the
+  handshake window is re-checked after its insert). Re-run after touching
+  `dotHTML` or the avatar row builders in `home.js`/`servers.js`, the presence
+  maps / WS close handler in `server.js`, `live_sessions` in `db.js`, or the
+  `.status-dot` rules in `styles.css`.
   `node scripts/test-search.js` covers the chat finder's message search
   (offline checks for `fmtAgo`'s buckets — "just now" / "10m ago" / "3h ago" /
   "5d ago", then the date once a week has passed — and for the `from:` operator's

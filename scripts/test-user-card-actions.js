@@ -101,6 +101,10 @@ window.$ = (s) => document.querySelector(s);
 window.paintAvatar = () => {};
 window.isOff = (st) => st === 'offline' || st === 'invisible';
 window.dotOf = (st) => st;
+// paintMe() asks whether this device is a phone (see dotHTML in the same
+// module, above the sliced range). This harness is about the card, not about
+// the mobile indicator, so the answer is always no.
+window.onMobileNow = () => false;
 window.nameStyleFor = () => '';
 window.paintGameBadge = () => {};
 // A tag-returning tagHTML: if paintMe ever inserts one into the me row again,

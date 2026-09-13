@@ -92,7 +92,11 @@ function connectWS() {
   try { if (S.ws) { S.ws.onclose = null; S.ws.onerror = null; try { S.ws.close(); } catch {} } } catch {}
   if (!store.token) return;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(store.token)}`);
+  // Tell the server what this device is (see deviceIsMobile): it is what makes
+  // someone's presence indicator a phone glyph for everyone else. Absent on a
+  // desktop, and absent is the safe default.
+  const dev = deviceIsMobile() ? '&device=mobile' : '';
+  const ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(store.token)}${dev}`);
   S.ws = ws;
   ws.onopen = () => {
     connAttempts = 0; connPingSent = 0; S.lastWsMsg = Date.now(); hideConn();
@@ -489,12 +493,19 @@ function onWS(m) {
         if (S.channelId === m.channelId) selectChannel((S.serverDetail.channels.find((c) => c.type === 'text') || {}).id);
       }
       break;
-    case 'presence':
-      Object.assign(S.presenceAll, m.online || {});
-      if (m.serverId === S.serverId) { S.online = m.online || {}; S.online[S.me.id] = S.me.status || 'online'; }
+    case 'presence': {
+      const on = m.online || {};
+      Object.assign(S.presenceAll, on);
+      // The phone map rides every roster: each id IN THE ROSTER is replaced, so
+      // a phone glyph cannot outlive the session that set it (an id that drops
+      // out of the roster is offline, and an offline dot never draws one).
+      const mob = m.mobile || {};
+      for (const id of Object.keys(on)) { if (mob[id]) S.presenceMobile[id] = 1; else delete S.presenceMobile[id]; }
+      if (m.serverId === S.serverId) { S.online = on; S.online[S.me.id] = S.me.status || 'online'; }
       if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
       repaintFriendsIfVisible();
       break;
+    }
     // Friends' voice rooms (Active Now rail). Friend-scoped + full-map replace,
     // so a dropped frame can never strand a stale IN VOICE row.
     case 'friends-voice':
@@ -503,12 +514,22 @@ function onWS(m) {
       break;
     case 'user-online':
       S.presenceAll[m.userId] = m.status || 'online';
+      if (m.mobile) S.presenceMobile[m.userId] = 1; else delete S.presenceMobile[m.userId];
       if (m.serverId === S.serverId) S.online[m.userId] = m.status || 'online';
+      if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
+      repaintFriendsIfVisible();
+      break;
+    // The account's mobile-ness on its own: a phone socket went away (and the
+    // person is still online on a desktop) or a phone arrived. Sent only when
+    // that flag can have moved — see the WS close handler in server.js.
+    case 'user-mobile':
+      if (m.mobile) S.presenceMobile[m.userId] = 1; else delete S.presenceMobile[m.userId];
       if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
       repaintFriendsIfVisible();
       break;
     case 'user-offline':
       delete S.presenceAll[m.userId];
+      delete S.presenceMobile[m.userId];
       if (m.serverId === S.serverId) delete S.online[m.userId];
       if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
       repaintFriendsIfVisible();

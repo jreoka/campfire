@@ -192,7 +192,7 @@ function friendRowEl(u, extra) {
   // the tag must not steal the tap into the server mini-panel. Same rule as
   // the DM sidebar rows — otherwise a tag click both opened the DM and stacked
   // the server panel on top of it.
-  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="dmmain"><span class="mname-row"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u, true)}${fPlaying ? gameBadgeHTML(u.playing_game) : ''}</span><span class="dmlast">@${esc(u.username)}${streaming ? ` · <span class="ustream-t">Streaming ${esc(streaming)}</span>` : (u.status_text ? ' · ' + esc(u.status_text) : (fPlaying ? ` · Playing ${esc(u.playing_game)}` : ''))}</span></span>`;
+  div.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span>${dotHTML(u.id, dot)}</span><span class="dmmain"><span class="mname-row"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u, true)}${fPlaying ? gameBadgeHTML(u.playing_game) : ''}</span><span class="dmlast">@${esc(u.username)}${streaming ? ` · <span class="ustream-t">Streaming ${esc(streaming)}</span>` : (u.status_text ? ' · ' + esc(u.status_text) : (fPlaying ? ` · Playing ${esc(u.playing_game)}` : ''))}</span></span>`;
   paintAvatar(div.querySelector('.avatar'), u);
   paintGameBadge(div.querySelector('.gbadge'));
   try { paintFriendStoryRing(div, u); } catch {}
@@ -308,7 +308,7 @@ function activeCard(c) {
     act += `<div class="anow-recent">Last played <b>${esc(c.recent.game)}</b> · ${agoStr(c.recent.last_seen_ms)}</div>`;
   }
   const stLine = (!c.off && c.f.status_text) ? `<span class="anow-sub">${esc(c.f.status_text)}</span>` : '';
-  el.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span><span class="anow-main"><span class="mname-row"><span class="anow-name" style="${nameStyleFor(c.f)}">${esc(c.f.display_name)}</span>${tagHTML(c.f)}</span><span class="anow-sub">@${esc(c.f.username)}</span>${stLine}${act}</span>`;
+  el.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span>${dotHTML(c.f.id, dot)}</span><span class="anow-main"><span class="mname-row"><span class="anow-name" style="${nameStyleFor(c.f)}">${esc(c.f.display_name)}</span>${tagHTML(c.f)}</span><span class="anow-sub">@${esc(c.f.username)}</span>${stLine}${act}</span>`;
   paintAvatar(el.querySelector('.avatar'), c.f);
   const join = anowJoinBtn(c.voice);
   if (join) el.appendChild(join);
@@ -343,7 +343,7 @@ function anowTileEl(c) {
   el.setAttribute('role', 'button');
   el.tabIndex = 0;
   el.title = `${c.f.display_name} — ${line.title}`;
-  el.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span>`
+  el.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span>${dotHTML(c.f.id, dot)}</span>`
     + `<span class="anow-tname" style="${nameStyleFor(c.f)}">${esc(c.f.display_name)}</span>`
     + `<span class="anow-tline${line.cls}" title="${esc(line.title)}">${line.html}</span>`;
   paintAvatar(el.querySelector('.avatar'), c.f);
@@ -591,7 +591,7 @@ function dmRowEl(t) {
   // the element box, so a tag inside would eat the far colour stop. The
   // mname-row keeps name + tag on one line with the tag right after the name.
   const avHTML = av
-    ? `<span class="avwrap st-${avDot}"><span class="avatar"></span><span class="status-dot ${avDot}"></span></span>`
+    ? `<span class="avwrap st-${avDot}"><span class="avatar"></span>${dotHTML(av.id, avDot)}</span>`
     : `<span class="avatar">${t.isGroup ? '#' : ''}</span>`;
   b.innerHTML = `${avHTML}<span class="dmmain"><span class="mname-row"><span class="dmname" style="${!t.isGroup && av ? nameStyleFor(av) : ''}">${esc(dmTitle(t))}</span>${!t.isGroup && av ? tagHTML(av, true) : ''}</span><span class="dmlast">${sub}</span></span>`;
   const avSpan = b.querySelector('.avatar');
@@ -678,7 +678,7 @@ function gmemRowEl(u) {
   lab.className = 'member gmem';
   lab.dataset.search = `${u.display_name || ''} ${u.username || ''}`.toLowerCase();
   lab.title = `Add ${u.display_name || u.username}`;
-  lab.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span><span class="status-dot ${dot}"></span></span>`
+  lab.innerHTML = `<span class="avwrap st-${dot}"><span class="avatar"></span>${dotHTML(u.id, dot)}</span>`
     + `<span class="dmmain"><span class="mname-row"><span class="dmname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u)}</span>`
     + `<span class="dmlast">@${esc(u.username)}${streaming ? ` · <span class="ustream-t">Streaming ${esc(streaming)}</span>` : (u.status_text ? ' · ' + esc(u.status_text) : (playing ? ` · Playing ${esc(playing)}` : ''))}</span></span>`
     + `<input type="checkbox" class="gcheck" value="${u.id}" />`;

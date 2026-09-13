@@ -6535,7 +6535,23 @@ wss.on('connection', async (ws, req) => {
   // Cluster-wide identity for this socket in live_sessions. Per-socket (not per
   // user) because the session count and the page-visible flag are per-socket.
   ws.lsid = bus.POD_ID + ':' + (++socketSeq);
+  // The socket owns a registry row from here on, but the FULL close handler
+  // cannot be attached until onMessage() and the broadcasts it needs exist.
+  // Anything that dies inside that window — a phone whose app is closed while
+  // its first frames are still being answered, a connect that drops mid-
+  // handshake — would otherwise leave its row behind and read as online (and,
+  // since the phone indicator, as ON A PHONE) for as long as this pod lives.
+  // So the registry is cleaned here too. The readyState test is the load-
+  // bearing half: a socket can die anywhere in the handshake ABOVE, before this
+  // listener exists, and the row is only written after that — so it has to be
+  // re-checked once the insert has landed. This listener stands down when setup
+  // finishes, and nothing is announced to anyone before then, so no offline
+  // broadcast is ever missed.
+  let setupDone = false;
+  const earlyCleanup = () => { clients.delete(ws); presenceForget(ws).catch(() => {}); };
+  ws.on('close', () => { if (!setupDone) earlyCleanup(); });
   await presenceUpsert(ws);
+  if (ws.readyState !== 1) earlyCleanup(); // CLOSING/CLOSED: that row is nobody's
   safeSend(ws, { t: 'hello', user: publicUser(u), version: APP_VERSION, gen: APP_GEN });
   await pushAdminPresence();
 
@@ -6898,6 +6914,9 @@ wss.on('connection', async (ws, req) => {
     }
     } catch (e) { console.error('[ws] close handler failed:', (e && e.message) || e); }
   });
+  // From here the handler above owns every close; the handshake-window listener
+  // armed next to presenceUpsert() stands down.
+  setupDone = true;
   } catch (e) { console.error('[ws] connection setup failed:', (e && e.message) || e); try { ws.close(4401, 'server error'); } catch {} }
 });
 

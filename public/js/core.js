@@ -18,6 +18,25 @@ const isCoarse = () => window.matchMedia && matchMedia('(hover: none)').matches;
 // styles.css — the two must be kept in sync.
 const PHONE_MQ = '(max-width:700px), (max-height:560px) and (pointer:coarse)';
 const phoneLayout = () => !!(window.matchMedia && matchMedia(PHONE_MQ).matches);
+// What DEVICE this is, which is not the same question as phoneLayout(): a
+// narrow desktop window and a phone held sideways are both "phone layout" on a
+// device nobody would call a phone, and the server only ever hears this once,
+// at socket connect (/ws?device=mobile). It is what decides whether other
+// people's presence indicator paints you as a phone, so it must never look at
+// the window at all. userAgentData is the modern answer where it exists; the
+// UA string is the fallback (Safari/Firefox, and the Tauri/Android shell, whose
+// WebView reports Android).
+function deviceIsMobile() {
+  try {
+    const ua = navigator.userAgent || '';
+    if (/android|iphone|ipod|ipad|windows phone|iemobile|blackberry|opera mini|mobile/i.test(ua)) return true;
+    // iPadOS 13+ reports itself as a Macintosh; the touchscreen is the tell.
+    if (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1) return true;
+    const uad = navigator.userAgentData;
+    if (uad && typeof uad.mobile === 'boolean') return uad.mobile;
+    return false;
+  } catch { return false; }
+}
 // ---------- conversation swap ----------
 // Switching channel or DM replaces the whole message list in one frame, which
 // reads as a hard cut between two pages. Restarting a ~130ms fade on the list
@@ -118,6 +137,7 @@ const S = {
   messages: new Map(), // channelId -> [msgs]
   online: {}, // userId -> status ('online'|'away'|'dnd'); absent = offline/invisible
   presenceAll: {}, // userId -> last-seen live status across ALL shared servers (feeds DM member list)
+  presenceMobile: {}, // userId -> 1 when they have a live socket on a phone (drives the phone indicator)
   emoji: {}, // current server's custom emoji name -> url (server settings UI)
   emojiAll: {}, // custom emoji of EVERY joined server: name -> {url, serverId}
   serverEmojis: [], // per-server custom emoji lists (picker server rail)

@@ -31,6 +31,13 @@
   --amber:#fbbf24;
   --red:#f87171;
   --purple:#a06bff;
+  /* The phone glyph knocked out of a status dot (see .status-dot.phone): a
+     frame with an earpiece slot and a home dot, because the DETAIL is what
+     makes the shape read as a phone at 10–12px — a bare rounded rectangle is
+     an unreadable blob. The interior stays transparent, so the status colour
+     shows through as the screen. White here is mask ALPHA, not colour, and
+     only the SHAPE lives here; the knockout's colour is --panel per theme. */
+  --phone-glyph:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 24'%3E%3Crect x='1.6' y='1.6' width='10.8' height='20.8' rx='3.4' fill='none' stroke='%23fff' stroke-width='3.2'/%3E%3Cpath d='M5.4 4.6h3.2' stroke='%23fff' stroke-width='2' stroke-linecap='round'/%3E%3Ccircle cx='7' cy='19.1' r='1.4' fill='%23fff'/%3E%3C/svg%3E");
   --on-red:#ffffff;
   --danger-bg:rgba(248,113,113,.09);
   --danger-line:rgba(248,113,113,.38);
@@ -1471,6 +1478,21 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .status-dot.dnd{background:var(--red)}
 .status-dot.streaming{background:var(--purple)}
 .status-dot.offline{background:#4f545c}
+/* Someone with a live socket on a phone (.phone, set from the server's mobile
+   maps — see dotHTML in servers.js). The disc keeps the size, the status
+   colour and the halo it always had and the phone is KNOCKED OUT of it: the
+   mask paints the surface colour through the disc, so one rule covers
+   green/amber/red/purple and follows --panel through every theme (white on the
+   light theme, black on OLED) without a per-status variant. The ::after is why
+   the disc's own box-shadow halo — the thing that keeps the indicator legible
+   over a busy avatar — survives untouched: masking the element itself would
+   clip the halo to a phone-shaped smear. 80% is the size that still leaves the
+   status colour reading as a disc around the phone. */
+.avwrap .status-dot.phone::after{
+  content:'';position:absolute;inset:0;background:var(--panel);
+  -webkit-mask:var(--phone-glyph) center/auto 80% no-repeat;
+  mask:var(--phone-glyph) center/auto 80% no-repeat;
+}
 .mstatus.ustream{color:var(--purple)}
 #me-card .mstatus.ustream{color:var(--purple)}
 .ustream-t{color:var(--purple);font-weight:700}
