@@ -582,9 +582,9 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   picture, a text preview, a plain file card and the card standing in for a
   removed file, offers nothing that could not work when the bytes are gone, and
   still leaves the message menu to the message's own pixels; picking it paints
-  the STORED verdict (words, score, tone, engine, findings, and why the file was
-  removed or kept) with one way out rather than two; and a long-press on an
-  emulated touch device gets the same item in the phone's sheet.
+  the STORED verdict (words, score, tone, findings, and why the file was removed
+  or kept — and no model trivia) with one way out rather than two; and a
+  long-press on an emulated touch device gets the same item in the phone's sheet.
   Both it and the pipeline test run the engine through
   `HARBIN_BIN=scripts/fake-harbin.js` — a `.js` value is invoked with the current
   Node binary (see `harbinCommand` in virus-scan.js), so neither needs a Rust

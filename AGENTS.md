@@ -324,11 +324,17 @@ about bytes nobody has been handed yet. Leader-locked, `BUCKET_SCAN_*` env,
 **"Harbin info"** is the reader's side of it: every attachment rendering carries
 `data-att-id`, and the attachment menu's item opens a read-only panel
 (`GET /api/attachments/:aid/scan`, membership-checked exactly like the message it
-hangs off) showing the STORED verdict — words, score, tone, the engine that made
-it, when, the findings, and why the file was removed or kept. It reads no bytes,
+hangs off) showing the STORED verdict — words, score, tone, when, the findings,
+and why the file was removed or kept. It reads no bytes,
 which is the point: an infected file's bytes are gone and explaining that is the
 whole job. The verdict is never recomputed, so the panel can never disagree with
-what actually happened to the file.
+what actually happened to the file. **No "Engine" row**: every verdict in a panel
+called Harbin info came from Harbin, so it only ever repeated the title, and the
+model's shape (trees, features) is an operator's diagnostic — it lives in the
+admin console's engine line and in `scripts/verify-harbin.js`, which is where
+"is this really the detector?" gets asked. `engineLabel()` is therefore just the
+name, which is also what the `engine` column stores; that column is not
+decoration, it is the bucket sweep's ledger marker.
 Coverage is the whole media tree: chat/DM attachments and **stories**
 through the flag-driven queue, and **profile media** (avatars, banners, sidebar
 banners, server icons, custom emoji, webhook avatars, the profile picker's
