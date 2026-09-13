@@ -82,6 +82,19 @@ function sourceChecks() {
   check(/areNotificationsEnabled\(\)/.test(service), 'it respects the OS notification switch');
   const main = fs.readFileSync(path.join(ROOT, 'app/src-tauri/gen/android/app/src/main/java/moe/dill/campfire/MainActivity.kt'), 'utf8');
   check(/addJavascriptInterface\(PushBridge\(this\), "CampfireNative"\)/.test(main), 'the page gets the bridge');
+  // The churn that made delivery a coin flip: connect() cancels the live socket,
+  // OkHttp reports a cancelled call as onFailure, and an unguarded listener
+  // schedules another connect() three seconds later — forever. Every connection
+  // must carry the generation it was opened with, and a stale callback must not
+  // be able to reconnect.
+  check(/private var generation = 0/.test(service) && /val gen = \+\+generation/.test(service)
+    && /client\.newWebSocket\([^\n]*listener\(gen\)\)/.test(service),
+    'a replaced socket is not mistaken for a failed one (generation-guarded listener)');
+  check(/private fun stale\(\): Boolean = stopped \|\| gen != generation/.test(service)
+    && /override fun onFailure[\s\S]{0,220}if \(stale\(\)\) return/.test(service),
+    'a stale listener cannot schedule a reconnect (the cancel-loop stays fixed)');
+  check(/generation\+\+/.test(service.slice(service.indexOf('private fun closeSocket()'), service.indexOf('private fun listener('))),
+    'a deliberate teardown cannot schedule a reconnect either');
   const bridge = fs.readFileSync(path.join(ROOT, 'app/src-tauri/gen/android/app/src/main/java/moe/dill/campfire/PushBridge.kt'), 'utf8');
   check(/if \(enabled\) PushService\.requestPermission\(activity\)/.test(bridge),
     'a fresh install is asked for the Android 13 permission when it enables');
@@ -315,6 +328,9 @@ async function main() {
       UPLOAD_DIR: uploads,
       UNFURL: '0',
       BUS: '0',
+      // Short enough that [B10] can watch a visibility lease lapse; the cluster
+      // runs the 75s default.
+      PUSH_VISIBILITY_TTL_MS: '2500',
     };
     const fail = (msg) => { throw new Error(msg + '\n--- server log ---\n' + serverLog.slice(-4000)); };
     child = spawn(process.execPath, [path.join(ROOT, 'server.js')], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -451,6 +467,25 @@ async function main() {
       setTimeout(() => resolve(-1), 4000);
     });
     check(bad === 4401, 'a bad token is closed with 4401, like the chat socket', bad);
+
+    console.log('\n[B10] a lost "hidden" cannot silence a device forever');
+    // The shell re-asserts its window state every ~25s and the server treats a
+    // "visible" report as a lease of TTL; this run shortens the TTL so the lapse
+    // is observable. A device whose last word was "on screen" and which then
+    // stops reporting (frame lost, radio asleep, app killed in front) must start
+    // ringing again instead of being skipped for the rest of its life.
+    const lease = await connectPush(B.token, { visibleAtOnce: true });
+    conns.push(lease);
+    await lease.ready();
+    asock.send({ t: 'dm', threadId: tid, content: 'while the lease holds' });
+    await sleep(900);
+    check(!pushes(lease).some((p) => p.payload && p.payload.body === 'while the lease holds'),
+      'a device that reports itself on screen is skipped while the lease holds', lease.events);
+    await sleep(2600); // past PUSH_VISIBILITY_TTL_MS, with nothing re-asserting it
+    asock.send({ t: 'dm', threadId: tid, content: 'after the lease lapsed' });
+    check(await waitFor(() => pushes(lease).some((p) => p.payload && p.payload.body === 'after the lease lapsed'), 6000),
+      'the lease lapses, so a stale "visible" delays a push instead of swallowing it', lease.events);
+    lease.close();
 
     console.log('\n[B9] it stays up');
     await sleep(400);

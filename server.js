@@ -5887,6 +5887,14 @@ const pushClients = new Set();
 // behind PUSH_DEBUG because it fires once per notification per recipient.
 const PUSH_DEBUG = /^(1|true|yes)$/i.test(String(process.env.PUSH_DEBUG || ''));
 const shortUid = (u) => String(u || '?').slice(0, 8);
+// "This device's window is on screen" is a LEASE, not a latch. A latch is only
+// as reliable as the one frame that set it: lose (or never deliver) the matching
+// `visible:false` when the phone goes in a pocket and the server then skips that
+// device's notifications forever, silently. The shell re-asserts its state every
+// ~25s (PushService.VISIBILITY_EVERY_MS), so a stale "visible" can only ever
+// delay a notification by this long, never swallow it.
+const VISIBILITY_TTL_MS = Math.max(500, parseInt(process.env.PUSH_VISIBILITY_TTL_MS || '', 10) || 75 * 1000);
+function pushSocketVisible(c) { return c.pushVisibleUntil > Date.now(); }
 function notifyPushSocketsLocal(userId, payload) {
   // The shell applies the same rule (PushService.kt): a test push from the
   // settings screen must reach a device whose app is on screen, or the button
@@ -5896,7 +5904,7 @@ function notifyPushSocketsLocal(userId, payload) {
   for (const c of pushClients) {
     if (c.pushUserId !== userId) continue;
     sockets++;
-    if (c.pushVisible && !force) { gated++; continue; }
+    if (!force && pushSocketVisible(c)) { gated++; continue; }
     safeSend(c, { t: 'push', payload });
     sent++;
   }
@@ -5942,6 +5950,7 @@ pushWss.on('connection', async (ws, req) => {
   // it afterwards would resurrect the bug it exists to prevent: a phone showing
   // notifications for the conversation already on screen.
   ws.pushVisible = false;
+  ws.pushVisibleUntil = 0;
   ws.on('pong', () => { ws.isAlive = true; });
   ws.on('close', (code) => {
     const who = ws.pushUserId;
@@ -5959,6 +5968,7 @@ pushWss.on('connection', async (ws, req) => {
       const vis = msg.visible !== false;
       if (vis !== ws.pushVisible) console.log('[push] visibility user=%s visible=%s', shortUid(ws.pushUserId), vis);
       ws.pushVisible = vis;
+      ws.pushVisibleUntil = vis ? Date.now() + VISIBILITY_TTL_MS : 0;
       return;
     }
     if (msg.t === 'ping') { safeSend(ws, { t: 'pong' }); return; }

@@ -72,6 +72,19 @@ class PushService : Service() {
   private var attempts = 0
   private var reconnect: Runnable? = null
   private var stopped = false
+  // Bumped every time connect() replaces the socket. Callbacks carry the
+  // generation they were opened with and a stale one is ignored - see connect().
+  private var generation = 0
+  // Re-asserts the window state on a timer so a single lost frame cannot leave
+  // the server believing an app that has gone to the background is still on
+  // screen (which would silently skip its notifications forever).
+  private val heartbeat = object : Runnable {
+    override fun run() {
+      if (stopped) return
+      sendVisibility(socket)
+      handler.postDelayed(this, VISIBILITY_EVERY_MS)
+    }
+  }
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -90,6 +103,7 @@ class PushService : Service() {
     } catch (e: Exception) {
       Log.w(TAG, "startForeground failed", e)
     }
+    handler.postDelayed(heartbeat, VISIBILITY_EVERY_MS)
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -107,6 +121,7 @@ class PushService : Service() {
 
   override fun onDestroy() {
     stopped = true
+    handler.removeCallbacks(heartbeat)
     closeSocket()
     if (instance === this) { instance = null; appVisible = false }
     super.onDestroy()
@@ -120,11 +135,23 @@ class PushService : Service() {
     val token = prefs.getString(KEY_TOKEN, "").orEmpty()
     val origin = prefs.getString(KEY_ORIGIN, "").orEmpty()
     if (token.isEmpty() || origin.isEmpty()) { stopSelf(); return }
-    try { socket?.cancel() } catch (ex: Exception) {}
     val url = origin.trimEnd('/')
       .replaceFirst("https://", "wss://")
       .replaceFirst("http://", "ws://") + "/ws/push?token=" + URLEncoder.encode(token, "UTF-8")
-    socket = client.newWebSocket(Request.Builder().url(url).build(), listener)
+    // A replaced socket MUST NOT look like a failed one. OkHttp reports a
+    // cancelled call as onFailure, so a listener that reconnects on any failure
+    // turned every deliberate replace into another reconnect three seconds
+    // later: connect() cancels the live socket, that cancel fires onFailure,
+    // onFailure schedules connect(), and the device spent its life mid-handshake
+    // — holding no usable socket the moment a push was fanned out. Measured on a
+    // real phone: open/close(1006) every ~3s, indefinitely. Each connection now
+    // carries the generation it was opened with, and only the newest one is
+    // allowed to report failures or reconnect.
+    val gen = ++generation
+    val fresh = client.newWebSocket(Request.Builder().url(url).build(), listener(gen))
+    val old = socket
+    socket = fresh
+    try { old?.cancel() } catch (ex: Exception) {}
   }
 
   private fun scheduleReconnect() {
@@ -144,18 +171,25 @@ class PushService : Service() {
   private fun closeSocket() {
     reconnect?.let { handler.removeCallbacks(it) }
     reconnect = null
+    // Anything the outgoing socket reports from here on is not a reason to come
+    // back: this is a deliberate teardown (stop, sign-out, service destroy).
+    generation++
     val ws = socket
     socket = null
     try { ws?.close(1000, "bye") } catch (ex: Exception) {}
   }
 
-  private val listener = object : WebSocketListener() {
+  private fun listener(gen: Int) = object : WebSocketListener() {
+    private fun stale(): Boolean = stopped || gen != generation
+
     override fun onOpen(webSocket: WebSocket, response: Response) {
+      if (stale()) return
       attempts = 0
       sendVisibility(webSocket)
     }
 
     override fun onMessage(webSocket: WebSocket, text: String) {
+      if (stale()) return
       try {
         val msg = JSONObject(text)
         when (msg.optString("t")) {
@@ -168,12 +202,14 @@ class PushService : Service() {
     }
 
     override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+      if (stale()) return
       // 4401 is the server refusing the session (token expired, a session
       // revoked, the account disabled). Reconnecting every minute until the app
       // is next opened would be pure battery drain, and the page re-configures
       // the service the moment it boots with a fresh token.
       if (code == 4401) {
         stopped = true
+        handler.removeCallbacks(heartbeat)
         try { webSocket.close(1000, "signed out") } catch (ex: Exception) {}
         stopSelf()
         return
@@ -182,12 +218,14 @@ class PushService : Service() {
     }
 
     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+      if (stale()) return
       Log.w(TAG, "socket closed: ${t.message}")
       attempts++
       scheduleReconnect()
     }
 
     override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+      if (stale()) return
       attempts++
       scheduleReconnect()
     }
@@ -269,6 +307,9 @@ class PushService : Service() {
     private const val SERVICE_NOTIF_ID = 8801
     private const val MESSAGE_NOTIF_ID = 8802
     private const val PERMISSION_REQ = 8803
+    // The server treats a "visible" report as a lease (see VISIBILITY_TTL_MS in
+    // server.js), so it has to be re-asserted well inside that window.
+    private const val VISIBILITY_EVERY_MS = 25_000L
 
     @Volatile private var instance: PushService? = null
 
