@@ -245,19 +245,24 @@ async function waitForHttp(p, ms) {
 
 // A device socket: what PushService holds. Records its frames, and stays open
 // unless a test closes it.
-function connectPush(token) {
+function connectPush(token, opts) {
   return new Promise((resolve, reject) => {
     const events = [];
     const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws/push?token=${encodeURIComponent(token)}`);
     ws.on('error', reject);
     ws.on('message', (raw) => { try { events.push(JSON.parse(raw.toString())); } catch {} });
     ws.on('close', (code) => { events.push({ t: '__close', code }); });
-    ws.on('open', () => resolve({
-      events,
-      ready: () => waitFor(() => events.some((e) => e.t === 'push-ready'), 5000),
-      send: (o) => ws.send(JSON.stringify(o)),
-      close: () => { try { ws.close(); } catch {} },
-    }));
+    ws.on('open', () => {
+      // The shell reports its window state the moment the socket opens, which is
+      // before the server's auth queries have finished.
+      if (opts && opts.visibleAtOnce) ws.send(JSON.stringify({ t: 'visibility', visible: true }));
+      resolve({
+        events,
+        ready: () => waitFor(() => events.some((e) => e.t === 'push-ready'), 5000),
+        send: (o) => ws.send(JSON.stringify(o)),
+        close: () => { try { ws.close(); } catch {} },
+      });
+    });
   });
 }
 function connectChat(token) {
@@ -382,6 +387,16 @@ async function main() {
     check(sess2.rows[0].c === 0, 'with the chat socket closed, the phone is offline while the device socket stays up', sess2.rows);
 
     console.log('\n[B4] the device decides, not the account');
+    // A socket that reports "on screen" in the same tick it opens: the auth
+    // queries run after that frame arrives, so they must not reset the flag.
+    const early = await connectPush(B.token, { visibleAtOnce: true });
+    conns.push(early);
+    await early.ready();
+    asock.send({ t: 'dm', threadId: tid, content: 'front from the first frame' });
+    await sleep(1000);
+    check(!pushes(early).some((p) => p.payload && p.payload.body === 'front from the first frame'),
+      'a visibility report sent as the socket opens survives auth (no reset after it)', early.events);
+    early.close();
     device.send({ t: 'visibility', visible: true });
     await sleep(300);
     asock.send({ t: 'dm', threadId: tid, content: 'while on screen' });

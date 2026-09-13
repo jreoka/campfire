@@ -5923,21 +5923,26 @@ async function socketAuth(ws, req) {
 
 pushWss.on('connection', async (ws, req) => {
   ws.isAlive = true;
+  // A cold service has no window at all, so hidden is the right default — set
+  // BEFORE auth, because the shell reports its real state the moment the socket
+  // opens and the auth queries below take longer than that round trip. Resetting
+  // it afterwards would resurrect the bug it exists to prevent: a phone showing
+  // notifications for the conversation already on screen.
+  ws.pushVisible = false;
   ws.on('pong', () => { ws.isAlive = true; });
   ws.on('close', () => { pushClients.delete(ws); ws.pushUserId = null; });
   ws.on('error', () => {});
   ws.on('message', (raw) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
-    // The shell tells us whether its window is in front. Hidden (the default —
-    // a cold service has no window at all) is what lets a notification through.
+    // The shell tells us whether its window is in front. Only a visible socket
+    // is skipped (see notifyPushSocketsLocal).
     if (msg.t === 'visibility') { ws.pushVisible = msg.visible !== false; return; }
     if (msg.t === 'ping') { safeSend(ws, { t: 'pong' }); return; }
   });
   const auth = await socketAuth(ws, req);
   if (!auth) return;
   ws.pushUserId = auth.u.id;
-  ws.pushVisible = false;
   pushClients.add(ws);
   safeSend(ws, { t: 'push-ready' });
 });
