@@ -61,6 +61,8 @@ const finalJs = fs.readFileSync(path.join(ROOT, 'public/js/final.js'), 'utf8');
 
 // The composer form, verbatim, so the harness measures the real thing.
 const composerMarkup = index.slice(index.indexOf('<form id="composer">'), index.indexOf('<!-- members -->'));
+// The me bar, verbatim: the input pill is specified to be exactly its height.
+const meCardMarkup = index.slice(index.indexOf('<div id="me-card">'), index.indexOf('\n      </div>', index.indexOf('<div id="me-card">')) + '\n      </div>'.length);
 // The real send-key logic, verbatim (it is the last function in core.js).
 const paintSrc = core.slice(core.indexOf('function paintComposerSend()'));
 // The field's visible surface rules, for the source-level assertions.
@@ -75,8 +77,10 @@ function pageHtml() {
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="file:///${ROOT.replace(/\\/g, '/')}/public/styles.css">
-<style>#chat{display:flex;flex-direction:column;height:100vh}</style></head><body>
-<main id="chat">${composerMarkup}</main>
+<style>#chat{display:flex;flex-direction:column;height:100vh}
+ #sidebar{width:268px;flex:0 0 auto}</style></head><body>
+<div style="display:flex;height:100vh"><aside id="sidebar"><div style="flex:1"></div>${meCardMarkup}</aside>
+<main id="chat">${composerMarkup}</main></div>
 <script>
 window.$ = (s) => document.querySelector(s);
 window.S = { view: 'server', serverId: 's', channelId: 'c', dmThreadId: null, pendingAtts: [] };
@@ -95,6 +99,7 @@ window.__report = function () {
     phone: matchMedia('(max-width:700px), (max-height:560px) and (pointer:coarse)').matches,
     coarse: matchMedia('(pointer:coarse)').matches,
     field,
+    meBar: R('#me-card'), // the input pill is meant to be exactly this tall
     fieldBg: cs('#in-render', 'backgroundColor'),
     fieldLine: cs('#in-render', 'borderTopColor'),
     fieldRadius: cs('#in-render', 'borderRadius'),
@@ -164,8 +169,13 @@ function main() {
 
   console.log('\n[2] the field\'s own controls are wired and styled');
   check(/align-items:flex-end/.test(ruleBody('#composer') || ''), '#composer bottom-aligns its children (send key stays on the bar when the box grows)');
-  check(/bottom:7px/.test(ruleBody('#btn-plus') || ''), 'the leading + rides the bottom of the box');
-  check(/bottom:7px/.test(ruleBody('#composer-tools') || ''), 'and so does the tool rail');
+  // The two offsets are the centred rest position for a 32px control inside the
+  // one-line pill — (pill height - 32) / 2 — so they move with --field-pad-y and
+  // must agree with each other. [5]/[7] measure the result.
+  const plusBottom = /bottom:([\d.]+)px/.exec(ruleBody('#btn-plus') || '');
+  const toolsBottom = /bottom:([\d.]+)px/.exec(ruleBody('#composer-tools') || '');
+  check(!!plusBottom && Number(plusBottom[1]) > 2, 'the leading + rides the bottom of the box', plusBottom && plusBottom[1]);
+  check(!!toolsBottom && !!plusBottom && toolsBottom[1] === plusBottom[1], 'and the tool rail sits on the same optical line', toolsBottom && toolsBottom[1]);
   check(/color-mix\(in srgb, var\(--text\) 8%, transparent\)/.test(ruleBody('#btn-plus,#btn-more') || ''), 'the + has a resting surface mixed off --text (so it lifts in light mode too)');
   check(/#composer \.tool-btn:not\(#btn-plus\):not\(#btn-more\)/.test(css), 'the phone thumbs-size rule exempts the +, which must stay smaller than its field');
   const tap = /--tap:\s*(\d+)px/.exec(css);
@@ -211,6 +221,9 @@ function main() {
     check(phone.fieldBg === 'rgb(23, 31, 47)', 'and it is the dark theme field surface', phone.fieldBg);
     check(phone.inputPad === phone.renderPad, 'the textarea and the backdrop have identical padding, or the caret drifts off the glyphs', { input: phone.inputPad, render: phone.renderPad });
     check(phone.field.h > 40 && phone.field.h < 56, 'a one-line field is a comfortable bar', phone.field.h);
+    check(!!phone.meBar && Math.abs(phone.field.h - phone.meBar.h) <= 0.5,
+      'the input pill is EXACTLY as tall as the me bar (2 x --field-pad-y + one 1.5 line + border)',
+      { pill: phone.field.h, me: phone.meBar && phone.meBar.h });
     check(phone.leadTop > 2 && phone.leadBottom > 2 && phone.leadLeft > 2 && phone.leadRight > 2,
       'the leading + sits fully INSIDE the field (it used to overflow the top and get clipped by the corner)',
       { top: phone.leadTop, bottom: phone.leadBottom, left: phone.leadLeft, right: phone.leadRight, lead: phone.lead, field: phone.field });
@@ -235,6 +248,9 @@ function main() {
     check(!desktop.phone, 'the desktop shell is active', desktop.phone);
     check(desktop.inputPad === desktop.renderPad, 'paddings still match on the desktop rule', { input: desktop.inputPad, render: desktop.renderPad });
     check(Math.abs(desktop.composerH - desktop.composerVar) <= 1.5, 'and the desktop composer matches its own --composer-h', { h: desktop.composerH, v: desktop.composerVar });
+    check(!!desktop.meBar && Math.abs(desktop.field.h - desktop.meBar.h) <= 0.5,
+      'the pill matches the me bar on the desktop rule too (both are 51.2px there)',
+      { pill: desktop.field.h, me: desktop.meBar && desktop.meBar.h });
     check(desktop.leadTop > 2 && desktop.leadBottom > 2, 'the + is inside the field there too', { top: desktop.leadTop, bottom: desktop.leadBottom, lead: desktop.lead, field: desktop.field });
     check(desktop.fieldBg === phone.fieldBg, 'same field surface on both layouts', { phone: phone.fieldBg, desktop: desktop.fieldBg });
   } finally {

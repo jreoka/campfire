@@ -64,12 +64,18 @@
      Kept to one text line: #messages gives up its old bottom padding to pay
      for it, so the gap above the input box is the same as it always was. */
   --strip-h:1.2rem;
-  /* Height of a one-row composer, MEASURED: 2 x its vertical padding + the
-     field's own box (2 x .72rem padding + a 1.5 line at .93rem + border), which
-     is the tallest thing in the row. composer-anchored popovers stack on it, so
-     re-measure whenever #composer's padding, the field's padding or its font
-     size changes. */
-  --composer-h:76px;
+  /* Height of a one-row composer, MEASURED: 2 x its vertical padding + the input
+     pill (see --field-pad-y), which is the tallest thing in the row.
+     composer-anchored popovers stack on it, so re-measure whenever #composer's
+     padding, the pill's padding or its font size changes (test-composer-field
+     measures it at both breakpoints). */
+  --composer-h:80px;
+  /* The message input pill is EXACTLY as tall as the me bar: 2 x this padding +
+     one 1.5 line at .93rem + the 2px border = the me card's 51.2px (2 x its .6rem
+     padding + its 32px avatar). Change one and the other has to follow —
+     test-composer-field measures the pair. The phone restates both (its field is
+     16px). */
+  --field-pad-y:.84rem;
 }
 /* Light mode: bright flat surfaces, same indigo primary. */
 [data-theme="light"]{
@@ -617,10 +623,12 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 /* The field's own controls ride the BOTTOM of the box, not its middle: on one
    line that is the same optical centre it always had, and when the box grows to
    four lines they stay on the bar instead of floating in the middle of a block
-   of text. Both offsets are tuned so a one-line box is unchanged. */
-#btn-plus{display:inline-flex;align-items:center;justify-content:center;position:absolute;left:.4rem;bottom:7px}
+   of text. The offset is the centred rest position for a 32px control in the
+   one-line pill — (pill height - 32) / 2 — so it moves with --field-pad-y
+   (test-composer-field measures the centring). */
+#btn-plus{display:inline-flex;align-items:center;justify-content:center;position:absolute;left:.4rem;bottom:9.6px}
 #btn-attach{display:none}
-#composer-tools{position:absolute;right:.4rem;bottom:7px;display:flex;align-items:center;gap:.15rem}
+#composer-tools{position:absolute;right:.4rem;bottom:9.6px;display:flex;align-items:center;gap:.15rem}
 #composer-tools .tool-btn{padding:.45rem}
 /* The + is 32px so it fits inside the field; its thumb target is grown to the
    full 44px by the ::after hit box in the coarse-pointer block below. */
@@ -632,14 +640,14 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
   width:32px;height:32px;padding:0;border-radius:50%;
   background:color-mix(in srgb, var(--text) 8%, transparent);color:var(--muted);
 }
-#btn-plus:active,#btn-more:active{background:color-mix(in srgb, var(--text) 20%, transparent);transform:scale(.9)}#in-message{flex:1;min-width:0;background:transparent;border:1px solid transparent;color:transparent;caret-color:var(--text);border-radius:16px;padding:.72rem 1rem;outline:none;position:relative;font:inherit;font-size:.93rem;resize:none;overflow-y:auto;overflow-wrap:anywhere}
+#btn-plus:active,#btn-more:active{background:color-mix(in srgb, var(--text) 20%, transparent);transform:scale(.9)}#in-message{flex:1;min-width:0;background:transparent;border:1px solid transparent;color:transparent;caret-color:var(--text);border-radius:16px;padding:var(--field-pad-y) 1rem;outline:none;position:relative;font:inherit;font-size:.93rem;resize:none;overflow-y:auto;overflow-wrap:anywhere}
 #in-message:focus{border-color:transparent}
 #composer-box:focus-within #in-render{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
 /* The field the reader actually sees: the textarea on top is transparent and
    only carries the caret. Metrics (padding, font, line-height) must stay
    identical between the two or the caret drifts off the glyphs — only the
    surface lives here. */
-#in-render{position:absolute;inset:0;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;background:var(--field);border:1px solid var(--field-line);border-radius:16px;padding:.72rem 4.2rem .72rem 3.1rem;font:inherit;font-size:.93rem;color:var(--text);transition:border-color var(--t-fast),box-shadow var(--t-fast)}
+#in-render{position:absolute;inset:0;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;background:var(--field);border:1px solid var(--field-line);border-radius:16px;padding:var(--field-pad-y) 4.2rem var(--field-pad-y) 3.1rem;font:inherit;font-size:.93rem;color:var(--text);transition:border-color var(--t-fast),box-shadow var(--t-fast)}
 #in-render-inner{white-space:pre-wrap;overflow-wrap:anywhere}
 /* The backdrop must not move a single glyph: markdown is shown by colour and
    background only. No padding, no weight/size/font changes — any of those
@@ -1910,10 +1918,10 @@ body{touch-action:manipulation}
   #in-message,#in-thread{font-size:16px}
   #in-render{font-size:16px}
   /* The phone composer is tighter than the desktop one and its field is 16px, so
-     its measured height is its own (2 x .72rem + 2 x .72rem field padding + a 1.5
-     line at 16px + border) — the popovers anchored above it read this, not the
-     desktop value. */
-  :root{--composer-h:72px}
+     its pill needs a smaller vertical padding to stay the same 51.2px as the me
+     bar — and --composer-h (2 x .72rem + that pill) follows. Both are measured by
+     test-composer-field. */
+  :root{--composer-h:74px;--field-pad-y:.7875rem}
   #composer{gap:.4rem;padding:.72rem;padding-bottom:calc(.72rem + var(--safe-b))}
   #composer .btn{padding:.7rem .9rem;min-height:44px}
   /* Thumb-sized tool keys — except the field's own leading +, which has to stay
@@ -1922,7 +1930,7 @@ body{touch-action:manipulation}
   #composer .tool-btn:not(#btn-plus):not(#btn-more),#composer .gif-btn{min-height:44px;min-width:44px;justify-content:center}
   #composer-tools{right:auto;left:.4rem}
   #composer-box #in-message{padding-right:.5rem;padding-left:2.95rem}
-  #in-render{padding:.72rem .5rem .72rem 2.95rem}
+  #in-render{padding:var(--field-pad-y) .5rem var(--field-pad-y) 2.95rem}
   #btn-attach,#btn-emoji,#btn-gif{display:none}
   #btn-plus{display:none}
   #btn-more{display:inline-flex;align-items:center;justify-content:center}
