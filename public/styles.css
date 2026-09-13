@@ -1688,8 +1688,14 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .fact-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:0;background:var(--panel-3);color:var(--muted);border-radius:50%;cursor:pointer;transition:background var(--t-fast),color var(--t-fast);flex-shrink:0}
 .fact-btn:hover{background:var(--panel-4);color:var(--text)}
 .fact-btn svg{display:block}
-.dm-pin{flex-shrink:0;display:inline-flex;align-items:center;color:var(--faint);margin-left:.15rem}
-.dmrow.pinned .dm-pin{color:var(--accent-hover)}
+/* The pinned-chat mark is a CHIP, not a bare glyph. It sits in the row's trailing
+   column — the end a sidebar banner paints brightest, since the ramp only darkens
+   toward the left — so an accent-coloured outline (or any outline) sank into the
+   picture. Filled, it is legible over any photo, and it is the same shape family
+   as the unread pill beside it. The glyph rides currentColor, so the chip's own
+   colour is the only thing that decides how it reads. */
+.dm-pin{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;margin-left:.15rem;border-radius:50%;background:var(--accent);color:var(--on-accent)}
+.dm-pin svg{display:block;width:11px;height:11px}
 /* ---------- pins + jump-to-present ---------- */
 .pins-btn{display:inline-flex;align-items:center;position:relative}
 .find-btn{display:inline-flex;align-items:center}
