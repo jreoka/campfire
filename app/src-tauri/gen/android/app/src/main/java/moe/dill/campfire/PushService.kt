@@ -167,6 +167,20 @@ class PushService : Service() {
       }
     }
 
+    override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+      // 4401 is the server refusing the session (token expired, a session
+      // revoked, the account disabled). Reconnecting every minute until the app
+      // is next opened would be pure battery drain, and the page re-configures
+      // the service the moment it boots with a fresh token.
+      if (code == 4401) {
+        stopped = true
+        try { webSocket.close(1000, "signed out") } catch (ex: Exception) {}
+        stopSelf()
+        return
+      }
+      try { webSocket.close(code, reason) } catch (ex: Exception) {}
+    }
+
     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
       Log.w(TAG, "socket closed: ${t.message}")
       attempts++
