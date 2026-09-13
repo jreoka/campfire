@@ -5881,15 +5881,28 @@ server.on('upgrade', (req, socket, head) => {
   target.handleUpgrade(req, socket, head, (ws) => target.emit('connection', ws, req));
 });
 const pushClients = new Set();
+// One line per device connect / disconnect / visibility flip is cheap and is the
+// only way to tell "the phone never connected" apart from "the phone said it was
+// on screen" when a notification does not arrive. The per-push fan-out line is
+// behind PUSH_DEBUG because it fires once per notification per recipient.
+const PUSH_DEBUG = /^(1|true|yes)$/i.test(String(process.env.PUSH_DEBUG || ''));
+const shortUid = (u) => String(u || '?').slice(0, 8);
 function notifyPushSocketsLocal(userId, payload) {
   // The shell applies the same rule (PushService.kt): a test push from the
   // settings screen must reach a device whose app is on screen, or the button
   // looks broken while you are looking at it.
   const force = !!(payload && payload.test);
+  let sockets = 0, sent = 0, gated = 0;
   for (const c of pushClients) {
     if (c.pushUserId !== userId) continue;
-    if (c.pushVisible && !force) continue;
+    sockets++;
+    if (c.pushVisible && !force) { gated++; continue; }
     safeSend(c, { t: 'push', payload });
+    sent++;
+  }
+  if (PUSH_DEBUG || gated > 0 || (sockets > 0 && sent === 0)) {
+    console.log('[push] fanout user=%s test=%s sockets=%d sent=%d gated-visible=%d tag=%s',
+      shortUid(userId), force ? 1 : 0, sockets, sent, gated, (payload && payload.tag) || '-');
   }
 }
 function notifyPushSockets(userId, payload) {
@@ -5930,20 +5943,33 @@ pushWss.on('connection', async (ws, req) => {
   // notifications for the conversation already on screen.
   ws.pushVisible = false;
   ws.on('pong', () => { ws.isAlive = true; });
-  ws.on('close', () => { pushClients.delete(ws); ws.pushUserId = null; });
+  ws.on('close', (code) => {
+    const who = ws.pushUserId;
+    pushClients.delete(ws);
+    ws.pushUserId = null;
+    if (who) console.log('[push] socket closed user=%s code=%s', shortUid(who), code);
+  });
   ws.on('error', () => {});
   ws.on('message', (raw) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     // The shell tells us whether its window is in front. Only a visible socket
     // is skipped (see notifyPushSocketsLocal).
-    if (msg.t === 'visibility') { ws.pushVisible = msg.visible !== false; return; }
+    if (msg.t === 'visibility') {
+      const vis = msg.visible !== false;
+      if (vis !== ws.pushVisible) console.log('[push] visibility user=%s visible=%s', shortUid(ws.pushUserId), vis);
+      ws.pushVisible = vis;
+      return;
+    }
     if (msg.t === 'ping') { safeSend(ws, { t: 'pong' }); return; }
   });
   const auth = await socketAuth(ws, req);
   if (!auth) return;
   ws.pushUserId = auth.u.id;
   pushClients.add(ws);
+  let mine = 0;
+  for (const c of pushClients) if (c.pushUserId === auth.u.id) mine++;
+  console.log('[push] socket open user=%s sockets=%d', shortUid(auth.u.id), mine);
   safeSend(ws, { t: 'push-ready' });
 });
 function broadcastToServer(serverId, obj, except) {
