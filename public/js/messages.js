@@ -1264,6 +1264,10 @@ function pruneAttPreviews() {
   for (const list of (typeof pendingByCtx !== 'undefined' ? pendingByCtx.values() : [])) {
     for (const a of list) live.add(a.url);
   }
+  // An upload card that is still exiting holds its finished attachment (see
+  // xhr.onload): that file is not in a list yet, and throwing its preview away
+  // here would make the chip appear with a blank tile.
+  for (const u of (S.uploads || [])) if (u.att && u.att.url) live.add(u.att.url);
   for (const url of [...attPreviews.keys()]) if (!live.has(url)) releaseAttPreview(url);
 }
 const CHIP_IMG_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
@@ -1296,19 +1300,31 @@ function renderComposerMeta() {
     chip.appendChild(x); box.appendChild(chip);
   }
   pruneAttPreviews();
-  // The Spoiler toggle belongs to the SECOND stage of an attachment's life: the
-  // chip only. While an upload card is still on stage (see attCardOnStage — it
-  // covers the green `done` card during its 650ms exit, not just an in-flight
-  // transfer) that card is what the reader is looking at, and painting the
-  // toggle into the chip ABOVE it read as the second stage arriving before the
-  // first had finished. The render at the end of removeUpload reveals it.
+  // The chip stage starts only once the card stage is OVER: no card left on
+  // stage (see attCardOnStage — an in-flight card, the green `done` card during
+  // its 650ms exit, or a failed one waiting to be dismissed) AND no upload still
+  // holding an attachment to file. Both halves matter: the first keeps the chip
+  // from appearing under a card that is still on screen, the second keeps a
+  // spoiler toggle from being offered before that chip exists. removeUpload
+  // releases the held attachment and repaints this.
+  const pendingAtts = [...S.pendingAtts, ...(S.uploads || []).filter((u) => u.att && u.attHere).map((u) => u.att)];
   const cardOnStage = attCardOnStage();
-  S.pendingAtts.forEach((a, i) => {
+  pendingAtts.forEach((a, i) => {
     const chip = document.createElement('div');
     chip.className = 'att-chip' + (a.scan === 'pending' ? ' scanning' : '');
     chip.innerHTML = attChipHTML(a);
     const x = document.createElement('button'); x.className = 'mini'; x.type = 'button'; x.textContent = '✕';
-    x.onclick = () => { S.pendingAtts.splice(i, 1); renderComposerMeta(); };
+    x.onclick = () => {
+      // Find it rather than trust the index: the list also holds attachments
+      // whose upload card is still exiting (see pendingAtts above). Dropping one
+      // of those must take the queued attachment with it, or removeUpload would
+      // file it straight back a moment later.
+      const at = S.pendingAtts.indexOf(a);
+      if (at >= 0) S.pendingAtts.splice(at, 1);
+      const held = (S.uploads || []).find((u) => u.att === a);
+      if (held) { held.att = null; held.attHere = false; }
+      renderComposerMeta();
+    };
     if ((a.kind === 'image' || a.kind === 'video') && !cardOnStage) {
       const sp = document.createElement('button');
       sp.type = 'button'; sp.className = 'mini' + (a.spoiler ? ' on' : ''); sp.textContent = 'Spoiler'; sp.title = 'Mark as spoiler';
@@ -1630,9 +1646,14 @@ function startUpload(u) {
       // whichever one is open now: park it there (and leave the composer alone)
       // when the reader has moved on.
       const here = !u.ctx || u.ctx === pendingCtxKey;
-      const home = here ? S.pendingAtts : attsListFor(u.ctx);
-      home.push(data);
+      // The attachment does NOT join its list yet: the card that just answered
+      // stays on stage in its green done state for its ~650ms exit, and a chip
+      // appearing under it read as the second stage arriving before the first
+      // one had finished (reported). It is held on the upload entry instead and
+      // filed by removeUpload, which is also what repaints the composer — so the
+      // chip arrives exactly when the card has left.
       u.att = data;
+      u.attHere = here;
       // Thumbnail for the composer chip (see attPreviews). The image's own
       // object URL is a fresh registration, independent of the upload card's
       // `u.thumb` so either side can revoke without breaking the other.
@@ -1641,7 +1662,6 @@ function startUpload(u) {
       } else if (data.kind === 'video' && u.thumb && !attPreviews.has(data.url)) {
         setAttPreview(data.url, u.thumb, false);
       }
-      if (here) renderComposerMeta();
       patchUploadProgress(u);
       setTimeout(() => removeUpload(u.id), 650);
     } else failUpload(u, (data && data.error) || ('http_' + xhr.status));
@@ -1676,12 +1696,20 @@ function removeUpload(id) {
   const i = (S.uploads || []).findIndex((x) => x.id === id);
   if (i < 0) return;
   // Whether the stage was OCCUPIED before this one left: only the card that
-  // empties the list has to repaint the composer (see the Spoiler gate in
+  // empties the list has to repaint the composer (see the chip gate in
   // renderComposerMeta — a done card sits in the list for 650ms after the
-  // server answers, and the chip's toggle appears the moment it goes).
+  // server answers, and nothing of the next stage shows until it goes).
   const hadCards = attCardOnStage();
   const [u] = S.uploads.splice(i, 1);
   if (u) { clearTimeout(u.watch); u.watch = null; }
+  // The attachment this card was holding: NOW it becomes a composer chip (see
+  // xhr.onload), in the conversation the upload started in — the reader may have
+  // moved on, exactly as before.
+  if (u && u.att) {
+    const home = u.attHere ? S.pendingAtts : attsListFor(u.ctx);
+    home.push(u.att);
+    u.att = null;
+  }
   if (u && u.thumb && u.thumb.startsWith('blob:')) { try { URL.revokeObjectURL(u.thumb); } catch {} }
   if (u && u.vthumbSrc) { try { URL.revokeObjectURL(u.vthumbSrc); } catch {} }
   renderUploads();

@@ -856,19 +856,21 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   clears it. It also pins the two owner-reported follow-ups on that card: the
   readout no longer prints a bare "…" while the bar is indeterminate (it read as
   a "more options" menu button next to the ✕, so the % cell goes empty), and the
-  chip's **Spoiler** toggle waits for the card to LEAVE the stage. That gate is
-  `attCardOnStage()` — a card still standing in `#upload-list` — NOT
-  `activeUploadCount`, because the card the server has already answered stays on
-  screen in its green `done` state for the 650ms exit, and the first cut (which
-  counted only `state === 'uploading'`) therefore painted the toggle into the
-  chip ABOVE a card that was still the thing being looked at (reported live:
-  "the spoiler mark stage still comes up above the first stage before it
-  disappears"). `removeUpload` is what finishes the handover: when the departing
-  card empties the list it repaints the composer, which is the moment the toggle
-  appears. The browser half drives that order for real: a second image upload
-  starts with a finished chip already in the composer (no toggle) and a live card
-  (no toggle), the green card is asserted present with `done`, and only after the
-  ~650ms exit are BOTH chips asserted to carry the toggle. Re-run it after
+  whole SECOND stage waits for the first: the chip — not just its **Spoiler**
+  toggle — is withheld until no card is left on stage. `xhr.onload` parks the
+  answered attachment on the upload entry (`u.att`/`u.attHere`) instead of filing
+  it, and `removeUpload` files it and repaints the composer exactly when the
+  departing card empties `#upload-list`. Gating on `activeUploadCount` was wrong
+  twice (the card the server has already answered sits there in its green `done`
+  state for a 650ms exit, so the chip and its toggle appeared under a card that
+  was still the thing being looked at — reported live, twice). `attCardOnStage()`
+  is the test, and the composer reads `S.pendingAtts` through
+  `renderComposerMeta`'s combined view (it appends the `attHere` held ones). The
+  browser half drives that order for real, reading the chip list and the card
+  list in ONE page: a finished chip is present with no toggle, the file answers
+  with the green card asserted `done` and still listed while NO second chip
+  appears, and only after the ~650ms exit does its chip arrive with the toggle on
+  both. Re-run it after
   touching `messages.js`'s upload block, `renderComposerMeta`, `removeUpload`,
   the conversation switchers, or the paths that leave a conversation. Anything
   that changes

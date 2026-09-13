@@ -5745,14 +5745,14 @@ async function presenceUpsert(ws) {
   const status = m.status || 'online';
   try {
     await db.prepare(
-      `INSERT INTO live_sessions (sid, user_id, pod_id, status, invisible, visible, is_admin, updated_at)
-       VALUES (?,?,?,?,?,?,?,?)
+      `INSERT INTO live_sessions (sid, user_id, pod_id, status, invisible, visible, is_admin, device, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?)
        ON CONFLICT (sid) DO UPDATE SET
          user_id = EXCLUDED.user_id, pod_id = EXCLUDED.pod_id, status = EXCLUDED.status,
          invisible = EXCLUDED.invisible, visible = EXCLUDED.visible,
-         is_admin = EXCLUDED.is_admin, updated_at = EXCLUDED.updated_at`
+         is_admin = EXCLUDED.is_admin, device = EXCLUDED.device, updated_at = EXCLUDED.updated_at`
     ).run(ws.lsid, m.userId, bus.POD_ID, status, status === 'invisible' ? 1 : 0,
-      m.visible ? 1 : 0, m.is_admin ? 1 : 0, Date.now());
+      m.visible ? 1 : 0, m.is_admin ? 1 : 0, m.device === 'mobile' ? 'mobile' : '', Date.now());
   } catch (e) { console.error('[presence] upsert failed:', (e && e.message) || e); }
 }
 async function presenceForget(ws) {
@@ -5811,6 +5811,43 @@ async function presenceForUsers(ids, forUserId) {
   }
   return map;
 }
+// ---------- "is this person on their phone?" ----------
+// The same registry, read for one extra fact: a socket that told us at connect
+// it is a phone. Rides alongside every presence roster as a SECOND map, so the
+// client paints the avatar-corner indicator as a phone glyph in the person's
+// own status colour. Two deliberate choices:
+//   * "any live mobile socket", not "the newest/visible one" — locking a phone
+//     clears the page-visibility flag, and an indicator that flickers off on
+//     every screen lock is worse than useless;
+//   * cluster-wide, like every other presence fact (live_sessions), so a phone
+//     on another replica counts exactly the same.
+async function mobileUsersFor(ids) {
+  const out = {};
+  if (!ids || !ids.size) return out;
+  const list = [...ids];
+  const ph = list.map(() => '?').join(',');
+  const rows = await db.prepare(
+    `SELECT DISTINCT user_id FROM live_sessions WHERE device = 'mobile' AND user_id IN (${ph})`
+  ).all(...list);
+  for (const r of rows) out[r.user_id] = 1;
+  return out;
+}
+async function mobileForServer(serverId) {
+  const out = {};
+  const rows = await db.prepare(
+    `SELECT DISTINCT s.user_id FROM live_sessions s
+       JOIN server_members m ON m.user_id = s.user_id AND m.server_id = ?
+      WHERE s.device = 'mobile'`
+  ).all(serverId);
+  for (const r of rows) out[r.user_id] = 1;
+  return out;
+}
+async function userOnMobile(userId) {
+  try {
+    const r = await db.prepare("SELECT 1 AS ok FROM live_sessions WHERE user_id = ? AND device = 'mobile'").get(userId);
+    return !!r;
+  } catch { return false; }
+}
 // Send a payload to every live socket of the given user's friends.
 function notifyFriends(userId, obj) {
   notifyFriendsLocal(userId, obj);
@@ -5830,7 +5867,7 @@ async function syncSocketFriends(userId) {
   for (const c of clients) {
     if (!c.meta || c.meta.userId !== userId) continue;
     c.meta.friends = ids;
-    safeSend(c, { t: 'presence', online: await presenceForUsers(ids, userId) });
+    safeSend(c, { t: 'presence', online: await presenceForUsers(ids, userId), mobile: await mobileUsersFor(ids) });
   }
   // A brand-new friend may already be sitting in a voice room.
   try { await sendFriendsVoice(userId); } catch {}
@@ -6037,6 +6074,11 @@ async function socketAuth(ws, req) {
   try {
     const url = new URL(req.url, 'http://x');
     const token = url.searchParams.get('token') || '';
+    // What the client says it is running on (core.js deviceIsMobile). It only
+    // ever decides whether a socket shows a phone in someone's presence
+    // indicator, so it is a whitelist rather than free text: a hand-written URL
+    // must not be able to put anything else into live_sessions.device.
+    const device = url.searchParams.get('device') === 'mobile' ? 'mobile' : '';
     let p;
     try { p = jwt.verify(token, JWT_SECRET); } catch { ws.close(4401, 'bad token'); return null; }
     const u = await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(p.sub);
@@ -6047,7 +6089,7 @@ async function socketAuth(ws, req) {
       const s = await db.prepare('SELECT id,user_id,revoked FROM sessions WHERE id = ?').get(p.sid);
       if (!s || s.user_id !== u.id || s.revoked) { ws.close(4401, 'bad token'); return null; }
     }
-    return { u, p };
+    return { u, p, device };
   } catch { try { ws.close(1011, 'error'); } catch {} return null; }
 }
 
@@ -6272,7 +6314,18 @@ async function reconcileReplicaState() {
       if (deadVoice.length || gone.length || deadRl.length || deadWac.length) {
         console.log(`[reconcile] reaped ${deadVoice.length} voice, ${gone.length} session, ${deadRl.length} limiter, ${deadWac.length} challenge row(s)`);
       }
-      if (gone.length) { try { await pushAdminPresence(); } catch {} }
+      if (gone.length) {
+        // And the phone flags those rows were holding: the account may still be
+        // live on a replica that IS alive, so recompute per affected user
+        // instead of assuming anything.
+        for (const uid of new Set(gone.map((r) => r.user_id))) {
+          const onPhone = (await userOnMobile(uid)) ? 1 : 0;
+          const sids = (await db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(uid)).map((r) => r.server_id);
+          for (const sid of sids) broadcastToServer(sid, { t: 'user-mobile', serverId: sid, userId: uid, mobile: onPhone });
+          notifyFriends(uid, { t: 'user-mobile', userId: uid, mobile: onPhone });
+        }
+        try { await pushAdminPresence(); } catch {}
+      }
     });
   } catch (e) { console.error('[reconcile] failed:', (e && e.message) || e); }
 }
@@ -6474,6 +6527,9 @@ wss.on('connection', async (ws, req) => {
     streaming: null,
     visible: true,
     is_admin: !!u.is_admin,
+    // '' or 'mobile' — see socketAuth. Kept on the socket so every roster read
+    // and every user-online push can answer "is this person on a phone".
+    device: auth.device || '',
   };
   clients.add(ws);
   // Cluster-wide identity for this socket in live_sessions. Per-socket (not per
@@ -6499,16 +6555,19 @@ wss.on('connection', async (ws, req) => {
       me.servers = new Set(rows.map((r) => r.server_id));
       // send presence roster per server (invisible users hidden from others)
       for (const sid of me.servers) {
-        safeSend(ws, { t: 'presence', serverId: sid, online: await presenceFor(sid, me.userId) });
+        safeSend(ws, { t: 'presence', serverId: sid, online: await presenceFor(sid, me.userId), mobile: await mobileForServer(sid) });
       }
       // Friends are visible regardless of shared servers: refresh the set and
       // hand over their presence (serverId-less roster merges into the same map).
       me.friends = await friendIdsOf(me.userId);
-      safeSend(ws, { t: 'presence', online: await presenceForUsers(me.friends, me.userId) });
+      safeSend(ws, { t: 'presence', online: await presenceForUsers(me.friends, me.userId), mobile: await mobileUsersFor(me.friends) });
       // announce online to others (unless invisible)
       if ((me.status || 'online') !== 'invisible') {
-        for (const sid of me.servers) broadcastToServer(sid, { t: 'user-online', serverId: sid, userId: me.userId, status: me.status || 'online' }, ws);
-        notifyFriends(me.userId, { t: 'user-online', userId: me.userId, status: me.status || 'online' });
+        // Read once, not per server: the phone flag belongs to the ACCOUNT, so
+        // every listener gets the same answer (see mobileUsersFor).
+        const onPhone = (await userOnMobile(me.userId)) ? 1 : 0;
+        for (const sid of me.servers) broadcastToServer(sid, { t: 'user-online', serverId: sid, userId: me.userId, status: me.status || 'online', mobile: onPhone }, ws);
+        notifyFriends(me.userId, { t: 'user-online', userId: me.userId, status: me.status || 'online', mobile: onPhone });
       }
       // send current voice occupancy for my servers
       for (const [key, set] of voiceRooms) {
@@ -6826,6 +6885,15 @@ wss.on('connection', async (ws, req) => {
       // Friends see the flip even with no shared server (last socket only).
       const stillLive = [...clients].some((c) => c.meta && c.meta.userId === ws.meta.userId);
       if (!stillLive) notifyFriends(ws.meta.userId, { t: 'user-offline', userId: ws.meta.userId });
+      // A phone that went away takes the phone indicator with it — but only
+      // that: with a desktop socket still holding the account open this is
+      // mobile:0, not offline. Read from live_sessions (this socket's row is
+      // already deleted), so a phone on another replica still counts.
+      if (ws.meta.device === 'mobile') {
+        const onPhone = (await userOnMobile(ws.meta.userId)) ? 1 : 0;
+        for (const sid of ws.meta.servers || []) broadcastToServer(sid, { t: 'user-mobile', serverId: sid, userId: ws.meta.userId, mobile: onPhone });
+        notifyFriends(ws.meta.userId, { t: 'user-mobile', userId: ws.meta.userId, mobile: onPhone });
+      }
       await pushAdminPresence();
     }
     } catch (e) { console.error('[ws] close handler failed:', (e && e.message) || e); }

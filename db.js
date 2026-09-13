@@ -841,12 +841,18 @@ CREATE TABLE IF NOT EXISTS live_sessions (
   invisible BIGINT NOT NULL DEFAULT 0,
   visible BIGINT NOT NULL DEFAULT 0,
   is_admin BIGINT NOT NULL DEFAULT 0,
+  -- 'mobile' when the socket said so at connect (/ws?device=mobile), '' for
+  -- everything else. Per SOCKET, like the rest of this row: the avatar-corner
+  -- phone indicator asks "does this user have any live phone socket", so one
+  -- row is enough to answer it.
+  device TEXT NOT NULL DEFAULT '',
   updated_at BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_live_sessions_user ON live_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_live_sessions_pod ON live_sessions(pod_id);
 CREATE INDEX IF NOT EXISTS idx_live_sessions_online ON live_sessions(invisible, user_id);
 `);
+  await addColumn('live_sessions', 'device', "TEXT NOT NULL DEFAULT ''");
   await db.exec(`
 -- Shared rate limiting and other short-lived security state. All of this used to
 -- live in a per-process Map, which multiplies every limit by the replica count:

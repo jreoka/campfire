@@ -523,13 +523,17 @@ slept or a half-open connection leaves the XHR pending with no event at all
 (`sweepStalledUploads()` re-judges it when the page is foregrounded again, and
 `storage.js`'s S3 client needs `throwOnRequestTimeout` — a bare `requestTimeout`
 only warns — so a silent object store cannot hold the route open either). The
-upload card's two stages hand over in order: the chip's **Spoiler** toggle is
-gated on `attCardOnStage()` (a card still standing in `#upload-list`), never on
-`activeUploadCount` — the card the server has already answered sits on screen in
-its green `done` state for a 650ms exit, so counting in-flight uploads painted
-the toggle into the chip ABOVE a card that was still the thing being looked at
-(reported twice), and `removeUpload` repainting the composer when the departing
-card empties the list is what reveals it. The typing strip above the
+upload card's two stages hand over in order, and the FIRST one finishes leaving
+before the second appears: the chip — not just its **Spoiler** toggle — is
+withheld until no card is left on stage. `xhr.onload` parks the answered
+attachment on the upload entry (`u.att`/`u.attHere`) instead of filing it, and
+`removeUpload` files it and repaints the composer exactly when the departing card
+empties `#upload-list`; gating on `activeUploadCount` instead was wrong twice
+(the card the server has already answered sits there in its green `done` state
+for a 650ms exit, so the chip and its toggle appeared under a card that was still
+the thing being looked at). `attCardOnStage()` is the test, and anything that
+reads `S.pendingAtts` for the composer must go through `renderComposerMeta`'s
+combined view (it appends the `attHere` held ones) or a chip will be missing. The typing strip above the
 composer always keeps its slot (`--strip-h`, one text line, transparent, text
 fades) — hiding it resizes `#messages` and shoves the conversation up/down.
 `#messages` pays for that slot by giving up its bottom padding, and anything

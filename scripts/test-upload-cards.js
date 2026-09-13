@@ -213,7 +213,7 @@ async function main() {
   check(/u\.ctx == null \? pendingCtxKey == null : u\.ctx === pendingCtxKey/.test(upSource),
     'renderUploads paints only the open conversation\'s uploads');
   check(/ctx: attsCtxNow\(\)/.test(upSource), 'each upload records the conversation it started in');
-  check(/const home = here \? S\.pendingAtts : attsListFor\(u\.ctx\)/.test(upSource),
+  check(/const home = u\.attHere \? S\.pendingAtts : attsListFor\(u\.ctx\)/.test(upSource),
     'a finished upload is filed where it was started, not where the reader is now');
   check(/activeUploadCount\(ctx\)/.test(upSource) && /activeUploadCount\(attsCtxNow\(\)\)/.test(upSource),
     'the 5-per-message cap counts that conversation\'s uploads');
@@ -227,17 +227,21 @@ async function main() {
   check(/if \(u\.indet \|\| sent\) \{ pct\.textContent = ''; fill\.classList\.add\('indet'\); \}/.test(upSource),
     'and goes indeterminate instead of freezing at 99% (leaving the % cell EMPTY — a bare "…" beside the ✕ read as a menu button)');
 
-  console.log('\n[2b] the Spoiler toggle belongs to the chip, not to the upload');
+  console.log('\n[2b] the chip stage starts only after the card stage is over');
   check(/function attCardOnStage\(\) \{[\s\S]{0,160}box\.querySelector\('\.up-card'\)/.test(messages),
     'the stage test is the card still standing in #upload-list (DOM, not just "still uploading")');
-  check(/const cardOnStage = attCardOnStage\(\);/.test(messages),
-    'the composer asks it while painting the chips');
-  check(/if \(\(a\.kind === 'image' \|\| a\.kind === 'video'\) && !cardOnStage\) \{/.test(messages),
-    'and offers "Mark as spoiler" only once no card is left on stage');
+  check(/const pendingAtts = \[\.\.\.S\.pendingAtts, \.\.\.\(S\.uploads \|\| \[\]\)\.filter\(\(u\) => u\.att && u\.attHere\)\.map\(\(u\) => u\.att\)\];/.test(messages),
+    'the composer paints the finished attachments its exiting cards are still holding');
+  check(/u\.att = data;\s*$[\s\S]{0,80}u\.attHere = here;/m.test(messages),
+    'xhr.onload parks the answered attachment on the upload entry instead of filing it');
+  check(/if \(u && u\.att\) \{[\s\S]{0,200}home\.push\(u\.att\);/.test(messages),
+    'and removeUpload — the moment the card leaves — files it in the conversation it started in');
   check(!/uploadsInFlight/.test(messages),
-    'it must NOT key on activeUploadCount: the answered card stays on screen in its green done state for the 650ms exit, so counting in-flight uploads painted the toggle while that card was still the thing being looked at');
+    'it must NOT key on activeUploadCount: the answered card sits on screen in its green done state for the 650ms exit, so counting in-flight uploads let the next stage appear under it');
+  check(/if \(\(a\.kind === 'image' \|\| a\.kind === 'video'\) && !cardOnStage\) \{/.test(messages),
+    'and no Spoiler toggle is offered while a card is still on stage');
   check(/setTimeout\(\(\) => removeUpload\(u\.id\), 650\)/.test(messages),
-    'the green done card still holds the stage for its ~650ms exit before the chip owns it');
+    'the green done card holds the stage for its ~650ms exit before the chip owns it');
   check(/sent \? ' · Finishing…' : ' · Uploading…'/.test(upSource), 'with a readout that says what it is waiting for');
   check(/const UPLOAD_ANSWER_MS = 90 \* 1000;/.test(upSource) && /const UPLOAD_IDLE_MS = 60 \* 1000;/.test(upSource)
     && /armUploadWatchdog\(u\)/.test(upSource),
@@ -329,17 +333,21 @@ async function main() {
     await sleep(30);
     check((await ev('JSON.stringify(window.__atts())')) === '[]', 'it does NOT become a chip in the chat the reader moved to');
     let parked = await ev('JSON.stringify(window.__parked())');
-    check(/s:s1:c1/.test(parked) && /a\.jpg/.test(parked), 'it is parked under the conversation it was started in', parked);
+    check(!/a\.jpg/.test(parked),
+      'and it is not filed yet either — its card is still on stage in that chat, exiting', parked);
     check((await ev('window.__cards()')) === 0, 'and no card appears in the wrong chat');
-    await sleep(700); // the done card lingers 650ms, then removes itself
+    await sleep(700); // the done card lingers 650ms, then removes itself and files the attachment
     check((await ev('window.__S.uploads.length')) === 0, 'the finished upload leaves the queue', await ev('window.__S.uploads.length'));
+    parked = await ev('JSON.stringify(window.__parked())');
+    check(/s:s1:c1/.test(parked) && /a\.jpg/.test(parked),
+      'once its card has exited, it is parked under the conversation it was started in', parked);
     await ev("window.__switchTo('s1', 'c1')");
     await sleep(30);
     check((await ev('JSON.stringify(window.__atts())')).indexOf('a.jpg') !== -1, 'coming back, the attachment is waiting', await ev('JSON.stringify(window.__atts())'));
     parked = await ev('JSON.stringify(window.__parked())');
     check(!/s:s1:c1/.test(parked), 'and it is no longer parked', parked);
 
-    console.log('\n[5b] the Spoiler stage waits for the green card to leave the stage');
+    console.log('\n[5b] the chip stage starts only after the card stage is over');
     await ev('window.__attachStart("pic.jpg", 4096, "image/png")');
     await sleep(30);
     let chips = await ev('window.__chips()');
@@ -349,15 +357,17 @@ async function main() {
     await ev(`window.__finish('s:s1:c1', { url: '/uploads/files/b.png', name: 'pic.jpg', mime: 'image/png', size: 4096, kind: 'image', scan: 'clean' })`);
     await sleep(40);
     chips = await ev('window.__chips()');
-    check(chips.length === 2 && chips[1].name === 'pic.jpg' && chips.every((c) => c.spoiler === false),
-      'its chip arrives as the card goes green, and NEITHER chip has grown a toggle', chips);
+    check(chips.length === 1,
+      'the moment it answers, NO second chip appears under the green card', chips);
     check((await ev('window.__cardDone()')) === true, 'the finished card is on screen in its done state');
     check((await ev('window.__cards()')) === 1, 'and it has not left the list yet');
     await sleep(750); // the done card holds the stage ~650ms, then removes itself
     chips = await ev('window.__chips()');
-    check(chips.length === 2 && chips.every((c) => c.spoiler === true),
-      'once the card is gone, both chips finally offer it', chips);
-    check((await ev('window.__cards()')) === 0, 'with no card left above them');
+    check(chips.length === 2 && chips[1].name === 'pic.jpg',
+      'once the card is gone, its chip finally arrives', chips);
+    check(chips.every((c) => c.spoiler === true),
+      'with the Spoiler toggle on both chips, the previous one included', chips);
+    check((await ev('window.__cards()')) === 0, 'and no card left above them');
 
     console.log('\n[6] two conversations upload at the same time without mixing');    await ev("window.__upload('mine.jpg', 1024)");
     await sleep(20);
