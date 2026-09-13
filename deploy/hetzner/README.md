@@ -15,18 +15,18 @@ is still in the namespace but **scaled to zero** as the rollback path.
 ## Why we moved
 
 The old cluster ran on a Civo Small node with **`cpu=890m`, `mem=1193460Ki`
-(~1165 MiB) allocatable**. clamd needed about a gigabyte - 996 MiB measured on
-production - so the cluster ran `VIRUS_SCAN=0`. That was an accepted trade-off
-(`../civo/README.md` §9), not an oversight: AV scanning was the one feature the
-node could not afford. This host has 8 GB, so **scanning is back on**, the box is
-cheaper than the Civo node plus its object store, and the app got 4 cores
-instead of 1 - which was the other long-standing complaint (two niced ffmpeg
-encodes made the app feel sluggish on one vCPU).
+(~1165 MiB) allocatable**. The resident scanner then in use needed about a
+gigabyte - 996 MiB measured on production - so the cluster ran `VIRUS_SCAN=0`.
+That was an accepted trade-off (`../civo/README.md` §9), not an oversight: AV
+scanning was the one feature the node could not afford. This host has 8 GB, so
+**scanning is back on**, the box is cheaper than the Civo node plus its object
+store, and the app got 4 cores instead of 1 - which was the other long-standing
+complaint (two niced ffmpeg encodes made the app feel sluggish on one vCPU).
 
-Scanning has since moved from clamd to **Harbin**, which is one self-contained
-binary rather than a resident daemon; that removed the clamd container and its
-~500 MB signature volume outright, and freed roughly 3 GB on this host. See
-"Uploads, scanning and compression" below.
+Scanning is **Harbin** now, one self-contained binary rather than a resident
+daemon, so there is no scanner container and no signature volume at all - and
+roughly 3 GB that the old daemon and its database held is back. See "Uploads,
+scanning and compression" below.
 
 ## Layout on the host
 

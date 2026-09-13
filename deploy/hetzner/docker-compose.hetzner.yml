@@ -14,9 +14,7 @@
 # There is no scanner service. Malware scanning is Harbin, which is one
 # self-contained binary inside the app image (see the Dockerfile's harbin
 # stage): no daemon, no signature volume, no ~1 GB resident engine to keep warm
-# and nothing to reach over the compose network. That retired the old `clamd`
-# service and its `clamav_db` volume, and with them the reason this box needed
-# 8 GB rather than 4.
+# and nothing to reach over the compose network.
 #
 # Not here: Caddy. TLS terminates at Cloudflare, and the base overlay for a
 # direct-TLS VPS (docker-compose.prod.yml) is a different, unused shape.

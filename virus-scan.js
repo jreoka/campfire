@@ -7,10 +7,9 @@
 //
 // Why Harbin (https://github.com/jreoka/harbin): it decides with a
 // machine-learned model compiled into the executable, so there is no daemon to
-// supervise, no signature database to download, no freshclam schedule and no
-// network in the detection path. That retires the ~1 GB clamd container, its
-// ~500 MB signature volume and the daily signature reload — the single largest
-// memory consumer this stack had. One binary, one argument:
+// supervise, no signature database to download, no signature-reload schedule and
+// no network in the detection path — no resident engine taking the largest share
+// of the box's memory. One binary, one argument:
 //
 //     harbin <file-or-directory>
 //
@@ -118,7 +117,7 @@ const SLOT_TIMEOUT_MS = 12 * 60 * 1000;
 // Parallel scan slots. Harbin is a short-lived process that reads at most the
 // first 256 KiB of content plus up to 4 MiB of synthesised memory image, so a
 // slot costs a process and a temp file rather than a share of a resident
-// engine — which is why this can be wider than a clamd-backed box could afford.
+// engine — which is why this can be wider than a daemon-backed box could afford.
 const _conc = parseInt(process.env.VIRUS_SCAN_CONCURRENCY || '3', 10);
 const CONCURRENCY = Math.min(10, Math.max(1, Number.isFinite(_conc) ? _conc : 3));
 // How long a broken engine waits before it is probed again. A transient

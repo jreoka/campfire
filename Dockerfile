@@ -32,10 +32,10 @@ RUN target/release/harbin --model-info > /tmp/model-info.txt \
 FROM node:22-alpine
 
 # pg_dump for the automatic S3 database backups, ffmpeg for the background
-# media compressor. Malware scanning needs no packages at all any more: the
-# engine is the self-contained binary copied in below (see the harbin stage),
-# which is why the ~1 GB clamd container and its ~500 MB signature volume are
-# gone. Uploads are staged in the temp dir while the engine reads them.
+# media compressor. Malware scanning needs no packages at all: the engine is the
+# self-contained binary copied in below (see the harbin stage), so there is no
+# scanner daemon and no signature volume to keep in the image or in RAM.
+# Uploads are staged in the temp dir while the engine reads them.
 RUN apk add --no-cache postgresql-client ffmpeg
 
 WORKDIR /app

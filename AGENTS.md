@@ -300,12 +300,13 @@ new build raises a banner at the top of the shell with an Update button
 height).
 
 **The app runs with `VIRUS_SCAN=1` and `MEDIA_COMPRESS` on.** That is the whole
-point of the Hetzner move: the Civo node had ~1.14 GiB allocatable and clamd
-needs ~1 GB, so the cluster ran with scanning **off**. Scanning is now **Harbin**
+point of the Hetzner move: the Civo node had ~1.14 GiB allocatable and the
+resident scanner of the day needed ~1 GB, so the cluster ran with scanning
+**off**. Scanning is now **Harbin**
 (`https://github.com/jreoka/harbin`) — a static, machine-learned detector that is
 one binary with one argument, an embedded model and no runtime, no network and no
-signature updates — so the ~1 GB clamd container, its ~500 MB signature volume
-and the `freshclam` schedule are all gone and the ~3 GB they held is back. The
+signature updates — so there is no scanner container, no signature volume and no
+signature-reload schedule, and the ~3 GB they held is back. The
 Dockerfile's `harbin` stage builds it from a pinned commit (`HARBIN_REF`, a
 cached layer) and copies it to `/usr/local/bin/harbin`; `HARBIN_BIN` overrides
 the path, and a `.js` value is run with the current Node binary, which is how the
