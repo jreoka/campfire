@@ -1021,8 +1021,7 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   row added without a guard fails the test instead of glowing.
   `node scripts/test-message-menus.js` covers the message / media context menus,
   the reminder composer and the inbox (real app against a throwaway database and
-  headless Chrome; skips without Postgres or Chrome). On desktop it opens the
-  real menu by dispatching a `contextmenu` on the message body and asserts Copy
+  headless Chrome; skips without Postgres or Chrome). On desktop it opens the  real menu by dispatching a `contextmenu` on the message body and asserts Copy
   text, Mark unread, Bookmark message, Create reminder… and View reactions (with
   its count) are all there; a 40-row menu is capped inside the viewport with
   `overflow-y:auto` and really scrolls; a right-click ON a picture (a `.att-wrap`
@@ -1040,13 +1039,25 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   events: a long-press slides the sheet up with the new rows in it, a long-press
   ON the picture opens the media sheet instead, and dragging the sheet's handle
   UP grows it under the finger, keeps it taller (`#sheet.sheet-tall`), never
-  leaves the viewport, and leaves the rows a scroll region.
+  leaves the viewport, and leaves the rows a scroll region. Finally the inbox
+  itself: the `#btn-notifs` control draws an envelope (a `<rect>` and a flap,
+  never the bell path), a bookmark whose message carried pictures renders one
+  tile per image/video through the derived preview URL (cache key and all) with
+  no tile for a plain file (that is counted in the row body instead), a video is
+  a play tile until a poster lands, tapping a picture tile opens the LIGHTBOX on
+  the original rather than the preview, and a mention whose message carried a
+  picture shows that picture as a tile too.
   `node scripts/test-bookmarks-reminders.js` covers the same subsystem's server
   half (real server + throwaway database, skips without Postgres): who may
   bookmark (members only — a non-member and an unknown id are refused), the
   snapshot (text, author, where, conversation ids), the duplicate guard, the
   `/api/bookmarks/ids` toggle set, search by text and author, and that a bookmark
-  still reads after the author deletes the message; mark-unread moving the
+  still reads after the author deletes the message; the media a bookmark
+  snapshots (a real PNG through the real upload route) and the inbox thumbnail
+  the server hands a mention — an ordinary attachment's url and kind, with a
+  SPOILERED one deliberately left out, because the veil exists to make the
+  reader choose and a list they did not open must not decide for them;
+  mark-unread moving the
   WATERMARK so `/api/unread` (channel) and `/api/dms` (DM) really report unread
   again, with the inverted read push reaching the account's socket; reminders
   created off a message and from nothing, the time bounds (`bad_time`, `too_far`),

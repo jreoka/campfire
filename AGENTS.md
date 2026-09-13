@@ -367,9 +367,17 @@ the author deletes the message, and a reminder hangs off a message or nothing at
 all. `fireDueReminders` is leader-locked (`db.LOCKS.reminders`, 20s tick) and
 claims each row with `UPDATE … WHERE fired_at IS NULL` before pushing, so a
 handover or a restart can never ring twice. The bell is now the **Inbox**
-(`openInbox`): Notifications / Reminders / Bookmarks tabs, each with its own
-search box — every list is fetched on open, and typing only repaints the list
-(never the shell) so the field keeps focus. `#ctx-menu` is capped
+(an envelope, `#btn-notifs`): Notifications / Reminders / Bookmarks tabs, each
+with its own search box — every list is fetched on open, and typing only
+repaints the list (never the shell) so the field keeps focus. Lists show their
+media: a bookmark's pictures render as tiles (`inboxMediaHTML`/`wireInboxMedia`,
+local uploads through the same derived preview the chat paints, a video as a
+play tile until `whenVideoPoster` lands, a tap opening the lightbox on the
+ORIGINAL) and a mention carries the message's first non-spoilered image/video
+(`notifications.media_url`/`media_kind`, filled once per fan-out in
+`notifyMentions`) — a spoilered attachment is deliberately never thumbnailed,
+because the veil is the reader's choice and a list they did not open must not
+make it for them. `#ctx-menu` is capped
 (`max-height:min(72vh,560px)`, `overflow-y:auto`) so a long menu scrolls instead
 of running off the screen; the phone `#sheet` is a flex column whose
 `.sheet-rows` is the only scroll region, and `sheetDragExpand` (final.js) makes

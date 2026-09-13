@@ -1829,6 +1829,17 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .inbox-list{display:flex;flex-direction:column;gap:.1rem;max-height:58dvh;overflow-y:auto;overscroll-behavior:contain;margin:0 -.2rem;padding:0 .2rem}
 .inbox-item.saved .isave{width:22px;height:22px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--accent);margin-top:.1rem}
 .inbox-item.saved .isave svg{width:15px;height:15px}
+/* A saved message's pictures, as thumbnails: recognise the thing you saved
+   before reading a word of it. Tiles, not a gallery — three at most, with the
+   rest counted. */
+.inbox-media{display:flex;align-items:center;gap:.35rem;margin-top:.45rem}
+.inbox-thumb{width:54px;height:54px;flex-shrink:0;padding:0;position:relative;display:flex;align-items:center;justify-content:center;border:1px solid var(--line-soft);border-radius:10px;background:var(--panel-3);background-size:cover;background-position:center;color:var(--muted);cursor:pointer;overflow:hidden}
+.inbox-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.inbox-thumb.spoiler img{filter:blur(9px);transform:scale(1.18)}
+.inbox-thumb.video::after{content:'';position:absolute;inset:0;background:rgba(4,6,11,.32)}
+.inbox-thumb-glyph{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;font-size:.78rem;line-height:1;color:var(--muted)}
+.inbox-thumb.video .inbox-thumb-glyph{color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.7)}
+.inbox-thumb-more{font-size:.76rem;font-weight:750;color:var(--muted);flex-shrink:0}
 .inbox-chip{display:inline-block;margin-left:.4rem;background:var(--panel-3);color:var(--muted);font-size:.66rem;font-weight:700;border-radius:999px;padding:.08rem .45rem;vertical-align:middle;max-width:14rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* ---------- reminder composer (time fan-out) ---------- */
 .rem-ctx{font-style:italic;overflow-wrap:anywhere}
@@ -2848,15 +2859,15 @@ body.story-open{overflow:hidden}
 .chan:active,.dmrow:active,.member:active,.vuser:active,.find-row:active,.inbox-item:active,.thread-item:active,.rx-user:active,.fwd-dest:active,.anow-card:active,.anow-tile:active,.st-tile:active,.set-row:active,.set-check:active,.theme-card:active,.prow:active,.share-row:active,.gmem:active,.sc-pick-row:active,.adm-row:active,.ctx-item:active,.sheet-row:active,.sheet-cancel:active,.uc-tab:active,.pk-tab:active,.pk-subbtn:active,.pk-rail-btn:active{
   background:var(--panel-3);
 }
-.chan:active,.dmrow:active,.member:active,.vuser:active,.find-row:active,.inbox-item:active,.thread-item:active,.rx-user:active,.fwd-dest:active,.anow-card:active,.anow-tile:active,.st-tile:active,.set-row:active,.set-check:active,.theme-card:active,.prow:active,.share-row:active,.gmem:active,.sc-pick-row:active,.adm-row:active,.ctx-item:active,.sheet-row:active,.sheet-cancel:active,.uc-tab:active,.pk-tab:active,.pk-subbtn:active,.pk-rail-btn:active,.mini:active,.chip:active,.ftab:active,.set-tab:active,.att-dl:active,.lb-btn:active,.dm-close:active,.ss-add:active{
+.chan:active,.dmrow:active,.member:active,.vuser:active,.find-row:active,.inbox-item:active,.inbox-thumb:active,.thread-item:active,.rx-user:active,.fwd-dest:active,.anow-card:active,.anow-tile:active,.st-tile:active,.set-row:active,.set-check:active,.theme-card:active,.prow:active,.share-row:active,.gmem:active,.sc-pick-row:active,.adm-row:active,.ctx-item:active,.sheet-row:active,.sheet-cancel:active,.uc-tab:active,.pk-tab:active,.pk-subbtn:active,.pk-rail-btn:active,.mini:active,.chip:active,.ftab:active,.set-tab:active,.att-dl:active,.lb-btn:active,.dm-close:active,.ss-add:active{
   transition:background 0s,transform var(--t-press) var(--ease-native);
 }
 /* The two rows the app is actually navigated with give the most: a channel or
    a DM is the phone's whole navigation surface. */
-.icon-btn:active,.chip:active,.mini:active,.me-icobtn:active,.vb-btn:active,.ss-add:active,.pk-star:active,.hist-x:active,.sb-close:active{
+.icon-btn:active,.chip:active,.mini:active,.me-icobtn:active,.vb-btn:active,.ss-add:active,.pk-star:active,.hist-x:active,.sb-close:active,.inbox-thumb:active{
   transform:scale(.92);
 }
-.icon-btn,.chip,.mini,.me-icobtn,.ss-add,.pk-star,.hist-x,.sb-close{
+.icon-btn,.chip,.mini,.me-icobtn,.ss-add,.pk-star,.hist-x,.sb-close,.inbox-thumb{
   transition:background var(--t-fast),color var(--t-fast),transform var(--t-press) var(--ease-native);
 }
 .chan:active,.dmrow:active,.member:active,.vuser:active,.find-row:active,.inbox-item:active,.thread-item:active,.anow-card:active,.anow-tile:active,.st-tile:active,.set-row:active,.theme-card:active,.prow:active,.sheet-row:active,.uc-tab:active,.ctx-item:active,.sc-pick-row:active,.gmem:active{
@@ -3064,6 +3075,7 @@ html.wrapper-app input,html.wrapper-app textarea,html.wrapper-app .codebox,html.
    ========================================================================== */
 @media (hover:hover){
   .icon-btn:hover{background:var(--panel-3)}
+  .inbox-thumb:hover{border-color:var(--line);filter:brightness(1.1)}
   .chip:hover{background:var(--panel-3)}
   .mini:hover{background:var(--panel-4)}
   .btn:hover{background:var(--panel-4)}

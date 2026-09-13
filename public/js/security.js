@@ -529,10 +529,14 @@ function paintNotifRows(list) {
     b.className = 'inbox-item' + (n.read_at ? ' read' : '');
     b.tabIndex = 0;
     const kind = n.kind === 'dm' ? 'DM' : n.kind === 'friend' ? 'Friend' : n.kind === 'reaction' ? 'Reaction' : n.kind === 'friend-status' ? 'Friend status' : n.kind === 'report' ? 'Report' : n.kind === 'reminder' ? 'Reminder' : 'Mention';
-    b.innerHTML = `<span class="dot"></span><span class="imain"><span class="ititle">${esc(n.title || kind)}</span><br/><span class="ibody">${esc(n.body || '')}</span></span><span class="iwhen">${esc(inboxWhen(n.created_at))}</span><button type="button" class="inbox-x" title="Dismiss">×</button>`;
+    // A mention of a message with a picture carries that picture's url (see
+    // notifyMentions) — the row shows it, so the inbox reads at a glance.
+    const media = n.media_url ? inboxThumbsOf([{ url: n.media_url, kind: n.media_kind === 'video' ? 'video' : 'image' }]) : [];
+    b.innerHTML = `<span class="dot"></span><span class="imain"><span class="ititle">${esc(n.title || kind)}</span><br/><span class="ibody">${esc(n.body || '')}</span>${inboxMediaHTML(media)}</span><span class="iwhen">${esc(inboxWhen(n.created_at))}</span><button type="button" class="inbox-x" title="Dismiss">×</button>`;
     b.onclick = () => openNotifItem(n);
     b.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openNotifItem(n); } };
     b.querySelector('.inbox-x').onclick = (e) => { e.stopPropagation(); dismissNotif(n); };
+    wireInboxMedia(b, media);
     list.appendChild(b);
   }
 }
@@ -553,21 +557,92 @@ function paintReminderRows(list) {
     list.appendChild(b);
   }
 }
+// A saved message's media, as thumbnails. A picture is recognised at a glance
+// where a line of text is not, and the thumbnail is the fastest way to find the
+// thing you saved — so a bookmark with pictures shows them, up to three, with a
+// count for the rest. Local uploads paint the derived preview (the same URL the
+// chat uses, so the browser usually has it already); a remote GIF has only its
+// own bytes; a video has no still until `whenVideoPoster` has captured one, so
+// it starts as a play tile and takes its frame when that lands.
+const INBOX_THUMB_MAX = 3;
+const INBOX_MEDIA_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="8.6" cy="9.6" r="1.6"/><path d="M3.6 17.2l4.6-4.4a1.6 1.6 0 0 1 2.2 0l3.2 3 2.4-2.2a1.6 1.6 0 0 1 2.2 0l2.4 2.2"/></svg>';
+function inboxThumbsOf(media) {
+  return (media || []).filter((x) => x && x.url && (x.kind === 'image' || x.kind === 'video'));
+}
+function inboxMediaHTML(media) {
+  const shown = inboxThumbsOf(media).slice(0, INBOX_THUMB_MAX);
+  if (!shown.length) return '';
+  const tiles = shown.map((x, i) => {
+    const src = x.kind === 'image' ? (imageSrcFor(x) || x.url) : '';
+    const inner = src
+      ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async" />`
+      : `<span class="inbox-thumb-glyph">${x.kind === 'video' ? '▶' : INBOX_MEDIA_SVG}</span>`;
+    return `<button type="button" class="inbox-thumb ${x.kind === 'video' ? 'video' : 'image'}${x.spoiler ? ' spoiler' : ''}"`
+      + ` data-i="${i}" title="${esc(x.name || (x.kind === 'video' ? 'Video' : 'Image'))}"`
+      + ` aria-label="${esc(x.name || (x.kind === 'video' ? 'Video' : 'Image'))}">${inner}</button>`;
+  }).join('');
+  const rest = inboxThumbsOf(media).length - shown.length;
+  return `<div class="inbox-media">${tiles}${rest > 0 ? `<span class="inbox-thumb-more">+${rest}</span>` : ''}</div>`;
+}
+// Wire one bookmark's thumbnails: a picture opens the lightbox, a video opens
+// its own bytes (there is nothing to zoom in a video), and a preview that will
+// not load steps back to the original and then to a neutral tile — never a
+// broken-image box, and never the message's file card (the document-level
+// fallback in final.js only owns images it can identify by data-fb-*).
+function wireInboxMedia(row, shown) {
+  row.querySelectorAll('.inbox-thumb').forEach((tile) => {
+    const x = shown[Number(tile.dataset.i)];
+    if (!x) return;
+    tile.onclick = (e) => {
+      e.stopPropagation();
+      if (x.kind === 'video') { openMediaLink(absUrl(x.url)); return; }
+      openLightbox(x.url, x.name);
+    };
+    if (x.kind === 'video' && typeof whenVideoPoster === 'function') {
+      whenVideoPoster(x.url, (shot) => {
+        if (!shot || !tile.isConnected) return;
+        tile.style.backgroundImage = `url("${String(shot).replace(/"/g, '%22')}")`;
+        tile.classList.add('has-poster');
+      });
+    }
+    const img = tile.querySelector('img');
+    if (img) {
+      img.addEventListener('error', () => {
+        if (img.dataset.triedOriginal) { tile.classList.remove('image'); tile.replaceChildren(tileGlyphNode()); return; }
+        img.dataset.triedOriginal = '1';
+        img.src = x.url;
+      });
+    }
+  });
+}
+function tileGlyphNode() {
+  const s = document.createElement('span');
+  s.className = 'inbox-thumb-glyph';
+  s.innerHTML = INBOX_MEDIA_SVG;
+  return s;
+}
 function paintBookmarkRows(list) {
   const items = (inboxData.bookmarks || []).filter((b) => inboxMatches(b.content, b.authorName, b.where));
   for (const m of items) {
     const b = document.createElement('div');
     b.className = 'inbox-item saved';
     b.tabIndex = 0;
-    const media = (m.media || []).length ? ` [${(m.media || []).length} attachment${(m.media || []).length === 1 ? '' : 's'}]` : '';
-    const snip = String(m.content || '').replace(/\s+/g, ' ').trim();
+    const thumbs = inboxThumbsOf(m.media);
+    const files = (m.media || []).length - thumbs.length;
+    const snip = String(m.content || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    // The pictures speak for themselves: text is only echoed when there is some,
+    // and the "[N attachments]" placeholder is left for media that cannot be
+    // shown as a tile (a zip, a PDF, a spoilered file).
+    const body = snip || (files > 0 ? `[${files} file${files === 1 ? '' : 's'}]` : (thumbs.length ? '' : '[no text]'));
     b.innerHTML = `<span class="isave">${BOOKMARK_SVG}</span><span class="imain">`
-      + `<span class="ititle">${esc(m.authorName || 'Unknown')}</span>${inboxChip(m.where)}<br/>`
-      + `<span class="ibody">${esc((snip || media).slice(0, 200) || '[no text]')}</span></span>`
-      + `<span class="iwhen">${esc(inboxWhen(m.createdAt))}</span><button type="button" class="inbox-x" title="Remove bookmark">×</button>`;
+      + `<span class="ititle">${esc(m.authorName || 'Unknown')}</span>${inboxChip(m.where)}`
+      + (body ? `<br/><span class="ibody">${esc(body)}</span>` : '')
+      + inboxMediaHTML(m.media)
+      + `</span><span class="iwhen">${esc(inboxWhen(m.createdAt))}</span><button type="button" class="inbox-x" title="Remove bookmark">×</button>`;
     b.onclick = () => openSavedTarget({ messageId: m.messageId, threadId: m.threadId, serverId: m.serverId, channelId: m.channelId });
     b.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSavedTarget({ messageId: m.messageId, threadId: m.threadId, serverId: m.serverId, channelId: m.channelId }); } };
     b.querySelector('.inbox-x').onclick = (e) => { e.stopPropagation(); removeBookmarkRow(m); };
+    wireInboxMedia(b, thumbs.slice(0, INBOX_THUMB_MAX));
     list.appendChild(b);
   }
 }

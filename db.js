@@ -637,6 +637,15 @@ CREATE INDEX IF NOT EXISTS idx_game_days_user ON game_days(user_id, day);
   await addColumn('users', 'playing_game', 'TEXT');
   await addColumn('users', 'game_enabled', 'BIGINT NOT NULL DEFAULT 1');
   await addColumn('users', 'game_exclusions', "TEXT NOT NULL DEFAULT '[]'");
+  // The picture (or video) a notification was about, so the inbox row can show
+  // it as a thumbnail instead of describing it in words (the notifications
+  // table is created just above — this cannot move up with the other
+  // addColumn calls, which run before it exists). Only ever set from an
+  // ordinary, non-spoilered attachment of the message that raised the
+  // notification; gated view-once media lives in dm_attachments and is never
+  // consulted, so nothing private can leak into an inbox thumbnail.
+  await addColumn('notifications', 'media_url', 'TEXT');
+  await addColumn('notifications', 'media_kind', 'TEXT');
   await addColumn('attachments', 'spoiler', 'BIGINT NOT NULL DEFAULT 0');
   await addColumn('dm_attachments', 'spoiler', 'BIGINT NOT NULL DEFAULT 0');
   // Intrinsic pixel size of an image attachment, so a reader can reserve the

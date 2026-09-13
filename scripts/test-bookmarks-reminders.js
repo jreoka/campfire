@@ -242,7 +242,62 @@ async function main() {
     // Put it back to read so the DM case below is judged on its own.
     await api('POST', `/api/channels/${channelId}/read`, { token: tB });
 
-    console.log('\n[6] DMs: bookmark + mark unread');
+    console.log('\n[6] media: the snapshot and the inbox thumbnail');
+    // A real 1x1 PNG through the real upload route, so the attachment the
+    // bookmark and the notification are built from is an ordinary one.
+    const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+    async function uploadPng(token, filename) {
+      const fd = new FormData();
+      fd.append('file', new Blob([PNG], { type: 'image/png' }), filename);
+      const r = await fetch(`http://127.0.0.1:${PORT}/api/upload`, { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: fd });
+      return { status: r.status, data: await r.json().catch(() => null) };
+    }
+    const up = await uploadPng(tA, 'saved-photo.png');
+    check(up.status === 200 && up.data && up.data.kind === 'image' && !!up.data.url, 'a picture uploads', up.data);
+
+    // A mention of a message that carries the picture, so the notification has
+    // something to thumbnail (see notifyMentions).
+    aWs.send({ t: 'message', serverId: sid, channelId, content: '@alice have a look at this', attachments: [up.data], replyTo: null, threadRoot: null });
+    const mMedia = await waitForAsync(async () => {
+      const r = await api('GET', `/api/servers/${sid}/channels/${channelId}/messages`, { token: tB });
+      return (r.data.messages || []).find((m) => m.content.includes('have a look')) || null;
+    }, 6000);
+    if (!mMedia) return fail('the mentionable message never landed');
+    const withMedia = await waitForAsync(async () => {
+      const r = await api('GET', '/api/notifs/inbox', { token: tB });
+      return (r.data.items || []).find((n) => n.kind === 'mention' && n.message_id === mMedia.id) || null;
+    }, 6000);
+    check(!!withMedia, 'the mention lands in the inbox', withMedia);
+    check(!!withMedia && withMedia.media_url === up.data.url, 'and carries the picture for the row to thumbnail', withMedia && { url: withMedia.media_url, want: up.data.url });
+    check(!!withMedia && withMedia.media_kind === 'image', 'with its kind', withMedia && withMedia.media_kind);
+
+    // The veil is a choice the reader makes: a spoilered picture must never be
+    // shown in a list they did not choose to open.
+    const upSpoil = await uploadPng(tA, 'spoilered.png');
+    const spoiled = { ...upSpoil.data, spoiler: 1 };
+    aWs.send({ t: 'message', serverId: sid, channelId, content: '@alice spoilered thing', attachments: [spoiled], replyTo: null, threadRoot: null });
+    const mSpoil = await waitForAsync(async () => {
+      const r = await api('GET', `/api/servers/${sid}/channels/${channelId}/messages`, { token: tB });
+      return (r.data.messages || []).find((m) => m.content.includes('spoilered thing')) || null;
+    }, 6000);
+    if (!mSpoil) return fail('the spoilered message never landed');
+    const spoilNotif = await waitForAsync(async () => {
+      const r = await api('GET', '/api/notifs/inbox', { token: tB });
+      return (r.data.items || []).find((n) => n.kind === 'mention' && n.message_id === mSpoil.id) || null;
+    }, 6000);
+    check(!!spoilNotif && !spoilNotif.media_url, 'a spoilered attachment is left out of the thumbnail', spoilNotif && spoilNotif.media_url);
+
+    // The bookmark keeps the media reference (never the bytes) so its row can
+    // show the picture too.
+    const bmMedia = await api('POST', '/api/bookmarks', { token: tB, body: { messageId: mMedia.id, kind: 'server' } });
+    check(bmMedia.status === 200, 'the picture message can be bookmarked', bmMedia.data);
+    const bmRow = (await api('GET', '/api/bookmarks', { token: tB })).data.items.find((x) => x.messageId === mMedia.id);
+    check(!!bmRow && (bmRow.media || []).length === 1, 'and its media comes back for the row', bmRow && bmRow.media);
+    check(!!bmRow && bmRow.media[0].kind === 'image' && bmRow.media[0].url === up.data.url && !bmRow.media[0].spoiler,
+      'as an image with its url and no spoiler flag', bmRow && bmRow.media[0]);
+    await api('DELETE', '/api/bookmarks/' + mMedia.id, { token: tB });
+
+    console.log('\n[7] DMs: bookmark + mark unread');
     const dm = await api('POST', '/api/dms', { token: tB, body: { userId: uA } });
     let threadId = dm.data.thread?.id || dm.data.threadId;
     if (!threadId) {
@@ -272,7 +327,7 @@ async function main() {
     const dmBack = await api('GET', '/api/dms', { token: tB });
     check((dmBack.data.threads.find((t) => t.id === threadId) || {}).unread >= 1, 'the DM really is unread again');
 
-    console.log('\n[7] reminders');
+    console.log('\n[8] reminders');
     const past = await api('POST', '/api/reminders', { token: tB, body: { text: 'too late', remindAt: Date.now() - 3600e3 } });
     check(past.status === 400 && past.data.error === 'bad_time', 'a past time is refused', past.data);
     const far = await api('POST', '/api/reminders', { token: tB, body: { text: 'too far', remindAt: Date.now() + 10 * 366 * 864e5 } });
@@ -295,7 +350,7 @@ async function main() {
     const rDel = await api('DELETE', '/api/reminders/' + r2.data.reminder.id, { token: tB });
     check(rDel.status === 200 && (await api('GET', '/api/reminders', { token: tB })).data.items.length === 1, 'a reminder can be deleted');
 
-    console.log('\n[8] the scheduler rings a reminder exactly once');
+    console.log('\n[9] the scheduler rings a reminder exactly once');
     const soon = await api('POST', '/api/reminders', { token: tB, body: { text: 'ring me', remindAt: Date.now() + 1500, messageId: m2.id } });
     check(soon.status === 200, 'a reminder set for a moment from now is accepted', soon.data);
     const fired = await waitForAsync(async () => {
@@ -317,7 +372,7 @@ async function main() {
     const ringCount = (await api('GET', '/api/notifs/inbox', { token: tB })).data.items.filter((n) => n.kind === 'reminder' && /ring me/.test(n.body || '')).length;
     check(ringCount === 1, 'and exactly one inbox row exists for it', ringCount);
 
-    console.log('\n[9] the tables survive a restart (guarded migrations)');
+    console.log('\n[10] the tables survive a restart (guarded migrations)');
     check(serverLog.indexOf('reminders') === -1 || true, 'server log has no reminder errors');
   } catch (e) {
     console.error('\n[test] ERROR: ' + ((e && e.stack) || e));

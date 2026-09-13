@@ -5060,8 +5060,8 @@ async function unreadNotifs(uid) {
 }
 async function pushInbox(userId, n) {
   try {
-    await db.prepare('INSERT INTO notifications (id,user_id,kind,title,body,server_id,channel_id,message_id,thread_id,report_id,created_at,read_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(uid(), userId, n.kind || 'mention', String(n.title || '').slice(0, 120), String(n.body || '').slice(0, 300), n.server_id || null, n.channel_id || null, n.message_id || null, n.thread_id || null, n.report_id || null, now(), null);
+    await db.prepare('INSERT INTO notifications (id,user_id,kind,title,body,server_id,channel_id,message_id,thread_id,report_id,media_url,media_kind,created_at,read_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(uid(), userId, n.kind || 'mention', String(n.title || '').slice(0, 120), String(n.body || '').slice(0, 300), n.server_id || null, n.channel_id || null, n.message_id || null, n.thread_id || null, n.report_id || null, n.media_url || null, n.media_kind || null, now(), null);
     await db.prepare('DELETE FROM notifications WHERE user_id = ? AND id NOT IN (SELECT id FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 200)').run(userId, userId);
     notifyUser(userId, { t: 'notif-new', unread: await unreadNotifs(userId) });
   } catch {}
@@ -5134,6 +5134,18 @@ async function notifyServerMessage(serverId, channelId, author, content, message
       for (const r of await db.prepare(`SELECT DISTINCT user_id FROM member_roles WHERE server_id = ? AND role_id IN (${ph})`).all(serverId, ...roleIds)) roleHolders.add(r.user_id);
     } catch {}
   }
+  // The picture the mention was about, looked up ONCE for the whole fan-out: an
+  // inbox row that shows the photo is as informative as the chat itself. A
+  // spoilered attachment is deliberately left out — the veil exists to make the
+  // reader choose, and a thumbnail in a list nobody asked to open would decide
+  // for them.
+  let inboxMedia = null;
+  if (messageId) {
+    try {
+      const a = await db.prepare(`SELECT url, kind FROM attachments WHERE message_id = ? AND kind IN ('image','video') AND COALESCE(spoiler, 0) = 0 ORDER BY created_at ASC LIMIT 1`).get(messageId);
+      if (a && a.url) inboxMedia = { url: a.url, kind: a.kind === 'video' ? 'video' : 'image' };
+    } catch {}
+  }
   for (const uid of cands) {
     const pm = byUser.get(uid) || new Map();
     const mode = pm.get(`c:${channelId}`) || pm.get(`s:${serverId}`) || pm.get('global') || 'all';
@@ -5146,7 +5158,7 @@ async function notifyServerMessage(serverId, channelId, author, content, message
     // Notification center is for mentions + major events only — plain new
     // messages never land in the inbox, even on 'All messages' (that scope
     // still controls the OS/push ping below).
-    if (isMention) await pushInbox(uid, { kind: 'mention', title, body, server_id: serverId, channel_id: channelId, message_id: messageId || null });
+    if (isMention) await pushInbox(uid, { kind: 'mention', title, body, server_id: serverId, channel_id: channelId, message_id: messageId || null, media_url: inboxMedia ? inboxMedia.url : null, media_kind: inboxMedia ? inboxMedia.kind : null });
     await pushToUser(uid, {
       title,
       body,

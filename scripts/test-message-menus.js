@@ -426,7 +426,68 @@ async function main() {
     check(counts.some((c) => /Bookmarks\s*1|Bookmarks1/.test(c)), 'the Bookmarks tab carries its count', counts);
     await evaluate(`(() => { try { cancelModal(); } catch (e) {} return 1; })()`);
 
-    console.log('\n[9] the phone: a long-press sheet, and dragging it taller');
+    console.log('\n[9] the inbox button, and pictures in the lists');
+    const icon = await evaluate(`(() => {
+      const b = document.querySelector('#btn-notifs');
+      const svg = b && b.querySelector('svg');
+      return {
+        has: !!svg,
+        rect: !!(svg && svg.querySelector('rect')),
+        bell: !!(svg && /A6 6 0 0 0 6 8/.test(svg.innerHTML)),
+        paths: svg ? svg.querySelectorAll('path').length : -1,
+      };
+    })()`);
+    check(icon.has && icon.rect && !icon.bell, 'the inbox button draws an envelope, not a bell', icon);
+    check(icon.paths >= 1, 'with a flap', icon);
+    const thumbs = await evaluate(`(() => {
+      // A bookmark whose message carried pictures (the server snapshots the
+      // media with it) and a mention that carried one.
+      inboxData.bookmarks = [{
+        id: 'x1', messageId: 'm1', kind: 'server', serverId: 's1', channelId: 'c1',
+        authorName: 'Bruce', content: '', where: '#general · Menus', createdAt: Date.now(),
+        media: [
+          { name: 'photo.png', kind: 'image', url: '/uploads/files/photo.png?v=1' },
+          { name: 'clip.mp4', kind: 'video', url: '/uploads/files/clip.mp4' },
+          { name: 'notes.txt', kind: 'file', url: '/uploads/files/notes.txt' },
+        ],
+      }];
+      inboxData.notifs = [{
+        id: 'n1', kind: 'mention', title: '#general · Menus', body: 'Bruce: have a look',
+        created_at: Date.now(), read_at: null,
+        media_url: '/uploads/files/notif.png?v=2', media_kind: 'image',
+      }];
+      inboxTab = 'bookmarks';
+      paintInboxShell();
+      const tiles = [...document.querySelectorAll('.inbox-thumb')].map((t) => {
+        const img = t.querySelector('img');
+        return { src: img ? img.getAttribute('src') : null, video: t.classList.contains('video'), label: t.getAttribute('aria-label') };
+      });
+      const body = (document.querySelector('#inbox-list .inbox-item .ibody') || {}).textContent || '';
+      const more = !!document.querySelector('.inbox-thumb-more');
+      document.querySelector('.inbox-thumb').click();
+      const lbOpen = !document.querySelector('#lightbox').classList.contains('hidden');
+      const lbSrc = document.querySelector('#lightbox-img').getAttribute('src');
+      try { closeLightbox(); } catch (e) {}
+      inboxTab = 'notifs';
+      paintInboxShell();
+      const notifTiles = [...document.querySelectorAll('.inbox-thumb')].map((t) => {
+        const img = t.querySelector('img');
+        return img ? img.getAttribute('src') : null;
+      });
+      return { tiles, body, more, lbOpen, lbSrc, notifTiles };
+    })()`);
+    check(thumbs.tiles.length === 2, 'a bookmark shows one tile per picture/video, and none for a plain file', thumbs.tiles);
+    check(thumbs.tiles[0] && /^\/uploads\/thumbs\/files\/photo\.png\.webp\?v=1$/.test(thumbs.tiles[0].src || ''),
+      'a local upload is thumbnailed through the derived preview, cache key and all', thumbs.tiles[0]);
+    check(thumbs.tiles[1] && thumbs.tiles[1].video && !thumbs.tiles[1].src, 'a video is a play tile until a poster lands', thumbs.tiles[1]);
+    check(!/notes\.txt/.test(JSON.stringify(thumbs.tiles)), 'the file is not a tile', thumbs.tiles);
+    check(/\[1 file\]/.test(thumbs.body), 'and is counted in the row body instead', thumbs.body);
+    check(thumbs.lbOpen && thumbs.lbSrc === '/uploads/files/photo.png?v=1', 'tapping a picture tile opens it full size (the original, not the preview)', { open: thumbs.lbOpen, src: thumbs.lbSrc });
+    check(thumbs.notifTiles.length === 1 && /^\/uploads\/thumbs\/files\/notif\.png\.webp\?v=2$/.test(thumbs.notifTiles[0] || ''),
+      'and a mention of a message with a picture shows it too', thumbs.notifTiles);
+    await evaluate(`(() => { try { cancelModal(); } catch (e) {} return 1; })()`);
+
+    console.log('\n[10] the phone: a long-press sheet, and dragging it taller');
     await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true });
     await sleep(400);
