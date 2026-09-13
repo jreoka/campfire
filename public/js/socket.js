@@ -395,6 +395,24 @@ function onWS(m) {
       try { applyRemoteChanRead(m.serverId, m.channelId); } catch {}
       break;
     }
+    case 'chan-unread': {
+      // "Mark unread" on another device: the watermark moved backwards, so the
+      // dot comes back here too. The open conversation is exempt — the reader
+      // is looking at it here (and this device would stamp it read again).
+      if (m.serverId && m.channelId && !(S.view === 'server' && S.serverId === m.serverId && S.channelId === m.channelId)) {
+        try { markChanUnread(m.serverId, m.channelId); } catch {}
+      }
+      break;
+    }
+    case 'dm-unread': {
+      if (m.threadId && !(S.view === 'home' && S.dmThreadId === m.threadId)) {
+        const n = Number(m.unread) || 1;
+        S.dmUnread.set(m.threadId, n);
+        try { renderDmLists(); } catch {}
+        try { paintHomeBadge(); } catch {}
+      }
+      break;
+    }
     case 'dm-updated': {
       updateMsgInCaches(m.message.id, (old) => Object.assign(old, m.message));
       const inHistDu = S.histMode && S.histMode.kind === 'dm' && S.histMode.id === m.message.threadId;

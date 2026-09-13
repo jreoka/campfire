@@ -78,7 +78,11 @@ function clientChecks() {
   check(/async function refreshUnreadState\(\)/.test(servers) && /syncChanUnread\(\)/.test(servers) && /refreshDms\(\)/.test(servers),
     'one refresh reads every unread surface (channels + DMs + inbox)');
   check(/syncChanUnread\(\);/.test(auth), 'boot syncs the channel badges (the localStorage cache only paints first)');
-  check(/document\.addEventListener\('visibilitychange'[\s\S]{0,400}refreshUnreadState\(\)/.test(final),
+  // final.js has more than one visibilitychange listener (the auto-updater has
+  // its own), so the unread one is judged on its OWN block rather than on a
+  // character window measured from the first listener in the file.
+  const visBlocks = final.split("document.addEventListener('visibilitychange'").slice(1);
+  check(visBlocks.some((b) => /clearActiveChanUnread\(\)/.test(b.slice(0, 900)) && /refreshUnreadState\(\)/.test(b.slice(0, 900))),
     'a foregrounded tab re-reads them (the sleeping-phone case)');
   check(/if \(wsOpened\) \{ try \{ refreshUnreadState\(\); \} catch \{\} \}/.test(socket),
     'a socket RECONNECT re-reads them too (the missed-push case)');

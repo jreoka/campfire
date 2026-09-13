@@ -61,7 +61,7 @@ const GIF_STAR_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none
 const REPORT_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4"/><path d="M5 4h12l-2 4 2 4H5"/></svg>';
 const RX_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.2 1.8 3.5 1.8 3.5-1.8 3.5-1.8"/><line x1="9" y1="9.5" x2="9" y2="9.6"/><line x1="15" y1="9.5" x2="15" y2="9.6"/></svg>';
 function sysMenuItems(m) {
-  return [{ label: 'Copy text', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(m.content || ''); toast('Copied'); } catch {} } }];
+  return [{ label: 'Copy text', icon: '⧉', fn: () => { copyTextNow(m.content || ''); toast('Copied'); } }];
 }
 // The GIF a message carries, if it is one a favorite can name: a picker post
 // keeps the Klipy item's slug on the attachment (see cleanGifMeta in
@@ -79,6 +79,128 @@ function gifFavOf(m) {
     mp4: a.gif_mp4 || null,
   };
 }
+const BOOKMARK_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4.2L5 21V4a1 1 0 0 1 1-1z"/></svg>';
+const BOOKMARK_ON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4.2L5 21V4a1 1 0 0 1 1-1z"/></svg>';
+const CLOCK_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9.5V13l2.5 1.6"/><path d="M9 2h6"/></svg>';
+const UNREAD_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5h13l5 6.5-5 6.5H3z"/><circle cx="19" cy="5" r="2.4" fill="currentColor" stroke="none"/></svg>';
+const IMG_COPY_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>';
+const SAVE_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>';
+const LINK_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>';
+const OPEN_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>';
+
+/* ================= attachment (image / video) menus =================
+ * A long-press or right-click ON the picture itself is about the picture, not
+ * about the message that carries it: copy it, save it, copy its link, open its
+ * link. The attachment's identity lives on the .att-wrap (see attachmentHTML in
+ * messages.js), so every target inside the wrap — the image, the download chip,
+ * the GIF star, the spoiler veil — resolves to the same menu. */
+function attFromEl(el) {
+  const w = el && el.closest ? el.closest('.att-wrap[data-fb-url]') : null;
+  if (!w) return null;
+  const url = w.dataset.fbUrl || '';
+  if (!url) return null;
+  const video = w.dataset.fbKind === 'video';
+  return { url, name: w.dataset.fbName || (video ? 'video' : 'image'), kind: video ? 'video' : 'image' };
+}
+function absUrl(u) { try { return new URL(u, location.origin).href; } catch { return String(u || ''); } }
+function sameOriginUrl(u) { try { return new URL(u, location.origin).origin === location.origin; } catch { return false; } }
+function copyTextNow(text) {
+  try {
+    const p = navigator.clipboard && navigator.clipboard.writeText(String(text || ''));
+    if (p && p.catch) p.catch(() => toast('Could not copy'));
+    else if (!p) toast('Could not copy');
+    return true;
+  } catch { return false; }
+}
+// "Copy image" is the clipboard image flavour, which every engine that has one
+// takes as image/png — anything else (a webp/gif upload, a Klipy gif) is drawn
+// through a canvas first. Cross-origin media a fetch cannot read (no CORS on
+// the CDN) and browsers with no async clipboard both end on the same plain
+// advice rather than a silent no-op.
+function pngBlobFromBlob(blob) {
+  return new Promise((resolve, reject) => {
+    const src = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const cv = document.createElement('canvas');
+        cv.width = img.naturalWidth || 1; cv.height = img.naturalHeight || 1;
+        cv.getContext('2d').drawImage(img, 0, 0);
+        cv.toBlob((b) => { URL.revokeObjectURL(src); b ? resolve(b) : reject(new Error('encode')); }, 'image/png');
+      } catch (e) { URL.revokeObjectURL(src); reject(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(src); reject(new Error('decode')); };
+    img.src = src;
+  });
+}
+async function copyImageToClipboard(a) {
+  try {
+    if (!navigator.clipboard || typeof ClipboardItem === 'undefined') throw new Error('unsupported');
+    const res = await fetch(a.url, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('fetch');
+    const blob = await res.blob();
+    const png = blob.type === 'image/png' ? blob : await pngBlobFromBlob(blob);
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+    try { haptic(8); } catch {}
+    toast('Image copied');
+  } catch { toast('Could not copy the image — try Save image'); }
+}
+function triggerDownload(href, name) {
+  const link = document.createElement('a');
+  link.href = href;
+  link.download = name || 'file';
+  link.target = '_blank';
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+async function saveMediaFile(a) {
+  try {
+    if (sameOriginUrl(a.url)) {
+      triggerDownload(a.url, a.name);
+      toast('Saving ' + String(a.name || 'file').slice(0, 60) + '…');
+      return;
+    }
+    // Cross-origin: the download attribute is ignored and the app wrapper's
+    // WebView swallows target=_blank, so pull the bytes and hand a blob url to
+    // the download; if CORS refuses, open the link rather than do nothing.
+    const res = await fetch(a.url);
+    if (!res.ok) throw new Error('fetch');
+    const blob = await res.blob();
+    const u = URL.createObjectURL(blob);
+    triggerDownload(u, a.name);
+    toast('Saving ' + String(a.name || 'file').slice(0, 60) + '…');
+    setTimeout(() => URL.revokeObjectURL(u), 10000);
+  } catch { openMediaLink(a.url); }
+}
+// The same handoff the rest of the app uses for external links: the native
+// shell opens it in the OS browser, a plain browser gets a new tab.
+function openMediaLink(url) {
+  try {
+    const inv = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+    if (typeof inv === 'function') { inv('open_external', { url }).catch(() => {}); return; }
+  } catch {}
+  try { window.open(url, '_blank', 'noopener'); } catch {}
+}
+function mediaMenuItems(el) {
+  const a = attFromEl(el);
+  if (!a) return null;
+  const img = a.kind === 'image';
+  const url = absUrl(a.url);
+  const items = [];
+  if (img) items.push({ label: 'Copy image', icon: IMG_COPY_SVG, fn: () => copyImageToClipboard(a) });
+  items.push({ label: img ? 'Save image' : 'Save video', icon: SAVE_SVG, fn: () => saveMediaFile(a) });
+  items.push({ label: img ? 'Copy image link' : 'Copy video link', icon: LINK_SVG, fn: () => { copyTextNow(url); toast('Link copied'); } });
+  items.push({ label: img ? 'Open image link' : 'Open video link', icon: OPEN_SVG, fn: () => openMediaLink(url) });
+  return items;
+}
+function mediaSheetHead(el) {
+  const a = attFromEl(el);
+  if (!a) return null;
+  return { title: a.name, sub: a.kind === 'video' ? 'Video' : 'Image', glyph: a.kind === 'video' ? '▶' : '■', color: 'var(--panel-3)' };
+}
+
 function messageMenuItems(m, mid, x, y) {
   const dm = !!m._dm;
   const own = m.user && m.user.id === S.me.id;
@@ -103,7 +225,15 @@ function messageMenuItems(m, mid, x, y) {
   items.push({ sep: true });
   if (own) items.push({ label: 'Edit message', icon: '✎', fn: () => startEdit(mid) });
   if (canMod(m)) items.push({ label: 'Delete message', icon: '🗑', danger: true, fn: () => api((dm ? '/api/dms/messages/' : '/api/messages/') + mid, { method: 'DELETE' }).catch(() => toast('Delete failed')) });
-  items.push({ label: 'Copy text', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(m.content || ''); toast('Copied'); } catch {} } });
+  items.push({ label: 'Copy text', icon: '⧉', fn: () => { copyTextNow(m.content || ''); toast('Copied'); } });
+  // The reader's own memory of a conversation: leave this message as the first
+  // unread one, keep it (or drop it) from the bookmarks list, or set a nudge
+  // hung off it. All three are account state, so they follow the reader to
+  // every device like pins and unread do.
+  items.push({ label: 'Mark unread', icon: UNREAD_SVG, fn: () => markMessageUnread(mid) });
+  const saved = !!(S.bookmarkIds && S.bookmarkIds.has(mid));
+  items.push({ label: saved ? 'Remove bookmark' : 'Bookmark message', icon: saved ? BOOKMARK_ON_SVG : BOOKMARK_SVG, fn: () => toggleBookmark(mid, !saved) });
+  items.push({ label: 'Create reminder…', icon: CLOCK_SVG, fn: () => openReminderModal(mid) });
   // Reporting sits at the very bottom, set apart and in red: you cannot report
   // your own message, and it goes to site admins (never the author).
   if (!own && !m.sys) {
@@ -152,6 +282,137 @@ function messageCtxMenu(mid, x, y) {
   if (!m) return;
   if (m.sys) { openCtx(x, y, sysMenuItems(m)); return; }
   openCtx(x, y, messageMenuItems(m, mid, x, y));
+}
+/* ================= bookmarks + reminders (the reader's own memory) ================= */
+// Bookmarked message ids, for the menu's Bookmark/Remove bookmark wording. The
+// rows themselves live on the server (they must survive a reload, and the inbox
+// reads them back); this set is only the toggle state.
+async function loadBookmarks() {
+  if (!S.me || !store.token) return;
+  try { const { ids } = await api('/api/bookmarks/ids'); S.bookmarkIds = new Set(ids || []); }
+  catch { if (!S.bookmarkIds) S.bookmarkIds = new Set(); }
+}
+async function toggleBookmark(mid, on) {
+  if (!S.bookmarkIds) S.bookmarkIds = new Set();
+  const m = msgById(mid);
+  try {
+    if (on) {
+      await api('/api/bookmarks', { method: 'POST', body: JSON.stringify({ messageId: mid, kind: (m && m._dm) ? 'dm' : 'server' }) });
+      S.bookmarkIds.add(mid);
+      haptic(8);
+      toast('Saved to bookmarks');
+    } else {
+      await api('/api/bookmarks/' + encodeURIComponent(mid), { method: 'DELETE' });
+      S.bookmarkIds.delete(mid);
+      toast('Bookmark removed');
+    }
+  } catch (err) {
+    if (err && err.message === 'already_bookmarked') { S.bookmarkIds.add(mid); toast('Already bookmarked'); return; }
+    toast('Could not update the bookmark');
+  }
+}
+// Unread is a watermark on the server (see the route), so this both lights the
+// conversation here and remembers it for every other device.
+async function markMessageUnread(mid) {
+  try {
+    const r = await api('/api/messages/' + encodeURIComponent(mid) + '/unread', { method: 'POST' });
+    if (r && r.kind === 'dm') {
+      S.dmUnread.set(r.threadId, r.unread || 1);
+      try { renderDmLists(); } catch {}
+      try { paintHomeBadge(); } catch {}
+    } else if (r) {
+      try { markChanUnread(r.serverId, r.channelId); } catch {}
+      try { paintServerUnread(r.serverId); } catch {}
+    }
+    haptic(8);
+    toast('Marked unread');
+  } catch { toast('Could not mark it unread'); }
+}
+// Fan-out time choices. The first is the default; Custom is the same row family
+// so picking a time is one tap and a typed time is one more field, never a mode
+// switch.
+const REMIND_PRESETS = [
+  { label: 'In 20 minutes', ms: 20 * 60 * 1000 },
+  { label: 'In an hour', ms: 60 * 60 * 1000 },
+  { label: 'In 3 hours', ms: 3 * 60 * 60 * 1000 },
+  { label: 'Tomorrow', ms: 24 * 60 * 60 * 1000 },
+  { label: 'Next week', ms: 7 * 24 * 60 * 60 * 1000 },
+];
+function remindWhenText(ts) {
+  try {
+    return new Date(ts).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch { return ''; }
+}
+// `datetime-local` wants a local wall-clock string, not an ISO instant.
+function localDatetimeValue(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function openReminderModal(mid) {
+  const m = mid ? msgById(mid) : null;
+  const dm = !!(m && m._dm);
+  const where = dm ? 'this conversation' : 'this channel';
+  const snip = m ? String(m.content || '').replace(/\s+/g, ' ').trim().slice(0, 120) : '';
+  const pick = { at: Date.now() + REMIND_PRESETS[1].ms, label: REMIND_PRESETS[1].label, custom: 0 };
+  const chips = REMIND_PRESETS.map((p, i) =>
+    `<button type="button" class="rem-chip${i === 1 ? ' sel' : ''}" data-i="${i}">${esc(p.label)}</button>`).join('');
+  openModal('Create reminder', `
+    ${snip ? `<p class="muted small rem-ctx">“${esc(snip)}”</p>` : `<p class="muted small rem-ctx">Reminder for ${esc(where)}.</p>`}
+    <label style="display:block;margin-top:.5rem">Remind me about
+      <input id="rem-text" maxlength="300" placeholder="e.g. reply to this" />
+    </label>
+    <div class="rem-label">When</div>
+    <div class="rem-chips" id="rem-chips">${chips}</div>
+    <label style="display:block;margin-top:.6rem">Custom time
+      <input type="datetime-local" id="rem-custom" value="${esc(localDatetimeValue(new Date(pick.at)))}" />
+    </label>
+    <p class="muted small" id="rem-when" style="margin-top:.5rem"></p>
+  `, 'Create reminder', async () => {
+    const text = ($('#rem-text')?.value || '').trim();
+    const remindAt = pick.custom || pick.at;
+    if (!(remindAt > Date.now() - 1000)) { toast('Pick a time in the future'); return; }
+    try {
+      await api('/api/reminders', { method: 'POST', body: JSON.stringify({ text, remindAt, messageId: mid || undefined }) });
+      toast('Reminder set for ' + remindWhenText(remindAt));
+    } catch (err) {
+      toast('Could not set the reminder: ' + prettyError(err && err.message));
+    }
+  });
+  const paintWhen = () => {
+    const at = pick.custom || pick.at;
+    const el = $('#rem-when');
+    if (el) el.textContent = 'Reminds you ' + remindWhenText(at) + (pick.custom ? ' (custom)' : ' · ' + pick.label);
+  };
+  paintWhen();
+  const chipsEl = $('#rem-chips');
+  if (chipsEl) {
+    chipsEl.querySelectorAll('.rem-chip').forEach((b) => {
+      b.onclick = () => {
+        const i = Number(b.dataset.i) || 0;
+        const p = REMIND_PRESETS[i] || REMIND_PRESETS[0];
+        pick.at = Date.now() + p.ms;
+        pick.label = p.label;
+        // A preset is a time in its own right: touching one takes the custom
+        // field back out of the running (and puts its clock back in step) so
+        // there is never a hidden second answer to "when".
+        pick.custom = 0;
+        const cu = $('#rem-custom');
+        if (cu) cu.value = localDatetimeValue(new Date(pick.at));
+        chipsEl.querySelectorAll('.rem-chip').forEach((x) => x.classList.toggle('sel', x === b));
+        paintWhen();
+      };
+    });
+  }
+  const cu = $('#rem-custom');
+  if (cu) {
+    cu.oninput = () => {
+      const ts = Date.parse(cu.value);
+      pick.custom = Number.isFinite(ts) ? ts : 0;
+      if (pick.custom) { chipsEl?.querySelectorAll('.rem-chip').forEach((x) => x.classList.remove('sel')); }
+      paintWhen();
+    };
+  }
+  setTimeout(() => { try { $('#rem-text')?.focus(); } catch {} }, 0);
 }
 function reactLabel(e) {
   const em = S.emojiAll[e.slice(1, -1)];
@@ -230,7 +491,8 @@ function openMsgSheet(mid) {
   sh.appendChild(cancel);
   document.body.appendChild(bd);
   document.body.appendChild(sh);
-  swipeDownToClose(sh, () => closeMsgSheet(), { dragClass: 'sheet-dragging', enabled: () => sh.classList.contains('open') });
+  swipeDownToClose(sh, () => closeMsgSheet(), { dragClass: 'sheet-dragging', scroller: () => sh.querySelector('.sheet-rows'), enabled: () => sh.classList.contains('open') });
+  sheetDragExpand(sh, { enabled: () => sh.classList.contains('open') });
   requestAnimationFrame(() => requestAnimationFrame(() => {
     bd.classList.add('open'); sh.classList.add('open');
   }));
@@ -347,7 +609,8 @@ function openCtxSheet(items, head) {
   sh.appendChild(cancel);
   document.body.appendChild(bd);
   document.body.appendChild(sh);
-  swipeDownToClose(sh, () => closeMsgSheet(), { dragClass: 'sheet-dragging', enabled: () => sh.classList.contains('open') });
+  swipeDownToClose(sh, () => closeMsgSheet(), { dragClass: 'sheet-dragging', scroller: () => sh.querySelector('.sheet-rows'), enabled: () => sh.classList.contains('open') });
+  sheetDragExpand(sh, { enabled: () => sh.classList.contains('open') });
   requestAnimationFrame(() => requestAnimationFrame(() => { bd.classList.add('open'); sh.classList.add('open'); }));
 }
 function folderSheetItems(fid) {
@@ -862,6 +1125,10 @@ function channelMenuItems(cid, ctype) {
 function channelCtxMenu(cid, ctype, x, y) { openCtx(x, y, channelMenuItems(cid, ctype)); }
 function ctxFor(el, x, y) {
   if (!el || !el.closest) return false;
+  // Media first: a right-click on a picture belongs to the picture (copy, save,
+  // link), and only the message's other pixels open the message menu.
+  const media = mediaMenuItems(el);
+  if (media) { openCtx(x, y, media); return true; }
   const msg = el.closest('.msg[data-mid]');
   if (msg) { messageCtxMenu(msg.dataset.mid, x, y); return true; }
   const vu = el.closest('.vuser[data-uid]');
@@ -898,7 +1165,7 @@ document.addEventListener('touchend', (e) => {
 document.addEventListener('touchstart', (e) => {
   noteTouchStart();
   if (!e.target.closest || e.target.closest('input, textarea, select, a')) return;
-  const t = e.target.closest('.msg,.chan,.member,.server-btn,.folder-btn,.vuser,[data-dmthread]');
+  const t = e.target.closest('.msg,.chan,.member,.server-btn,.folder-btn,.vuser,[data-dmthread],.att-wrap');
   if (!t) return;
   const touch = e.touches[0];
   const x = touch.clientX, y = touch.clientY;
@@ -907,6 +1174,13 @@ document.addEventListener('touchstart', (e) => {
   holdT = setTimeout(() => {
     holdT = null;
     haptic(12); // the long-press that opens a menu is one of the few beats left
+    // A picture holds its own menu (copy / save / link) — the same rows the
+    // desktop right-click gets, in the sheet this device uses for everything.
+    const aw = t.closest('.att-wrap');
+    if (aw && isCoarse()) {
+      const media = mediaMenuItems(aw);
+      if (media) { holdSheet = true; openCtxSheet(media, mediaSheetHead(aw)); return; }
+    }
     const mt = t.closest('.msg[data-mid]');
     if (mt && isCoarse()) { holdSheet = true; openMsgSheet(mt.dataset.mid); return; }
     const ch = t.closest('.chan[data-cid]');

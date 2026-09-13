@@ -236,6 +236,77 @@ swipeDownToClose.swallowUntil = 0;
 document.addEventListener('click', (e) => {
   if (Date.now() < swipeDownToClose.swallowUntil) { e.stopPropagation(); e.preventDefault(); }
 }, true);
+// A bottom sheet whose menu is longer than the sheet is made TALLER by dragging
+// it up from its handle/header — the phone gesture, not a scrollbar the thumb
+// has to find. The rows stay a scroll region (a flick still scrolls a menu that
+// outgrows even the expanded sheet), so this only decides how much of the
+// screen the sheet is allowed to claim: drag up past a third of the way and it
+// stays tall, drag down and it gives the screen back before the next downward
+// pull closes it.
+//
+// The grab zone is deliberately the chrome, never the rows: a drag from inside
+// the list must stay the list's scroll (and, at its top, the close gesture
+// swipeDownToClose owns). Direction is decided once per touch, so the two
+// handlers can share a finger without fighting over it.
+function sheetDragExpand(panel, opts = {}) {
+  if (!panel) return;
+  const maxH = () => Math.round((window.visualViewport && window.visualViewport.height ? window.visualViewport.height : innerHeight) * (opts.max || 0.94));
+  const onGrab = (target) => {
+    try { return !!target.closest('.sheet-handle, .sheet-head, .sheet-reacts, .sheet-swrow, .sheet-swlabel'); } catch { return false; }
+  };
+  let startH = 0, startY = 0, active = false, dir = 0;
+  panel.addEventListener('touchstart', (e) => {
+    active = false; dir = 0;
+    if (e.touches.length !== 1 || (opts.enabled && !opts.enabled())) return;
+    if (!onGrab(e.target)) return;
+    active = true;
+    startH = panel.offsetHeight;
+    startY = e.touches[0].clientY;
+  }, { passive: true });
+  panel.addEventListener('touchmove', (e) => {
+    if (!active || e.touches.length !== 1) return;
+    const d = startY - e.touches[0].clientY; // up is positive
+    if (!dir) {
+      if (Math.abs(d) < 6) return;
+      // Downward belongs to the close gesture — hand the finger over rather
+      // than growing and shrinking the sheet in the same frame.
+      if (d < 0) { active = false; return; }
+      dir = 1;
+    }
+    e.preventDefault();
+    panel.classList.add('sheet-dragging');
+    // The stylesheet's own cap (78vh) is what a drag is lifting, so it has to be
+    // overridden while the finger owns the height — clearing the inline value
+    // instead would leave the sheet clamped to exactly where it started.
+    panel.style.maxHeight = maxH() + 'px';
+    panel.style.height = Math.max(120, Math.min(maxH(), startH + d)) + 'px';
+  }, { passive: false });
+  const end = () => {
+    if (!active) return;
+    active = false;
+    const h = parseFloat(panel.style.height) || 0;
+    const wasDrag = !!dir;
+    dir = 0;
+    panel.classList.remove('sheet-dragging');
+    // Settle on the side of the decision the finger was on: the sheet is either
+    // tall or it is not, never halfway. The class goes on BEFORE the inline cap
+    // comes off, so the height never falls back for a frame.
+    if (h && h > startH + 24) panel.classList.add('sheet-tall');
+    else if (h) panel.classList.remove('sheet-tall');
+    panel.style.height = '';
+    panel.style.maxHeight = '';
+    if (h) {
+      panel.style.transition = 'max-height .2s var(--ease-native)';
+      setTimeout(() => { if (!panel.classList.contains('sheet-dragging')) panel.style.transition = ''; }, 220);
+    }
+    // Only a real drag swallows the release click; a touch that wobbled and
+    // lifted is still a tap on whatever row it was over.
+    if (wasDrag) swipeDownToClose.swallowUntil = Date.now() + 400;
+  };
+  panel.addEventListener('touchend', end, { passive: true });
+  panel.addEventListener('touchcancel', end, { passive: true });
+}
+
 swipeDownToClose($('#profile-backdrop .profile'), () => closeProfileScreen(), { scroller: () => $('#pf-body') });
 swipeDownToClose($('#usercard'), () => closeUserCard(), { enabled: () => $('#usercard').classList.contains('sheet') });
 // The members drawer's own dismiss: it comes in from the right edge, so it

@@ -384,42 +384,242 @@ function inboxWhen(ts) {
   try { return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
   catch { return ''; }
 }
-async function openInbox() {
-  let items = [];
-  try { ({ items } = await api('/api/notifs/inbox')); } catch { toast('Could not load notifications'); return; }
-  openModal('Notifications', `<div class="row end" style="margin:0 0 .4rem"><button class="btn small" id="m-notif-readall">Mark all read</button><button class="btn small" id="m-notif-clear">Dismiss all</button></div><div id="m-inbox-list"></div>`, 'Close', null, { wide: true });
-  const list = $('#m-inbox-list');
-  if (!items.length) list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">All caught up — mentions and friend updates land here.</p>';
+// ---------- the inbox: notifications, reminders, bookmarks ----------
+// One panel behind the bell, three lists that are all "something waiting for
+// you": the notification inbox it always was, the reminders you set off a
+// message (or from nothing at all), and the messages you bookmarked. Each tab
+// carries its own search box — the lists are read on the fly (bookmarks and
+// reminders are capped server-side) so filtering is instant and never a round
+// trip per keystroke.
+const INBOX_TABS = [
+  { id: 'notifs', label: 'Notifications', hint: 'Search notifications…' },
+  { id: 'reminders', label: 'Reminders', hint: 'Search reminders…' },
+  { id: 'bookmarks', label: 'Bookmarks', hint: 'Search bookmarks…' },
+];
+let inboxTab = 'notifs';
+let inboxQuery = '';
+let inboxData = { notifs: null, reminders: null, bookmarks: null };
+// "in 3 hr" / "2 days ago" — a reminder is read on a clock, not a calendar.
+function inboxRel(ts) {
+  if (!ts) return '';
+  const diff = Number(ts) - Date.now();
+  const past = diff < 0;
+  const abs = Math.abs(diff);
+  if (abs < 60000) return 'now';
+  let text;
+  if (abs < 3600000) text = Math.round(abs / 60000) + ' min';
+  else if (abs < 86400000) text = Math.round(abs / 3600000) + ' hr';
+  else { const d = Math.round(abs / 86400000); text = d + (d === 1 ? ' day' : ' days'); }
+  return past ? text + ' ago' : 'in ' + text;
+}
+function inboxChip(text, cls) { return text ? `<span class="inbox-chip${cls ? ' ' + cls : ''}">${esc(text)}</span>` : ''; }
+// Local copies of the two row marks so this module paints its own list without
+// depending on another module's icon constants (and never an emoji glyph).
+const INBOX_CLOCK_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9.5V13l2.5 1.6"/><path d="M9 2h6"/></svg>';
+const INBOX_CHECK_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>';
+async function openInbox(tab) {
+  if (tab && INBOX_TABS.some((t) => t.id === tab)) inboxTab = tab;
+  inboxQuery = '';
+  inboxData = { notifs: null, reminders: null, bookmarks: null };
+  const tabs = INBOX_TABS.map((t) =>
+    `<button type="button" class="inbox-tab${t.id === inboxTab ? ' on' : ''}" data-tab="${t.id}" role="tab" aria-selected="${t.id === inboxTab}">${t.label}<span class="inbox-tab-n hidden" data-n="${t.id}"></span></button>`).join('');
+  // The search field is added a beat later, on purpose: openModal() focuses the
+  // first <input> it finds, and a phone should not raise its keyboard just
+  // because the inbox was opened to read something.
+  openModal('Inbox', `<div class="inbox-tabs" id="inbox-tabs" role="tablist">${tabs}</div><div id="inbox-pane"></div>`, 'Close', null, { wide: true });
+  const tabEl = $('#inbox-tabs');
+  tabEl.querySelectorAll('.inbox-tab').forEach((b) => {
+    b.onclick = () => {
+      inboxTab = b.dataset.tab;
+      inboxQuery = '';
+      tabEl.querySelectorAll('.inbox-tab').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-selected', String(x === b)); });
+      paintInboxShell();
+    };
+  });
+  paintInboxShell();
+  await loadInboxAll();
+  // Repaint the LIST only: rebuilding the shell here would tear the search
+  // field out from under a reader who is already typing in it.
+  paintInboxList();
+  paintInboxCounts();
+}
+function inboxTabDef(id) { return INBOX_TABS.find((t) => t.id === id) || INBOX_TABS[0]; }
+function inboxLoading() { return inboxData[inboxTab] === null; }
+// The shell (search + list) is rebuilt on a tab change; typing only ever
+// repaints the LIST, so the caret stays in the field.
+function paintInboxShell() {
+  const pane = $('#inbox-pane');
+  if (!pane) return;
+  pane.innerHTML = `
+    <div class="inbox-search"><input id="inbox-q" type="search" autocomplete="off" spellcheck="false" placeholder="${esc(inboxTabDef(inboxTab).hint)}" value="${esc(inboxQuery)}" /></div>
+    <div class="inbox-list" id="inbox-list"></div>`;
+  const q = $('#inbox-q');
+  if (q) {
+    q.oninput = () => { inboxQuery = q.value.trim().toLowerCase(); paintInboxList(); };
+    q.onkeydown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); q.value = ''; inboxQuery = ''; paintInboxList(); } };
+  }
+  paintInboxList();
+  paintInboxCounts();
+}
+function paintInboxCounts() {
+  const set = (id, n) => {
+    const el = document.querySelector(`#inbox-tabs .inbox-tab-n[data-n="${id}"]`);
+    if (!el) return;
+    el.textContent = n > 99 ? '99+' : String(n);
+    el.classList.toggle('hidden', !n);
+  };
+  set('notifs', S.notifUnread || 0);
+  set('reminders', (inboxData.reminders || []).filter((r) => !r.firedAt).length);
+  set('bookmarks', (inboxData.bookmarks || []).length);
+}
+async function loadInboxAll() {
+  const [n, r, b] = await Promise.all([
+    api('/api/notifs/inbox').catch(() => null),
+    api('/api/reminders').catch(() => null),
+    api('/api/bookmarks').catch(() => null),
+  ]);
+  // null keeps a tab in its loading state; an empty array is a real answer.
+  if (n) { inboxData.notifs = n.items || []; paintNotifBadge(n.unread || 0); } else if (!inboxData.notifs) inboxData.notifs = [];
+  if (r) inboxData.reminders = r.items || []; else if (!inboxData.reminders) inboxData.reminders = [];
+  if (b) inboxData.bookmarks = b.items || []; else if (!inboxData.bookmarks) inboxData.bookmarks = [];
+}
+function inboxMatches(...fields) {
+  if (!inboxQuery) return true;
+  return fields.some((f) => String(f || '').toLowerCase().includes(inboxQuery));
+}
+function paintInboxList() {
+  const list = $('#inbox-list');
+  if (!list) return;
+  list.innerHTML = '';
+  if (inboxLoading()) { list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">Loading…</p>'; return; }
+  if (inboxTab === 'notifs') paintNotifRows(list);
+  else if (inboxTab === 'reminders') paintReminderRows(list);
+  else paintBookmarkRows(list);
+  if (!list.children.length) {
+    const msg = inboxQuery
+      ? 'Nothing matches that search.'
+      : inboxTab === 'notifs' ? 'All caught up — mentions and friend updates land here.'
+      : inboxTab === 'reminders' ? 'No reminders yet — set one from a message\'s menu (Create reminder).'
+      : 'No bookmarks yet — save a message from its menu.';
+    list.innerHTML = `<p class="muted" style="text-align:center;padding:1rem">${esc(msg)}</p>`;
+  }
+}
+function paintNotifRows(list) {
+  const items = (inboxData.notifs || []).filter((n) => inboxMatches(n.title, n.body, n.kind));
+  if (items.length) {
+    const bar = document.createElement('div');
+    bar.className = 'row end';
+    bar.innerHTML = '<button class="btn small" id="m-notif-readall">Mark all read</button><button class="btn small" id="m-notif-clear">Dismiss all</button>';
+    list.appendChild(bar);
+    bar.querySelector('#m-notif-readall').onclick = async () => {
+      try { await api('/api/notifs/read', { method: 'PUT', body: JSON.stringify({ all: true }) }); } catch {}
+      paintNotifBadge(0);
+      for (const n of (inboxData.notifs || [])) n.read_at = n.read_at || Date.now();
+      paintInboxList(); paintInboxCounts();
+    };
+    bar.querySelector('#m-notif-clear').onclick = async () => {
+      try { await api('/api/notifs', { method: 'DELETE' }); } catch {}
+      paintNotifBadge(0);
+      inboxData.notifs = [];
+      paintInboxList(); paintInboxCounts();
+    };
+  }
   for (const n of items) {
     const b = document.createElement('div');
     b.className = 'inbox-item' + (n.read_at ? ' read' : '');
     b.tabIndex = 0;
-    const kind = n.kind === 'dm' ? 'DM' : n.kind === 'friend' ? 'Friend' : n.kind === 'reaction' ? 'Reaction' : n.kind === 'friend-status' ? 'Friend status' : n.kind === 'report' ? 'Report' : 'Mention';
+    const kind = n.kind === 'dm' ? 'DM' : n.kind === 'friend' ? 'Friend' : n.kind === 'reaction' ? 'Reaction' : n.kind === 'friend-status' ? 'Friend status' : n.kind === 'report' ? 'Report' : n.kind === 'reminder' ? 'Reminder' : 'Mention';
     b.innerHTML = `<span class="dot"></span><span class="imain"><span class="ititle">${esc(n.title || kind)}</span><br/><span class="ibody">${esc(n.body || '')}</span></span><span class="iwhen">${esc(inboxWhen(n.created_at))}</span><button type="button" class="inbox-x" title="Dismiss">×</button>`;
     b.onclick = () => openNotifItem(n);
     b.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openNotifItem(n); } };
-    b.querySelector('.inbox-x').onclick = (e) => { e.stopPropagation(); dismissNotif(n, b); };
+    b.querySelector('.inbox-x').onclick = (e) => { e.stopPropagation(); dismissNotif(n); };
     list.appendChild(b);
   }
-  $('#m-notif-readall').onclick = async () => {
-    try { await api('/api/notifs/read', { method: 'PUT', body: JSON.stringify({ all: true }) }); } catch {}
-    paintNotifBadge(0);
-    openInbox();
-  };
-  $('#m-notif-clear').onclick = async () => {
-    try { await api('/api/notifs', { method: 'DELETE' }); } catch {}
-    paintNotifBadge(0);
-    openInbox();
-  };
+}
+function paintReminderRows(list) {
+  const items = (inboxData.reminders || []).filter((r) => inboxMatches(r.text, r.where));
+  for (const r of items) {
+    const b = document.createElement('div');
+    b.className = 'inbox-item saved' + (r.firedAt ? ' read' : '');
+    b.tabIndex = 0;
+    const when = r.firedAt ? 'rang ' + inboxRel(r.firedAt) : inboxRel(r.remindAt);
+    b.innerHTML = `<span class="isave">${r.firedAt ? INBOX_CHECK_SVG : INBOX_CLOCK_SVG}</span><span class="imain">`
+      + `<span class="ititle">${esc(r.text || 'Reminder')}</span><br/>`
+      + `<span class="ibody">${r.where ? esc(r.where) + ' · ' : ''}${esc(inboxWhen(r.remindAt))}</span></span>`
+      + `<span class="iwhen">${esc(when)}</span><button type="button" class="inbox-x" title="Delete">×</button>`;
+    b.onclick = () => openSavedTarget(r);
+    b.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSavedTarget(r); } };
+    b.querySelector('.inbox-x').onclick = (e) => { e.stopPropagation(); deleteReminder(r); };
+    list.appendChild(b);
+  }
+}
+function paintBookmarkRows(list) {
+  const items = (inboxData.bookmarks || []).filter((b) => inboxMatches(b.content, b.authorName, b.where));
+  for (const m of items) {
+    const b = document.createElement('div');
+    b.className = 'inbox-item saved';
+    b.tabIndex = 0;
+    const media = (m.media || []).length ? ` [${(m.media || []).length} attachment${(m.media || []).length === 1 ? '' : 's'}]` : '';
+    const snip = String(m.content || '').replace(/\s+/g, ' ').trim();
+    b.innerHTML = `<span class="isave">${BOOKMARK_SVG}</span><span class="imain">`
+      + `<span class="ititle">${esc(m.authorName || 'Unknown')}</span>${inboxChip(m.where)}<br/>`
+      + `<span class="ibody">${esc((snip || media).slice(0, 200) || '[no text]')}</span></span>`
+      + `<span class="iwhen">${esc(inboxWhen(m.createdAt))}</span><button type="button" class="inbox-x" title="Remove bookmark">×</button>`;
+    b.onclick = () => openSavedTarget({ messageId: m.messageId, threadId: m.threadId, serverId: m.serverId, channelId: m.channelId });
+    b.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSavedTarget({ messageId: m.messageId, threadId: m.threadId, serverId: m.serverId, channelId: m.channelId }); } };
+    b.querySelector('.inbox-x').onclick = (e) => { e.stopPropagation(); removeBookmarkRow(m); };
+    list.appendChild(b);
+  }
+}
+async function removeBookmarkRow(m) {
+  try { await api('/api/bookmarks/' + encodeURIComponent(m.messageId), { method: 'DELETE' }); } catch {}
+  if (S.bookmarkIds) S.bookmarkIds.delete(m.messageId);
+  inboxData.bookmarks = (inboxData.bookmarks || []).filter((x) => x.messageId !== m.messageId);
+  paintInboxList(); paintInboxCounts();
+}
+async function deleteReminder(r) {
+  try { await api('/api/reminders/' + encodeURIComponent(r.id), { method: 'DELETE' }); } catch {}
+  inboxData.reminders = (inboxData.reminders || []).filter((x) => x.id !== r.id);
+  paintInboxList(); paintInboxCounts();
+}
+// A saved entry opens the LIVE message when it still exists (so it can be
+// replied to, reacted to, read in context) and the conversation it came from
+// when it does not — the snapshot on the bookmark is what keeps it readable.
+async function openSavedTarget(item) {
+  const messageId = item.messageId || '';
+  const threadId = item.threadId || '';
+  const serverId = item.serverId || '';
+  const channelId = item.channelId || '';
+  $('#modal-backdrop').classList.add('hidden');
+  try {
+    if (threadId) {
+      await openHome();
+      if (!S.dms.some((t) => t.id === threadId)) {
+        try { await api(`/api/dms/${threadId}/open`, { method: 'POST' }); await refreshDms(); } catch {}
+      }
+      selectDmThread(threadId);
+      if (messageId) setTimeout(() => { try { jumpToMessage(messageId); } catch {} }, 450);
+      return;
+    }
+    if (serverId) {
+      if (serverId !== S.serverId) await selectServer(serverId);
+      if (channelId && channelId !== S.channelId) await selectChannel(channelId, { keepNav: true });
+      if (messageId) setTimeout(() => { try { jumpToMessage(messageId); } catch {} }, 450);
+      return;
+    }
+  } catch {}
+  if (messageId) { try { await jumpToMessage(messageId); } catch {} }
 }
 async function openNotifItem(n) {
   try { await api('/api/notifs/read', { method: 'PUT', body: JSON.stringify({ ids: [n.id] }) }); } catch {}
   refreshNotifBadge();
+  // A reminder's row carries the conversation it was set off, so it lands the
+  // same way any other notification does.
   $('#modal-backdrop').classList.add('hidden');
   try {
     // Site-admin reports open the console's queue rather than a chat.
     if (n.kind === 'report' && isSiteAdmin()) { openAdminConsole('reports'); return; }
-    if ((n.kind === 'dm' || n.kind === 'reaction') && n.thread_id) { await openHome(); selectDmThread(n.thread_id); }
+    if ((n.kind === 'dm' || n.kind === 'reaction' || n.kind === 'reminder') && n.thread_id) { await openHome(); selectDmThread(n.thread_id); if (n.message_id) setTimeout(() => { try { jumpToMessage(n.message_id); } catch {} }, 450); }
     else if (n.kind === 'friend') { await openHome(); S.friendTab = 'pending'; document.querySelector('#friend-tabs .ftab[data-ftab="pending"]')?.click(); refreshFriends(); }
     else if (n.kind === 'friend-status') { await openHome(); showFriendsPanel(); }
     else if (n.server_id) {
@@ -429,11 +629,10 @@ async function openNotifItem(n) {
     }
   } catch {}
 }
-async function dismissNotif(n, el) {
+async function dismissNotif(n) {
   try { const { unread } = await api('/api/notifs/' + n.id, { method: 'DELETE' }); paintNotifBadge(unread || 0); } catch {}
-  el.remove();
-  const list = $('#m-inbox-list');
-  if (list && !list.children.length) list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">All caught up — mentions and friend updates land here.</p>';
+  inboxData.notifs = (inboxData.notifs || []).filter((x) => x.id !== n.id);
+  paintInboxList(); paintInboxCounts();
 }
 $('#btn-notifs').onclick = openInbox;
 function openOwnCard() {

@@ -180,9 +180,14 @@ function attachmentHTML(a) {
     const ar = d ? d.w / d.h : 0;
     const r = ar ? ar.toFixed(4) : '';
     const style = d ? ` style="--att-ar:${r};width:min(${d.w}px,100%,420px,calc(var(--att-max-h,320px) * ${r}))"` : '';
-    return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}${d ? ' ar' : ' no-ar'}"${style}><span class="att-ph" aria-hidden="true"><span class="att-spin"></span></span><img class="att-img" src="${esc(thumb || a.url)}" alt="${esc(a.name)}" loading="lazy" decoding="async"${d ? ` width="${d.w}" height="${d.h}"` : ''}${thumb ? ' data-fb-thumb="1"' : ''} data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${attFavHTML(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+    // The wrap carries the attachment's own identity too (url/name/kind): the
+    // long-press and right-click menus are opened on whatever the finger is
+    // over, which is the wrap, the image, the download chip or the star — one
+    // read from the wrap covers all of them (see attFromEl in actions.js).
+    const meta = ` data-fb-url="${esc(a.url)}" data-fb-name="${esc(a.name)}" data-fb-kind="image"`;
+    return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}${d ? ' ar' : ' no-ar'}"${style}${meta}><span class="att-ph" aria-hidden="true"><span class="att-spin"></span></span><img class="att-img" src="${esc(thumb || a.url)}" alt="${esc(a.name)}" loading="lazy" decoding="async"${d ? ` width="${d.w}" height="${d.h}"` : ''}${thumb ? ' data-fb-thumb="1"' : ''} data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${attFavHTML(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   }
-  if (a.kind === 'video') return `<span class="att-wrap loading${a.spoiler ? ' spoiler' : ''}"><video class="att-vid" src="${esc(a.url)}" controls preload="metadata" playsinline></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+  if (a.kind === 'video') return `<span class="att-wrap loading${a.spoiler ? ' spoiler' : ''}" data-fb-url="${esc(a.url)}" data-fb-name="${esc(a.name)}" data-fb-kind="video"><video class="att-vid" src="${esc(a.url)}" controls preload="metadata" playsinline></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'audio') return audioPlayerHTML(a);
   if (textPreviewable(a)) return textFileHTML(a);
   return `<a class="file-card" href="${esc(a.url)}" target="_blank" rel="noopener"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span><span class="fname">${esc(a.name)}</span><br/><span class="fsize">${fmtSize(a.size)}</span></span></a>`;

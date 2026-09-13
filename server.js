@@ -2193,6 +2193,268 @@ app.post('/api/reports', authRequired, async (req, res) => {
   res.json({ ok: true, id: rep.id });
 });
 
+// ---------- mark unread (from a message) ----------
+// Unread is a WATERMARK, not a per-message flag (channel_reads.last_read_at /
+// dm_members.last_read_at — see channelUnreadFor), so "Mark unread" steps that
+// watermark to one millisecond BEFORE the message: the message itself becomes
+// the first unread one and everything the reader already saw below it stays
+// read. One endpoint for both surfaces because the caller only ever holds a
+// message id, and the push is the read push inverted so this account's other
+// devices paint the dot too.
+app.post('/api/messages/:mid/unread', authRequired, async (req, res) => {
+  const mid = String(req.params.mid || '');
+  if (!mid) return res.status(400).json({ error: 'bad_request' });
+  const sm = await db.prepare('SELECT id, server_id, channel_id, created_at FROM messages WHERE id = ?').get(mid);
+  if (sm) {
+    if (!(await isMember(sm.server_id, req.user.id))) return res.status(404).json({ error: 'no_message' });
+    await db.prepare(`INSERT INTO channel_reads (user_id, channel_id, last_read_at) VALUES (?,?,?)
+      ON CONFLICT (user_id, channel_id) DO UPDATE SET last_read_at = EXCLUDED.last_read_at`)
+      .run(req.user.id, sm.channel_id, Number(sm.created_at) - 1);
+    notifyUser(req.user.id, { t: 'chan-unread', serverId: sm.server_id, channelId: sm.channel_id });
+    return res.json({ ok: true, kind: 'server', serverId: sm.server_id, channelId: sm.channel_id });
+  }
+  const dm = await dmMsg(mid);
+  if (!dm) return res.status(404).json({ error: 'no_message' });
+  const t = await dmThreadFor(req.user.id, dm.thread_id);
+  if (!t) return res.status(404).json({ error: 'no_message' });
+  await db.prepare('UPDATE dm_members SET last_read_at = ? WHERE thread_id = ? AND user_id = ?')
+    .run(Number(dm.created_at) - 1, t.id, req.user.id);
+  const unread = (await dmUnreadCounts(req.user.id)).get(t.id) || 0;
+  notifyUser(req.user.id, { t: 'dm-unread', threadId: t.id, unread });
+  res.json({ ok: true, kind: 'dm', threadId: t.id, unread });
+});
+
+// ---------- bookmarks ("save for later") ----------
+// The account's own private list, and the same shape as a report snapshot: the
+// author, the text, where it happened and the media references are captured at
+// bookmark time so the entry still reads correctly after the author deletes the
+// message. The BYTES are never copied (a bookmark holds a url, exactly like the
+// message did), and a bookmark confers no access the reader did not already
+// have — opening one re-navigates to the live message through the normal
+// membership checks.
+function bookmarkContextLabel(kind, row) {
+  return kind === 'dm'
+    ? String(row.thread_title || 'Direct message')
+    : ((row.channel_name ? '#' + row.channel_name : 'chat') + (row.server_name ? ' · ' + row.server_name : ''));
+}
+async function bookmarkSnapshotFor(kind, m, meId) {
+  const snap = {
+    at: now(),
+    message: { id: m.id, created_at: m.created_at, edited: !!m.edited_at, content: String(m.content || '').slice(0, 4000) },
+    where: {}, media: [],
+  };
+  if (kind === 'dm') {
+    const t = await db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(m.thread_id);
+    // Named from the READER's side, the same way the DM list names a thread
+    // (see dmTitle on the client): everyone but me, so a 1:1 shows the other
+    // person and a group falls back to its members when it has no name.
+    const others = t ? await db.prepare(`SELECT display_name FROM users WHERE id IN (SELECT user_id FROM dm_members WHERE thread_id = ? AND user_id <> ?) ORDER BY display_name ASC LIMIT 6`).all(t.id, meId || '') : [];
+    const names = others.map((u) => u.display_name).filter(Boolean);
+    snap.where.thread = {
+      id: m.thread_id,
+      name: (t && t.name) || '',
+      isGroup: !!(t && t.is_group),
+      // A title that reads on its own in the saved list (the server has no
+      // dmTitle helper — that one is client-side — so it is derived here once).
+      title: (t && t.name) || (t && t.is_group ? (names.slice(0, 4).join(', ') || 'Group chat') : (names[0] ? names[0] : 'Direct message')),
+    };
+    for (const a of await db.prepare('SELECT filename, mime, size, kind, url FROM dm_attachments WHERE message_id = ?').all(m.id)) {
+      snap.media.push(m.view_once
+        ? { name: a.filename, mime: a.mime, kind: a.kind, gated: true }
+        : { name: a.filename, mime: a.mime, kind: a.kind, url: a.url });
+    }
+  } else {
+    const s = await db.prepare('SELECT id, name FROM servers WHERE id = ?').get(m.server_id);
+    const c = await db.prepare('SELECT id, name FROM channels WHERE id = ?').get(m.channel_id);
+    snap.where.server = { id: m.server_id, name: (s && s.name) || '' };
+    snap.where.channel = { id: m.channel_id, name: (c && c.name) || '' };
+    for (const a of await db.prepare('SELECT filename, mime, size, kind, url, spoiler FROM attachments WHERE message_id = ?').all(m.id)) {
+      snap.media.push({ name: a.filename, mime: a.mime, size: a.size, kind: a.kind, url: a.url, spoiler: !!a.spoiler });
+    }
+  }
+  snap.media = snap.media.slice(0, 12);
+  return snap;
+}
+function bookmarkView(row) {
+  let snap = {};
+  try { snap = JSON.parse(row.snapshot || '{}') || {}; } catch {}
+  const where = snap.where || {};
+  const t = where.thread || {}, c = where.channel || {}, s = where.server || {};
+  return {
+    id: row.id, messageId: row.message_id, kind: row.kind,
+    serverId: row.server_id, channelId: row.channel_id, threadId: row.thread_id,
+    authorId: row.author_id, authorName: row.author_name, authorUsername: row.author_username,
+    content: row.content,
+    where: row.kind === 'dm'
+      ? (t.title || t.name || 'Direct message')
+      : ((c.name ? '#' + c.name : 'chat') + (s.name ? ' · ' + s.name : '')),
+    media: snap.media || [],
+    messageAt: (snap.message && snap.message.created_at) || null,
+    createdAt: row.created_at,
+  };
+}
+// One place that resolves a message id to its row + the ids a bookmark/reminder
+// needs, with the reader's access checked. Returns null when it is not theirs to
+// see. The client sends a message id and nothing else it could lie about.
+async function contextForMessage(mid, userId) {
+  const sm = await db.prepare('SELECT * FROM messages WHERE id = ?').get(mid);
+  if (sm) {
+    if (!(await isMember(sm.server_id, userId))) return null;
+    const s = await db.prepare('SELECT name FROM servers WHERE id = ?').get(sm.server_id);
+    const c = await db.prepare('SELECT name FROM channels WHERE id = ?').get(sm.channel_id);
+    return {
+      kind: 'server', m: sm, serverId: sm.server_id, channelId: sm.channel_id, threadId: null,
+      label: ((c && c.name ? '#' + c.name : 'chat') + (s && s.name ? ' · ' + s.name : '')),
+    };
+  }
+  const dm = await dmMsg(mid);
+  if (!dm) return null;
+  const t = await dmThreadFor(userId, dm.thread_id);
+  if (!t) return null;
+  const others = await db.prepare(`SELECT display_name FROM users WHERE id IN (SELECT user_id FROM dm_members WHERE thread_id = ? AND user_id <> ?) ORDER BY display_name ASC LIMIT 6`).all(t.id, userId);
+  const names = others.map((u) => u.display_name).filter(Boolean);
+  return {
+    kind: 'dm', m: dm, serverId: null, channelId: null, threadId: t.id,
+    label: t.name || (t.is_group ? (names.slice(0, 4).join(', ') || 'Group chat') : (names[0] || 'Direct message')),
+  };
+}
+app.post('/api/bookmarks', authRequired, async (req, res) => {
+  const mid = String(req.body?.messageId || '');
+  if (!mid) return res.status(400).json({ error: 'bad_request' });
+  const ctx = await contextForMessage(mid, req.user.id);
+  if (!ctx) return res.status(404).json({ error: 'no_message' });
+  if (ctx.m.sys) return res.status(400).json({ error: 'cannot_bookmark_system' });
+  const author = ctx.m.user_id ? await db.prepare('SELECT id, username, display_name FROM users WHERE id = ?').get(ctx.m.user_id) : null;
+  const snap = await bookmarkSnapshotFor(ctx.kind, ctx.m, req.user.id);
+  const row = {
+    id: uid(), user_id: req.user.id, message_id: mid, kind: ctx.kind,
+    server_id: ctx.serverId, channel_id: ctx.channelId, thread_id: ctx.threadId,
+    author_id: author ? author.id : null,
+    author_name: author ? author.display_name : (ctx.m.webhook_id ? (ctx.m.webhook_name || 'Webhook') : 'Deleted user'),
+    author_username: author ? author.username : '',
+    content: String(ctx.m.content || '').slice(0, 4000),
+    snapshot: JSON.stringify(snap), created_at: now(),
+  };
+  try {
+    await db.prepare(`INSERT INTO bookmarks
+      (id,user_id,message_id,kind,server_id,channel_id,thread_id,author_id,author_name,author_username,content,snapshot,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(row.id, row.user_id, row.message_id, row.kind, row.server_id, row.channel_id, row.thread_id,
+        row.author_id, row.author_name, row.author_username, row.content, row.snapshot, row.created_at);
+  } catch (e) {
+    if (e && e.code === '23505') return res.status(409).json({ error: 'already_bookmarked' });
+    throw e;
+  }
+  res.json({ ok: true, bookmark: bookmarkView(row) });
+});
+app.delete('/api/bookmarks/:mid', authRequired, async (req, res) => {
+  await db.prepare('DELETE FROM bookmarks WHERE user_id = ? AND message_id = ?').run(req.user.id, String(req.params.mid || ''));
+  res.json({ ok: true });
+});
+app.get('/api/bookmarks', authRequired, async (req, res) => {
+  const q = String(req.query.q || '').trim().slice(0, 80).toLowerCase();
+  const rows = q
+    ? await db.prepare(`SELECT * FROM bookmarks WHERE user_id = ?
+        AND (lower(content) LIKE ? OR lower(author_name) LIKE ? OR lower(snapshot) LIKE ?)
+        ORDER BY created_at DESC LIMIT 200`).all(req.user.id, '%' + q + '%', '%' + q + '%', '%' + q + '%')
+    : await db.prepare('SELECT * FROM bookmarks WHERE user_id = ? ORDER BY created_at DESC LIMIT 200').all(req.user.id);
+  res.json({ items: rows.map(bookmarkView) });
+});
+// Just the ids, for the menu's "Remove bookmark" vs "Bookmark message" toggle:
+// the whole list can be long and the client only needs to know membership.
+app.get('/api/bookmarks/ids', authRequired, async (req, res) => {
+  const rows = await db.prepare('SELECT message_id FROM bookmarks WHERE user_id = ? ORDER BY created_at DESC LIMIT 1000').all(req.user.id);
+  res.json({ ids: rows.map((r) => r.message_id) });
+});
+
+// ---------- reminders ----------
+// A personal nudge at a chosen time, optionally hung off the message that
+// prompted it (so its notification can land back in that conversation).
+// Everything about the time is the client's choice — the server only bounds it.
+function reminderView(row) {
+  return {
+    id: row.id, text: row.text, kind: row.kind,
+    serverId: row.server_id, channelId: row.channel_id, threadId: row.thread_id, messageId: row.message_id,
+    where: row.context_label || '', remindAt: row.remind_at, createdAt: row.created_at, firedAt: row.fired_at || null,
+  };
+}
+app.get('/api/reminders', authRequired, async (req, res) => {
+  const q = String(req.query.q || '').trim().slice(0, 80).toLowerCase();
+  // Pending first, soonest at the top; the ones that already rang follow,
+  // newest first, so the list reads as a schedule with a history under it.
+  const rows = q
+    ? await db.prepare(`SELECT * FROM reminders WHERE user_id = ? AND (lower(text) LIKE ? OR lower(context_label) LIKE ?)
+        ORDER BY (fired_at IS NULL) DESC, CASE WHEN fired_at IS NULL THEN remind_at ELSE -remind_at END ASC LIMIT 200`)
+      .all(req.user.id, '%' + q + '%', '%' + q + '%')
+    : await db.prepare(`SELECT * FROM reminders WHERE user_id = ?
+        ORDER BY (fired_at IS NULL) DESC, CASE WHEN fired_at IS NULL THEN remind_at ELSE -remind_at END ASC LIMIT 200`).all(req.user.id);
+  res.json({ items: rows.map(reminderView) });
+});
+app.post('/api/reminders', authRequired, async (req, res) => {
+  const text = String(req.body?.text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  const remindAt = Number(req.body?.remindAt) || 0;
+  if (!(remindAt > Date.now() - 60 * 1000)) return res.status(400).json({ error: 'bad_time' });
+  if (remindAt > Date.now() + 5 * 366 * 864e5) return res.status(400).json({ error: 'too_far' });
+  let kind = 'server', serverId = null, channelId = null, threadId = null, messageId = null, label = '';
+  const mid = String(req.body?.messageId || '');
+  if (mid) {
+    const ctx = await contextForMessage(mid, req.user.id);
+    if (!ctx) return res.status(404).json({ error: 'no_message' });
+    kind = ctx.kind; serverId = ctx.serverId; channelId = ctx.channelId; threadId = ctx.threadId;
+    messageId = mid; label = ctx.label;
+  }
+  const row = {
+    id: uid(), user_id: req.user.id, text: text || 'Reminder', kind,
+    server_id: serverId, channel_id: channelId, thread_id: threadId, message_id: messageId,
+    context_label: label, remind_at: remindAt, created_at: now(), fired_at: null,
+  };
+  await db.prepare(`INSERT INTO reminders
+    (id,user_id,text,kind,server_id,channel_id,thread_id,message_id,context_label,remind_at,created_at,fired_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(row.id, row.user_id, row.text, row.kind, row.server_id, row.channel_id, row.thread_id,
+      row.message_id, row.context_label, row.remind_at, row.created_at, null);
+  res.json({ ok: true, reminder: reminderView(row) });
+});
+app.delete('/api/reminders/:id', authRequired, async (req, res) => {
+  await db.prepare('DELETE FROM reminders WHERE id = ? AND user_id = ?').run(String(req.params.id || ''), req.user.id);
+  res.json({ ok: true });
+});
+// The tick. Claiming the row is the idempotency gate — the UPDATE only matches
+// while fired_at is still NULL — so two replicas racing (or a restart in the
+// middle of the fan-out) ring exactly once. Bounded per tick so a backlog can
+// never hold the loop open.
+async function fireDueReminders() {
+  let due = [];
+  try { due = await db.prepare('SELECT * FROM reminders WHERE fired_at IS NULL AND remind_at <= ? ORDER BY remind_at ASC LIMIT 50').all(now()); }
+  catch { return; }
+  for (const r of due) {
+    let claimed;
+    try { claimed = await db.prepare('UPDATE reminders SET fired_at = ? WHERE id = ? AND fired_at IS NULL').run(now(), r.id); }
+    catch { continue; }
+    if (!claimed || !claimed.changes) continue;
+    const title = 'Reminder' + (r.context_label ? ' · ' + r.context_label : '');
+    const body = String(r.text || 'Your reminder').slice(0, 300);
+    try {
+      await pushInbox(r.user_id, {
+        kind: 'reminder', title,
+        body,
+        server_id: r.server_id || null, channel_id: r.channel_id || null,
+        message_id: r.message_id || null, thread_id: r.thread_id || null,
+      });
+    } catch {}
+    try {
+      let url = '/';
+      if (r.thread_id) url = `/?dm=${r.thread_id}`;
+      else if (r.server_id) url = `/?server=${r.server_id}&channel=${r.channel_id || ''}`;
+      if (r.message_id) url += (url.includes('?') ? '&' : '?') + 'm=' + r.message_id;
+      // Remember what it pointed at so the reminder's inbox row can jump there
+      // too (the notification body is just the text).
+      await pushToUser(r.user_id, { title, body, icon: '/icons/icon-192.png', tag: 'reminder:' + r.id, url },
+        { webPush: !(await userVisible(r.user_id)) });
+    } catch {}
+  }
+}
+
 // ---------- pinned messages (server channels) ----------
 async function pinInfo(pinRow) {
   const u = pinRow.pinned_by ? await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(pinRow.pinned_by) : null;
@@ -7112,6 +7374,11 @@ async function boot() {
   // Stories expire after 24h: rows + their uploaded bytes go together.
   await db.withLock(db.LOCKS.reapStories, reapStories);
   safeLockedInterval('stories', db.LOCKS.reapStories, reapStories, 20 * 60 * 1000);
+  // Personal reminders: a 20s tick is the delivery granularity (a reminder set
+  // for 14:30:00 rings within 20 seconds of it), leader-locked so one replica
+  // rings and the per-row claim makes even a handover single-shot.
+  await db.withLock(db.LOCKS.reminders, fireDueReminders).catch(() => {});
+  safeLockedInterval('reminders', db.LOCKS.reminders, fireDueReminders, 20 * 1000);
   // NOTE: media-compress / virus-scan / storage-sweep / backup own their own
   // schedulers and are still per-replica. They are made leader-aware in the
   // next phase (each takes its LOCKS key per tick); their work is idempotent

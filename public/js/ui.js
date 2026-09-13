@@ -206,7 +206,7 @@ $('#btn-chat-more').onclick = (e) => {
   e.stopPropagation();
   const defs = [
     ['#btn-find', 'Search chats'],
-    ['#btn-notifs', 'Notifications'],
+    ['#btn-notifs', 'Inbox'],
     ['#btn-threads', 'Active threads'],
     ['#btn-pins', 'Pinned messages'],
     ['#btn-members', 'Members'],

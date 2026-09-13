@@ -573,6 +573,49 @@ CREATE TABLE IF NOT EXISTS gif_favorites (
   PRIMARY KEY (user_id, slug)
 );
 CREATE INDEX IF NOT EXISTS idx_gif_favorites_user ON gif_favorites(user_id, created_at DESC);
+-- Bookmarked messages ("save for later"): the account's own private list, one
+-- row per message. The message itself is snapshotted at bookmark time (author,
+-- text, where it happened, attachment references) so the entry survives the
+-- author deleting it — the bytes are never copied, exactly like a report
+-- snapshot. kind is 'server' | 'dm'; the ids are kept loosely (no FK) so a
+-- deleted channel or thread cannot cascade away something the reader saved.
+CREATE TABLE IF NOT EXISTS bookmarks (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'server',
+  server_id TEXT,
+  channel_id TEXT,
+  thread_id TEXT,
+  author_id TEXT,
+  author_name TEXT NOT NULL DEFAULT '',
+  author_username TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  snapshot TEXT NOT NULL DEFAULT '{}',
+  created_at BIGINT NOT NULL,
+  UNIQUE (user_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_user ON bookmarks(user_id, created_at DESC);
+-- Reminders: a personal nudge at a chosen time, optionally hung off the message
+-- that prompted it. fired_at is the delivered watermark (set before the push
+-- is sent, so a restart mid-fan-out can never double-ring), and the scheduler
+-- only ever looks at rows where it is NULL.
+CREATE TABLE IF NOT EXISTS reminders (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  text TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL DEFAULT 'server',
+  server_id TEXT,
+  channel_id TEXT,
+  thread_id TEXT,
+  message_id TEXT,
+  context_label TEXT NOT NULL DEFAULT '',
+  remind_at BIGINT NOT NULL,
+  created_at BIGINT NOT NULL,
+  fired_at BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_reminders_user ON reminders(user_id, remind_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(remind_at);
 CREATE TABLE IF NOT EXISTS user_games (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   game TEXT NOT NULL,
@@ -956,6 +999,7 @@ const LOCKS = {
   mediaBucketScan: 771013, // media-compress bucket reconciliation (list the bucket, compress what the flags missed)
   beaconSweep: 771014,    // watcher stale-beacon cleanup (playing_game) — one replica
   attDims: 771015,        // att-dims.js: measure images that predate the shape record
+  reminders: 771016,      // deliver due reminders (one replica rings, never N)
 };
 
 // Try to take the lock without waiting. Resolves { ran: false } when another

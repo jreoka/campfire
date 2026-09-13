@@ -349,7 +349,32 @@ references and where it happened, pushes every site admin live, drops an inbox
 entry, and puts a badge on the console's Reports tab + rail shield; admins
 search/filter the queue and dismiss, delete the message, disable the author,
 delete + disable, or ban from the server (one decision closes every open report
-on that message). The pin button's "N new" badge is a per-account memory
+on that message). Menus are content-aware: a right-click/long-press ON a picture
+or a video (`attFromEl` reads the `data-fb-*` identity off the `.att-wrap`) gets
+the PICTURE's own menu — Copy image, Save image, Copy image link, Open image
+link, and for a video the link flavour plus Save video (a browser cannot put
+video bytes on the clipboard, so it is never offered) — checked BEFORE the
+`[data-mid]` message branch in `ctxFor`. The message menu adds Mark unread,
+Bookmark message and Create reminder… beside Copy text, and View reactions
+whenever the message has any. Mark unread moves the WATERMARK
+(`channel_reads`/`dm_members.last_read_at`) to one millisecond before the
+message, so `POST /api/messages/:mid/unread` (one route, both surfaces,
+membership-checked) makes it the first unread one and pushes `chan-unread` /
+`dm-unread` to the account's other devices. Bookmarks (`bookmarks`) and
+reminders (`reminders`) both snapshot nothing they do not need: a bookmark keeps
+author + text + where + media URLs captured at save time, so it still reads after
+the author deletes the message, and a reminder hangs off a message or nothing at
+all. `fireDueReminders` is leader-locked (`db.LOCKS.reminders`, 20s tick) and
+claims each row with `UPDATE … WHERE fired_at IS NULL` before pushing, so a
+handover or a restart can never ring twice. The bell is now the **Inbox**
+(`openInbox`): Notifications / Reminders / Bookmarks tabs, each with its own
+search box — every list is fetched on open, and typing only repaints the list
+(never the shell) so the field keeps focus. `#ctx-menu` is capped
+(`max-height:min(72vh,560px)`, `overflow-y:auto`) so a long menu scrolls instead
+of running off the screen; the phone `#sheet` is a flex column whose
+`.sheet-rows` is the only scroll region, and `sheetDragExpand` (final.js) makes
+it TALLER by dragging its handle/header up — the gesture, not a scrollbar — with
+`.sheet-tall` (94vh) holding the decision after release. The pin button's "N new" badge is a per-account memory
 (`pin_seen`) mirrored server-side and pushed over `pin-seen`, so reading a
 conversation's pins on the phone clears the badge on the desktop too; the phone
 Home tab mirrors the Active Now rail as a horizontal tile scroller under

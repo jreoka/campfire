@@ -1019,6 +1019,42 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   stylesheet neutralizes every `:hover` such a menu can paint under
   `body.touch-hold` — the last check sweeps the sheet/ctx hover rules, so a new
   row added without a guard fails the test instead of glowing.
+  `node scripts/test-message-menus.js` covers the message / media context menus,
+  the reminder composer and the inbox (real app against a throwaway database and
+  headless Chrome; skips without Postgres or Chrome). On desktop it opens the
+  real menu by dispatching a `contextmenu` on the message body and asserts Copy
+  text, Mark unread, Bookmark message, Create reminder… and View reactions (with
+  its count) are all there; a 40-row menu is capped inside the viewport with
+  `overflow-y:auto` and really scrolls; a right-click ON a picture (a `.att-wrap`
+  with the attachment's own data attributes) gets the PICTURE's menu — Copy
+  image / Save image / Copy image link / Open image link — and a video the link
+  flavour plus Save video, never a promise to copy a video's bytes. Bookmarking
+  from the row round-trips to `/api/bookmarks`, flips the row to Remove bookmark,
+  and shows up in the inbox's Bookmarks tab; Mark unread paints the channel and
+  the server's `/api/unread` agrees (the message is written by a SECOND account,
+  because unread only ever counts someone else's message); the reminder composer
+  fans out five presets plus a custom field that take the choice off each other
+  and creates against `/api/reminders`; the bell opens an Inbox with
+  Notifications / Reminders / Bookmarks tabs, each with a search box that filters
+  without the field losing focus. Then at a phone viewport with real touch
+  events: a long-press slides the sheet up with the new rows in it, a long-press
+  ON the picture opens the media sheet instead, and dragging the sheet's handle
+  UP grows it under the finger, keeps it taller (`#sheet.sheet-tall`), never
+  leaves the viewport, and leaves the rows a scroll region.
+  `node scripts/test-bookmarks-reminders.js` covers the same subsystem's server
+  half (real server + throwaway database, skips without Postgres): who may
+  bookmark (members only — a non-member and an unknown id are refused), the
+  snapshot (text, author, where, conversation ids), the duplicate guard, the
+  `/api/bookmarks/ids` toggle set, search by text and author, and that a bookmark
+  still reads after the author deletes the message; mark-unread moving the
+  WATERMARK so `/api/unread` (channel) and `/api/dms` (DM) really report unread
+  again, with the inverted read push reaching the account's socket; reminders
+  created off a message and from nothing, the time bounds (`bad_time`, `too_far`),
+  the account-private list with its pending-first ordering and search, and the
+  scheduler firing one exactly once — `fired_at` stamped, one `reminder` inbox
+  row carrying where it points, and neither a second tick nor a re-read
+  duplicating it.
+
   `node scripts/test-mobile-settings-sheet.js` covers the phone's settings
   master/detail and the me-bar card sheet (offline static checks plus headless
   Chrome at a phone and a desktop viewport, skipping without Chrome — note

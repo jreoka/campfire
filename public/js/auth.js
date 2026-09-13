@@ -277,7 +277,10 @@ function consumeInvite() {
 async function handleDeepLinkQuery(qs) {
   try {
     if (!qs) return;
-    const qdm = qs.get('dm'), qserv = qs.get('server'), qchan = qs.get('channel'), qfriends = qs.get('friends'), qadmin = qs.get('admin'), qstory = qs.get('story');
+    const qdm = qs.get('dm'), qserv = qs.get('server'), qchan = qs.get('channel'), qfriends = qs.get('friends'), qadmin = qs.get('admin'), qstory = qs.get('story'), qmsg = qs.get('m');
+    // A single message of the conversation the link names — how a reminder's
+    // push lands on the message it was set off (see fireDueReminders).
+    const landMsg = () => { if (qmsg) setTimeout(() => { try { jumpToMessage(qmsg); } catch {} }, 450); };
     if (qadmin === 'reports' && isSiteAdmin()) openAdminConsole('reports');
     else if (qdm) {
       await openHome();
@@ -290,9 +293,11 @@ async function handleDeepLinkQuery(qs) {
           selectDmThread(thread.id);
         } catch {}
       }
+      landMsg();
     } else if (qserv && S.servers.some((s) => s.id === qserv)) {
       await selectServer(qserv);
       if (S.serverDetail?.channels.some((c) => c.id === qchan && c.type === 'text')) await selectChannel(qchan);
+      landMsg();
     } else if (qfriends) {
       await openHome();
       showFriendsPanel();
@@ -318,6 +323,9 @@ async function boot() {
     // Per-account unread channel dots (localStorage) — load before the first
     // server/channel restore so the dots are already painted when it lands.
     try { loadChanUnread(); } catch {}
+    // Which messages this account has bookmarked — the message menu's
+    // Bookmark/Remove bookmark wording needs it before the first right-click.
+    try { loadBookmarks(); } catch {}
     S.bootRetrying = false;
     try { syncAccountTheme(); } catch {}
     // Report local timezone so game streaks bucket play on the player's

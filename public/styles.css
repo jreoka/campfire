@@ -241,7 +241,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
    overlay scrollers where a scrollbar is the correct affordance. */
 #server-list,#dm-rail,#server-ui,#home-ui,#messages,#member-list,#thread-replies,#friends-page,
 #find-results,#story-view .pf-body,#set-tabs,#set-body,.rx-list,.pk-grid,.pk-rail,.share-targets,
-#m-inbox-list,#m-threads-list,.pins-list,.sc-pick-list,#fwd-dests,.gmem-list,.story-sheet,
+#m-inbox-list,#m-threads-list,.inbox-list,.sheet-rows,.pins-list,.sc-pick-list,#fwd-dests,.gmem-list,.story-sheet,
 .adm-scroll,.adm-rep-text,#stories-page,.sc-emoji-grid,.txt-full{scrollbar-width:none}
 #server-list::-webkit-scrollbar,#dm-rail::-webkit-scrollbar,#server-ui::-webkit-scrollbar,
 #home-ui::-webkit-scrollbar,#messages::-webkit-scrollbar,#member-list::-webkit-scrollbar,
@@ -249,6 +249,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 #story-view .pf-body::-webkit-scrollbar,#set-tabs::-webkit-scrollbar,#set-body::-webkit-scrollbar,
 .rx-list::-webkit-scrollbar,.pk-grid::-webkit-scrollbar,.pk-rail::-webkit-scrollbar,
 .share-targets::-webkit-scrollbar,#m-inbox-list::-webkit-scrollbar,#m-threads-list::-webkit-scrollbar,
+.inbox-list::-webkit-scrollbar,.sheet-rows::-webkit-scrollbar,
 .pins-list::-webkit-scrollbar,.sc-pick-list::-webkit-scrollbar,#fwd-dests::-webkit-scrollbar,
 .gmem-list::-webkit-scrollbar,.story-sheet::-webkit-scrollbar,.adm-scroll::-webkit-scrollbar,
 .adm-rep-text::-webkit-scrollbar,#stories-page::-webkit-scrollbar,.sc-emoji-grid::-webkit-scrollbar,
@@ -737,7 +738,7 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 #srv-banner{height:88px;background-size:cover;background-position:center;border-bottom:1px solid var(--line-soft);flex-shrink:0}
 
 /* ---------- context menu ---------- */
-#ctx-menu{position:fixed;z-index:400;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);padding:.35rem;min-width:210px;max-width:280px}
+#ctx-menu{position:fixed;z-index:400;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);padding:.35rem;min-width:210px;max-width:280px;max-height:min(72vh,560px);overflow-y:auto;overscroll-behavior:contain}
 .ctx-item{display:flex;align-items:center;gap:.6rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:8px;padding:.55rem .65rem;font-size:.87rem;font-weight:600;cursor:pointer;transition:background var(--t-fast)}
 
 .ctx-item.danger{color:var(--danger-tx)}
@@ -1177,22 +1178,28 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 /* ---------- bottom sheet (touch message menu) ---------- */
 #sheet-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.6);z-index:158;opacity:0;transition:opacity var(--t-sheet) var(--ease-native)}
 #sheet-backdrop.open{opacity:1}
-#sheet{position:fixed;left:0;right:0;bottom:0;z-index:159;background:var(--panel-2);border:0;border-radius:16px 16px 0 0;padding:.6rem .9rem calc(.9rem + var(--safe-b));transform:translateY(105%);transition:transform var(--t-sheet) var(--ease-native);max-height:82vh;max-height:82dvh;overflow-y:auto;overscroll-behavior:contain}
+#sheet{position:fixed;left:0;right:0;bottom:0;z-index:159;background:var(--panel-2);border:0;border-radius:16px 16px 0 0;padding:.6rem .9rem calc(.9rem + var(--safe-b));transform:translateY(105%);transition:transform var(--t-sheet) var(--ease-native);max-height:78vh;max-height:78dvh;display:flex;flex-direction:column;overflow:hidden;overscroll-behavior:contain}
+/* Dragged taller from its handle/header (sheetDragExpand, final.js), or opened
+   with the class by a caller that knows the list is long. The list is the only
+   scroll region — a menu that outgrows even this is scrolled by touch, not by a
+   scrollbar the reader has to aim at. */
+#sheet.sheet-tall{max-height:94vh;max-height:94dvh}
 /* A sheet that has been dragged down follows the finger; the transition comes
    back on release so it still settles smoothly. */
 #sheet.sheet-dragging{transition:none}
 #sheet.open{transform:none}
-.sheet-handle{width:42px;height:4px;border-radius:999px;background:var(--panel-4);margin:.1rem auto .7rem}
-.sheet-head{display:flex;gap:.65rem;align-items:center;padding:.2rem .2rem .7rem}
+.sheet-handle{width:42px;height:4px;border-radius:999px;background:var(--panel-4);margin:.1rem auto .7rem;flex:0 0 auto}
+.sheet-head{display:flex;gap:.65rem;align-items:center;padding:.2rem .2rem .7rem;flex:0 0 auto}
 .sheet-head .avatar{width:38px;height:38px;font-size:.8rem;flex-shrink:0}
 .sheet-who{font-size:.9rem;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sheet-who .when{font-weight:400;color:var(--muted);font-size:.74rem;margin-left:.35rem}
 .sheet-snip{font-size:.8rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sheet-reacts{display:flex;gap:.35rem;background:var(--panel-3);border:0;border-radius:12px;padding:.55rem .6rem;margin-bottom:.55rem}
+.sheet-reacts{display:flex;gap:.35rem;background:var(--panel-3);border:0;border-radius:12px;padding:.55rem .6rem;margin-bottom:.55rem;flex:0 0 auto}
 .sheet-reacts button{flex:1;border:0;background:transparent;font-size:1.5rem;line-height:1;padding:.45rem 0;border-radius:10px;cursor:pointer;min-width:0;transition:background var(--t-fast)}
 .sheet-reacts button:hover{background:rgba(255,255,255,.08)}
 .sheet-reacts img.cemoi{width:28px;height:28px;vertical-align:middle}
-.sheet-rows{display:flex;flex-direction:column;gap:2px}
+.sheet-rows{display:flex;flex-direction:column;gap:2px;flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
+.sheet-rows::-webkit-scrollbar{display:none}
 .sheet-row{display:flex;align-items:center;gap:.75rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:10px;padding:.75rem .65rem;font-size:.92rem;font-weight:650;cursor:pointer}
 
 /* A long-press opens the sheet under a finger that is still down: the row beneath
@@ -1205,12 +1212,12 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .sheet-row.danger{color:var(--danger-tx)}
 .sheet-row .ctx-ic{width:20px}
 .sheet-sep{height:1px;background:var(--line);margin:.3rem .45rem;opacity:.5}
-.sheet-swatches{padding:.15rem .65rem .55rem}
+.sheet-swatches{padding:.15rem .65rem .55rem;flex:0 0 auto}
 .sheet-swlabel{font-size:.72rem;font-weight:750;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:.1rem 0 .5rem}
 .sheet-swrow{display:flex;flex-wrap:wrap;gap:10px}
 .sheet-sw{width:30px;height:30px;border-radius:50%;cursor:pointer;border:2px solid transparent;padding:0}
 .sheet-sw.sel{border-color:#fff}
-.sheet-cancel{width:100%;margin-top:.65rem;border:0;background:var(--panel-3);color:var(--text);border-radius:12px;padding:.8rem;font-size:.92rem;font-weight:750;cursor:pointer;transition:background var(--t-fast)}
+.sheet-cancel{width:100%;margin-top:.65rem;border:0;background:var(--panel-3);color:var(--text);border-radius:12px;padding:.8rem;font-size:.92rem;font-weight:750;cursor:pointer;transition:background var(--t-fast);flex:0 0 auto}
 .sheet-cancel:hover{background:var(--panel-4)}
 @media (hover:none){
   .msg-actions{display:none!important}
@@ -1809,6 +1816,27 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .tab-badge{margin-left:.45rem;background:var(--red);color:#fff;font-size:.62rem;font-weight:800;border-radius:999px;padding:.08rem .38rem;min-width:18px;text-align:center;line-height:1.35;display:inline-block}
 .tab-badge.hidden{display:none}
 #m-inbox-list{display:flex;flex-direction:column;gap:.1rem;max-height:58dvh;overflow-y:auto;overscroll-behavior:contain;margin:0 -.2rem;padding:0 .2rem}
+/* ---------- the inbox (notifications / reminders / bookmarks) ---------- */
+.inbox-tabs{display:flex;gap:.3rem;border-bottom:1px solid var(--line-soft);margin:0 0 .7rem;padding-bottom:.15rem}
+.inbox-tab{position:relative;flex:1;border:0;background:transparent;color:var(--muted);font-size:.84rem;font-weight:700;padding:.55rem .3rem .6rem;border-radius:10px 10px 0 0;cursor:pointer;transition:color var(--t-fast),background var(--t-fast)}
+.inbox-tab:hover{color:var(--text);background:var(--panel-2)}
+.inbox-tab.on{color:var(--text)}
+.inbox-tab.on::after{content:'';position:absolute;left:.5rem;right:.5rem;bottom:-1px;height:2px;border-radius:2px;background:var(--accent)}
+.inbox-tab-n{margin-left:.35rem;background:var(--panel-4);color:var(--text);font-size:.66rem;font-weight:800;border-radius:999px;padding:.06rem .38rem;min-width:16px;display:inline-block;text-align:center}
+.inbox-tab-n.hidden{display:none}
+.inbox-search{margin:0 0 .45rem}
+.inbox-search input{width:100%}
+.inbox-list{display:flex;flex-direction:column;gap:.1rem;max-height:58dvh;overflow-y:auto;overscroll-behavior:contain;margin:0 -.2rem;padding:0 .2rem}
+.inbox-item.saved .isave{width:22px;height:22px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--accent);margin-top:.1rem}
+.inbox-item.saved .isave svg{width:15px;height:15px}
+.inbox-chip{display:inline-block;margin-left:.4rem;background:var(--panel-3);color:var(--muted);font-size:.66rem;font-weight:700;border-radius:999px;padding:.08rem .45rem;vertical-align:middle;max-width:14rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* ---------- reminder composer (time fan-out) ---------- */
+.rem-ctx{font-style:italic;overflow-wrap:anywhere}
+.rem-label{font-size:.72rem;font-weight:750;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:.85rem 0 .45rem}
+.rem-chips{display:flex;flex-wrap:wrap;gap:.4rem}
+.rem-chip{border:1px solid var(--line-soft);background:var(--panel-2);color:var(--text);border-radius:999px;padding:.45rem .8rem;font-size:.82rem;font-weight:650;cursor:pointer;transition:background var(--t-fast),border-color var(--t-fast),color var(--t-fast)}
+.rem-chip:hover{background:var(--panel-3)}
+.rem-chip.sel{background:var(--accent);border-color:var(--accent);color:#fff}
 .inbox-item{display:flex;gap:.65rem;align-items:flex-start;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:12px;padding:.6rem .65rem;cursor:pointer;transition:background var(--t-fast)}
 .inbox-item:hover{background:var(--panel-2)}
 .inbox-item .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex-shrink:0;margin-top:.4rem}
