@@ -405,7 +405,18 @@ function withTimeout(p, ms, label) {
   });
 }
 
+// The staging dir is created on first use rather than only by the startup
+// sweep: `materialize` writes into it, so a scan must not depend on a cleanup
+// pass having run first (and it may be pointed somewhere else entirely by
+// HARBIN_TMP_DIR, including at a path that does not exist yet).
+let tmpDirReady = false;
+function ensureTmpDir() {
+  if (tmpDirReady) return;
+  try { fs.mkdirSync(TMP_DIR, { recursive: true }); tmpDirReady = true; } catch {}
+}
+
 function tempPathFor(key) {
+  ensureTmpDir();
   const ext = (path.extname(String(key || '')) || '').toLowerCase();
   const safeExt = /^\.[a-z0-9]{1,8}$/.test(ext) ? ext : '';
   return path.join(TMP_DIR, TEMP_PREFIX + crypto.randomBytes(16).toString('hex') + safeExt);
@@ -797,7 +808,7 @@ function kickVirusScan() {
 // them behind. Only this process's own prefix is touched, and a single startup
 // pass keeps the temp dir from growing across restarts.
 async function cleanTempDir() {
-  try { await fs.promises.mkdir(TMP_DIR, { recursive: true }); } catch {}
+  ensureTmpDir();
   let names = [];
   try { names = await fs.promises.readdir(TMP_DIR); } catch { return; }
   let removed = 0;
@@ -857,6 +868,9 @@ module.exports = {
   scanStatus, scanStatusMap, scanGating, setScanHooks, getScanStats,
   scanningEnabled: () => SCANNING,
   emitScanChange: emitChange,
-  // exported for unit tests (the stand-in engine and the parser):
+  // exported for unit tests (the stand-in engine, the parser, and the S3
+  // staging path, which is the shape production runs and the local test
+  // server does not):
   _runHarbinRaw: runHarbinRaw, _verdictFrom: verdictFrom, _probeEngine: probeEngine,
+  _materialize: materialize, _tempPathFor: tempPathFor, TEMP_PREFIX,
 };
