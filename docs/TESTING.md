@@ -918,6 +918,32 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   height unchanged. Statically it pins which panes spin (settings: account /
   notifications / blocked / games / media; admin: all five) and that the
   synchronous Themes pane does not, plus the reduced-motion off switch.
+  `node scripts/test-att-shape.js` covers the shape of a picture before its
+  bytes (the "media attachments just uncollapse and appear" fix). Offline it
+  drives the REAL `image-size.js` header parser against generated and crafted
+  files — JPEG (SOF behind EXIF), PNG, GIF, WebP in all three bitstreams, BMP
+  including a top-down negative height, plus a committed PNG through
+  `dimsFromFile` — and, more importantly, against what it must REFUSE: a
+  truncated file, a non-image, an empty head, a zero or absurd dimension, and
+  AVIF (a wrong shape is worse than none, so anything unrecognised answers
+  null). Statically it pins the record (`w`/`h` guarded columns on both
+  attachment tables, the partial index the backfill selects on, the
+  `db.LOCKS.attDims` key), the bounded newest-first leader-locked backfill
+  (`att-dims.js`: ranged GET of just the head, non-images marked 0/0 without a
+  read, one unreadable object never stopping the run), the upload route that
+  measures what it just stored (buffer in S3 mode, file on disk otherwise) and
+  the ingest that clamps a client-supplied pair, the placeholder/`ready`
+  contract in `attachmentHTML`/`wireAttImage`/`pins.js`, and the stylesheet
+  rules (`--att-max-h` per surface, `no-ar` neutral box, `:has(.file-card)`,
+  reduced motion). In headless Chrome — against the real markup, the real
+  stylesheet and REAL generated PNGs served over HTTP — it measures each case
+  synchronously before any bytes can arrive and again after the load: the
+  reserved box must equal the box the picture lands in at every shape
+  (landscape, portrait, square, small, a 4000px panorama) and against both caps,
+  a picture under the caps must not be scaled, an unmeasured one must show the
+  neutral box and then take its real ratio, a warm second render must clear its
+  placeholder, and a spoilered picture keeps its veil and blur. Skips without
+  Chrome.
   `node scripts/test-native-back.js` covers the native shell (`js/native.js`)
   against a throwaway database with a real phone viewport and real touch input,
   skipping without Postgres or Chrome: on a touch device the first touch arms

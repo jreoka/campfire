@@ -42,6 +42,59 @@ document.addEventListener('click', (e) => {
 // media-compress.js) with the attachment's own bytes one error away: the
 // document error handler (final.js) swaps in the original exactly once, so a
 // preview that cannot be minted costs a slower load, never a broken picture.
+// ---------- the shape of a picture, before its bytes ----------
+// A chat picture used to render at zero height and then snap to full size as it
+// landed, which collapses the row it is in and shoves everything below it — the
+// whole-list rebuilds make that happen again on every new message. So every
+// image gets its intrinsic size as width/height attributes: the browser then
+// reserves exactly the box the picture will occupy, and the placeholder below
+// has something to paint into.
+//
+// The size comes from the attachment record (server-measured, see image-size.js
+// / att-dims.js), and from the image itself once it has painted here — that
+// second source is what keeps media posted before the record existed stable
+// across the constant re-renders within a session.
+const attDimsSeen = new Map(); // clean upload path -> { w, h }
+function attCleanUrl(url) { return String(url || '').split('?')[0]; }
+function attDimsFor(a) {
+  const w = Number(a && a.w) || 0, h = Number(a && a.h) || 0;
+  if (w > 0 && h > 0) return { w, h };
+  return attDimsSeen.get(attCleanUrl(a && a.url)) || null;
+}
+// Remember what a painted picture turned out to be. Keyed on the ORIGINAL url
+// (the preview has its own, and the attachment is what carries the size).
+function attDimsLearn(img) {
+  try {
+    const w = img.naturalWidth, h = img.naturalHeight;
+    if (!(w > 0) || !(h > 0)) return;
+    const url = img.dataset.fbUrl || img.getAttribute('src') || '';
+    if (url) attDimsSeen.set(attCleanUrl(url), { w, h });
+  } catch {}
+}
+// Hold the placeholder until the picture has actually painted, then hand the box
+// over to it. A cached image can already be complete by the time this runs, so
+// `complete` is checked too — a load listener alone would leave the placeholder
+// up forever on a warm cache. A failed preview is not a reason to keep it: the
+// document error handler (final.js) swaps in the original, whose own load comes
+// through here, and a picture that never loads at all ends as a file card, which
+// the stylesheet drops the placeholder for.
+//
+// `.pending` is what SHOWS the placeholder, and it is set here rather than in the
+// markup: a surface that renders an attachment without wiring it (and the tests
+// that drive attachmentHTML directly) then gets the old behaviour — a visible
+// picture — instead of one parked invisible behind a spinner that never lifts.
+function wireAttImage(img) {
+  if (!img || img.dataset.phWired) return;
+  img.dataset.phWired = '1';
+  const wrap = (img.closest && img.closest('.att-wrap')) || null;
+  if (wrap) wrap.classList.add('pending');
+  const done = () => {
+    attDimsLearn(img);
+    if (wrap) wrap.classList.add('ready');
+  };
+  if (img.complete && img.naturalWidth > 0) { done(); return; }
+  img.addEventListener('load', done, { once: true });
+}
 function thumbSrcFor(url) {
   const clean = String(url || '').split('?')[0];
   if (!/^\/uploads\/files\/[A-Za-z0-9._-]+$/.test(clean)) return '';
@@ -65,7 +118,18 @@ function attachmentHTML(a) {
     // it is where the preview falls back to. data-fb-thumb marks a src that may
     // still need that fallback.
     const thumb = imageSrcFor(a);
-    return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><img class="att-img" src="${esc(thumb || a.url)}" alt="${esc(a.name)}" loading="lazy" decoding="async"${thumb ? ' data-fb-thumb="1"' : ''} data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+    // A known size reserves the box. It has to go on the WRAP rather than the
+    // image: the wrap is shrink-to-fit, so the image's own max-width:100% has no
+    // definite containing block to resolve against until the bytes arrive — the
+    // percentage collapses to nothing and the reservation is worthless. The
+    // width expression is the box the picture will end up in, the same one the
+    // caps compute: no wider than the picture, the column, 420px, or the height
+    // cap at this ratio. `.pin-atts` moves the height cap (see styles.css).
+    const d = attDimsFor(a);
+    const ar = d ? d.w / d.h : 0;
+    const r = ar ? ar.toFixed(4) : '';
+    const style = d ? ` style="--att-ar:${r};width:min(${d.w}px,100%,420px,calc(var(--att-max-h,320px) * ${r}))"` : '';
+    return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}${d ? ' ar' : ' no-ar'}"${style}><span class="att-ph" aria-hidden="true"><span class="att-spin"></span></span><img class="att-img" src="${esc(thumb || a.url)}" alt="${esc(a.name)}" loading="lazy" decoding="async"${d ? ` width="${d.w}" height="${d.h}"` : ''}${thumb ? ' data-fb-thumb="1"' : ''} data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   }
   if (a.kind === 'video') return `<span class="att-wrap loading${a.spoiler ? ' spoiler' : ''}"><video class="att-vid" src="${esc(a.url)}" controls preload="metadata" playsinline></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'audio') return audioPlayerHTML(a);
@@ -690,7 +754,7 @@ function messageEl(m, opts = {}) {
     // Images grow 0 -> full height on load and shove bottom-pinned readers
     // upward; load/error listeners can miss instant (cached) loads, but the
     // resize itself is always observable — follow it while near the bottom.
-    div.querySelectorAll('img.att-img').forEach((img) => observeStick(img));
+    div.querySelectorAll('img.att-img').forEach((img) => { observeStick(img); wireAttImage(img); });
   } catch {}
   return div;
 }

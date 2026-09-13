@@ -865,6 +865,8 @@ body.ub-open #lightbox #lb-stage{padding-top:calc(4.4rem + var(--safe-t) + var(-
 .up-card.failed .up-sub{color:var(--red)}
 .up-x,.up-retry{flex-shrink:0}
 @media (prefers-reduced-motion:reduce){.up-card,.up-spin,.sv-spin,.att-spin,.set-tab-spin,.vb-btn.busy::after,.up-fill.indet{animation:none}
+/* The picture still takes its box over — just without the fade. */
+.att-wrap .att-ph,.att-wrap img.att-img{transition:none}
 /* The reaction still appears and fades — just without the long rise. */
 .sv-float{animation:sv-float-reduced .9s ease-out forwards}}
 @keyframes sv-float-reduced{0%{opacity:0}20%{opacity:1}100%{opacity:0}}
@@ -911,7 +913,42 @@ body.ub-open #lightbox #lb-stage{padding-top:calc(4.4rem + var(--safe-t) + var(-
 .msg-atts{display:flex;flex-direction:column;align-items:flex-start;gap:.45rem;margin-top:.35rem}
 .msg-atts img.att-img{max-width:100%;max-height:320px;border-radius:12px;cursor:zoom-in;object-fit:contain;background:#000}
 .msg-atts video.att-vid{max-width:100%;max-height:320px;border-radius:12px;background:#000}
-.att-wrap{position:relative;display:inline-block;max-width:420px}
+.att-wrap{position:relative;display:inline-block;max-width:420px;--att-max-h:320px}
+/* The width/height ATTRIBUTES a measured picture carries are its intrinsic size,
+   and only `width:auto;height:auto` makes the browser treat them that way: as a
+   specified width/height they are clamped against the caps one axis at a time,
+   which letterboxes the frame instead of scaling it. */
+.msg-atts img.att-img,.pin-atts img.att-img{width:auto;height:auto}
+/* ---------- the shape of a picture, before its bytes ----------
+   A chat picture used to render at zero height and then snap to full size as it
+   landed, collapsing its row and shoving everything below it — and a list
+   rebuild made that happen again on every new message. The size the server
+   measured now reserves the box, and the placeholder is the skin over it.
+
+   The reservation lives on the WRAP, not on the picture: the wrap is
+   shrink-to-fit, so an image's own max-width:100% has no definite containing
+   block to resolve against until the bytes arrive — the percentage collapses to
+   nothing and the box is as good as unreserved. attachmentHTML() therefore sets
+   the wrap's width from the measured size (min(picture, column, 420px, height
+   cap x ratio)) and this aspect-ratio gives it the height. */
+.att-wrap.ar{aspect-ratio:var(--att-ar)}
+/* Shown only by the wiring (`.pending`), so an unwired surface degrades to the
+   old behaviour — a visible picture — rather than one parked invisible behind a
+   spinner that never lifts. */
+.att-wrap .att-ph{display:none;position:absolute;inset:0;align-items:center;justify-content:center;border-radius:12px;background:var(--panel-3);pointer-events:none;transition:opacity .2s var(--ease-out)}
+.att-wrap.pending .att-ph{display:flex}
+.pin-atts .att-wrap{--att-max-h:200px}
+.pin-atts .att-ph{border-radius:10px}
+/* Nothing knows this picture's shape (media posted before sizes were recorded,
+   or a format no header parse understands): a small neutral box, so the wait is
+   visible at all. Reserving a GUESSED shape would only snap harder later. */
+.att-wrap.no-ar.pending .att-ph{position:static;width:min(200px,55vw);aspect-ratio:4/3;transition:none}
+.att-wrap.no-ar.pending.ready .att-ph{display:none}
+.att-wrap.pending.ready .att-ph{opacity:0}
+/* A picture that never loads degrades to a file card (final.js) — the
+   placeholder goes with it. */
+.att-wrap:has(.file-card) .att-ph{display:none}
+.att-wrap.pending:not(.ready) img.att-img{opacity:0;transition:opacity .2s var(--ease-out)}
 .spoiler{border-radius:6px;padding:0 .3rem;cursor:pointer}
 .msg .text .spoiler:not(.shown),.uc-bio .spoiler:not(.shown){background:var(--spoiler);color:transparent;user-select:none}
 .msg .text .spoiler:not(.shown) a,.uc-bio .spoiler:not(.shown) a{color:transparent}

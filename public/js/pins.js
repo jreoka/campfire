@@ -297,8 +297,12 @@ async function renderPinsList() {
     else if (!atts.length) textEl.textContent = '[no text]';
     else textEl.remove();
     const attsEl = row.querySelector('.pin-atts');
-    if (atts.length && typeof attachmentHTML === 'function') attsEl.innerHTML = atts.map(attachmentHTML).join('');
-    else attsEl.remove();
+    if (atts.length && typeof attachmentHTML === 'function') {
+      attsEl.innerHTML = atts.map(attachmentHTML).join('');
+      // The same placeholder contract as the chat: wire what was just painted,
+      // or a pinned picture sits behind a spinner that never lifts.
+      if (typeof wireAttImage === 'function') attsEl.querySelectorAll('img.att-img').forEach(wireAttImage);
+    } else attsEl.remove();
     row.querySelector('.pin-meta').textContent = 'Pinned by ' + (p.pinned_by ? p.pinned_by.display_name : '?');
     paintAvatar(row.querySelector('.avatar'), p.user);
     const btns = document.createElement('div');

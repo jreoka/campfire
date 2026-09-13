@@ -596,6 +596,23 @@ CREATE INDEX IF NOT EXISTS idx_game_days_user ON game_days(user_id, day);
   await addColumn('users', 'game_exclusions', "TEXT NOT NULL DEFAULT '[]'");
   await addColumn('attachments', 'spoiler', 'BIGINT NOT NULL DEFAULT 0');
   await addColumn('dm_attachments', 'spoiler', 'BIGINT NOT NULL DEFAULT 0');
+  // Intrinsic pixel size of an image attachment, so a reader can reserve the
+  // picture's box before its bytes arrive instead of watching the conversation
+  // collapse and shove itself as it pops in. NULL means "not measured yet" and
+  // is what att-dims.js works through; 0 means "measured, nothing to reserve"
+  // (a video, a file, or a format no header parse understands) — kept distinct
+  // so the backfill never re-reads an object it has already answered for.
+  await addColumn('attachments', 'w', 'BIGINT');
+  await addColumn('attachments', 'h', 'BIGINT');
+  await addColumn('dm_attachments', 'w', 'BIGINT');
+  await addColumn('dm_attachments', 'h', 'BIGINT');
+  // The backfill asks exactly one question — "what is still unmeasured?" — and
+  // this partial index keeps that a lookup instead of a scan of every
+  // attachment ever posted, shrinking as the answers come in.
+  await db.exec(`
+CREATE INDEX IF NOT EXISTS idx_attachments_unmeasured ON attachments(created_at) WHERE w IS NULL;
+CREATE INDEX IF NOT EXISTS idx_dm_attachments_unmeasured ON dm_attachments(created_at) WHERE w IS NULL;
+`);
   await addColumn('server_members', 'position', 'BIGINT NOT NULL DEFAULT 0');
   await addColumn('server_members', 'folder_id', 'TEXT');
   await addColumn('users', 'is_admin', 'BIGINT NOT NULL DEFAULT 0');
@@ -921,6 +938,7 @@ const LOCKS = {
   stateReconcile: 771012, // drop voice_occupants + live_sessions rows left by dead replicas
   mediaBucketScan: 771013, // media-compress bucket reconciliation (list the bucket, compress what the flags missed)
   beaconSweep: 771014,    // watcher stale-beacon cleanup (playing_game) — one replica
+  attDims: 771015,        // att-dims.js: measure images that predate the shape record
 };
 
 // Try to take the lock without waiting. Resolves { ran: false } when another

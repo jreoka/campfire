@@ -15,6 +15,7 @@ const webpush = require('web-push');
 const { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } = require('@simplewebauthn/server');
 const db = require('./db');
 const storage = require('./storage');
+const imageSize = require('./image-size');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
@@ -1482,7 +1483,7 @@ app.post('/api/webhooks/:wid/:token', async (req, res) => {
     const isRemoteImg = a?.kind === 'image' && /^https:\/\//.test(url);
     if (!isLocal && !isRemoteImg) continue;
     const mime = String(a?.mime || 'application/octet-stream').slice(0, 80);
-    cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, MAX_FILE_BYTES)), kind: isLocal ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file') : 'image', spoiler: a?.spoiler ? 1 : 0 });
+    cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, MAX_FILE_BYTES)), kind: isLocal ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file') : 'image', spoiler: a?.spoiler ? 1 : 0, ...cleanAttDims(a) });
   }
   if (!content && !cleanAtts.length) return res.status(400).json({ error: 'empty_message' });
   const mid = uid();
@@ -2312,8 +2313,23 @@ app.post('/api/upload', authRequired, (req, res, next) => {
   let candidate = false;
   try { candidate = require('./media-compress').isCandidate(mt, fileKey, req.file.size); } catch {}
   try { scan = await require('./virus-scan').queueFileScan(fileKey, { compress: candidate }); } catch {}
-  res.json({ url: uploadUrl('files', req.file), name: String(req.file.originalname || 'file').slice(0, 120), mime: mt, size: req.file.size, kind, scan });
+  res.json({ url: uploadUrl('files', req.file), name: String(req.file.originalname || 'file').slice(0, 120), mime: mt, size: req.file.size, kind, scan, ...(await uploadDims(req.file, kind)) });
 });
+
+// The shape of just-uploaded media, measured here (from the file's own header —
+// see image-size.js) and echoed through the client with the message, so a
+// picture can reserve its box the moment it is posted instead of a backfill
+// later. Images only: a video's size lives in its container, and a file has
+// none. Anything unmeasurable is 0/0 = "asked, nothing to reserve".
+async function uploadDims(file, kind) {
+  if (kind !== 'image' || !file) return { w: 0, h: 0 };
+  try {
+    const size = file.buffer
+      ? imageSize.dimsFromBuffer(file.buffer)
+      : await imageSize.dimsFromFile(fs, file.path);
+    return size ? { w: size.w, h: size.h } : { w: 0, h: 0 };
+  } catch { return { w: 0, h: 0 }; }
+}
 
 // image upload middleware: rejects non-images / oversize with a clean 400/413
 function imgSingle(up) {
@@ -5022,7 +5038,7 @@ async function hydrateDm(rows, meId) {
       // View-once media is never handed out as a normal attachment: it stays
       // gated behind /viewonce/open, and the card only carries its shape.
       if (voIds.has(a.message_id)) { voBy[a.message_id] = { kind: a.kind, mime: a.mime, name: a.filename }; continue; }
-      (attBy[a.message_id] = attBy[a.message_id] || []).push({ id: a.id, url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler, scan: (sk && scanMap.get(sk)) || 'clean' });
+      (attBy[a.message_id] = attBy[a.message_id] || []).push({ id: a.id, url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler, w: Number(a.w) || 0, h: Number(a.h) || 0, scan: (sk && scanMap.get(sk)) || 'clean' });
     }
     for (const r of await db.prepare(`SELECT message_id, emoji, user_id FROM dm_reactions WHERE message_id IN (${ph})`).all(...ids)) {
       const t = (reactBy[r.message_id] = reactBy[r.message_id] || {});
@@ -5071,9 +5087,21 @@ function cleanAttachments(atts) {
       size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, MAX_FILE_BYTES)),
       kind: isLocal ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file') : 'image',
       spoiler: a?.spoiler ? 1 : 0,
+      ...cleanAttDims(a),
     });
   }
   return out;
+}
+// The intrinsic size the uploader measured (see /api/upload). A LAYOUT HINT and
+// nothing more: the box is capped by CSS whatever this says, so the only job
+// here is to keep it sane — both halves or neither, positive, and no bigger than
+// any real picture. A missing or silly pair stores 0/0, which reads as "no
+// measured shape" and lets the client size the picture from itself.
+const ATT_DIM_MAX = 20000;
+function cleanAttDims(a) {
+  const w = parseInt(a?.w, 10) || 0;
+  const h = parseInt(a?.h, 10) || 0;
+  return (w >= 1 && h >= 1 && w <= ATT_DIM_MAX && h <= ATT_DIM_MAX) ? { w, h } : { w: 0, h: 0 };
 }
 // ---------- polls (single-choice, live-tallying) ----------
 function normalizePollOptions(v) {
@@ -5811,7 +5839,7 @@ async function hydrateMessages(rows, meId) {
     try { scanMap = await require('./virus-scan').scanStatusMap(attRows.map((a) => scanKeyForUrl(a.url))); } catch {}
     for (const a of attRows) {
       const sk = scanKeyForUrl(a.url);
-      (attBy[a.message_id] = attBy[a.message_id] || []).push({ id: a.id, url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler, scan: (sk && scanMap.get(sk)) || 'clean' });
+      (attBy[a.message_id] = attBy[a.message_id] || []).push({ id: a.id, url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler, w: Number(a.w) || 0, h: Number(a.h) || 0, scan: (sk && scanMap.get(sk)) || 'clean' });
     }
     for (const r of await db.prepare(`SELECT message_id, emoji, user_id FROM message_reactions WHERE message_id IN (${ph})`).all(...ids)) {
       const t = (reactBy[r.message_id] = reactBy[r.message_id] || {});
@@ -6503,7 +6531,7 @@ wss.on('connection', async (ws, req) => {
         const kind = isLocal
           ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file')
           : 'image';
-        cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, MAX_FILE_BYTES)), kind, spoiler: a?.spoiler ? 1 : 0 });
+        cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, MAX_FILE_BYTES)), kind, spoiler: a?.spoiler ? 1 : 0, ...cleanAttDims(a) });
       }
       if (!content && !cleanAtts.length && !pollOpts) return;
       const mid = uid();
@@ -6512,8 +6540,8 @@ wss.on('connection', async (ws, req) => {
         .run(mid, serverId, channelId, me.userId, content, replyTo, threadRoot, fwdFrom, now());
       // Posting in a thread re-follows it (undoes an unfollow from the Threads panel).
       if (threadRoot) { try { await db.prepare('DELETE FROM thread_unfollows WHERE thread_root_id = ? AND user_id = ?').run(threadRoot, me.userId); } catch {} }
-      const insAtt = db.prepare('INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,spoiler,created_at) VALUES (?,?,?,?,?,?,?,?,?)');
-      for (const a of cleanAtts) await insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, now());
+      const insAtt = db.prepare('INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,spoiler,w,h,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+      for (const a of cleanAtts) await insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, a.w || 0, a.h || 0, now());
       if (cleanAtts.length) kickMedia();
       if (pollOpts) {
         if (!content) return; // a poll needs its question as the message text
@@ -6549,8 +6577,8 @@ wss.on('connection', async (ws, req) => {
       await db.prepare('INSERT INTO dm_messages (id,thread_id,user_id,content,reply_to_id,fwd_from,created_at) VALUES (?,?,?,?,?,?,?)')
         .run(mid, threadId, me.userId, content, replyTo, fwdFrom, now());
       await db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ?').run(threadId);
-      const insAtt = db.prepare('INSERT INTO dm_attachments (id,message_id,url,filename,mime,size,kind,spoiler,created_at) VALUES (?,?,?,?,?,?,?,?,?)');
-      for (const a of cleanAtts) await insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, now());
+      const insAtt = db.prepare('INSERT INTO dm_attachments (id,message_id,url,filename,mime,size,kind,spoiler,w,h,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+      for (const a of cleanAtts) await insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, a.w || 0, a.h || 0, now());
       if (cleanAtts.length) kickMedia();
       if (pollOpts) {
         if (!content) return; // a poll needs its question as the message text
@@ -6989,6 +7017,10 @@ async function boot() {
     vs.startVirusScan();
   } catch (e) { console.error('[virusscan] scheduler failed to start:', (e && e.message) || e); }
   try { require('./storage-sweep').startStorageSweep(); } catch (e) { console.error('[sweep] scheduler failed to start:', (e && e.message) || e); }
+  // Shapes for the images that predate `w`/`h` (see att-dims.js): newest first,
+  // a small bounded batch per tick, so a channel backlog reserves its boxes
+  // instead of collapsing and shoving as pictures land.
+  try { require('./att-dims').startAttDims(); } catch (e) { console.error('[dims] scheduler failed to start:', (e && e.message) || e); }
   // Link previews: one fetch per URL (cached in link_embeds), swept monthly.
   try { await db.withLock(db.LOCKS.unfurlPrune, () => require('./unfurl').prune()); } catch (e) { console.error('[unfurl] prune failed:', (e && e.message) || e); }
   safeLockedInterval('unfurl', db.LOCKS.unfurlPrune, () => require('./unfurl').prune(), 6 * 3600 * 1000);

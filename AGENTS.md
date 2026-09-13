@@ -54,6 +54,9 @@ campfire/
   media-compress.js  # ffmpeg re-encode of over-large media: single-pass in the scan slot,
                      # the flag-driven queue (chat/DM/stories), the bucket reconciler
                      # (profile media + anything the flags never saw), and the key ledger
+  image-size.js      # intrinsic size from an image's own header (JPEG/PNG/GIF/WebP/BMP)
+  att-dims.js        # backfill measuring media posted before the shape record existed
+                     # (newest-first, bounded per tick, leader-locked)
   package.json       # deps (express, ws, jsonwebtoken, bcryptjs, cookie-parser)
   Dockerfile         # node:22-alpine, no build tools needed
   docker-compose.yml # one service, ./data volume, requires JWT_SECRET in .env
