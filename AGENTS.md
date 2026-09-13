@@ -571,9 +571,11 @@ every task, in this file.
   `ssh root@46.225.214.40`, then `cd /opt/campfire/app && git pull && docker
   compose -f docker-compose.yml -f deploy/hetzner/docker-compose.hetzner.yml up
   -d --build`. Full runbook: **`deploy/hetzner/README.md`**.
-- The GHCR image built by `.github/workflows/container.yml` is **no longer what
-  production runs** — the host builds from its own checkout. Pushing `main` still
-  builds it; nothing pulls it.
+- Production builds its own image on the host from its own checkout, and the
+  repo **publishes no container image anywhere** — the old GHCR workflow is gone
+  (nothing ever pulled it, and a private package nothing consumes is just a
+  second, staler copy of the app to keep track of). `docker compose up -d
+  --build` on the host is the only build that matters.
 - Env-only changes need **no rebuild**: edit `/opt/campfire/app/.env` (mode 600)
   and `up -d --force-recreate campfire`.
 - Confirm the deploy: `curl https://campfire.dill.moe/api/version` (the
