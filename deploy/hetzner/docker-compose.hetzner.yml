@@ -1,0 +1,78 @@
+# Campfire on a single Hetzner VPS - the Kubernetes-specific services, replaced.
+#
+#   cd /opt/campfire/app
+#   docker compose -f docker-compose.yml -f deploy/hetzner/docker-compose.hetzner.yml up -d
+#
+# The base docker-compose.yml is unchanged: db + campfire. This overlay adds the
+# three things the cluster used to provide, and nothing else:
+#
+#   cloudflared  the site's only ingress. Outbound-only, so ufw never opens
+#                80/443. Its tunnel routes campfire.dill.moe -> http://campfire:3000
+#   coturn       the TURN relay, on the host network so it binds the VPS's public
+#                IP directly - which is why there is no port mapping here
+#   clamd        the AV engine. The app talks to it over the compose network and
+#                never spawns it, so this is the CLAM_HOST / CLAM_REMOTE path in
+#                virus-scan.js rather than the loopback one
+#
+# Not here: Caddy. TLS terminates at Cloudflare, and the base overlay for a
+# direct-TLS VPS (docker-compose.prod.yml) is a different, unused shape.
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: campfire-cloudflared
+    restart: unless-stopped
+    # --no-autoupdate: the image tag is the version we pin; a self-updating
+    # binary inside a container just makes the running version unknowable.
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in .env}
+    depends_on:
+      - campfire
+
+  coturn:
+    image: coturn/coturn:latest
+    container_name: campfire-coturn
+    restart: unless-stopped
+    # host networking: the relay must present the VPS's real public address to
+    # peers, and its relay range (49160-49200/udp) is a host port range. Same
+    # reasoning as the cluster's `hostNetwork: true`.
+    network_mode: host
+    environment:
+      - TURN_USER=${TURN_USER:?Set TURN_USER in .env}
+      - TURN_PASS=${TURN_PASS:?Set TURN_PASS in .env}
+    volumes:
+      - ./deploy/hetzner/coturn/turnserver.conf:/etc/coturn-base/turnserver.conf:ro
+    # coturn reads exactly ONE config file, and the credential is a secret, so
+    # render base + user line into a temp file at start - the same trick the
+    # cluster used with a ConfigMap + emptyDir. `$$` is a literal $ for the
+    # container's shell.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - cat /etc/coturn-base/turnserver.conf > /tmp/turnserver.conf &&
+        printf 'user=%s:%s\n' "$$TURN_USER" "$$TURN_PASS" >> /tmp/turnserver.conf &&
+        exec turnserver -c /tmp/turnserver.conf --pidfile= --no-cli
+
+  clamd:
+    image: clamav/clamav:stable
+    container_name: campfire-clamd
+    restart: unless-stopped
+    volumes:
+      # Signatures (~1 GB) live in a named volume, not the image layer, so a
+      # restart does not re-download the whole database.
+      - clamav_db:/var/lib/clamav
+      # A complete clamd.conf we control. The stock one caps StreamMaxLength at
+      # 25M, which would reject INSTREAM uploads over 25 MB outright - the app
+      # allows 50. Derived from the image's own file; see the header in it.
+      - ./deploy/hetzner/clamav/clamd.conf:/etc/clamav/clamd.conf:ro
+    # No ports published: only the app needs to reach it, over the compose
+    # network, by service name. Nothing on the host or the internet can.
+    healthcheck:
+      test: ["CMD-SHELL", "clamdcheck.sh || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+
+volumes:
+  clamav_db:

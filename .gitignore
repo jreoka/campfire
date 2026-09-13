@@ -1,6 +1,9 @@
 node_modules/
 data/*.db*
 .env
+# Migration credentials (Civo source + R2 destination). Never commit.
+.env.migrate
+.env.k8s
 app/src-tauri/target/
 nul
 

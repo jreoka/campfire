@@ -27,7 +27,15 @@ function s3() {
     _client = new S3Client({
       region: REGION,
       endpoint: ENDPOINT,
-      forcePathStyle: true, // R2 jurisdiction endpoints are path-style
+      // Addressing style is a property of the ENDPOINT, not a preference, and
+      // the two stores this project has used are exact opposites:
+      //   Civo   answers only path-style (`<endpoint>/<bucket>/<key>`); its
+      //          virtual-host form does not even resolve in DNS.
+      //   Hetzner answers only virtual-host (`<bucket>.<endpoint>/<key>`) and
+      //          403s on path-style.
+      // Both verified against the real endpoints with scripts/s3-smoke.js.
+      // Defaults to path-style so an existing deployment is byte-identical.
+      forcePathStyle: process.env.S3_FORCE_PATH_STYLE !== '0',
       credentials: {
         accessKeyId: process.env.S3_ACCESS_KEY || '',
         secretAccessKey: process.env.S3_SECRET_KEY || '',
