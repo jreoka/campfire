@@ -65,11 +65,11 @@
      for it, so the gap above the input box is the same as it always was. */
   --strip-h:1.2rem;
   /* Height of a one-row composer, MEASURED: 2 x its vertical padding + the
-     field's own box (2 x .72rem padding + a 1.5 line at .93rem + border), which
+     field's own box (2 x .78rem padding + a 1.5 line at .93rem + border), which
      is the tallest thing in the row. composer-anchored popovers stack on it, so
      re-measure whenever #composer's padding, the field's padding or its font
-     size changes. */
-  --composer-h:76px;
+     size changes (test-composer-field measures it). */
+  --composer-h:84px;
 }
 /* Light mode: bright flat surfaces, same indigo primary. */
 [data-theme="light"]{
@@ -419,7 +419,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .mini:disabled:hover{background:var(--panel-3)}
 .mini.danger{background:var(--danger-bg);border:1px solid var(--danger-line);color:var(--danger-tx)}
 .mini.danger:hover{background:rgba(248,113,113,.17)}
-#me-card{display:flex;align-items:center;gap:.55rem;padding:.6rem .7rem;margin:.4rem .6rem .6rem -70px;border:0;border-radius:12px;background-color:var(--panel-2);font-size:.88rem;font-weight:600;overflow:hidden;transition:background-color .15s;position:relative;z-index:2}
+#me-card{display:flex;align-items:center;gap:.55rem;padding:.75rem .7rem;margin:.4rem .6rem .6rem -70px;border:0;border-radius:12px;background-color:var(--panel-2);font-size:.88rem;font-weight:600;overflow:hidden;transition:background-color .15s;position:relative;z-index:2}
 /* The avatar + name is the only part of the bar that opens your card, so the
    space around mute/deafen/settings does nothing. It says so on hover with a
    rounded outline (outline, not border, so the target never moves the layout). */
@@ -430,7 +430,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 }
 #me-open:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 #me-card.off{opacity:.55}
-#me-card .avwrap{position:relative;width:32px;height:32px;flex-shrink:0}
+#me-card .avwrap{position:relative;width:36px;height:36px;flex-shrink:0}
 #me-card .avwrap .avatar{width:100%;height:100%;font-size:.75rem}
 #me-card .avwrap .status-dot{position:absolute;bottom:-3px;right:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2.5px var(--panel-2);z-index:2}
 #me-card .mnames{display:flex;flex-direction:column;min-width:0;flex:1;line-height:1.25}
@@ -576,7 +576,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 /* flex-end, not center: the send key rides the bottom edge so it stays on the
    same line as the field's own controls when the box grows to several lines.
    On a one-line box the two are within a pixel of each other either way. */
-#composer{display:flex;gap:.55rem;align-items:flex-end;padding:.9rem .9rem .9rem;padding-bottom:calc(.9rem + var(--safe-b));background:var(--panel);min-width:0;position:relative}
+#composer{display:flex;gap:.55rem;align-items:flex-end;padding:1.1rem .9rem 1.1rem;padding-bottom:calc(1.1rem + var(--safe-b));background:var(--panel);min-width:0;position:relative}
 /* The strip keeps its slot at all times — only its contents fade. It used to be
    display:none when idle, so every indicator appearing/disappearing resized
    #messages and shoved the whole conversation up and down (and made the
@@ -617,10 +617,12 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 /* The field's own controls ride the BOTTOM of the box, not its middle: on one
    line that is the same optical centre it always had, and when the box grows to
    four lines they stay on the bar instead of floating in the middle of a block
-   of text. Both offsets are tuned so a one-line box is unchanged. */
-#btn-plus{display:inline-flex;align-items:center;justify-content:center;position:absolute;left:.4rem;bottom:7px}
+   of text. Both offsets are the centred rest position for a 32px control in the
+   one-line field ((field height - 32) / 2) — re-derive them with the field's
+   padding, or the + drifts off the glyph line (test-composer-field measures it). */
+#btn-plus{display:inline-flex;align-items:center;justify-content:center;position:absolute;left:.4rem;bottom:8.6px}
 #btn-attach{display:none}
-#composer-tools{position:absolute;right:.4rem;bottom:7px;display:flex;align-items:center;gap:.15rem}
+#composer-tools{position:absolute;right:.4rem;bottom:8.6px;display:flex;align-items:center;gap:.15rem}
 #composer-tools .tool-btn{padding:.45rem}
 /* The + is 32px so it fits inside the field; its thumb target is grown to the
    full 44px by the ::after hit box in the coarse-pointer block below. */
@@ -632,14 +634,14 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
   width:32px;height:32px;padding:0;border-radius:50%;
   background:color-mix(in srgb, var(--text) 8%, transparent);color:var(--muted);
 }
-#btn-plus:active,#btn-more:active{background:color-mix(in srgb, var(--text) 20%, transparent);transform:scale(.9)}#in-message{flex:1;min-width:0;background:transparent;border:1px solid transparent;color:transparent;caret-color:var(--text);border-radius:16px;padding:.72rem 1rem;outline:none;position:relative;font:inherit;font-size:.93rem;resize:none;overflow-y:auto;overflow-wrap:anywhere}
+#btn-plus:active,#btn-more:active{background:color-mix(in srgb, var(--text) 20%, transparent);transform:scale(.9)}#in-message{flex:1;min-width:0;background:transparent;border:1px solid transparent;color:transparent;caret-color:var(--text);border-radius:16px;padding:.78rem 1rem;outline:none;position:relative;font:inherit;font-size:.93rem;resize:none;overflow-y:auto;overflow-wrap:anywhere}
 #in-message:focus{border-color:transparent}
 #composer-box:focus-within #in-render{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
 /* The field the reader actually sees: the textarea on top is transparent and
    only carries the caret. Metrics (padding, font, line-height) must stay
    identical between the two or the caret drifts off the glyphs — only the
    surface lives here. */
-#in-render{position:absolute;inset:0;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;background:var(--field);border:1px solid var(--field-line);border-radius:16px;padding:.72rem 4.2rem .72rem 3.1rem;font:inherit;font-size:.93rem;color:var(--text);transition:border-color var(--t-fast),box-shadow var(--t-fast)}
+#in-render{position:absolute;inset:0;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;background:var(--field);border:1px solid var(--field-line);border-radius:16px;padding:.78rem 4.2rem .78rem 3.1rem;font:inherit;font-size:.93rem;color:var(--text);transition:border-color var(--t-fast),box-shadow var(--t-fast)}
 #in-render-inner{white-space:pre-wrap;overflow-wrap:anywhere}
 /* The backdrop must not move a single glyph: markdown is shown by colour and
    background only. No padding, no weight/size/font changes — any of those
@@ -1910,19 +1912,19 @@ body{touch-action:manipulation}
   #in-message,#in-thread{font-size:16px}
   #in-render{font-size:16px}
   /* The phone composer is tighter than the desktop one and its field is 16px, so
-     its measured height is its own (2 x .72rem + 2 x .72rem field padding + a 1.5
+     its measured height is its own (2 x .95rem + 2 x .78rem field padding + a 1.5
      line at 16px + border) — the popovers anchored above it read this, not the
      desktop value. */
-  :root{--composer-h:72px}
-  #composer{gap:.4rem;padding:.72rem;padding-bottom:calc(.72rem + var(--safe-b))}
+  :root{--composer-h:81px}
+  #composer{gap:.4rem;padding:.95rem;padding-bottom:calc(.95rem + var(--safe-b))}
   #composer .btn{padding:.7rem .9rem;min-height:44px}
   /* Thumb-sized tool keys — except the field's own leading +, which has to stay
      smaller than the field it sits in (a 44px disc in a 47px box has nowhere to
      sit) and gets its touch target from the ::after hit box below instead. */
   #composer .tool-btn:not(#btn-plus):not(#btn-more),#composer .gif-btn{min-height:44px;min-width:44px;justify-content:center}
-  #composer-tools{right:auto;left:.4rem}
+  #composer-tools{right:auto;left:.4rem;bottom:9.5px}
   #composer-box #in-message{padding-right:.5rem;padding-left:2.95rem}
-  #in-render{padding:.72rem .5rem .72rem 2.95rem}
+  #in-render{padding:.78rem .5rem .78rem 2.95rem}
   #btn-attach,#btn-emoji,#btn-gif{display:none}
   #btn-plus{display:none}
   #btn-more{display:inline-flex;align-items:center;justify-content:center}
