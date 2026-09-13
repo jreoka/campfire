@@ -209,15 +209,26 @@ The owner will iterate on features **without ever losing persistent data**.
   volume, media in the R2 bucket `campfire-media`. Never `rm -rf data`, never
   drop the database, never delete the volume or the bucket, never write
   destructive one-offs without explicit confirmation. Twice-daily off-site
-  snapshots (database + every media object + every Secret) go to a **second
-  Cloudflare R2 bucket**, `campfire-backup`, written by `backup.js` — runbook
+  snapshots (database + every Secret) go to a **second Cloudflare R2 bucket**,
+  `campfire-backup`, written by `backup.js` — runbook
   `deploy/hetzner/README.md`. Nothing writes to a media bucket's `backups/`
   prefix any more.
-  **Open risk, stated plainly:** media and backups now live in ONE Cloudflare
+  **Media is deliberately NOT in the backup** (owner decision): a snapshot
+  carries a media *inventory* (key + size), never the bytes, because mirroring
+  the media bucket under `blobs/` doubled what the account stored inside the
+  SAME Cloudflare account that held the media — no vendor separation, so it
+  could not survive losing that account, and it bought nothing but the bill.
+  Consequence, stated plainly: **the media bucket is the only copy of the
+  media.** The dump + Secrets are the doomsday copy; no code path can return a
+  media byte from the backup bucket, and `--restore-media` is an audit that
+  names what is unaccounted for. `scripts/purge-backup-blobs.js` deleted the old
+  mirror (dry-run first); `prune()` in `backup.js` reaps whatever is left.
+  **Open risk, stated plainly:** media and backups live in ONE Cloudflare
   account, so losing that account costs the live media and the only copies of
-  everything at once. The old Civo/R2 split existed to prevent exactly that.
-  Moving the backups to a third vendor (Backblaze B2, free at this size)
-  restores the separation.
+  everything else at once. The old Civo/R2 split existed to prevent exactly
+  that. Moving the backups to a third vendor (Backblaze B2, free at this size)
+  restores the separation for the database and Secrets — and a copy somewhere
+  else is the only thing that would make media recoverable again.
 - Schema changes must be **guarded migrations** (`CREATE TABLE IF NOT EXISTS`,
   `ALTER TABLE ... ADD COLUMN` only when the column is missing — see
   `columnExists`/`addColumn` in `db.js`) so existing databases upgrade in
@@ -365,9 +376,10 @@ breather. Two, not more (owner request) — a request the 4-core box now honours
 with room to spare, where the single-vCPU node did not.
 
 **Uploads live in the Cloudflare R2 media bucket** (`campfire-media`), not on
-disk — so a replica needs no shared filesystem, and so the doomsday backup
-actually contains the media (`backup.js` enumerates the object store, so media
-kept on a host filesystem would silently stop being backed up). The credential
+disk — so a replica needs no shared filesystem, and because media kept on a host
+filesystem is media no replica and no backup can see. It is also the **only**
+copy: `backup.js` records a media inventory (key + size) and never the bytes —
+see the data-safety contract. The credential
 is an R2 token **scoped to that bucket alone**, so the key the app holds cannot
 reach the backup bucket. Addressing style is a property of the endpoint, not a
 preference — **Civo answers only path-style, Hetzner Object Storage only
@@ -577,14 +589,19 @@ every task, in this file.
   `tls: error decoding message` — kubectl then fails on every version. Keep only
   the leaf in that field.
 - Backups are **off-site in Cloudflare R2** (`r2.js`, `R2_*` env), never in the
-  media bucket: 12-hourly snapshots of the pg_dump, every media object and every
-  Secret in the namespace, newest `R2_BACKUP_KEEP` (2) retained. Media is stored
-  once under `blobs/` and shared between snapshots, so a second snapshot of an
-  unchanged bucket uploads nothing. Restore with
-  `node scripts/restore-from-r2.js` (`--list` / `--show` / `--fetch` /
-  `--restore-media`). `R2_*` is deliberately separate from `S3_*`: getting the
-  backup destination wrong must not be able to break media serving, or the
-  reverse.
+  media bucket: 12-hourly snapshots of the pg_dump, every Secret in the
+  namespace and a media **inventory**, newest `R2_BACKUP_KEEP` (2) retained.
+  Version-2 manifests say `media.included: false` and list key + size per
+  object; no snapshot stores media bytes. The blob-era `blobs/` mirror (the
+  whole media bucket, deduplicated) doubled the account's storage for no
+  recovery benefit — it lived in the SAME Cloudflare account as the media, so it
+  had no vendor separation either — and `scripts/purge-backup-blobs.js` deleted
+  it (dry-run first, then `--write`); `prune()` reaps any residue. Restore with
+  `node scripts/restore-from-r2.js` (`--list` / `--show` / `--fetch`);
+  `--restore-media` is now an inventory audit that names the keys the media
+  bucket no longer has and copies only what a pre-change snapshot still holds as
+  a blob. `R2_*` is deliberately separate from `S3_*`: getting the backup
+  destination wrong must not be able to break media serving, or the reverse.
 - The pod runs as the `campfire` ServiceAccount, which has a namespace-scoped
   read-only Role on Secrets — that is how a snapshot includes `JWT_SECRET` and
   the tunnel token. The R2 bucket is therefore as sensitive as the cluster:

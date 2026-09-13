@@ -242,8 +242,28 @@ Expect allocation, 16/16 messages relayed, 0% packet loss.
 ## Backups (the doomsday copy)
 
 Still **Cloudflare R2**, bucket `campfire-backup`, by `backup.js`: a 12-hourly
-snapshot of the pg_dump, every media object (deduplicated under `blobs/`) and
-every Secret in the namespace. `R2_BACKUP_KEEP=2`.
+snapshot of the pg_dump, every Secret in the namespace and a **media inventory**
+(key + size per object). `R2_BACKUP_KEEP=2`.
+
+**The media bytes are not in there, on purpose.** They used to be, mirrored
+under `blobs/` and deduplicated across snapshots — which doubled what the
+Cloudflare account stored, in the same account that held the media it copied, so
+it could not survive losing that account and bought nothing but the bill.
+Version-2 manifests say `media.included: false`. The trade, stated plainly: the
+media bucket is now the **only** copy of the media, and a restore can name the
+media it is missing but cannot bring a byte back. The one-time cleanup:
+
+```bash
+# dry run first: counts what it would free, lists blobs the media bucket no longer has
+docker compose ... exec -T campfire node scripts/purge-backup-blobs.js
+docker compose ... exec -T campfire node scripts/purge-backup-blobs.js --write
+```
+
+A blob whose key is still in the media bucket is a copy and is deleted; one the
+media bucket no longer has is the only copy of bytes the app already removed
+(reaped view-once media, a file the scanner deleted, an original media-compress
+replaced) and is kept unless `--orphans` is passed. `prune()` in `backup.js` now
+reaps any blobs/ residue on every snapshot run as the backstop.
 
 ```bash
 docker compose ... exec -T campfire node scripts/restore-from-r2.js --list
@@ -259,13 +279,17 @@ them makes presence and the bus lie.
 
 ## Open items
 
-1. **Biggest risk: media and backups now share one Cloudflare account.** The
-   whole point of the old split was that losing the media vendor must not cost
-   the backups (see `../civo/README.md` §8). Now one account holds live media
-   *and* the only copies of everything. The fix is to move **backups** to a third
-   vendor - Backblaze B2 has a 10 GB free tier, so at ~250 MiB of media it stays
-   free - which restores the property. `r2.js` speaks plain S3 but B2 has
-   checksum quirks worth testing first.
+1. **Biggest risk: media and backups share one Cloudflare account, and the media
+   has no second copy at all.** The whole point of the old split was that losing
+   the media vendor must not cost the backups (see `../civo/README.md` §8). Now
+   one account holds live media *and* the only copies of everything else — and
+   since snapshots stopped mirroring the media (see §Backups), a lost
+   `campfire-media` bucket loses the media outright. Two fixes, in order: move
+   **backups** to a third vendor (Backblaze B2 has a 10 GB free tier, so at
+   ~250 MiB of media it stays free), which restores the separation `r2.js` was
+   built for; and give the media its own out-of-account copy (`rclone sync` to
+   B2/Storj on a schedule, or a second provider's bucket) if that media is worth
+   more than the storage it costs to duplicate.
 2. The old Civo cluster is **scaled to zero, not deleted**. It is the rollback:
    `kubectl -n campfire scale deploy/campfire deploy/cloudflared --replicas=1`.
    Rolling back loses everything written since the cutover, so decide soon.

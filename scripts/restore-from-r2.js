@@ -5,10 +5,19 @@
 //   node scripts/restore-from-r2.js --fetch [stamp] [--out DIR] [--with-media]
 //   node scripts/restore-from-r2.js --restore-media [stamp] [--write]
 //
+// MEDIA IS NOT IN THE BACKUP BUCKET
+//   Snapshots carry the database dump, the Secrets and a media INVENTORY (key +
+//   size per object) -- never the bytes, because mirroring them doubled the
+//   account's storage inside the same Cloudflare account as the media itself.
+//   So `--with-media` / `--restore-media` are now an AUDIT with a legacy escape
+//   hatch: they name the media keys the snapshot recorded that the media bucket
+//   no longer has, and copy nothing (the bytes exist nowhere). Anything still
+//   present under blobs/ from a snapshot written before that change is copied.
+//
 // Needs both sets of credentials, because it reads the backup bucket and (for
-// media) writes the media bucket:
+// media) reads the media bucket:
 //   R2_ENDPOINT R2_BUCKET R2_REGION R2_ACCESS_KEY R2_SECRET_KEY   (backup, read)
-//   S3_ENDPOINT S3_BUCKET S3_REGION S3_ACCESS_KEY S3_SECRET_KEY   (media, write)
+//   S3_ENDPOINT S3_BUCKET S3_REGION S3_ACCESS_KEY S3_SECRET_KEY   (media)
 //
 // Restoring the DATABASE is deliberately not automated here. `pg_restore
 // --clean` drops and recreates tables in a live database, and the data-safety
@@ -71,15 +80,30 @@ function age(created) {
   return Math.floor(h / 24) + 'd ago';
 }
 
+// The media keys a snapshot recorded. version >= 2 keeps them under
+// media.inventory (no bytes anywhere); the blob-era manifests (version 1, or
+// anything with a top-level objects array) kept them there alongside a blob
+// that may or may not still exist.
+function mediaList(m) {
+  if (Array.isArray(m.media && m.media.inventory)) return m.media.inventory;
+  return Array.isArray(m.objects) ? m.objects : [];
+}
+
 // The dump is what a rebuild actually needs, so keep the default listing
-// focused on it rather than on the blob inventory.
+// focused on it rather than on the media inventory.
 function summarise(m) {
   const lines = [];
   lines.push(`  stamp      ${m.stamp}   (${m.created}, ${age(m.created)})`);
   lines.push(`  reason     ${m.reason}`);
   lines.push(`  database   ${m.database ? human(m.database.size) + '  sha256 ' + String(m.database.sha256).slice(0, 16) + '…' : 'MISSING'}`);
   lines.push(`  secrets    ${m.secrets ? m.secrets.count + ' object(s)' : 'NOT INCLUDED'}`);
-  lines.push(`  media      ${m.source ? m.source.objects + ' object(s), ' + human(m.source.bytes) : '?'}`);
+  const listed = mediaList(m);
+  const noBytes = m.media ? m.media.included === false : false;
+  lines.push(`  media      ${m.source ? m.source.objects + ' object(s), ' + human(m.source.bytes) : '?'}` +
+    (noBytes ? ' — inventory only, bytes are NOT in this bucket' : ' (blob-era snapshot)'));
+  if (noBytes && !listed.length && m.media && m.media.inventoryOmitted) {
+    lines.push(`             inventory list omitted: ${m.media.inventoryOmitted}`);
+  }
   if (m.warnings && m.warnings.length) {
     for (const w of m.warnings) lines.push(`  WARNING    ${w}`);
   }
@@ -146,13 +170,25 @@ async function main() {
     if (arg('with-media', false)) {
       const mediaDir = path.join(dir, 'media');
       fs.mkdirSync(mediaDir, { recursive: true });
-      let n = 0, bytes = 0;
-      for (const o of m.objects || []) {
-        const buf = await r2.getBuffer(BLOBS + o.key);
+      let n = 0, bytes = 0, gone = 0;
+      for (const o of mediaList(m)) {
+        let buf;
+        try {
+          buf = await r2.getBuffer(BLOBS + o.key);
+        } catch {
+          // Expected for every snapshot written since media stopped being
+          // mirrored: the inventory names the key, the bytes were never here.
+          gone++;
+          continue;
+        }
         const dest = path.join(mediaDir, o.key);
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         fs.writeFileSync(dest, buf);
         n++; bytes += buf.length;
+      }
+      if (gone) {
+        console.log(`${gone} media object(s) named by this snapshot have no bytes in the backup bucket ` +
+          '(media is not mirrored here -- see README §Backups)');
       }
       console.log(`saved ${n} media object(s) (${human(bytes)}) under ${mediaDir}`);
     }
@@ -168,7 +204,9 @@ Next steps (run these deliberately):
   kubectl -n campfire exec db-0 -- psql -U campfire -d campfire -c \\
     "TRUNCATE bus_replicas, bus_events, live_sessions, voice_occupants, rate_limits, webauthn_challenges;"
 
-  # 2. media (re-run the backup bucket into the media bucket)
+  # 2. media: the backup bucket holds an INVENTORY, not the bytes. Any object
+  #    gone from the media bucket cannot be restored from here -- this reports
+  #    what is missing and copies only what a pre-change snapshot still holds.
   node scripts/restore-from-r2.js --restore-media ${stamp} --write
 
   # 3. secrets: compare secrets.json against the cluster before applying, and
@@ -179,19 +217,28 @@ Next steps (run these deliberately):
 
   if (process.argv.includes('--restore-media')) {
     if (!storage.s3Enabled()) {
-      console.error('S3_* env is not configured; this writes the media bucket.');
+      console.error('S3_* env is not configured; this reads the media bucket.');
       process.exit(1);
     }
     const target = new Set((await storage.s3List('')).map((o) => o.key));
-    let done = 0, skipped = 0, bytes = 0, ignored = 0;
-    for (const o of m.objects || []) {
+    const list = mediaList(m);
+    let done = 0, skipped = 0, bytes = 0, ignored = 0, gone = 0;
+    for (const o of list) {
       // Never resurrect the media bucket's backups/ prefix. It is not media, and
       // backups deliberately live in R2 only -- a snapshot taken before that
       // prefix was emptied still lists those keys.
       if (o.key === 'backups' || o.key.startsWith(storage.BACKUP_PREFIX)) { ignored++; continue; }
       // Copy, never delete: an object already present is left exactly as it is.
       if (target.has(o.key)) { skipped++; continue; }
-      const buf = await r2.getBuffer(BLOBS + o.key);
+      let buf;
+      try {
+        buf = await r2.getBuffer(BLOBS + o.key);
+      } catch {
+        // No blob: this snapshot recorded the key but the bytes were never in
+        // the backup bucket (every snapshot since media stopped being mirrored).
+        gone++;
+        continue;
+      }
       if (!write) {
         console.log(`  would write ${o.key} (${human(buf.length)})`);
       } else {
@@ -204,6 +251,12 @@ Next steps (run these deliberately):
     }
     if (ignored) console.log(`ignored ${ignored} key(s) under ${storage.BACKUP_PREFIX} (backups live in R2, not here)`);
     console.log(`${write ? 'wrote' : 'would write'} ${done} object(s) (${human(bytes)}), ${skipped} already present in the media bucket`);
+    if (gone) {
+      console.log(`${gone} of the ${list.length} key(s) this snapshot recorded are gone from the media bucket and ` +
+        'have no bytes in the backup bucket.');
+      console.log('Media is not mirrored into the backup bucket (see README §Backups): those files cannot be ' +
+        'restored from it by any command.');
+    }
     if (!write) console.log('dry run -- re-run with --write to actually restore');
     return;
   }

@@ -10,7 +10,7 @@
 // destination must be able to be wrong without breaking media serving.
 const {
   S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand,
-  ListObjectsV2Command, HeadObjectCommand,
+  DeleteObjectsCommand, ListObjectsV2Command, HeadObjectCommand,
 } = require('@aws-sdk/client-s3');
 
 const ENDPOINT = process.env.R2_ENDPOINT || '';
@@ -66,6 +66,24 @@ async function del(key) {
   await client().send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
 }
 
+// Batched delete, for the one caller that removes a whole legacy prefix (the
+// blobs/ mirror the backup no longer writes). S3/R2 take 1000 keys per request,
+// so this is about round trips rather than cost. Keys that are already gone are
+// success, not an error -- deleting the same prefix twice must be harmless.
+async function delMany(keys) {
+  const list = (keys || []).filter(Boolean);
+  let deleted = 0;
+  for (let i = 0; i < list.length; i += 1000) {
+    const batch = list.slice(i, i + 1000);
+    await client().send(new DeleteObjectsCommand({
+      Bucket: BUCKET,
+      Delete: { Objects: batch.map((Key) => ({ Key })), Quiet: true },
+    }));
+    deleted += batch.length;
+  }
+  return deleted;
+}
+
 async function head(key) {
   return client().send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }));
 }
@@ -88,4 +106,4 @@ async function list(prefix) {
   return out;
 }
 
-module.exports = { r2Enabled, put, get, getBuffer, del, head, list, BUCKET, ENDPOINT };
+module.exports = { r2Enabled, put, get, getBuffer, del, delMany, head, list, BUCKET, ENDPOINT };

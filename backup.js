@@ -4,26 +4,28 @@
 //   snapshots/<stamp>/manifest.json        inventory + checksums (written LAST)
 //   snapshots/<stamp>/db/campfire.dump     pg_dump -Fc of the whole database
 //   snapshots/<stamp>/secrets/secrets.json every k8s Secret in the namespace
-//   blobs/<source key>                     the media bucket, deduplicated
 //
-// The media bucket is no longer a backup destination at all -- the database
-// dump and the media live in R2, which is a different vendor from the store the
-// app serves from. That is the point: a Civo account or bucket problem must not
-// be able to take out the backups too.
+// WHAT A SNAPSHOT IS NOT: THE MEDIA
+//   The media bucket is deliberately NOT copied here any more. It used to be,
+//   deduplicated under blobs/<key> -- which doubled what the account stored, in
+//   the SAME Cloudflare account that held the media it copied. So it could not
+//   survive losing that account, and it bought nothing but the bill. A snapshot
+//   now carries a media INVENTORY (key + size, a few bytes per object) and never
+//   the bytes.
 //
-// WHY BLOBS ARE SHARED AND NOT COPIED PER SNAPSHOT
-//   Media is stored once under blobs/<its own key>; a snapshot only references
-//   it from its manifest. "Keep a couple of snapshots" therefore costs a couple
-//   of manifests plus whatever media is genuinely new, instead of a full copy
-//   of the bucket every 12 hours.
+//   Stated plainly, because it is a real downgrade in what a restore can do:
+//   the media bucket is the ONLY copy of the media. Database + Secrets are the
+//   doomsday copy; the inventory is what lets a restore name the media that is
+//   unaccounted for instead of guessing at it. A media byte cannot be recovered
+//   from this bucket by any code path. scripts/purge-backup-blobs.js removes the
+//   mirror the old design left behind.
 //
-//   Known limitation: a snapshot points at a key, not at immutable bytes. If a
-//   key's content is rewritten in place (media-compress can do this; it is off
-//   in production) an older snapshot will restore the newer bytes for that key.
-//   Everything else about the snapshot stays point-in-time.
+//   Known limitation: a key is recorded, not pinned to immutable bytes, and media
+//   keys are rewritten in place (media-compress) or reaped (view-once). The
+//   inventory is a point-in-time record of what existed, nothing more.
 //
-//   The manifest is written last, so a snapshot directory that exists is a
-//   snapshot that completed.
+//   The dump is written first and the manifest LAST, so a snapshot directory
+//   that has a manifest is a snapshot that completed.
 //
 // RUNS ONCE PER CLUSTER
 //   Every replica runs this scheduler, so the work is behind the same advisory
@@ -41,8 +43,15 @@ const storage = require('./storage');
 const r2 = require('./r2');
 
 const SNAPSHOT_PREFIX = 'snapshots/';
-const BLOB_PREFIX = 'blobs/';
+// The media mirror the old design wrote here. Nothing writes or reads it any
+// more; prune() reaps whatever is left (see the note there).
+const LEGACY_BLOB_PREFIX = 'blobs/';
 const MANIFEST_NAME = 'manifest.json';
+// The inventory is a few dozen bytes per media object, so it is cheap next to a
+// media copy -- but it is still JSON in a manifest, and an unbounded list in a
+// 12-hourly job is how a snapshot grows without anybody watching. Past this many
+// objects the snapshot records the counts and says the list was omitted.
+const MAX_INVENTORY = 100000;
 // "only a couple retained" -- 2 snapshots at a 12h cadence is 24h of history.
 const KEEP = Math.max(1, parseInt(process.env.R2_BACKUP_KEEP || '2', 10) || 2);
 // Catch up on boot when the newest snapshot is older than this: a bit under the
@@ -173,22 +182,6 @@ async function readSnapshotDirs() {
   return { dirs, complete, orphans };
 }
 
-// Hashes from the newest existing manifest, so a reused blob keeps the hash it
-// was first recorded with instead of being re-downloaded just to re-hash it.
-async function previousHashes(complete) {
-  const map = new Map();
-  if (!complete.length) return map;
-  const newest = complete[complete.length - 1];
-  try {
-    const buf = await r2.getBuffer(SNAPSHOT_PREFIX + newest + '/' + MANIFEST_NAME);
-    const m = JSON.parse(buf.toString('utf8'));
-    for (const o of m.objects || []) if (o && o.key && o.sha256) map.set(o.key, o.sha256);
-  } catch (e) {
-    console.warn('[backup] could not read previous manifest for hashes:', (e && e.message) || e);
-  }
-  return map;
-}
-
 // ---- the run ---------------------------------------------------------------
 
 async function runBackup(reason) {
@@ -240,45 +233,46 @@ async function runBackupLocked(reason) {
       console.warn(`[backup] ${s} SECRETS NOT BACKED UP: ${sec.reason}`);
     }
 
-    // 3. the media bucket, deduplicated
+    // 3. the media bucket -- an inventory, never the bytes (see the header).
+    //    No download, no upload: the only thing this costs is the listing call
+    //    the backup already needed, and it is what a restore reads to say which
+    //    media the snapshot knew about.
     const src = await storage.s3List('');
-    const existing = new Map((await r2.list(BLOB_PREFIX)).map((o) => [o.key.slice(BLOB_PREFIX.length), o.size]));
-    const dirsNow = await readSnapshotDirs();
-    const prev = await previousHashes(dirsNow.complete);
-
-    const objects = [];
-    let uploaded = 0, reused = 0, bytes = 0;
+    const inventory = [];
+    let mediaBytes = 0;
     for (const o of src) {
-      bytes += o.size;
-      if (existing.get(o.key) === o.size) {
-        reused++;
-        objects.push({ key: o.key, size: o.size, sha256: prev.get(o.key) || null, reused: true });
-        continue;
-      }
-      // Sequential on purpose: objects are capped at MAX_FILE_MB (50) and this
-      // pod has a 640Mi limit, so downloading the bucket in parallel is how you
-      // OOM a backup job.
-      const got = await storage.s3Get(o.key);
-      const buf = Buffer.from(await got.Body.transformToByteArray());
-      await r2.put(BLOB_PREFIX + o.key, buf, got.ContentType || 'application/octet-stream');
-      uploaded++;
-      objects.push({ key: o.key, size: buf.length, sha256: sha256(buf), reused: false });
+      // The media bucket's own backups/ prefix is not media: it is the legacy
+      // pile from before the doomsday copy moved to R2, and it is nothing a
+      // reader could ever fetch. Leaving it out keeps the inventory honest.
+      if (o.key === 'backups' || o.key.startsWith(storage.BACKUP_PREFIX)) continue;
+      inventory.push({ key: o.key, size: o.size });
+      mediaBytes += o.size;
     }
-    console.log(`[backup] ${s} media ${src.length} object(s), ${mb(bytes)}: ${uploaded} uploaded, ${reused} already stored`);
+    const listed = inventory.length > MAX_INVENTORY ? null : inventory;
+    console.log(`[backup] ${s} media inventory ${inventory.length} object(s), ${mb(mediaBytes)} ` +
+      `${listed ? '' : '(list omitted: over ' + MAX_INVENTORY + ') '}-- bytes stay in the media bucket`);
 
     // 4. the manifest, last
     const manifest = {
-      version: 1,
+      version: 2,
       stamp: s,
       created: new Date().toISOString(),
       reason,
       pod: process.env.POD_ID || null,
-      source: { bucket: storage.S3_BUCKET || null, objects: src.length, bytes },
+      source: { bucket: storage.S3_BUCKET || null, objects: inventory.length, bytes: mediaBytes },
       database: { key: dumpKey, size: dump.length, sha256: sha256(dump) },
       secrets: secretsRef,
       warnings: sec.ok ? [] : ['secrets not backed up: ' + sec.reason],
-      media: { uploaded, reused, keep: KEEP },
-      objects,
+      media: {
+        // The load-bearing flag: a snapshot with this false has no media bytes
+        // in it and nothing in this bucket can conjure any.
+        included: false,
+        note: 'inventory only -- media bytes live in the media bucket and are not copied here',
+        objects: inventory.length,
+        bytes: mediaBytes,
+        inventory: listed,
+        inventoryOmitted: listed ? null : `${inventory.length} objects (over the ${MAX_INVENTORY} entry cap)`,
+      },
     };
     const manifestKey = SNAPSHOT_PREFIX + s + '/' + MANIFEST_NAME;
     await r2.put(manifestKey, Buffer.from(JSON.stringify(manifest, null, 2)), 'application/json');
@@ -326,35 +320,29 @@ async function prune() {
   const keep = complete.slice(-KEEP);
   console.log(`[backup] retention: keeping ${keep.length} snapshot(s) [${keep.join(', ')}], removed ${deleted} object(s)`);
 
-  // Blob pruning is the dangerous half. Only delete a blob once EVERY retained
-  // manifest has been read successfully and none of them references it; if any
-  // manifest cannot be read, skip blob pruning entirely this run. A blob that a
-  // retained snapshot still needs is a silently corrupt backup.
-  const referenced = new Set();
-  for (const s of keep) {
-    let m;
+  // The legacy media mirror, reaped. Nothing writes blobs/ any more and nothing
+  // reads it -- a snapshot names keys, not blobs -- so whatever is still there
+  // is a second copy of the media bucket kept purely to pay for it twice. A
+  // first pass is a big delete, which is why scripts/purge-backup-blobs.js
+  // exists to do it deliberately, dry-run first; this is the backstop that
+  // makes it stay gone (an older deployment writing blobs again, a purge that
+  // was interrupted). Deleting a blob can never break a retained snapshot,
+  // because no code path reads one to restore anything.
+  let blobs = [];
+  try {
+    blobs = await r2.list(LEGACY_BLOB_PREFIX);
+  } catch (e) {
+    console.warn('[backup] could not list legacy blobs/:', (e && e.message) || e);
+  }
+  if (blobs.length) {
+    const bytes = blobs.reduce((n, b) => n + (b.size || 0), 0);
     try {
-      const buf = await r2.getBuffer(SNAPSHOT_PREFIX + s + '/' + MANIFEST_NAME);
-      m = JSON.parse(buf.toString('utf8'));
+      const n = await r2.delMany(blobs.map((b) => b.key));
+      console.log(`[backup] reaped ${n} legacy blob(s) (${mb(bytes)}): snapshots store no media bytes`);
     } catch (e) {
-      console.warn(`[backup] blob prune SKIPPED: cannot read manifest for ${s} (${(e && e.message) || e})`);
-      return;
+      console.warn('[backup] legacy blob reap failed:', (e && e.message) || e);
     }
-    if (!Array.isArray(m.objects)) {
-      console.warn(`[backup] blob prune SKIPPED: manifest for ${s} has no object list`);
-      return;
-    }
-    for (const o of m.objects) if (o && o.key) referenced.add(o.key);
   }
-
-  const blobs = await r2.list(BLOB_PREFIX);
-  let dropped = 0;
-  for (const b of blobs) {
-    const key = b.key.slice(BLOB_PREFIX.length);
-    if (referenced.has(key)) continue;
-    try { await r2.del(b.key); dropped++; } catch {}
-  }
-  if (dropped) console.log(`[backup] pruned ${dropped} blob(s) no retained snapshot references`);
 }
 
 // ---- schedule --------------------------------------------------------------
