@@ -1213,12 +1213,30 @@ function groupRemoveTabHTML(t, uid) {
   return ucTabHTML('uc-remove', 'x-user', 'Remove', ' danger');
 }
 // ---------- user card ----------
+// A click that OPENS a card is not a click "outside" it. The card's closer
+// (final.js) listens on document, so it runs after the row's own click handler
+// in the SAME click — and the microtask between the two is all openUserCard
+// needs to paint the card when the roster is already loaded (ensureFriends()
+// returns without fetching for 30s after a refresh). The closer therefore read
+// a brand-new card as "outside" and shut it in the tick it appeared: the Active
+// Now rail, a 1:1 DM's header name and a context menu's "View profile" all read
+// as dead — but only on an account whose friend list was warm, which is why a
+// fresh page (or a test that injects friends) never reproduced it. One counter,
+// bumped in the CAPTURE phase so it already carries this click's number when the
+// opener runs, stamped on the card by openUserCard; the closer asks whether the
+// click it is handling is that one.
+let ucClickSeq = 0;
+document.addEventListener('click', () => { ucClickSeq++; }, true);
+function ucOpenedByThisClick() {
+  const c = $('#usercard');
+  return !!c && c.dataset.openClick === String(ucClickSeq);
+}
 // Member-rail cards open to the LEFT of the sidebar, never over it.
-function openMemberCard(uid, rowEl, y) {
+function openMemberCard(uid, rowEl, y, opts = {}) {
   const p = $('#members')?.getBoundingClientRect();
   const r = rowEl?.getBoundingClientRect?.();
   const w = Math.min(300, innerWidth - 16);
-  openUserCard(uid, (p && p.width ? p.left : (r ? r.left : innerWidth)) - w - 8, r ? r.top : y);
+  openUserCard(uid, (p && p.width ? p.left : (r ? r.left : innerWidth)) - w - 8, r ? r.top : y, null, opts);
 }
 // The phone shape of the person popover: a full-height sheet that slides up from
 // the bottom. The sheet CSS (`#usercard.sheet` in the phone block) owns the
@@ -1231,6 +1249,7 @@ function userCardAsSheet(card) {
   card.style.maxHeight = ''; card.style.overflowY = '';
 }
 async function openUserCard(uid, x, y, fallback, opts = {}) {
+  const openClick = ucClickSeq; // this click's number, read before any await
   if (S.me && uid !== S.me.id) await ensureFriends();
   // `fallback` is for rows that already hold the person: a story's viewers list
   // can name someone in no loaded roster (a viewer who shares a server you do
@@ -1268,6 +1287,9 @@ async function openUserCard(uid, x, y, fallback, opts = {}) {
   const streaming = !isOff(st) && (u.streaming_game || null);
   const ban = u.banner_url || u.sidebar_banner_url;
   card.dataset.uid = uid;
+  // The click that asked for this card — its own closer must not read it as a
+  // click outside (see ucOpenedByThisClick at the top of this section).
+  card.dataset.openClick = String(openClick);
   // The status menu always opens as just your current status.
   if (uid === S.me.id) presenceMenu = { open: false, cascade: null };
   card.style.background = cardBgFor(u);

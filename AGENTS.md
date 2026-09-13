@@ -551,7 +551,16 @@ profile-screen pill. On a phone tapping the me bar opens that card as a
 full-height `.sheet` that slides up from the bottom (`openOwnCard` adds the class
 and clears the popup's inline geometry, so `#usercard.sheet` owns it and
 `clampUserCard()` must keep bailing on a sheet); desktop keeps the
-bottom-anchored popup. `.sv-stage` must stay `touch-action:none` — the story
+bottom-anchored popup. The card's closer is a document-level click listener, so
+it runs after whatever row opened the card in the SAME click — and with a friend
+list refreshed in the last 30s (`ensureFriends()` no-ops) the card is already
+painted by then, so a surface that opened one on click looked dead: the Active
+Now rail, a 1:1 DM's header name, a ctx-menu "View profile". `openUserCard` now
+stamps the click it was asked for (a capture-phase counter, `ucClickSeq`, read
+before its first await) and `final.js`'s closer consults `ucOpenedByThisClick()`
+— so a new surface that opens a card on click is covered by stamping, never by
+being added to the closer's selector list. `.sv-stage` must stay
+`touch-action:none` — the story
 viewer's swipe-down-to-close rides on raw pointer events, and `pan-y` let the
 browser claim the drag and cancel them — and that gesture moves `#story-view`
 itself (bars/head/foot travel with the picture, then the overlay slides off the

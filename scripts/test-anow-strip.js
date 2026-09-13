@@ -159,6 +159,29 @@ async function main() {
       }
     };
     const phone = (w, h) => send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 2, mobile: true });
+    // A real finger on an element: touchstart/touchend at its centre. Synthetic
+    // `el.click()` is not enough here — the bug this pins depends on how much
+    // work sits between the opener and the card's document-level closer, and a
+    // dispatched MouseEvent hides it (see the [6] section).
+    const tap = async (sel) => {
+      const p = await evaluate(`(() => {
+        const el = document.querySelector(${JSON.stringify(sel)});
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+        const hit = document.elementFromPoint(x, y);
+        return { x, y, hit: hit ? (hit.className && hit.className.toString()) || hit.tagName : null, inside: !!(hit && hit.closest && hit.closest(${JSON.stringify(sel)})), offline: document.querySelector('#conn-overlay').classList.contains('show') };
+      })()`);
+      if (!p) return { err: 'no ' + sel };
+      await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: p.x, y: p.y }] });
+      await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await sleep(600);
+      const card = await evaluate(`(() => {
+        const uc = document.querySelector('#usercard');
+        return { open: !uc.classList.contains('hidden'), uid: uc.dataset.uid || null, sheet: uc.classList.contains('sheet'), rect: uc.getBoundingClientRect().toJSON() };
+      })()`);
+      return { at: p, card };
+    };
     const shot = async (name) => {
       try {
         const r = await send('Page.captureScreenshot', { format: 'png' });
@@ -280,6 +303,62 @@ async function main() {
     })()`);
     check(dm.title === 'MEMBERS' && dm.panelRows === 2, 'the members panel lists the thread', dm);
     check(dm.tiles === 2, 'and the friends\' strip is still there (not the thread\'s members)', dm);
+
+    console.log('\n[6] tapping a friend in the rail opens their card');
+    // The regression: a card's closer (final.js) is a document-level click
+    // listener, so it runs after the row's own handler in the SAME click — and
+    // when the friend list is warm, `ensureFriends()` returns without fetching
+    // and openUserCard paints the card inside the microtask between the two. The
+    // closer then read that brand-new card as a click "outside" it and closed it
+    // in the tick it appeared, so every Active Now tap (and a 1:1 DM's header
+    // name) looked dead on a real account while a freshly-loaded page — or a
+    // test that injects friends without friendsAt — never showed it. So the
+    // friend list is stamped warm here on purpose.
+    const warm = () => `(async () => {
+      closeUserCard();
+      S.dmThreadId = null;
+      const F = (id, name) => ({ id, username: id, display_name: name, status: 'online' });
+      S.friends = { friends: [F('u1', 'Ana'), F('u2', 'Bo')], pendingIn: [], pendingOut: [], blocked: [] };
+      S.online = { u1: 'online', u2: 'online' }; S.presenceAll = S.online;
+      S.friendsVoice = new Map();
+      activeGaming.clear();
+      S.friendsAt = Date.now(); // a roster fetched < 30s ago: ensureFriends() no-ops
+      await renderActiveNow();
+    })()`;
+    await phone(1400, 900);
+    await evaluate(warm());
+    // A dropped socket paints the full-screen #conn-overlay over the rail, which
+    // would make the tap land on it instead — never a real reason to fail here.
+    check(!!(await waitFor(`!document.querySelector('#conn-overlay').classList.contains('show')`, 10000)), 'the socket is up before the taps');
+    await sleep(150);
+    const desktopTap = await tap('#member-list .anow-card');
+    check(desktopTap.at?.inside === true, 'the tap lands on the desktop rail card, not the page', desktopTap.at);
+    check(desktopTap.card?.open === true && desktopTap.card?.uid === 'u1', 'a tap opens the friend\'s card', desktopTap);
+    check((desktopTap.card?.rect?.left ?? 1e9) < 1100 && desktopTap.card?.sheet === false,
+      'as the popup left of the members panel (never over it)', desktopTap.card && { left: desktopTap.card.rect.left, sheet: desktopTap.card.sheet });
+    const closed = await evaluate(`(async () => {
+      document.querySelector('#messages').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 300));
+      return document.querySelector('#usercard').classList.contains('hidden');
+    })()`);
+    check(closed === true, 'and a click outside still closes it', closed);
+
+    await phone(390, 844);
+    await evaluate(warm() + `.then(() => document.body.classList.add('nav-open'))`);
+    await sleep(300);
+    const tileTap = await tap('#anow-rail .anow-tile');
+    check(tileTap.at?.inside === true, 'the tap lands on the phone tile', tileTap.at);
+    check(tileTap.card?.open === true && tileTap.card?.uid === 'u1', 'a tile tap opens the card too', tileTap);
+    check(tileTap.card?.sheet === true, 'as the full-height phone sheet every other phone surface uses', tileTap.card && { sheet: tileTap.card.sheet, rect: tileTap.card.rect });
+    const reopen = await evaluate(`(async () => {
+      // Keyboard/Enter is the same entry point (the tile is a real control).
+      closeUserCard();
+      document.querySelector('#anow-rail .anow-tile').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 400));
+      const uc = document.querySelector('#usercard');
+      return { open: !uc.classList.contains('hidden'), uid: uc.dataset.uid };
+    })()`);
+    check(reopen.open === true && reopen.uid === 'u1', 'Enter on a tile opens it as well', reopen);
 
     const realErrors = pageErrors.filter((e) => e && !/favicon|Failed to load resource/i.test(e));
     check(realErrors.length === 0, 'no page exceptions', realErrors.slice(0, 3));

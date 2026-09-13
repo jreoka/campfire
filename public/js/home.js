@@ -349,8 +349,12 @@ function anowTileEl(c) {
   paintAvatar(el.querySelector('.avatar'), c.f);
   const join = anowJoinBtn(c.voice);
   if (join) el.appendChild(join);
-  el.onclick = () => openMemberCard(c.f.id, el);
-  el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openMemberCard(c.f.id, el); } };
+  // A phone's person popover is the full-height sheet every other phone surface
+  // uses (the me bar, a 1:1 DM's name); the desktop rail anchors it left of the
+  // members panel, which is off-screen nonsense for a strip in the nav page.
+  const open = () => openMemberCard(c.f.id, el, undefined, { sheet: phoneLayout() });
+  el.onclick = open;
+  el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
   return el;
 }
 function paintActiveNowStrip(g) {

@@ -60,6 +60,7 @@ const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
 const ui = fs.readFileSync(path.join(ROOT, 'public/js/ui.js'), 'utf8');
 const pickers = fs.readFileSync(path.join(ROOT, 'public/js/pickers.js'), 'utf8');
 const stories = fs.readFileSync(path.join(ROOT, 'public/js/stories.js'), 'utf8');
+const final = fs.readFileSync(path.join(ROOT, 'public/js/final.js'), 'utf8');
 const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
 
 console.log('\n[1] the layer contract');
@@ -87,6 +88,26 @@ check(/row\.dataset\.ownclick = '1';\n    row\.onclick = \(e\) => \{ openUserCar
 check(/if \(floating\) return;\n  cancelModal\(\);/.test(ui.replace(/\r\n/g, '\n')),
   'a backdrop click dismisses a floating card before the panel');
 check(/const floating = \['#usercard', '#tagcard'\]\.some/.test(ui), 'and it looks at both popovers');
+
+console.log('\n[2b] the click that opens a card is not a click outside it');
+// The card's closer is a document-level listener, so it runs after the opener
+// in the same click — and with a warm friend list the card is already painted
+// by then (ensureFriends() no-ops), which is what used to make the Active Now
+// rail and a 1:1 DM's header name look dead. The opener stamps the click it was
+// asked for and the closer checks it.
+check(/const openClick = ucClickSeq;[^\n]*\n[^\n]*await ensureFriends\(\);/.test(pickers.replace(/\r\n/g, '\n')),
+  'openUserCard reads this click\'s number before it awaits anything');
+check(/card\.dataset\.openClick = String\(openClick\);/.test(pickers), 'and stamps it on the card it opens');
+check(/let ucClickSeq = 0;\ndocument\.addEventListener\('click', \(\) => \{ ucClickSeq\+\+; \}, true\);/.test(pickers.replace(/\r\n/g, '\n')),
+  'the counter is bumped in the capture phase, so an opener already sees this click');
+check(/function ucOpenedByThisClick\(\) \{[\s\S]{0,220}dataset\.openClick === String\(ucClickSeq\)/.test(pickers),
+  'and the predicate compares it with the card\'s own stamp');
+check(/if \(!clickInPath\(e, \[[\s\S]*?\]\) && !ucOpenedByThisClick\(\)\) closeUserCard\(\);/.test(final),
+  'the card\'s closer consults it before closing', final.match(/if \(!clickInPath[^\n]*/)?.[0]);
+check(/openUserCard\(uid, \(p && p\.width/.test(pickers) && /function openMemberCard\(uid, rowEl, y, opts = \{\}\)/.test(pickers),
+  'the member-rail opener passes its options through (the phone shape travels with it)');
+check(/openMemberCard\(c\.f\.id, el, undefined, \{ sheet: phoneLayout\(\) \}\)/.test(fs.readFileSync(path.join(ROOT, 'public/js/home.js'), 'utf8')),
+  'and an Active Now rail row asks for the phone sheet');
 
 const chromePath = findChrome();
 if (!chromePath) {

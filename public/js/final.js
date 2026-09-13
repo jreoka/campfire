@@ -328,7 +328,10 @@ function clickInPath(e, sels) {
   // Clicks inside the bottom sheet are handled by the sheet's own rows (a row may
   // open the picker), so they must not close it again in the same click.
   if (!e.target.closest('#picker') && !e.target.closest('#btn-emoji') && !e.target.closest('#btn-gif') && !e.target.closest('#srv-tag-emoji') && !e.target.closest('.msg-actions') && !e.target.closest('#sheet')) closePicker();
-  if (!clickInPath(e, ['#usercard', '#me-card', '[data-uid]', '.member', '.usertag[data-tag-sid]'])) closeUserCard();
+  // ...and a click that just OPENED the card is not a click outside it either:
+  // this listener runs after the opener in the same click, and an already-loaded
+  // friend list paints the card before it gets here (ucOpenedByThisClick).
+  if (!clickInPath(e, ['#usercard', '#me-card', '[data-uid]', '.member', '.usertag[data-tag-sid]']) && !ucOpenedByThisClick()) closeUserCard();
   if (ctxEl && !e.target.closest('#ctx-menu') && !e.target.closest('.msg-actions')) closeCtx();
   if ($('#emoji-pop') && !e.target.closest('#emoji-pop') && !e.target.closest('#in-message')) hideEmojiPop();
   if (folderFlyoutEl && !e.target.closest('#folder-menu')) closeFolderFlyout();

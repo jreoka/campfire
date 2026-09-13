@@ -184,8 +184,14 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   and a backdrop click dismisses the floating card before the panel underneath.
   The browser half asserts the card/tag panel are what a click at their centre
   actually hits with a dialog open, and that the panel needs the second click.
-  Re-run after touching the card/tag z-index, the `[data-uid]` delegate or the
-  story viewers list.
+  It also pins the click that OPENS a card not being read as a click outside it:
+  the closer is a document-level listener, so it runs after the row's own handler
+  in the same click, and with a warm friend list the card is already painted by
+  then — which is what made the Active Now rail and a 1:1 DM's header name look
+  dead. `openUserCard` stamps the click it was asked for (a counter bumped in the
+  capture phase, `ucOpenedByThisClick`) and the closer consults it.
+  Re-run after touching the card/tag z-index, the `[data-uid]` delegate, the
+  card's closer in `final.js` or the story viewers list.
   `node scripts/test-user-card-actions.js` covers the card's action tabs, the
   me bar's missing server tag and the avatar-as-story-button (offline for the tab
   builders — it runs the real `ucTabHTML`/`UC_ICONS` out of `pickers.js` and
@@ -423,7 +429,13 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   in a room first), the row really scrolls horizontally, only a reachable voice
   room offers Join, it disappears when nobody is online, it stays out of the
   way on desktop (where `#members` is the rail), and it stays fed while a DM is
-  open. Writes phone/desktop screenshots to the temp dir. Skips when Postgres
+  open. Its last section drives a real touch on a rail row and on a tile with the
+  friend list marked warm (`friendsAt`, which is what made `ensureFriends()`
+  no-op and the card die in the same click) and asserts the tap opens that
+  friend's card — the desktop popup left of the members panel, the phone tile as
+  the full-height sheet — that a click outside still closes it, and that Enter on
+  a tile opens it as well.
+  Writes phone/desktop screenshots to the temp dir. Skips when Postgres
   or Chrome is missing.
   `node scripts/test-mobile-landscape.js` covers the phone held sideways, the
   one gate on the whole landscape fix: every mobile @media block in styles.css
