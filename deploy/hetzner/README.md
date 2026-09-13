@@ -272,6 +272,13 @@ docker compose ... run --rm --no-deps campfire \
 bash deploy/hetzner/restore-db.sh data/restore/campfire.dump
 ```
 
+Take a snapshot now instead of waiting for the slot (same lock and retention as
+the scheduler, so it cannot race one):
+
+```bash
+docker compose ... exec -T campfire node scripts/run-backup.js manual
+```
+
 `restore-db.sh` runs `pg_restore --clean --if-exists` and then TRUNCATEs the
 runtime tables (`bus_*`, `live_sessions`, `voice_occupants`, `rate_limits`,
 `webauthn_challenges`) - those describe a cluster this is not, and inheriting
