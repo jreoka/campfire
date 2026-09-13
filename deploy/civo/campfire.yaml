@@ -5,7 +5,7 @@
 # (kube-reserved 512 + system-reserved 100 + eviction-hard 100 of 2 GiB).
 # Budget, with AV scanning off so there is no clamd (compression IS on, and it
 # runs in-process: up to MEDIA_COMPRESS_CONCURRENCY niced single-threaded
-# ffmpeg at a time, 4 here):
+# ffmpeg at a time, 2 here):
 #   k3s system pods (Traefik/CoreDNS/metrics-server/ServiceLB/CSI)  ~300 MiB
 #   postgres                                                        ~150-250
 #   campfire                                                        ~150-350
@@ -13,6 +13,16 @@
 #   -> ~650-950 MiB of 1336, roughly 400 MiB of headroom.
 # REQUESTS are what get scheduled; LIMITS are only reached under load, so the
 # limits below deliberately sum above the allocatable figure.
+#
+# MULTI-NODE: everything below is written so the app scales out to a second (or
+# third) node without a single edit except `replicas`. The app itself is already
+# replica-safe — every fan-out (chat, DMs, presence, typing, WebRTC signalling,
+# voice rosters, admin presence) crosses replicas through the Postgres bus in
+# bus.js, periodic work is leader-locked (db.LOCKS), rate limits live in the
+# database, and media lives in the object store rather than on a node. The
+# acceptance test is `node scripts/test-multi-replica.js`. What made that
+# impossible before was this file, not the app: `strategy: Recreate` and no
+# spread constraint. See "Scaling past one node" in deploy/civo/README.md.
 #
 # Secrets are NOT in this file. Create them first (see deploy/civo/README.md).
 ---
@@ -157,6 +167,11 @@ metadata:
 spec:
   selector:
     app: campfire
+  # Deliberately NOT sticky. Every WebSocket is independent and every broadcast
+  # crosses replicas through the bus, so a client may be served by any pod, and
+  # pinning a client to "the pod it first reached" would do the opposite of
+  # load balancing — it would rebuild a single-node hot spot at the proxy.
+  sessionAffinity: None
   ports:
     - port: 3000
       targetPort: 3000
@@ -167,19 +182,43 @@ metadata:
   name: campfire
   namespace: campfire
 spec:
+  # THE ONLY NUMBER TO CHANGE when the cluster grows a node. One replica here
+  # because the single Civo Small node (~1165 MiB allocatable) cannot hold two;
+  # `kubectl -n campfire scale deploy/campfire --replicas=2` (and cloudflared
+  # with it) is the whole scale-out. See deploy/civo/README.md §11.
   replicas: 1
   selector:
     matchLabels:
       app: campfire
   strategy:
-    # RWO Postgres pin plus the in-pod upload buffer: recreate rather than
-    # surging a second pod onto a node that cannot hold two of these.
-    type: Recreate
+    # RollingUpdate with NO surge: a rollout never asks this 1 vCPU / 1165 MiB
+    # node for capacity it does not have, which is exactly what `Recreate` was
+    # standing in for — and unlike Recreate it is also correct at replicas > 1,
+    # where maxUnavailable 1 replaces one pod at a time while the survivors keep
+    # serving. Readiness + DRAIN_WAIT_MS drain the outgoing pod before its
+    # sockets drop, so clients reconnect to a peer rather than erroring.
+    # Raise maxSurge to 1 on a cluster with headroom if you want zero downtime.
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
   template:
     metadata:
       labels:
         app: campfire
     spec:
+      # Keep replicas on SEPARATE nodes once there is more than one — without
+      # ever wedging a single-node cluster. ScheduleAnyway is a preference, not
+      # a requirement: with one node the second pod still schedules onto it
+      # (rather than sitting Pending and stalling a rollout), and with two or
+      # more the pods end up one per node, which is the point of scaling out.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: campfire
       # The app drains for DRAIN_WAIT_MS (5s) after failing readiness, so this
       # must comfortably exceed that. Civo's ingress/proxy needs the readiness
       # 503 to land before the socket closes.
@@ -207,6 +246,17 @@ spec:
               value: "3000"
             - name: NODE_ENV
               value: production
+            # Replica identity for the cross-replica bus: bus.js tags every
+            # published event with POD_NAME and skips its own, and /healthz +
+            # /readyz report it. The fallback (os.hostname()) happens to be the
+            # pod name on Kubernetes — set it from the downward API so that is a
+            # guarantee rather than a coincidence.
+            - name: POD_NAME
+              valueFrom: { fieldRef: { apiVersion: v1, fieldPath: metadata.name } }
+            # PER REPLICA. The bus holds one dedicated connection for LISTEN,
+            # so N replicas cost N x (PG_POOL_MAX + 1) against Postgres'
+            # max_connections=50 above: 2 replicas = 18, 4 replicas = 36. Raise
+            # max_connections in the StatefulSet before going past four.
             - name: PG_POOL_MAX
               value: "8"            # the bus LISTEN client holds one connection
             - name: PGHOST
@@ -246,6 +296,10 @@ spec:
             # four niced ffmpeg at once still showed up as the app feeling
             # sluggish while a backlog drained — two keeps the box responsive
             # while a burst still clears far faster than one-at-a-time.
+            # PER REPLICA, and it is the per-NODE CPU that bounds it: with the
+            # spread constraint below each replica gets its own node, so N
+            # replicas mean N x 2 encodes across N vCPUs, not 2N on one core.
+            # Only if two replicas ever share a node does this want lowering.
             # MEDIA_COMPRESS_SLOT_MB makes each encode past the first
             # find 192Mi free in the cgroup before it starts — the pod's limit is
             # reached by a burst of large VIDEOS, and the kernel would otherwise
@@ -349,10 +403,34 @@ spec:
         - name: data
           emptyDir: {}
 ---
+# A voluntary disruption (a node drain, a cluster upgrade) may take at most ONE
+# app pod at a time. At replicas > 1 this is what keeps somebody serving while a
+# node is emptied. maxUnavailable — not minAvailable — on purpose: at replicas 1
+# a minAvailable of 1 is unsatisfiable and would block `kubectl drain` forever,
+# whereas maxUnavailable 1 still allows the eviction and simply stops a drain
+# from taking two pods at once.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: campfire
+  namespace: campfire
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: campfire
+---
 # coturn as a TURN relay. hostNetwork so it binds the node's public IP directly
 # and needs NO Civo LoadBalancer (which would cost EUR 10.86/mo and double the
 # node bill). Because the node address is used as-is, external-ip is omitted and
 # coturn advertises the address it listens on.
+#
+# Stays ONE replica however many nodes the cluster has: `turn.dill.moe` is a
+# single DNS-only A record to one node IP, and hostNetwork means a second pod
+# would fight the first for 3478. HA for TURN is a separate name per node, not a
+# replica count — voice does not need it, because coturn only relays the calls
+# whose peers cannot reach each other directly and an app pod restart does not
+# touch it.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -438,6 +516,19 @@ spec:
 ---
 # Outbound-only tunnel: no inbound 80/443 and no LoadBalancer needed, and
 # Cloudflare terminates TLS on the dill.moe zone that is already there.
+#
+# This is the cluster's front door, so it is also the first place load
+# balancing can be lost: one cloudflared replica holds one origin connection
+# pool, and a pooled keep-alive connection to the `campfire` ClusterIP sticks to
+# whichever pod it landed on. Replicas of the SAME tunnel token share the tunnel
+# — Cloudflare distributes requests across their edge connections — so scaling
+# this WITH the app gives each node its own way in and the request load actually
+# reaches more than one pod:
+#   kubectl -n campfire scale deploy/campfire --replicas=2
+#   kubectl -n campfire scale deploy/cloudflared --replicas=2
+# One is right for one node (and a second pod here would only add ~30Mi for no
+# extra path in). The default RollingUpdate surging the replacement FIRST is
+# deliberate: the tunnel stays connected through its own rollout.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -453,6 +544,15 @@ spec:
       labels:
         app: cloudflared
     spec:
+      # Same reasoning as the app's: spread across nodes when there are several,
+      # never block scheduling on the single-node cluster.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: cloudflared
       containers:
         - name: cloudflared
           image: cloudflare/cloudflared:latest

@@ -163,6 +163,15 @@ async function main() {
     check(!!rzA.pod && !!rzB.pod && rzA.pod !== rzB.pod, 'replicas have distinct identities', { a: rzA.pod, b: rzB.pod });
     check(!!(rzA.bus && rzA.bus.started) && !!(rzB.bus && rzB.bus.started), 'bus is started on both');
     check(!!(rzB.bus && (rzB.bus.peers || []).includes(rzA.pod)), 'replica B sees replica A in the registry', rzB.bus && rzB.bus.peers);
+    // Both processes booted this same image against a fresh database at the same
+    // time, so they raced for a release generation. The client's update prompt
+    // depends on that number being cluster-wide and monotonic, and on the two
+    // replicas agreeing — which is what `ON CONFLICT (version) DO NOTHING` plus a
+    // read-back is there to guarantee.
+    const vA = (await api(PORT_A, 'GET', '/api/version')).data || {};
+    const vB = (await api(PORT_B, 'GET', '/api/version')).data || {};
+    check(!!vA.version && vA.version === vB.version, 'both replicas report the same build', { a: vA.version, b: vB.version });
+    check(vA.gen > 0 && vA.gen === vB.gen, 'and claimed ONE release generation between them', { a: vA.gen, b: vB.gen });
 
     console.log('\n[2] accounts, a shared server + text channel');
     const reg = async (n) => {
@@ -310,7 +319,29 @@ async function main() {
     check(allowed <= 60, `at most 60 of 66 alternating requests passed (got ${allowed})`, { allowed, limited });
     check(limited >= 6, `the remainder were rejected with 429 (got ${limited})`, { allowed, limited });
 
-    console.log('\n[11] both replicas stayed healthy');
+    console.log('\n[11] game-activity beacons are shared, not per-replica');
+    // The watcher beacons to WHICHEVER replica the Service sends it to, and the
+    // playtime it earns is (this ts - the previous ts). Both halves were a
+    // per-process Map once, so alternating replicas credited nothing and the
+    // leader-only stale sweep could not see a peer's beacons at all.
+    // Beacon to A, then to B 40s of game time later: the credit can only exist
+    // if B read the state A wrote.
+    const t0 = Date.now() - 60000;
+    r = await api(PORT_A, 'POST', '/api/watcher/status', { token: B.token, body: { game: 'Hades', ts: t0 } });
+    check(r.status === 200, 'beacon accepted on replica A', r.data);
+    r = await api(PORT_B, 'POST', '/api/watcher/status', { token: B.token, body: { game: 'Hades', ts: t0 + 40000 } });
+    check(r.status === 200, 'follow-up beacon accepted on replica B', r.data);
+    const gaming = (await api(PORT_A, 'GET', '/api/me/gaming', { token: B.token })).data || {};
+    const hades = (gaming.games || []).find((g) => g.game === 'Hades');
+    check(!!hades && hades.total_ms >= 39000,
+      'replica B credited the 40s gap since replica A\'s beacon', { total_ms: hades && hades.total_ms });
+    check(gaming.now_playing === 'Hades', 'the live game is visible from the other replica too', gaming.now_playing);
+    // Stop it the way the watcher does, and confirm the clear travels.
+    await api(PORT_B, 'DELETE', '/api/watcher/status', { token: B.token });
+    const after = (await api(PORT_A, 'GET', '/api/me/gaming', { token: B.token })).data || {};
+    check(after.now_playing === null, 'quitting on replica B clears the badge read on replica A');
+
+    console.log('\n[12] both replicas stayed healthy');
     const rzA2 = (await api(PORT_A, 'GET', '/readyz')).data || {};
     const rzB2 = (await api(PORT_B, 'GET', '/readyz')).data || {};
     check(rzA2.ok === true && rzB2.ok === true, 'both replicas remain ready');

@@ -6,7 +6,7 @@ coturn and a Cloudflare Tunnel. `campfire.yaml` holds every resource.
 sensitive reaches git.
 
 **The migration is done and verified.** `campfire.dill.moe` is served from this
-cluster. Sections 0–2 and 10 are the standing reference; §5 records how the
+cluster. Sections 0–2, 10 and 11 are the standing reference; §5 records how the
 data got here; §6 is what to re-run after any change.
 
 ---
@@ -171,6 +171,8 @@ kubectl -n campfire get pods -w
 
 Expect `campfire`, `cloudflared`, `coturn`, `db-0`. A `civo-volume` PVC stays
 `Pending` until a pod consumes it (`WaitForFirstConsumer`) — that is normal.
+A `PodDisruptionBudget` named `campfire` is applied with them; it caps how many
+app pods a node drain may take at once (see §11).
 
 Since the bucket holds the only copy of the media, media is not on the node at
 all: `UPLOAD_DIR` is an `emptyDir`, which is what lets replicas scale without a
@@ -324,6 +326,9 @@ relic deleted. One `viewonce/` object has been created since.
 - [ ] `/healthz` (liveness, touches nothing external) and `/readyz` (readiness)
       both 200
 - [ ] `curl https://campfire.dill.moe/api/version` — fingerprint changed
+- [ ] **After scaling out:** `kubectl -n campfire get pods -o wide` shows the
+      replicas on *different* nodes, `/readyz` names a different pod when asked
+      repeatedly, and `node scripts/test-multi-replica.js` is green (§11)
 
 `kubectl top` is **not available** on this cluster (no metrics-server), so use
 the `/readyz` endpoint and the pod list rather than a `top` check.
@@ -474,3 +479,128 @@ box.
 | S3 `InvalidAccessKeyId` everywhere | Used the credential's UUID instead of the access key | Use the short access key (§2) |
 | All S3 copies fail `non-retryable streaming request` | aws-sdk v3 streaming PUT + checksum trailer vs Civo's store | Buffer the body (§5) |
 | `[backup] catch-up check failed: UnknownError` | Same streaming PUT / credential problem, surfacing in the backup path | §2 + §5 |
+
+---
+
+## 11. Scaling past one node
+
+Everything here is written so this is a **replica count, not a rewrite** — and
+that is a claim with a test behind it, not a hope:
+
+```bash
+node scripts/test-multi-replica.js     # two real server processes, one database
+```
+
+It boots two server.js processes against one throwaway Postgres and asserts,
+socket-to-socket, that a message/DM/WebRTC offer/presence flip made on replica A
+arrives on a client attached to replica B, exactly once, with no duplicate on the
+origin — plus that the rate limiter counts across replicas instead of granting
+every replica its own quota. Green there means the cross-replica fan-out is real.
+
+### What already makes it safe
+
+- **Cross-replica fan-out — `bus.js`.** Postgres `LISTEN/NOTIFY` as a wake-up
+  plus an outbox table (`bus_events`) as the data path. Every audience class has
+  ONE local-delivery primitive (`notifyUser`, `broadcastToServer`,
+  `notifyFriends`, `notifyAllClients`); the ~120 call sites deliver locally and
+  publish, and a peer replays the event through the matching `*Local` helper —
+  which never publishes, so nothing ping-pongs. Publishers skip their own origin,
+  so a single replica behaves byte-for-byte as it did before the bus existed.
+  Voice rosters (`voice_occupants`), WebRTC signalling, presence
+  (`live_sessions`), typing and admin presence all ride it.
+- **One replica does each periodic job — `db.LOCKS`.** Postgres advisory locks
+  taken per tick, so leadership moves freely after a crash and a skipped tick is
+  normal. Story expiry, status expiry, orphan sweeps, the media bucket scan, the
+  unfurl prune, the nightly dump, bus retention and the dead-replica reconciler
+  are all leader-locked. `scripts/test-leader-lock.js` covers the mechanism.
+- **Shared state lives in Postgres, not in a process.** Rate limits, DM/channel
+  unread, pin-seen, sessions, voice occupancy, webauthn challenges, the
+  compression ledger and the watcher beacons (§ "Nothing per-process that
+  matters", below).
+- **Media is in the object store**, so no replica needs another's filesystem —
+  `UPLOAD_DIR` is an `emptyDir` and could be removed entirely.
+
+### The three things to change
+
+```bash
+# 1. Add the node in Civo, wait for it to go Ready.
+kubectl get nodes -w
+
+# 2. Scale the app AND the tunnel to one each per node.
+kubectl -n campfire scale deploy/campfire    --replicas=2
+kubectl -n campfire scale deploy/cloudflared --replicas=2
+
+# 3. Confirm they landed on different nodes and both are Ready.
+kubectl -n campfire get pods -o wide
+curl -s https://campfire.dill.moe/readyz   # -> {"pod":"campfire-...","bus":{...}}
+```
+
+The manifest already carries the rest: `topologySpreadConstraints` on
+`kubernetes.io/hostname` (**preferred**, so a single-node cluster is never
+wedged by a Pending second pod), an app `PodDisruptionBudget` of
+`maxUnavailable: 1`, `sessionAffinity: None` on the Service, and a
+`strategy: RollingUpdate` with `maxSurge: 0` so a rollout never asks the old
+1-vCPU node for capacity it does not have.
+
+**Scale `cloudflared` with the app.** It is the cluster's front door and the one
+place load balancing can be lost: a single cloudflared holds one origin
+connection pool, and a pooled keep-alive connection to the `campfire` ClusterIP
+sticks to whichever pod it reached. Replicas of the same tunnel token share the
+tunnel (Cloudflare distributes across their edge connections), so two of them
+means two independent ways in.
+
+### Nothing per-process that matters
+
+Two pieces of state used to be `Map`s in `server.js` and were moved to the
+database for exactly this reason — worth knowing, because each is a class of bug
+to watch for:
+
+- **Watcher beacons** (`watcher_beacons`). The game-activity watcher beacons
+  every 10–30s to *whichever* pod the Service sends it to, and the credit for
+  playtime is the gap between consecutive beacons. With a per-process map,
+  replica B had no memory of a beacon replica A had just handled: playtime
+  silently under-counted, and a stale `playing_game` badge was only swept by the
+  replica whose map happened to hold it (and that sweep is leader-locked, so it
+  usually wasn't). One row per user, shared.
+- **The compression ledger and every other sweeper** were always DB-backed; the
+  beacon was the odd one out.
+
+Still deliberately per-replica, all of them harmless or bounded: `sessTouch`
+(a last-seen write throttle — worst case one extra write), `storyPostAt` and
+`reactionPingAt` (client-facing anti-flood/dedupe, so the worst case is a
+duplicate push or a 3s gap becoming 1.5s), and the caches
+(`gameIconMem`, `voiceNameCache`, `thumbHave`, unfurl in-flight dedupe) which
+only cost a refetch.
+
+### Resource notes for N replicas
+
+- `PG_POOL_MAX=8` **per replica**, and the bus holds one more connection for
+  `LISTEN`: 2 replicas = 18 connections against Postgres' `max_connections=50`,
+  4 replicas = 36. Raise `max_connections` in the StatefulSet before going past
+  four.
+- `MEDIA_COMPRESS_CONCURRENCY=2` **per replica**. With the spread constraint
+  each replica gets its own node and its own vCPU, so N replicas are N×2 encodes
+  across N cores — not 2N on one. Only co-locating two replicas on one node
+  would want this lowered.
+- Postgres stays a single `db-0` on the `pgdata` PVC. It is a shared dependency,
+  not a replica: it is reachable over the Service from any node, and the app
+  tolerates a database blip (readiness fails, `/healthz` does not, so there is
+  no restart loop).
+- coturn stays **one** replica regardless (see the comment in `campfire.yaml`):
+  `turn.dill.moe` is one DNS-only A record to one node IP and `hostNetwork`
+  means a second would fight for 3478.
+
+### Rolling out a new image across replicas
+
+`maxUnavailable: 1` replaces one pod at a time, so for the length of a rollout
+two builds are live at once and a client can reach either. The client's update
+prompt is built for exactly that: it decides "is there a newer release?" from a
+**release generation** — a cluster-wide counter in the `app_releases` table, one
+row per distinct build, claimed idempotently at boot — rather than from the build
+fingerprint. A fingerprint is a content hash, so it reads as a change in either
+direction and the tab would be told the build it just left is the update; a
+generation makes "older" decidable, so an old pod mid-rollout reports a lower
+number and raises nothing. `scripts/test-update-banner.js` pins both halves.
+
+No forced reloads either way: the user gets a banner at the top of the shell with
+an Update button, and nothing reloads until they press it.

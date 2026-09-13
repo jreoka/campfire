@@ -258,6 +258,8 @@ async function joinVoice(serverId, channelId) {
   if (S.view === 'home') { try { renderDmMembers(); } catch {} } // Active Now flips Join → Open
   startSpeakingMonitor();
   sfx.join();
+  // Banner copy follows the call state (see joinDmCall).
+  if (S.updateReady) { try { paintUpdateBanner(); } catch {} }
 }
 async function joinDmCall(threadId, withVideo = false) {
   if (inThisDmCall(threadId)) { openCallView(); return; }
@@ -283,6 +285,9 @@ async function joinDmCall(threadId, withVideo = false) {
   try { renderDmLists(); } catch {}
   if (S.view === 'home') { try { renderDmMembers(); } catch {} } // Active Now flips Join → Open
   if (withVideo) { try { await toggleCamera(); } catch {} }
+  // The banner copy becomes a warning the moment a call is live (and
+  // leaveVoice() above repainted it for the gap where S.voice was null).
+  if (S.updateReady) { try { paintUpdateBanner(); } catch {} }
 }
 function leaveVoice(silent) {
   if (!S.voice) return;
@@ -320,7 +325,10 @@ function leaveVoice(silent) {
   renderChannels();
   try { renderDmLists(); } catch {}
   if (S.view === 'home') { try { renderDmMembers(); } catch {} } // Active Now flips Open → Join
-  if (S.updateReady && !silent) location.reload();
+  // Out of the call, the banner stops being a warning and goes back to being a
+  // plain update notice. It deliberately does NOT reload here any more — the
+  // reader decides when, which is the whole point of the banner.
+  if (S.updateReady) { try { paintUpdateBanner(); } catch {} }
 }
 function sendVoiceState() {
   if (!S.voice) return;

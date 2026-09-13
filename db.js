@@ -845,6 +845,43 @@ CREATE TABLE IF NOT EXISTS webauthn_challenges (
 );
 CREATE INDEX IF NOT EXISTS idx_wac_expires ON webauthn_challenges(expires);
 `);
+  await db.exec(`
+-- Watcher beacons (the Windows/desktop app's game-activity heartbeat). This was
+-- the last piece of per-process state that mattered: the beacon arrives every
+-- 10-30s at WHICHEVER replica the Service sends it to, and both things derived
+-- from it are gaps between consecutive beacons.
+--   * Playtime. creditPlay() is handed (this ts - the previous ts), so a replica
+--     with no memory of the last beacon credited NOTHING — playtime silently
+--     under-counted as soon as there was more than one replica, and switching
+--     games lost the tail of the old one.
+--   * The stale sweep (no beacon for 90s -> playing_game = NULL) is leader-only,
+--     so a non-leader's map was never swept at all and a crashed watcher's
+--     "Playing X" badge could sit there indefinitely.
+-- One row per user, exactly like voice_occupants: a user watches games on one
+-- machine, so the key is stable and the timestamps are globally comparable.
+CREATE TABLE IF NOT EXISTS watcher_beacons (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  last_seen BIGINT NOT NULL,
+  game TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_watcher_beacons_seen ON watcher_beacons(last_seen);
+`);
+  await db.exec(`
+-- Release generations: one row per distinct build, numbered in the order the
+-- cluster first ran it. The client's "a new version is ready" prompt needs a
+-- MONOTONIC answer, and the build fingerprint (APP_VERSION) is a content hash —
+-- with two replicas mid-rollout a tab that booted from the new pod can ask an
+-- old one and be told the build it just left is "the update". A generation makes
+-- "older" decidable: every pod reports the generation of ITS build, so an old
+-- pod numbers below the new one and raises nothing.
+-- Keyed by version, so an old pod that restarts after the rollout gets its own
+-- original (lower) generation back rather than a fresh high one.
+CREATE TABLE IF NOT EXISTS app_releases (
+  version TEXT PRIMARY KEY,
+  gen BIGINT NOT NULL,
+  created_at BIGINT NOT NULL
+);
+`);
   // Site owner is always an admin (idempotent; runs on every boot so fresh
   // installs and existing databases both converge without manual SQL).
   try { await db.exec(`UPDATE users SET is_admin = 1 WHERE username = '${OWNER_USERNAME}'`); } catch {}

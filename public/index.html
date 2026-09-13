@@ -583,6 +583,23 @@ downward drag dismisses it (see the lightbox block in pickers.js). -->
   </div>
 </div>
 
+<!-- Update banner. A deploy used to reload the page out from under the reader:
+     a toast, then a 30-second timer, then an immediate reload the moment they
+     left a voice call. Nothing reloads itself any more — this waits at the top
+     of the shell and the reader applies it when it suits them.
+     It takes real SPACE instead of covering a header: `body.ub-open` moves the
+     safe-area padding of every full-height surface down by --ub-h (see the
+     banner block in styles.css). -->
+<div id="update-banner" class="hidden" role="status" aria-live="polite">
+  <span class="ub-ic" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 12a8.5 8.5 0 1 1-2.5-6"/><path d="M20.5 3.5V9H15"/></svg></span>
+  <span class="ub-text">
+    <b>Update available</b>
+    <span id="ub-sub">A new version of Campfire has rolled out.</span>
+  </span>
+  <button type="button" id="ub-go" class="btn small primary">Update</button>
+  <button type="button" id="ub-x" class="ub-x" title="Dismiss" aria-label="Dismiss update notice"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+</div>
+
 <div id="toast" class="hidden"></div>
 
 <!-- view-once: the recipient's one-shot player -->

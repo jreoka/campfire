@@ -210,10 +210,16 @@ function onWS(m) {
   switch (m.t) {
     case 'hello': {
       S.me = m.user;
-      // deploys drop + re-establish every WS: version mismatch here means an
-      // update landed while the tab was open — prompt immediately, no waiting
-      if (m.version && S.bootVersion && m.version !== S.bootVersion && !S.updateReady) onUpdateReady();
-      else if (m.version && !S.bootVersion) S.bootVersion = m.version;
+      // deploys drop + re-establish every WS: a release generation ABOVE the one
+      // this page is running means an update landed while the tab was open —
+      // banner it immediately, no waiting. A lower one is an old pod still
+      // serving mid-rollout and raises nothing (see onUpdateReady in final.js).
+      if (typeof m.gen === 'number' && m.gen > 0) {
+        if (typeof noteBuild === 'function') noteBuild(m.version, m.gen);
+        if (S.bootGen !== null && m.gen > S.bootGen) onUpdateReady(m.gen);
+      } else if (m.version && !S.bootVersion) {
+        S.bootVersion = m.version;
+      }
       break;
     }
     case 'message-new': {

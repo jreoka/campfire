@@ -496,38 +496,105 @@ document.addEventListener('error', (e) => {
   }
 }, true);
 
-// ---------- auto-update (deploys apply without hard refresh) ----------
-S.bootVersion = null; S.updateReady = false;
+// ---------- update banner (a deploy never reloads the page for you) ----------
+// A new build used to take the page: a toast with a Refresh button, a 30-second
+// timer that reloaded anyway, an immediate reload the moment you left a voice
+// call, and — if the socket reconnected mid-check — another one on the spot. A
+// reader in the middle of typing, reading or a call could lose their place with
+// no warning. Nothing reloads itself now. The banner waits at the top of the
+// shell, the reader presses Update when it suits them, and dismissing it is a
+// real choice: the app keeps working on the old build until they reload for
+// some other reason (which is safe — the client/server protocol is additive).
+//
+// "Is there a newer release?" is answered by the server's RELEASE GENERATION, a
+// cluster-wide counter (see app_releases in db.js), not by the build fingerprint.
+// With a rolling update across replicas two builds are live at once, so a tab
+// that booted from the new pod can poll an old one — and a fingerprint reads as
+// a change in either direction, so it would announce the build the tab just left
+// as "the update". A generation makes "older" decidable: the old pod reports a
+// LOWER number and prompts nothing.
+S.bootVersion = null;   // fingerprint, for the record
+S.bootGen = null;       // generation of the build this page is running
+S.updateReady = false;  // a newer release is waiting
+S.updateDismissed = false;
+S.updateGen = 0;        // generation of the release being offered
+S.updateDismissedGen = 0;
+// Record what this page is running. Always called before any comparison, so a
+// client never prompts against a generation it has not established yet.
+function noteBuild(version, gen) {
+  if (version) S.bootVersion = version;
+  if (S.bootGen === null) S.bootGen = (typeof gen === 'number' && gen > 0) ? gen : 0;
+}
+function updateBannerEl() { return $('#update-banner'); }
+function paintUpdateBanner() {
+  const el = updateBannerEl();
+  if (!el) return;
+  const on = !!(S.updateReady && !S.updateDismissed);
+  el.classList.toggle('hidden', !on);
+  // The strip takes real space, so the shell pays for it instead of hiding a
+  // header underneath (see the #update-banner block in styles.css).
+  document.body.classList.toggle('ub-open', on);
+  if (!on) return;
+  const sub = $('#ub-sub'), go = $('#ub-go');
+  // In a call, reloading ends it — say so, and label the button with what it
+  // will actually do rather than letting it read as a harmless refresh. The copy
+  // is kept SHORT because this is a single ellipsised line on a phone: the old
+  // "You are in a call — updating will end it" truncated to "…will …", cutting
+  // the one word that mattered (test-update-banner-layout.js asserts it fits).
+  if (sub) sub.textContent = S.voice
+    ? 'Updating will end your call.'
+    : 'A new version of Campfire has rolled out.';
+  if (go) { go.textContent = S.voice ? 'Leave & update' : 'Update'; go.disabled = false; }
+}
 async function checkVersion() {
   try {
     const r = await fetch('/api/version', { cache: 'no-store' });
-    const { version } = await r.json();
-    if (!S.bootVersion) { S.bootVersion = version; return; }
-    if (version === S.bootVersion) return;
-    if (!S.updateReady) onUpdateReady();
-    else if (!S.voice && !document.hidden) location.reload();
+    const { version, gen } = await r.json();
+    if (S.bootGen === null) { noteBuild(version, gen); return; }
+    if (typeof gen === 'number' && gen > 0) {
+      if (gen > S.bootGen) onUpdateReady(gen);
+      return;
+    }
+    // A server too old to report a generation: fall back to the fingerprint. It
+    // cannot tell which build is newer, so it only fires for a version this page
+    // is not running and has not already offered.
+    if (version && version !== S.bootVersion && !S.updateReady) onUpdateReady(0);
   } catch { try { if (typeof armConnSoon === 'function') armConnSoon(); } catch {} }
 }
-function onUpdateReady() {
-  S.updateReady = true;
-  if (S.voice) { toast('Update ready — applies when you leave voice'); return; }
-  toastAction('App updated — refresh for the latest version', 'Refresh', () => location.reload());
-  clearTimeout(onUpdateReady._t);
-  onUpdateReady._t = setTimeout(() => { if (S.updateReady && !S.voice && !document.hidden) location.reload(); }, 30000);
-}
-function toastAction(msg, label, fn) {
-  const el = $('#toast');
-  el.innerHTML = '';
-  el.appendChild(document.createTextNode(msg));
-  if (label) {
-    const b = document.createElement('button');
-    b.className = 'btn small primary'; b.style.marginLeft = '.6rem'; b.textContent = label;
-    b.onclick = () => { el.classList.add('hidden'); fn && fn(); };
-    el.appendChild(b);
+// Called from the version poll, from the socket's `hello` after a reconnect
+// (a deploy drops every socket), and from the service worker's ping.
+function onUpdateReady(gen) {
+  const g = Number(gen) || 0;
+  if (S.updateReady) {
+    // Already waiting on this release or a newer one — nothing to re-announce.
+    if (!g || g <= S.updateGen) return;
+    // A NEWER release than the one that was dismissed speaks up again.
+    if (S.updateDismissed && g <= S.updateDismissedGen) return;
+    S.updateDismissed = false;
   }
-  el.classList.remove('hidden');
-  clearTimeout(toast._t);
-  toast._t = setTimeout(() => el.classList.add('hidden'), 8000);
+  S.updateReady = true;
+  if (g > S.updateGen) S.updateGen = g;
+  paintUpdateBanner();
+}
+function dismissUpdateNotice() {
+  S.updateDismissed = true;
+  S.updateDismissedGen = S.updateGen || 0;
+  paintUpdateBanner();
+}
+function applyUpdate() {
+  const go = $('#ub-go');
+  if (go) { go.disabled = true; go.textContent = 'Updating…'; }
+  // Same last-breath flush beforeunload does, done here too so the click itself
+  // is the moment the drafts are safe.
+  try { flushDrafts(); } catch {}
+  try { rememberView(); } catch {}
+  try { pinSeenFlush(); } catch {}
+  location.reload();
+}
+{
+  const go = $('#ub-go'), x = $('#ub-x');
+  if (go) go.addEventListener('click', applyUpdate);
+  if (x) x.addEventListener('click', dismissUpdateNotice);
 }
 function pollVersion() {
   checkVersion();

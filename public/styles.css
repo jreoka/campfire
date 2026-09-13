@@ -752,6 +752,77 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 #toast{position:fixed;left:50%;bottom:calc(1.2rem + var(--safe-b));transform:translateX(-50%);background:#e8eaf0;color:#141414;padding:.7rem 1.15rem;border-radius:10px;z-index:500;font-size:.86rem;font-weight:650;max-width:90vw;display:flex;align-items:center;gap:.6rem}
 #toast .btn.small.primary{background:#141414;border-color:transparent;color:#e8eaf0}
 
+/* ---------- update banner ----------
+   The deploy notice: a strip across the top of the shell, in the accent, with a
+   button that applies the update. It replaced a forced reload (toast -> 30s
+   timer -> reload on leaving a call), so it must never move on its own and never
+   hide anything behind it.
+
+   It pays for its own height rather than overlapping: `body.ub-open` sets
+   --ub-h and every full-height surface below pushes its safe-area padding down
+   by exactly that. The strip itself always sits at top:0 and carries the top
+   safe-area inset, so a notched phone gets the inset once, not twice.
+
+   The height is DECLARED, not left to the content: `height:calc(3rem + safe-t)`
+   (--ub-h + the inset) and the row is centred in it. Deriving 3rem from the
+   padding plus the tallest control was off by 3px — the two-line text block
+   (13.9px @1.28 + 12.6px @1.28) is taller than the 32px button, so the strip
+   really stood 51px tall and clipped the top 3px of the chat header, which is
+   exactly what scripts/test-update-banner-layout.js measures. Anything that can
+   outgrow the strip is now clipped inside it instead of growing it. */
+#update-banner{position:fixed;top:0;left:0;right:0;z-index:600;display:flex;align-items:center;gap:.7rem;
+  height:calc(3rem + var(--safe-t));padding:var(--safe-t) calc(.7rem + var(--safe-r)) 0 calc(.7rem + var(--safe-l));
+  background:var(--panel-2);border-bottom:1px solid var(--line);overflow:hidden;animation:cf-drop .24s var(--ease-native)}
+#update-banner .ub-ic{width:30px;height:30px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--accent-dim);color:var(--accent)}
+#update-banner .ub-text{display:flex;flex-direction:column;justify-content:center;min-width:0;flex:1;line-height:1.28;overflow:hidden}
+#update-banner .ub-text b{font-size:.87rem;font-weight:750}
+#update-banner .ub-text>span{font-size:.79rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#update-banner .btn.small{flex-shrink:0}
+#update-banner .ub-x{width:30px;height:30px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;padding:0;
+  border:0;background:transparent;color:var(--muted);border-radius:8px;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
+#update-banner .ub-x:hover{background:var(--panel-3);color:var(--text)}
+body.ub-open{--ub-h:3rem}
+body.ub-open #view-main{padding-top:calc(var(--safe-t) + var(--ub-h))}
+/* Also the auth view: a session can expire (or be signed out) while the notice
+   is up, and #view-auth is its own scroll container with a top-padded card. */
+body.ub-open #view-auth{padding-top:calc(1.5rem + var(--ub-h))}
+/* Phone-only fixed surfaces sit on the viewport, not in #view-main, so each one
+   that is pinned to the top pays the strip itself. */
+body.ub-open #left,
+body.ub-open #members,
+body.ub-open #thread-panel,
+body.ub-open #find-panel{top:calc(var(--safe-t) + var(--ub-h))}
+/* Immersive surfaces are edge-to-edge overlays; they keep the strip above them
+   and give up the pixels from their own top padding. */
+body.ub-open #vo-view,
+body.ub-open #story-view,
+body.ub-open #story-compose,
+body.ub-open #sc-pick{padding-top:calc(.55rem + var(--safe-t) + var(--ub-h))}
+body.ub-open #lightbox #lb-stage{padding-top:calc(4.4rem + var(--safe-t) + var(--ub-h))}
+@keyframes cf-drop{from{opacity:0;transform:translateY(-100%)}to{opacity:1;transform:none}}
+@media (max-width:700px){
+  #update-banner{gap:.55rem}
+  /* One line on a phone: the sub-line is the first thing to go, and in a call it
+     is the line that matters most — so it stays and the title is what shrinks. */
+  #update-banner .ub-text b{font-size:.84rem}
+  #update-banner .ub-text>span{font-size:.76rem}
+}
+@media (max-width:480px){
+  #update-banner .ub-ic{display:none}
+}
+/* On a phone the settings/profile/admin backdrops are full-height panels that
+   already pay the top inset; while the strip is up they pay the strip too. The
+   desktop versions are centred cards over a dim backdrop, where a strip across
+   the empty top is exactly where it should be. */
+@media (max-width:820px),(max-height:560px) and (pointer:coarse){
+  body.ub-open #modal-backdrop,
+  body.ub-open #settings-backdrop,
+  body.ub-open #srv-settings-backdrop,
+  body.ub-open #chan-settings-backdrop,
+  body.ub-open #admin-backdrop,
+  body.ub-open #profile-backdrop{padding-top:calc(var(--safe-t) + var(--ub-h))}
+}
+
 /* ---------- attachments, replies, reactions ---------- */
 .tool-btn{border:0;background:transparent;color:var(--muted);border-radius:50%;padding:.5rem;cursor:pointer;display:inline-flex;align-items:center;transition:background var(--t-fast),color var(--t-fast)}
 .tool-btn:hover{background:var(--panel-3);color:var(--text)}
@@ -2584,7 +2655,7 @@ body.story-open{overflow:hidden}
 #thread-panel,#find-panel{animation:cf-rise .16s ease-out}
 .folder-open{animation:cf-fade .14s ease-out}
 @media (prefers-reduced-motion:reduce){
-  .modal,.settings,.profile,#modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#profile-backdrop,#lightbox,#ctx-menu,#folder-menu,#picker,#usercard,#usercard.sheet,#mention-pop,#emoji-pop,#chan-pop,#composer-more,#story-new,.sn-card,#lightbox img,#toast,#jump-present,.auth-card,#thread-panel,#find-panel,.folder-open{animation:none}
+  .modal,.settings,.profile,#modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#profile-backdrop,#lightbox,#ctx-menu,#folder-menu,#picker,#usercard,#usercard.sheet,#mention-pop,#emoji-pop,#chan-pop,#composer-more,#story-new,.sn-card,#lightbox img,#toast,#jump-present,#update-banner,.auth-card,#thread-panel,#find-panel,.folder-open{animation:none}
   .msg-actions,.reaction,.send-btn svg{transition:none}
   .rc-old,.rc-new{animation:none}
   .reaction:active,.dm-close:active{transform:none}

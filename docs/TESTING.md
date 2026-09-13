@@ -960,3 +960,62 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   server, and asserts the ALTER + backfill ran as one unit (every pre-existing
   membership stamped, an old unread DM not resurrected) and that the backfill
   stays one-shot — a plain restart must not mark a live unread message read.
+  `node scripts/test-update-banner.js` covers the deploy notice that replaced
+  the forced reloads (owner request: users were being surprised by them). It runs
+  the REAL banner block sliced out of `public/js/final.js` against a DOM stub and
+  a virtual clock, so "nothing reloads itself" is asserted rather than eyeballed:
+  the first poll only records what the page is running, a newer release raises the
+  banner (and `body.ub-open` so the shell pays for its height), sixty further
+  polls and a whole simulated hour reload NOTHING, the 30-second timer and the
+  reload-on-leaving-a-call are gone, the click is the only thing that reloads (and
+  it flushes the composer drafts first, disables itself so a double click cannot
+  fire twice), dismissing is honoured without nagging while a LATER release still
+  speaks up, and in a voice call the copy warns and the button reads "Leave &
+  update" instead of quietly ending the call. The second half pins the
+  rolling-update rule — with `maxUnavailable: 1` two builds answer at once, so a
+  release generation rather than the build fingerprint decides "newer": an OLDER
+  pod mid-rollout raises nothing, a newer build still does, and booting on the old
+  pod after a reload shows nothing — plus the static wiring (`/api/version` and
+  the WS handshake carry `gen`, `app_releases` is claimed idempotently, `voice.js`
+  contains no reload at all, the markup/ids, and the CSS that makes `#view-main`,
+  `#left`, `#members`, `#vo-view`, `#story-view` and `#view-auth` pay for the
+  strip). Offline, no browser. Re-run after touching `final.js`'s banner block,
+  `voice.js`'s join/leave, `socket.js`'s hello, `/api/version`, or the banner CSS.
+  `node scripts/test-update-banner-layout.js` measures the same banner's LAYOUT in
+  a real browser (headless Chrome over CDP, skipping without Chrome). It lays the
+  REAL markup out with the REAL stylesheet and asserts the one invariant the whole
+  design rests on: the strip's real height equals `--ub-h`, the amount
+  `body.ub-open` moves every full-height surface down by. It caught a real 3px
+  clip — the two-line text block is taller than the 32px button, so deriving 3rem
+  from padding + control was wrong, and the height is declared now. Also: the
+  header/rail/sidebar/nav page all start BELOW the strip, the Update button and ✕
+  are hittable at their centres at every size, nothing overflows, and the copy is
+  a single ellipsised line (the in-call warning is asserted to be fully readable,
+  not truncated) at 1100x700, 390x844, 844x390, and 320x568. Every case asserts
+  `innerWidth` matches what was asked for — via CDP device metrics, because a
+  Windows window cannot go below ~490px and a `--window-size=390` probe silently
+  laid out at 490. `--shot out.png [--w 390 --h 844 --mobile --call]` writes a
+  real PNG of any case, which is how the design was eyeballed. Re-run after any
+  change to the banner CSS, its markup, or the copy in `final.js`.
+  `node scripts/test-multi-replica.js` is the acceptance test for running more
+  than one replica (see `deploy/civo/README.md` §11). It spawns TWO real
+  `server.js` processes against one throwaway Postgres, pins a WebSocket client to
+  each, and asserts every fan-out crosses replicas: a channel message each way,
+  exactly once with no duplicate on the origin (which is what proves the bus is
+  actually carrying it and the origin-skip is intact), a DM through `notifyUser`,
+  voice rosters that can only be right if `voice_occupants` is shared, a WebRTC
+  offer reaching a peer socket on the other process, join/leave propagation, a
+  presence roster and a status flip crossing pods, the admin Online count
+  including the other replica's sessions, the rate limiter counting across
+  replicas instead of granting each its own quota, and game-activity beacons
+  being shared — a beacon to replica A followed by one to replica B 40s later must
+  credit that 40s of playtime, which a per-process map silently dropped (and a
+  quit on one replica must clear the badge read on the other). Skips (exit 0)
+  without Postgres; re-run after touching `bus.js`, `server.js`'s fan-out
+  helpers/voice/presence/limiter/beacon paths, or `db.js`'s shared tables.
+  `node scripts/test-bus.js` and `node scripts/test-leader-lock.js` cover the two
+  primitives underneath it in isolation: the outbox bus (ordering, the rescue pass
+  for a lower id that commits late, origin-skip, retention) and the Postgres
+  advisory locks (`withLock` skipping rather than queueing, `withLockWait`
+  blocking, `withKeyLock` per storage key). `scripts/bus-probe.js` and
+  `scripts/lock-probe.js` are the manual two-terminal probes for a live cluster.

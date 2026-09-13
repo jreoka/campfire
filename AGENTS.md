@@ -233,6 +233,29 @@ by a **Cloudflare Tunnel** (no LoadBalancer — it would cost more than the node
 Postgres 18 on a `civo-volume` PVC, coturn in-cluster via `hostNetwork`.
 Manifests + runbook: `deploy/civo/`. See **Deployment** below for how to ship.
 
+**The app is replica-safe and the manifest is ready to scale past one node**
+(owner requirement: it must load-balance across nodes when the cluster grows).
+Scale-out is a replica count, not a rewrite — `kubectl -n campfire scale
+deploy/campfire deploy/cloudflared --replicas=N`, then read
+**`deploy/civo/README.md` §11**. Every fan-out (chat, DMs, presence, typing,
+WebRTC signalling, voice rosters, admin presence) crosses replicas through the
+Postgres bus in `bus.js`; periodic work is leader-locked via `db.LOCKS`; shared
+state lives in Postgres (never a per-process `Map` — the watcher beacons were the
+last offender and now live in `watcher_beacons`); media is in the object store,
+so no replica needs another's filesystem. The manifest carries the rest:
+`topologySpreadConstraints` on the hostname (preferred, so one node never wedges
+a rollout), a `maxUnavailable: 1` PDB, `sessionAffinity: None`, and
+`RollingUpdate` with `maxSurge: 0`. Acceptance test:
+`node scripts/test-multi-replica.js`.
+Two rules learned from this: a rolling update runs **two builds at once**, so
+"is there a newer release?" is decided by a cluster-wide **release generation**
+(`app_releases`, claimed idempotently at boot, sent as `gen` on `/api/version`
+and the WS `hello`) and never by the content-hash fingerprint, which reads as a
+change in either direction; and **nothing reloads the page for the reader** — a
+new build raises a banner at the top of the shell with an Update button
+(`#update-banner`, `body.ub-open` makes every full-height surface pay for its
+height).
+
 **The app runs with `VIRUS_SCAN=0` and `MEDIA_COMPRESS` on.** clamd needs ~1 GB
 and the node has ~1.14 GiB allocatable, so AV scanning is off. Compression does
 NOT depend on it: the `virus-scan` slot runs with no engine as a
@@ -265,7 +288,8 @@ committed.
 Shipped: auth, servers/invites, text channels, voice rooms (mesh WebRTC, sidebar
 occupants + VAD rings), uploads, emoji (Emojibase set + custom + Klipy GIFs),
 replies/threads/reactions/edits/mentions/markdown, presence + statuses, user
-cards, tabbed settings, rail folders + DnD, B&W theme, ctx menus, auto-update,
+cards, tabbed settings, rail folders + DnD, B&W theme, ctx menus, a deploy
+banner (never a forced reload),
 TOTP 2FA + passkeys + sessions, notification inbox, link previews (server-side
 OpenGraph/oEmbed unfurl → cached card with thumbnail, SSRF-guarded), stories
 (24h photo/video posts with an in-app camera, friend + server audiences,
@@ -336,8 +360,8 @@ DM unread is server state, never a per-tab tally: `dm_members.last_read_at`
 (stamped by `POST /api/dms/:tid/read`, which the client fires when a thread opens
 and when a message lands in the one already open) and `/api/dms` returns each
 thread's `unread`, so the unread-sender avatars under the campfire (`#dm-rail`)
-come back after a reload — including the one the auto-updater fires seconds
-after a deploy — and reading a DM on the phone clears the desktop (`dm-read`).
+come back after a reload — including the one a deploy's Update banner leads to —
+and reading a DM on the phone clears the desktop (`dm-read`).
 A row that was never read starts at `joined_at`, so being added to an old group
 chat doesn't light up its history, and own/system messages never count.
 Channel notifications are a count, not a dot: a server with unread channels

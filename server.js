@@ -39,6 +39,29 @@ const APP_VERSION = (() => {
     return h.digest('hex').slice(0, 12);
   } catch { return 'dev'; }
 })();
+// This build's RELEASE GENERATION, filled in at boot from the shared
+// `app_releases` table (see registerRelease below). 0 means "not registered" —
+// a client reads that as "no newer release here" and simply does not prompt, so
+// a failure to register can only ever cost a missed notice, never a wrong one.
+let APP_GEN = 0;
+// Claim a generation for this build, or read back the one it already has.
+// Two replicas booting the same image compute the same MAX(gen)+1 and the
+// ON CONFLICT keeps exactly one of them, so both read back the same number —
+// the INSERT ... SELECT is a single statement, so there is no window to race.
+async function registerRelease() {
+  try {
+    await db.prepare(
+      `INSERT INTO app_releases (version, gen, created_at)
+       SELECT ?, COALESCE(MAX(gen), 0) + 1, ? FROM app_releases
+       ON CONFLICT (version) DO NOTHING`
+    ).run(APP_VERSION, Date.now());
+    const row = await db.prepare('SELECT gen FROM app_releases WHERE version = ?').get(APP_VERSION);
+    APP_GEN = Number(row && row.gen) || 0;
+    console.log(`[campfire] release ${APP_VERSION} is generation ${APP_GEN}`);
+  } catch (e) {
+    console.error('[campfire] release registration failed (clients will not be prompted for updates):', (e && e.message) || e);
+  }
+}
 
 // One-time flatten: threads are 1 level deep — re-parent any reply-of-a-reply
 // onto the ultimate root. Idempotent (matches 0 rows when clean), so it runs
@@ -678,9 +701,13 @@ async function slowBlocked(channelId, userId, secs) {
 
 // ---------- API ----------
 // Client auto-update fingerprint: changes whenever deployed code changes.
+// `gen` is the build's RELEASE GENERATION — a cluster-wide monotonic number (see
+// db.js's app_releases). The client prompts on "the server is a newer release
+// than the build I am running", which a content hash alone cannot answer: during
+// a rolling update across replicas two builds answer at the same time.
 app.get('/api/version', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ version: APP_VERSION });
+  res.json({ version: APP_VERSION, gen: APP_GEN });
 });
 app.get('/api/config', (req, res) => {
   const iceServers = [{ urls: process.env.STUN_URL || 'stun:stun.l.google.com:19302' }];
@@ -3241,7 +3268,25 @@ app.patch('/api/me', authRequired, async (req, res) => {
 // time is credited in capped increments so gaps/clock skew can't inflate totals.
 const GAME_RE = /^[\p{L}\p{N} .(),&+'\-:]{2,48}$/u;
 const BEACON_CAP_MS = 15 * 60 * 1000;
-const lastBeacon = new Map(); // userId -> { ts, game|null }
+// SHARED state (the `watcher_beacons` table), NOT a per-process Map. A beacon
+// lands on whichever replica the Service sent it to, and everything derived from
+// it is a delta between consecutive beacons: creditPlay() is handed
+// (this ts - the previous ts), so a replica that had never seen the previous one
+// credited nothing and playtime silently under-counted the moment there was more
+// than one pod. The stale sweep has the same shape in reverse — it is
+// leader-locked, so a local Map left the leader blind to every beacon a peer had
+// received. One row per user; see db.js for the full note.
+async function lastBeacon(userId) {
+  try {
+    return (await db.prepare('SELECT last_seen AS ts, game FROM watcher_beacons WHERE user_id = ?').get(userId)) || null;
+  } catch { return null; }
+}
+async function setBeacon(userId, ts, game) {
+  await db.prepare(
+    `INSERT INTO watcher_beacons (user_id, last_seen, game) VALUES (?, ?, ?)
+     ON CONFLICT (user_id) DO UPDATE SET last_seen = EXCLUDED.last_seen, game = EXCLUDED.game`
+  ).run(userId, ts, game);
+}
 const BEACON_STALE_MS = 90 * 1000;
 function utcDay(ts) { return new Date(ts).toISOString().slice(0, 10); }
 // Timezone-aware calendar days for streaks. The watcher (and web client)
@@ -3449,7 +3494,7 @@ app.post('/api/watcher/status', authRequired, async (req, res) => {
   const enabled = u.game_enabled !== 0;
   const game = (enabled && rawGame && !exclusions.has(rawGame)) ? rawGame : null;
   const prev = (await freshUser(u.id)).playing_game;
-  const last = lastBeacon.get(u.id);
+  const last = await lastBeacon(u.id);
   if (last && last.game === game) {
     if (game) await creditPlay(u.id, game, Math.min(ts - last.ts, BEACON_CAP_MS), ts, tz);
   } else if (last && last.game) {
@@ -3460,13 +3505,13 @@ app.post('/api/watcher/status', authRequired, async (req, res) => {
   } else if (!game && prev) {
     await db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(u.id);
   }
-  lastBeacon.set(u.id, { ts, game });
+  await setBeacon(u.id, ts, game);
   const u2 = await freshUser(u.id);
   await broadcastUserUpdate(u2);
   res.json({ ok: true, playing_game: u2.playing_game });
 });
 app.delete('/api/watcher/status', authRequired, async (req, res) => {
-  lastBeacon.set(req.user.id, { ts: Date.now(), game: null });
+  await setBeacon(req.user.id, Date.now(), null);
   await db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(req.user.id);
   const u2 = await freshUser(req.user.id);
   await broadcastUserUpdate(u2);
@@ -6371,7 +6416,7 @@ wss.on('connection', async (ws, req) => {
   // user) because the session count and the page-visible flag are per-socket.
   ws.lsid = bus.POD_ID + ':' + (++socketSeq);
   await presenceUpsert(ws);
-  safeSend(ws, { t: 'hello', user: publicUser(u), version: APP_VERSION });
+  safeSend(ws, { t: 'hello', user: publicUser(u), version: APP_VERSION, gen: APP_GEN });
   await pushAdminPresence();
 
   const onMessage = async raw => {
@@ -6873,6 +6918,8 @@ async function boot() {
   // waits for it to finish rather than racing it (and rather than racing
   // bus.js's own table creation).
   await db.withLockWait(db.LOCKS.migrate, () => db.initDb());
+  // Claim/read this build's release generation (must follow initDb's DDL).
+  await registerRelease();
   // Subscriptions first, then the bus: starting first would leave a window in
   // which a peer's event arrives with no handler registered to receive it.
   wireBus();
@@ -6910,6 +6957,12 @@ async function boot() {
     }
     // Clear stale playing_game on startup (watchers will re-beacon within 30s)
     await db.prepare('UPDATE users SET playing_game = NULL WHERE playing_game IS NOT NULL').run();
+    // ...and forget the beacon memory with it. These rows are SHARED, so unlike
+    // the old per-process Map they survive a restart: leaving game='X' behind
+    // would make the next beacon for that user look like a continuation and
+    // credit the whole idle gap as playtime (capped at 15 min). A lone boot
+    // means nothing was running, so nothing is owed.
+    try { await db.prepare('UPDATE watcher_beacons SET game = NULL WHERE game IS NOT NULL').run(); } catch {}
     // Streaming never survives a restart (voice rooms don't either).
     try { await db.prepare('UPDATE users SET streaming_game = NULL WHERE streaming_game IS NOT NULL').run(); } catch {}
   });
@@ -6973,15 +7026,21 @@ process.on('SIGINT', () => { shutdown('SIGINT'); });
 // Watcher stale-beacon cleanup: no heartbeat for 90s (3 missed 30s beats)
 // means the watcher died without a goodbye — assume stopped playing.
 // Leader-only, so N replicas don't each write the same clear and re-broadcast
-// the same user-update for one stale beacon.
+// the same user-update for one stale beacon. It sweeps the SHARED table, which
+// is the whole point: the beacon it is clearing may have been received by any
+// replica, and a per-process map made that invisible to whichever replica
+// happened to hold the lock.
 safeLockedInterval('beacon', db.LOCKS.beaconSweep, async () => {
   const stale = Date.now() - BEACON_STALE_MS;
-  for (const [userId, beacon] of lastBeacon.entries()) {
-    if (beacon.ts < stale && beacon.game) {
-      await db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(userId);
-      lastBeacon.set(userId, { ts: Date.now(), game: null });
-      const u2 = await freshUser(userId);
-      if (u2 && u2.id) await broadcastUserUpdate(u2);
-    }
+  const rows = await db.prepare(
+    'SELECT user_id FROM watcher_beacons WHERE last_seen < ? AND game IS NOT NULL'
+  ).all(stale);
+  for (const row of rows) {
+    await db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(row.user_id);
+    // Stamp it fresh so the row is not re-judged until the next window; the
+    // game is forgotten, the beacon's age is not replayed.
+    await db.prepare('UPDATE watcher_beacons SET last_seen = ?, game = NULL WHERE user_id = ?').run(Date.now(), row.user_id);
+    const u2 = await freshUser(row.user_id);
+    if (u2 && u2.id) await broadcastUserUpdate(u2);
   }
 }, 30 * 1000);
