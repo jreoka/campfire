@@ -219,7 +219,34 @@ async function main() {
     check(h.state.reloads === 0, 'and hanging up does not reload');
   }
 
-  console.log('\n[7] static wiring (the paths a slice cannot see)');
+  console.log('\n[7] dismissing is per page load — a refresh is always a clean slate');
+  {
+    // The owner's question, pinned: "if I dismiss the banner, am I stuck on the
+    // old version?" No. The dismissal is in-memory only, so it cannot outlive the
+    // page — the next load (F5, a PWA relaunch, a reopened app) boots on whatever
+    // the server is serving now and has nothing left to prompt about.
+    let res = { version: 'aaa111', gen: 4 };
+    const h = harness(() => res);
+    await h.api.checkVersion();
+    res = { version: 'bbb222', gen: 5 };
+    await h.api.checkVersion();
+    h.el('ub-x').click();
+    check(h.bannerShut(), 'dismissed on this page load');
+    check(h.state.S.updateReady === true, 'the update is still pending in that tab, so a manual F5 applies it');
+    check(h.state.reloads === 0, 'and the page does not reload itself in the meantime');
+    h.runPolls(30);
+    check(h.state.reloads === 0, 'not after half an hour of polls either');
+    // A reload is a fresh page: no inherited dismissal, and the boot generation
+    // is the NEW build, so there is nothing to prompt about.
+    const fresh = harness(() => ({ version: 'bbb222', gen: 5 }));
+    await fresh.api.checkVersion();
+    check(fresh.state.S.updateDismissed === false, 'a fresh page load starts undismissed', fresh.state.S.updateDismissed);
+    check(fresh.state.S.bootGen === 5, 'and boots on whatever the server serves now', fresh.state.S.bootGen);
+    check(fresh.bannerShut(), 'so the newly loaded page shows nothing — it is already the new build');
+    check(fresh.state.reloads === 0, 'with no reload of its own');
+  }
+
+  console.log('\n[8] static wiring (the paths a slice cannot see)');
   {
     const reloadsInBlock = (bannerSrc.match(/location\.reload\(\)/g) || []).length;
     check(reloadsInBlock === 1, 'exactly one location.reload() survives in the banner block', { count: reloadsInBlock });
@@ -228,6 +255,10 @@ async function main() {
     check(applyIdx >= 0 && reloadIdx > applyIdx, 'and it is inside applyUpdate() — the button, not a timer');
     check(!/setTimeout/.test(bannerSrc), 'no timer of any kind lives in the banner block');
     check(!/toastAction/.test(finalSrc), 'the old toast-with-Refresh path is gone entirely');
+    // The one thing that would make a dismissal stick across reloads. It must
+    // never be written down: a refresh has to be a clean slate.
+    check(!/localStorage/.test(bannerSrc),
+      'nothing about the update is persisted, so no reload can inherit a dismissal');
 
     const voiceSrc = fs.readFileSync(path.join(ROOT, 'public/js/voice.js'), 'utf8');
     check(!/location\.reload\(\)/.test(voiceSrc), 'leaving a voice call never reloads (voice.js has no reload at all)');
