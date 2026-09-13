@@ -3,7 +3,9 @@
 // WHAT A SNAPSHOT IS
 //   snapshots/<stamp>/manifest.json        inventory + checksums (written LAST)
 //   snapshots/<stamp>/db/campfire.dump     pg_dump -Fc of the whole database
-//   snapshots/<stamp>/secrets/secrets.json every k8s Secret in the namespace
+//   snapshots/<stamp>/secrets/secrets.json the app's environment (which on
+//                                          Compose IS the host .env) plus every
+//                                          k8s Secret when running in-cluster
 //
 // WHAT A SNAPSHOT IS NOT: THE MEDIA
 //   The media bucket is deliberately NOT copied here any more. It used to be,
@@ -92,16 +94,48 @@ function pgDumpToFile(tmp) {
   });
 }
 
-// ---- cluster secrets -------------------------------------------------------
-// A restore that has the database and the media but not JWT_SECRET logs every
-// user out, and without the tunnel token there is no way back in from outside.
-// Secrets are read from the API server with the pod's own ServiceAccount, which
-// is granted get/list on secrets in this namespace only (see campfire.yaml).
+// ---- secrets ---------------------------------------------------------------
+// A restore that has the database but not JWT_SECRET logs every user out, and
+// without the tunnel token there is no way back in from outside. There are two
+// places those live, and a snapshot carries BOTH:
 //
-// These are stored base64-decoded-able, i.e. plaintext-equivalent. The R2
-// bucket is therefore as sensitive as the cluster itself.
-
+//   the pod's environment   every deployment. Docker Compose passes the host's
+//                           .env to this container with `env_file`, so the
+//                           environment IS the host's .env -- JWT_SECRET,
+//                           POSTGRES_PASSWORD, TUNNEL_TOKEN, TURN_*, KLIPY_KEY,
+//                           S3_*/R2_* -- with no bind mount of the host's file.
+//                           On Kubernetes the same vars arrive from Secrets.
+//   the k8s Secret objects  only in-cluster, read from the API server with the
+//                           pod's own ServiceAccount (get/list in this
+//                           namespace only; see campfire.yaml). Those keep
+//                           things that are never mounted as env vars.
+//
+// Both are stored VERBATIM, i.e. plaintext-equivalent. The R2 bucket is
+// therefore as sensitive as the host or cluster -- it holds the backup keys
+// themselves.
 const SA_DIR = '/var/run/secrets/kubernetes.io/serviceaccount';
+
+// Not configuration: the image's own runtime noise. A restore that sets PATH
+// from a backup is how you get a broken container, and a container id is not
+// state. Everything else in the environment is captured, including the plain
+// config (STUN_URL, MAX_FILE_MB, UNFURL...): rebuilding the app means getting
+// its settings back too, not only the passwords.
+const ENV_NOISE = new Set([
+  'PATH', 'HOME', 'PWD', 'OLDPWD', 'SHLVL', '_', 'TERM', 'LANG', 'LC_ALL',
+  'HOSTNAME', 'NODE_VERSION', 'YARN_VERSION', 'POD_ID',
+]);
+
+function captureEnv() {
+  const out = {};
+  for (const k of Object.keys(process.env).sort()) {
+    // Case-insensitively: Windows spells them Path/Home/ComSpec, and the noise
+    // list is about meaning, not spelling.
+    if (ENV_NOISE.has(k.toUpperCase()) || k.startsWith('npm_') || k.startsWith('KUBERNETES_')) continue;
+    const v = process.env[k];
+    if (typeof v === 'string') out[k] = v;
+  }
+  return out;
+}
 
 function k8sAvailable() {
   return Boolean(process.env.KUBERNETES_SERVICE_HOST) && fs.existsSync(path.join(SA_DIR, 'token'));
@@ -137,8 +171,7 @@ function k8sGetJson(pathname) {
   });
 }
 
-async function collectSecrets() {
-  if (!k8sAvailable()) return { ok: false, reason: 'not running in-cluster' };
+async function collectK8sSecrets() {
   const nsFile = path.join(SA_DIR, 'namespace');
   const ns = fs.existsSync(nsFile) ? fs.readFileSync(nsFile, 'utf8').trim() : 'default';
   try {
@@ -152,10 +185,18 @@ async function collectSecrets() {
       if ((s.type || '') === 'kubernetes.io/service-account-token') continue;
       out[name] = { type: s.type || 'Opaque', data: s.data || {} };
     }
-    return { ok: true, namespace: ns, count: Object.keys(out).length, secrets: out };
+    return { ok: true, namespace: ns, secrets: out };
   } catch (e) {
     return { ok: false, reason: (e && e.message) || String(e) };
   }
+}
+
+async function collectSecrets() {
+  const env = captureEnv();
+  const k8s = k8sAvailable()
+    ? await collectK8sSecrets()
+    : { ok: false, reason: 'not running in-cluster' };
+  return { env, k8s };
 }
 
 // ---- snapshot inventory ----------------------------------------------------
@@ -212,25 +253,38 @@ async function runBackupLocked(reason) {
     started.push(dumpKey);
     console.log(`[backup] ${s} database ${mb(dump.length)} (sha256 ${sha256(dump).slice(0, 12)}…) [${reason}]`);
 
-    // 2. cluster secrets
+    // 2. secrets: the running environment (every deployment) and, in-cluster,
+    //    the Secret objects behind it.
     let secretsRef = null;
     const sec = await collectSecrets();
-    if (sec.ok) {
+    const envNames = Object.keys(sec.env);
+    const k8sCount = sec.k8s.ok ? Object.keys(sec.k8s.secrets).length : 0;
+    if (envNames.length || k8sCount) {
       const key = SNAPSHOT_PREFIX + s + '/secrets/secrets.json';
       const buf = Buffer.from(JSON.stringify({
         capturedAt: new Date().toISOString(),
-        namespace: sec.namespace,
-        note: 'k8s Secret objects verbatim; data values are base64, i.e. plaintext-equivalent.',
-        secrets: sec.secrets,
+        source: k8sCount && envNames.length ? 'kubernetes+env' : (k8sCount ? 'kubernetes' : 'env'),
+        note: 'plaintext-equivalent: env values are verbatim and every deployment passes the host .env ' +
+          'to the app, so this file is the configuration a rebuild needs. The R2 bucket is as sensitive as the host.',
+        kubernetes: sec.k8s.ok
+          ? { namespace: sec.k8s.namespace, objects: sec.k8s.secrets }
+          : { ok: false, reason: sec.k8s.reason || 'unavailable' },
+        env: sec.env,
       }, null, 2));
       await r2.put(key, buf, 'application/json');
       started.push(key);
-      secretsRef = { key, count: sec.count };
-      console.log(`[backup] ${s} secrets ${sec.count} object(s)`);
+      secretsRef = { key, count: envNames.length + k8sCount, env: envNames.length, kubernetes: k8sCount, source: k8sCount && envNames.length ? 'kubernetes+env' : (k8sCount ? 'kubernetes' : 'env') };
+      // Names only, never values: the log line is for "did JWT_SECRET go in?",
+      // and a value in `docker compose logs` is a value leaked to everyone who
+      // can read the logs.
+      console.log(`[backup] ${s} secrets: ${envNames.length} env var(s)` +
+        (k8sCount ? ` + ${k8sCount} k8s object(s)` : '') +
+        ` [${envNames.join(' ').slice(0, 300)}${envNames.join(' ').length > 300 ? ' …' : ''}]`);
     } else {
       // Loud, and recorded in the manifest: a snapshot without secrets is not
       // the fully self-contained rebuild we advertise.
-      console.warn(`[backup] ${s} SECRETS NOT BACKED UP: ${sec.reason}`);
+      console.warn(`[backup] ${s} SECRETS NOT BACKED UP: nothing in the environment` +
+        (sec.k8s.reason ? ` and ${sec.k8s.reason}` : ''));
     }
 
     // 3. the media bucket -- an inventory, never the bytes (see the header).
@@ -262,7 +316,7 @@ async function runBackupLocked(reason) {
       source: { bucket: storage.S3_BUCKET || null, objects: inventory.length, bytes: mediaBytes },
       database: { key: dumpKey, size: dump.length, sha256: sha256(dump) },
       secrets: secretsRef,
-      warnings: sec.ok ? [] : ['secrets not backed up: ' + sec.reason],
+      warnings: secretsRef ? [] : ['secrets not backed up: nothing in the environment'],
       media: {
         // The load-bearing flag: a snapshot with this false has no media bytes
         // in it and nothing in this bucket can conjure any.

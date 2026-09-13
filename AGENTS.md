@@ -223,12 +223,15 @@ The owner will iterate on features **without ever losing persistent data**.
   media byte from the backup bucket, and `--restore-media` is an audit that
   names what is unaccounted for. `scripts/purge-backup-blobs.js` deleted the old
   mirror (dry-run first); `prune()` in `backup.js` reaps whatever is left.
-  **And the Secret half is inert on the Compose deploy**: `collectSecrets()`
-  talks to the Kubernetes API, which the Hetzner host has no equivalent of, so
-  its snapshots say `secrets NOT INCLUDED` and `/opt/campfire/app/.env` (mode
-  600, holding `JWT_SECRET`/`TURN_*`/`R2_*`) is not captured by anything. Keep a
-  copy of that file off the host; teaching `backup.js` the Compose env is an
-  open item (runbook §Backups).
+  **Secrets are captured as the app's environment**, which is what keeps a
+  snapshot self-contained on a host with no Kubernetes API: `docker-compose.yml`
+  passes the host's `.env` to the container with `env_file`, so `collectSecrets()`
+  records every environment variable verbatim (minus the image's runtime noise —
+  `PATH`, `HOSTNAME`, container ids) and, when running in-cluster, the k8s Secret
+  objects as well. `--fetch` writes `restored.env` beside `secrets.json`, so a
+  rebuild starts from the settings the app actually ran with. Values are never
+  logged — the snapshot's log line prints names, and that file is
+  plaintext-equivalent, exactly as the k8s Secret capture always was.
   **Open risk, stated plainly:** media and backups live in ONE Cloudflare
   account, so losing that account costs the live media and the only copies of
   everything else at once. The old Civo/R2 split existed to prevent exactly
@@ -609,8 +612,12 @@ every task, in this file.
   a blob. `R2_*` is deliberately separate from `S3_*`: getting the backup
   destination wrong must not be able to break media serving, or the reverse.
 - The pod runs as the `campfire` ServiceAccount, which has a namespace-scoped
-  read-only Role on Secrets — that is how a snapshot includes `JWT_SECRET` and
-  the tunnel token. The R2 bucket is therefore as sensitive as the cluster:
+  read-only Role on Secrets — that is how an in-cluster snapshot gets the Secret
+  objects behind `JWT_SECRET` and the tunnel token. On the Compose host there is
+  no API to ask, so the **environment capture** carries them instead: compose
+  passes the host's `.env` to the container with `env_file`, so `secrets.json`
+  holds every variable the app runs with, plus a `restored.env` written by
+  `--fetch`. Either way the R2 bucket is as sensitive as the host or cluster:
   `secrets.json` is plaintext-equivalent and contains the R2 keys themselves.
 - Voice/TURN: coturn runs on the VPS host network (`network_mode: host`; 3478/udp+tcp,
   3479/tcp, relay 49160-49200/udp) so it binds the public IP directly.

@@ -242,21 +242,25 @@ Expect allocation, 16/16 messages relayed, 0% packet loss.
 ## Backups (the doomsday copy)
 
 Still **Cloudflare R2**, bucket `campfire-backup`, by `backup.js`: a 12-hourly
-snapshot of the pg_dump, the Secrets it can reach and a **media inventory**
-(key + size per object). `R2_BACKUP_KEEP=2`.
+snapshot of the pg_dump, the settings/secrets the app runs with and a **media
+inventory** (key + size per object). `R2_BACKUP_KEEP=2`.
 
-**Secrets are NOT in these snapshots on this host.** `collectSecrets()` reads
-them from the Kubernetes API with the pod's ServiceAccount — the mechanism the
-Civo deploy had and this one does not, so every snapshot here carries
-`WARNING secrets not backed up: not running in-cluster` and `--show` says
-`secrets NOT INCLUDED`. `/opt/campfire/app/.env` (mode 600) is therefore **not
-covered by the backup**: keep your own copy of it, because a rebuild without
-`JWT_SECRET` logs every user out and without `TURN_*`/`R2_*` the site comes back
-half-configured. Making the snapshot self-contained means teaching `backup.js`
-to capture the Compose env (a mounted env file, or the secret-shaped subset of
-`process.env`) — worth doing, not done.
+**Secrets ride in as the app's own environment.** Compose passes this host's
+`.env` to the container with `env_file`, so `secrets.json` inside a snapshot
+holds every variable the app runs with — `JWT_SECRET`, `POSTGRES_PASSWORD`,
+`TUNNEL_TOKEN`, `TURN_*`, `KLIPY_KEY`, `S3_*`/`R2_*` — verbatim, plus the plain
+config (`MAX_FILE_MB`, `UNFURL`, `STUN_URL`…), minus the image's runtime noise
+(`PATH`, `HOSTNAME`). That is what makes a rebuild here possible without
+retyping keys from memory; on the Civo deploy the same file also carried the
+namespace's Secret objects, read through the ServiceAccount.
 
-**The media bytes are not in there either, on purpose.** They used to be,
+`--fetch` writes both forms: `secrets.json` (everything, plus counts) and
+`restored.env`, a `KEY=value` file you can diff against
+`/opt/campfire/app/.env`. **Compare before applying** — replacing `JWT_SECRET`
+logs every user out. The snapshot log line prints variable *names* only, never
+values, so `docker compose logs` is not a place secrets leak.
+
+**The media bytes are not in there, on purpose.** They used to be,
 mirrored under `blobs/` and deduplicated across snapshots — which doubled what
 the Cloudflare account stored, in the same account that held the media it copied,
 so it could not survive losing that account and bought nothing but the bill.
@@ -280,6 +284,7 @@ reaps any blobs/ residue on every snapshot run as the backstop.
 docker compose ... exec -T campfire node scripts/restore-from-r2.js --list
 docker compose ... run --rm --no-deps campfire \
   node scripts/restore-from-r2.js --fetch --out /data/restore
+# /data/restore now holds campfire.dump, manifest.json, secrets.json and restored.env
 bash deploy/hetzner/restore-db.sh data/restore/campfire.dump
 ```
 

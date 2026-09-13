@@ -104,6 +104,19 @@ function mediaList(m) {
   return Array.isArray(m.objects) ? m.objects : [];
 }
 
+// What the secrets half of a manifest holds. Snapshots since the Compose fix
+// record the app's environment (the host .env) as well; blob-era k8s snapshots
+// recorded only Secret objects, so both shapes have to read.
+function secretsLine(m) {
+  if (!m.secrets) return 'NOT INCLUDED';
+  const n = m.secrets.count;
+  const parts = [];
+  if (m.secrets.env) parts.push(`${m.secrets.env} env var(s)`);
+  if (m.secrets.kubernetes) parts.push(`${m.secrets.kubernetes} k8s object(s)`);
+  if (!parts.length) parts.push(`${n} object(s)`);
+  return `${n} — ${parts.join(' + ')}`;
+}
+
 // The dump is what a rebuild actually needs, so keep the default listing
 // focused on it rather than on the media inventory.
 function summarise(m) {
@@ -111,7 +124,7 @@ function summarise(m) {
   lines.push(`  stamp      ${m.stamp}   (${m.created}, ${age(m.created)})`);
   lines.push(`  reason     ${m.reason}`);
   lines.push(`  database   ${m.database ? human(m.database.size) + '  sha256 ' + String(m.database.sha256).slice(0, 16) + '…' : 'MISSING'}`);
-  lines.push(`  secrets    ${m.secrets ? m.secrets.count + ' object(s)' : 'NOT INCLUDED'}`);
+  lines.push(`  secrets    ${secretsLine(m)}`);
   const listed = mediaList(m);
   const noBytes = m.media ? m.media.included === false : false;
   lines.push(`  media      ${m.source ? m.source.objects + ' object(s), ' + human(m.source.bytes) : '?'}` +
@@ -179,7 +192,29 @@ async function main() {
     if (m.secrets) {
       const sec = await r2.getBuffer(m.secrets.key);
       fs.writeFileSync(path.join(dir, 'secrets.json'), sec);
-      console.log(`saved ${path.join(dir, 'secrets.json')} (${m.secrets.count} secret(s))`);
+      // A .env-shaped copy beside it, because that is what the app reads: the
+      // environment capture IS the host's .env, so a rebuild can start from it
+      // instead of retyping keys. Written as KEY=value with nothing quoted --
+      // compose's env_file takes the value to end of line, which is exactly how
+      // the app received it.
+      let envLines = 0;
+      try {
+        const parsed = JSON.parse(sec.toString('utf8'));
+        const env = parsed.env || {};
+        const names = Object.keys(env);
+        if (names.length) {
+          fs.writeFileSync(path.join(dir, 'restored.env'),
+            names.sort().map((k) => `${k}=${env[k]}`).join('\n') + '\n');
+          envLines = names.length;
+        }
+      } catch (e) {
+        console.warn('could not build restored.env:', (e && e.message) || e);
+      }
+      console.log(`saved ${path.join(dir, 'secrets.json')} (${secretsLine(m)})`);
+      if (envLines) {
+        console.log(`saved ${path.join(dir, 'restored.env')} (${envLines} line(s)) — ` +
+          'compare it against the host .env rather than overwriting it blind');
+      }
     }
 
     if (arg('with-media', false)) {
@@ -211,22 +246,23 @@ async function main() {
     console.log(`
 Next steps (run these deliberately):
 
-  # 1. database
-  kubectl -n campfire cp ${path.join(dir, dumpName)} db-0:/tmp/restore.dump
-  kubectl -n campfire exec -it db-0 -- pg_restore -U campfire -d campfire --clean --if-exists /tmp/restore.dump
-  kubectl -n campfire exec -it db-0 -- rm -f /tmp/restore.dump
-  #    then clear the runtime tables so the first boot is unambiguous:
-  kubectl -n campfire exec db-0 -- psql -U campfire -d campfire -c \\
-    "TRUNCATE bus_replicas, bus_events, live_sessions, voice_occupants, rate_limits, webauthn_challenges;"
+  # 1. database -- the production host is Docker Compose (deploy/hetzner):
+  bash deploy/hetzner/restore-db.sh ${path.join(dir, dumpName)}
+  #    On the Civo rollback cluster, kubectl instead:
+  #    kubectl -n campfire cp ${path.join(dir, dumpName)} db-0:/tmp/restore.dump
+  #    kubectl -n campfire exec -it db-0 -- pg_restore -U campfire -d campfire --clean --if-exists /tmp/restore.dump
+  #    (restore-db.sh also TRUNCATEs the runtime tables -- bus_*, live_sessions,
+  #     voice_occupants, rate_limits, webauthn_challenges -- so the first boot is
+  #     unambiguous; do the same by hand if you restore with kubectl.)
 
   # 2. media: the backup bucket holds an INVENTORY, not the bytes. Any object
   #    gone from the media bucket cannot be restored from here -- this reports
   #    what is missing and copies only what a pre-change snapshot still holds.
   node scripts/restore-from-r2.js --restore-media ${stamp} --write
 
-  # 3. secrets: compare secrets.json against the cluster before applying, and
-  #    remember that replacing JWT_SECRET logs every user out.
-  kubectl -n campfire get secret campfire-secrets -o jsonpath='{.data.JWT_SECRET}' | base64 -d`);
+  # 3. secrets: restored.env is the host .env as this snapshot saw it. Compare
+  #    it against /opt/campfire/app/.env (mode 600) before applying anything,
+  #    and remember that replacing JWT_SECRET logs every user out.`);
     return;
   }
 

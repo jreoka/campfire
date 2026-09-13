@@ -12,10 +12,16 @@
 //     blobs/ residue, because nothing reads a blob to restore anything;
 //   * a failed run rolls back its own partial objects instead of leaving an
 //     orphan directory holding a retention slot.
+// It also pins the secrets half: the environment goes in (that IS the host .env
+// on Compose), with the image's runtime noise left out.
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 
 process.env.R2_BACKUP_KEEP = '2';
+// The values a snapshot has to carry, and the noise it must not.
+process.env.JWT_SECRET = 'test-jwt-secret';
+process.env.POSTGRES_PASSWORD = 'test-db-password';
+process.env.MAX_FILE_MB = '50';
 
 // pg_dump stand-in: backup.js shells out for the dump, so the fake writes the
 // file it is handed and reports success.
@@ -118,8 +124,17 @@ function seedLegacy(stamp) {
   check('the media totals match the inventory', m.media.objects === 2 && m.media.bytes === 2058, m.media);
   check('the dump is recorded with its length and sha256',
     m.database.size === FAKE_DUMP.length && m.database.sha256 === sha256(FAKE_DUMP), m.database);
-  check('the snapshot says why secrets are missing',
-    Array.isArray(m.warnings) && m.warnings.some((w) => w.includes('secrets not backed up')), m.warnings);
+  check('the environment is in the snapshot, so a rebuild has its secrets',
+    m.secrets && m.secrets.env >= 2, m.secrets);
+  const secrets = JSON.parse(store.get(`snapshots/${stamp}/secrets/secrets.json`).toString('utf8'));
+  check('the values are stored verbatim',
+    secrets.env.JWT_SECRET === 'test-jwt-secret' && secrets.env.POSTGRES_PASSWORD === 'test-db-password',
+    Object.keys(secrets.env));
+  check('the plain config is captured too, not only passwords', secrets.env.MAX_FILE_MB === '50', secrets.env.MAX_FILE_MB);
+  check('runtime noise is left out of the environment capture',
+    !('PATH' in secrets.env) && !('HOSTNAME' in secrets.env), Object.keys(secrets.env).slice(0, 8));
+  check('no warning is raised when secrets were captured',
+    Array.isArray(m.warnings) && m.warnings.length === 0, m.warnings);
   check('the database dump and its manifest are in the same directory',
     store.has(`snapshots/${stamp}/db/campfire.dump`) && store.has(manifestKey), keys());
 
