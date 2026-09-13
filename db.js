@@ -798,11 +798,20 @@ WHERE (s.audience = 'server' OR s.audience = 'friends')
   // Guarded so a database that saw the first cut upgrades in place.
   await addColumn('story_reactions', 'count', 'BIGINT NOT NULL DEFAULT 1');
   // View-once messages: media that stays gated until the recipient opens it
-  // (state: 'unopened' | 'replayable' | 'consumed'), with one replay allowed.
-  // Unopened items never expire; the bytes go when the view is used up.
+  // (state: 'unopened' | 'replayable' | 'consumed'), with one replay allowed —
+  // and the replay has to be STARTED inside a short window after the first view
+  // (view_once_replay_until, see VIEWONCE_REPLAY_MS in server.js). Unopened
+  // items never expire; the bytes go when the view (and its window) are used up.
+  // 0 means "no window open", which is every item that has not been viewed yet.
   await addColumn('dm_messages', 'view_once', 'BIGINT NOT NULL DEFAULT 0');
   await addColumn('dm_messages', 'view_once_state', "TEXT NOT NULL DEFAULT ''");
   await addColumn('dm_messages', 'view_once_replays', 'BIGINT NOT NULL DEFAULT 1');
+  await addColumn('dm_messages', 'view_once_replay_until', 'BIGINT NOT NULL DEFAULT 0');
+  // The replay-window sweeper (reapExpiredViewOnce) asks for exactly this slice
+  // of a table that is otherwise large, so give it an index of its own.
+  try {
+    await db.exec("CREATE INDEX IF NOT EXISTS idx_dm_messages_vo_replay ON dm_messages (view_once_replay_until) WHERE view_once_state = 'replayable'");
+  } catch (e) { console.warn('[db] view-once replay index skipped:', (e && e.message) || e); }
   await addColumn('messages', 'webhook_id', 'TEXT');
   await addColumn('messages', 'webhook_name', 'TEXT');
   await addColumn('messages', 'webhook_avatar', 'TEXT');
@@ -1010,6 +1019,7 @@ const LOCKS = {
   attDims: 771015,        // att-dims.js: measure images that predate the shape record
   reminders: 771016,      // deliver due reminders (one replica rings, never N)
   bucketScan: 771017,     // bucket-scan.js: adopt stored objects no verdict covers
+  viewOnceReplay: 771018, // reap view-once replay windows nobody came back for
 };
 
 // Try to take the lock without waiting. Resolves { ran: false } when another

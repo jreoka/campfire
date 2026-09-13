@@ -387,8 +387,9 @@ banner (never a forced reload),
 TOTP 2FA + passkeys + sessions, notification inbox, link previews (server-side
 OpenGraph/oEmbed unfurl → cached card with thumbnail, SSRF-guarded), stories
 (24h photo/video posts with an in-app camera, friend + server audiences,
-thumbnails cropped into the rings), view-once messages (one view +
-one replay, per-friend DMs, media gated until opened and deleted after use).
+thumbnails cropped into the rings), view-once messages (one view, then one
+replay that has to be STARTED within 30s of it — `VIEWONCE_REPLAY_SECONDS`; per
+friend DMs, media gated until opened and deleted after use).
 The story camera is a Snapchat-style composer: tap the shutter for a photo, hold
 it to record (release to stop), pinch to zoom the viewfinder (the capture crops
 to what you saw, and a zoomed recording is composited so it matches), double-tap
@@ -616,7 +617,14 @@ must go through `leaveVoice`/`pushFriendsVoice` or the rail shows ghosts. View-o
 lives under `viewonce/` (never `files/`): that prefix is served only with a
 signed ticket from `POST /api/dm/:mid/viewonce/open` (a story sent to an
 individual friend is copied into `viewonce/` for the same gate), so nothing can
-fetch it before the recipient opens the message. Async discipline:
+fetch it before the recipient opens the message. The replay is a WINDOW, not a
+lifetime: `view_once_replay_until` (set by `/viewonce/consume`, deadline
+`VIEWONCE_REPLAY_MS`) is when the replay must be STARTED — reads mask a lapsed
+window as `consumed` (as the status sweep masks expired statuses), `/viewonce/open`
+answers `replay_expired`, and `reapExpiredViewOnce` collects the bytes a whole
+ticket lifetime later so a replay that began in the last second keeps its media.
+The client's card runs the same countdown off `replayUntil` (`voTick`), so both
+sides of a DM watch the same clock without a push. Async discipline:
 never pass an async callback to map/filter/forEach when results are used
 synchronously (use for..of or Promise.all); background timers go through
 safeInterval so rejections log instead of crashing. Composer text is never

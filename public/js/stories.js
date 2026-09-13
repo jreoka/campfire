@@ -3143,7 +3143,7 @@ function renderStoryAudience() {
     if (shown.length) {
       const note = document.createElement('p');
       note.className = 'sc-vo-note';
-      note.textContent = 'Friends you pick here get it in their DMs as a view-once — one view, one replay.';
+      note.textContent = 'Friends you pick here get it in their DMs as a view-once — one view, one quick replay.';
       list.appendChild(note);
     }
     for (const f of shown) {
@@ -3397,7 +3397,7 @@ async function storyPostNow() {
   }
   // Individually picked friends get a private view-once copy: the server
   // re-files the story's bytes under the gated prefix (no second upload), so
-  // each DM still views once, replays once, and dies after use.
+  // each DM still views once, gets one timed replay, and dies after use.
   let dmSent = 0;
   if (dmIds.length && story) {
     try {

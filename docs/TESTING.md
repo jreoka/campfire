@@ -513,7 +513,22 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   icons are on screen. Skips without Chrome.
   `node scripts/test-viewonce.js` covers view-once messages against the same
 dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
-  one-replay lifecycle, and that unopened items never expire.
+  one-replay lifecycle, and that unopened items never expire. The replay is on a
+  clock (it has to be STARTED within `VIEWONCE_REPLAY_SECONDS`, 30 by default),
+  so the test moves that deadline in the database rather than waiting it out:
+  the window is exposed to both sides, a replay inside it still works, a lapsed
+  one READS as opened (masked at read time) and answers `replay_expired`, and
+  the sweeper closes a window nobody came back for and takes the bytes. It needs
+  a reachable dev database (`PGHOST/PGUSER/PGPASSWORD`, same defaults as
+  `scripts/test-stories.js`) to do that.
+  `node scripts/test-viewonce-window.js` is the card half of the same rule, and
+  is offline apart from headless Chrome: the REAL `voCardHTML`/`voLiveState`/
+  `voTick` (sliced out of `public/js/viewonce.js`) are driven against the real
+  stylesheet, so the reader's countdown reads `replayUntil` from the server,
+  ticks in place in tabular figures, drops the Replay chip and disables the card
+  the second it closes, the sender's own card runs the same clock, and a window
+  the server already reports as lapsed paints the tombstone outright. Re-run it
+  after touching the view-once card, its ticker, or the window copy.
   `node scripts/test-upload-pipeline.js` covers the whole upload pipeline
   end-to-end against a throwaway database with a slow STAND-IN engine
   (`scripts/fake-harbin.js`, pointed at by `HARBIN_BIN`), in the two shapes

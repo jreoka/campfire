@@ -269,6 +269,15 @@ async function scanGate(req, res, next) {
   } catch { return next(); }
 }
 app.use('/uploads', scanGate);
+// View-once timing. The recipient gets ONE view, then one replay that has to be
+// STARTED within VIEWONCE_REPLAY_MS of the first view closing (30s, the owner's
+// window). The deadline is never a limit on watching: a replay that has started
+// runs to the end of the media — which is why reapExpiredViewOnce collects the
+// bytes a full ticket lifetime AFTER the deadline rather than at it. The latest
+// ticket anyone can hold was minted AT the deadline, so waiting a ticket
+// lifetime is exactly what guarantees no player is ever pulled out from under.
+const VIEWONCE_REPLAY_MS = Math.max(1000, (parseInt(process.env.VIEWONCE_REPLAY_SECONDS || '30', 10) || 30) * 1000);
+const VIEWONCE_TICKET_TTL_MS = 10 * 60 * 1000;
 // View-once gate: a viewonce/ key is only served with a valid ticket minted by
 // POST /api/dm/:id/viewonce/open (HMAC over key+viewer+expiry). Nothing can
 // peek at the media before the recipient opens the message, and the ticket
@@ -276,7 +285,7 @@ app.use('/uploads', scanGate);
 function viewOnceSig(key, userId, exp) {
   return crypto.createHmac('sha256', JWT_SECRET).update(key + ':' + userId + ':' + exp).digest('hex').slice(0, 32);
 }
-function viewOnceTicket(key, userId, ttlMs = 10 * 60 * 1000) {
+function viewOnceTicket(key, userId, ttlMs = VIEWONCE_TICKET_TTL_MS) {
   const exp = Date.now() + ttlMs;
   return `${userId}.${exp}.${viewOnceSig(key, userId, exp)}`;
 }
@@ -3350,9 +3359,25 @@ async function viewOnceMessage(mid, userId) {
   if (m.view_once_state === 'consumed') return { error: 'already_opened' };
   return { m };
 }
+// The state a READER is shown. The deadline is the truth: once it is past, the
+// item is spent — whether or not the sweeper has got round to its bytes — so
+// every read masks an expired window as consumed (the same trick the status
+// sweep uses). Without this the card would sit on "replay ready" for the whole
+// ticket lifetime after the window closed.
+function voDisplayState(row) {
+  const st = (row && row.view_once_state) || 'unopened';
+  if (st === 'replayable' && Number(row.view_once_replay_until) > 0 && Number(row.view_once_replay_until) <= now()) return 'consumed';
+  return st;
+}
 app.post('/api/dm/:mid/viewonce/open', authRequired, async (req, res) => {
   const { m, error } = await viewOnceMessage(req.params.mid, req.user.id);
   if (error) return res.status(error === 'not_found' ? 404 : 403).json({ error });
+  // The replay lives on a clock: it has to be STARTED inside the window the
+  // first view opened. Past it this is a distinct refusal from "already
+  // opened", because the recipient did nothing wrong — they were just late.
+  if (m.view_once_state === 'replayable' && Number(m.view_once_replay_until) > 0 && Number(m.view_once_replay_until) <= now()) {
+    return res.status(403).json({ error: 'replay_expired' });
+  }
   const att = await db.prepare('SELECT * FROM dm_attachments WHERE message_id = ? ORDER BY created_at ASC LIMIT 1').get(m.id);
   if (!att || !String(att.url).includes('/uploads/viewonce/')) return res.status(410).json({ error: 'media_gone' });
   const key = storage.s3KeyFromUrl(String(att.url).split('?')[0]);
@@ -3362,6 +3387,8 @@ app.post('/api/dm/:mid/viewonce/open', authRequired, async (req, res) => {
     kind: att.kind, mime: att.mime, caption: m.content || '', name: att.filename,
     overlays: overlaysFromJson(m.viewonce_overlays),
     state: m.view_once_state, replaysLeft: Number(m.view_once_replays) || 0,
+    replayUntil: Number(m.view_once_replay_until) || 0,
+    replayWindowMs: VIEWONCE_REPLAY_MS,
   });
 });
 app.post('/api/dm/:mid/viewonce/consume', authRequired, async (req, res) => {
@@ -3370,9 +3397,13 @@ app.post('/api/dm/:mid/viewonce/consume', authRequired, async (req, res) => {
   const replays = Number(m.view_once_replays) || 0;
   let state = 'consumed';
   let deleted = false;
+  let replayUntil = 0;
   if (m.view_once_state === 'unopened' && replays > 0) {
+    // The first view is over: the replay is now on a clock, and only one.
     state = 'replayable';
-    await db.prepare('UPDATE dm_messages SET view_once_state = ?, view_once_replays = ? WHERE id = ?').run(state, replays - 1, m.id);
+    replayUntil = now() + VIEWONCE_REPLAY_MS;
+    await db.prepare('UPDATE dm_messages SET view_once_state = ?, view_once_replays = ?, view_once_replay_until = ? WHERE id = ?')
+      .run(state, replays - 1, replayUntil, m.id);
   } else {
     await db.prepare('UPDATE dm_messages SET view_once_state = ? WHERE id = ?').run('consumed', m.id);
     const rows = await db.prepare('SELECT * FROM dm_attachments WHERE message_id = ?').all(m.id);
@@ -3382,8 +3413,38 @@ app.post('/api/dm/:mid/viewonce/consume', authRequired, async (req, res) => {
   }
   const full = await fullDm(m.id, null);
   await dmNotify(m.thread_id, { t: 'dm-updated', message: full });
-  res.json({ ok: true, state, deleted, message: full });
+  res.json({ ok: true, state, deleted, replayUntil, message: full });
 });
+
+// The replay window can close with nobody watching, and then it is spent: every
+// read masks it, every open refuses it, and this is what finally takes the
+// bytes and tells the thread. It runs a whole ticket lifetime past the deadline
+// (see VIEWONCE_TICKET_TTL_MS above), which is what keeps it from ever deleting
+// media out from under a replay that started in the window's last second.
+async function reapExpiredViewOnce() {
+  const cutoff = now() - VIEWONCE_TICKET_TTL_MS;
+  const rows = await db.prepare(
+    "SELECT id, thread_id FROM dm_messages WHERE view_once = 1 AND view_once_state = 'replayable' AND view_once_replay_until > 0 AND view_once_replay_until <= ?"
+  ).all(cutoff);
+  let closed = 0;
+  for (const r of rows) {
+    // Claim the row before touching bytes: the recipient's own close can land
+    // at any moment (they tapped the replay a second late), and a losing claim
+    // must never delete a second time or re-announce a tombstone.
+    const claim = await db.prepare("UPDATE dm_messages SET view_once_state = 'consumed' WHERE id = ? AND view_once_state = 'replayable'").run(r.id);
+    if (!claim.changes) continue;
+    for (const a of await db.prepare('SELECT url FROM dm_attachments WHERE message_id = ?').all(r.id)) {
+      try { deleteUploaded(a.url); } catch {}
+    }
+    await db.prepare('DELETE FROM dm_attachments WHERE message_id = ?').run(r.id);
+    closed++;
+    try {
+      const full = await fullDm(r.id, null);
+      await dmNotify(r.thread_id, { t: 'dm-updated', message: full });
+    } catch (e) { console.warn('[viewonce] tombstone push failed:', (e && e.message) || e); }
+  }
+  if (closed) console.log('[viewonce] replay window closed on ' + closed + ' item' + (closed === 1 ? '' : 's'));
+}
 
 
 app.delete('/api/stories/:id', authRequired, async (req, res) => {
@@ -5404,8 +5465,16 @@ async function hydrateDm(rows, meId) {
     // Set when this DM answers a story (the attached media is the story's
     // preview, copied so it survives the story's expiry).
     storyId: r.story_id || null,
-    // View-once: state + shape only, the media comes from /viewonce/open.
-    viewOnce: r.view_once ? Object.assign({ state: r.view_once_state || 'unopened', replaysLeft: Number(r.view_once_replays) || 0 }, voBy[r.id] || {}) : null,
+    // View-once: state + shape only, the media comes from /viewonce/open. The
+    // replay window is masked here, at read time, so a card never promises a
+    // replay the clock has already taken away (replayUntil lets the client run
+    // the same countdown without waiting for a push).
+    viewOnce: r.view_once ? Object.assign({
+      state: voDisplayState(r),
+      replaysLeft: Number(r.view_once_replays) || 0,
+      replayUntil: Number(r.view_once_replay_until) || 0,
+      replayWindowMs: VIEWONCE_REPLAY_MS,
+    }, voBy[r.id] || {}) : null,
     replyTo: r.reply_to_id ? (r.p_content != null ? { id: r.reply_to_id, author: r.p_name || 'deleted', snippet: String(r.p_content).slice(0, 140) } : { id: r.reply_to_id, author: 'deleted', snippet: '', deleted: true }) : null,
     threadCount: 0, edited: !!r.edited_at, _dm: true,
     attachments: attBy[r.id] || [],
@@ -7467,6 +7536,13 @@ async function boot() {
   // Stories expire after 24h: rows + their uploaded bytes go together.
   await db.withLock(db.LOCKS.reapStories, reapStories);
   safeLockedInterval('stories', db.LOCKS.reapStories, reapStories, 20 * 60 * 1000);
+  // View-once replay windows: the item is spent the instant the window closes,
+  // but its bytes are collected a ticket lifetime later (nothing is deleted
+  // while a just-started replay could still be fetching). Nothing reads this
+  // clock for the UI — every read masks it and the client counts down itself —
+  // so the tick is only about when the bytes actually go.
+  await db.withLock(db.LOCKS.viewOnceReplay, reapExpiredViewOnce).catch(() => {});
+  safeLockedInterval('viewonce', db.LOCKS.viewOnceReplay, reapExpiredViewOnce, 20 * 1000);
   // Personal reminders: a 20s tick is the delivery granularity (a reminder set
   // for 14:30:00 rings within 20 seconds of it), leader-locked so one replica
   // rings and the per-row claim makes even a handover single-shot.
