@@ -241,6 +241,7 @@ function prettyError(e) {
     nsfw_confirm_required: 'Confirm you are 18 or older to view this channel.',
     group_full: 'Group chats fit up to 9 friends.',
     pick_audience: 'Pick who can see it — friends, a server, or specific friends.',
+    upload_timeout: 'The server stopped responding — try again.',
   };
   return map[e] || e.replace(/_/g, ' ');
 }

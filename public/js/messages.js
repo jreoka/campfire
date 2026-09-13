@@ -1143,7 +1143,12 @@ function releaseAttPreview(url) {
 }
 function pruneAttPreviews() {
   if (!attPreviews.size) return;
+  // Attachments parked in another conversation are still live: their thumbnail
+  // must survive until that conversation is opened (or the entry is dropped).
   const live = new Set((S.pendingAtts || []).map((a) => a.url));
+  for (const list of (typeof pendingByCtx !== 'undefined' ? pendingByCtx.values() : [])) {
+    for (const a of list) live.add(a.url);
+  }
   for (const url of [...attPreviews.keys()]) if (!live.has(url)) releaseAttPreview(url);
 }
 const CHIP_IMG_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
@@ -1161,6 +1166,7 @@ function attChipHTML(a) {
     + `<span class="chip-sub">${fmtSize(a.size)}${a.spoiler ? ' · Spoiler' : ''}</span></span>`;
 }
 function renderComposerMeta() {
+  syncPendingAttsCtx(); // the open conversation's own attachments (see pendingByCtx)
   const box = $('#attach-preview');
   box.innerHTML = '';
   const hasReply = !!S.replyTo, hasAtts = S.pendingAtts.length > 0;
@@ -1223,20 +1229,76 @@ function replyToMsg(m) {
     const im = $('#in-message'); if (im) im.focus();
   }
 }
+// ---------- attachments belong to a conversation ----------
+// An attachment — and the upload still running for it — belongs to the chat it
+// was started in, exactly like the text draft. `S.pendingAtts` is ALWAYS the
+// open conversation's list; every other conversation's is parked here and taken
+// back when that conversation is opened again. Without this a half-uploaded file
+// followed the reader into the next server, painted its progress bar over that
+// chat's composer, and (once it landed) became a chip in the wrong conversation
+// — one Enter away from being posted there.
+const pendingByCtx = new Map(); // ctx -> [attachment, …]
+const PENDING_CTX_MAX = 20;     // how many parked conversations are remembered
+let pendingCtxKey = null;       // the context S.pendingAtts currently belongs to
+
+function attsCtxNow() { try { return draftCtx(); } catch { return null; } }
+function attsListFor(ctx) {
+  let list = pendingByCtx.get(ctx);
+  if (!list) { list = []; pendingByCtx.set(ctx, list); }
+  return list;
+}
+// Oldest parked conversations fall off the front; the open one is never dropped
+// (a Map keeps insertion order, and re-setting an existing key does not move it).
+function trimPendingByCtx() {
+  if (pendingByCtx.size <= PENDING_CTX_MAX) return;
+  for (const k of [...pendingByCtx.keys()]) {
+    if (pendingByCtx.size <= PENDING_CTX_MAX) break;
+    if (k === pendingCtxKey) continue;
+    pendingByCtx.delete(k);
+  }
+}
+// The composer now belongs to another conversation: file what the old one was
+// holding under its own key and take back what this one had. Called from
+// renderComposerMeta (so every path that repaints the composer for a new context
+// gets it for free) and explicitly by the switchers that repaint without it.
+function syncPendingAttsCtx() {
+  const ctx = attsCtxNow();
+  if (ctx === pendingCtxKey) return false;
+  if (pendingCtxKey) {
+    if ((S.pendingAtts || []).length) pendingByCtx.set(pendingCtxKey, S.pendingAtts.slice());
+    else pendingByCtx.delete(pendingCtxKey);
+  }
+  pendingCtxKey = ctx;
+  const saved = ctx ? pendingByCtx.get(ctx) : null;
+  if (ctx) pendingByCtx.delete(ctx); // adopted: the composer holds them now
+  S.pendingAtts = saved ? saved.slice() : [];
+  trimPendingByCtx();
+  renderUploads();
+  return true;
+}
+// In-flight uploads for one conversation: the 5-per-message cap is per message,
+// and a message belongs to a conversation.
+function activeUploadCount(ctx) {
+  const k = ctx === undefined ? pendingCtxKey : ctx;
+  return (S.uploads || []).filter((u) => u.state === 'uploading' && (k == null || u.ctx == null || u.ctx === k)).length;
+}
 // ---------- composer uploads: progress cards above the message box ----------
 // Each in-flight file gets a card in #upload-list with a live progress bar, %
 // readout, spinner, and cancel. XHR (not fetch) so we get upload progress
 // events. Finished files move into S.pendingAtts; failures stay on the card
 // with a Retry button instead of vanishing into a toast.
 let uploadSeq = 0;
-function activeUploadCount() { return (S.uploads || []).filter((u) => u.state === 'uploading').length; }
 function uploadCardEl(id) { const box = $('#upload-list'); return box ? box.querySelector('[data-up="' + id + '"]') : null; }
 function renderUploads() {
   const box = $('#upload-list');
   if (!box) return;
-  box.classList.toggle('hidden', !(S.uploads || []).length);
+  // Only this conversation's cards. A file uploading in another chat has no
+  // business painting a progress bar over this one — and its ✕ cancels a file
+  // the reader can no longer see.
+  const mine = (S.uploads || []).filter((u) => (u.ctx == null ? pendingCtxKey == null : u.ctx === pendingCtxKey));
+  box.classList.toggle('hidden', !mine.length);
   const seen = new Set();
-  (S.uploads || []).forEach((u) => {
+  mine.forEach((u) => {
     seen.add(String(u.id));
     let el = uploadCardEl(u.id);
     if (!el) {
@@ -1274,11 +1336,16 @@ function paintUploadCard(el, u) {
     sub.textContent = 'Failed · ' + (u.err || 'upload failed');
     retry.classList.remove('hidden'); x.classList.remove('hidden'); x.title = 'Dismiss';
   } else {
-    const p = u.total > 0 ? Math.min(99, Math.round((u.loaded / u.total) * 100)) : 0;
-    pct.textContent = u.indet ? '…' : p + '%';
-    if (u.indet) fill.classList.add('indet');
-    else { fill.classList.remove('indet'); fill.style.width = p + '%'; }
-    sub.textContent = fmtSize(u.size) + ' · Uploading…';
+    // The browser hands the whole body to the network stack before the server
+    // has answered, so "every byte sent" is not "done": the request is still in
+    // flight through the last ACKs, the bucket write and the scan/compress slot.
+    // A frozen 99% for that reads as a stuck upload, so once the body is out the
+    // bar goes indeterminate and says what it is waiting for.
+    const sent = u.total > 0 && u.loaded >= u.total;
+    const p = u.total > 0 ? Math.max(0, Math.min(99, Math.round((u.loaded / u.total) * 100))) : 0;
+    if (u.indet || sent) { pct.textContent = '…'; fill.classList.add('indet'); }
+    else { pct.textContent = p + '%'; fill.classList.remove('indet'); fill.style.width = p + '%'; }
+    sub.textContent = fmtSize(u.size) + (sent ? ' · Finishing…' : ' · Uploading…');
     retry.classList.add('hidden'); x.classList.remove('hidden'); x.title = 'Cancel upload';
   }
 }
@@ -1303,14 +1370,22 @@ function maxUploadBytes() {
 }
 function uploadAndAttach(file) {
   if (!file) return;
+  // An attachment needs a conversation to belong to (and every finished file is
+  // filed under one). The picker/drop paths check this too; the + menu and a
+  // paste can reach here with the composer hidden.
+  if (!composerTargetReady()) { toast('Pick a chat first, then attach'); return; }
+  syncPendingAttsCtx(); // the open conversation owns the composer (and its list)
   const maxBytes = maxUploadBytes();
   if (file.size > maxBytes) { toast('File too big (max ' + Math.round(maxBytes / 1048576) + 'MB)'); return; }
-  if (S.pendingAtts.length + activeUploadCount() >= 5) { toast('Max 5 attachments per message'); return; }
+  if ((S.pendingAtts || []).length + activeUploadCount(attsCtxNow()) >= 5) { toast('Max 5 attachments per message'); return; }
   S.uploads = S.uploads || [];
   const entry = {
     id: ++uploadSeq, file, name: file.name || 'file',
     size: file.size || 0, loaded: 0, total: file.size || 0,
     indet: false, state: 'uploading', err: '', xhr: null, thumb: '', att: null,
+    // The conversation this upload belongs to (see pendingByCtx): its card only
+    // paints there, and the finished attachment is filed there.
+    ctx: attsCtxNow(),
   };
   const mime = String(file.type || '');
   if (mime.startsWith('image/')) {
@@ -1338,8 +1413,23 @@ function uploadAndAttach(file) {
   renderUploads();
   startUpload(entry);
 }
+// The body can be fully handed to the socket while the request is still in
+// flight — and a proxy that drops a half-open connection never fires onerror.
+// Without a ceiling a response that never comes leaves "Finishing…" shimmering
+// forever; past this it becomes a normal, Retry-able failure.
+const UPLOAD_STALL_MS = 5 * 60 * 1000;
+function armUploadWatchdog(u) {
+  clearTimeout(u.watch);
+  u.watch = setTimeout(() => {
+    if (u.state !== 'uploading') return;
+    // A file the reader is still waiting on: only reachable when the body is out
+    // and nothing came back (see the caller).
+    failUpload(u, 'upload_timeout');
+  }, UPLOAD_STALL_MS);
+}
 function startUpload(u) {
   u.state = 'uploading'; u.loaded = 0; u.indet = false; u.err = '';
+  clearTimeout(u.watch); u.watch = null;
   renderUploads();
   const fd = new FormData();
   fd.append('file', u.file);
@@ -1350,14 +1440,21 @@ function startUpload(u) {
   xhr.upload.onprogress = (e) => {
     if (e.lengthComputable && e.total > 0) { u.loaded = e.loaded; u.total = e.total; u.indet = false; }
     else u.indet = true;
+    if (u.total > 0 && u.loaded >= u.total && !u.watch) armUploadWatchdog(u);
     patchUploadProgress(u);
   };
   xhr.onload = () => {
+    clearTimeout(u.watch); u.watch = null;
     let data = null;
     try { data = JSON.parse(xhr.responseText); } catch {}
     if (xhr.status >= 200 && xhr.status < 300 && data) {
       u.state = 'done'; u.loaded = u.total || u.size;
-      S.pendingAtts.push(data);
+      // The attachment belongs to the conversation the upload started in, not to
+      // whichever one is open now: park it there (and leave the composer alone)
+      // when the reader has moved on.
+      const here = !u.ctx || u.ctx === pendingCtxKey;
+      const home = here ? S.pendingAtts : attsListFor(u.ctx);
+      home.push(data);
       u.att = data;
       // Thumbnail for the composer chip (see attPreviews). The image's own
       // object URL is a fresh registration, independent of the upload card's
@@ -1367,16 +1464,18 @@ function startUpload(u) {
       } else if (data.kind === 'video' && u.thumb && !attPreviews.has(data.url)) {
         setAttPreview(data.url, u.thumb, false);
       }
-      renderComposerMeta();
+      if (here) renderComposerMeta();
       patchUploadProgress(u);
       setTimeout(() => removeUpload(u.id), 650);
     } else failUpload(u, (data && data.error) || ('http_' + xhr.status));
   };
-  xhr.onerror = () => failUpload(u, 'network_error');
+  xhr.onerror = () => { clearTimeout(u.watch); u.watch = null; failUpload(u, 'network_error'); };
+  xhr.onabort = () => { clearTimeout(u.watch); u.watch = null; };
   try { xhr.send(fd); } catch (err) { failUpload(u, err && err.message); }
 }
 function failUpload(u, errMsg) {
   if (!u || u.state !== 'uploading') return;
+  clearTimeout(u.watch); u.watch = null;
   try { u.err = prettyError(errMsg || 'upload_failed'); } catch { u.err = String(errMsg || 'upload failed'); }
   u.state = 'failed';
   renderUploads();
@@ -1397,6 +1496,7 @@ function removeUpload(id) {
   const i = (S.uploads || []).findIndex((x) => x.id === id);
   if (i < 0) return;
   const [u] = S.uploads.splice(i, 1);
+  if (u) { clearTimeout(u.watch); u.watch = null; }
   if (u && u.thumb && u.thumb.startsWith('blob:')) { try { URL.revokeObjectURL(u.thumb); } catch {} }
   if (u && u.vthumbSrc) { try { URL.revokeObjectURL(u.vthumbSrc); } catch {} }
   renderUploads();

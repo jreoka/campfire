@@ -559,7 +559,8 @@ async function selectDmThread(id, opts = {}) {
   paintDmCallButtons();
   try { clearTyping(); } catch {}
   applyComposerDraft(); // this DM's own unfinished text, if any
-  S.replyTo = null; S.pendingAtts = []; S.editing = null;
+  S.replyTo = null; S.editing = null;
+  syncPendingAttsCtx(); // and this DM's own attachments / in-flight uploads
   renderComposerMeta();
   // Instant: paint the cached tail (if any) at the remembered anchor so
   // switching back never flashes Loading… or jumps; the fetch below tops up.
@@ -605,6 +606,10 @@ function paintHomePanel() {
   if (stories) { try { renderStoriesPage(); } catch {} }
 }
 function renderDmBlank() {
+  // No conversation is open here: park whatever the one we just left was holding
+  // (attachments and their in-flight uploads) rather than letting it follow the
+  // reader onto Home or into the next chat.
+  try { syncPendingAttsCtx(); } catch {}
   document.body.classList.remove('dm-open');
   S.histMode = null;
   S.histNew = 0;

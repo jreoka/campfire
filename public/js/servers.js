@@ -205,7 +205,7 @@ async function selectServer(id) {
       S.emoji = {};
       for (const e of emoji) S.emoji[e.name] = e.url;
     } catch { S.emoji = {}; }
-    S.replyTo = null; S.pendingAtts = []; S.editing = null;
+    S.replyTo = null; S.editing = null; syncPendingAttsCtx(); // the open channel's attachments stay with it
     renderComposerMeta(); closeThread(true);
     // pick first text channel
     const texts = server.channels.filter((c) => c.type === 'text');
@@ -610,6 +610,10 @@ async function selectChannel(id, opts = {}) {
   $('#composer').classList.remove('hidden');
   $('#in-message').placeholder = ch ? `Message #${ch.name}` : 'Message…';
   applyComposerDraft(); // this channel's own unfinished text, if any
+  // …and its own attachments / in-flight uploads (this path repaints the
+  // composer without going through renderComposerMeta).
+  syncPendingAttsCtx();
+  renderUploads();
   $('#messages').classList.remove('hidden');
   renderTopic();
   paintSlowmodeHint();

@@ -710,6 +710,25 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   disk (with the upload) when the message is deleted. Re-run after touching
   `media-compress.js`'s thumbnail block, `server.js`'s `/uploads/thumbs` route
   or `storage-sweep.js`'s listing.
+  `node scripts/test-upload-cards.js` covers the composer's upload cards
+  (headless Chrome, skipping without Chrome; it runs the REAL upload block sliced
+  out of `messages.js` against a fake XMLHttpRequest, then checks the wiring
+  statically) — the two reported bugs: a progress card that "moves servers with
+  me" when you switch chats, and an upload that sits "stuck at 99%". An
+  attachment and its upload are per conversation (`pendingByCtx` /
+  `syncPendingAttsCtx`, re-synced by every `renderComposerMeta` plus explicit
+  calls in selectChannel / selectServer / selectDmThread / renderDmBlank): the
+  card only paints in the chat it was started in, a file that finishes after the
+  reader moved on is PARKED for that conversation (and taken back when it is
+  opened again) instead of becoming a chip in the wrong composer, two chats can
+  upload at once without mixing, the 5-per-message cap counts one conversation,
+  and an attach with no conversation is refused rather than orphaned. For the
+  stuck card: the bar goes indeterminate and reads "Finishing…" once the browser
+  has handed the whole body to the socket (a frozen 99% is what read as a hang),
+  an upload watchdog arms at 5 minutes and turns a response that never comes into
+  a normal failed card with Retry, and every exit clears it. Re-run it after
+  touching `messages.js`'s upload block, `renderComposerMeta`, the conversation
+  switchers, or the paths that leave a conversation.
   `node scripts/test-lightbox.js` covers the photo lightbox (headless Chrome,
   skipping without Chrome; it runs the real lightbox block pulled out of
   `pickers.js` against the real `#lightbox` markup and `styles.css`): the

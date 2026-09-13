@@ -398,8 +398,8 @@ every task, in this file.
 
 Non-obvious rules (learned the hard way): uploads must live on the
 persistent volume (never the image layer); new uploads get `?v=` cache keys;
-missing `/uploads/*` must 404 (never SPA fallback); bump the SW `CACHE` version
-on every `public/` change; navigations are network-first. The instance owner's
+missing `/uploads/*` must 404 (never SPA fallback); navigations are
+network-first. The instance owner's
 account (`jreoka`, exported as `db.OWNER_USERNAME`) is untouchable by every
 other site admin: `blockedByOwnerLock()` 403s `owner_protected` on each
 account route (edit, password, disable, demote, delete, forced logout, 2FA
@@ -428,7 +428,10 @@ lost to a reload: every conversation's half-written message lives in a
 per-account draft store (`core.js`: `draftSoon`/`flushDrafts`/
 `applyComposerDraft`), so any new composer or chat switch must call
 `flushDrafts()` before the context changes and `applyComposerDraft()` after it,
-and clear the draft when the message actually goes out. The typing strip above the
+and clear the draft when the message goes out. Attachments and their uploads are
+per conversation too (`messages.js`: `pendingByCtx`/`syncPendingAttsCtx`,
+re-synced by `renderComposerMeta`) — an upload card only paints in the chat it
+was started in, and its finished file lands THERE. The typing strip above the
 composer always keeps its slot (`--strip-h`, one text line, transparent, text
 fades) — hiding it resizes `#messages` and shoves the conversation up/down.
 `#messages` pays for that slot by giving up its bottom padding, and anything
@@ -898,10 +901,9 @@ are load-bearing:
   keep `storyRevealPreview` from yanking the reader back a step when the bytes
   land mid-audience-pick.
 - **A chat image renders a derived 640px WebP preview, not its own bytes**
-  (`thumbKeyFor`/`thumbSourceKey` in media-compress.js). Only `files/` is
-  eligible (`viewonce/` is ticket-gated), minting shares `withCompressLock` and
-  never holds a request (a miss 404s and the client falls back to `data-fb-url`),
-  the scan gate reads through to the source, and the sweep never lists `thumbs/`.
+  (`thumbKeyFor`/`thumbSourceKey`): only `files/` is eligible (`viewonce/` is
+  ticket-gated), minting shares `withCompressLock` and never holds a request, and
+  the sweep must never list `thumbs/`.
 
 ## Environment notes (this dev machine)
 
@@ -926,5 +928,4 @@ tree before deleting the message. Do not re-add automated matching without the
 same care the old code took: never preview suspected material in an admin UI,
 and keep any hash list out of `./data`.
 
-- Open ideas (not requested yet): DMs, push notifications, moderation roles
-  beyond owner. (File/image sharing + custom emoji/GIFs already shipped.)
+- Open ideas: moderation roles beyond owner.
