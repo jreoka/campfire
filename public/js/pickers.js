@@ -666,8 +666,10 @@ document.addEventListener('keydown', (e) => {
     if (spWrap) { spWrap.classList.add('shown'); return; }
     // Thread the attachment filename through so the lightbox corner button
     // can download it (embed images have no attachment — no button then).
+    // data-fb-url is the ORIGINAL upload: the inline picture is a derived
+    // preview, and the full-screen viewer has to open the real thing.
     const dl = imgEl.closest('.att-wrap')?.querySelector('.att-dl');
-    openLightbox(imgEl.src, dl?.getAttribute('download') || ''); return;
+    openLightbox(imgEl.dataset.fbUrl || imgEl.src, dl?.getAttribute('download') || ''); return;
   }
   if (clEl) {
     const ch = (S.serverDetail?.channels || []).find((c) => c.id === clEl.dataset.clink);

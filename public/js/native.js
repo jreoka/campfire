@@ -1,7 +1,7 @@
 /* Campfire — the native shell.
  *
  * Everything in here exists for one reason: the installed app (and the mobile
- * web app) should behave like an app, not like a page in a browser. Three
+ * web app) should behave like an app, not like a page in a browser. Four
  * pieces, none of which the SPA had before:
  *
  *   1. Back navigation. Android's system back button / edge-swipe and the
@@ -23,6 +23,11 @@
  *      press states need a touchstart listener to exist at all on iOS, and the
  *      installed-app flag (`html.standalone`) is read once here for the few
  *      rules that should only apply to the installed app.
+ *
+ *   4. No keyboard on launch. Launching the app must not open the on-screen
+ *      keyboard, which the platform does on its own (WebView first-focus, an
+ *      Android focus restore, a bfcache/reload re-focus of the composer).
+ *      Until the user's first real gesture, text fields refuse focus.
  */
 'use strict';
 
@@ -289,4 +294,62 @@ try {
     if (!e.target.closest) return;
     if (e.target.closest('#btn-menu, #btn-nav-close')) haptic(7);
   });
+} catch {}
+
+// ---------------------------------------------------------------------------
+// 4. A launch never opens the on-screen keyboard
+// ---------------------------------------------------------------------------
+// Entering the app on a phone must not pop the keyboard. Nothing in the SPA
+// focuses a field at boot — the PLATFORM does it for us: an Android WebView
+// hands focus to the first editable element it finds, Android restores focus to
+// whatever was focused when the app was last backgrounded, and a reload or a
+// bfcache restore re-focuses the composer mid-draft. The result is a chat that
+// opens with half the screen behind a keyboard nobody asked for.
+//
+// The rule: until the user's own first gesture lands, focus is refused on every
+// text field and any editable already holding it is blurred. That first
+// touch/key press disarms the guard for the rest of the session, so every
+// legitimate focus — tapping the composer, a dialog's input, Reply — behaves
+// exactly as it did before. Coarse pointers only: on a desktop a reload that
+// restores the caret you were typing at is a feature, and there is no keyboard
+// to cover the app.
+let cfGesture = false;   // the user has driven this document at least once
+function cfEditable(el) {
+  if (!el || el.nodeType !== 1) return false;
+  if (el.tagName === 'TEXTAREA') return true;
+  if (el.tagName === 'INPUT') return !/^(button|checkbox|radio|file|submit|reset|range|color|image|hidden)$/i.test(el.type || 'text');
+  return el.isContentEditable === true;
+}
+function cfRefuseLaunchFocus() {
+  if (cfGesture) return;
+  const el = document.activeElement;
+  if (!cfEditable(el)) return;
+  try { el.blur(); } catch {}
+  try { const s = window.getSelection(); if (s && s.removeAllRanges) s.removeAllRanges(); } catch {}
+}
+try {
+  const coarse = (typeof isCoarse === 'function')
+    ? isCoarse()
+    : !!(window.matchMedia && matchMedia('(hover: none)').matches);
+  if (coarse) {
+    // Capture phase, so the guard is already disarmed by the time the browser's
+    // own default action focuses the field the finger landed on.
+    const off = () => { cfGesture = true; };
+    for (const ev of ['pointerdown', 'touchstart', 'mousedown', 'keydown', 'wheel']) {
+      document.addEventListener(ev, off, { capture: true, passive: true });
+    }
+    document.addEventListener('focusin', (e) => {
+      if (cfGesture || !cfEditable(e.target)) return;
+      try { e.target.blur(); } catch {}
+    }, true);
+    // Platform focus does not arrive at one predictable moment (a WebView gives
+    // it after first paint, a restore can be seconds late), so sweep on the load
+    // events and a few times after them instead of trusting a single instant.
+    for (const ms of [0, 60, 250, 800, 2000]) {
+      const t = setTimeout(cfRefuseLaunchFocus, ms);
+      try { if (t && t.unref) t.unref(); } catch {}
+    }
+    window.addEventListener('load', cfRefuseLaunchFocus);
+    window.addEventListener('pageshow', cfRefuseLaunchFocus);
+  }
 } catch {}

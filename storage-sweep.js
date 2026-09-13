@@ -111,12 +111,17 @@ async function pendingScanKeys() {
   return set;
 }
 
-// Every stored file: the whole bucket except `backups/` (keys are top-level:
-// files/, avatars/, banners/, emoji/, icons/, sidebar/ — never a shared
-// 'uploads/' prefix; listing that used to match nothing) + recursive local
-// walk (covers pre-S3-migration leftovers in S3 mode).
+// Every stored file: the whole bucket except `backups/` (database dumps) and
+// `thumbs/` (DERIVED chat-image previews — no DB row points at one, so listing
+// them would have the sweep delete every preview as an orphan; they are deleted
+// with their source instead, see deleteStored) + recursive local walk (covers
+// pre-S3-migration leftovers in S3 mode).
+// Keys are top-level: files/, avatars/, banners/, emoji/, icons/, sidebar/ —
+// never a shared 'uploads/' prefix; listing that used to match nothing.
 // `opts.maxPages` bounds the bucket listing for callers that would rather report
 // a partial pass than hang (media-compress's reconciliation does).
+const DERIVED_PREFIX = 'thumbs/';
+function isDerivedKey(key) { return key === 'thumbs' || String(key).startsWith(DERIVED_PREFIX); }
 async function listStored(opts) {
   const out = []; // {key, mtime, size, where:'s3'|'local'}
   if (storage.s3Enabled()) {
@@ -125,6 +130,7 @@ async function listStored(opts) {
       if (!o.key || o.key.endsWith('/')) continue;
       // Database dumps live under backups/ and are never listed as sweepable.
       if (o.key === storage.BACKUP_PREFIX.slice(0, -1) || o.key.startsWith(storage.BACKUP_PREFIX)) continue;
+      if (isDerivedKey(o.key)) continue;
       out.push({ key: o.key, mtime: o.modified ? new Date(o.modified).getTime() : 0, size: o.size || 0, where: 's3' });
     }
   }
@@ -136,8 +142,10 @@ async function listStored(opts) {
       if (e.isDirectory()) await walk(p);
       else if (e.isFile()) {
         try {
+          const key = path.relative(UPLOAD_DIR, p).split(path.sep).join('/');
+          if (isDerivedKey(key)) continue;
           const st = await fs.promises.stat(p);
-          out.push({ key: path.relative(UPLOAD_DIR, p).split(path.sep).join('/'), mtime: st.mtimeMs, size: st.size, where: 'local' });
+          out.push({ key, mtime: st.mtimeMs, size: st.size, where: 'local' });
         } catch {}
       }
     }
@@ -147,6 +155,18 @@ async function listStored(opts) {
 }
 
 async function deleteStored(f) {
+  // A preview is not listed (see listStored), so it is deleted here with the
+  // source it was derived from — otherwise the bytes would sit in the bucket
+  // forever with nothing left to point at them.
+  let thumbKey = null;
+  try { thumbKey = require('./media-compress').thumbKeyFor(f.key); } catch {}
+  if (thumbKey) {
+    try {
+      if (f.where === 's3') await storage.s3DeleteNow(thumbKey);
+      const tp = path.join(UPLOAD_DIR, thumbKey);
+      if (path.resolve(tp).startsWith(path.resolve(UPLOAD_DIR))) await fs.promises.unlink(tp);
+    } catch {}
+  }
   if (f.where === 's3') {
     await storage.s3DeleteNow(f.key);
     return;

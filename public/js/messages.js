@@ -35,13 +35,38 @@ document.addEventListener('click', (e) => {
   if (!dl) return;
   toast(`Downloading ${(dl.getAttribute('download') || 'file').slice(0, 60)}…`);
 });
+// Full-size chat images are what makes opening a channel crawl on a slow link:
+// one photo is 10-30x the bytes of its own 640px preview, and a backlog is
+// mostly pictures. Every chat/DM image therefore renders its DERIVED preview
+// (/uploads/thumbs/files/<name>.<ext>.webp — minted on first request, see
+// media-compress.js) with the attachment's own bytes one error away: the
+// document error handler (final.js) swaps in the original exactly once, so a
+// preview that cannot be minted costs a slower load, never a broken picture.
+function thumbSrcFor(url) {
+  const clean = String(url || '').split('?')[0];
+  if (!/^\/uploads\/files\/[A-Za-z0-9._-]+$/.test(clean)) return '';
+  return '/uploads/thumbs/' + clean.slice('/uploads/'.length) + '.webp';
+}
+function imageSrcFor(a) {
+  const url = String((a && a.url) || '');
+  const thumb = thumbSrcFor(url);
+  if (!thumb) return '';
+  const q = url.indexOf('?');
+  return thumb + (q >= 0 ? url.slice(q) : '');
+}
 function attachmentHTML(a) {
   // Virus-scan states (see virus-scan.js): pending files render an
   // animated scanning card and infected files a greyed-out warning —
   // never the bytes, no preview, no download link anywhere.
   if (a.scan === 'infected') return `<div class="scan-block infected"><span class="scan-ic">${SCAN_SHIELD_SVG}</span><span class="scan-tx"><b>${esc(a.name)}</b><span>Virus detected — this file was removed and can't be downloaded.</span></span></div>`;
   if (a.scan === 'pending') return `<div class="scan-block scanning"><span class="scan-tx"><b>${esc(a.name)} (${fmtSize(a.size)})</b><span>Processing file<span class="scan-dots"></span></span><span class="scan-track"><span class="scan-fill"></span></span></span></div>`;
-  if (a.kind === 'image') return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+  if (a.kind === 'image') {
+    // data-fb-url is the ORIGINAL: the lightbox and the download link use it, and
+    // it is where the preview falls back to. data-fb-thumb marks a src that may
+    // still need that fallback.
+    const thumb = imageSrcFor(a);
+    return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}"><img class="att-img" src="${esc(thumb || a.url)}" alt="${esc(a.name)}" loading="lazy" decoding="async"${thumb ? ' data-fb-thumb="1"' : ''} data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+  }
   if (a.kind === 'video') return `<span class="att-wrap loading${a.spoiler ? ' spoiler' : ''}"><video class="att-vid" src="${esc(a.url)}" controls preload="metadata" playsinline></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'audio') return audioPlayerHTML(a);
   if (textPreviewable(a)) return textFileHTML(a);
@@ -136,6 +161,29 @@ function ensureVideoPoster(v) {
     if (shot) applyVideoPoster(v, shot);
     else { v.dataset.posterOk = '1'; revealVideoShell(v); }
   });
+}
+// Capturing a poster frame costs a real fetch of the clip (the temp element
+// seeks into the file), so it waits until the video is about to be seen instead
+// of starting one download per clip in a channel's backlog — opening a busy
+// channel used to fire a video fetch for every video on the page, which is the
+// same slow-link problem the image previews solve. One observer for the whole
+// document; a clip already near the viewport captures on the first callback,
+// and without IntersectionObserver the old eager path stands.
+let posterIO = null;
+function requestVideoPoster(v) {
+  if (!v || v.dataset.posterOk || v.dataset.posterWanted) return;
+  if (typeof IntersectionObserver !== 'function') { ensureVideoPoster(v); return; }
+  v.dataset.posterWanted = '1';
+  if (!posterIO) {
+    posterIO = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        try { posterIO.unobserve(e.target); } catch {}
+        if (e.target.isConnected) ensureVideoPoster(e.target);
+      }
+    }, { rootMargin: '320px 0px' });
+  }
+  try { posterIO.observe(v); } catch { ensureVideoPoster(v); }
 }
 // ---------- stick-to-bottom on media resize ----------
 // A video can change size more than once: no intrinsic size until metadata
@@ -638,7 +686,7 @@ function messageEl(m, opts = {}) {
   div.innerHTML = inner;
   if (!grouped) paintAvatar(div.querySelector('.avatar'), au);
   try {
-    div.querySelectorAll('video.att-vid').forEach((v) => { ensureVideoPoster(v); observeStick(v); });
+    div.querySelectorAll('video.att-vid').forEach((v) => { requestVideoPoster(v); observeStick(v); });
     // Images grow 0 -> full height on load and shove bottom-pinned readers
     // upward; load/error listeners can miss instant (cached) loads, but the
     // resize itself is always observable — follow it while near the bottom.

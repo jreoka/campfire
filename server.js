@@ -156,14 +156,19 @@ function uploadUrl(sub, file) { return `/uploads/${sub}/${file.filename}?v=${Dat
 function deleteUploaded(url) {
   if (!url || !url.startsWith('/uploads/')) return;
   const clean = String(url).split('?')[0];
-  if (storage.s3Enabled()) {
-    const key = storage.s3KeyFromUrl(clean);
-    if (key) storage.s3Delete(key);
-  }
+  const key = storage.s3KeyFromUrl(clean);
+  const drop = (k) => {
+    if (!k) return;
+    if (storage.s3Enabled()) storage.s3Delete(k);
+    const p = path.join(UPLOAD_DIR, k);
+    if (path.resolve(p).startsWith(path.resolve(UPLOAD_DIR))) fs.unlink(p, () => {});
+  };
+  // A derived preview (thumbs/files/…) is an artifact of the source, so it goes
+  // with it instead of lingering as an orphan the sweep never lists.
+  try { drop(key && require('./media-compress').thumbKeyFor(key)); } catch {}
   // Always attempt the local unlink too: harmless when absent, and covers
   // files still on disk from before an S3 migration.
-  const p = path.join(UPLOAD_DIR, clean.slice('/uploads/'.length));
-  if (path.resolve(p).startsWith(path.resolve(UPLOAD_DIR))) fs.unlink(p, () => {});
+  drop(key);
 }
 // Remove stored bytes for deleted messages. Attachment DB rows cascade on
 // message delete, but S3/local files linger forever without this (the
@@ -218,8 +223,15 @@ app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] })
 async function scanGate(req, res, next) {
   try {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next();
-    const key = storage.s3KeyFromUrl('/uploads' + req.path);
+    let key = storage.s3KeyFromUrl('/uploads' + req.path);
     if (!key) return next();
+    // A derived preview answers for the upload it was made from, so the gate has
+    // to read through it: a preview of a pending or infected file is the same
+    // bytes, and serving one would be the exact bypass this gate exists to stop.
+    try {
+      const src = require('./media-compress').thumbSourceKey(key);
+      if (src) key = src;
+    } catch {}
     const vs = require('./virus-scan');
     if (!vs.scanGating()) return next();
     if (!key.startsWith('files/')) return next();
@@ -259,6 +271,30 @@ app.use('/uploads/viewonce', (req, res, next) => {
     return next();
   } catch { return res.status(403).json({ error: 'viewonce_locked' }); }
 })
+// Derived chat-image previews (see media-compress.js): minted on the first
+// request, then served like any other upload. A reader is never parked behind
+// the encode queue — if the preview is not ready within THUMB_WAIT_MS the
+// request answers 404, the client's <img> falls back to the original bytes, and
+// the encode finishes behind the response for the next open. Anything that is
+// not a real derived preview (a hand-made thumbs/ key, viewonce/, a non-image)
+// falls through to the normal handlers, which 404 it.
+const THUMB_WAIT_MS = Math.max(0, parseInt(process.env.THUMB_WAIT_MS || '800', 10) || 800);
+app.use('/uploads/thumbs', async (req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  try {
+    const key = storage.s3KeyFromUrl(String(req.originalUrl || '').split('?')[0]);
+    const mc = require('./media-compress');
+    const src = key && mc.thumbSourceKey(key);
+    if (!src) return next();
+    const ready = await mc.ensureThumb(src, { waitMs: THUMB_WAIT_MS });
+    if (!ready) {
+      // Never cached: the next open must be able to get the real preview.
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(404).json({ error: 'not_found' });
+    }
+    return next();
+  } catch { return next(); }
+});
 app.use('/uploads', express.static(UPLOAD_DIR, {
   dotfiles: 'deny', index: false, maxAge: '7d',
   setHeaders(res, filePath) {

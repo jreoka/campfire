@@ -290,6 +290,14 @@ async function main() {
     check(/prefers-reduced-motion:reduce\)\{[^}]*\.att-spin/.test(css), 'reduced motion disables the spinner animation');
     check(/class="att-wrap loading/.test(markSource) && /att-vid-load/.test(markSource) && /att-spin/.test(markSource), 'the video markup carries the wrap state, overlay and spinner');
     check(/revealVideoShell\(v\);\s*\}\s*\/\/ One frame per URL/.test(postSource), 'the poster capture reveals the shell');
+    // The capture costs a real fetch of the clip, so it waits for the video to
+    // come near the viewport instead of starting one download per clip in a
+    // channel's backlog (see test-image-previews.js for the image half of the
+    // same slow-link problem).
+    check(/requestVideoPoster\(v\); observeStick\(v\)/.test(messages) && !/ensureVideoPoster\(v\); observeStick\(v\)/.test(messages),
+      'the render path defers poster capture to visibility, not the whole backlog');
+    check(/function requestVideoPoster[\s\S]{0,700}rootMargin: '320px 0px'/.test(postSource),
+      'and captures once the clip is near the viewport');
   } catch (e) {
     console.error('[test] ' + (e && e.stack || e));
     process.exit(1);

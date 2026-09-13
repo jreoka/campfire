@@ -378,6 +378,15 @@ $('#in-message').addEventListener('scroll', () => {
 document.addEventListener('error', (e) => {
   const t = e.target;
   if (!(t instanceof HTMLImageElement)) return;
+  // A derived image preview that could not be minted — the server would not park
+  // the request behind a cold encode, or the bytes will not decode — falls back
+  // to the attachment's own upload, once. The marker is cleared first so a
+  // second failure degrades to the file card below instead of looping.
+  if (t.dataset.fbThumb && t.dataset.fbUrl) {
+    t.removeAttribute('data-fb-thumb');
+    t.src = t.dataset.fbUrl;
+    return;
+  }
   if (t.dataset.fbName) {
     const a = document.createElement('a');
     a.className = 'file-card'; a.href = t.dataset.fbUrl; a.target = '_blank'; a.rel = 'noopener';

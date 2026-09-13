@@ -604,6 +604,9 @@ async function replaceBytes(key, srcPath, mime) {
     // whole new one.
     const tmp = dest + '.tmp-' + crypto.randomBytes(6).toString('hex');
     try {
+      // A first write to a new sub-directory (thumbs/files/) has to make it:
+      // the local backend is a plain tree. Harmless when it already exists.
+      await fs.promises.mkdir(path.dirname(dest), { recursive: true });
       await fs.promises.copyFile(srcPath, tmp);
       await fs.promises.rename(tmp, dest);
     } catch (e) {
@@ -655,6 +658,155 @@ async function keySize(key) {
   } catch { return 0; }
 }
 
+// ---------- derived chat-image previews ----------
+// A channel's backlog is mostly pictures, and one full-size photo is 10–30x its
+// own 640px WebP preview — so opening a channel on a slow link is dominated by
+// image bytes nobody ever zooms into. Every /uploads/files/ image gets a derived
+// preview at /uploads/thumbs/files/<name>.<ext>.webp, minted on first request
+// (and backfilled by the bucket scan, so a fresh deploy fills history instead of
+// making the first reader of every old channel pay) and served like any other
+// upload. The reader's <img> asks for the preview and falls back to the original
+// ONCE when it cannot be minted, so a cold cache — or a box without libwebp —
+// never shows a broken picture, only a slower-loading one.
+//
+// Two rules keep this from becoming a second media pipeline:
+//   - it encodes through withCompressLock like everything else on the box (the
+//     one-encode accounting is what keeps a 1-vCPU pod answering requests);
+//   - a request never WAITS for an encode. ensureThumb() waits at most
+//     opts.waitMs and then answers "not ready" (see server.js, which 404s so the
+//     client falls back); the encode finishes behind the response.
+const THUMB_DIR = 'thumbs/';
+const THUMB_EXT = '.webp';
+const THUMB_PX = 640;  // long side: the chat wrap is 420px wide, phones are 2–3x
+const THUMB_Q = 76;
+const THUMB_WAIT = Symbol('thumb_wait');
+const THUMB_ENABLED = process.env.MEDIA_THUMBS !== '0';
+// Previews minted by the scheduled bucket scan per pass (0 disables the
+// backfill — the on-request path still works). Bounded like every other sweep
+// budget: this box has one core and the pass already holds the encode lock.
+const THUMB_BACKFILL_MAX = Math.max(0, parseInt(process.env.MEDIA_THUMB_BACKFILL_MAX || '60', 10) || 60);
+const THUMB_RETRY_MS = 10 * 60 * 1000; // how long a refusal is remembered
+// Types worth previewing. SVG stays out (a raster preview of vector art is a
+// downgrade, same rule as compression) and so does everything a thumbnail of a
+// 640px box could not improve on.
+const THUMB_EXTS = new Set(['.jpg', '.jpeg', '.jpe', '.jfif', '.png', '.apng', '.webp', '.gif', '.bmp', '.avif', '.jxl', '.heic', '.heif', '.tif', '.tiff', '.ico', '.psd', '.tga', '.jp2', '.qoi']);
+
+const thumbHave = new Set();      // srcKey -> preview verified this process
+const thumbTried = new Map();     // srcKey -> when a mint was refused (short-lived)
+const thumbJobs = new Map();      // srcKey -> in-flight Promise<thumbKey|null>
+// Queued by the bucket scan, drained a couple per worker tick (see tick). The
+// pass must not sit on 60 encodes: it is the same worker either way, and this
+// way the pass finishes, the admin panel sees its result, and the backlog
+// drains in the background exactly like the compression queue does.
+const thumbBacklog = [];
+
+// 'files/abc.jpg' -> 'thumbs/files/abc.jpg.webp'. Null for anything that is not
+// a chat/DM upload (viewonce/ previews would be a way around its ticket gate) or
+// not a still image.
+function thumbKeyFor(srcKey) {
+  const key = String(srcKey || '');
+  if (!key.startsWith('files/')) return null;
+  if (key.includes('..') || /[\0]/.test(key)) return null;
+  if (!/^[A-Za-z0-9._/-]+$/.test(key)) return null;
+  if (!THUMB_EXTS.has(extOf(key))) return null;
+  return THUMB_DIR + key + THUMB_EXT;
+}
+
+// The inverse, with a round-trip check so a hand-made thumbs/ key can never name
+// a source the forward direction would not have produced.
+function thumbSourceKey(thumbKey) {
+  const key = String(thumbKey || '');
+  if (!key.startsWith(THUMB_DIR) || !key.endsWith(THUMB_EXT)) return null;
+  const src = key.slice(THUMB_DIR.length, -THUMB_EXT.length);
+  return thumbKeyFor(src) === key ? src : null;
+}
+
+function thumbsPossible() {
+  return THUMB_ENABLED && checkFfmpeg() && probeEncoders().webp;
+}
+
+// Is a preview available for this source right now? `opts.waitMs` bounds how
+// long the caller is willing to be parked (0 = wait for the whole encode, which
+// only the backfill does). Returns the thumb key, or null.
+async function ensureThumb(srcKey, opts) {
+  const tkey = thumbKeyFor(srcKey);
+  if (!tkey || !thumbsPossible()) return null;
+  if (thumbHave.has(srcKey)) return tkey;
+  const triedAt = thumbTried.get(srcKey);
+  if (triedAt && now() - triedAt < THUMB_RETRY_MS) return null;
+  let job = thumbJobs.get(srcKey);
+  if (!job) {
+    job = mintThumb(srcKey, tkey).finally(() => thumbJobs.delete(srcKey));
+    thumbJobs.set(srcKey, job);
+  }
+  const waitMs = Math.max(0, Number(opts && opts.waitMs) || 0);
+  if (!waitMs) return job;
+  // An encode already running (or queued) owns the box: the preview cannot land
+  // inside any sane wait, so answer immediately and let the mint finish behind
+  // the response rather than stalling the reader for the full budget.
+  const load = compressLoad();
+  if (load.active >= load.concurrency || load.queued > 0) return null;
+  const raced = await Promise.race([
+    job,
+    new Promise((resolve) => { const t = setTimeout(() => resolve(THUMB_WAIT), waitMs); try { t.unref(); } catch {} }),
+  ]);
+  return raced === THUMB_WAIT ? null : raced;
+}
+
+async function mintThumb(srcKey, tkey) {
+  try {
+    // A preview from an earlier boot (or another replica) is the common case on
+    // a busy instance: one HEAD beats decoding the original again.
+    if (!(await keyExists(tkey))) {
+      const ok = await withCompressLock(() => encodeThumb(srcKey, tkey));
+      if (!ok) { thumbTried.set(srcKey, now()); return null; }
+    }
+    thumbHave.add(srcKey);
+    thumbTried.delete(srcKey);
+    return tkey;
+  } catch (e) {
+    warn('thumbnail failed for ' + srcKey + ': ' + String((e && e.message) || e).slice(0, 140));
+    thumbTried.set(srcKey, now());
+    return null;
+  }
+}
+
+async function encodeThumb(srcKey, tkey) {
+  const rand = crypto.randomBytes(8).toString('hex');
+  const tmpIn = path.join(os.tmpdir(), `cf-thumb-in-${rand}${extOf(srcKey) || '.bin'}`);
+  const tmpOut = path.join(os.tmpdir(), `cf-thumb-out-${rand}${THUMB_EXT}`);
+  try {
+    await downloadToTemp(srcKey, tmpIn);
+    const inStat = await fs.promises.stat(tmpIn).catch(() => null);
+    if (!inStat || !inStat.size) return false;
+    // One frame (an animation previews as its first frame), no audio, metadata
+    // stripped, and the box shrinks to the source for anything already smaller
+    // than it — min() rather than force_original_aspect_ratio alone, which would
+    // happily upscale a 200px image to 640. The expressions are quoted because
+    // a bare comma is a filtergraph separator ("No option name near ...").
+    const box = `scale='min(${THUMB_PX},iw)':'min(${THUMB_PX},ih)':force_original_aspect_ratio=decrease`;
+    const r = await runFfmpeg([
+      '-hide_banner', '-loglevel', 'error', '-y', '-i', tmpIn, '-threads', '1', '-map_metadata', '-1', '-an',
+      '-vf', box,
+      '-c:v', 'libwebp', '-quality', String(THUMB_Q), '-frames:v', '1', tmpOut,
+    ]);
+    if (!r.ok) {
+      const err = String(r.error || 'encode_failed').slice(0, 160);
+      stats.errors++;
+      stats.lastError = { key: srcKey, error: 'thumb: ' + err.slice(0, 120), at: now() };
+      warn('thumbnail encode failed, keeping original:', srcKey, err);
+      return false;
+    }
+    const outStat = await fs.promises.stat(tmpOut).catch(() => null);
+    if (!outStat || !outStat.size) return false;
+    await replaceBytes(tkey, tmpOut, 'image/webp');
+    return true;
+  } finally {
+    try { await fs.promises.unlink(tmpIn); } catch {}
+    try { await fs.promises.unlink(tmpOut); } catch {}
+  }
+}
+
 const cacheBust = (cleanUrl) => `${cleanUrl}?v=${Date.now().toString(36)}`;
 const MIME_BY_OUT = { '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.webm': 'audio/webm' };
 
@@ -699,6 +851,10 @@ function roomForAnother() {
 function pump() {
   while (slots.length && active < CONCURRENCY && roomForAnother()) slots.shift()();
 }
+
+// How loaded the encoder is right now: a caller that would only be waiting on a
+// slot can decide not to wait at all (see ensureThumb's thumbnail budget).
+function compressLoad() { return { active, queued: slots.length, concurrency: CONCURRENCY }; }
 
 function withCompressLock(fn) {
   return new Promise((resolve, reject) => {
@@ -1135,7 +1291,7 @@ async function reconcileBucket(opts) {
   const result = {
     startedAt: t0, dry, objects: 0, referenced: 0, ledger: 0, candidates: 0,
     compressed: 0, savedBytes: 0, jobs: 0, skippedOrphan: 0, skippedText: 0,
-    skippedFloor: 0, skippedFresh: 0, deferred: 0, errors: 0, ms: 0,
+    skippedFloor: 0, skippedFresh: 0, deferred: 0, errors: 0, thumbsQueued: 0, ms: 0,
   };
   try {
     const [stored, index, ledger] = await Promise.all([
@@ -1181,6 +1337,23 @@ async function reconcileBucket(opts) {
         result.errors++;
         warn('scan failed for ' + j.key + ': ' + String((e && e.message) || e).slice(0, 140));
       }
+    }
+    result.ms = now() - t0;
+    // Preview backlog: QUEUE (never await) the chat images this listing says have
+    // no preview yet, so a deploy fills the existing history in without the pass
+    // itself parking on dozens of encodes. The worker drains a couple per tick.
+    if (THUMB_BACKFILL_MAX && thumbsPossible()) {
+      let queued = 0;
+      for (const o of stored) {
+        if (queued >= THUMB_BACKFILL_MAX) break;
+        if (!o.key || !thumbKeyFor(o.key) || !index.keys.has(o.key)) continue;
+        if (o.mtime && o.mtime > cutoff) continue; // the on-request path will settle it
+        if (thumbHave.has(o.key) || thumbTried.has(o.key) || thumbBacklog.includes(o.key)) continue;
+        thumbBacklog.push(o.key);
+        queued++;
+      }
+      result.thumbsQueued = queued;
+      if (queued) log(`previews: queued ${queued} chat image(s) for a thumbnail`);
     }
     result.ms = now() - t0;
     log(`bucket scan: ${result.objects} objects, ${result.candidates} candidates, ${result.compressed} compressed (${Math.round(result.savedBytes / 1024)}KB), ${result.deferred} deferred, ${result.errors} errors in ${Math.round(result.ms / 1000)}s`);
@@ -1238,6 +1411,7 @@ async function getBucketScanStats() {
     enabled: SWEEP_ENABLED && ENABLED, everyMs: SWEEP_EVERY_MS, firstMs: SWEEP_FIRST_MS,
     minAgeMs: SWEEP_MIN_AGE_MS, jobsPerPass: SWEEP_MAX_JOBS, maxMs: SWEEP_MAX_MS,
     maxPages: SWEEP_MAX_PAGES, pendingKeys: pendingKeys.length, running: sweeping,
+    thumbQueue: thumbBacklog.length,
     ledger: await ledgerStats(),
     ...sweepStats,
   };
@@ -1273,10 +1447,19 @@ async function tick() {
       try { await processKeyNow(key); }
       catch (e) { warn('profile key failed (' + key + '): ' + String((e && e.message) || e).slice(0, 140)); }
     }
+    // Preview backlog the bucket scan queued (see reconcileBucket): a couple per
+    // tick, like a profile key — small, cheap, and the reader is looking at it.
+    let minted = 0;
+    while (thumbBacklog.length && minted < 2) {
+      const key = thumbBacklog.shift();
+      minted++;
+      try { await ensureThumb(key); }
+      catch (e) { warn('preview failed (' + key + '): ' + String((e && e.message) || e).slice(0, 140)); }
+    }
     // Skips (tiny/foreign/missing files) are cheap: burn through a few per
     // tick looking for real work, but cap compressions at BATCH.
     const rows = await fetchCandidates(BATCH + 25);
-    if (!rows.length) return pendingKeys.length ? 'more' : 'idle';
+    if (!rows.length) return (pendingKeys.length || thumbBacklog.length) ? 'more' : 'idle';
     // Virus-scan gate: only compress scan-clean files. Anything else stays
     // queued (compressed = 0); the scan worker's clean verdict kicks us
     // back, and rewritten bytes get rescanned anyway (see processRow).
@@ -1305,7 +1488,7 @@ async function tick() {
     // Anything left? A cheap 1-row probe decides hot-loop vs idle poll.
     try {
       const rest = await fetchCandidates(1);
-      return (rest.length || pendingKeys.length) ? 'more' : 'idle';
+      return (rest.length || pendingKeys.length || thumbBacklog.length) ? 'more' : 'idle';
     } catch { return 'more'; }
   } catch (e) {
     warn('tick failed:', String((e && e.message) || e).slice(0, 200));
@@ -1439,4 +1622,6 @@ module.exports = {
   isCandidate, compressionEnabled,
   // profile media + the scheduled bucket reconciliation
   kickProfileMedia, kickBucketScan, reconcileBucket, getBucketScanStats, refsForKey, compressStandalone, keySize,
+  // derived chat-image previews (thumbs/)
+  thumbKeyFor, thumbSourceKey, ensureThumb,
 };

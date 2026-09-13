@@ -897,6 +897,11 @@ are load-bearing:
   sequence (`sc.shotSeq`) so a slow encode can't resurrect a retaken shot, and
   keep `storyRevealPreview` from yanking the reader back a step when the bytes
   land mid-audience-pick.
+- **A chat image renders a derived 640px WebP preview, not its own bytes**
+  (`thumbKeyFor`/`thumbSourceKey` in media-compress.js). Only `files/` is
+  eligible (`viewonce/` is ticket-gated), minting shares `withCompressLock` and
+  never holds a request (a miss 404s and the client falls back to `data-fb-url`),
+  the scan gate reads through to the source, and the sweep never lists `thumbs/`.
 
 ## Environment notes (this dev machine)
 

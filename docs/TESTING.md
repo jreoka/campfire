@@ -677,7 +677,39 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   leaving a stuck spinner, and tapping the overlay on a slow video reveals it
   immediately — the spinner doubles as the play affordance it replaced. Keep
   `revealVideoShell` on both exits of `ensureVideoPoster` or a failed capture
-  parks on the spinner forever.
+  parks on the spinner forever. It also pins the deferral that keeps a backlog
+  from starting a download per clip: the render path calls `requestVideoPoster`
+  (an IntersectionObserver with a 320px margin) rather than `ensureVideoPoster`.
+  `node scripts/test-image-previews.js` covers the derived chat-image previews
+  (`thumbs/files/<name>.<ext>.webp`, see `AGENTS.md`/`media-compress.js`) — the
+  fix for "the backlog of messages loaded when you open a chat takes a while",
+  since one photo is 10-30x its own 640px WebP. Offline it runs the real
+  `thumbKeyFor`/`thumbSourceKey` out of `media-compress.js` (the key round-trips,
+  and anything that is not a chat still image is refused — `viewonce/` above all,
+  which is gated behind a ticket and must have no side door) and checks the
+  wiring statically: the server mints with a bounded wait and 404s uncached when
+  it is not ready, the scan gate reads a preview through to its source (a
+  preview of a pending/infected upload is the same bytes), deleting an upload
+  takes its preview, the orphan sweep neither lists nor keeps one, the bucket
+  scan queues the backfill for the worker to drain, and the client asks for the
+  preview with the original one error away. Then, in headless Chrome, the REAL
+  `attachmentHTML` plus the REAL document error handler against a server that
+  404s one preview and serves another: the cold image lands on the original
+  after exactly one fallback request (never the broken-file card), and the warm
+  one never fetches the original at all. The lightbox keeping the original is
+  asserted too — a preview in a full-screen viewer would be a visible downgrade.
+  Re-run it after touching `messages.js`'s attachment markup, `final.js`'s error
+  handler, `pickers.js`'s lightbox call, or the preview helpers.
+  `node scripts/test-image-previews-e2e.js` is the same feature end-to-end
+  (ffmpeg + Postgres, skipping without either; boots the cluster's shape —
+  `VIRUS_SCAN=0`, compression on): a real upload's preview is minted on the
+  first request as genuine WebP bytes far smaller than the upload, served from
+  the bucket tree afterwards, refused for a missing source / a video / a
+  non-image / a `viewonce/` key, never upscaled past a 64px source, absent from
+  a dry orphan sweep while a planted unreferenced file is listed, and gone from
+  disk (with the upload) when the message is deleted. Re-run after touching
+  `media-compress.js`'s thumbnail block, `server.js`'s `/uploads/thumbs` route
+  or `storage-sweep.js`'s listing.
   `node scripts/test-lightbox.js` covers the photo lightbox (headless Chrome,
   skipping without Chrome; it runs the real lightbox block pulled out of
   `pickers.js` against the real `#lightbox` markup and `styles.css`): the
@@ -808,6 +840,20 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   drawer, because the outside-click closer exempts `#sheet` the same way it
   exempts the header (without that the row's own click was read as "outside the
   drawer" and closed it again in the same tick).
+  `node scripts/test-launch-keyboard.js` covers the launch rule "opening the app
+  on a phone must not pop the keyboard" (headless Chrome at a phone viewport,
+  skipping without Chrome; it runs the REAL guard sliced out of
+  `js/native.js` and checks the wiring statically): the guard only arms on a
+  coarse pointer, it refuses focus on a textarea/text input/contenteditable
+  while armed, it leaves a button and a checkbox focusable (it is not a focus
+  thief), a field the platform focused BEFORE the guard installed is released by
+  the launch sweep, one real dispatched touch disarms it for the rest of the
+  session (so the composer then focuses normally), and the guard is re-armed on
+  the next document load. Re-run it after touching the guard block in
+  `native.js` — and note that the pieces it protects are platform behavior
+  (Android WebView first-focus, an Android focus restore, a bfcache/reload
+  re-focus of the composer), so a regression here is invisible on a desktop
+  browser.
   `node scripts/test-dm-unread.js` covers the unread-DM badges under the campfire
   (offline for the client half, then a real server against a throwaway database,
   skipping without Postgres): they used to be a per-tab tally built from live
