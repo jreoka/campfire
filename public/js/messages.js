@@ -1413,22 +1413,61 @@ function uploadAndAttach(file) {
   renderUploads();
   startUpload(entry);
 }
-// The body can be fully handed to the socket while the request is still in
-// flight — and a proxy that drops a half-open connection never fires onerror.
-// Without a ceiling a response that never comes leaves "Finishing…" shimmering
-// forever; past this it becomes a normal, Retry-able failure.
-const UPLOAD_STALL_MS = 5 * 60 * 1000;
+// A stalled upload must never shimmer forever, because that bar is the only
+// feedback a reader has. The dangerous case is not an error: a phone that slept,
+// a half-open connection, or a proxy that dropped the answer leaves the XHR
+// pending with NO event at all — no onerror, no onabort, and no timeout of its
+// own. Reproduced live: a 36 KB upload whose bytes reached the bucket, whose
+// verdict landed 0.5 s later, and whose card still read "Finishing…" minutes on.
+//
+// Three ceilings, all measured from the last sign of life, so a genuinely slow
+// transfer is never killed by them:
+//   - the body is still going out and events keep arriving → re-armed per event;
+//   - the body is out and the server owes an answer → it answers in
+//     milliseconds (it queues compression instead of waiting for it), so a
+//     minute and a half of silence means that answer was lost;
+//   - the size is unknown, so progress cannot be judged → only a long silence.
+const UPLOAD_IDLE_MS = 60 * 1000;
+const UPLOAD_IDLE_UNKNOWN_MS = 3 * 60 * 1000;
+const UPLOAD_ANSWER_MS = 90 * 1000;
+// When this attempt is declared dead. `sentAt` is stamped the moment the browser
+// reports every byte handed to the network stack; `lastTick` moves on every
+// progress event.
+function uploadStalledAt(u) {
+  const base = u.sentAt || u.lastTick || u.startedAt || Date.now();
+  if (u.sentAt) return base + UPLOAD_ANSWER_MS;
+  return base + (u.total > 0 ? UPLOAD_IDLE_MS : UPLOAD_IDLE_UNKNOWN_MS);
+}
+function checkUploadStall(u) {
+  if (!u || u.state !== 'uploading') return;
+  if (Date.now() < uploadStalledAt(u)) { armUploadWatchdog(u); return; }
+  failUpload(u, 'upload_timeout');
+}
 function armUploadWatchdog(u) {
   clearTimeout(u.watch);
-  u.watch = setTimeout(() => {
-    if (u.state !== 'uploading') return;
-    // A file the reader is still waiting on: only reachable when the body is out
-    // and nothing came back (see the caller).
-    failUpload(u, 'upload_timeout');
-  }, UPLOAD_STALL_MS);
+  u.watch = setTimeout(() => { u.watch = null; checkUploadStall(u); }, Math.max(1000, uploadStalledAt(u) - Date.now()));
+}
+// The page was hidden while an upload was in flight: background timers are
+// throttled there, so the ceiling is re-checked the moment the reader is looking
+// again — an honest "Retry" beats a bar that never moves.
+function sweepStalledUploads() {
+  for (const u of (S.uploads || [])) checkUploadStall(u);
+}
+// Abandon this attempt's XHR. `u` is reused by Retry (and by a cancel), so a
+// late answer from the abandoned request must not be able to run: it would set
+// the entry to done and push a SECOND attachment for one file.
+function detachUpload(u) {
+  const x = u && u.xhr;
+  if (!x) return;
+  try { x.onload = null; x.onerror = null; x.onabort = null; } catch {}
+  try { if (x.upload) x.upload.onprogress = null; } catch {}
+  try { x.abort(); } catch {}
+  u.xhr = null;
 }
 function startUpload(u) {
+  detachUpload(u);
   u.state = 'uploading'; u.loaded = 0; u.indet = false; u.err = '';
+  u.sentAt = 0; u.startedAt = Date.now(); u.lastTick = u.startedAt;
   clearTimeout(u.watch); u.watch = null;
   renderUploads();
   const fd = new FormData();
@@ -1438,9 +1477,11 @@ function startUpload(u) {
   xhr.open('POST', '/api/upload');
   if (store.token) xhr.setRequestHeader('Authorization', 'Bearer ' + store.token);
   xhr.upload.onprogress = (e) => {
+    u.lastTick = Date.now();
     if (e.lengthComputable && e.total > 0) { u.loaded = e.loaded; u.total = e.total; u.indet = false; }
     else u.indet = true;
-    if (u.total > 0 && u.loaded >= u.total && !u.watch) armUploadWatchdog(u);
+    if (u.total > 0 && u.loaded >= u.total && !u.sentAt) u.sentAt = Date.now();
+    armUploadWatchdog(u);
     patchUploadProgress(u);
   };
   xhr.onload = () => {
@@ -1471,7 +1512,10 @@ function startUpload(u) {
   };
   xhr.onerror = () => { clearTimeout(u.watch); u.watch = null; failUpload(u, 'network_error'); };
   xhr.onabort = () => { clearTimeout(u.watch); u.watch = null; };
-  try { xhr.send(fd); } catch (err) { failUpload(u, err && err.message); }
+  try { xhr.send(fd); } catch (err) { failUpload(u, err && err.message); return; }
+  // Armed from the send rather than from a progress event: a transfer that never
+  // reports progress is exactly the one that used to hang with no ceiling at all.
+  armUploadWatchdog(u);
 }
 function failUpload(u, errMsg) {
   if (!u || u.state !== 'uploading') return;
@@ -1484,7 +1528,7 @@ function failUpload(u, errMsg) {
 function cancelUpload(id) {
   const u = (S.uploads || []).find((x) => x.id === id);
   if (!u) return;
-  try { if (u.xhr && u.state === 'uploading') u.xhr.abort(); } catch {}
+  detachUpload(u);
   removeUpload(id);
 }
 function retryUpload(id) {

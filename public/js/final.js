@@ -566,8 +566,10 @@ let unreadRefreshAt = 0;
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
   // Foregrounding is also when a tapped notification is waiting to be routed
-  // (the Android shell parks it until the page is up).
+  // (the Android shell parks it until the page is up) and when an upload that
+  // stalled while the page was hidden gets its verdict instead of shimmering.
   try { takeNativeDeepLink(); } catch {}
+  try { if (typeof sweepStalledUploads === 'function') sweepStalledUploads(); } catch {}
   try { clearActiveChanUnread(); } catch {}
   if (Date.now() - unreadRefreshAt < 10000) return;
   unreadRefreshAt = Date.now();

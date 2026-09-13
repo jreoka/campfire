@@ -32,6 +32,17 @@ function s3() {
         accessKeyId: process.env.S3_ACCESS_KEY || '',
         secretAccessKey: process.env.S3_SECRET_KEY || '',
       },
+      maxAttempts: 2,
+      // The upload route awaits this PUT before it can answer, so a silent
+      // object store used to hold the request — and the browser's "Finishing…"
+      // card — open forever (aws-sdk v3 has no request timeout by default, and
+      // `requestTimeout` on its own only WARNS: without throwOnRequestTimeout
+      // the request keeps hanging). Bounded here, the route fails instead:
+      // `storage_failed`, a visible failure and a Retry the reader can press.
+      // 30s clears the 50 MB cap the app uploads (the PUT is origin -> store in
+      // one region, not the reader's uplink) and two attempts stay inside the
+      // client's own 90s answer ceiling, so the reader gets the real error.
+      requestHandler: { connectionTimeout: 5000, requestTimeout: 30000, throwOnRequestTimeout: true },
     });
   }
   return _client;

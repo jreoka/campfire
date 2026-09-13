@@ -313,6 +313,23 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   Postgres is missing for the socket half; the source/client checks always run.
   Re-run after touching `pushToUser`/`notifyPushSockets`, the `/ws` upgrade
   routing, `public/js/final.js`'s native bridges, or Settings → Notifications.
+  `node scripts/test-upload-stall.js` covers a stalled upload (reported live: a
+  36 KB PNG's card sat on "Finishing…", the bytes were in the bucket and the
+  compression verdict landed 0.5 s later, so the answer had simply been lost —
+  a half-open connection or a phone that slept leaves an XHR pending with NO
+  event at all). It drives the REAL watchdog sliced out of `public/js/messages.js`
+  on a virtual clock: the body being out switches to a short answer ceiling
+  (90 s, not the old five minutes), no progress for a minute fails a transfer
+  that is still going out, steady progress is never a stall, an unknown size is
+  judged by silence alone, a done entry is never failed, `sweepStalledUploads()`
+  fails an overdue upload the moment the page is foregrounded again (background
+  timers are throttled there), `detachUpload` strips an abandoned attempt's
+  handlers so a late answer cannot add a second attachment, plus the source-level
+  wiring (watchdog armed from the send rather than from a progress event, cancel
+  detaches, final.js sweeps on foreground). Offline, no browser. Re-run after
+  touching the upload watchdog, `startUpload`/`cancelUpload`/`retryUpload`, or
+  final.js's visibility handler; `scripts/test-upload-cards.js` (headless Chrome)
+  covers the same ceilings through the real card UI.
   `node scripts/test-games-manager.js` covers Settings → Games' server routes
   against a throwaway database: the manager payload (totals, per-game level +
   streak, live game), ignore / un-ignore one game by name, an ignored game that
@@ -750,10 +767,15 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   and an attach with no conversation is refused rather than orphaned. For the
   stuck card: the bar goes indeterminate and reads "Finishing…" once the browser
   has handed the whole body to the socket (a frozen 99% is what read as a hang),
-  an upload watchdog arms at 5 minutes and turns a response that never comes into
-  a normal failed card with Retry, and every exit clears it. Re-run it after
+  an upload watchdog turns a response that never comes into a normal failed card
+  with Retry (armed from the send, and shortened to 90 s once the body is out —
+  see `scripts/test-upload-stall.js` for the ceilings themselves), and every exit
+  clears it. Re-run it after
   touching `messages.js`'s upload block, `renderComposerMeta`, the conversation
-  switchers, or the paths that leave a conversation.
+  switchers, or the paths that leave a conversation. Anything that changes
+  `storage.js`'s S3 client (its timeout/retry config is what stops a silent
+  object store from holding an upload request open forever) wants the upload
+  routes re-checked with `scripts/test-upload-pipeline.js`.
   `node scripts/test-lightbox.js` covers the photo lightbox (headless Chrome,
   skipping without Chrome; it runs the real lightbox block pulled out of
   `pickers.js` against the real `#lightbox` markup and `styles.css`): the

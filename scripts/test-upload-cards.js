@@ -143,7 +143,7 @@ window.__fail = (ctx, why) => { failUpload(window.__entry(ctx), why); };
 window.__switchTo = (serverId, channelId) => { S.view = 'server'; S.serverId = serverId; S.channelId = channelId; syncPendingAttsCtx(); };
 window.__switchHome = () => { S.view = 'home'; S.dmThreadId = null; S.serverId = null; S.channelId = null; syncPendingAttsCtx(); };
 window.__watchArmed = (ctx) => !!(window.__entry(ctx) && window.__entry(ctx).watch);
-window.__stall = () => UPLOAD_STALL_MS;
+window.__stall = () => UPLOAD_ANSWER_MS;
 window.__atts = () => (S.pendingAtts || []).map((a) => a.url);
 </script>
 </body></html>`;
@@ -186,10 +186,13 @@ async function main() {
   check(/if \(u\.indet \|\| sent\) \{ pct\.textContent = '…'; fill\.classList\.add\('indet'\); \}/.test(upSource),
     'and goes indeterminate instead of freezing at 99%');
   check(/sent \? ' · Finishing…' : ' · Uploading…'/.test(upSource), 'with a readout that says what it is waiting for');
-  check(/const UPLOAD_STALL_MS = 5 \* 60 \* 1000;/.test(upSource) && /armUploadWatchdog\(u\)/.test(upSource),
+  check(/const UPLOAD_ANSWER_MS = 90 \* 1000;/.test(upSource) && /const UPLOAD_IDLE_MS = 60 \* 1000;/.test(upSource)
+    && /armUploadWatchdog\(u\)/.test(upSource),
     'a response that never comes has a ceiling');
-  check(/if \(u\.total > 0 && u\.loaded >= u\.total && !u\.watch\) armUploadWatchdog\(u\);/.test(upSource),
-    'armed once, when the bytes are out');
+  check(/try \{ xhr\.send\(fd\); \} catch \(err\) \{ failUpload\(u, err && err\.message\); return; \}[\s\S]{0,400}armUploadWatchdog\(u\);/.test(upSource),
+    'armed from the send, so a transfer that never reports progress still has one');
+  check(/if \(u\.total > 0 && u\.loaded >= u\.total && !u\.sentAt\) u\.sentAt = Date\.now\(\);/.test(upSource),
+    'and "every byte handed over" switches to the shorter answer ceiling');
   check(/clearTimeout\(u\.watch\); u\.watch = null;/.test(upSource), 'and cleared on every exit (load/error/abort/fail/remove)');
   check(/upload_timeout: 'The server stopped responding/.test(auth), 'the timeout has a human message');
 
@@ -258,7 +261,7 @@ async function main() {
     check(!!card && card.pct === '…' && card.indet, 'body out: the bar goes indeterminate (never a frozen 99%)', card);
     check(!!card && card.sub.indexOf('Finishing') !== -1, 'and the readout says Finishing', card && card.sub);
     check((await ev("window.__watchArmed('s:s1:c1')")) === true, 'with the stall ceiling armed');
-    check((await ev('window.__stall()')) === 300000, 'at 5 minutes');
+    check((await ev('window.__stall()')) === 90000, 'at 90 seconds — the server answers in milliseconds, so that is a lost response');
 
     console.log('\n[4] switching servers does not carry the upload over');
     await ev("window.__switchTo('s2', 'c9')");

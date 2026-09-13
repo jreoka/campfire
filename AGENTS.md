@@ -448,7 +448,14 @@ per-account draft store (`core.js`: `draftSoon`/`flushDrafts`/
 and clear the draft when the message goes out. Attachments and their uploads are
 per conversation too (`messages.js`: `pendingByCtx`/`syncPendingAttsCtx`,
 re-synced by `renderComposerMeta`) — an upload card only paints in the chat it
-was started in, and its finished file lands THERE. The typing strip above the
+was started in, and its finished file lands THERE. An upload that is never
+answered must FAIL visibly, never shimmer: the watchdog (`messages.js`) is armed
+from `xhr.send()` — not from a progress event, which a dead transfer may never
+send — and its ceiling drops to 90s once the body is out, because a phone that
+slept or a half-open connection leaves the XHR pending with no event at all
+(`sweepStalledUploads()` re-judges it when the page is foregrounded again, and
+`storage.js`'s S3 client needs `throwOnRequestTimeout` — a bare `requestTimeout`
+only warns — so a silent object store cannot hold the route open either). The typing strip above the
 composer always keeps its slot (`--strip-h`, one text line, transparent, text
 fades) — hiding it resizes `#messages` and shoves the conversation up/down.
 `#messages` pays for that slot by giving up its bottom padding, and anything
