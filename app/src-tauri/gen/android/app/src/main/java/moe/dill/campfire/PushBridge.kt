@@ -21,6 +21,11 @@ class PushBridge(private val activity: MainActivity) {
   fun configure(token: String, origin: String, enabled: Boolean): Boolean =
     try {
       PushService.configure(activity, token ?: "", origin ?: "", enabled)
+      // Android 13+ drops notifications silently without the runtime grant, and
+      // a fresh install has never been asked. Asking here (right after the sign
+      // in that ran this) is what keeps a new phone from being silent; it is a
+      // no-op once the user has answered either way.
+      if (enabled) PushService.requestPermission(activity)
       true
     } catch (e: Exception) {
       false
