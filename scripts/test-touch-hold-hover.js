@@ -106,7 +106,7 @@ check(uncovered.length === 0, 'no hover inside a touch-opened menu is left uncov
 console.log('\n[3] the openers and the touch listeners are wired');
 check(/function openCtx\(x, y, items\) \{\n  suppressHoverFromTouch\(\);/.test(actions) || /function openCtx\(x, y, items\) \{[\s\S]{0,40}suppressHoverFromTouch\(\);/.test(actions), 'the floating popup suppresses');
 check(/function openCtxSheet\(items, head\) \{[\s\S]{0,90}suppressHoverFromTouch\(\);/.test(actions), 'the sheet suppresses');
-check(/function openMsgSheet\(mid\) \{[\s\S]{0,90}suppressHoverFromTouch\(\);/.test(actions), 'the message sheet suppresses');
+check(/function openMsgSheet\(mid(, el)?\) \{[\s\S]{0,90}suppressHoverFromTouch\(\);/.test(actions), 'the message sheet suppresses');
 check(/document\.addEventListener\('touchstart', \(e\) => \{\r?\n\s*noteTouchStart\(\);/.test(actions), 'touchstart records the touch before its early returns');
 check(/touchmove[\s\S]{0,400}noteTouchMove\(\)/.test(actions), 'a real move hands hover back');
 check(/pointermove'[\s\S]{0,80}pointerType === 'mouse'[\s\S]{0,40}noteTouchMove\(\)/.test(actions), 'and so does a real mouse move (hybrid devices)');

@@ -1,15 +1,16 @@
-// "Harbin info": the attachment menu entry and the panel behind it.
+// "Harbin info": the attachment rows in the message menu, and the panel behind
+// them.
 //
 // The chat card can only ever say a file was blocked; the REASON lives in the
 // scan record, and this is the only surface that shows it. So this drives the
 // real page in headless Chrome against a real server (skips without Chrome or
 // Postgres) and pins the whole path end to end:
 //
-//   - a right-click on an attachment offers "Harbin info", on every rendering
-//     that carries an attachment identity: a picture, an audio player, a file
-//     card, and the card that stands in for a file the scanner removed;
-//   - a right-click on the message's own pixels still gets the MESSAGE menu —
-//     the attachment menu must not swallow it;
+//   - an attachment has no menu of its own any more: right-clicking a rendering
+//     that carries an attachment identity — a picture, an audio player, a file
+//     card, and the card that stands in for a file the scanner removed — opens
+//     the MESSAGE's menu with that file's rows in it, "Harbin info" among them,
+//     and a message with no media at all grows none of them;
 //   - picking it fetches the stored verdict and paints the panel: the verdict
 //     and score, the engine that made it, when it ran, and the findings;
 //   - the panel is read-only: one way out, not two;
@@ -268,7 +269,7 @@ async function main() {
     await evaluate(`(() => { document.querySelector('#modal-ok').click(); return true; })()`);
     await sleep(250);
 
-    console.log('\n[3] the attachment menu offers "Harbin info" — and only on attachments');
+    console.log('\n[3] the attachment rows are part of the message menu — and only for media');
     const menuFor = async (selector) => evaluate(`(() => {
       const el = document.querySelector(${JSON.stringify(selector)});
       if (!el) return { missing: true };
@@ -280,6 +281,8 @@ async function main() {
 
     const zipMenu = await menuFor('.file-card[data-att-id]');
     check(zipMenu.open && zipMenu.labels.includes('Harbin info'), 'a plain file card offers it', zipMenu.labels);
+    check(zipMenu.labels.includes('Copy text') && zipMenu.labels.includes('Bookmark message'),
+      'from the message menu it now rides in', zipMenu.labels);
     await closeMenu();
 
     const txtMenu = await menuFor('.txtfile[data-att-id]');
@@ -288,16 +291,46 @@ async function main() {
 
     const imgMenu = await menuFor('img.att-img[data-att-id], .att-wrap[data-att-id]');
     check(imgMenu.open && imgMenu.labels.includes('Harbin info'), 'a picture offers it (beside copy/save)', imgMenu.labels);
+    check(imgMenu.labels.includes('Copy image') && imgMenu.labels.includes('Mark unread'),
+      'with the picture\'s rows and the message\'s in ONE menu', imgMenu.labels);
     await closeMenu();
 
     const blockedMenu = await menuFor('.scan-block.infected[data-att-id]');
     check(blockedMenu.open && blockedMenu.labels.includes('Harbin info'), 'the card standing in for a removed file offers it', blockedMenu.labels);
-    check(blockedMenu.labels.length === 1, 'and offers nothing that could not work — the bytes are gone', blockedMenu.labels);
+    check(!blockedMenu.labels.some((l) => /^(?:Save |Copy link$|Copy (?:image|video) link|Open (?:image|video) link)/.test(l)),
+      'and offers nothing that could not work — the bytes are gone', blockedMenu.labels);
     await closeMenu();
 
-    // The message's own pixels must still open the MESSAGE menu.
-    const msgMenu = await menuFor('.msg[data-mid] .msg-text, .msg[data-mid] .mcontent, .msg[data-mid]');
-    check(msgMenu.open && !msgMenu.labels.includes('Harbin info'), 'a click on the message still gets the message menu', msgMenu.labels);
+    // The message's own pixels (not the file card) open the same menu, with the
+    // attachment's rows in it — that is the whole point of the merge.
+    const msgMenu = await evaluate(`(() => {
+      const msg = document.querySelector('.scan-block.infected[data-att-id]').closest('.msg[data-mid]');
+      const r = msg.getBoundingClientRect();
+      msg.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + 4) }));
+      const m = document.querySelector('#ctx-menu');
+      return { open: !!m, labels: m ? [...m.querySelectorAll('.ctx-item span:last-child')].map((s) => s.textContent) : [] };
+    })()`);
+    check(msgMenu.open && msgMenu.labels.includes('Harbin info') && msgMenu.labels.includes('Copy text'),
+      'a click on the message body gets the message menu, its attachment\'s rows in it', msgMenu.labels);
+    await closeMenu();
+
+    // ...and a message with NO attachment grows none of it: the rows are about
+    // the media, not about messages.
+    await evaluate(`(() => {
+      S.ws.send(JSON.stringify({ t: 'message', serverId: S.serverId, channelId: S.channelId, content: 'nothing attached here' }));
+      return true;
+    })()`);
+    const plainReady = await waitFor(`[...document.querySelectorAll('.msg[data-mid]')].some((m) => (m.textContent || '').includes('nothing attached here'))`, 15000);
+    check(!!plainReady, 'a text-only message renders');
+    const plainMenu = await evaluate(`(() => {
+      const msg = [...document.querySelectorAll('.msg[data-mid]')].find((m) => (m.textContent || '').includes('nothing attached here'));
+      msg.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 240, clientY: 240 }));
+      const m = document.querySelector('#ctx-menu');
+      return { open: !!m, labels: m ? [...m.querySelectorAll('.ctx-item span:last-child')].map((s) => s.textContent) : [] };
+    })()`);
+    check(plainMenu.open && plainMenu.labels.includes('Copy text'), 'its menu opens as usual', plainMenu.labels);
+    check(!plainMenu.labels.some((l) => /Harbin info|Save |Copy image|Copy link|Open image/.test(l)),
+      'with no attachment rows at all', plainMenu.labels);
     await closeMenu();
 
     console.log('\n[4] the panel shows the stored verdict, not a fresh guess');
@@ -378,6 +411,8 @@ async function main() {
     })()`);
     check(!!sheet, 'the long-press opens the phone sheet', sheet);
     check(!!sheet && sheet.some((l) => /Harbin info/.test(l)), 'and it carries the same item', sheet);
+    check(!!sheet && sheet.some((l) => /Copy text/.test(l)),
+      'in the message sheet the hold opened — the attachment has no sheet of its own', sheet);
     await evaluate(`(() => { const b = document.querySelector('#sheet-backdrop'); if (b) b.click(); return true; })()`);
 
     check(pageErrors.length === 0, 'no uncaught page errors through the whole run', pageErrors.slice(0, 3));

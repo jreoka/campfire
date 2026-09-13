@@ -322,7 +322,7 @@ about bytes nobody has been handed yet. Leader-locked, `BUCKET_SCAN_*` env,
 `backups/` and `thumbs/` never listed, admin routes
 `POST /api/admin/scan/run[?dry=1]` and the Media tab's two buttons.
 **"Harbin info"** is the reader's side of it: every attachment rendering carries
-`data-att-id`, and the attachment menu's item opens a read-only panel
+`data-att-id`, and the row the message menu merges in from it opens a read-only panel
 (`GET /api/attachments/:aid/scan`, membership-checked exactly like the message it
 hangs off) showing the STORED verdict — words, score, tone, when, the findings,
 and why the file was removed or kept. It reads no bytes,
@@ -425,15 +425,25 @@ on that message). Menus are content-aware: an attachment carries its own identit
 (`data-att-id` + the `data-fb-*` media pair, painted by `attMeta` in
 messages.js on EVERY rendering — the `.att-wrap`, the audio player, the text
 preview, the plain file card, and the `scan-block` card standing in for a
-pending or removed file), so a right-click/long-press anywhere on it gets the
-ATTACHMENT's menu — Copy image / Save image / Copy image link / Open image link
-for media (a browser cannot put video bytes on the clipboard, so that flavour is
-never offered), Save file / Copy link for the rest, and **Harbin info** on all of
-them — checked BEFORE the `[data-mid]` message branch in `ctxFor`. `attFromEl`
-reads that identity and the `a:not([data-att-id])` exemption in the contextmenu
-guard is what lets a file card through without taking the browser's own link menu
-away from ordinary links. A blocked file's card offers ONLY "Harbin info",
-because there is nothing left to save. The message menu adds Mark unread,
+pending or removed file), and those rows ride in the MESSAGE's own menu rather
+than in a menu of their own: `msgAttItems` (actions.js) turns a message's
+attachments — its own record, plus the identity of the element under the pointer
+when the record does not cover it — into Copy image / Save image / Copy image
+link / Open image link for media (a browser cannot put video bytes on the
+clipboard, so that flavour is never offered), Save file / Copy link for the
+rest, and **Harbin info** on all of them, pushed between the content actions and
+Mark unread. A message with no attachment grows nothing; one attachment needs no
+heading, several get their own file name above their rows (`.ctx-head`, a
+caption, not a row). So `ctxFor` resolves the `[data-mid]` message branch FIRST
+and only falls back to `attMenuItems` for media with no message around it (a
+pinned message's media in the pins panel, which has no message menu to merge
+into) — the same order in the long-press handler, which opens `openMsgSheet(mid,
+el)` for anything inside a message. `attFromEl` reads the identity and the
+`a:not([data-att-id])` exemption in the contextmenu guard is what lets a file
+card through without taking the browser's own link menu away from ordinary links.
+A file whose bytes were removed (`infected`) or are not published yet
+(`pending`) offers ONLY "Harbin info", because there is nothing left to save.
+The message menu adds Mark unread,
 Bookmark message and Create reminder… beside Copy text, and View reactions
 whenever the message has any. Mark unread moves the WATERMARK
 (`channel_reads`/`dm_members.last_read_at`) to one millisecond before the

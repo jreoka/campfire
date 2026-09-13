@@ -744,6 +744,9 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .ctx-item.danger{color:var(--danger-tx)}
 .ctx-ic{display:inline-flex;flex-shrink:0;width:18px;justify-content:center}
 .ctx-sep{height:1px;background:var(--line);margin:.3rem .45rem;opacity:.5}
+/* The file name above one attachment's rows, when a message carries more than
+   one (see msgAttItems in actions.js): a caption, never a target. */
+.ctx-head{padding:.45rem .65rem .15rem;font-size:.72rem;font-weight:700;letter-spacing:.02em;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 #modal-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.68);display:flex;align-items:center;justify-content:center;z-index:160;padding:1rem;overflow-y:auto}
 .modal{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;padding:1.5rem;width:100%;max-width:410px}
@@ -1246,6 +1249,7 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .sheet-row.danger{color:var(--danger-tx)}
 .sheet-row .ctx-ic{width:20px}
 .sheet-sep{height:1px;background:var(--line);margin:.3rem .45rem;opacity:.5}
+.sheet-rows .ctx-head{padding:.55rem .65rem .2rem;font-size:.75rem}
 .sheet-swatches{padding:.15rem .65rem .55rem;flex:0 0 auto}
 .sheet-swlabel{font-size:.72rem;font-weight:750;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:.1rem 0 .5rem}
 .sheet-swrow{display:flex;flex-wrap:wrap;gap:10px}

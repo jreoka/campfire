@@ -42,6 +42,7 @@ function openCtx(x, y, items) {
   m.id = 'ctx-menu';
   for (const it of items) {
     if (it.sep) { const s = document.createElement('div'); s.className = 'ctx-sep'; m.appendChild(s); continue; }
+    if (it.head) { const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = it.head; m.appendChild(h); continue; }
     const b = document.createElement('button');
     b.className = 'ctx-item' + (it.danger ? ' danger' : '');
     b.innerHTML = (it.icon ? `<span class="ctx-ic">${it.icon}</span>` : '') + `<span>${esc(it.label)}</span>`;
@@ -88,14 +89,17 @@ const SAVE_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" st
 const LINK_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>';
 const OPEN_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>';
 
-/* ================= attachment menus =================
- * A long-press or right-click ON the attachment is about the attachment, not
- * about the message that carries it: copy it, save it, copy its link, open its
- * link — and ask what the scanner made of it. Every rendering carries the
- * attachment's identity (see attMeta in messages.js), so one read from whatever
- * the pointer is over — the wrap, the image, the download chip, the GIF star,
- * the spoiler veil, the audio player, a file card, or the scanning/infected
- * card that stands in for a file — resolves to the same menu. */
+/* ================= attachment rows =================
+ * Media has no menu of its own: the rows that act on an attachment — copy it,
+ * save it, copy its link, open its link, and ask what the scanner made of it —
+ * are merged into the menu the MESSAGE already has, so a right-click or
+ * long-press anywhere on a message with media carries both the message's actions
+ * and its file's. Every rendering carries the attachment's identity (see attMeta
+ * in messages.js), so one read from whatever the pointer is over — the wrap, the
+ * image, the download chip, the GIF star, the spoiler veil, the audio player, a
+ * file card, or the scanning/infected card that stands in for a file — resolves
+ * to the same rows. A surface with no message around it (a pinned message's
+ * media) still gets those rows alone, as its own menu. */
 function attFromEl(el) {
   const w = el && el.closest ? el.closest('[data-att-id]') : null;
   if (!w) return null;
@@ -190,46 +194,61 @@ function openMediaLink(url) {
   } catch {}
   try { window.open(url, '_blank', 'noopener'); } catch {}
 }
-function mediaMenuItems(el) {
-  const a = attFromEl(el);
-  if (!a) return null;
-  const img = a.kind === 'image';
-  const video = a.kind === 'video';
-  if (!img && !video) return null;
+// The rows that act on ONE attachment, whatever shape it is. The clipboard
+// flavour exists only for a picture (no engine takes video bytes as clipboard
+// image), the link rows name what they copy/open, and the scanner's record is
+// offered on every stored upload. Nothing to save or link to when the bytes were
+// removed or are not published yet — the reader gets the explanation instead,
+// and nothing that would 404 at them.
+function attItemsFor(a) {
+  if (!a) return [];
+  const kind = a.kind || 'file';
+  const img = kind === 'image', video = kind === 'video';
   const url = absUrl(a.url);
   const items = [];
-  if (img) items.push({ label: 'Copy image', icon: IMG_COPY_SVG, fn: () => copyImageToClipboard(a) });
-  items.push({ label: img ? 'Save image' : 'Save video', icon: SAVE_SVG, fn: () => saveMediaFile(a) });
-  items.push({ label: img ? 'Copy image link' : 'Copy video link', icon: LINK_SVG, fn: () => { copyTextNow(url); toast('Link copied'); } });
-  items.push({ label: img ? 'Open image link' : 'Open video link', icon: OPEN_SVG, fn: () => openMediaLink(url) });
+  // Nothing to copy, save or link to when the bytes were removed or are not
+  // published yet: the reader gets the explanation instead (Harbin info), and
+  // nothing that would 404 at them.
+  if (a.scan !== 'infected' && a.scan !== 'pending' && a.url) {
+    if (img) items.push({ label: 'Copy image', icon: IMG_COPY_SVG, fn: () => copyImageToClipboard(a) });
+    items.push({ label: img ? 'Save image' : video ? 'Save video' : kind === 'audio' ? 'Save audio' : 'Save file', icon: SAVE_SVG, fn: () => saveMediaFile(a) });
+    items.push({
+      label: img ? 'Copy image link' : video ? 'Copy video link' : 'Copy link',
+      icon: LINK_SVG, fn: () => { copyTextNow(url); toast('Link copied'); },
+    });
+    if (img || video) items.push({ label: img ? 'Open image link' : 'Open video link', icon: OPEN_SVG, fn: () => openMediaLink(url) });
+  }
   const hb = harbinInfoItem(a);
   if (hb) items.push(hb);
   return items;
 }
-// Everything that is not a picture or a video gets the same menu shape without
-// the clipboard-image flavour, plus the scanner panel. A file card is an <a>, so
-// the contextmenu guard lets it through only because it carries an attachment
-// identity — a plain link still gets the browser's own menu.
-function fileMenuItems(el) {
+// An attachment's rows on their own, for a surface with no message menu to
+// merge into (a pinned message's media in the pins panel).
+function attMenuItems(el) {
   const a = attFromEl(el);
   if (!a) return null;
-  if (a.kind === 'image' || a.kind === 'video') return null;
-  const url = absUrl(a.url);
-  const items = [];
-  // Nothing to save or link to when the bytes were removed or are not published
-  // yet: the reader gets the explanation, and nothing that would 404 at them.
-  if (a.scan !== 'infected' && a.scan !== 'pending' && a.url) {
-    items.push({ label: a.kind === 'audio' ? 'Save audio' : 'Save file', icon: SAVE_SVG, fn: () => saveMediaFile(a) });
-    items.push({ label: 'Copy link', icon: LINK_SVG, fn: () => { copyTextNow(url); toast('Link copied'); } });
-  }
-  const hb = harbinInfoItem(a);
-  if (hb) items.push(hb);
+  const items = attItemsFor(a);
   return items.length ? items : null;
 }
-// The attachment menu, whatever the attachment is. Media first (its own
-// flavour), then the general one.
-function attMenuItems(el) {
-  return mediaMenuItems(el) || fileMenuItems(el);
+// The attachment rows for a MESSAGE, ready to ride in its menu: its own record
+// (what was rendered), plus the identity of the element the pointer is actually
+// over when the record does not cover it — an attachment rendering that carries
+// data-att-id stays actionable whatever else changed. One attachment needs no
+// heading, the labels speak for themselves; several get their own file name
+// above their rows, or three "Save image" rows would be indistinguishable.
+function msgAttItems(m, el) {
+  const atts = Array.isArray(m.attachments) ? m.attachments.slice() : [];
+  const over = el ? attFromEl(el) : null;
+  if (over && (over.id || over.url)
+    && !atts.some((x) => (over.id && x.id === over.id) || (!over.id && over.url && x.url === over.url))) atts.push(over);
+  const blocks = atts.map((a) => ({ a, items: attItemsFor(a) })).filter((b) => b.items.length);
+  const items = [];
+  const multi = blocks.length > 1;
+  for (const b of blocks) {
+    if (multi) items.push({ head: b.a.name || 'attachment' });
+    items.push(...b.items);
+  }
+  return items;
 }
 function mediaSheetHead(el) {
   const a = attFromEl(el);
@@ -334,7 +353,7 @@ async function openHarbinInfo(a) {
   $('#modal-body').innerHTML = hbInfoHTML(r);
 }
 
-function messageMenuItems(m, mid, x, y) {
+function messageMenuItems(m, mid, x, y, el) {
   const dm = !!m._dm;
   const own = m.user && m.user.id === S.me.id;
   const items = [
@@ -359,6 +378,12 @@ function messageMenuItems(m, mid, x, y) {
   if (own) items.push({ label: 'Edit message', icon: '✎', fn: () => startEdit(mid) });
   if (canMod(m)) items.push({ label: 'Delete message', icon: '🗑', danger: true, fn: () => api((dm ? '/api/dms/messages/' : '/api/messages/') + mid, { method: 'DELETE' }).catch(() => toast('Delete failed')) });
   items.push({ label: 'Copy text', icon: '⧉', fn: () => { copyTextNow(m.content || ''); toast('Copied'); } });
+  // The message's own media, in this same menu: every attachment adds its rows
+  // (copy/save/link, and what the scanner made of it) between the content
+  // actions and the reader's memory of the conversation. A message with no
+  // attachment grows nothing.
+  const attItems = msgAttItems(m, el);
+  if (attItems.length) items.push({ sep: true }, ...attItems, { sep: true });
   // The reader's own memory of a conversation: leave this message as the first
   // unread one, keep it (or drop it) from the bookmarks list, or set a nudge
   // hung off it. All three are account state, so they follow the reader to
@@ -410,11 +435,11 @@ function openReportModal(mid) {
     }
   }, { danger: true });
 }
-function messageCtxMenu(mid, x, y) {
+function messageCtxMenu(mid, x, y, el) {
   const m = msgById(mid);
   if (!m) return;
   if (m.sys) { openCtx(x, y, sysMenuItems(m)); return; }
-  openCtx(x, y, messageMenuItems(m, mid, x, y));
+  openCtx(x, y, messageMenuItems(m, mid, x, y, el));
 }
 /* ================= bookmarks + reminders (the reader's own memory) ================= */
 // Bookmarked message ids, for the menu's Bookmark/Remove bookmark wording. The
@@ -559,7 +584,7 @@ function closeMsgSheet(instant) {
   bd?.classList.remove('open'); sh?.classList.remove('open');
   setTimeout(() => { document.querySelector('#sheet-backdrop')?.remove(); document.querySelector('#sheet')?.remove(); }, 240);
 }
-function openMsgSheet(mid) {
+function openMsgSheet(mid, el) {
   const m = msgById(mid);
   if (!m) return;
   suppressHoverFromTouch();
@@ -603,8 +628,9 @@ function openMsgSheet(mid) {
   }
   const rows = document.createElement('div');
   rows.className = 'sheet-rows';
-  for (const it of (m.sys ? sysMenuItems(m) : messageMenuItems(m, mid, 0, 0))) {
+  for (const it of (m.sys ? sysMenuItems(m) : messageMenuItems(m, mid, 0, 0, el))) {
     if (it.sep) { const s = document.createElement('div'); s.className = 'sheet-sep'; rows.appendChild(s); continue; }
+    if (it.head) { const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = it.head; rows.appendChild(h); continue; }
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'sheet-row' + (it.danger ? ' danger' : '');
@@ -723,6 +749,7 @@ function openCtxSheet(items, head) {
   rows.className = 'sheet-rows';
   for (const it of items) {
     if (it.sep) { const s = document.createElement('div'); s.className = 'sheet-sep'; rows.appendChild(s); continue; }
+    if (it.head) { const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = it.head; rows.appendChild(h); continue; }
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'sheet-row' + (it.danger ? ' danger' : '');
@@ -1258,14 +1285,16 @@ function channelMenuItems(cid, ctype) {
 function channelCtxMenu(cid, ctype, x, y) { openCtx(x, y, channelMenuItems(cid, ctype)); }
 function ctxFor(el, x, y) {
   if (!el || !el.closest) return false;
-  // The attachment first: a right-click on a picture, a player, a file card or
-  // the card standing in for a blocked file belongs to THAT attachment (copy,
-  // save, link, and what the scanner made of it), and only the message's other
-  // pixels open the message menu.
+  // A message owns every pixel of itself, media included: an attachment's rows
+  // are part of the message's own menu now (see msgAttItems), so a right-click
+  // on a picture, a player or a file card opens THAT menu with the file's rows
+  // in it — never a menu of its own.
+  const msg = el.closest('.msg[data-mid]');
+  if (msg && msgById(msg.dataset.mid)) { messageCtxMenu(msg.dataset.mid, x, y, el); return true; }
+  // An attachment with no message around it — a pinned message's media in the
+  // pins panel — has no message menu to merge into, so it keeps its own rows.
   const att = attMenuItems(el);
   if (att) { openCtx(x, y, att); return true; }
-  const msg = el.closest('.msg[data-mid]');
-  if (msg) { messageCtxMenu(msg.dataset.mid, x, y); return true; }
   const vu = el.closest('.vuser[data-uid]');
   if (vu && vu.dataset.uid) { openUserCard(vu.dataset.uid, x, y); return true; }
   const mem = el.closest('.member[data-uid]');
@@ -1311,16 +1340,19 @@ document.addEventListener('touchstart', (e) => {
   holdT = setTimeout(() => {
     holdT = null;
     haptic(12); // the long-press that opens a menu is one of the few beats left
-    // An attachment holds its own menu (copy / save / link, and what the scanner
-    // made of it) — the same rows the desktop right-click gets, in the sheet this
-    // device uses for everything.
+    // A message takes the hold on any of its pixels now: the attachment's own
+    // rows (copy / save / link, and what the scanner made of it) ride in the
+    // message's menu, so holding a picture slides up the same sheet the message
+    // body opens, with the file's rows in it.
+    const mt = t.closest('.msg[data-mid]');
+    if (mt && isCoarse() && msgById(mt.dataset.mid)) { holdSheet = true; openMsgSheet(mt.dataset.mid, t); return; }
+    // An attachment with no message around it (a pinned message's media) still
+    // gets the attachment's own sheet — the same rows, headed by the file.
     const aw = t.closest('[data-att-id]');
     if (aw && isCoarse()) {
       const att = attMenuItems(aw);
       if (att) { holdSheet = true; openCtxSheet(att, mediaSheetHead(aw)); return; }
     }
-    const mt = t.closest('.msg[data-mid]');
-    if (mt && isCoarse()) { holdSheet = true; openMsgSheet(mt.dataset.mid); return; }
     const ch = t.closest('.chan[data-cid]');
     if (ch && isCoarse()) { holdSheet = true; openChannelSheet(ch.dataset.cid, ch.dataset.ctype); return; }
     const sb = t.closest('.server-btn[data-sid]');

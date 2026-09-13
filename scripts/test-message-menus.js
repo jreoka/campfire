@@ -1,9 +1,12 @@
-// The message / media context menus, the reminder composer and the tabbed inbox
+// The message context menus, the reminder composer and the tabbed inbox
 // (see AGENTS.md verification conventions).
 //
 // The features this pins down:
-//  - a right-click or long-press ON a picture is about the PICTURE (Copy image,
-//    Save image, Copy image link, Open image link) and never the message menu;
+//  - an attachment has no menu of its own: a right-click or long-press on a
+//    picture (or a player, or a file card) opens the MESSAGE's menu with the
+//    file's own rows in it (Copy image, Save image, Copy image link, Open image
+//    link) — so the picture's actions and the message's arrive together, and a
+//    message with no media grows nothing;
 //  - the message menu carries Copy text, Mark unread, Bookmark message and
 //    Create reminder…, plus View reactions whenever the message has any;
 //  - a menu taller than the viewport gets a real scrollbar (max-height +
@@ -268,14 +271,22 @@ async function main() {
     check(scrollbar, 'and it really scrolls');
     await closeCtx();
 
-    console.log('\n[4] a picture has its own menu');
+    console.log('\n[4] a picture\'s rows ride in the message menu');
+    // The attachment goes on the MESSAGE RECORD (the menu's own source) and a
+    // synthetic element with a real box stands in for the bytes, so the pointer
+    // has something to hit — the same identity on both, so the rows cannot
+    // double up.
     await evaluate(`(() => {
+      const m = msgById(${JSON.stringify(mid)});
+      m.attachments = [{ id: 'att-photo', url: '/uploads/files/photo.jpg', name: 'photo.jpg', kind: 'image', scan: 'clean' }];
       const msg = document.querySelector(${JSON.stringify(textSel)});
       const wrap = document.createElement('span');
       wrap.className = 'att-wrap';
+      wrap.dataset.attId = 'att-photo';
       wrap.dataset.fbUrl = '/uploads/files/photo.jpg';
       wrap.dataset.fbName = 'photo.jpg';
       wrap.dataset.fbKind = 'image';
+      wrap.dataset.fbScan = 'clean';
       wrap.innerHTML = '<img class="att-img" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="photo" />';
       msg.appendChild(wrap);
       return 1;
@@ -288,14 +299,18 @@ async function main() {
     })()`);
     await sleep(150);
     const imgMenu = await labels();
-    for (const want of ['Copy image', 'Save image', 'Copy image link', 'Open image link']) {
-      check(imgMenu.some((l) => l.includes(want)), 'the image menu carries ' + want, imgMenu);
+    for (const want of ['Copy image', 'Save image', 'Copy image link', 'Open image link', 'Harbin info']) {
+      check(imgMenu.some((l) => l.includes(want)), 'right-clicking the picture carries ' + want, imgMenu);
     }
-    check(!imgMenu.some((l) => l.includes('Mark unread')), 'and is the picture\'s menu, not the message\'s', imgMenu);
+    check(imgMenu.filter((l) => l.includes('Save image')).length === 1, 'the picture\'s rows appear exactly once', imgMenu);
+    check(imgMenu.some((l) => l.includes('Copy text')) && imgMenu.some((l) => l.includes('Mark unread')),
+      'and it is the MESSAGE menu, with the picture\'s rows merged in — not a menu of its own', imgMenu);
     await closeCtx();
 
     await evaluate(`(() => {
+      msgById(${JSON.stringify(mid)}).attachments = [{ id: 'att-clip', url: '/uploads/files/clip.mp4', name: 'clip.mp4', kind: 'video', scan: 'clean' }];
       const wrap = document.querySelector(${JSON.stringify(textSel)} + ' .att-wrap');
+      wrap.dataset.attId = 'att-clip';
       wrap.dataset.fbUrl = '/uploads/files/clip.mp4';
       wrap.dataset.fbName = 'clip.mp4';
       wrap.dataset.fbKind = 'video';
@@ -311,9 +326,10 @@ async function main() {
     await sleep(150);
     const vidMenu = await labels();
     for (const want of ['Save video', 'Copy video link', 'Open video link']) {
-      check(vidMenu.some((l) => l.includes(want)), 'the video menu carries ' + want, vidMenu);
+      check(vidMenu.some((l) => l.includes(want)), 'the video adds ' + want, vidMenu);
     }
     check(!vidMenu.some((l) => l.includes('Copy video') && !l.includes('link')), 'and never promises to copy the bytes of a video', vidMenu);
+    check(vidMenu.some((l) => l.includes('Copy text')), 'in the same combined menu', vidMenu);
     await closeCtx();
 
     console.log('\n[5] bookmarking from the menu really round-trips');
@@ -514,16 +530,19 @@ async function main() {
       check(phoneSheet.labels.some((l) => l.includes('Mark unread')), 'and mark unread', phoneSheet.labels);
     }
     await closeSheet();
-    // A picture with a real box: the media sheet is opened by holding the
-    // picture itself, so the finger has to land on the picture.
+    // A picture with a real box: the picture is held itself, so the finger has
+    // to land on it. Its rows arrive in the MESSAGE sheet, with the message's.
     await evaluate(`(() => {
       document.querySelectorAll('.att-wrap').forEach((w) => w.remove());
+      msgById(${JSON.stringify(mid)}).attachments = [{ id: 'att-phone', url: '/uploads/files/phone.jpg', name: 'phone.jpg', kind: 'image', scan: 'clean' }];
       const msg = document.querySelector(${JSON.stringify(textSel)});
       const wrap = document.createElement('span');
       wrap.className = 'att-wrap';
+      wrap.dataset.attId = 'att-phone';
       wrap.dataset.fbUrl = '/uploads/files/phone.jpg';
       wrap.dataset.fbName = 'phone.jpg';
       wrap.dataset.fbKind = 'image';
+      wrap.dataset.fbScan = 'clean';
       wrap.style.display = 'block';
       wrap.innerHTML = '<img class="att-img" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" style="display:block;width:220px;height:140px" alt="phone" />';
       msg.appendChild(wrap);
@@ -546,7 +565,9 @@ async function main() {
       await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
       await sleep(250);
       check(!!mediaSheet && mediaSheet.labels.some((l) => l.includes('Save image')) && mediaSheet.labels.some((l) => l.includes('Copy image link')),
-        'a long-press ON the picture opens the media sheet, not the message sheet', mediaSheet);
+        'holding the picture slides up the message sheet with the picture\'s rows in it', mediaSheet);
+      check(!!mediaSheet && mediaSheet.labels.some((l) => l.includes('Copy text')) && mediaSheet.labels.some((l) => l.includes('Mark unread')),
+        'and the message\'s own rows are in the same sheet', mediaSheet && mediaSheet.labels);
     }
     await closeSheet();
     // A deliberately long menu, opened as a sheet, then dragged taller by its handle.
