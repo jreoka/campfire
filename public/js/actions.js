@@ -63,15 +63,16 @@ const RX_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stro
 function sysMenuItems(m) {
   return [{ label: 'Copy text', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(m.content || ''); toast('Copied'); } catch {} } }];
 }
-// The GIF a message carries, if it came from the picker: that post keeps the
-// Klipy item's identity on the attachment (see cleanGifMeta in server.js), which
-// is the whole shape a favorite needs. An uploaded .gif has none — nothing to
-// favorite, no menu row.
+// The GIF a message carries, if it is one a favorite can name: a picker post
+// keeps the Klipy item's slug on the attachment (see cleanGifMeta in
+// server.js), and a GIF posted before the picker stamped that is keyed on the
+// md.gif url it was posted with (gifFavKeyFor in messages.js). An uploaded .gif
+// has neither — nothing to favorite, so no menu row.
 function gifFavOf(m) {
-  const a = (m.attachments || []).find((x) => x.gif_slug);
+  const a = (m.attachments || []).find((x) => gifFavKeyFor(x));
   if (!a) return null;
   return {
-    slug: a.gif_slug,
+    slug: gifFavKeyFor(a),
     title: String(a.name || '').replace(/\.gif$/i, ''),
     gif: a.url,
     thumb: a.gif_thumb || a.url,
@@ -90,7 +91,7 @@ function messageMenuItems(m, mid, x, y) {
   // picture's own star (see attFavHTML in messages.js) writes the same favorite.
   const gifFav = gifFavOf(m);
   if (gifFav) {
-    const on = (S.gifFavs || []).some((f) => f.slug === gifFav.slug);
+    const on = gifFavMatch(S.gifFavs, gifFav.slug, gifFav.gif);
     items.push({ label: on ? 'Remove GIF from favorites' : 'Add GIF to favorites', icon: GIF_STAR_SVG, fn: () => toggleGifFav(gifFav) });
   }
   if (!dm && !m.threadRoot) items.push({ label: 'Open thread', icon: '💬', fn: () => openThread(mid) });

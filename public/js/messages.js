@@ -25,20 +25,54 @@ function updateMsgInCaches(mid, fn) {
 }
 const DL_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>';
 function attDl(a) { return `<a class="att-dl" href="${esc(a.url)}" download="${esc(a.name)}" target="_blank" rel="noopener" title="Download">${DL_ICON}</a>`; }
+// ---------- starring a GIF that was shared in chat ----------
 // A GIF posted from the picker carries the Klipy item it came from on the
 // attachment itself (gif_slug/gif_thumb/gif_mp4 — see cleanGifMeta in
-// server.js), so it can be starred straight into the same per-user favorites
-// the picker's own tiles write; the picker then shows it starred too. A GIF
-// uploaded as a file has no Klipy identity behind it, so it gets no star.
-// Same corner affordance as `.pk-star` on a picker tile, mirrored to the LEFT
-// because the download button owns the top-right of every attachment.
+// server.js), and that slug is what a favorite is keyed on. A GIF posted BEFORE
+// the picker stamped any of that still has an identity of its own, though: the
+// md.gif url the picker posted, which is stable for the life of the Klipy item.
+// So a remote GIF attachment with no slug is keyed on a short deterministic hash
+// of that url instead (which the favorites table accepts as a slug — see
+// GIF_FAV_SLUG_RE), and every lookup matches a favorite by key OR by its gif
+// url, so the two ways of naming the same GIF always resolve to one row.
+// An UPLOADED .gif has neither a Klipy item nor an https url behind it, and the
+// favorites route only takes http(s): it gets no star rather than a dead one.
 const ATT_STAR_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l2.9 6.9 7.1.6-5.4 4.7 1.6 7-6.2-3.8-6.2 3.8 1.6-7-5.4-4.7 7.1-.6z"/></svg>';
+function gifUrlFavKey(url) {
+  // FNV-1a twice from different offsets — a ~64-bit key in base36. Stability
+  // across devices and sessions is the whole point: the same GIF posted twice
+  // must resolve to one favorite.
+  const h = (seed) => {
+    let x = seed;
+    for (let i = 0; i < url.length; i++) { x ^= url.charCodeAt(i); x = Math.imul(x, 16777619) >>> 0; }
+    return x.toString(36);
+  };
+  return 'u' + h(2166136261) + h(1099511628);
+}
+// The identity a favorite is written under: the Klipy slug when the post has
+// one, else the url-derived key for a remote GIF, else '' (nothing to star).
+function gifFavKeyFor(a) {
+  if (!a) return '';
+  if (a.gif_slug) return a.gif_slug;
+  if (a.kind !== 'image' || a.mime !== 'image/gif' || !/^https:\/\//.test(String(a.url || ''))) return '';
+  return gifUrlFavKey(a.url);
+}
+// Is this GIF already in the account's favorites? By key, or by the gif it
+// points at — a GIF starred from chat before the picker knew its slug, then
+// starred again from a picker tile, is one row, not two. `favs` is the caller's
+// list (the picker passes S.gifFavs explicitly); a null one falls back to the
+// account's, and the markup path runs fine without any app state at all.
+function gifFavMatch(favs, key, gifUrl) {
+  const list = favs || (typeof S !== 'undefined' && S.gifFavs) || [];
+  return list.some((f) => f && ((!!key && f.slug === key) || (!!gifUrl && f.gif === gifUrl)));
+}
 function attFavHTML(a) {
-  if (!a || !a.gif_slug) return '';
-  const on = !!(typeof S !== 'undefined' && S.gifFavs && S.gifFavs.some((f) => f.slug === a.gif_slug));
+  const key = gifFavKeyFor(a);
+  if (!key) return '';
+  const on = gifFavMatch(null, key, a.url);
   const label = on ? 'Remove from favorites' : 'Add to favorites';
   return `<button type="button" class="att-star${on ? ' on' : ''}" data-act="gif-fav"` +
-    ` data-gif-slug="${esc(a.gif_slug)}" data-gif-url="${esc(a.url)}" data-gif-thumb="${esc(a.gif_thumb || '')}"` +
+    ` data-gif-key="${esc(key)}" data-gif-url="${esc(a.url)}" data-gif-thumb="${esc(a.gif_thumb || a.url || '')}"` +
     ` data-gif-mp4="${esc(a.gif_mp4 || '')}" data-gif-title="${esc(String(a.name || '').replace(/\.gif$/i, ''))}"` +
     ` title="${label}" aria-label="${label}" aria-pressed="${on ? 'true' : 'false'}">${ATT_STAR_SVG}</button>`;
 }

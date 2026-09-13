@@ -307,8 +307,9 @@ gitignored; `deploy/hetzner/README.md` has the cluster-Secret → env mapping.
 Shipped: auth, servers/invites, text channels, voice rooms (mesh WebRTC, sidebar
 occupants + VAD rings), uploads, emoji (Emojibase set + custom + Klipy GIFs whose
 per-account favorites are written from a picker tile OR from the star on a GIF
-somebody posted in chat — the attachment carries the Klipy identity, see
-`cleanGifMeta`/`attFavHTML`),
+somebody posted in chat — a picker post carries the Klipy identity on the
+attachment (`cleanGifMeta`/`attFavHTML`), and a GIF posted before that existed is
+keyed on a hash of its own md.gif url, so both resolve to one row),
 replies/threads/reactions/edits/mentions/markdown, presence + statuses, user
 cards, tabbed settings, rail folders + DnD, B&W theme, ctx menus, a deploy
 banner (never a forced reload),

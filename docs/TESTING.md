@@ -795,25 +795,33 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   write that list, but a posted GIF was only bytes with an opaque Klipy CDN url —
   nothing in it leads back to the item, so the picker now stamps the Klipy
   identity on the attachment it sends, the server validates and stores it, and
-  the chat draws a star on that GIF). Offline it runs the real `cleanGifMeta`
-  (a slug/thumb/mp4 survive, a junk slug or a non-http thumb is dropped, and an
-  UPLOADED gif never gets an identity at all) and the two real writers sliced out
-  of `pickers.js`: a star on a chat GIF and a picker tile must POST
-  byte-identical bodies for the same GIF, and un-starring is one DELETE by slug —
-  if those two ever drift, "one list" quietly becomes two. Headless Chrome then
-  renders the REAL `attachmentHTML` against `styles.css`: the star is on a picker
-  GIF and nowhere else (not on an uploaded picture, not on an uploaded .gif), it
-  carries the whole favorite in its `data-*` attributes, it sits inside the
-  picture and clear of the download button, it waits for the hover on a mouse
-  device, and its "on" state is the account's list. Finally a real server against
-  a throwaway database (skipping without Postgres) proves the round trip: the
-  identity survives post → history for a channel AND a DM, a local upload or a
-  bogus slug never keeps one, a favorite written from what the server handed a
-  reader lands in that account's list and never in another's, re-starring the
-  same GIF updates the one row, and the routes refuse a junk slug / a non-http
-  gif / an unauthenticated caller. Re-run it after touching `cleanGifMeta`,
-  `attWire`, the attachment inserts, `sendGif`, `attFavHTML`, the `.att-star`
-  rules, or the gif-favorites routes.
+  the chat draws a star on that GIF). A GIF posted BEFORE that stamping existed
+  is still starrable: it has no slug, but the md.gif url it was posted with is a
+  stable identity of its own, so the client keys the favorite on a deterministic
+  hash of that url (which the favorites route accepts as a slug) and every lookup
+  matches by key OR by the gif itself — so the same GIF starred from chat and
+  then from a picker tile is one row, never two. Offline it runs the real
+  `cleanGifMeta` and the real key helpers out of `messages.js` (a remote GIF with
+  no slug gets a stable key; an UPLOADED .gif and a non-GIF remote picture get
+  none, because the favorites route would refuse their url) plus the two real
+  writers sliced out of `pickers.js`: a star on a chat GIF and a picker tile must
+  POST byte-identical bodies for the same GIF, and un-starring is one DELETE by
+  slug. Headless Chrome then renders the REAL `attachmentHTML` against
+  `styles.css`: the star is on a starrable GIF and nowhere else, it carries the
+  whole favorite in its `data-*` attributes, it sits beside the download button
+  in the picture's top-right corner with enough gap that the two 44px thumb boxes
+  cannot overlap, it waits for the hover on a mouse device, and its "on" state is
+  the account's list — by slug, by url key, or via a row the picker wrote under
+  the real slug. Finally a real server against a throwaway database (skipping
+  without Postgres) proves the round trip: the identity survives post → history
+  for a channel AND a DM, a local upload or a bogus slug never keeps one, a
+  favorite written from what the server handed a reader lands in that account's
+  list and never in another's, re-starring the same GIF updates the one row, a
+  pre-deploy GIF with no identity at all is starrable off its url alone, and the
+  routes refuse a junk slug / a non-http gif / an unauthenticated caller. Re-run
+  it after touching `cleanGifMeta`, `attWire`, the attachment inserts, `sendGif`,
+  `attFavHTML`/`gifFavKeyFor`, the `.att-star` rules, or the gif-favorites
+  routes.
   `node scripts/test-upload-cards.js` covers the composer's upload cards
   (headless Chrome, skipping without Chrome; it runs the REAL upload block sliced
   out of `messages.js` against a fake XMLHttpRequest, then checks the wiring

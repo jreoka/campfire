@@ -222,7 +222,6 @@ function renderGifTab() {
   box.innerHTML = '';
   const q = gifQuery.toLowerCase();
   const n = S.gifFavs ? S.gifFavs.length : null;
-  const favSlugs = new Set((S.gifFavs || []).map((f) => f.slug));
   $('#pk-search').placeholder = gifSubView === 'favs' ? 'Search favorites' : 'Search KLIPY';
   if (gifSubView === 'favs') {
     box.insertAdjacentHTML('beforeend',
@@ -242,7 +241,7 @@ function renderGifTab() {
         ? S.gifFavs.filter((g) => (g.title || '').toLowerCase().includes(q) || (g.slug || '').includes(q))
         : S.gifFavs;
       if (!favs.length) {
-        box.insertAdjacentHTML('beforeend', `<div class="pk-empty small">${q ? 'No favorites match.' : 'No favorites yet — star a GIF in All GIFs to add them here.'}</div>`);
+        box.insertAdjacentHTML('beforeend', `<div class="pk-empty small">${q ? 'No favorites match.' : 'No favorites yet — star a GIF in All GIFs, or star one somebody posted in chat.'}</div>`);
       } else {
         for (const g of favs) box.appendChild(gifButton(g, true, () => sendGif(g)));
       }
@@ -259,7 +258,9 @@ function renderGifTab() {
     box.insertAdjacentHTML('beforeend', `<div class="pk-sec">${q ? 'KLIPY results' : 'Trending'}</div>`);
     if (gifResults === null) box.insertAdjacentHTML('beforeend', '<div class="pk-empty small">Loading…</div>');
     else if (!gifResults.length) box.insertAdjacentHTML('beforeend', `<div class="pk-empty small">${gifFailed ? 'GIFs unavailable.' : 'No GIFs found.'}</div>`);
-    else for (const g of gifResults) box.appendChild(gifButton(g, favSlugs.has(g.slug), () => sendGif(g)));
+    // A tile reads starred if the account has that GIF — by Klipy slug, or by
+    // the gif itself (a row written from a chat star that predates the slug).
+    else for (const g of gifResults) box.appendChild(gifButton(g, gifFavMatch(S.gifFavs, g.slug, g.gif), () => sendGif(g)));
   }
 }
 // ---------- GIF favorites (per-user, synced across devices) ----------
@@ -295,11 +296,14 @@ function ensureGifFavs() {
 }
 async function toggleGifFav(g) {
   if (!g || !g.slug) return;
-  const fav = (S.gifFavs || []).some((f) => f.slug === g.slug);
+  // Resolve by key OR by the gif itself: the same GIF can already be in the list
+  // under a url-derived key (starred from chat before this picker knew its
+  // slug), and that row is the one to remove — never a second row.
+  const hit = (S.gifFavs || []).find((f) => f && ((!!g.slug && f.slug === g.slug) || (!!g.gif && f.gif === g.gif)));
   try {
-    if (fav) {
-      await api('/api/me/gif-favorites/' + encodeURIComponent(g.slug), { method: 'DELETE' });
-      S.gifFavs = S.gifFavs.filter((f) => f.slug !== g.slug);
+    if (hit) {
+      await api('/api/me/gif-favorites/' + encodeURIComponent(hit.slug), { method: 'DELETE' });
+      S.gifFavs = S.gifFavs.filter((f) => f.slug !== hit.slug);
     } else {
       const saved = await api('/api/me/gif-favorites', {
         method: 'POST',
@@ -310,11 +314,13 @@ async function toggleGifFav(g) {
     refreshFavViews();
   } catch (err) { toast('Favorites update failed: ' + prettyError(err.message)); }
 }
-// A star clicked on a GIF in chat carries the attachment's own Klipy identity
-// (its data-* attributes), which is exactly the shape toggleGifFav writes.
+// A star clicked on a GIF in chat carries the attachment's own identity (its
+// data-* attributes): the Klipy slug, or the url-derived key when the post
+// predates the picker stamping one. Either way it is exactly the shape
+// toggleGifFav writes.
 function chatGifFavFromBtn(btn) {
   return {
-    slug: btn.dataset.gifSlug || '',
+    slug: btn.dataset.gifKey || '',
     title: btn.dataset.gifTitle || '',
     gif: btn.dataset.gifUrl || '',
     thumb: btn.dataset.gifThumb || btn.dataset.gifUrl || '',
@@ -324,12 +330,11 @@ function chatGifFavFromBtn(btn) {
 // Repaint every chat star in place. A full message rebuild would jump the
 // scroll (and re-request every picture) for a change that touches one button.
 function paintChatGifStars() {
-  const stars = document.querySelectorAll('.att-star[data-gif-slug]');
+  const stars = document.querySelectorAll('.att-star[data-gif-key]');
   if (!stars.length) return;
   if (S.gifFavs === null) { ensureGifFavs(); return; } // repaints when it lands
-  const on = new Set((S.gifFavs || []).map((f) => f.slug));
   for (const b of stars) {
-    const isOn = on.has(b.dataset.gifSlug);
+    const isOn = gifFavMatch(S.gifFavs, b.dataset.gifKey, b.dataset.gifUrl);
     const label = isOn ? 'Remove from favorites' : 'Add to favorites';
     b.classList.toggle('on', isOn);
     b.setAttribute('aria-pressed', isOn ? 'true' : 'false');

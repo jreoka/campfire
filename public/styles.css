@@ -971,13 +971,14 @@ body.ub-open #lightbox #lb-stage{padding-top:calc(4.4rem + var(--safe-t) + var(-
 .att-dl:hover{background:rgba(0,0,0,.85);color:#fff}
 .att-wrap:hover .att-dl,.att-dl:focus-visible{opacity:1}
 @media (hover:none){.att-dl{opacity:1}}
-/* The star on a GIF that came from the picker (see attFavHTML in messages.js):
-   the same affordance as a `.pk-star` on a picker tile, mirrored to the top-LEFT
-   because the download button owns the top-right of every attachment. It follows
-   the download button's reveal-on-hover rule (an unconditional ::after hit box
-   supplies the thumb target, see "tap targets"), and on touch it is simply
-   always there — there is nothing to hover with. */
-.att-star{position:absolute;top:.45rem;left:.45rem;display:flex;align-items:center;justify-content:center;width:30px;height:30px;border:0;padding:0;border-radius:9px;background:rgba(9,12,24,.55);color:#fff;cursor:pointer;opacity:0;z-index:2;transition:opacity .15s,background var(--t-fast),transform var(--t-press) var(--ease-native)}
+/* The star on a GIF that can be favorited (see attFavHTML in messages.js): the
+   same affordance as a `.pk-star` on a picker tile, sitting beside the download
+   button in the picture's top-right corner — its own `.45rem` edge, then a
+   `.8rem` gap, then that button's 32px circle (the gap is wide enough that the
+   two 44px thumb hit boxes cannot overlap; see "tap targets"). Both are revealed
+   together on hover, and on touch they are simply always there: there is nothing
+   to hover with, and an unconditional ::after supplies each hit box. */
+.att-star{position:absolute;top:.45rem;right:calc(.45rem + 32px + .8rem);display:flex;align-items:center;justify-content:center;width:32px;height:32px;border:0;padding:0;border-radius:10px;background:rgba(9,12,24,.55);color:#fff;cursor:pointer;opacity:0;z-index:2;transition:opacity .15s,background var(--t-fast),transform var(--t-press) var(--ease-native)}
 .att-star svg{width:16px;height:16px;fill:none;stroke:#fff;stroke-width:2}
 .att-star.on svg{fill:var(--accent);stroke:var(--accent)}
 .att-star:hover{background:rgba(9,12,24,.82)}

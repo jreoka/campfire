@@ -92,6 +92,10 @@ function loadWriters() {
   return new Function('S', 'api', 'toast', 'prettyError', 'refreshFavViews',
     src + '\nreturn { toggleGifFav, chatGifFavFromBtn };');
 }
+// The real identity helpers out of messages.js (the markup's own key function).
+const favKey = new Function(
+  slice(messages, 'function gifUrlFavKey(url) {', 'function attFavHTML(') +
+  '\nreturn { gifUrlFavKey, gifFavKeyFor, gifFavMatch };')();
 
 // ---------- [A] the wiring, offline ----------
 function wiringChecks() {
@@ -140,31 +144,42 @@ function wiringChecks() {
   console.log('\n[A4] the star is on the picture, and the menu carries the same action');
   check(/function attFavHTML\(a\)/.test(messages) && /\$\{attFavHTML\(a\)\}/.test(messages),
     'the image branch renders it');
-  check(/if \(!a \|\| !a\.gif_slug\) return '';/.test(messages),
-    'only a GIF that came from the picker gets one — an uploaded picture never does');
-  check(/data-act="gif-fav"/.test(messages) && /data-gif-slug="\$\{esc\(a\.gif_slug\)\}"/.test(messages) &&
+  check(/function gifFavKeyFor\(a\)/.test(messages) && /if \(a\.gif_slug\) return a\.gif_slug;/.test(messages),
+    'a picker post is keyed on its Klipy slug');
+  check(/a\.kind !== 'image' \|\| a\.mime !== 'image\/gif' \|\| !\/\^https:\\\/\\\/\/\.test\(String\(a\.url \|\| ''\)\)/.test(messages)
+    && /return gifUrlFavKey\(a\.url\);/.test(messages),
+    'and a GIF posted before the picker stamped one is keyed on its md.gif url — but an UPLOADED .gif (no https url) never is',
+    (messages.match(/return gifUrlFavKey\(a\.url\);/g) || []).length);
+  check(/function gifUrlFavKey\(url\)/.test(messages) && /Math\.imul\(x, 16777619\)/.test(messages),
+    'the url key is a plain deterministic hash, so two sessions derive the same one');
+  check(/const hit = \(S\.gifFavs \|\| \[\]\)\.find\(\(f\) => f && \(\(!!g\.slug && f\.slug === g\.slug\) \|\| \(!!g\.gif && f\.gif === g\.gif\)\)\);/.test(pickers),
+    'and every lookup matches a favorite by key OR by the gif it points at, so the two names for one GIF resolve to one row');
+  check(/data-act="gif-fav"/.test(messages) && /data-gif-key="\$\{esc\(key\)\}"/.test(messages) &&
     /data-gif-url="\$\{esc\(a\.url\)\}"/.test(messages) && /data-gif-thumb=/.test(messages) && /data-gif-mp4=/.test(messages),
-    'the button carries the whole favorite (slug, gif, thumb, mp4) — no lookup needed');
+    'the button carries the whole favorite (key, gif, thumb, mp4) — no lookup needed');
   check(/aria-pressed="\$\{on \? 'true' : 'false'\}"/.test(messages),
     'and its pressed state, so the star is legible to a screen reader');
   check(/else if \(act === 'gif-fav'\) toggleGifFav\(chatGifFavFromBtn\(actEl\)\);/.test(pickers),
     'the shared click delegate routes it to the ONE favorites writer');
-  check(/const gifFav = gifFavOf\(m\);/.test(actions) && /Add GIF to favorites/.test(actions) && /Remove GIF from favorites/.test(actions),
+  check(/const a = \(m\.attachments \|\| \[\]\)\.find\(\(x\) => gifFavKeyFor\(x\)\);/.test(actions)
+    && /Add GIF to favorites/.test(actions) && /Remove GIF from favorites/.test(actions),
     'the message menu offers the same action for a touch/keyboard path');
   const imageBranch = slice(messages, "if (a.kind === 'image') {", "if (a.kind === 'video')");
   check(imageBranch.includes('${attFavHTML(a)}') && (messages.match(/attFavHTML\(a\)/g) || []).length === 2,
     'and it rides the image branch only (never a video or a file card)',
     (messages.match(/attFavHTML\(a\)/g) || []).length);
+  check(/else for \(const g of gifResults\) box\.appendChild\(gifButton\(g, gifFavMatch\(S\.gifFavs, g\.slug, g\.gif\),/.test(pickers),
+    'a picker tile reads starred from either key too (starred in chat, lit in All GIFs)');
 
   console.log('\n[A5] the stylesheet and the boot load');
-  check(/\.att-star\{[^}]*position:absolute[^}]*left:\.45rem/.test(css),
-    'the star is pinned to the top-LEFT (the download button owns the top-right)');
+  check(/\.att-star\{[^}]*position:absolute[^}]*top:\.45rem;right:calc\(\.45rem \+ 32px \+ \.8rem\)/.test(css),
+    'the star sits beside the download button in the top-right corner (a .8rem gap keeps their hit boxes apart)');
   check(/\.att-wrap:hover \.att-star,\.att-star:focus-visible\{opacity:1\}/.test(css) && /@media \(hover:none\)\{\.att-star\{opacity:\.9\}\}/.test(css),
     'revealed on hover, always visible where there is no hover');
   check(/\.att-star\.on svg\{fill:var\(--accent\);stroke:var\(--accent\)\}/.test(css) && /\.pk-star\.on svg\{fill:var\(--accent\);stroke:var\(--accent\)\}/.test(css),
     'a starred GIF reads like a starred picker tile (same accent fill)');
   check(/\.att-star::after\{[^}]*width:var\(--tap\);height:var\(--tap\)\}/.test(css),
-    'its 30px face grows a 44px thumb target (a pinned control already owns the box)');
+    'its 32px face grows a 44px thumb target (a pinned control already owns the box)');
   check(/\.att-star:active\{transform:scale\(\.92\)\}/.test(css) && /\.att-star:active\{transform:none\}/.test(css),
     'it presses like the rest of the app, and stands still under reduced motion');
   check(/try \{ ensureGifFavs\(\); \} catch \{\}/.test(auth),
@@ -191,7 +206,7 @@ async function writerChecks() {
   // The dataset attFavHTML puts on the button, built here from the same values
   // (section [C] proves the real markup carries exactly these).
   const btn = { dataset: {
-    gifSlug: gif.slug, gifUrl: gif.gif, gifThumb: gif.thumb, gifMp4: gif.mp4,
+    gifKey: gif.slug, gifUrl: gif.gif, gifThumb: gif.thumb, gifMp4: gif.mp4,
     gifTitle: gif.title,
   } };
   const calls = [];
@@ -233,6 +248,47 @@ async function writerChecks() {
   check(/GIF_FAV_SLUG_RE\.test\(slug\)/.test(server) && cleaner.GIF_FAV_SLUG_RE.source === /^[a-z0-9_-]{1,80}$/i.source,
     'the favorites route validates the slug with the very regex the cleaner does');
   check(/isHttpUrl\(gif\)/.test(server), 'and the gif itself must be an http(s) url (so an uploaded path can never be favorited)');
+
+  console.log('\n[B4] a GIF posted before the picker stamped its slug still has a name');
+  const old = { kind: 'image', mime: 'image/gif', url: 'https://static.klipy.com/ii/4493325008d34b7bf8cd6813cd5c1619/1a/2b/oldOne.gif', name: 'Old GIF.gif' };
+  const key = favKey.gifFavKeyFor(old);
+  check(/^u[a-z0-9]+$/.test(key) && key.length >= 12 && key === favKey.gifFavKeyFor({ ...old }),
+    'a remote GIF with no slug is keyed on a deterministic hash of its url', key);
+  check(key !== favKey.gifFavKeyFor({ ...old, url: old.url.replace('oldOne', 'other') }),
+    'a different GIF gets a different key');
+  check(cleaner.GIF_FAV_SLUG_RE.test(key),
+    'and the key is a slug the favorites route accepts — the server never has to know how it was made', key);
+  check(favKey.gifFavKeyFor({ kind: 'image', mime: 'image/gif', url: '/uploads/files/cat.gif' }) === '',
+    'an UPLOADED .gif gets no key at all (the favorites route would refuse its url)');
+  check(favKey.gifFavKeyFor({ kind: 'image', mime: 'image/png', url: 'https://example.com/a.png' }) === '',
+    'nor does a remote picture that is not a GIF');
+  check(favKey.gifFavKeyFor({ kind: 'image', mime: 'image/gif', url: old.url, gif_slug: 'sunday-al' }) === 'sunday-al',
+    'a post that DOES carry the Klipy slug is keyed on that, not on its url');
+  check(favKey.gifFavMatch([{ slug: key, gif: old.url }], 'sunday-al', old.url) === true &&
+    favKey.gifFavMatch([{ slug: 'sunday-al', gif: old.url }], key, old.url) === true &&
+    favKey.gifFavMatch([{ slug: 'sunday-al', gif: 'https://static.klipy.com/other.gif' }], key, old.url) === false,
+    'and a lookup matches by key OR by the gif, so the two names for one GIF are one row');
+
+  console.log('\n[B5] the same GIF starred from chat and then from a picker tile is ONE row');
+  {
+    const calls2 = [];
+    const S2 = { gifFavs: [] };
+    const api2 = async (p, opts = {}) => {
+      calls2.push({ p, method: opts.method || 'GET', body: opts.body ? JSON.parse(opts.body) : null });
+      if (opts.method === 'POST') return JSON.parse(opts.body);
+      return { ok: true };
+    };
+    const W = loadWriters()(S2, api2, () => {}, (m) => m, () => {});
+    // Starred from chat before the picker knew the slug: a url-keyed row.
+    await W.toggleGifFav({ slug: key, title: 'Old GIF', gif: old.url, thumb: old.url, mp4: null });
+    calls2.length = 0;
+    // Now the picker tile for that SAME GIF — its Klipy slug, and the same md.gif
+    // url the chat post carried, which is what ties the two names together.
+    await W.toggleGifFav({ ...gif, gif: old.url });
+    check(calls2.length === 1 && calls2[0].method === 'DELETE' && calls2[0].p === '/api/me/gif-favorites/' + key,
+      'the tile REMOVES the url-keyed row instead of adding a second one', calls2);
+    check(S2.gifFavs.length === 0, 'and the account is left with neither (one GIF, one star state)', S2.gifFavs);
+  }
 }
 
 // ---------- [C] the star, in a real browser ----------
@@ -308,32 +364,50 @@ async function browserChecks(chrome, gifAtt) {
   console.log('\n[C1] the star renders on a picker GIF, and carries the whole favorite');
   const out = await runChrome(chrome, pageHtml(gifAtt, []));
   if (out.err) { check(false, 'headless Chrome rendered the real markup', out); return null; }
-  check(out.star && out.star.gifSlug === gifAtt.gif_slug && out.star.gifUrl === gifAtt.url &&
+  check(out.star && out.star.gifKey === gifAtt.gif_slug && out.star.gifUrl === gifAtt.url &&
     out.star.gifThumb === gifAtt.gif_thumb && out.star.gifMp4 === gifAtt.gif_mp4 && out.star.gifTitle === 'Al Roker Shouts Sunday',
-    'the button carries slug, gif, thumb, mp4 and the title (with the .gif suffix stripped)', out.star);
+    'the button carries the key, gif, thumb, mp4 and the title (with the .gif suffix stripped)', out.star);
   check(out.on === false && out.pressed === 'false' && out.title === 'Add to favorites',
     'an unstarred GIF reads as unstarred', out);
   check(out.opacity === '0', 'and on a mouse device it waits for the hover (like the download button)', out.opacity);
 
-  console.log('\n[C2] it sits on the picture, clear of the download button');
+  console.log('\n[C2] it sits beside the download button, on the picture');
   check(out.starBox && out.wrap && out.starBox.x >= out.wrap.x && out.starBox.y >= out.wrap.y &&
     out.starBox.right <= out.wrap.right && out.starBox.bottom <= out.wrap.bottom,
     'inside the picture\'s own box', { star: out.starBox, wrap: out.wrap });
-  check(out.starBox && out.dlBox && out.starBox.right < out.dlBox.x,
-    'and clear of the download button (which owns the other corner)', { star: out.starBox, dl: out.dlBox });
-  check(out.starBox && out.starBox.x - out.wrap.x < out.wrap.w / 2 && out.starBox.y - out.wrap.y < out.wrap.h / 2,
-    'top-left, not somewhere in the middle', { star: out.starBox, wrap: out.wrap });
+  check(out.starBox && out.dlBox && out.starBox.right < out.dlBox.x && out.starBox.y === out.dlBox.y,
+    'clear of the download button, and level with it', { star: out.starBox, dl: out.dlBox });
+  check(out.starBox && out.dlBox && (out.dlBox.x - out.starBox.right) >= 12,
+    'with enough gap that their 44px thumb boxes cannot overlap', { star: out.starBox, dl: out.dlBox });
+  check(out.starBox && out.starBox.x - out.wrap.x > out.wrap.w / 2 && out.starBox.y - out.wrap.y < 12,
+    'top-right, on the picture\'s top edge', { star: out.starBox, wrap: out.wrap });
 
   console.log('\n[C3] the account\'s list is what the star shows');
-  const on = await runChrome(chrome, pageHtml(gifAtt, [{ slug: gifAtt.gif_slug, title: 'x', thumb: 't', gif: 'g', mp4: null }]));
+  const on = await runChrome(chrome, pageHtml(gifAtt, [{ slug: gifAtt.gif_slug, title: 'x', thumb: 't', gif: gifAtt.url, mp4: null }]));
   check(!on.err && on.on === true && on.pressed === 'true' && on.title === 'Remove from favorites',
     'a GIF already in the favorites paints starred', on);
 
-  console.log('\n[C4] nothing else gets a star');
+  console.log('\n[C4] a GIF posted BEFORE the picker stamped its slug is still starrable');
+  const oldGif = {
+    kind: 'image', mime: 'image/gif', name: 'Old GIF.gif', size: 0, scan: 'clean', w: 480, h: 270,
+    url: 'https://static.klipy.com/ii/4493325008d34b7bf8cd6813cd5c1619/1a/2b/oldOne.gif',
+  };
+  const legacy = await runChrome(chrome, pageHtml(oldGif, []));
+  check(!legacy.err && !!legacy.star && /^u[a-z0-9]+$/.test(legacy.star.gifKey || '') && legacy.star.gifThumb === oldGif.url,
+    'it gets a star keyed on its md.gif url (and that url is its own thumb)', legacy.star);
+  const legacyOn = await runChrome(chrome, pageHtml(oldGif, [{ slug: legacy.star && legacy.star.gifKey, title: 'x', thumb: 't', gif: oldGif.url, mp4: null }]));
+  check(!legacyOn.err && legacyOn.on === true, 'and the row written under that key lights it up', legacyOn);
+  const legacyByUrl = await runChrome(chrome, pageHtml(oldGif, [{ slug: 'some-klipy-slug', title: 'x', thumb: 't', gif: oldGif.url, mp4: null }]));
+  check(!legacyByUrl.err && legacyByUrl.on === true,
+    'as does a row the PICKER wrote under the real Klipy slug — the url is what ties them together', legacyByUrl);
+
+  console.log('\n[C5] nothing else gets a star');
   const plain = await runChrome(chrome, pageHtml({ kind: 'image', url: '/uploads/files/photo.png?v=1', name: 'photo.png', w: 800, h: 600 }, []));
   check(!plain.err && !plain.star && !!plain.wrap, 'an uploaded picture has none', plain);
-  const uploadedGif = await runChrome(chrome, pageHtml({ kind: 'image', url: '/uploads/files/cat.gif?v=1', name: 'cat.gif', w: 320, h: 240 }, []));
-  check(!uploadedGif.err && !uploadedGif.star, 'neither has an uploaded .gif (no Klipy item behind it)', uploadedGif);
+  const uploadedGif = await runChrome(chrome, pageHtml({ kind: 'image', mime: 'image/gif', url: '/uploads/files/cat.gif?v=1', name: 'cat.gif', w: 320, h: 240 }, []));
+  check(!uploadedGif.err && !uploadedGif.star, 'neither has an uploaded .gif (its url is not http, so a favorite could not be written)', uploadedGif);
+  const remotePng = await runChrome(chrome, pageHtml({ kind: 'image', mime: 'image/png', url: 'https://example.com/a.png', name: 'a.png', w: 300, h: 200 }, []));
+  check(!remotePng.err && !remotePng.star, 'and a remote picture that is not a GIF does not either', remotePng);
   return out.star;
 }
 
@@ -536,6 +610,37 @@ async function serverChecks() {
     const del = await api('DELETE', '/api/me/gif-favorites/sunday-al', { token: A.token });
     const gone = await api('GET', '/api/me/gif-favorites', { token: A.token });
     check(del.status === 200 && gone.data.favorites.length === 0, 'un-starring removes exactly that row', gone.data.favorites);
+
+    console.log('\n[D6] a GIF posted long before this feature is starrable anyway');
+    // The owner's own case: two Klipy GIFs sat in the database from before the
+    // picker stamped any identity, so there is no slug, thumb or mp4 on the row —
+    // only the md.gif url the picker posted. That url is the identity.
+    const legacyUrl = 'https://static.klipy.com/ii/4493325008d34b7bf8cd6813cd5c1619/1a/2b/legacyOne.gif';
+    asock.send({
+      t: 'message', serverId: srv.id, channelId: chan.id, content: '',
+      attachments: [{ url: legacyUrl, name: 'Old GIF.gif', mime: 'image/gif', size: 0, kind: 'image' }],
+    });
+    const legacyMsg = await waitFor(async () => (await history()).find((m) => (m.attachments || []).some((a) => a.url === legacyUrl)), 6000);
+    const legacyAtt = legacyMsg && legacyMsg.attachments[0];
+    check(!!legacyAtt && legacyAtt.gif_slug === undefined,
+      'the row has no Klipy identity at all (exactly the pre-deploy GIF)', legacyAtt);
+    const legacyKey = legacyAtt ? favKey.gifFavKeyFor(legacyAtt) : '';
+    check(/^u[a-z0-9]+$/.test(legacyKey), 'the client derives one from the url it was posted with', legacyKey);
+    const seen2 = [];
+    const S2 = { gifFavs: [] };
+    const W2 = loadWriters()(S2, async (p, opts = {}) => {
+      const r = await api(opts.method || 'GET', p, { token: A.token, body: opts.body ? JSON.parse(opts.body) : undefined });
+      if (r.status !== 200) throw new Error('http ' + r.status + ' ' + JSON.stringify(r.data));
+      seen2.push({ p, body: opts.body ? JSON.parse(opts.body) : null });
+      return r.data;
+    }, () => {}, (m) => m, () => {});
+    await W2.toggleGifFav({ slug: legacyKey, title: 'Old GIF', gif: legacyAtt.url, thumb: legacyAtt.url, mp4: null });
+    const legacyList = await api('GET', '/api/me/gif-favorites', { token: A.token });
+    check(seen2.length === 1 && legacyList.data.favorites.length === 1 && legacyList.data.favorites[0].slug === legacyKey,
+      'and the server takes it: the old GIF is in the picker\'s favorites now', { post: seen2[0], list: legacyList.data.favorites });
+    const stream = await api('GET', `/api/servers/${srv.id}/channels/${chan.id}/messages`, { token: B.token });
+    check(!!(stream.data.messages || []).find((m) => (m.attachments || []).some((a) => a.url === legacyUrl)),
+      'nothing about the post itself had to change for that to work');
   } catch (e) {
     check(false, 'the live round trip ran', ((e && e.message) || String(e)).slice(0, 600));
   } finally {
