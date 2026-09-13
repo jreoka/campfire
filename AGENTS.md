@@ -194,12 +194,18 @@ declared in the manifest); no tray/watcher on mobile — that Rust code is
 
 The owner will iterate on features **without ever losing persistent data**.
 - Code and data are separate: Postgres data lives in the `pgdata` Docker
-  volume, uploads in `./data`. Never `rm -rf data`, never drop the
-  database, never write destructive one-offs without explicit confirmation.
-  Twice-daily off-site snapshots (database + every media object + the cluster's
-  Secrets) go to a **Cloudflare R2** bucket, deliberately not the media bucket —
-  see `deploy/civo/README.md` §4. Nothing writes to the media bucket's
-  `backups/` prefix any more.
+  volume, media in the R2 bucket `campfire-media`. Never `rm -rf data`, never
+  drop the database, never delete the volume or the bucket, never write
+  destructive one-offs without explicit confirmation. Twice-daily off-site
+  snapshots (database + every media object + every Secret) go to a **second
+  Cloudflare R2 bucket**, `campfire-backup`, written by `backup.js` — runbook
+  `deploy/hetzner/README.md`. Nothing writes to a media bucket's `backups/`
+  prefix any more.
+  **Open risk, stated plainly:** media and backups now live in ONE Cloudflare
+  account, so losing that account costs the live media and the only copies of
+  everything at once. The old Civo/R2 split existed to prevent exactly that.
+  Moving the backups to a third vendor (Backblaze B2, free at this size)
+  restores the separation.
 - Schema changes must be **guarded migrations** (`CREATE TABLE IF NOT EXISTS`,
   `ALTER TABLE ... ADD COLUMN` only when the column is missing — see
   `columnExists`/`addColumn` in `db.js`) so existing databases upgrade in
@@ -227,11 +233,15 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
 
 ## Current state
 
-Live at https://campfire.dill.moe — a **Civo Kubernetes cluster**, namespace
-`campfire`. One Civo Small node (1 vCPU / 2 GiB, ~1.14 GiB allocatable) exposed
-by a **Cloudflare Tunnel** (no LoadBalancer — it would cost more than the node),
-Postgres 18 on a `civo-volume` PVC, coturn in-cluster via `hostNetwork`.
-Manifests + runbook: `deploy/civo/`. See **Deployment** below for how to ship.
+Live at https://campfire.dill.moe — **one Hetzner Cloud VPS** (CX33, 4 vCPU /
+8 GB, Nuremberg `nbg1`) running Docker Compose, fronted by a **Cloudflare
+Tunnel** (outbound-only, so no inbound 80/443 and no certificates to renew),
+with coturn on the host network for TURN and **clamd as a sibling container for
+upload scanning**. Media lives in Cloudflare R2; the doomsday backups do too.
+Runbook: **`deploy/hetzner/README.md`**. See **Deployment** below for how to ship.
+
+The **Civo Kubernetes cluster is scaled to zero** — it is the rollback path, not
+production, and `deploy/civo/` now documents a retired shape.
 
 **The app is replica-safe and the manifest is ready to scale past one node**
 (owner requirement: it must load-balance across nodes when the cluster grows).
@@ -256,13 +266,16 @@ new build raises a banner at the top of the shell with an Update button
 (`#update-banner`, `body.ub-open` makes every full-height surface pay for its
 height).
 
-**The app runs with `VIRUS_SCAN=0` and `MEDIA_COMPRESS` on.** clamd needs ~1 GB
-and the node has ~1.14 GiB allocatable, so AV scanning is off. Compression does
-NOT depend on it: the `virus-scan` slot runs with no engine as a
-compress-and-publish slot, so an upload the compressor would rewrite waits
-(gated, "Processing file") until its encode lands and clients still get exactly
-one `pending -> final` transition. What it will never touch is served the moment
-it lands. Coverage is the whole media tree: chat/DM attachments and **stories**
+**The app runs with `VIRUS_SCAN=1` and `MEDIA_COMPRESS` on.** That is the whole
+point of the Hetzner move: the Civo node had ~1.14 GiB allocatable and clamd
+needs ~1 GB, so the cluster ran with scanning **off**. The VPS has 8 GB, so the
+slot is a real **scan -> compress -> scan** pipeline again and only the last
+clean verdict is published — clients still see exactly one `pending -> final`
+transition, and a file a running player already holds is never swapped
+underneath it. Prove the engine rather than assuming it:
+`node scripts/verify-clamd.js` (PING, EICAR detected, a harmless body cleared so
+it is not an always-guilty engine, and a full-size 50 MB body accepted).
+Coverage is the whole media tree: chat/DM attachments and **stories**
 through the flag-driven queue, and **profile media** (avatars, banners, sidebar
 banners, server icons, custom emoji, webhook avatars, the profile picker's
 history) through the same compressor, which lists the bucket hourly
@@ -273,17 +286,20 @@ ffmpeg can decode** (no floor; `MEDIA_COMPRESS_MIN_KB` restores one).
 `MAX_FILE_MB=50`, because S3 mode buffers every
 upload in RAM, and `VIRUS_SCAN_CONCURRENCY=4` + `MEDIA_COMPRESS_CONCURRENCY=2`
 let a burst of uploads compress in parallel (one niced single-threaded ffmpeg
-each, memory-guarded against the pod's limit) instead of one file per 2s
-breather. Two, not more (owner request): the node has 1 vCPU, and the app
-felt sluggish while a backlog drained. To get scanning back, run one clamd
-anywhere and set
-`CLAM_HOST` — that is config, not code.
+each, memory-guarded against the container's limit) instead of one file per 2s
+breather. Two, not more (owner request) — a request the 4-core box now honours
+with room to spare, where the single-vCPU node did not.
 
-**Uploads live in the Civo object store** (`objectstore.nyc1.civo.com`, bucket
-`campfire`, path-style addressing), not on disk — so replicas need no shared
-filesystem. Secrets are Kubernetes secrets (`campfire-db`, `campfire-secrets`,
-`campfire-s3`, `campfire-r2`, `campfire-registry`, `campfire-tunnel`), never
-committed.
+**Uploads live in the Cloudflare R2 media bucket** (`campfire-media`), not on
+disk — so a replica needs no shared filesystem, and so the doomsday backup
+actually contains the media (`backup.js` enumerates the object store, so media
+kept on a host filesystem would silently stop being backed up). The credential
+is an R2 token **scoped to that bucket alone**, so the key the app holds cannot
+reach the backup bucket. Addressing style is a property of the endpoint, not a
+preference — **Civo answers only path-style, Hetzner Object Storage only
+virtual-host, R2 both** — which is what `S3_FORCE_PATH_STYLE` exists for. Config
+and secrets live in `/opt/campfire/app/.env` on the host, mode 600 and
+gitignored; `deploy/hetzner/README.md` has the cluster-Secret → env mapping.
 
 Shipped: auth, servers/invites, text channels, voice rooms (mesh WebRTC, sidebar
 occupants + VAD rings), uploads, emoji (Emojibase set + custom + Klipy GIFs),
@@ -406,27 +422,30 @@ permission to commit, push, and deploy to production — never ask for it first,
 and never pause to confirm a deploy.** The owner granted that up front, for
 every task, in this file.
 - Local repo commits to `origin/main` (`https://github.com/jreoka/campfire`).
-- Production is the **Civo Kubernetes cluster**, namespace `campfire`. **There is
-  no SSH deploy and no `docker compose` in production any more** — the OVH VPS,
-  its `docker-compose.prod.yml` and its Caddy setup were retired in the
-  migration. The VPS's S3 bucket was deleted too; do not go looking for it.
-- Access: `kubectl -n campfire get pods`. **Gotcha:** Civo's kubeconfig puts the
-  leaf certificate *and* `k3s-client-ca` in `client-certificate-data`, and k3s
-  v1.36 rejects a CA in the client chain with `tls: error decoding message` —
-  kubectl then fails on every version. Keep only the leaf in that field.
-- Code ships as an **image**, not a git pull. `.github/workflows/container.yml`
-  builds and pushes `ghcr.io/jreoka/campfire:sha-<short>` to GHCR on any push to
-  `main` touching app files. Packages are private, so the pod pulls via the
-  `campfire-registry` imagePullSecret. Then:
-  `kubectl -n campfire set image deploy/campfire campfire=ghcr.io/jreoka/campfire:sha-<short>`
-  (or edit `deploy/civo/campfire.yaml` and `kubectl apply -f deploy/civo/campfire.yaml`).
-- Env-only changes need **no rebuild**: patch the Deployment or its Secret and
-  `kubectl -n campfire rollout restart deploy/campfire`.
-- Confirm the deploy: `curl https://campfire.dill.moe/api/version` (fingerprint
-  changes) and `kubectl -n campfire get pods` → all `1/1 Running`.
-- Postgres is a `civo-volume` PVC; media is the Civo bucket. Both survive pod
-  restarts. Never delete the PVC or the bucket — the data-safety contract below
-  applies unchanged.
+- Production is **one Hetzner VPS** (`46.225.214.40`, Nuremberg), running Docker
+  Compose from `/opt/campfire/app`:
+  `ssh root@46.225.214.40`, then `cd /opt/campfire/app && git pull && docker
+  compose -f docker-compose.yml -f deploy/hetzner/docker-compose.hetzner.yml up
+  -d --build`. Full runbook: **`deploy/hetzner/README.md`**.
+- The GHCR image built by `.github/workflows/container.yml` is **no longer what
+  production runs** — the host builds from its own checkout. Pushing `main` still
+  builds it; nothing pulls it.
+- Env-only changes need **no rebuild**: edit `/opt/campfire/app/.env` (mode 600)
+  and `up -d --force-recreate campfire`.
+- Confirm the deploy: `curl https://campfire.dill.moe/api/version` (the
+  fingerprint changes) and `docker compose ps` → everything Up, `db` and `clamd`
+  healthy.
+- Postgres is the `pgdata` Docker volume on that host. Never delete it and never
+  `docker compose down -v` — that destroys the database. The data-safety contract
+  below applies unchanged.
+- The **Civo cluster is scaled to zero** and kept as the rollback:
+  `kubectl -n campfire scale deploy/campfire deploy/cloudflared --replicas=1`.
+  Leave it at zero otherwise — a second `backup.js` writing to the same R2 bucket
+  would fight over retention, and its DB is frozen at the cutover. **Gotcha:**
+  Civo's kubeconfig puts the leaf certificate *and* `k3s-client-ca` in
+  `client-certificate-data`, and k3s v1.36 rejects a CA in the client chain with
+  `tls: error decoding message` — kubectl then fails on every version. Keep only
+  the leaf in that field.
 - Backups are **off-site in Cloudflare R2** (`r2.js`, `R2_*` env), never in the
   media bucket: 12-hourly snapshots of the pg_dump, every media object and every
   Secret in the namespace, newest `R2_BACKUP_KEEP` (2) retained. Media is stored
@@ -440,13 +459,19 @@ every task, in this file.
   read-only Role on Secrets — that is how a snapshot includes `JWT_SECRET` and
   the tunnel token. The R2 bucket is therefore as sensitive as the cluster:
   `secrets.json` is plaintext-equivalent and contains the R2 keys themselves.
-- Voice/TURN: coturn runs in-cluster (`hostNetwork`; 3478/udp+tcp, 3479/tcp,
-  relay 49160-49200/udp). `turn.dill.moe` is a **DNS-only** A record to the node
-  IP — Cloudflare's proxy does not carry UDP, so TURN can never use the tunnel.
-- Two habits worth keeping: an object store is not S3-shaped by default (Civo's
-  store rejects the chunked/checksum-trailer PUT that aws-sdk v3 sends for a
-  streaming Body — buffer the body), and `<bucket>.<endpoint>` virtual-host
-  addressing does not resolve there (use `forcePathStyle`).
+- Voice/TURN: coturn runs on the VPS host network (`network_mode: host`; 3478/udp+tcp,
+  3479/tcp, relay 49160-49200/udp) so it binds the public IP directly.
+  `turn.dill.moe` is a **DNS-only** A record to `46.225.214.40` — Cloudflare's
+  proxy does not carry UDP, so TURN can never use the tunnel. Test it with
+  `turnutils_uclient -y` from inside the coturn container.
+- Three things learned about object stores, all measured, all worth keeping: an
+  object store is not S3-shaped by default (Civo's rejects the
+  chunked/checksum-trailer PUT aws-sdk v3 sends for a streaming Body — buffer the
+  body); addressing style belongs to the ENDPOINT (Civo path-style only, Hetzner
+  virtual-host only, R2 both); and a missing key is not always a `404` (Hetzner
+  says `403 UnknownError`, and ~1 request in 5 failed that way on real PUTs at
+  any rate). `scripts/s3-smoke.js` answers all three against a live endpoint
+  before you trust it with data.
 
 Non-obvious rules (learned the hard way): uploads must live on the
 persistent volume (never the image layer); new uploads get `?v=` cache keys;

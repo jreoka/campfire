@@ -1,5 +1,12 @@
 # Campfire on Civo — deploy + operations runbook
 
+> **RETIRED — this is no longer production.** Campfire moved to a single
+> Hetzner VPS on 2026-09-13; the runbook for the live system is
+> **`../hetzner/README.md`**. The cluster still exists but is **scaled to zero**,
+> kept only as the rollback path, and its database is frozen at the cutover.
+> Everything below is accurate history: it documents the shape that was running,
+> including the `VIRUS_SCAN=0` trade-off in §9 that the move was made to undo.
+
 One **Civo Small** node (1 vCPU / 2 GiB, `$10.86/mo`) runs the app, Postgres,
 coturn and a Cloudflare Tunnel. `campfire.yaml` holds every resource.
 **Secrets are not in it** — create them imperatively (below) so nothing
