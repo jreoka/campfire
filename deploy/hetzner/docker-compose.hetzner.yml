@@ -18,6 +18,17 @@
 # direct-TLS VPS (docker-compose.prod.yml) is a different, unused shape.
 
 services:
+  campfire:
+    # A single host has no kubelet to arbitrate, so a runaway encode or a burst
+    # of uploads must not be able to take Postgres down with it. S3 mode buffers
+    # every upload in RAM (MAX_FILE_MB=50 across VIRUS_SCAN_CONCURRENCY slots)
+    # and the compressor holds more while ffmpeg runs, so 2g is headroom rather
+    # than a target - the cluster ran the same process under an 896Mi limit.
+    mem_limit: 2g
+
+  db:
+    mem_limit: 1g
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: campfire-cloudflared
@@ -57,6 +68,10 @@ services:
     image: clamav/clamav:stable_base
     container_name: campfire-clamd
     restart: unless-stopped
+    # ~1.2 GB resident for the loaded engine, and briefly about 2.4 GB during a
+    # signature reload (ConcurrentDatabaseReload builds a second engine before
+    # dropping the first). 3g covers the spike and still leaves the host room.
+    mem_limit: 3g
     volumes:
       # Signatures (~1 GB) live in a named volume, not the image layer, so a
       # restart does not re-download the whole database. `_base` is the tag the
