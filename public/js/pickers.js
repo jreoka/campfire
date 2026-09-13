@@ -263,14 +263,35 @@ function renderGifTab() {
   }
 }
 // ---------- GIF favorites (per-user, synced across devices) ----------
+// One list, two ways in: the picker's own tiles, and the star on a GIF somebody
+// posted in chat (attFavHTML in messages.js). Both write the same row and both
+// key on the Klipy slug, so a GIF starred either way reads starred everywhere.
+let gifFavsFor = null; // the account the loaded list belongs to
 async function loadGifFavs() {
-  if (S.gifFavs !== null) return;
+  const me = (S.me && S.me.id) || null;
+  if (S.gifFavs !== null && gifFavsFor === me) return;
   try {
     const { favorites } = await api('/api/me/gif-favorites');
-    if (S.gifFavs !== null) return; // superseded by a later load
+    if (S.gifFavs !== null && gifFavsFor === me) return; // superseded by a later load
     S.gifFavs = favorites;
+    gifFavsFor = me;
   } catch { /* leave null; the tab shows Loading and retries on next open */ }
   refreshFavViews();
+}
+// The chat stars need the same list to know what is already favorited. Loaded
+// once per session (the picker loads it on open anyway, and that load is the
+// retry). A failure does NOT re-arm this — repainting a message list would
+// otherwise fire the request again on every render, invisibly.
+let gifFavsTried = false;
+function ensureGifFavs() {
+  const me = (S.me && S.me.id) || null;
+  // Signing in as somebody else on a page that never reloaded (an expired
+  // session landing back on the auth screen) must not inherit the last
+  // account's favorites — nor the latch that says they are already loaded.
+  if (S.gifFavs !== null && gifFavsFor !== me) { S.gifFavs = null; gifFavsTried = false; }
+  if (S.gifFavs !== null || gifFavsTried) return;
+  gifFavsTried = true;
+  loadGifFavs();
 }
 async function toggleGifFav(g) {
   if (!g || !g.slug) return;
@@ -289,7 +310,34 @@ async function toggleGifFav(g) {
     refreshFavViews();
   } catch (err) { toast('Favorites update failed: ' + prettyError(err.message)); }
 }
+// A star clicked on a GIF in chat carries the attachment's own Klipy identity
+// (its data-* attributes), which is exactly the shape toggleGifFav writes.
+function chatGifFavFromBtn(btn) {
+  return {
+    slug: btn.dataset.gifSlug || '',
+    title: btn.dataset.gifTitle || '',
+    gif: btn.dataset.gifUrl || '',
+    thumb: btn.dataset.gifThumb || btn.dataset.gifUrl || '',
+    mp4: btn.dataset.gifMp4 || null,
+  };
+}
+// Repaint every chat star in place. A full message rebuild would jump the
+// scroll (and re-request every picture) for a change that touches one button.
+function paintChatGifStars() {
+  const stars = document.querySelectorAll('.att-star[data-gif-slug]');
+  if (!stars.length) return;
+  if (S.gifFavs === null) { ensureGifFavs(); return; } // repaints when it lands
+  const on = new Set((S.gifFavs || []).map((f) => f.slug));
+  for (const b of stars) {
+    const isOn = on.has(b.dataset.gifSlug);
+    const label = isOn ? 'Remove from favorites' : 'Add to favorites';
+    b.classList.toggle('on', isOn);
+    b.setAttribute('aria-pressed', isOn ? 'true' : 'false');
+    b.title = label; b.setAttribute('aria-label', label);
+  }
+}
 function refreshFavViews() {
+  paintChatGifStars();
   if (!S.picker) return;
   if (document.querySelector('.pk-tab.active')?.dataset.ptab === 'gifs') renderGifTab();
 }
@@ -316,7 +364,14 @@ function sendGif(g) {
   const pick = S.gifPick;
   closePicker();
   if (pick === 'avatar' || pick === 'banner' || pick === 'sidebar') { if (url) applyProfileUrl(pick, url); return; }
-  const att = { url, name: (g.title || 'gif').slice(0, 80) + '.gif', mime: 'image/gif', size: 0, kind: 'image' };
+  const att = {
+    url, name: (g.title || 'gif').slice(0, 80) + '.gif', mime: 'image/gif', size: 0, kind: 'image',
+    // The Klipy identity travels with the post so the GIF can be starred from
+    // the chat it lands in (see cleanGifMeta in server.js / attFavHTML in
+    // messages.js). w/h let the chat reserve the picture's box before it loads.
+    gifSlug: g.slug || '', gifThumb: g.thumb || '', gifMp4: g.mp4 || '',
+    w: g.w || 0, h: g.h || 0,
+  };
   // A pending reply (main composer chip or in-thread chip) rides along —
   // otherwise the GIF lands as a standalone message.
   if (S.view === 'home') {
@@ -693,6 +748,7 @@ document.addEventListener('keydown', (e) => {
     else if (act === 'reply' && mid) replyToMsg(msgById(mid));
     else if (act === 'thread' && mid) openThread(mid);
     else if (act === 'vote' && mid) votePoll(mid, actEl.dataset.opt);
+    else if (act === 'gif-fav') toggleGifFav(chatGifFavFromBtn(actEl));
     else if (act === 'expand-file') expandTextFile(actEl);
     else if (act === 'edit' && mid) startEdit(mid);
     else if (act === 'edit-unattach' && mid) {

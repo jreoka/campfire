@@ -57,10 +57,26 @@ function openCtx(x, y, items) {
   ctxEl = m;
 }
 const PIN_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l1 7 3 3v2H5v-2l3-3z"/><path d="M12 16v5"/></svg>';
+const GIF_STAR_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.7 5.6 6.1.6-4.5 4.2 1.2 6-5.5-3.1-5.5 3.1 1.2-6L3.2 9.2l6.1-.6z"/></svg>';
 const REPORT_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4"/><path d="M5 4h12l-2 4 2 4H5"/></svg>';
 const RX_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.2 1.8 3.5 1.8 3.5-1.8 3.5-1.8"/><line x1="9" y1="9.5" x2="9" y2="9.6"/><line x1="15" y1="9.5" x2="15" y2="9.6"/></svg>';
 function sysMenuItems(m) {
   return [{ label: 'Copy text', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(m.content || ''); toast('Copied'); } catch {} } }];
+}
+// The GIF a message carries, if it came from the picker: that post keeps the
+// Klipy item's identity on the attachment (see cleanGifMeta in server.js), which
+// is the whole shape a favorite needs. An uploaded .gif has none — nothing to
+// favorite, no menu row.
+function gifFavOf(m) {
+  const a = (m.attachments || []).find((x) => x.gif_slug);
+  if (!a) return null;
+  return {
+    slug: a.gif_slug,
+    title: String(a.name || '').replace(/\.gif$/i, ''),
+    gif: a.url,
+    thumb: a.gif_thumb || a.url,
+    mp4: a.gif_mp4 || null,
+  };
 }
 function messageMenuItems(m, mid, x, y) {
   const dm = !!m._dm;
@@ -70,6 +86,13 @@ function messageMenuItems(m, mid, x, y) {
     { label: 'Reply', icon: '↩', fn: () => replyToMsg(m) },
     { label: 'Forward', icon: '↗', fn: () => openForward(mid) },
   ];
+  // Starring the GIF sits with the other actions on the message's content; the
+  // picture's own star (see attFavHTML in messages.js) writes the same favorite.
+  const gifFav = gifFavOf(m);
+  if (gifFav) {
+    const on = (S.gifFavs || []).some((f) => f.slug === gifFav.slug);
+    items.push({ label: on ? 'Remove GIF from favorites' : 'Add GIF to favorites', icon: GIF_STAR_SVG, fn: () => toggleGifFav(gifFav) });
+  }
   if (!dm && !m.threadRoot) items.push({ label: 'Open thread', icon: '💬', fn: () => openThread(mid) });
   if (m.reactions?.length) {
     const n = m.reactions.reduce((a, r) => a + (r.count || 0), 0);
@@ -432,7 +455,12 @@ function sendForward() {
   const orig = src.content || '';
   let content = comment ? (orig ? comment + '\n\n' + orig : comment) : orig;
   content = content.slice(0, 5000);
-  const atts = (src.attachments || []).slice(0, 5).map((a) => ({ url: a.url, name: a.name, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler }));
+  // A forwarded GIF stays starrable in its new home, so the picker identity
+  // (and the measured shape) rides along with the bytes.
+  const atts = (src.attachments || []).slice(0, 5).map((a) => ({
+    url: a.url, name: a.name, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler,
+    gifSlug: a.gif_slug || '', gifThumb: a.gif_thumb || '', gifMp4: a.gif_mp4 || '', w: a.w || 0, h: a.h || 0,
+  }));
   if (!content && !atts.length) { toast('Nothing to forward'); return; }
   if (!S.ws || S.ws.readyState !== 1) { toast('Reconnecting… try again in a second'); return; }
   const fwdFrom = src.fwdFrom || (src.user ? src.user.display_name : 'Deleted user');

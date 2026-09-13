@@ -25,6 +25,23 @@ function updateMsgInCaches(mid, fn) {
 }
 const DL_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>';
 function attDl(a) { return `<a class="att-dl" href="${esc(a.url)}" download="${esc(a.name)}" target="_blank" rel="noopener" title="Download">${DL_ICON}</a>`; }
+// A GIF posted from the picker carries the Klipy item it came from on the
+// attachment itself (gif_slug/gif_thumb/gif_mp4 — see cleanGifMeta in
+// server.js), so it can be starred straight into the same per-user favorites
+// the picker's own tiles write; the picker then shows it starred too. A GIF
+// uploaded as a file has no Klipy identity behind it, so it gets no star.
+// Same corner affordance as `.pk-star` on a picker tile, mirrored to the LEFT
+// because the download button owns the top-right of every attachment.
+const ATT_STAR_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l2.9 6.9 7.1.6-5.4 4.7 1.6 7-6.2-3.8-6.2 3.8 1.6-7-5.4-4.7 7.1-.6z"/></svg>';
+function attFavHTML(a) {
+  if (!a || !a.gif_slug) return '';
+  const on = !!(typeof S !== 'undefined' && S.gifFavs && S.gifFavs.some((f) => f.slug === a.gif_slug));
+  const label = on ? 'Remove from favorites' : 'Add to favorites';
+  return `<button type="button" class="att-star${on ? ' on' : ''}" data-act="gif-fav"` +
+    ` data-gif-slug="${esc(a.gif_slug)}" data-gif-url="${esc(a.url)}" data-gif-thumb="${esc(a.gif_thumb || '')}"` +
+    ` data-gif-mp4="${esc(a.gif_mp4 || '')}" data-gif-title="${esc(String(a.name || '').replace(/\.gif$/i, ''))}"` +
+    ` title="${label}" aria-label="${label}" aria-pressed="${on ? 'true' : 'false'}">${ATT_STAR_SVG}</button>`;
+}
 // Shield mark for the virus-scan cards (inline SVG keeps UI chrome emoji-free).
 const SCAN_SHIELD_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 3.5v5.2c0 5-3.4 9.4-8 10.8-4.6-1.4-8-5.8-8-10.8V5.5z"/><path d="M9 11.5l2.2 2.2L15.5 9.5"/></svg>';
 // Media downloads go through plain anchor navigation (works in every WebView),
@@ -129,7 +146,7 @@ function attachmentHTML(a) {
     const ar = d ? d.w / d.h : 0;
     const r = ar ? ar.toFixed(4) : '';
     const style = d ? ` style="--att-ar:${r};width:min(${d.w}px,100%,420px,calc(var(--att-max-h,320px) * ${r}))"` : '';
-    return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}${d ? ' ar' : ' no-ar'}"${style}><span class="att-ph" aria-hidden="true"><span class="att-spin"></span></span><img class="att-img" src="${esc(thumb || a.url)}" alt="${esc(a.name)}" loading="lazy" decoding="async"${d ? ` width="${d.w}" height="${d.h}"` : ''}${thumb ? ' data-fb-thumb="1"' : ''} data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+    return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}${d ? ' ar' : ' no-ar'}"${style}><span class="att-ph" aria-hidden="true"><span class="att-spin"></span></span><img class="att-img" src="${esc(thumb || a.url)}" alt="${esc(a.name)}" loading="lazy" decoding="async"${d ? ` width="${d.w}" height="${d.h}"` : ''}${thumb ? ' data-fb-thumb="1"' : ''} data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${attFavHTML(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   }
   if (a.kind === 'video') return `<span class="att-wrap loading${a.spoiler ? ' spoiler' : ''}"><video class="att-vid" src="${esc(a.url)}" controls preload="metadata" playsinline></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'audio') return audioPlayerHTML(a);

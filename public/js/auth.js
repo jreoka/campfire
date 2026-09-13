@@ -366,6 +366,10 @@ async function boot() {
   // devices, so fold in the server's copy as soon as the shell is up — the
   // cached localStorage value already painted, this corrects it.
   pinSeenPull();
+  // The GIF favorites, for the same reason on a different surface: the star on a
+  // GIF in chat has to know what is already starred before the first message
+  // paints it. One indexed read; the picker's own open is the retry if it fails.
+  try { ensureGifFavs(); } catch {}
   // Persistent per-user last-view (localStorage, survives browser restarts),
   // so a reload reopens the conversation you were in; the composer text for
   // that conversation comes from the per-account draft store (see core.js).

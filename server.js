@@ -1483,14 +1483,14 @@ app.post('/api/webhooks/:wid/:token', async (req, res) => {
     const isRemoteImg = a?.kind === 'image' && /^https:\/\//.test(url);
     if (!isLocal && !isRemoteImg) continue;
     const mime = String(a?.mime || 'application/octet-stream').slice(0, 80);
-    cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, MAX_FILE_BYTES)), kind: isLocal ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file') : 'image', spoiler: a?.spoiler ? 1 : 0, ...cleanAttDims(a) });
+    cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, MAX_FILE_BYTES)), kind: isLocal ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file') : 'image', spoiler: a?.spoiler ? 1 : 0, ...cleanAttDims(a), ...cleanGifMeta(a) });
   }
   if (!content && !cleanAtts.length) return res.status(400).json({ error: 'empty_message' });
   const mid = uid();
   await db.prepare('INSERT INTO messages (id,server_id,channel_id,user_id,content,reply_to_id,webhook_id,webhook_name,webhook_avatar,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
     .run(mid, w.server_id, w.channel_id, null, content, replyTo, w.id, name, avatar, now());
-  const insAtt = db.prepare('INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,spoiler,created_at) VALUES (?,?,?,?,?,?,?,?,?)');
-  for (const a of cleanAtts) await insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, now());
+  const insAtt = db.prepare('INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,spoiler,gif_slug,gif_thumb,gif_mp4,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
+  for (const a of cleanAtts) await insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, a.gif_slug || null, a.gif_thumb || null, a.gif_mp4 || null, now());
   if (cleanAtts.length) kickMedia();
   const full = await fullMessage(mid, null);
   broadcastToServer(w.server_id, { t: 'message-new', serverId: w.server_id, channelId: w.channel_id, message: full });
@@ -5038,7 +5038,7 @@ async function hydrateDm(rows, meId) {
       // View-once media is never handed out as a normal attachment: it stays
       // gated behind /viewonce/open, and the card only carries its shape.
       if (voIds.has(a.message_id)) { voBy[a.message_id] = { kind: a.kind, mime: a.mime, name: a.filename }; continue; }
-      (attBy[a.message_id] = attBy[a.message_id] || []).push({ id: a.id, url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler, w: Number(a.w) || 0, h: Number(a.h) || 0, scan: (sk && scanMap.get(sk)) || 'clean' });
+      (attBy[a.message_id] = attBy[a.message_id] || []).push(attWire(a, (sk && scanMap.get(sk)) || 'clean'));
     }
     for (const r of await db.prepare(`SELECT message_id, emoji, user_id FROM dm_reactions WHERE message_id IN (${ph})`).all(...ids)) {
       const t = (reactBy[r.message_id] = reactBy[r.message_id] || {});
@@ -5074,6 +5074,9 @@ async function fullDm(mid, meId) {
   const row = await db.prepare(`${DM_JOIN} WHERE m.id = ?`).get(mid);
   return row ? (await hydrateDm([row], meId))[0] : null;
 }
+// Klipy slugs can contain uppercase letters (e.g. 'goatplaybanjo-chat-4--ksp3BOGTL')
+const GIF_FAV_SLUG_RE = /^[a-z0-9_-]{1,80}$/i;
+const isHttpUrl = (u) => /^https?:\/\//i.test(String(u || ''));
 function cleanAttachments(atts) {
   const out = [];
   for (const a of (Array.isArray(atts) ? atts.slice(0, 5) : [])) {
@@ -5088,9 +5091,41 @@ function cleanAttachments(atts) {
       kind: isLocal ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file') : 'image',
       spoiler: a?.spoiler ? 1 : 0,
       ...cleanAttDims(a),
+      ...cleanGifMeta(a),
     });
   }
   return out;
+}
+// A GIF the picker sent carries the Klipy item it came from (the picker knows
+// the slug, the xs thumb and the md mp4; nothing can be derived back out of the
+// CDN urls, which are opaque hashes). Storing that identity on the attachment is
+// what lets a GIF shared in chat be starred into the very same per-user
+// favorites the picker's own tiles write — see POST /api/me/gif-favorites. It is
+// only ever kept on a REMOTE picture: an uploaded .gif has no Klipy item behind
+// it, so a client claiming one would only mint a star whose favorite the
+// favorites route (https-only) then refuses.
+function cleanGifMeta(a) {
+  const slug = String(a?.gifSlug || '').trim();
+  if (!/^https:\/\//.test(String(a?.url || '')) || !GIF_FAV_SLUG_RE.test(slug)) {
+    return { gif_slug: null, gif_thumb: null, gif_mp4: null };
+  }
+  return {
+    gif_slug: slug,
+    gif_thumb: isHttpUrl(a?.gifThumb) ? String(a.gifThumb).slice(0, 500) : null,
+    gif_mp4: isHttpUrl(a?.gifMp4) ? String(a.gifMp4).slice(0, 500) : null,
+  };
+}
+// The attachment shape the client renders from. The GIF identity only rides
+// along when there is one (and then all three fields do, so the star never has
+// to fall back to a URL it cannot use).
+function attWire(a, scan) {
+  return {
+    id: a.id, url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind,
+    spoiler: !!a.spoiler, w: Number(a.w) || 0, h: Number(a.h) || 0, scan,
+    ...(a.gif_slug
+      ? { gif_slug: a.gif_slug, gif_thumb: a.gif_thumb || null, gif_mp4: a.gif_mp4 || null }
+      : {}),
+  };
 }
 // The intrinsic size the uploader measured (see /api/upload). A LAYOUT HINT and
 // nothing more: the box is capped by CSS whatever this says, so the only job
@@ -5619,9 +5654,10 @@ app.get('/api/gifs/trending', authRequired, async (req, res) => {
 });
 
 // ---------- GIF favorites (per-user, synced across devices) ----------
-// Klipy slugs can contain uppercase letters (e.g. 'goatplaybanjo-chat-4--ksp3BOGTL')
-const GIF_FAV_SLUG_RE = /^[a-z0-9_-]{1,80}$/i;
-const isHttpUrl = (u) => /^https?:\/\//i.test(String(u || ''));
+// One list, two ways in: the picker's own tiles, and the star on a GIF somebody
+// posted in chat (the attachment carries the Klipy slug it was sent with, see
+// cleanGifMeta). Both write here, so a GIF starred either way shows starred in
+// both places. GIF_FAV_SLUG_RE / isHttpUrl live with the attachment cleaners.
 app.get('/api/me/gif-favorites', authRequired, async (req, res) => {
   res.json({ favorites: await db.prepare(
     `SELECT slug, title, thumb, gif, mp4, created_at
@@ -5839,7 +5875,7 @@ async function hydrateMessages(rows, meId) {
     try { scanMap = await require('./virus-scan').scanStatusMap(attRows.map((a) => scanKeyForUrl(a.url))); } catch {}
     for (const a of attRows) {
       const sk = scanKeyForUrl(a.url);
-      (attBy[a.message_id] = attBy[a.message_id] || []).push({ id: a.id, url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler, w: Number(a.w) || 0, h: Number(a.h) || 0, scan: (sk && scanMap.get(sk)) || 'clean' });
+      (attBy[a.message_id] = attBy[a.message_id] || []).push(attWire(a, (sk && scanMap.get(sk)) || 'clean'));
     }
     for (const r of await db.prepare(`SELECT message_id, emoji, user_id FROM message_reactions WHERE message_id IN (${ph})`).all(...ids)) {
       const t = (reactBy[r.message_id] = reactBy[r.message_id] || {});
@@ -6521,18 +6557,7 @@ wss.on('connection', async (ws, req) => {
         // Threads are 1 level deep: a reply-to-a-reply lands on the ultimate root.
         if (rr.thread_root_id) threadRoot = rr.thread_root_id;
       }
-      const cleanAtts = [];
-      for (const a of atts) {
-        const url = String(a?.url || '');
-        const isLocal = url.startsWith('/uploads/files/');
-        const isRemoteImg = a?.kind === 'image' && /^https:\/\//.test(url);
-        if (!isLocal && !isRemoteImg) continue;
-        const mime = String(a?.mime || 'application/octet-stream').slice(0, 80);
-        const kind = isLocal
-          ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file')
-          : 'image';
-        cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, MAX_FILE_BYTES)), kind, spoiler: a?.spoiler ? 1 : 0, ...cleanAttDims(a) });
-      }
+      const cleanAtts = cleanAttachments(atts);
       if (!content && !cleanAtts.length && !pollOpts) return;
       const mid = uid();
       const fwdFrom = String(msg.fwdFrom || '').trim().slice(0, 64) || null;
@@ -6540,8 +6565,8 @@ wss.on('connection', async (ws, req) => {
         .run(mid, serverId, channelId, me.userId, content, replyTo, threadRoot, fwdFrom, now());
       // Posting in a thread re-follows it (undoes an unfollow from the Threads panel).
       if (threadRoot) { try { await db.prepare('DELETE FROM thread_unfollows WHERE thread_root_id = ? AND user_id = ?').run(threadRoot, me.userId); } catch {} }
-      const insAtt = db.prepare('INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,spoiler,w,h,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
-      for (const a of cleanAtts) await insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, a.w || 0, a.h || 0, now());
+      const insAtt = db.prepare('INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,spoiler,w,h,gif_slug,gif_thumb,gif_mp4,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+      for (const a of cleanAtts) await insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, a.w || 0, a.h || 0, a.gif_slug || null, a.gif_thumb || null, a.gif_mp4 || null, now());
       if (cleanAtts.length) kickMedia();
       if (pollOpts) {
         if (!content) return; // a poll needs its question as the message text
@@ -6577,8 +6602,8 @@ wss.on('connection', async (ws, req) => {
       await db.prepare('INSERT INTO dm_messages (id,thread_id,user_id,content,reply_to_id,fwd_from,created_at) VALUES (?,?,?,?,?,?,?)')
         .run(mid, threadId, me.userId, content, replyTo, fwdFrom, now());
       await db.prepare('UPDATE dm_members SET hidden = 0 WHERE thread_id = ?').run(threadId);
-      const insAtt = db.prepare('INSERT INTO dm_attachments (id,message_id,url,filename,mime,size,kind,spoiler,w,h,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
-      for (const a of cleanAtts) await insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, a.w || 0, a.h || 0, now());
+      const insAtt = db.prepare('INSERT INTO dm_attachments (id,message_id,url,filename,mime,size,kind,spoiler,w,h,gif_slug,gif_thumb,gif_mp4,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+      for (const a of cleanAtts) await insAtt.run(uid(), mid, a.url, a.name, a.mime, a.size, a.kind, a.spoiler || 0, a.w || 0, a.h || 0, a.gif_slug || null, a.gif_thumb || null, a.gif_mp4 || null, now());
       if (cleanAtts.length) kickMedia();
       if (pollOpts) {
         if (!content) return; // a poll needs its question as the message text

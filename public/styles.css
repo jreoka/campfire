@@ -971,6 +971,19 @@ body.ub-open #lightbox #lb-stage{padding-top:calc(4.4rem + var(--safe-t) + var(-
 .att-dl:hover{background:rgba(0,0,0,.85);color:#fff}
 .att-wrap:hover .att-dl,.att-dl:focus-visible{opacity:1}
 @media (hover:none){.att-dl{opacity:1}}
+/* The star on a GIF that came from the picker (see attFavHTML in messages.js):
+   the same affordance as a `.pk-star` on a picker tile, mirrored to the top-LEFT
+   because the download button owns the top-right of every attachment. It follows
+   the download button's reveal-on-hover rule (an unconditional ::after hit box
+   supplies the thumb target, see "tap targets"), and on touch it is simply
+   always there — there is nothing to hover with. */
+.att-star{position:absolute;top:.45rem;left:.45rem;display:flex;align-items:center;justify-content:center;width:30px;height:30px;border:0;padding:0;border-radius:9px;background:rgba(9,12,24,.55);color:#fff;cursor:pointer;opacity:0;z-index:2;transition:opacity .15s,background var(--t-fast),transform var(--t-press) var(--ease-native)}
+.att-star svg{width:16px;height:16px;fill:none;stroke:#fff;stroke-width:2}
+.att-star.on svg{fill:var(--accent);stroke:var(--accent)}
+.att-star:hover{background:rgba(9,12,24,.82)}
+.att-star:active{transform:scale(.92)}
+.att-wrap:hover .att-star,.att-star:focus-visible{opacity:1}
+@media (hover:none){.att-star{opacity:.9}}
 .msg-atts audio{max-width:100%}
 /* ---------- link embeds (YouTube, X, Spotify, Twitch, TikTok, ...) ---------- */
 .embeds{display:flex;flex-direction:column;gap:.55rem;margin-top:.45rem;max-width:520px}
@@ -2774,7 +2787,7 @@ body.story-open{overflow:hidden}
 #chat-header.dm-name-tap #chan-name:active,
 #chat-header.dm-name-tap #chan-hash:active{opacity:.6}
 @media (prefers-reduced-motion:reduce){
-  .icon-btn:active,.chip:active,.mini:active,.me-icobtn:active,.vb-btn:active,.ss-add:active,.pk-star:active,.hist-x:active,.sb-close:active,.server-btn:active{transform:none}
+  .icon-btn:active,.chip:active,.mini:active,.me-icobtn:active,.vb-btn:active,.ss-add:active,.pk-star:active,.hist-x:active,.sb-close:active,.server-btn:active,.att-star:active{transform:none}
 }
 
 /* ---------- 2. tap targets ----------
@@ -2798,6 +2811,9 @@ body.story-open{overflow:hidden}
      thumb target comes from a hit box that may overhang the field. */
   #btn-plus,#btn-more{position:relative}
   #btn-plus::after,#btn-more::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--tap);height:var(--tap)}
+  /* The chat GIF star is pinned to a corner, so it is already a containing block
+     for its own hit box (see the note above) — no `position:relative`. */
+  .att-star::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--tap);height:var(--tap)}
   /* A hit box may only grow into space that is actually empty. The row's ✕ sits
      in a tight list, so it takes the row's own height and no more. */
   .dm-close::after{content:'';position:absolute;inset:0}

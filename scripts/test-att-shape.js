@@ -286,12 +286,15 @@ async function main() {
     check(all.length > 0 && all.every((x) => x.vals.length === x.cols.length && x.vals.every((v) => v === '?')),
       `every ${table} insert keeps its columns and placeholders in step`, all.map((x) => x.cols.length + '/' + x.vals.length));
   }
-  check((server.match(/INSERT INTO attachments \([^)]*w,h,created_at\)/g) || []).length === 1
-    && (server.match(/INSERT INTO dm_attachments \([^)]*w,h,created_at\)/g) || []).length === 1,
+  check((server.match(/INSERT INTO attachments \([^)]*w,h,gif_slug,gif_thumb,gif_mp4,created_at\)/g) || []).length === 1
+    && (server.match(/INSERT INTO dm_attachments \([^)]*w,h,gif_slug,gif_thumb,gif_mp4,created_at\)/g) || []).length === 1,
     'the channel and DM message inserts write the measured pair');
-  check((server.match(/a\.spoiler \|\| 0, a\.w \|\| 0, a\.h \|\| 0, now\(\)/g) || []).length === 2,
+  check((server.match(/a\.spoiler \|\| 0, a\.w \|\| 0, a\.h \|\| 0, a\.gif_slug \|\| null, a\.gif_thumb \|\| null, a\.gif_mp4 \|\| null, now\(\)/g) || []).length === 2,
     'and bind it for both');
-  check((server.match(/w: Number\(a\.w\) \|\| 0, h: Number\(a\.h\) \|\| 0/g) || []).length === 2,
+  // One shared wire shape (attWire) feeds both hydrations, so the pair can only
+  // be handed to the client in one place — and the GIF identity with it.
+  check((server.match(/w: Number\(a\.w\) \|\| 0, h: Number\(a\.h\) \|\| 0/g) || []).length === 1
+    && /function attWire\(a, scan\)/.test(server) && (server.match(/attWire\(a, \(sk && scanMap\.get\(sk\)\) \|\| 'clean'\)/g) || []).length === 2,
     'both message payloads hand the pair to the client');
 
   console.log('\n[4] the client reserves the box');

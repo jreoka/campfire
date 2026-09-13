@@ -305,7 +305,10 @@ and secrets live in `/opt/campfire/app/.env` on the host, mode 600 and
 gitignored; `deploy/hetzner/README.md` has the cluster-Secret → env mapping.
 
 Shipped: auth, servers/invites, text channels, voice rooms (mesh WebRTC, sidebar
-occupants + VAD rings), uploads, emoji (Emojibase set + custom + Klipy GIFs),
+occupants + VAD rings), uploads, emoji (Emojibase set + custom + Klipy GIFs whose
+per-account favorites are written from a picker tile OR from the star on a GIF
+somebody posted in chat — the attachment carries the Klipy identity, see
+`cleanGifMeta`/`attFavHTML`),
 replies/threads/reactions/edits/mentions/markdown, presence + statuses, user
 cards, tabbed settings, rail folders + DnD, B&W theme, ctx menus, a deploy
 banner (never a forced reload),

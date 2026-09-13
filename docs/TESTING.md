@@ -790,6 +790,30 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   disk (with the upload) when the message is deleted. Re-run after touching
   `media-compress.js`'s thumbnail block, `server.js`'s `/uploads/thumbs` route
   or `storage-sweep.js`'s listing.
+  `node scripts/test-gif-favorites.js` covers starring a GIF somebody shared in
+  chat into the GIF picker's favorites (the picker's own tiles could already
+  write that list, but a posted GIF was only bytes with an opaque Klipy CDN url —
+  nothing in it leads back to the item, so the picker now stamps the Klipy
+  identity on the attachment it sends, the server validates and stores it, and
+  the chat draws a star on that GIF). Offline it runs the real `cleanGifMeta`
+  (a slug/thumb/mp4 survive, a junk slug or a non-http thumb is dropped, and an
+  UPLOADED gif never gets an identity at all) and the two real writers sliced out
+  of `pickers.js`: a star on a chat GIF and a picker tile must POST
+  byte-identical bodies for the same GIF, and un-starring is one DELETE by slug —
+  if those two ever drift, "one list" quietly becomes two. Headless Chrome then
+  renders the REAL `attachmentHTML` against `styles.css`: the star is on a picker
+  GIF and nowhere else (not on an uploaded picture, not on an uploaded .gif), it
+  carries the whole favorite in its `data-*` attributes, it sits inside the
+  picture and clear of the download button, it waits for the hover on a mouse
+  device, and its "on" state is the account's list. Finally a real server against
+  a throwaway database (skipping without Postgres) proves the round trip: the
+  identity survives post → history for a channel AND a DM, a local upload or a
+  bogus slug never keeps one, a favorite written from what the server handed a
+  reader lands in that account's list and never in another's, re-starring the
+  same GIF updates the one row, and the routes refuse a junk slug / a non-http
+  gif / an unauthenticated caller. Re-run it after touching `cleanGifMeta`,
+  `attWire`, the attachment inserts, `sendGif`, `attFavHTML`, the `.att-star`
+  rules, or the gif-favorites routes.
   `node scripts/test-upload-cards.js` covers the composer's upload cards
   (headless Chrome, skipping without Chrome; it runs the REAL upload block sliced
   out of `messages.js` against a fake XMLHttpRequest, then checks the wiring

@@ -606,6 +606,17 @@ CREATE INDEX IF NOT EXISTS idx_game_days_user ON game_days(user_id, day);
   await addColumn('attachments', 'h', 'BIGINT');
   await addColumn('dm_attachments', 'w', 'BIGINT');
   await addColumn('dm_attachments', 'h', 'BIGINT');
+  // The Klipy identity of a GIF posted from the picker (see cleanGifMeta in
+  // server.js), so a GIF somebody shared in chat can be starred into the SAME
+  // per-user favorites the picker's own tiles write — gif_favorites keys on that
+  // slug. NULL for everything that did not come from the picker: an uploaded
+  // .gif has no Klipy item behind it and nothing to favorite.
+  await addColumn('attachments', 'gif_slug', 'TEXT');
+  await addColumn('attachments', 'gif_thumb', 'TEXT');
+  await addColumn('attachments', 'gif_mp4', 'TEXT');
+  await addColumn('dm_attachments', 'gif_slug', 'TEXT');
+  await addColumn('dm_attachments', 'gif_thumb', 'TEXT');
+  await addColumn('dm_attachments', 'gif_mp4', 'TEXT');
   // The backfill asks exactly one question — "what is still unmeasured?" — and
   // this partial index keeps that a lookup instead of a scan of every
   // attachment ever posted, shrinking as the answers come in.
