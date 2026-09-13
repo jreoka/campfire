@@ -82,6 +82,9 @@ function sourceChecks() {
   check(/areNotificationsEnabled\(\)/.test(service), 'it respects the OS notification switch');
   const main = fs.readFileSync(path.join(ROOT, 'app/src-tauri/gen/android/app/src/main/java/moe/dill/campfire/MainActivity.kt'), 'utf8');
   check(/addJavascriptInterface\(PushBridge\(this\), "CampfireNative"\)/.test(main), 'the page gets the bridge');
+  const bridge = fs.readFileSync(path.join(ROOT, 'app/src-tauri/gen/android/app/src/main/java/moe/dill/campfire/PushBridge.kt'), 'utf8');
+  check(/if \(enabled\) PushService\.requestPermission\(activity\)/.test(bridge),
+    'a fresh install is asked for the Android 13 permission when it enables');
   const final = fs.readFileSync(path.join(ROOT, 'public/js/final.js'), 'utf8');
   check(/function syncNativePush/.test(final) && /b\.configure\(store\.token/.test(final), 'the session is handed to the service');
   check(/window\.__cfDeepLink/.test(final), 'a tapped notification routes to its conversation');
