@@ -853,12 +853,34 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   an upload watchdog turns a response that never comes into a normal failed card
   with Retry (armed from the send, and shortened to 90 s once the body is out —
   see `scripts/test-upload-stall.js` for the ceilings themselves), and every exit
-  clears it. Re-run it after
+  clears it. It also pins the two owner-reported follow-ups on that card: the
+  readout no longer prints a bare "…" while the bar is indeterminate (it read as
+  a "more options" menu button next to the ✕, so the % cell goes empty), and the
+  chip's **Spoiler** toggle is held back while any upload for the conversation is
+  still in flight — it appears only once the green "done" card has finished its
+  ~650ms exit (`activeUploadCount` in `renderComposerMeta`). Re-run it after
   touching `messages.js`'s upload block, `renderComposerMeta`, the conversation
   switchers, or the paths that leave a conversation. Anything that changes
   `storage.js`'s S3 client (its timeout/retry config is what stops a silent
   object store from holding an upload request open forever) wants the upload
   routes re-checked with `scripts/test-upload-pipeline.js`.
+  `node scripts/test-attachment-gap.js` covers the distance between the composer
+  and the attachment cards above it (headless Chrome, skipping without Chrome;
+  it builds the real chat column from `index.html`'s markup + the real
+  `styles.css` and MEASURES the gap at a desktop and a phone viewport, with and
+  without the cards on screen). Both stages of an upload used to read as "quite
+  far from the message box": `#attach-preview` / `#upload-list` sit above the
+  always-reserved typing strip, so a full `.9rem` of composer padding was pure
+  extra air. With a card on screen `#chat:has(#attach-preview:not(.hidden))
+  #composer` drops it to `.25rem` (the strip still separates them, and it keeps
+  its height, so nothing below the cards moves). Two traps it now guards: CSS
+  **padding cannot go negative** (`calc(.9rem - var(--strip-h))` clamps to 0, so
+  an overlap would need a negative MARGIN), and **a sibling combinator inside
+  `:has()` never matches** (`#composer:has(~ #attach-preview)` passes
+  `CSS.supports` yet matched nothing in Chrome 152 — the static half fails if
+  that form comes back). Re-run it after touching the composer's padding,
+  `--strip-h`, `#attach-preview`/`#upload-list`, or the order of those elements
+  in `index.html`.
   `node scripts/test-lightbox.js` covers the photo lightbox (headless Chrome,
   skipping without Chrome; it runs the real lightbox block pulled out of
   `pickers.js` against the real `#lightbox` markup and `styles.css`): the

@@ -183,8 +183,16 @@ async function main() {
 
   console.log('\n[2] "every byte sent" is not "done"');
   check(/const sent = u\.total > 0 && u\.loaded >= u\.total;/.test(upSource), 'the card knows when the body is out');
-  check(/if \(u\.indet \|\| sent\) \{ pct\.textContent = '…'; fill\.classList\.add\('indet'\); \}/.test(upSource),
-    'and goes indeterminate instead of freezing at 99%');
+  check(/if \(u\.indet \|\| sent\) \{ pct\.textContent = ''; fill\.classList\.add\('indet'\); \}/.test(upSource),
+    'and goes indeterminate instead of freezing at 99% (leaving the % cell EMPTY — a bare "…" beside the ✕ read as a menu button)');
+
+  console.log('\n[2b] the Spoiler toggle belongs to the chip, not to the upload');
+  check(/const uploadsInFlight = activeUploadCount\(pendingCtxKey\) > 0;/.test(messages),
+    'the composer knows whether this conversation still has an upload running');
+  check(/if \(\(a\.kind === 'image' \|\| a\.kind === 'video'\) && !uploadsInFlight\) \{/.test(messages),
+    'and offers "Mark as spoiler" only once every card has finished and left the list');
+  check(/setTimeout\(\(\) => removeUpload\(u\.id\), 650\)/.test(messages),
+    'the green done card still holds the stage for its ~650ms exit before the chip owns it');
   check(/sent \? ' · Finishing…' : ' · Uploading…'/.test(upSource), 'with a readout that says what it is waiting for');
   check(/const UPLOAD_ANSWER_MS = 90 \* 1000;/.test(upSource) && /const UPLOAD_IDLE_MS = 60 \* 1000;/.test(upSource)
     && /armUploadWatchdog\(u\)/.test(upSource),
@@ -258,7 +266,7 @@ async function main() {
     check(!!card && /Uploading/.test(card.sub), 'and it says Uploading', card && card.sub);
     await ev("window.__progress('s:s1:c1', 2048, 2048)");
     card = await ev('window.__card()');
-    check(!!card && card.pct === '…' && card.indet, 'body out: the bar goes indeterminate (never a frozen 99%)', card);
+    check(!!card && card.pct === '' && card.indet, 'body out: the bar goes indeterminate, with no "…" readout (never a frozen 99%)', card);
     check(!!card && card.sub.indexOf('Finishing') !== -1, 'and the readout says Finishing', card && card.sub);
     check((await ev("window.__watchArmed('s:s1:c1')")) === true, 'with the stall ceiling armed');
     check((await ev('window.__stall()')) === 90000, 'at 90 seconds — the server answers in milliseconds, so that is a lost response');
@@ -302,7 +310,7 @@ async function main() {
     check((await ev('window.__cards()')) === 1 && !!card && card.name === 'mine.jpg', 'switching back shows this chat\'s card again', card);
     await ev("window.__progress('s:s1:c1', 1024, 1024)");
     card = await ev('window.__card()');
-    check(!!card && card.indet && card.pct === '…', 'with its progress where it was left', card);
+    check(!!card && card.indet && card.pct === '', 'with its progress where it was left', card);
     check((await ev("window.__progress('s:s1:c1', 1024, 1024), window.__watchArmed('s:s1:c1')")) === true, 'and its own stall ceiling');
 
     console.log('\n[7] a stalled request fails cleanly, with a Retry');

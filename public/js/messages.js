@@ -1296,13 +1296,19 @@ function renderComposerMeta() {
     chip.appendChild(x); box.appendChild(chip);
   }
   pruneAttPreviews();
+  // The Spoiler toggle belongs to the SECOND stage of an attachment's life: the
+  // chip only. While any upload for this conversation is still in flight the
+  // green "done" card (upload-list) is what the reader is looking at, so the
+  // toggle is held back until every card has finished and left the list — the
+  // render at the end of that ~650ms green exit is what reveals it.
+  const uploadsInFlight = activeUploadCount(pendingCtxKey) > 0;
   S.pendingAtts.forEach((a, i) => {
     const chip = document.createElement('div');
     chip.className = 'att-chip' + (a.scan === 'pending' ? ' scanning' : '');
     chip.innerHTML = attChipHTML(a);
     const x = document.createElement('button'); x.className = 'mini'; x.type = 'button'; x.textContent = '✕';
     x.onclick = () => { S.pendingAtts.splice(i, 1); renderComposerMeta(); };
-    if (a.kind === 'image' || a.kind === 'video') {
+    if ((a.kind === 'image' || a.kind === 'video') && !uploadsInFlight) {
       const sp = document.createElement('button');
       sp.type = 'button'; sp.className = 'mini' + (a.spoiler ? ' on' : ''); sp.textContent = 'Spoiler'; sp.title = 'Mark as spoiler';
       sp.onclick = () => { a.spoiler = !a.spoiler; renderComposerMeta(); };
@@ -1458,7 +1464,10 @@ function paintUploadCard(el, u) {
     // bar goes indeterminate and says what it is waiting for.
     const sent = u.total > 0 && u.loaded >= u.total;
     const p = u.total > 0 ? Math.max(0, Math.min(99, Math.round((u.loaded / u.total) * 100))) : 0;
-    if (u.indet || sent) { pct.textContent = '…'; fill.classList.add('indet'); }
+    // The trailing cell is left EMPTY while the card is indeterminate: a bare
+    // "…" beside the ✕ reads as a "more options" menu button (reported), and the
+    // travelling bar plus "Finishing…" already say what is happening.
+    if (u.indet || sent) { pct.textContent = ''; fill.classList.add('indet'); }
     else { pct.textContent = p + '%'; fill.classList.remove('indet'); fill.style.width = p + '%'; }
     sub.textContent = fmtSize(u.size) + (sent ? ' · Finishing…' : ' · Uploading…');
     retry.classList.add('hidden'); x.classList.remove('hidden'); x.title = 'Cancel upload';

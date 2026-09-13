@@ -527,6 +527,18 @@ composer always keeps its slot (`--strip-h`, one text line, transparent, text
 fades) — hiding it resizes `#messages` and shoves the conversation up/down.
 `#messages` pays for that slot by giving up its bottom padding, and anything
 anchored to the composer top stacks `var(--strip-h)` on `var(--composer-h)`.
+Attachment cards live in that gap (`#attach-preview` for finished chips,
+`#upload-list` for in-flight cards), so with a card on screen the composer
+shrinks its top padding to `.25rem` (`#chat:has(#attach-preview:not(.hidden))
+#composer`) — a full `.9rem` on top of the strip read as "quite far from the
+message box" (reported), and the strip keeps its height so nothing below the
+cards moves. Two traps found doing it: **padding cannot go negative**
+(`calc(.9rem - var(--strip-h))` clamps to 0, so an overlap has to be a negative
+MARGIN, not padding), and **a sibling combinator inside `:has()` never matches**
+— `#composer:has(~ #attach-preview)` passes `CSS.supports` yet matched nothing in
+Chrome 152, so the rule silently did nothing; key `:has()` on descendants of a
+shared ancestor instead. `scripts/test-attachment-gap.js` measures the real gap
+at both breakpoints.
 Every sidebar banner (the me bar, member rows, DM rows) is painted through
 `paintSidebarBanner` in `servers.js` — never inline the gradient again. Those
 rows are fractional-width, and `background-size: cover` with the default

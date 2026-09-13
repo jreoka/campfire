@@ -850,6 +850,18 @@ body.ub-open #lightbox #lb-stage{padding-top:calc(4.4rem + var(--safe-t) + var(-
 .att-chip .chip-sub{font-size:.72rem;color:var(--muted);font-variant-numeric:tabular-nums}
 /* ---------- composer upload progress ---------- */
 #upload-list{display:flex;flex-direction:column;gap:.45rem;padding:.55rem .9rem;background:var(--panel)}
+/* With attachment cards on screen the composer gives back most of the air it
+   keeps above them: the always-reserved typing strip (see #typing-bar) already
+   supplies that separation, so a full .9rem on top of it made both stages of an
+   upload read as "quite far from the message box" (reported). The strip keeps
+   its height, so nothing below the cards moves — only the plain gap shrinks.
+   Keyed on #chat's DESCENDANTS: `#composer:has(~ #attach-preview…)` — a sibling
+   combinator inside :has() — is accepted by CSS.supports but never matches in
+   Chrome 152, so that form silently did nothing. Also note padding cannot go
+   negative (calc(.9rem - var(--strip-h)) clamps to 0), which is why this is a
+   smaller positive value rather than an overlap.
+   scripts/test-attachment-gap.js measures the real gap at both breakpoints. */
+#chat:has(#attach-preview:not(.hidden)) #composer,#chat:has(#upload-list:not(.hidden)) #composer{padding-top:.25rem}
 .up-card{display:flex;align-items:center;gap:.65rem;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:.55rem .7rem;max-width:430px;animation:up-in .18s ease}
 @keyframes up-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .up-ic{position:relative;width:36px;height:36px;border-radius:10px;background:var(--panel-3);color:var(--muted);display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden}
