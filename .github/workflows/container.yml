@@ -1,12 +1,14 @@
 name: container
 
-# Builds the Campfire container and publishes it to GHCR so the Civo cluster has
-# an image to pull. Uses the workflow's own GITHUB_TOKEN (which carries
-# packages:write); no PAT or registry secret is required.
+# Builds the Campfire container and publishes it to GHCR. This is a build check
+# and a ready-to-pull image for anyone deploying the app elsewhere — production
+# (deploy/hetzner) builds from its own checkout and does not pull it. Uses the
+# workflow's own GITHUB_TOKEN (which carries packages:write); no PAT or registry
+# secret is required.
 #
 # Tags produced: ghcr.io/jreoka/campfire:sha-<short> and :latest
-# NOTE: GHCR packages created here are PRIVATE by default, so a cluster needs an
-# imagePullSecret unless the package is switched to public in package settings.
+# NOTE: GHCR packages created here are PRIVATE by default, so pulling one needs
+# an imagePullSecret unless the package is switched to public in its settings.
 
 on:
   workflow_dispatch:
@@ -28,8 +30,8 @@ on:
       - 'public/**'
       - 'scripts/gen-icons.js'
       - 'scripts/png-util.js'
-      # Ships in the image so it can be run from inside the pod, which is where
-      # both credential sets already are.
+      # Ships in the image so it can be run from inside the container, which is
+      # where the backup credentials already are.
       - 'scripts/restore-from-r2.js'
       - '.github/workflows/container.yml'
 

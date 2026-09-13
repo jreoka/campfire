@@ -234,10 +234,11 @@ The owner will iterate on features **without ever losing persistent data**.
   plaintext-equivalent, exactly as the k8s Secret capture always was.
   **Open risk, stated plainly:** media and backups live in ONE Cloudflare
   account, so losing that account costs the live media and the only copies of
-  everything else at once. The old Civo/R2 split existed to prevent exactly
-  that. Moving the backups to a third vendor (Backblaze B2, free at this size)
-  restores the separation for the database and Secrets — and a copy somewhere
-  else is the only thing that would make media recoverable again.
+  everything else at once. They used to sit with two different vendors, which is
+  what prevented exactly that. Moving the backups to a third vendor (Backblaze
+  B2, free at this size) restores the separation for the database and Secrets —
+  and a copy somewhere else is the only thing that would make media recoverable
+  again.
 - Schema changes must be **guarded migrations** (`CREATE TABLE IF NOT EXISTS`,
   `ALTER TABLE ... ADD COLUMN` only when the column is missing — see
   `columnExists`/`addColumn` in `db.js`) so existing databases upgrade in
@@ -273,22 +274,14 @@ image for upload scanning** (no scanner container — see below). Media lives in
 Cloudflare R2; the doomsday backups do too.
 Runbook: **`deploy/hetzner/README.md`**. See **Deployment** below for how to ship.
 
-The **Civo Kubernetes cluster is scaled to zero** — it is the rollback path, not
-production, and `deploy/civo/` now documents a retired shape.
-
-**The app is replica-safe and the manifest is ready to scale past one node**
-(owner requirement: it must load-balance across nodes when the cluster grows).
-Scale-out is a replica count, not a rewrite — `kubectl -n campfire scale
-deploy/campfire deploy/cloudflared --replicas=N`, then read
-**`deploy/civo/README.md` §11**. Every fan-out (chat, DMs, presence, typing,
+**The app is replica-safe and ready to scale past one node** (owner requirement:
+it must load-balance across nodes when the deployment grows). Scale-out is a
+replica count, not a rewrite. Every fan-out (chat, DMs, presence, typing,
 WebRTC signalling, voice rosters, admin presence) crosses replicas through the
 Postgres bus in `bus.js`; periodic work is leader-locked via `db.LOCKS`; shared
 state lives in Postgres (never a per-process `Map` — the watcher beacons were the
 last offender and now live in `watcher_beacons`); media is in the object store,
-so no replica needs another's filesystem. The manifest carries the rest:
-`topologySpreadConstraints` on the hostname (preferred, so one node never wedges
-a rollout), a `maxUnavailable: 1` PDB, `sessionAffinity: None`, and
-`RollingUpdate` with `maxSurge: 0`. Acceptance test:
+so no replica needs another's filesystem. Acceptance test:
 `node scripts/test-multi-replica.js`.
 Two rules learned from this: a rolling update runs **two builds at once**, so
 "is there a newer release?" is decided by a cluster-wide **release generation**
@@ -300,7 +293,7 @@ new build raises a banner at the top of the shell with an Update button
 height).
 
 **The app runs with `VIRUS_SCAN=1` and `MEDIA_COMPRESS` on.** That is the whole
-point of the Hetzner move: the Civo node had ~1.14 GiB allocatable and the
+point of the Hetzner move: the old node had ~1.14 GiB allocatable and the
 resident scanner of the day needed ~1 GB, so the cluster ran with scanning
 **off**. Scanning is now **Harbin**
 (`https://github.com/jreoka/harbin`) — a static, machine-learned detector that is
@@ -392,8 +385,8 @@ copy: `backup.js` records a media inventory (key + size) and never the bytes —
 see the data-safety contract. The credential
 is an R2 token **scoped to that bucket alone**, so the key the app holds cannot
 reach the backup bucket. Addressing style is a property of the endpoint, not a
-preference — **Civo answers only path-style, Hetzner Object Storage only
-virtual-host, R2 both** — which is what `S3_FORCE_PATH_STYLE` exists for. Config
+preference — **Hetzner Object Storage answers only virtual-host, R2 answers
+both** — which is what `S3_FORCE_PATH_STYLE` exists for. Config
 and secrets live in `/opt/campfire/app/.env` on the host, mode 600 and
 gitignored; `deploy/hetzner/README.md` has the cluster-Secret → env mapping.
 
@@ -590,17 +583,9 @@ every task, in this file.
 - Postgres is the `pgdata` Docker volume on that host. Never delete it and never
   `docker compose down -v` — that destroys the database. The data-safety contract
   below applies unchanged.
-- The **Civo cluster is scaled to zero** and kept as the rollback:
-  `kubectl -n campfire scale deploy/campfire deploy/cloudflared --replicas=1`.
-  Leave it at zero otherwise — a second `backup.js` writing to the same R2 bucket
-  would fight over retention, and its DB is frozen at the cutover. **Gotcha:**
-  Civo's kubeconfig puts the leaf certificate *and* `k3s-client-ca` in
-  `client-certificate-data`, and k3s v1.36 rejects a CA in the client chain with
-  `tls: error decoding message` — kubectl then fails on every version. Keep only
-  the leaf in that field.
 - Backups are **off-site in Cloudflare R2** (`r2.js`, `R2_*` env), never in the
-  media bucket: 12-hourly snapshots of the pg_dump, every Secret in the
-  namespace and a media **inventory**, newest `R2_BACKUP_KEEP` (2) retained.
+  media bucket: 12-hourly snapshots of the pg_dump, the secrets the app runs with
+  and a media **inventory**, newest `R2_BACKUP_KEEP` (2) retained.
   Version-2 manifests say `media.included: false` and list key + size per
   object; no snapshot stores media bytes. The blob-era `blobs/` mirror (the
   whole media bucket, deduplicated) doubled the account's storage for no
@@ -625,14 +610,14 @@ every task, in this file.
   `turn.dill.moe` is a **DNS-only** A record to `46.225.214.40` — Cloudflare's
   proxy does not carry UDP, so TURN can never use the tunnel. Test it with
   `turnutils_uclient -y` from inside the coturn container.
-- Three things learned about object stores, all measured, all worth keeping: an
-  object store is not S3-shaped by default (Civo's rejects the
-  chunked/checksum-trailer PUT aws-sdk v3 sends for a streaming Body — buffer the
-  body); addressing style belongs to the ENDPOINT (Civo path-style only, Hetzner
-  virtual-host only, R2 both); and a missing key is not always a `404` (Hetzner
-  says `403 UnknownError`, and ~1 request in 5 failed that way on real PUTs at
-  any rate). `scripts/s3-smoke.js` answers all three against a live endpoint
-  before you trust it with data.
+- Two facts about object stores, both measured against endpoints this app has
+  used: an object store is not S3-shaped by default (aws-sdk v3 sends a
+  streaming Body as a chunked PUT with a checksum trailer, and not every store
+  accepts that — `storage.js` and `r2.js` buffer the body, which also pins
+  ContentLength so a short read can never be stored as a whole object); and
+  addressing style belongs to the ENDPOINT, not to taste (Hetzner Object Storage
+  answers only virtual-host, R2 answers both), which is what
+  `S3_FORCE_PATH_STYLE` exists for.
 
 Non-obvious rules (learned the hard way): uploads must live on the
 persistent volume (never the image layer); new uploads get `?v=` cache keys;

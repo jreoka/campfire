@@ -40,9 +40,9 @@ function client() {
 }
 
 // Always a Buffer, never a stream. aws-sdk v3 sends a streaming Body as a
-// chunked PUT with a checksum trailer, and not every S3-compatible store
-// accepts that (Civo's does not -- see scripts/migrate-s3.js). Buffering also
-// pins ContentLength, so a short read can never be stored as a whole object.
+// chunked PUT with a checksum trailer, which not every S3-compatible store
+// accepts. Buffering also pins ContentLength, so a short read can never be
+// stored as a whole object.
 async function put(key, buffer, contentType) {
   await client().send(new PutObjectCommand({
     Bucket: BUCKET,

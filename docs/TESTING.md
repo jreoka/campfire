@@ -1282,7 +1282,7 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   real PNG of any case, which is how the design was eyeballed. Re-run after any
   change to the banner CSS, its markup, or the copy in `final.js`.
   `node scripts/test-multi-replica.js` is the acceptance test for running more
-  than one replica (see `deploy/civo/README.md` §11). It spawns TWO real
+  than one replica. It spawns TWO real
   `server.js` processes against one throwaway Postgres, pins a WebSocket client to
   each, and asserts every fan-out crosses replicas: a channel message each way,
   exactly once with no duplicate on the origin (which is what proves the bus is

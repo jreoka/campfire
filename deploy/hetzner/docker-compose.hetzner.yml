@@ -1,10 +1,10 @@
-# Campfire on a single Hetzner VPS - the Kubernetes-specific services, replaced.
+# Campfire on a single Hetzner VPS - ingress and TURN alongside the app.
 #
 #   cd /opt/campfire/app
 #   docker compose -f docker-compose.yml -f deploy/hetzner/docker-compose.hetzner.yml up -d
 #
 # The base docker-compose.yml is unchanged: db + campfire. This overlay adds the
-# two things the cluster used to provide, and nothing else:
+# two services the app needs beside them, and nothing else:
 #
 #   cloudflared  the site's only ingress. Outbound-only, so ufw never opens
 #                80/443. Its tunnel routes campfire.dill.moe -> http://campfire:3000

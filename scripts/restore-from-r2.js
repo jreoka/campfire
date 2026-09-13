@@ -248,12 +248,9 @@ Next steps (run these deliberately):
 
   # 1. database -- the production host is Docker Compose (deploy/hetzner):
   bash deploy/hetzner/restore-db.sh ${path.join(dir, dumpName)}
-  #    On the Civo rollback cluster, kubectl instead:
-  #    kubectl -n campfire cp ${path.join(dir, dumpName)} db-0:/tmp/restore.dump
-  #    kubectl -n campfire exec -it db-0 -- pg_restore -U campfire -d campfire --clean --if-exists /tmp/restore.dump
-  #    (restore-db.sh also TRUNCATEs the runtime tables -- bus_*, live_sessions,
-  #     voice_occupants, rate_limits, webauthn_challenges -- so the first boot is
-  #     unambiguous; do the same by hand if you restore with kubectl.)
+  #    restore-db.sh runs pg_restore --clean --if-exists and then TRUNCATEs the
+  #    runtime tables (bus_*, live_sessions, voice_occupants, rate_limits,
+  #    webauthn_challenges), so the first boot is unambiguous.
 
   # 2. media: the backup bucket holds an INVENTORY, not the bytes. Any object
   #    gone from the media bucket cannot be restored from here -- this reports

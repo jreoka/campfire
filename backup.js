@@ -106,8 +106,8 @@ function pgDumpToFile(tmp) {
 //                           S3_*/R2_* -- with no bind mount of the host's file.
 //                           On Kubernetes the same vars arrive from Secrets.
 //   the k8s Secret objects  only in-cluster, read from the API server with the
-//                           pod's own ServiceAccount (get/list in this
-//                           namespace only; see campfire.yaml). Those keep
+//                           pod's own ServiceAccount, which is granted get/list
+//                           on secrets in this namespace only. Those keep
 //                           things that are never mounted as env vars.
 //
 // Both are stored VERBATIM, i.e. plaintext-equivalent. The R2 bucket is

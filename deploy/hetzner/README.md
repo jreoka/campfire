@@ -1,7 +1,6 @@
 # Campfire on a single Hetzner VPS
 
-Production since 2026-09-13. This replaces the Civo Kubernetes deployment, which
-is still in the namespace but **scaled to zero** as the rollback path.
+Production since 2026-09-13.
 
 | | |
 |---|---|
@@ -14,14 +13,14 @@ is still in the namespace but **scaled to zero** as the rollback path.
 
 ## Why we moved
 
-The old cluster ran on a Civo Small node with **`cpu=890m`, `mem=1193460Ki`
-(~1165 MiB) allocatable**. The resident scanner then in use needed about a
-gigabyte - 996 MiB measured on production - so the cluster ran `VIRUS_SCAN=0`.
-That was an accepted trade-off (`../civo/README.md` §9), not an oversight: AV
-scanning was the one feature the node could not afford. This host has 8 GB, so
-**scanning is back on**, the box is cheaper than the Civo node plus its object
-store, and the app got 4 cores instead of 1 - which was the other long-standing
-complaint (two niced ffmpeg encodes made the app feel sluggish on one vCPU).
+The old deployment ran on a single-vCPU node with **`cpu=890m`,
+`mem=1193460Ki` (~1165 MiB) allocatable**. The resident scanner then in use
+needed about a gigabyte - 996 MiB measured on production - so it ran
+`VIRUS_SCAN=0`. That was an accepted trade-off, not an oversight: AV scanning was
+the one feature that node could not afford. This host has 8 GB, so **scanning is
+back on**, the box is cheaper than that node plus its object store, and the app
+got 4 cores instead of 1 - which was the other long-standing complaint (two
+niced ffmpeg encodes made the app feel sluggish on one vCPU).
 
 Scanning is **Harbin** now, one self-contained binary rather than a resident
 daemon, so there is no scanner container and no signature volume at all - and
@@ -44,8 +43,8 @@ patches - a deploy is a `git pull` and a `compose up`.
 ## Services
 
 `docker-compose.yml` (unchanged from the repo) plus
-`deploy/hetzner/docker-compose.hetzner.yml`, which supplies the two things the
-cluster used to provide:
+`deploy/hetzner/docker-compose.hetzner.yml`, which adds the two services the app
+needs beside the app and database:
 
 | service | why | memory limit |
 |---|---|---|
@@ -58,9 +57,9 @@ There is no scanner service. Harbin is a binary inside the app image (built by
 the Dockerfile's `harbin` stage) rather than a sibling container: it needs no
 daemon, no signature volume, no healthcheck and no compose network hop.
 
-The limits are deliberate: a single host has no kubelet to arbitrate, so one
-runaway encode or a burst of uploads must not be able to starve Postgres.
-Limits are ceilings, not reservations, so nothing is held back at idle.
+The limits are deliberate: with no orchestrator to arbitrate, one runaway encode
+or a burst of uploads must not be able to starve Postgres. Limits are ceilings,
+not reservations, so nothing is held back at idle.
 
 There is **no Caddy**. TLS terminates at Cloudflare, and
 `docker-compose.prod.yml` (the direct-TLS VPS shape) is unused here.
@@ -99,29 +98,29 @@ docker compose -f docker-compose.yml -f deploy/hetzner/docker-compose.hetzner.ym
 ```
 
 There is one replica, so this is a few seconds of 502 rather than a rolling
-update - the same gap the cluster had with `maxSurge: 0` on a single node. The
-code is still replica-safe (the Postgres bus and `db.LOCKS`), so scaling out
-later means adding a host and a load balancer, not a rewrite.
+update. The code is still replica-safe (the Postgres bus and `db.LOCKS`), so
+scaling out later means adding a host and a load balancer, not a rewrite.
 
 Env-only changes need no rebuild: edit `.env`, then `up -d --force-recreate campfire`.
 
 ## Secrets
 
-`.env` holds everything, including the four credential sets. It was rebuilt from
-the cluster's Secrets during the migration - the mapping was:
+`.env` holds everything, including the four credential sets. It is passed
+straight into the app container by compose's `env_file`, which is also how a
+snapshot captures it (see §Backups). The sets:
 
 ```
-POSTGRES_DB|POSTGRES_USER|POSTGRES_PASSWORD  <- secret campfire-db
+POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD
 JWT_SECRET, DOMAIN, ORIGIN, KLIPY_KEY,
 TURNSTILE_SECRET, TURNSTILE_SITEKEY,
-TURN_URL, TURN_USER, TURN_PASS               <- secret campfire-secrets
-S3_*                                          <- secret campfire-s3 (media)
-R2_*                                          <- secret campfire-r2 (backups)
-TUNNEL_TOKEN                                  <- secret campfire-tunnel
+TURN_URL, TURN_USER, TURN_PASS
+S3_*                                          the media bucket
+R2_*                                          the backup bucket
+TUNNEL_TOKEN                                  the Cloudflare tunnel
 ```
 
-`JWT_SECRET` **must** match the old deployment or every session is invalidated -
-that is why users stayed logged in across the cutover.
+`JWT_SECRET` **must** keep its value or every session is invalidated - that is
+why users stayed logged in across the move.
 
 ## Media storage: Cloudflare R2, not Hetzner Object Storage
 
@@ -132,8 +131,8 @@ backend-agnostic, so the move changed no database row and no cached URL.
 ### Why not Hetzner Object Storage
 
 It was the obvious choice - same region as the VPS, ~1 ms, no cross-cloud hop -
-and it does not work. Measured with `scripts/s3-smoke.js` against a real bucket
-in `nbg1`:
+and it does not work. Measured against a real bucket in `nbg1` (with the
+endpoint smoke-test script this repo has since dropped):
 
 | test | result |
 |---|---|
@@ -151,9 +150,9 @@ reads 403ing, so the store is unusable for this app. Two public reports describe
 the same symptom.
 
 The other thing the exercise proved: **addressing style belongs to the
-endpoint.** Civo answers only path-style (its virtual-host form does not resolve
-in DNS); Hetzner answers only virtual-host (path-style 403s); R2 accepts both.
-`storage.js` reads `S3_FORCE_PATH_STYLE` for this, defaulting to path-style.
+endpoint.** Hetzner Object Storage answers only virtual-host (path-style 403s);
+R2, which is what the app uses, accepts both. `storage.js` reads
+`S3_FORCE_PATH_STYLE` for this, defaulting to path-style.
 
 ### Credentials
 
@@ -210,7 +209,7 @@ before Harbin can read it and the check reports SKIPPED with that reason; on thi
 host nothing else is watching the temp dir, so it runs for real.
 
 **The whole bucket is swept daily** (`bucket-scan.js`): the upload path only ever
-judges what it just received, so anything stored while the cluster ran
+judges what it just received, so anything stored while scanning was
 `VIRUS_SCAN=0` — or before Harbin existed — has no verdict at all, and the
 `/uploads` gate serves an unknown key. The sweep lists the stored tree and queues
 the keys no Harbin verdict covers. A key it has already judged is never
@@ -251,7 +250,7 @@ holds every variable the app runs with — `JWT_SECRET`, `POSTGRES_PASSWORD`,
 `TUNNEL_TOKEN`, `TURN_*`, `KLIPY_KEY`, `S3_*`/`R2_*` — verbatim, plus the plain
 config (`MAX_FILE_MB`, `UNFURL`, `STUN_URL`…), minus the image's runtime noise
 (`PATH`, `HOSTNAME`). That is what makes a rebuild here possible without
-retyping keys from memory; on the Civo deploy the same file also carried the
+retyping keys from memory; running in Kubernetes, the same file also carried the
 namespace's Secret objects, read through the ServiceAccount.
 
 `--fetch` writes both forms: `secrets.json` (everything, plus counts) and
@@ -297,56 +296,38 @@ docker compose ... exec -T campfire node scripts/run-backup.js manual
 
 `restore-db.sh` runs `pg_restore --clean --if-exists` and then TRUNCATEs the
 runtime tables (`bus_*`, `live_sessions`, `voice_occupants`, `rate_limits`,
-`webauthn_challenges`) - those describe a cluster this is not, and inheriting
-them makes presence and the bus lie.
+`webauthn_challenges`) - those describe a multi-replica cluster, which this is
+not, and inheriting them makes presence and the bus lie.
 
 ## Open items
 
 1. **Biggest risk: media and backups share one Cloudflare account, and the media
-   has no second copy at all.** The whole point of the old split was that losing
-   the media vendor must not cost the backups (see `../civo/README.md` §8). Now
-   one account holds live media *and* the only copies of everything else — and
-   since snapshots stopped mirroring the media (see §Backups), a lost
-   `campfire-media` bucket loses the media outright. Two fixes, in order: move
-   **backups** to a third vendor (Backblaze B2 has a 10 GB free tier, so at
-   ~250 MiB of media it stays free), which restores the separation `r2.js` was
-   built for; and give the media its own out-of-account copy (`rclone sync` to
-   B2/Storj on a schedule, or a second provider's bucket) if that media is worth
-   more than the storage it costs to duplicate.
-2. The old Civo cluster is **scaled to zero, not deleted**. It is the rollback:
-   `kubectl -n campfire scale deploy/campfire deploy/cloudflared --replicas=1`.
-   Rolling back loses everything written since the cutover, so decide soon.
-   Its cron-like workers are off while it is scaled down, which matters: a
-   second `backup.js` writing to the same R2 bucket would fight over retention.
+   has no second copy at all.** They used to sit with two different vendors, which
+   is what kept a lost media store from costing the backups too. Now one account
+   holds live media *and* the only copies of everything else — and since
+   snapshots stopped mirroring the media (see §Backups), a lost `campfire-media`
+   bucket loses the media outright. Two fixes, in order: move **backups** to a
+   third vendor (Backblaze B2 has a 10 GB free tier, so at ~250 MiB of media it
+   stays free), which restores the separation `r2.js` was built for; and give the
+   media its own out-of-account copy (`rclone sync` to B2/Storj on a schedule, or
+   a second provider's bucket) if that media is worth more than the storage it
+   costs to duplicate.
+2. **Retired infrastructure is still provisioned and still billing**: the old
+   Kubernetes cluster is scaled to zero (not deleted) and its object store is
+   untouched. Nothing here uses either, and the object store holds a pre-R2 copy
+   of the media — so delete both from the provider's dashboard once you are
+   satisfied that R2 is serving everything, and delete that provider's API key
+   with them.
 3. No HA. One host, one Postgres, one of everything. A reboot is downtime.
-4. The Civo object store is untouched (`campfire`, 262 objects) and still billed
-   until deleted. Delete it only after a full billing cycle has served from R2 -
-   `scripts/migrate-media-bucket.js` will not do it for you, on purpose.
-5. Rotate every credential that was pasted into a chat during this migration:
-   the Civo API key, the Cloudflare Global API Key, and the Hetzner API token.
-   The R2 media token and the R2 backup keys are live and should stay, but the
-   **Cloudflare Global API Key is not needed by anything running here** - it was
-   only used to create the bucket and the scoped token.
+4. Rotate the credentials that were pasted into a chat during the migration: the
+   Cloudflare Global API Key and the Hetzner API token. The R2 media token and the
+   R2 backup keys are live and should stay, but the **Cloudflare Global API Key is
+   not needed by anything running here** - it was only used to create the bucket
+   and the scoped token.
 
-## The cutover, for reference
+## One thing to remember about the tunnel
 
-The whole move took one ~85-second outage (04:01:00Z -> 04:02:25Z):
-
-1. Media copied Civo -> R2 and verified (262 objects, 246 MiB, every one
-   re-downloaded and MD5-matched).
-2. Tunnel ingress repointed from `http://campfire.campfire.svc.cluster.local:3000`
-   to **`http://campfire:3000`** - a name that resolves in the k8s namespace *and*
-   on the compose network, so the change was verifiable as non-breaking (12/12
-   HTTP 200) before the switch.
-3. Old cluster scaled to 0 (`cloudflared` then `campfire`), which stops all
-   writes - including its backup worker, which would otherwise keep writing
-   snapshots of a database that is no longer production.
-4. Fresh `pg_dump` of the now-quiesced database, transferred, restored, and
-   compared: row counts matched the live cluster exactly.
-5. `cloudflared` started on the VPS.
-
-**Do not repeat the mistake made during preparation:** starting `cloudflared` on
-the new host *while the old cluster's connector was still up* puts both in the
-same tunnel, and Cloudflare load-balances across connectors. Because the ingress
-still named a k8s-internal hostname, roughly one live request in five failed for
-about 90 seconds. On one tunnel it is stop-then-start, never both.
+Starting `cloudflared` on a new host *while another connector for the same tunnel
+is still up* puts both in one tunnel, and Cloudflare load-balances across
+connectors - so a half-migrated routing change makes a fraction of live requests
+fail with no obvious cause. On one tunnel it is stop-then-start, never both.

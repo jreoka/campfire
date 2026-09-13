@@ -28,12 +28,9 @@ function s3() {
       region: REGION,
       endpoint: ENDPOINT,
       // Addressing style is a property of the ENDPOINT, not a preference, and
-      // the two stores this project has used are exact opposites:
-      //   Civo   answers only path-style (`<endpoint>/<bucket>/<key>`); its
-      //          virtual-host form does not even resolve in DNS.
-      //   Hetzner answers only virtual-host (`<bucket>.<endpoint>/<key>`) and
-      //          403s on path-style.
-      // Both verified against the real endpoints with scripts/s3-smoke.js.
+      // stores differ: Hetzner Object Storage answers only virtual-host
+      // (`<bucket>.<endpoint>/<key>`) and 403s on path-style, while Cloudflare
+      // R2 (what this app uses) answers both.
       // Defaults to path-style so an existing deployment is byte-identical.
       forcePathStyle: process.env.S3_FORCE_PATH_STYLE !== '0',
       credentials: {
