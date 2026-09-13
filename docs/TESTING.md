@@ -810,9 +810,17 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   `styles.css`: the star is on a starrable GIF and nowhere else, it carries the
   whole favorite in its `data-*` attributes, it sits beside the download button
   in the picture's top-right corner with enough gap that the two 44px thumb boxes
-  cannot overlap, it waits for the hover on a mouse device, and its "on" state is
+  cannot overlap, the two are a matched PAIR (same 32px box, 10px rounding,
+  scrim, reveal and press — the download button is a rounded square, not the old
+  circle), it waits for the hover on a mouse device, and its "on" state is
   the account's list — by slug, by url key, or via a row the picker wrote under
-  the real slug. Finally a real server against a throwaway database (skipping
+  the real slug. It also pins the download button's OTHER life: the audio player
+  and the text/code card reuse the same class inline, and the overlay geometry
+  (absolute, opacity 0, no `.att-wrap` to hover) left that copy invisible at the
+  top-right of the PAGE on a mouse device and pinned to the viewport on touch —
+  measured, so the test asserts it is `position:static`, visible, and inside its
+  own card, and that only the overlay copy grows a thumb hit box.
+  Finally a real server against a throwaway database (skipping
   without Postgres) proves the round trip: the identity survives post → history
   for a channel AND a DM, a local upload or a bogus slug never keeps one, a
   favorite written from what the server handed a reader lands in that account's

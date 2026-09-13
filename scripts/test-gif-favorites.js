@@ -178,9 +178,16 @@ function wiringChecks() {
     'revealed on hover, always visible where there is no hover');
   check(/\.att-star\.on svg\{fill:var\(--accent\);stroke:var\(--accent\)\}/.test(css) && /\.pk-star\.on svg\{fill:var\(--accent\);stroke:var\(--accent\)\}/.test(css),
     'a starred GIF reads like a starred picker tile (same accent fill)');
+  check(/\.att-dl\{[^}]*border-radius:10px[^}]*background:rgba\(9,12,24,\.55\)/.test(css)
+    && /\.att-dl:active\{transform:scale\(\.92\)\}/.test(css),
+    'the download button is the star\'s twin — same 32px square, rounding, scrim and press');
+  check(/\.vplayer \.att-dl,\.txt-head \.att-dl\{position:static;opacity:1/.test(css),
+    'and the inline reuse in the audio player / text card is un-anchored from the overlay geometry (see C3)');
+  check(/\.att-wrap \.att-dl::after\{[^}]*width:var\(--tap\)/.test(css),
+    'only the overlay copy grows a thumb hit box (an inline one would anchor to the page)');
   check(/\.att-star::after\{[^}]*width:var\(--tap\);height:var\(--tap\)\}/.test(css),
     'its 32px face grows a 44px thumb target (a pinned control already owns the box)');
-  check(/\.att-star:active\{transform:scale\(\.92\)\}/.test(css) && /\.att-star:active\{transform:none\}/.test(css),
+  check(/\.att-star:active\{transform:scale\(\.92\)\}/.test(css) && /\.att-star:active[^{}]*\{transform:none\}/.test(css),
     'it presses like the rest of the app, and stands still under reduced motion');
   check(/try \{ ensureGifFavs\(\); \} catch \{\}/.test(auth),
     'boot pulls the account\'s favorites, so the first paint of a chat GIF is already honest');
@@ -317,6 +324,7 @@ const wrap = box.querySelector('.att-wrap');
 const star = wrap.querySelector('.att-star');
 const dl = wrap.querySelector('.att-dl');
 const r = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height), right: Math.round(b.right), bottom: Math.round(b.bottom) }; };
+const cs = (el) => { if (!el) return null; const c = getComputedStyle(el); return { radius: c.borderRadius, bg: c.backgroundColor, w: c.width, h: c.height, opacity: c.opacity, position: c.position }; };
 const ds = star ? Object.assign({}, star.dataset) : null;
 if (ds) delete ds.act;
 document.title = JSON.stringify({
@@ -325,9 +333,54 @@ document.title = JSON.stringify({
   pressed: star ? star.getAttribute('aria-pressed') : null,
   title: star ? star.getAttribute('title') : null,
   wrap: r(wrap), starBox: r(star), dlBox: r(dl),
+  starCss: cs(star), dlCss: cs(dl),
   opacity: star ? getComputedStyle(star).opacity : null,
   imgSrc: (wrap.querySelector('img.att-img') || {}).getAttribute ? wrap.querySelector('img.att-img').getAttribute('src') : null,
 });
+</script></body></html>`;
+}
+
+// The audio player and the text/code card reuse the same download button INLINE
+// (see the note on `.vplayer .att-dl` in styles.css), so they need the two real
+// builders, which sit further down messages.js than the markup slice above.
+const INLINE_END = messages.indexOf('function vpAudio(root)');
+const inlineSource = messages.slice(MARK_START, INLINE_END);
+
+function inlinePageHtml() {
+  return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
+<style>${css}</style>
+<style>html,body{margin:0;background:#0e1420}
+#host{width:420px;padding:10px}
+#host *{transition:none!important}</style>
+</head><body><div id="host"><div class="msg"><div class="body"><div class="text" id="text"></div></div></div></div><script>
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function fmtSize() { return '1 KB'; }
+function toast() {}
+const S = { gifFavs: [] };
+${inlineSource}
+const box = document.getElementById('text');
+const r = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height), right: Math.round(b.right), bottom: Math.round(b.bottom) }; };
+function probe(kind) {
+  const att = kind === 'audio'
+    ? { kind: 'audio', url: '/uploads/files/a.mp3', name: 'a.mp3', size: 1000, mime: 'audio/mpeg' }
+    : { kind: 'file', url: '/uploads/files/a.md', name: 'a.md', size: 40, mime: 'text/markdown', id: 'f1' };
+  const d = document.createElement('div');
+  d.className = 'msg-atts';
+  d.innerHTML = attachmentHTML(att);
+  box.appendChild(d);
+  const card = d.querySelector(kind === 'audio' ? '.vplayer' : '.txtfile');
+  const dl = d.querySelector('.att-dl');
+  if (!card || !dl) return { missing: true };
+  const c = getComputedStyle(dl);
+  return {
+    opacity: c.opacity, position: c.position,
+    card: r(card), dl: r(dl),
+    // Inside its own card means it is in the flow of that row — not the overlay
+    // box it wears over a picture, which resolved against the viewport.
+    inside: r(dl).x >= r(card).x && r(dl).right <= r(card).right && r(dl).y >= r(card).y && r(dl).bottom <= r(card).bottom,
+  };
+}
+document.title = JSON.stringify({ audio: probe('audio'), text: probe('text') });
 </script></body></html>`;
 }
 
@@ -381,13 +434,32 @@ async function browserChecks(chrome, gifAtt) {
     'with enough gap that their 44px thumb boxes cannot overlap', { star: out.starBox, dl: out.dlBox });
   check(out.starBox && out.starBox.x - out.wrap.x > out.wrap.w / 2 && out.starBox.y - out.wrap.y < 12,
     'top-right, on the picture\'s top edge', { star: out.starBox, wrap: out.wrap });
+  check(out.starCss && out.dlCss && out.starCss.radius === out.dlCss.radius && out.starCss.bg === out.dlCss.bg &&
+    out.starCss.w === out.dlCss.w && out.starCss.h === out.dlCss.h && out.starCss.opacity === out.dlCss.opacity,
+    'and the two are a matched pair — same box, rounding, scrim and reveal',
+    { star: out.starCss, dl: out.dlCss });
+  check(out.dlCss && out.dlCss.radius === '10px' && out.dlCss.w === '32px',
+    'the download button is a rounded square, not the old circle', out.dlCss);
 
-  console.log('\n[C3] the account\'s list is what the star shows');
+  console.log('\n[C3] the audio player and a text/code card keep that button INLINE');
+  const inl = await runChrome(chrome, inlinePageHtml());
+  check(!inl.err && inl.audio && !inl.audio.missing && inl.text && !inl.text.missing,
+    'both surfaces render one', inl);
+  check(!inl.err && inl.audio.position === 'static' && inl.audio.opacity === '1' &&
+    inl.text.position === 'static' && inl.text.opacity === '1',
+    'in the flow and visible (the overlay geometry had no .att-wrap to hover, so it sat'
+    + ' invisible at opacity 0 — and on touch it lit up pinned to the viewport)',
+    { audio: inl.audio, text: inl.text });
+  check(!inl.err && inl.audio.inside && inl.text.inside,
+    'and inside its own card, not at the corner of the page',
+    { audio: inl.audio, text: inl.text });
+
+  console.log('\n[C4] the account\'s list is what the star shows');
   const on = await runChrome(chrome, pageHtml(gifAtt, [{ slug: gifAtt.gif_slug, title: 'x', thumb: 't', gif: gifAtt.url, mp4: null }]));
   check(!on.err && on.on === true && on.pressed === 'true' && on.title === 'Remove from favorites',
     'a GIF already in the favorites paints starred', on);
 
-  console.log('\n[C4] a GIF posted BEFORE the picker stamped its slug is still starrable');
+  console.log('\n[C5] a GIF posted BEFORE the picker stamped its slug is still starrable');
   const oldGif = {
     kind: 'image', mime: 'image/gif', name: 'Old GIF.gif', size: 0, scan: 'clean', w: 480, h: 270,
     url: 'https://static.klipy.com/ii/4493325008d34b7bf8cd6813cd5c1619/1a/2b/oldOne.gif',
@@ -401,7 +473,7 @@ async function browserChecks(chrome, gifAtt) {
   check(!legacyByUrl.err && legacyByUrl.on === true,
     'as does a row the PICKER wrote under the real Klipy slug — the url is what ties them together', legacyByUrl);
 
-  console.log('\n[C5] nothing else gets a star');
+  console.log('\n[C6] nothing else gets a star');
   const plain = await runChrome(chrome, pageHtml({ kind: 'image', url: '/uploads/files/photo.png?v=1', name: 'photo.png', w: 800, h: 600 }, []));
   check(!plain.err && !plain.star && !!plain.wrap, 'an uploaded picture has none', plain);
   const uploadedGif = await runChrome(chrome, pageHtml({ kind: 'image', mime: 'image/gif', url: '/uploads/files/cat.gif?v=1', name: 'cat.gif', w: 320, h: 240 }, []));

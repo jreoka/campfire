@@ -967,15 +967,22 @@ body.ub-open #lightbox #lb-stage{padding-top:calc(4.4rem + var(--safe-t) + var(-
 .att-vid-load{position:absolute;inset:0;display:none;align-items:center;justify-content:center;border:0;padding:0;border-radius:12px;background:#000;z-index:1;cursor:pointer}
 .att-wrap.loading .att-vid-load{display:flex}
 .att-spin{width:24px;height:24px;border-radius:50%;border:2.5px solid rgba(255,255,255,.18);border-top-color:rgba(255,255,255,.85);animation:up-spin .8s linear infinite}
-.att-dl{position:absolute;top:.45rem;right:.45rem;display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.65);color:#fff;opacity:0;transition:opacity .15s,background var(--t-fast);z-index:2}
-.att-dl:hover{background:rgba(0,0,0,.85);color:#fff}
+/* The download button over a picture or a video. It and the favorite star are a
+   matched PAIR in the top-right corner: same 32px box, same 10px rounding, same
+   scrim, same reveal — the star sits beside it (see `.att-star` below) and is
+   only there for a GIF, so on everything else the download button keeps the
+   corner alone. */
+.att-dl{position:absolute;top:.45rem;right:.45rem;display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:10px;background:rgba(9,12,24,.55);color:#fff;opacity:0;z-index:2;transition:opacity .15s,background var(--t-fast),transform var(--t-press) var(--ease-native)}
+.att-dl svg{width:16px;height:16px}
+.att-dl:hover{background:rgba(9,12,24,.82);color:#fff}
+.att-dl:active{transform:scale(.92)}
 .att-wrap:hover .att-dl,.att-dl:focus-visible{opacity:1}
 @media (hover:none){.att-dl{opacity:1}}
 /* The star on a GIF that can be favorited (see attFavHTML in messages.js): the
    same affordance as a `.pk-star` on a picker tile, sitting beside the download
    button in the picture's top-right corner — its own `.45rem` edge, then a
-   `.8rem` gap, then that button's 32px circle (the gap is wide enough that the
-   two 44px thumb hit boxes cannot overlap; see "tap targets"). Both are revealed
+   `.8rem` gap, then that button's 32px box (the gap is wide enough that the two
+   44px thumb hit boxes cannot overlap; see "tap targets"). Both are revealed
    together on hover, and on touch they are simply always there: there is nothing
    to hover with, and an unconditional ::after supplies each hit box. */
 .att-star{position:absolute;top:.45rem;right:calc(.45rem + 32px + .8rem);display:flex;align-items:center;justify-content:center;width:32px;height:32px;border:0;padding:0;border-radius:10px;background:rgba(9,12,24,.55);color:#fff;cursor:pointer;opacity:0;z-index:2;transition:opacity .15s,background var(--t-fast),transform var(--t-press) var(--ease-native)}
@@ -1944,6 +1951,15 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .vp-bars i.on{background:var(--accent)}
 .vp-meta{display:flex;justify-content:space-between;font-size:.7rem;color:var(--muted);font-variant-numeric:tabular-nums}
 .vplayer .att-dl{flex-shrink:0}
+/* …and that button is INLINE here, at the end of the player's row — not the
+   overlay it is over a picture. Left to the base rule it inherited the overlay's
+   geometry with no `.att-wrap` to hover: measured, it sat at opacity 0 in the
+   top-right of the PAGE (its parent is static, so the absolute box resolved
+   against the viewport — the audio player at y≈360 put its download button at
+   y=7), and on a touch device the `hover:none` reveal lit it up there. Same
+   shape as the volume button beside it. */
+.vplayer .att-dl,.txt-head .att-dl{position:static;opacity:1;width:28px;height:28px;border-radius:8px;background:transparent;color:var(--muted)}
+.vplayer .att-dl:hover,.txt-head .att-dl:hover{background:var(--panel-3);color:var(--text)}
 /* audio preview volume: hover/tap the speaker for a slider popup */
 .vp-vol{position:relative;display:flex;align-items:center;flex-shrink:0}
 .vp-volbtn{width:30px;height:30px;border-radius:50%;border:0;background:transparent;color:var(--muted);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:color var(--t-fast),background var(--t-fast)}
@@ -2788,7 +2804,7 @@ body.story-open{overflow:hidden}
 #chat-header.dm-name-tap #chan-name:active,
 #chat-header.dm-name-tap #chan-hash:active{opacity:.6}
 @media (prefers-reduced-motion:reduce){
-  .icon-btn:active,.chip:active,.mini:active,.me-icobtn:active,.vb-btn:active,.ss-add:active,.pk-star:active,.hist-x:active,.sb-close:active,.server-btn:active,.att-star:active{transform:none}
+  .icon-btn:active,.chip:active,.mini:active,.me-icobtn:active,.vb-btn:active,.ss-add:active,.pk-star:active,.hist-x:active,.sb-close:active,.server-btn:active,.att-star:active,.att-dl:active{transform:none}
 }
 
 /* ---------- 2. tap targets ----------
@@ -2813,7 +2829,11 @@ body.story-open{overflow:hidden}
   #btn-plus,#btn-more{position:relative}
   #btn-plus::after,#btn-more::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--tap);height:var(--tap)}
   /* The chat GIF star is pinned to a corner, so it is already a containing block
-     for its own hit box (see the note above) — no `position:relative`. */
+     for its own hit box (see the note above) — no `position:relative`. The
+     download button beside it is pinned the same way; the INLINE ones (the audio
+     player, a text card) are not, and must not get a box anchored to whatever
+     positioned ancestor they happen to have. */
+  .att-wrap .att-dl::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--tap);height:var(--tap)}
   .att-star::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--tap);height:var(--tap)}
   /* A hit box may only grow into space that is actually empty. The row's ✕ sits
      in a tight list, so it takes the row's own height and no more. */
