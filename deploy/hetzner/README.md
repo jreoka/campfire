@@ -15,13 +15,18 @@ is still in the namespace but **scaled to zero** as the rollback path.
 ## Why we moved
 
 The old cluster ran on a Civo Small node with **`cpu=890m`, `mem=1193460Ki`
-(~1165 MiB) allocatable**. clamd needs about a gigabyte - 996 MiB measured on
+(~1165 MiB) allocatable**. clamd needed about a gigabyte - 996 MiB measured on
 production - so the cluster ran `VIRUS_SCAN=0`. That was an accepted trade-off
 (`../civo/README.md` §9), not an oversight: AV scanning was the one feature the
 node could not afford. This host has 8 GB, so **scanning is back on**, the box is
 cheaper than the Civo node plus its object store, and the app got 4 cores
 instead of 1 - which was the other long-standing complaint (two niced ffmpeg
 encodes made the app feel sluggish on one vCPU).
+
+Scanning has since moved from clamd to **Harbin**, which is one self-contained
+binary rather than a resident daemon; that removed the clamd container and its
+~500 MB signature volume outright, and freed roughly 3 GB on this host. See
+"Uploads, scanning and compression" below.
 
 ## Layout on the host
 
@@ -39,16 +44,19 @@ patches - a deploy is a `git pull` and a `compose up`.
 ## Services
 
 `docker-compose.yml` (unchanged from the repo) plus
-`deploy/hetzner/docker-compose.hetzner.yml`, which supplies the three things the
+`deploy/hetzner/docker-compose.hetzner.yml`, which supplies the two things the
 cluster used to provide:
 
 | service | why | memory limit |
 |---|---|---|
-| `campfire` | the app | 2g |
+| `campfire` | the app, malware scanner included | 2g |
 | `db` | Postgres 18, named volume `pgdata` | 1g |
 | `cloudflared` | the only ingress; outbound-only | - |
 | `coturn` | TURN relay, `network_mode: host` so it binds the public IP | - |
-| `clamd` | the AV engine, reached over the compose network as `clamd` | 3g |
+
+There is no scanner service. Harbin is a binary inside the app image (built by
+the Dockerfile's `harbin` stage) rather than a sibling container: it needs no
+daemon, no signature volume, no healthcheck and no compose network hop.
 
 The limits are deliberate: a single host has no kubelet to arbitrate, so one
 runaway encode or a burst of uploads must not be able to starve Postgres.
@@ -161,29 +169,45 @@ ideal.
 
 ## Uploads, scanning and compression
 
-`VIRUS_SCAN=1` with `CLAM_HOST=clamd`. The app never spawns clamd; it speaks
-TCP to the sibling container, which is `virus-scan.js`'s remote path
-(`CLAM_REMOTE`). The pipeline is **scan -> compress -> scan**, and only the last
-clean verdict is published, so clients still see exactly one
-`pending -> final` transition.
+`VIRUS_SCAN=1`. The engine is **Harbin** (https://github.com/jreoka/harbin) — a
+static, machine-learned malware detector that is one binary with one argument, an
+embedded model and no runtime, no network and no signature updates. The
+Dockerfile builds it from a pinned commit and copies it into the app image, so
+there is no scanner container, no signature volume and no healthcheck to watch.
+The pipeline is **scan -> compress -> scan**, and only the last clean verdict is
+published, so clients still see exactly one `pending -> final` transition.
 
-The stock image config is used **as-is**, deliberately. Its defaults already fit:
-`StreamMaxLength` and `MaxFileSize` are 100M against `MAX_FILE_MB=50`. (The
-`#StreamMaxLength 25M` line in `clamd.conf` is a commented *example*, not the
-default - getting that backwards would reject every large upload at the scan
-step.) `ConcurrentDatabaseReload` stays on, which builds a second ~1.2 GB engine
-during a daily signature update; that is the concrete reason this box is 8 GB.
+Two consequences worth knowing:
+
+* **The engine reads a path, not a stream.** In S3 mode the object is written to
+  a temp file (`HARBIN_TMP_DIR`) before the scan and unlinked when the verdict
+  lands; on local disk the stored file is scanned in place. A startup pass clears
+  any `cf-scan-*` left behind by a crash, so the temp dir cannot grow across
+  restarts.
+* **Harbin's `suspicious` band is served, not blocked.** Its shipped operating
+  point is the malicious threshold (0.95), where recall measured 1.00000 with 4
+  false positives across 70,300 benign files; the 0.60 band is counted, logged
+  and shown in the admin panel instead. `HARBIN_BLOCK_SUSPICIOUS=1` refuses it
+  too, at a real false-positive cost on installer stubs and self-extracting
+  archives.
 
 Verify the scanner for real, from inside the app container:
 
 ```bash
 docker compose -f docker-compose.yml -f deploy/hetzner/docker-compose.hetzner.yml \
-  exec -T -e CLAM_HOST=clamd campfire node scripts/verify-clamd.js
+  exec -T campfire node scripts/verify-harbin.js
 ```
 
-It checks PING, that EICAR is detected, that a harmless body is cleared (so it is
-not an always-guilty engine), and that a **50 MB** body is accepted - the largest
-thing an upload can hand it.
+It checks that the engine runs **with a detection model embedded** (a build with
+no model answers CLEAN to everything, which is worse than no scanner), that a
+synthetic all-writable+executable PE is detected, that the EICAR test string is
+detected, that a harmless body is cleared (so it is not an always-guilty engine),
+and that a **50 MB** body is accepted - the largest thing an upload can hand it.
+
+EICAR is written to a temp file for the duration of that check, because Harbin
+takes a path. On a dev machine with endpoint antivirus the file is quarantined
+before Harbin can read it and the check reports SKIPPED with that reason; on this
+host nothing else is watching the temp dir, so it runs for real.
 
 ## Voice / TURN
 

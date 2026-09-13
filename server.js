@@ -7399,7 +7399,7 @@ async function boot() {
   // Chat-upload compressor (images/GIFs/video/audio): one file at a time,
   // niced + single-threaded, so the VPS never feels it.
   try { require('./media-compress').startMediaCompress(); } catch (e) { console.error('[media] scheduler failed to start:', (e && e.message) || e); }
-  // Virus scanner (ClamAV): every upload scanned by content, files gated
+  // Virus scanner (Harbin): every upload scanned by content, files gated
   // until clean. Orphan sweep: unreferenced bytes deleted daily (backups/
   // never listed).
   try {

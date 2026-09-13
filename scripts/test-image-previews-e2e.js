@@ -156,8 +156,8 @@ async function main() {
         PGHOST: pg.host, PGPORT: String(pg.port), PGUSER: pg.user, PGPASSWORD: pg.password, PGDATABASE: TEST_DB,
         JWT_SECRET: 'test-image-previews-secret',
         UPLOAD_DIR: uploads,
-        // The cluster's shape: no clamd, compression on, so the upload is gated
-        // only until the compressor publishes it.
+        // The no-scanner shape: VIRUS_SCAN off, compression on, so the upload is
+        // gated only until the compressor publishes it.
         VIRUS_SCAN: '0',
         MEDIA_COMPRESS: '1',
         MEDIA_COMPRESS_ACTIVE_MS: '250',

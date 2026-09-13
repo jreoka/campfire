@@ -6,11 +6,14 @@
 // as a clean file, the sweeper compressed it a few seconds later, and the
 // follow-up verdict re-broadcast the message with a new URL — which reset
 // playback under anyone listening. Here we boot a real server against a
-// throwaway Postgres database with a fake (slow) clamd on loopback and assert:
+// throwaway Postgres database with a slow STAND-IN Harbin engine
+// (scripts/fake-harbin.js, pointed at by HARBIN_BIN) and assert:
 //   - the message shows the file as pending first,
 //   - exactly ONE message-updated follows, already pointing at compressed
-//     bytes that the scanner approved,
-//   - the old bytes are gone (format change) and file_scans followed the file.
+//     bytes that the engine approved,
+//   - the old bytes are gone (format change) and file_scans followed the file,
+//   - a file the engine refuses is deleted, its row goes `infected`, the gate
+//     answers 410, and the message is re-broadcast as blocked.
 //
 // Requirements: ffmpeg on PATH and Postgres reachable (docker compose up -d db).
 // Skips (exit 0) with a message when either is missing.
@@ -21,7 +24,6 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const net = require('net');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
 const { Client } = require('pg');
@@ -30,8 +32,8 @@ const WebSocket = require('ws');
 const ROOT = path.join(__dirname, '..');
 const TEST_DB = 'campfire_test';
 const PORT = parseInt(process.env.TEST_PORT || '3411', 10);
-const CLAM_PORT = parseInt(process.env.TEST_CLAM_PORT || '3412', 10);
-const SCAN_DELAY_MS = 1500; // slow fake clamd keeps the upload pending long enough to observe
+const FAKE_ENGINE = path.join(__dirname, 'fake-harbin.js');
+const SCAN_DELAY_MS = 1500; // a slow stand-in keeps the upload pending long enough to observe
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log('[test]', ...a);
@@ -55,48 +57,20 @@ function readEnvFile() {
   return out;
 }
 
-// ---------- fake clamd (INSTREAM + PING, delayed verdicts) ----------
+// ---------- the stand-in engine's log ----------
+// The engine answers over a process exit code and a report line, so what it was
+// ASKED is only visible through what it wrote down. fake-harbin.js appends one
+// JSON line per answered scan when FAKE_HARBIN_LOG is set, which is how the
+// assertions below stay honest about *which bytes* reached the scanner.
+// Declared at module scope because readEngineLog() runs outside main(), where
+// the path is decided — a `const` inside main() would leave the helper reading
+// a binding that is not in scope, and its catch would silently return [].
+let engineLog = '';
 
-function startFakeClamd(port) {
-  const state = { scans: 0, sizes: [], pings: 0 };
-  const srv = net.createServer((sock) => {
-    let buf = Buffer.alloc(0);
-    let mode = null;
-    let curSize = 0;
-    sock.on('error', () => {});
-    sock.on('data', (d) => {
-      buf = Buffer.concat([buf, d]);
-      if (!mode) {
-        const i0 = buf.indexOf(0), inl = buf.indexOf(10);
-        let end = -1;
-        if (i0 >= 0 && (inl < 0 || i0 < inl)) end = i0;
-        else if (inl >= 0) end = inl;
-        if (end < 0) return;
-        const cmd = buf.slice(0, end).toString('latin1').trim().toUpperCase();
-        buf = buf.slice(end + 1);
-        if (cmd.includes('PING')) { mode = 'ping'; state.pings++; sock.write('PONG\0'); return; }
-        if (cmd.includes('INSTREAM')) { mode = 'instream'; return; }
-        sock.destroy();
-        return;
-      }
-      if (mode !== 'instream') return;
-      for (;;) {
-        if (buf.length < 4) return;
-        const len = buf.readUInt32BE(0);
-        if (len === 0) {
-          buf = buf.slice(4);
-          state.scans++;
-          state.sizes.push(curSize);
-          setTimeout(() => { try { sock.end('stream: OK\0'); } catch {} }, SCAN_DELAY_MS);
-          return;
-        }
-        if (buf.length < 4 + len) return;
-        curSize += len;
-        buf = buf.slice(4 + len);
-      }
-    });
-  });
-  return new Promise((resolve) => srv.listen(port, '127.0.0.1', () => resolve({ srv, state })));
+function readEngineLog() {
+  try {
+    return fs.readFileSync(engineLog, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  } catch { return []; }
 }
 
 // ---------- helpers ----------
@@ -198,39 +172,36 @@ async function main() {
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-pipe-'));
   const uploads = path.join(tmp, 'uploads');
-  const clamdb = path.join(tmp, 'clamav');
-  const bindir = path.join(tmp, 'bin');
-  for (const d of [uploads, clamdb, bindir]) fs.mkdirSync(d, { recursive: true });
-  fs.writeFileSync(path.join(clamdb, 'test.cvd'), 'placeholder'); // hasDbFiles() only looks at the extension
-
-  // Fake engine binaries so the scanner supervises "clamd" normally; our fake
-  // TCP server answers PING/INSTREAM (the shim process itself exits at once).
-  const trueBin = process.platform === 'win32' ? 'C:/Program Files/Git/usr/bin/true.exe' : '/bin/true';
-  const shim = (n) => path.join(bindir, process.platform === 'win32' ? n + '.exe' : n);
-  try { fs.copyFileSync(trueBin, shim('clamd')); fs.copyFileSync(trueBin, shim('freshclam')); }
-  catch { return skip('cannot create engine shims'); }
+  fs.mkdirSync(uploads, { recursive: true });
+  // The stand-in engine writes one JSON line per answered scan here. It has to
+  // exist and be readable before the server boots, and it is outside the
+  // uploads tree so it can never be mistaken for media.
+  engineLog = path.join(tmp, 'engine.jsonl');
+  fs.writeFileSync(engineLog, '');
 
   const media = {
     wav: path.join(tmp, 'tone.wav'),
     jpg: path.join(tmp, 'noise.jpg'),
     small: path.join(tmp, 'thumb.png'), // tiny, but still a candidate: there is no size floor
     txt: path.join(tmp, 'notes.txt'), // not media at all — the compressor must never gate it
+    bad: path.join(tmp, 'payload.txt'), // what the stand-in engine refuses (see fake-harbin.js)
   };
   fs.writeFileSync(media.txt, 'not media, just a text file\n');
+  // Content, never a file name — and a deliberately innocent name, so the check
+  // proves the pipeline blocks on what the bytes ARE, not what they are called.
+  fs.writeFileSync(media.bad, 'holiday photo attachment\n' + 'FAKE-HARBIN-MALWARE-MARKER' + '\nmore harmless-looking text\n');
   if (!ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=20,volume=0.4', '-ac', '1', '-c:a', 'pcm_s16le', media.wav])
     || !ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'nullsrc=s=2048x2048,geq=random(1)*255:128:128', '-frames:v', '1', '-q:v', '1', media.jpg])
     || !ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x334155:s=64x64', '-frames:v', '1', media.small])) {
     return skip('ffmpeg could not generate test media');
   }
 
-  let child = null, fake = null, db = null;
+  let child = null, db = null;
   let serverLog = '';
   try {
     await admin.query(`DROP DATABASE IF EXISTS ${TEST_DB} WITH (FORCE)`);
     await admin.query(`CREATE DATABASE ${TEST_DB}`);
     await admin.end();
-
-    fake = await startFakeClamd(CLAM_PORT);
 
     const baseEnv = {
       ...process.env,
@@ -239,17 +210,20 @@ async function main() {
       JWT_SECRET: 'test-single-pass-secret',
       UPLOAD_DIR: uploads,
       VIRUS_SCAN: '1',
-      CLAM_PORT: String(CLAM_PORT),
-      CLAM_DB_DIR: clamdb,
+      // The stand-in engine, invoked through the current Node binary (a .js
+      // HARBIN_BIN — see virus-scan.js), so this test needs no Rust toolchain
+      // and behaves the same on Windows, macOS and Linux.
+      HARBIN_BIN: FAKE_ENGINE,
+      FAKE_HARBIN_DELAY_MS: String(SCAN_DELAY_MS),
+      FAKE_HARBIN_LOG: engineLog,
       MEDIA_COMPRESS_ACTIVE_MS: '250',
       MEDIA_COMPRESS_EVERY_MS: '5000',
       ORPHAN_SWEEP: '1', // exercised below (dry run + real sweep on a planted orphan)
       UNFURL: '0',
       DRAIN_WAIT_MS: '0', // the compression-only phase restarts the server
-      PATH: bindir + path.delimiter + (process.env.PATH || ''),
     };
-    // Boot/stop helpers: the second phase runs the SAME database with no clamd
-    // at all, which is the shape the production cluster uses.
+    // Boot/stop helpers: the second phase runs the SAME database with scanning
+    // off entirely, which is the shape a box that cannot afford scanning uses.
     function startServer(extra) {
       serverLog = '';
       const c = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
@@ -288,7 +262,7 @@ async function main() {
     db.on('error', (e) => console.log('[test] db client error:', (e && e.message) || e));
     await db.connect();
     const rowFor = async (key) => (await db.query('SELECT url, mime, size, kind, compressed FROM attachments WHERE split_part(url,\'?\',1) = $1', ['/uploads/' + key])).rows;
-    const scanRow = async (key) => (await db.query('SELECT status, attempts FROM file_scans WHERE key = $1', [key])).rows[0] || null;
+    const scanRow = async (key) => (await db.query('SELECT status, attempts, error FROM file_scans WHERE key = $1', [key])).rows[0] || null;
 
     // Runs one upload through the live pipeline and returns what clients saw.
     async function roundTrip(filePath, name, mime) {
@@ -329,7 +303,9 @@ async function main() {
     const served = await fetch(`http://127.0.0.1:${PORT}${aAtt ? aAtt.url : ''}`);
     const servedBytes = Buffer.from(await served.arrayBuffer());
     check('compressed file is served through the scan gate', served.status === 200 && servedBytes.length === aAtt.size, 'status=' + served.status + ' bytes=' + servedBytes.length);
-    check('candidate output was scanned too (sizes seen by clamd)', fake.state.sizes.includes(aAtt.size), 'scans=' + fake.state.sizes.join(','));
+    const aScans = readEngineLog();
+    check('candidate output was scanned too (the engine saw the mp3)',
+      aScans.some((s) => s.size === aAtt.size), 'engine saw sizes ' + aScans.map((s) => s.size).join(','));
 
     console.log('\n-- image: jpeg upload -> inline compression (same key) --');
     const b = await roundTrip(media.jpg, 'noise.jpg', 'image/jpeg');
@@ -339,7 +315,8 @@ async function main() {
     check('final attachment is clean + same key', !!bAtt && bAtt.scan === 'clean' && bAtt.url.split('?')[0] === b.up.url.split('?')[0], bAtt && bAtt.url);
     check('cache-buster rotated', !!bAtt && bAtt.url !== b.up.url);
     check('final bytes are smaller', !!bAtt && bAtt.size < b.up.size, bAtt && (bAtt.size + ' < ' + b.up.size));
-    check('rewritten bytes scanned before publishing', fake.state.sizes.includes(bAtt.size), 'scans=' + fake.state.sizes.join(','));
+    check('rewritten bytes scanned before publishing',
+      readEngineLog().some((s) => s.size === bAtt.size), 'engine saw sizes ' + readEngineLog().map((s) => s.size).join(','));
     const bKey = bAtt.url.split('?')[0].replace('/uploads/', '');
     check('scan verdict clean for the key', (await scanRow(bKey) || {}).status === 'clean');
     const bOnDisk = fs.statSync(path.join(uploads, bKey)).size;
@@ -368,6 +345,35 @@ async function main() {
       check('dm attachment row marked compressed', !!dmRow && Number(dmRow.compressed) === 1);
       check('dm original bytes deleted', !fs.existsSync(path.join(uploads, dmUp.url.split('?')[0].replace('/uploads/', ''))));
     }
+
+    console.log('\n-- detection: a flagged upload is deleted, gated and re-broadcast --');
+    // The stand-in engine refuses this one on CONTENT (see fake-harbin.js), and
+    // the file is named like an innocent holiday photo on purpose: the point of
+    // content scanning is that a renamed extension buys an attacker nothing.
+    const badConn = await connectWs(token);
+    await waitFor(() => badConn.events.some((e) => e.t === 'hello'), 5000);
+    const badUp = await uploadFile(media.bad, 'holiday-photo-2019.txt', 'text/plain', token);
+    check('the flagged upload is gated as pending', badUp.scan === 'pending', 'scan=' + badUp.scan);
+    badConn.send({
+      t: 'message', serverId: srv.server.id, channelId, content: '',
+      attachments: [{ url: badUp.url, name: badUp.name, mime: badUp.mime, size: badUp.size, kind: badUp.kind }],
+    });
+    const badNew = await waitFor(() => badConn.events.find((e) => e.t === 'message-new'), 8000);
+    if (!badNew) fail('the detection fixture message never arrived');
+    const badMid = badNew.message.id;
+    const badDone = await waitFor(() => badConn.events.find((e) => e.t === 'message-updated' && e.message.id === badMid
+      && e.message.attachments[0].scan === 'infected'), 30000);
+    badConn.close();
+    check('the message is re-broadcast as blocked', !!badDone, badDone ? '' : 'no infected update within 30s');
+    const badKey = badUp.url.split('?')[0].replace('/uploads/', '');
+    const badRow = await scanRow(badKey);
+    check('the verdict names the engine and its evidence',
+      !!badRow && /^Harbin: .+ \(0\.\d+\)$/.test(badRow.error || ''), badRow && badRow.error);
+    check('the infected bytes were deleted', !fs.existsSync(path.join(uploads, badKey)));
+    check('the scan row is kept so the chat can still explain itself',
+      !!badRow && badRow.status === 'infected');
+    const badServed = await fetch(`http://127.0.0.1:${PORT}${badUp.url}`);
+    check('the gate refuses the deleted bytes (410)', badServed.status === 410, 'status=' + badServed.status);
 
     console.log('\n-- sweeper fallback: a file the pipeline never saw --');
     // Bytes + a clean verdict but compressed = 0: exactly the state a
@@ -443,15 +449,14 @@ async function main() {
     check('real sweep deletes it', !!real.result && !fs.existsSync(orphanPath), JSON.stringify(real.result && { deleted: real.result.deleted, scanned: real.result.scanned }));
     await db.query('UPDATE users SET is_admin = 0 WHERE id = $1', [reg.user.id]);
 
-    // ---------- compression-only slot (no clamd) ----------
-    // What the production cluster runs: a 1 vCPU / ~1.14GiB node cannot afford
-    // clamd's ~1GB, so VIRUS_SCAN=0. The slot must still settle every upload's
-    // bytes BEFORE they are served, or a client gets the uncompressed file and
-    // then a swap. And what the sweeper does touch is already visible, so it
-    // must publish under a NEW key instead of rewriting the bytes behind a URL
-    // someone may be streaming.
+    // ---------- compression-only slot (no scanner) ----------
+    // A box that cannot afford a scanner runs VIRUS_SCAN=0. The slot must still
+    // settle every upload's bytes BEFORE they are served, or a client gets the
+    // uncompressed file and then a swap. And what the sweeper does touch is
+    // already visible, so it must publish under a NEW key instead of rewriting
+    // the bytes behind a URL someone may be streaming.
     console.log('\n-- compression-only slot: VIRUS_SCAN=0, MEDIA_COMPRESS=1 --');
-    const scansBefore = fake.state.scans;
+    const scansBefore = readEngineLog().length;
     await stopServer();
     // The bucket scan is driven explicitly below (POST /api/admin/media/scan), so
     // the scheduled pass is parked well beyond this run — but the age floor is
@@ -494,10 +499,11 @@ async function main() {
     await sleep(1500);
     pConn.close();
     const pUpdates = pConn.events.filter((e) => e.t === 'message-updated' && e.message.id === pMid);
-    check('exactly ONE transition, no clamd involved', pUpdates.length === 1 && !!pDone, 'updates=' + pUpdates.length);
+    check('exactly ONE transition, no engine involved', pUpdates.length === 1 && !!pDone, 'updates=' + pUpdates.length);
     const pAtt = pDone && pDone.message.attachments[0];
     check('final bytes are compressed + clean', !!pAtt && pAtt.mime === 'audio/mpeg' && pAtt.size < pUp.size, pAtt && (pAtt.mime + ' ' + pAtt.size + ' < ' + pUp.size));
-    check('no clamd was asked anything at all', fake.state.scans === scansBefore, 'scans=' + (fake.state.scans - scansBefore));
+    check('the engine was not asked anything at all',
+      readEngineLog().length === scansBefore, 'extra scans=' + (readEngineLog().length - scansBefore));
     const pServed = await fetch(`http://127.0.0.1:${PORT}${pAtt ? pAtt.url : ''}`);
     check('the published file is servable through the gate', pServed.status === 200, 'status=' + pServed.status);
     check('old scan row dropped, new key carries the verdict', (await scanRow(pUp.url.split('?')[0].replace('/uploads/', ''))) === null && !!(await scanRow(pAtt && pAtt.url.split('?')[0].replace('/uploads/', ''))));
@@ -735,7 +741,6 @@ async function main() {
   } finally {
     try { if (db) await db.end(); } catch {}
     try { if (child) child.kill(); } catch {}
-    try { if (fake) fake.srv.close(); } catch {}
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
     try {
       const drop = new Client({ ...pg, database: 'postgres', connectionTimeoutMillis: 4000 });

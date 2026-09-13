@@ -50,7 +50,8 @@ campfire/
   db.js              # Postgres wrapper + schema (initDb: CREATE TABLE IF NOT EXISTS + guarded migrations)
   unfurl.js          # link previews: server-side OpenGraph/oEmbed unfurl, SSRF-guarded fetch,
                      # Postgres cache, signed thumbnail proxy (/api/unfurl, /api/unfurl/img)
-  virus-scan.js      # ClamAV scanning + gated serving (+ inline media compression per upload)
+  virus-scan.js      # Harbin (machine-learned) scanning + gated serving
+                     # (+ inline media compression per upload)
   media-compress.js  # ffmpeg re-encode of over-large media: single-pass in the scan slot,
                      # the flag-driven queue (chat/DM/stories), the bucket reconciler
                      # (profile media + anything the flags never saw), and the key ledger
@@ -58,7 +59,11 @@ campfire/
   att-dims.js        # backfill measuring media posted before the shape record existed
                      # (newest-first, bounded per tick, leader-locked)
   package.json       # deps (express, ws, jsonwebtoken, bcryptjs, cookie-parser)
-  Dockerfile         # node:22-alpine, no build tools needed
+  Dockerfile         # multi-stage: rust builds Harbin, node:22-alpine runs the app
+  scripts/rwx-pe.js  # synthetic all-RWX PE: a detection positive control that is
+                     # not a virus signature (Harbin's tier-1 precision anchor)
+  scripts/fake-harbin.js   # stand-in engine (HARBIN_BIN): the pipeline's test harness
+  scripts/verify-harbin.js # acceptance check against a REAL engine
   docker-compose.yml # one service, ./data volume, requires JWT_SECRET in .env
   .env.example       # template (copy to .env)
   app/               # Windows Tauri app (Tauri v2, WebView2) — release-built on
@@ -239,8 +244,9 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
 Live at https://campfire.dill.moe — **one Hetzner Cloud VPS** (CX33, 4 vCPU /
 8 GB, Nuremberg `nbg1`) running Docker Compose, fronted by a **Cloudflare
 Tunnel** (outbound-only, so no inbound 80/443 and no certificates to renew),
-with coturn on the host network for TURN and **clamd as a sibling container for
-upload scanning**. Media lives in Cloudflare R2; the doomsday backups do too.
+with coturn on the host network for TURN and **Harbin compiled into the app
+image for upload scanning** (no scanner container — see below). Media lives in
+Cloudflare R2; the doomsday backups do too.
 Runbook: **`deploy/hetzner/README.md`**. See **Deployment** below for how to ship.
 
 The **Civo Kubernetes cluster is scaled to zero** — it is the rollback path, not
@@ -271,13 +277,29 @@ height).
 
 **The app runs with `VIRUS_SCAN=1` and `MEDIA_COMPRESS` on.** That is the whole
 point of the Hetzner move: the Civo node had ~1.14 GiB allocatable and clamd
-needs ~1 GB, so the cluster ran with scanning **off**. The VPS has 8 GB, so the
-slot is a real **scan -> compress -> scan** pipeline again and only the last
-clean verdict is published — clients still see exactly one `pending -> final`
+needs ~1 GB, so the cluster ran with scanning **off**. Scanning is now **Harbin**
+(`https://github.com/jreoka/harbin`) — a static, machine-learned detector that is
+one binary with one argument, an embedded model and no runtime, no network and no
+signature updates — so the ~1 GB clamd container, its ~500 MB signature volume
+and the `freshclam` schedule are all gone and the ~3 GB they held is back. The
+Dockerfile's `harbin` stage builds it from a pinned commit (`HARBIN_REF`, a
+cached layer) and copies it to `/usr/local/bin/harbin`; `HARBIN_BIN` overrides
+the path, and a `.js` value is run with the current Node binary, which is how the
+pipeline test drops in a stand-in engine with no Rust toolchain. The slot is
+still a real **scan -> compress -> scan** pipeline and only the last clean
+verdict is published — clients still see exactly one `pending -> final`
 transition, and a file a running player already holds is never swapped
 underneath it. Prove the engine rather than assuming it:
-`node scripts/verify-clamd.js` (PING, EICAR detected, a harmless body cleared so
-it is not an always-guilty engine, and a full-size 50 MB body accepted).
+`node scripts/verify-harbin.js` (the engine runs *with a model embedded* — a
+model-less build answers CLEAN to everything and is refused — a synthetic
+all-RWX PE and EICAR both detected, a harmless body cleared so it is not an
+always-guilty engine, and a full-size 50 MB body accepted). Two rules about the
+engine itself: it takes a **path, never a stream** (S3 objects are staged to
+`HARBIN_TMP_DIR` and unlinked on verdict; on local disk the stored file is
+scanned in place), and its **`suspicious` band (>= 0.60) is served, not blocked**
+— the shipped operating point is the malicious threshold (0.95), so the band is
+counted, logged and shown in the admin panel, and `HARBIN_BLOCK_SUSPICIOUS=1`
+refuses it too at a real false-positive cost.
 Coverage is the whole media tree: chat/DM attachments and **stories**
 through the flag-driven queue, and **profile media** (avatars, banners, sidebar
 banners, server icons, custom emoji, webhook avatars, the profile picker's
@@ -473,8 +495,9 @@ every task, in this file.
 - Env-only changes need **no rebuild**: edit `/opt/campfire/app/.env` (mode 600)
   and `up -d --force-recreate campfire`.
 - Confirm the deploy: `curl https://campfire.dill.moe/api/version` (the
-  fingerprint changes) and `docker compose ps` → everything Up, `db` and `clamd`
-  healthy.
+  fingerprint changes) and `docker compose ps` → everything Up, `db` healthy.
+  There is no scanner container to check any more; `docker compose exec campfire
+  harbin --model-info` is the engine's own proof that it is there with a model.
 - Postgres is the `pgdata` Docker volume on that host. Never delete it and never
   `docker compose down -v` — that destroys the database. The data-safety contract
   below applies unchanged.
@@ -895,10 +918,13 @@ NEXT: iterate per owner feedback on the live site.
   the entries for the area you are touching instead of loading it every time.
 - **Upload pipeline E2E:** `node scripts/test-upload-pipeline.js` (needs ffmpeg
   + the dev Postgres, skips otherwise) boots a real server against a throwaway
-  database with a fake clamd and asserts the single-transition compression flow
-  for the scan-integrated path, then **restarts it with `VIRUS_SCAN=0`** to
-  assert the compression-only shape the cluster runs (gated candidate -> one
-  transition with no clamd, immediate serving for non-candidates, and a
+  database with a slow STAND-IN engine (`scripts/fake-harbin.js`, handed to the
+  app as `HARBIN_BIN`) and asserts the single-transition compression flow
+  for the scan-integrated path plus the detection path (a flagged upload is
+  deleted, its row goes `infected`, the gate answers 410, and the message is
+  re-broadcast as blocked), then **restarts it with `VIRUS_SCAN=0`** to
+  assert the compression-only shape (gated candidate -> one
+  transition with no engine, immediate serving for non-candidates, and a
   sweeper rewrite landing on a fresh key with the old bytes untouched), and
   finally covers **story media** and the **bucket reconciliation** (a dry pass
   lists candidates and changes nothing; a real pass repoints a flagless
@@ -906,9 +932,10 @@ NEXT: iterate per owner feedback on the live site.
   object come back byte-identical; a second pass finds nothing left, which is
   the ledger doing its job). Re-run it after touching `virus-scan.js`,
   `media-compress.js`, `storage-sweep.js`, or the upload routes.
-  On Windows run it from Git Bash: its `haveBinaries()` probe shells out to `sh`,
-  which a PowerShell session has no PATH entry for, and the scan-mode phase then
-  silently exercises the no-engine path instead.
+  What the engine was ASKED is read from its own log (`FAKE_HARBIN_LOG`),
+  because a process contract only tells you the verdict — and because the
+  stand-in is a `.js` file run through this Node binary, the test needs no Rust
+  toolchain and behaves the same in PowerShell and Git Bash.
 - Smoke test API: `curl localhost:3000/api/config`, register/login flow.
 - E2E (register → create server → invite-join → WS live message → history →
   channel create/delete → voice-join signaling) was verified passing; re-run an
@@ -929,7 +956,7 @@ are load-bearing:
   never showed the bug.
 - **Never rewrite an upload in place.** `media-compress.replaceBytes` writes a
   sibling temp file and `rename()`s over the target. `copyFile()` exposes a torn
-  file to clamd and to HTTP at the same time.
+  file to the malware scanner and to HTTP at the same time.
 - **S3 mode buffers uploads in memory** (`multer.memoryStorage`) before the
   bucket PUT, so `MAX_FILE_MB` (default 200) is also a per-upload RAM budget on
   the box. Scanning and compression stream; multer does not. The composer reads
@@ -942,16 +969,16 @@ are load-bearing:
   force); the sweep has a `?dry=1` mode that reports victims without deleting.
 - **Compression is scan -> compress -> scan, and only the last verdict gets
   published.** On a clean verdict the `virus-scan` slot compresses the file
-  itself (`processMedia` -> `media-compress.processUpload`), streams the
-  candidate output into clamd (a local temp file — never re-downloaded), and
-  only commits it once that verdict is clean. So clients see exactly one
-  `pending -> final` transition and a playing file is never swapped out from
-  under a running player. Never hand unscanned bytes to ffmpeg or publish
-  unscanned output.
+  itself (`processMedia` -> `media-compress.processUpload`), hands the candidate
+  output to the engine (a local temp file — never re-downloaded, since Harbin
+  takes the path directly), and only commits it once that verdict is clean. So
+  clients see exactly one `pending -> final` transition and a playing file is
+  never swapped out from under a running player. Never hand unscanned bytes to
+  ffmpeg or publish unscanned output.
 - **The slot is not only a scan slot.** `virus-scan`'s worker runs whenever
   scanning **or** compression is on (`slotOn()`), and the serving gate
   (`scanGating`) is tied to the same predicate. With `VIRUS_SCAN=0` it becomes a
-  compress-and-publish slot: `processRow` skips every clamd path, calls
+  compress-and-publish slot: `processRow` never touches the engine, calls
   `processMedia(key, null)` (no candidate scan to ask for) and marks the row
   clean, which is what lifts the 423. Which uploads wait for it is the upload
   route's call — `queueFileScan(key, {compress: media-compress.isCandidate(...)})`

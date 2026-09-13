@@ -515,15 +515,21 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
 dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   one-replay lifecycle, and that unopened items never expire.
   `node scripts/test-upload-pipeline.js` covers the whole upload pipeline
-  end-to-end against a throwaway database with a fake (slow) clamd on loopback,
-  in the two shapes production runs. **Scan mode** (`VIRUS_SCAN=1`): the message
-  renders the file as pending, exactly ONE `message-updated` follows carrying
-  bytes the scanner also approved, the old key is deleted on a format change and
-  `file_scans` follows the new one; the sweeper fallback still compresses a file
-  the slot never saw. **Compression-only mode** (the server is restarted with
-  `VIRUS_SCAN=0`, no clamd at all — the Civo cluster's shape): a candidate upload
+  end-to-end against a throwaway database with a slow STAND-IN engine
+  (`scripts/fake-harbin.js`, pointed at by `HARBIN_BIN`), in the two shapes
+  production runs. **Scan mode** (`VIRUS_SCAN=1`): the message renders the file as
+  pending, exactly ONE `message-updated` follows carrying bytes the scanner also
+  approved, the old key is deleted on a format change and `file_scans` follows
+  the new one; a file the engine refuses is deleted, its row goes `infected` with
+  the engine's own evidence on it, the gate answers 410 and the message is
+  re-broadcast as blocked; the sweeper fallback still compresses a file the slot
+  never saw. What the engine was ASKED is read from its log
+  (`FAKE_HARBIN_LOG`), because a process contract only reports the verdict — that
+  is how "the rewritten bytes were re-scanned before publishing" stays a real
+  assertion. **Compression-only mode** (the server is restarted with
+  `VIRUS_SCAN=0`, no engine at all): a candidate upload
   is gated (423) until the slot publishes it and then raises ONE transition with
-  no clamd contacted, a non-media upload (a zip/text file) is served the instant
+  no engine contacted, a non-media upload (a zip/text file) is served the instant
   it lands while a tiny image is gated like any other and still published after
   the encoder declines to rewrite it (`no_saving`), and **concurrency** really
   is parallel: four rows are planted at once and the worker's own high-water
@@ -543,10 +549,19 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   both keys; an unreferenced object and an object only a pasted link mentions
   come back byte-identical, the second counted as `skippedText`; a second dry
   pass reports zero candidates, which is the ledger doing its job; the admin
-  payload carries the scan state). Skips without ffmpeg or Postgres. On Windows
-  run it from Git Bash: `haveBinaries()` probes with `sh`, and a PowerShell
-  session has no `sh` on PATH, so the scan-mode phase silently falls back to the
-  no-engine path and its checks fail.
+  payload carries the scan state). Skips without ffmpeg or Postgres.
+  `node scripts/verify-harbin.js` is the acceptance check against a REAL engine
+  (the deployed binary, not the stand-in): it proves the engine runs with a
+  detection model embedded — a model-less build answers CLEAN to everything and
+  is refused — detects a synthetic all-RWX PE and the EICAR test string, clears a
+  harmless body (so it is not always-guilty), and accepts a full-size 50 MB body.
+  The EICAR check reports SKIPPED when a host-side antivirus quarantines the temp
+  file before Harbin can read it (Windows Defender does, reliably), which says
+  nothing about Harbin; the synthetic PE
+  (`scripts/rwx-pe.js`) is the positive control that works everywhere, because it
+  is a precision anchor rather than a virus signature. Run it on the server, where
+  nothing else watches the temp dir, after touching `virus-scan.js` or bumping
+  `HARBIN_REF` in the Dockerfile.
   `node scripts/test-compress-types.js` covers the compressor's **coverage
   contract** offline (no server, no database): that there is no size floor
   (`MIN_BYTES` all zero, so a 174-byte png / 300-byte mp4 / 2 KB wav are all

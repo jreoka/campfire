@@ -38,7 +38,7 @@
 // - ... and the same slot runs WITHOUT a scanner: with VIRUS_SCAN=0 the
 //   worker still claims every upload, compresses it before anything is
 //   published, and only then lets it be served (virus-scan.js processRow). So
-//   the one-transition promise holds on a box that cannot afford clamd.
+//   the one-transition promise holds on a box that cannot afford scanning.
 // - Anything the sweeper touches is ALREADY visible, so it always publishes
 //   under a fresh key and leaves the old bytes for the orphan sweep: bytes
 //   behind a live URL are never rewritten under a reader.
@@ -598,10 +598,10 @@ async function replaceBytes(key, srcPath, mime) {
     if (!path.resolve(dest).startsWith(path.resolve(UPLOAD_DIR) + path.sep)) throw new Error('bad_key');
     // Swap ATOMICALLY (write beside, then rename). copyFile() would expose a
     // torn file to anything reading this path concurrently — and two things
-    // do: clamd and HTTP serving. A half-written file read by the scanner is a
-    // false verdict, which is exactly the failure mode we cannot afford.
-    // rename() is atomic, so readers see either the whole old file or the
-    // whole new one.
+    // do: the malware scanner and HTTP serving. A half-written file read by the
+    // scanner is a false verdict, which is exactly the failure mode we cannot
+    // afford. rename() is atomic, so readers see either the whole old file or
+    // the whole new one.
     const tmp = dest + '.tmp-' + crypto.randomBytes(6).toString('hex');
     try {
       // A first write to a new sub-directory (thumbs/files/) has to make it:

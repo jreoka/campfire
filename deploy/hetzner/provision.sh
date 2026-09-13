@@ -11,10 +11,11 @@
 #   * NO inbound 80/443. The site is served through a Cloudflare Tunnel, which is
 #     outbound-only: cloudflared dials out and Cloudflare terminates TLS. The only
 #     inbound ports are ssh and the coturn relay.
-#   * swap is OOM insurance, not a working set. 8 GB holds the app, Postgres and
-#     clamd (~1 GB) with room to spare; swappiness=10 keeps the kernel out of it
-#     unless something is genuinely about to die — and an OOM killer picking
-#     Postgres is the failure this prevents.
+#   * swap is OOM insurance, not a working set. 8 GB holds the app, Postgres, the
+#     media compressor and the malware scanner with room to spare (the scanner is
+#     a short-lived process, not a resident daemon); swappiness=10 keeps the
+#     kernel out of it unless something is genuinely about to die — and an OOM
+#     killer picking Postgres is the failure this prevents.
 #   * Docker comes from Ubuntu's own archive rather than Docker's apt repo, which
 #     may not have published packages for this Ubuntu release's codename yet.
 set -euo pipefail

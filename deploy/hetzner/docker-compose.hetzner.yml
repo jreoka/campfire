@@ -4,15 +4,19 @@
 #   docker compose -f docker-compose.yml -f deploy/hetzner/docker-compose.hetzner.yml up -d
 #
 # The base docker-compose.yml is unchanged: db + campfire. This overlay adds the
-# three things the cluster used to provide, and nothing else:
+# two things the cluster used to provide, and nothing else:
 #
 #   cloudflared  the site's only ingress. Outbound-only, so ufw never opens
 #                80/443. Its tunnel routes campfire.dill.moe -> http://campfire:3000
 #   coturn       the TURN relay, on the host network so it binds the VPS's public
 #                IP directly - which is why there is no port mapping here
-#   clamd        the AV engine. The app talks to it over the compose network and
-#                never spawns it, so this is the CLAM_HOST / CLAM_REMOTE path in
-#                virus-scan.js rather than the loopback one
+#
+# There is no scanner service. Malware scanning is Harbin, which is one
+# self-contained binary inside the app image (see the Dockerfile's harbin
+# stage): no daemon, no signature volume, no ~1 GB resident engine to keep warm
+# and nothing to reach over the compose network. That retired the old `clamd`
+# service and its `clamav_db` volume, and with them the reason this box needed
+# 8 GB rather than 4.
 #
 # Not here: Caddy. TLS terminates at Cloudflare, and the base overlay for a
 # direct-TLS VPS (docker-compose.prod.yml) is a different, unused shape.
@@ -63,41 +67,3 @@ services:
       - cat /etc/coturn-base/turnserver.conf > /tmp/turnserver.conf &&
         printf 'user=%s:%s\n' "$$TURN_USER" "$$TURN_PASS" >> /tmp/turnserver.conf &&
         exec turnserver -c /tmp/turnserver.conf --pidfile= --no-cli
-
-  clamd:
-    image: clamav/clamav:stable_base
-    container_name: campfire-clamd
-    restart: unless-stopped
-    # ~1.2 GB resident for the loaded engine, and briefly about 2.4 GB during a
-    # signature reload (ConcurrentDatabaseReload builds a second engine before
-    # dropping the first). 3g covers the spike and still leaves the host room.
-    mem_limit: 3g
-    volumes:
-      # Signatures (~1 GB) live in a named volume, not the image layer, so a
-      # restart does not re-download the whole database. `_base` is the tag the
-      # ClamAV docs recommend for exactly this setup: it ships without
-      # signatures and the entrypoint runs freshclam into the mounted volume.
-      - clamav_db:/var/lib/clamav
-    # No ports published: only the app needs to reach it, over the compose
-    # network, by service name. Nothing on the host and nothing on the internet
-    # can - which is the whole security argument for running clamd in-cluster
-    # rather than exposing its unauthenticated TCP protocol anywhere.
-    #
-    # The stock clamd.conf is used as-is, deliberately. Its defaults already fit
-    # this app: StreamMaxLength 100M and MaxFileSize 100M against MAX_FILE_MB=50
-    # (the `#StreamMaxLength 25M` line in the file is a commented EXAMPLE, not
-    # the default), and ConcurrentDatabaseReload yes, which builds a second
-    # engine during a signature update and so briefly doubles the ~1 GB resident
-    # set. That is the reason this host has 8 GB when the old cluster had 2.
-    # scripts/verify-clamd.js proves those limits rather than assuming them, by
-    # streaming a 50 MB body and the EICAR test string to the real daemon.
-    healthcheck:
-      test: ["CMD-SHELL", "clamdcheck.sh || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      # The first start downloads the entire signature set before clamd listens.
-      start_period: 900s
-
-volumes:
-  clamav_db:
