@@ -30,10 +30,26 @@ Native wrapper around the Campfire web app. Built with **Tauri v2**:
     profiles. Richest on Windows — Discord's DB has ~11k Windows entries but
     only a few dozen macOS ones and a handful for Linux, so detection outside
     Windows is best-effort.
+  - **Notifications** — no WebView on any of the three desktops implements the
+    Notification API, so the app shows them itself: a hidden window's message
+    hands its title/body to `tauri-plugin-notification` through the `notify`
+    command (see `socket.js` → `nativeNotify`). Nothing to enable, and no web
+    push endpoint is registered from the desktop shell.
 - **Android** — same web app in a native shell (full Campfire experience
   including voice; no tray/watcher/autostart — mobile has none). Needs
   Android 7+. Microphone/camera permissions are requested in-app when voice
   or video calls run.
+  - **Notifications** — Android WebView implements neither `PushManager` nor
+    `Notification`, and the shell pauses the WebView as soon as the app is
+    backgrounded, so `PushService` (`gen/android/.../PushService.kt`) holds its
+    own socket to the server's `/ws/push` in a foreground service and posts the
+    notification locally from the payload the OS push would have carried. It
+    survives backgrounding *and* the app being swiped away
+    (`stopWithTask="false"`); the server only sends while this device's window
+    is not in front, so a phone in a pocket rings even when Campfire is open on
+    a desktop. Android 13+ asks for the notification permission, Settings →
+    Notifications shows the state and a test button, and a tapped notification
+    opens the conversation it came from.
 
 ## Requirements
 

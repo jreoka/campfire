@@ -42,10 +42,10 @@ import java.util.concurrent.TimeUnit
  * client does: hold the connection ourselves, in a foreground service, and post
  * the notification locally.
  *
- * The service owns its own socket to `/ws/push` — it does NOT depend on the
+ * The service owns its own socket to `/ws/push` - it does NOT depend on the
  * WebView, so it survives the app being backgrounded AND the task being swiped
  * away (`android:stopWithTask="false"`). The server sends it exactly the payload
- * it would have handed to a Web Push endpoint ("#chat · Server" / "Alex (DM)",
+ * it would have handed to a Web Push endpoint ("#chat - Server" / "Alex (DM)",
  * already filtered through the account's mute + mention rules), so every rule
  * lives in one place on the server.
  *
@@ -120,7 +120,7 @@ class PushService : Service() {
     val token = prefs.getString(KEY_TOKEN, "").orEmpty()
     val origin = prefs.getString(KEY_ORIGIN, "").orEmpty()
     if (token.isEmpty() || origin.isEmpty()) { stopSelf(); return }
-    try { socket?.cancel() } catch {}
+    try { socket?.cancel() } catch (ex: Exception) {}
     val url = origin.trimEnd('/')
       .replaceFirst("https://", "wss://")
       .replaceFirst("http://", "ws://") + "/ws/push?token=" + URLEncoder.encode(token, "UTF-8")
@@ -146,7 +146,7 @@ class PushService : Service() {
     reconnect = null
     val ws = socket
     socket = null
-    try { ws?.close(1000, "bye") } catch {}
+    try { ws?.close(1000, "bye") } catch (ex: Exception) {}
   }
 
   private val listener = object : WebSocketListener() {
@@ -181,7 +181,7 @@ class PushService : Service() {
 
   private fun sendVisibility(ws: WebSocket?) {
     if (ws == null) return
-    try { ws.send(JSONObject().put("t", "visibility").put("visible", appVisible).toString()) } catch {}
+    try { ws.send(JSONObject().put("t", "visibility").put("visible", appVisible).toString()) } catch (ex: Exception) {}
   }
 
   // ---------- notifications ----------
@@ -189,7 +189,7 @@ class PushService : Service() {
   private fun showMessageNotification(payload: JSONObject?) {
     payload ?: return
     // On screen already: the app itself is showing the conversation, and the
-    // server's own "any device visible" gate is not what decides this — the
+    // server's own "any device visible" gate is not what decides this - the
     // device is. The Settings tab's "Send test notification" is the exception,
     // or it would look broken while you are looking at the button.
     val isTest = payload.optBoolean("test", false)
@@ -261,7 +261,11 @@ class PushService : Service() {
     /** Is the app's window on screen right now? MainActivity owns this. */
     @Volatile var appVisible = false
 
-    fun setAppVisible(visible: Boolean) {
+    /**
+     * MainActivity's onResume/onPause. Mirroring it to the server is what makes
+     * the suppression per-device rather than per-account.
+     */
+    fun setAppInForeground(visible: Boolean) {
       appVisible = visible
       instance?.let { it.sendVisibility(it.socket) }
     }
@@ -282,7 +286,7 @@ class PushService : Service() {
       } else {
         // Signed out or turned off: tear the socket down (the stored config is
         // what a later start reads, so prefs stay authoritative).
-        try { ctx.stopService(svc) } catch {}
+        try { ctx.stopService(svc) } catch (ex: Exception) {}
       }
     }
 
@@ -300,7 +304,7 @@ class PushService : Service() {
       if (Build.VERSION.SDK_INT < 33) return
       if (ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
       activity.runOnUiThread {
-        try { ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), PERMISSION_REQ) } catch {}
+        try { ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), PERMISSION_REQ) } catch (ex: Exception) {}
       }
     }
 

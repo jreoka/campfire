@@ -24,20 +24,20 @@ class MainActivity : TauriActivity() {
     super.onWebViewCreate(webView)
     this.webView = webView
     // The site sees window.CampfireNative (see public/js/final.js).
-    try { webView.addJavascriptInterface(PushBridge(this), "CampfireNative") } catch {}
+    try { webView.addJavascriptInterface(PushBridge(this), "CampfireNative") } catch (ex: Exception) {}
   }
 
   override fun onResume() {
     super.onResume()
     // The only suppression the push service applies: on screen means the app is
     // already showing the conversation, so no notification is posted.
-    PushService.setAppVisible(true)
+    PushService.setAppInForeground(true)
     flushPendingUrl()
   }
 
   override fun onPause() {
     super.onPause()
-    PushService.setAppVisible(false)
+    PushService.setAppInForeground(false)
   }
 
   override fun onNewIntent(intent: Intent) {
@@ -62,7 +62,7 @@ class MainActivity : TauriActivity() {
   /**
    * Try to hand the pending url to the running page. If the page is still
    * loading (or the app was cold-started) the hook is missing and the url is
-   * left for the page's own drain through the bridge — never dropped.
+   * left for the page's own drain through the bridge - never dropped.
    */
   fun flushPendingUrl() {
     val url = pendingUrl ?: return
@@ -77,7 +77,7 @@ class MainActivity : TauriActivity() {
             synchronized(this) { if (pendingUrl == url) pendingUrl = null }
           }
         }
-      } catch {}
+      } catch (ex: Exception) {}
     }
   }
 }

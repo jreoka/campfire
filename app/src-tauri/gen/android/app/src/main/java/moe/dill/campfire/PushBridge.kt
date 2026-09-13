@@ -16,7 +16,7 @@ import org.json.JSONObject
  * back, and nothing else has to know the socket exists.
  */
 class PushBridge(private val activity: MainActivity) {
-  /** Signed in / signed out, and the on-off switch in Settings → Notifications. */
+  /** Signed in / signed out, and the on-off switch in Settings - Notifications. */
   @JavascriptInterface
   fun configure(token: String, origin: String, enabled: Boolean): Boolean =
     try {
@@ -26,7 +26,7 @@ class PushBridge(private val activity: MainActivity) {
       false
     }
 
-  /** `{ enabled, running, permission }` — what the settings tab prints. */
+  /** `{ enabled, running, permission }` - what the settings tab prints. */
   @JavascriptInterface
   fun status(): String = try { PushService.statusJson(activity) } catch (e: Exception) { "{}" }
 
@@ -40,7 +40,7 @@ class PushBridge(private val activity: MainActivity) {
     }
 
   /**
-   * A conversation to open because a notification was tapped, or "" — the
+   * A conversation to open because a notification was tapped, or "" - the
    * service hands the push payload's url here through MainActivity's intent.
    * The page drains it after boot and on every return to the foreground.
    */
