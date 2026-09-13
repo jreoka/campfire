@@ -302,7 +302,11 @@ function hbInfoHTML(r) {
   const rows = [];
   rows.push(['Scanned', sc && sc.scannedAt ? hbWhen(sc.scannedAt) : 'not yet']);
   if (sc && sc.attempts > 1) rows.push(['Attempts', String(sc.attempts)]);
-  rows.push(['File', (r.key || 'not a stored upload') + (r.size ? ' · ' + fmtSize(r.size) : '')]);
+  // Derived from BOTH the key and `local`, so a missing field can never turn
+  // into a false claim about where the file lives: no key AND no local flag
+  // reads as "a stored upload" rather than "not a stored upload".
+  const where = r.local ? (r.key || 'a stored upload') : 'not a stored upload';
+  rows.push(['File', where + (r.size ? ' · ' + fmtSize(r.size) : '')]);
   const findings = (sc && sc.evidence) || [];
   return `<div class="hb-head">
     <span class="hb-ic${v.tone ? ' ' + v.tone : ''}">${HB_SHIELD}</span>

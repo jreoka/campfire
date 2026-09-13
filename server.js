@@ -2259,6 +2259,11 @@ app.get('/api/attachments/:aid/scan', authRequired, async (req, res) => {
   res.json({
     id: row.id, origin, name: row.filename, url: row.url, mime: row.mime,
     size: Number(row.size) || 0, kind: row.kind,
+    // The storage key the verdict hangs off, and whether there is one at all.
+    // Both, because the panel renders the key and derives its wording from
+    // `local`: sending only `local` is what let every photo claim not to be a
+    // stored upload.
+    key: key || null,
     local: !!key,
     // Effective, not raw: a pending background re-scan reports `clean` because
     // that is what the reader's file actually did (see effectiveStatus).

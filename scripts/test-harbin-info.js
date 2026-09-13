@@ -335,6 +335,8 @@ async function main() {
       check(blockedPanel.tone.includes('bad'), 'tone matches the verdict', blockedPanel.tone);
       check(blockedPanel.findings.length >= 1, 'it lists the findings the verdict was based on', blockedPanel.findings);
       check(/removed|no longer/i.test(blockedPanel.text), 'and says the file was removed', blockedPanel.text.slice(0, 200));
+      check(blockedPanel.text.includes('files/'), 'it names the stored object the verdict hangs off', blockedPanel.rows);
+      check(!/not a stored upload/.test(blockedPanel.text), 'and never says the file is not a stored upload', blockedPanel.rows);
       check(!/trees|features/.test(blockedPanel.text), 'the panel carries no model trivia', blockedPanel.rows);
       check(blockedPanel.closeHidden && blockedPanel.cancelButtons === 1, 'the panel is read-only: one way out', { buttons: blockedPanel.cancelButtons });
     }
@@ -347,6 +349,10 @@ async function main() {
       check(/^Clean/.test(cleanPanel.verdict), 'a clean file reads as clean', cleanPanel.verdict);
       check(cleanPanel.tone.includes('ok'), 'with the clean tone', cleanPanel.tone);
       check(cleanPanel.closeHidden && cleanPanel.cancelButtons === 1, 'and it is read-only as well', { buttons: cleanPanel.cancelButtons });
+      // A local upload must name its key. This is the check that would have
+      // caught the response dropping `key` while the panel rendered it.
+      check(/\bfiles\/[0-9a-f]{16,}\./.test(cleanPanel.text), 'it names the storage key', cleanPanel.rows);
+      check(!/not a stored upload/.test(cleanPanel.text), 'and does not claim a local upload is not stored', cleanPanel.rows);
     }
     await evaluate(`(() => { document.querySelector('#modal-ok').click(); return true; })()`);
     await sleep(200);
