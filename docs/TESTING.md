@@ -114,18 +114,22 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   rows, DM rows) go through the helper instead of re-inlining the old
   cover/repeat style. The harness keeps a "vintage" row with the old recipe so
   it proves it can still reproduce the light edge.
-  `node scripts/test-dm-pin.js` covers the pinned-chat mark on a DM row staying
+  `node scripts/test-dm-row-marks.js` covers the marks on a DM row staying
   legible over the person's banner (static checks plus a headless-Chrome pixel
-  proof; skips without Chrome). The pin sits in the row's trailing column, which
-  is exactly where a banner paints its brightest pixels — the ramp only darkens
-  toward the left — so the old accent-coloured outline sank into any photo. The
-  test asserts the mark is a filled `--accent` disc with an `--on-accent` glyph
-  (18px, centred, `currentColor` so the chip decides how the glyph reads), that
-  nothing re-colours the glyph behind the chip (a higher-specificity colour on a
-  filled disc hides it — the trap this rule replaced), and then paints a PURE
-  WHITE banner through the real `paintSidebarBanner`, screenshots at dpr 1 and 2
-  and samples the inside of the disc: every sample must still be the accent and
-  none may be the picture.
+  proof; skips without Chrome). Both trailing marks had it: the pin was a bare
+  accent-coloured outline and the ✕ a bare grey one, and they sit in the row's
+  trailing column — exactly where a banner paints its brightest pixels, since the
+  ramp only darkens toward the left. The test asserts the pin is a filled
+  `--accent` disc with an `--on-accent` glyph (18px, centred, `currentColor` so
+  the chip decides how the glyph reads), that nothing re-colours the glyph behind
+  the chip (a higher-specificity colour on a filled disc hides it — the trap this
+  rule replaced), and that a bannered row's ✕ takes the dark `.att-dl` scrim with
+  a white glyph, darkening rather than changing hue on hover while the flat-row
+  danger-wash hover is left alone (it also computes that the scrim keeps the
+  glyph above 4.5:1 even over a pure-white picture). It then paints a PURE WHITE
+  banner through the real `paintSidebarBanner`, screenshots at dpr 1 and 2 and
+  samples the inside of each mark — every sample must still be that mark's own
+  fill (accent for the pin, a flat dark scrim for the ✕), never the picture.
   `node scripts/test-presence-widget.js` covers the presence switcher that now
   lives on your own user card as a vertical menu (offline; it runs the real
   `presenceWidgetHTML`, `statusLineHTML`, `presenceDurationSel`, `choosePresence`

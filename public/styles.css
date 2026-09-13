@@ -1876,6 +1876,14 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .fwd-dest.sel .fwd-check{visibility:visible}
 .dm-close{flex-shrink:0;width:24px;height:24px;border:0;border-radius:8px;background:transparent;color:var(--faint);cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity var(--t-fast),background var(--t-fast),color var(--t-fast),transform .1s ease}
 .dmrow:hover .dm-close,.dmrow:focus-within .dm-close{opacity:1}
+/* A banner puts a photo behind the row, and the trailing end is where it paints
+   brightest (the ramp only darkens toward the left), so the same treatment the
+   pin needed applies to the ✕: a control over a picture gets the dark scrim
+   `.att-dl` uses over an attachment, brightening instead of changing hue —
+   the danger wash it wears on a flat row is 9% red, which over a bright picture
+   is exactly as unreadable as the bare glyph was. */
+.dmrow.has-banner .dm-close{background:rgba(0,0,0,.6);color:#fff}
+.dmrow.has-banner .dm-close:hover{background:rgba(0,0,0,.8);color:#fff}
 
 .dm-close:active{transform:scale(.88)}
 .dm-close svg{display:block}
