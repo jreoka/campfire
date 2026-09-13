@@ -76,6 +76,13 @@
      test-composer-field measures the pair. The phone restates both (its field is
      16px). */
   --field-pad-y:.84rem;
+  /* That same pill's height, derived from the numbers above rather than written
+     out: the send key beside it is EXACTLY this tall so its top and bottom edges
+     land on the field's (it used to be a flat 46px, a few pixels short of the
+     box). It is one row's height on purpose — a box grown to four lines keeps
+     the key on the bar (see #composer's flex-end), so this must NOT follow the
+     box's height. The phone restates it against its own 16px field. */
+  --field-h:calc(2 * var(--field-pad-y) + 1.5 * .93rem + 2px);
 }
 /* Light mode: bright flat surfaces, same indigo primary. */
 [data-theme="light"]{
@@ -598,9 +605,11 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #typing-bar.show #typing{opacity:1;visibility:visible}
 #slowmode-hint{display:inline-flex;align-items:center;gap:.32rem;font-size:.74rem;font-weight:700;color:var(--amber);white-space:nowrap}
 #slowmode-hint.hidden{display:none}
-/* Rounded square, not a circle — it reads as a key in the composer row and
-   matches the 16px radius the composer field uses. */
-.send-btn{width:46px;height:46px;border-radius:16px;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:background var(--t-fast),color var(--t-fast),transform .1s ease}
+/* Rounded square-ish, not a circle — it reads as a key in the composer row and
+   matches the 16px radius the composer field uses. Its height is the field's
+   own (--field-h), not a fixed 46px: the two sit on the same bar, and a key
+   shorter than the box it sends from looks like it fell out of the row. */
+.send-btn{width:46px;height:var(--field-h);border-radius:16px;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:background var(--t-fast),color var(--t-fast),transform .1s ease}
 .send-btn:active{transform:scale(.94)}
 .send-btn svg{display:block;transition:transform .15s ease}
 /* Nothing to send: an empty box. A permanently lit accent button invited a tap
@@ -2083,9 +2092,9 @@ body{touch-action:manipulation}
   #in-render{font-size:16px}
   /* The phone composer is tighter than the desktop one and its field is 16px, so
      its pill needs a smaller vertical padding to stay the same 51.2px as the me
-     bar — and --composer-h (2 x .72rem + that pill) follows. Both are measured by
-     test-composer-field. */
-  :root{--composer-h:74px;--field-pad-y:.7875rem}
+     bar — and --composer-h (2 x .72rem + that pill) follows, as does the send
+     key's --field-h. All three are measured by test-composer-field. */
+  :root{--composer-h:74px;--field-pad-y:.7875rem;--field-h:calc(2 * var(--field-pad-y) + 1.5 * 1rem + 2px)}
   #composer{gap:.4rem;padding:.72rem;padding-bottom:calc(.72rem + var(--safe-b))}
   #composer .btn{padding:.7rem .9rem;min-height:44px}
   /* Thumb-sized tool keys — except the field's own leading +, which has to stay

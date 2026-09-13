@@ -16,6 +16,8 @@
 //     send, accent the moment there is. Same size and place either way, so
 //     nothing reflows as you type — and it is cosmetic only, requestSubmit()
 //     still fires with the key disabled (pinned in test-drafts-browser.js).
+//     It is also exactly as TALL as the field it sends from (--field-h), which
+//     it used to miss by a few pixels as a flat 46px key.
 //  4. the + menu was a column of bare labels. It is the phone's only way into
 //     attach / emoji / GIF / voice, so it gets icon rows like the ctx menu.
 //
@@ -121,6 +123,8 @@ window.__report = function () {
     menuRowsWithIcon: menuRows.filter((r) => r.querySelector('.ctx-ic svg')).length,
     menuSeps: document.querySelectorAll('#composer-more .ctx-sep').length,
     // The send key, driven through the real function.
+    // The send key rides the field's own height: same top and bottom edges.
+    send: R('#composer .send-btn'),
     empty: (paintComposerSend(), window.__send()),
     typed: (() => { const i = document.querySelector('#in-message'); i.value = 'hello'; paintComposerSend(); return window.__send(); })(),
     attOnly: (() => { const i = document.querySelector('#in-message'); i.value = ''; S.pendingAtts = [{ id: 'a' }]; paintComposerSend(); return window.__send(); })(),
@@ -195,6 +199,12 @@ function main() {
   check(/syncComposerRender\(\);\s*\n\s*try \{ paintComposerSend\(\); \} catch \{\}/.test(messages), 'renderComposerMeta repaints it (attachments and reply chips)');
   check(/\$\('#in-message'\)\.addEventListener\('input', \(\) => \{ try \{ paintComposerSend\(\); \} catch \{\} \}\)/.test(finalJs), 'and so does typing in the box');
   check(/\.send-btn\.is-off\{background:var\(--panel-3\)/.test(css), 'the off state is a muted surface, not the accent');
+  // The key's height is the field's, derived from the same numbers (2 x padding +
+  // one 1.5 line + border) rather than a flat pixel value — and the phone, whose
+  // field is 16px, restates it. [5]/[7] measure both layouts.
+  check(/\.send-btn\{[^}]*height:var\(--field-h\)/.test(css), 'the send key takes its height from --field-h, not a hardcoded size');
+  check(/--field-h:calc\(2 \* var\(--field-pad-y\) \+ 1\.5 \* \.93rem \+ 2px\)/.test(css), 'which is derived from the desktop field\'s own metrics');
+  check(/--field-h:calc\(2 \* var\(--field-pad-y\) \+ 1\.5 \* 1rem \+ 2px\)/.test(css), 'and restated against the phone\'s 16px field');
   check(/\.send-btn\.is-off:hover\{background:var\(--panel-3\)\}/.test(css) && /\.send-btn\.is-off:hover svg\{transform:none\}/.test(css), 'and it does not play the accent hover or the nudge it cannot honour');
   // The composer's hover rules live in the one @media (hover:hover) block at the
   // bottom of the sheet, or a tap would leave the artifact stuck on the key.
@@ -230,6 +240,12 @@ function main() {
     check(Math.abs(phone.leadTop - phone.leadBottom) <= 3, 'and it is centred on the one-line field', { top: phone.leadTop, bottom: phone.leadBottom });
     check(phone.lead.h >= 30 && phone.lead.h <= 34, 'at 32px, small enough to fit the field', phone.lead.h);
     check(phone.composerAlign === 'flex-end', 'the send key rides the bottom of the row', phone.composerAlign);
+    check(!!phone.send && Math.abs(phone.send.h - phone.field.h) <= 0.5,
+      'the send key is EXACTLY as tall as the message box (it was a flat 46px, ~5px short)',
+      { send: phone.send && phone.send.h, field: phone.field.h });
+    check(!!phone.send && Math.abs(phone.send.t - phone.field.t) <= 0.5 && Math.abs(phone.send.b - phone.field.b) <= 0.5,
+      'so its top and bottom edges land on the box\'s',
+      { sendTop: phone.send && phone.send.t, fieldTop: phone.field.t, sendBottom: phone.send && phone.send.b, fieldBottom: phone.field.b });
     check(Math.abs(phone.composerH - phone.composerVar) <= 1.5, 'the phone composer is the height --composer-h claims (the popovers above it anchor on it)',
       { h: phone.composerH, v: phone.composerVar });
     check(phone.menuRows === 7 && phone.menuRowsWithIcon === 7, 'the + menu rows render with their icons', { rows: phone.menuRows, icons: phone.menuRowsWithIcon });
@@ -252,6 +268,9 @@ function main() {
       'the pill matches the me bar on the desktop rule too (both are 51.2px there)',
       { pill: desktop.field.h, me: desktop.meBar && desktop.meBar.h });
     check(desktop.leadTop > 2 && desktop.leadBottom > 2, 'the + is inside the field there too', { top: desktop.leadTop, bottom: desktop.leadBottom, lead: desktop.lead, field: desktop.field });
+    check(!!desktop.send && Math.abs(desktop.send.h - desktop.field.h) <= 0.5,
+      'and the send key matches the box on the desktop rule too',
+      { send: desktop.send && desktop.send.h, field: desktop.field.h });
     check(desktop.fieldBg === phone.fieldBg, 'same field surface on both layouts', { phone: phone.fieldBg, desktop: desktop.fieldBg });
   } finally {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}

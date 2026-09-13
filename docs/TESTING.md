@@ -609,7 +609,12 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   `::after` hit box (it used to be thumbs-sized itself, which made it overflow a
   47px field and get clipped by the corner); `#composer` bottom-aligns its
   children so a box grown to four lines keeps every control on the bar; the `+`
-  menu's seven rows all carry an icon; and the send key reads the box through
+  menu's seven rows all carry an icon; the send key is exactly as tall as the
+  one-line field — its height is `--field-h`, derived from the field's own
+  padding + 1.5 line + border and restated for the phone's 16px field, so the two
+  share a top and a bottom edge at both breakpoints (it used to be a flat 46px
+  key, ~5px short of the box) — while staying one row tall, so a box grown to
+  several lines keeps it on the bar; and it reads the box through
   the real `paintComposerSend()` — muted and disabled when empty, whitespace-only
   or with no conversation behind it, lit for text or an attachment-only send.
   It also pins that the send key and the `+` are hover-styled only inside the
