@@ -71,6 +71,8 @@ function readEnvFile() {
 // A file whose NAME is innocent and whose BYTES are the marker the stand-in
 // engine refuses (see fake-harbin.js): the pipeline decides on content.
 const MARKER = 'FAKE-HARBIN-MALWARE-MARKER';
+// The middle band the stand-in has too: flagged, but under the block level.
+const SUSPECT_MARKER = 'FAKE-HARBIN-SUSPECT-MARKER';
 
 async function main() {
   const chromePath = findChrome();
@@ -225,8 +227,48 @@ async function main() {
     check(cleanZip.scan === 'clean', 'and so is a plain file', cleanZip.scan);
     const bad = await postFile('holiday-photo-2019.txt', 'text/plain', 'innocent looking\n' + MARKER + '\nmore innocent looking text\n');
     check(bad.scan === 'infected', 'a file whose BYTES are flagged is blocked, whatever it is called', bad.scan);
+    // Harbin's MIDDLE band: above its suspicious threshold, below the level this
+    // server blocks. That file is served — and served silently was the wrong
+    // half of the trade, so the message has to say so.
+    const sus = await postFile('maybe-not-fine.txt', 'text/plain', 'looks harmless\n' + SUSPECT_MARKER + '\n');
+    check(sus.scan === 'clean', 'a file in the suspicious band is SERVED, not gated', sus.scan);
 
-    console.log('\n[2] the attachment menu offers "Harbin info" — and only on attachments');
+    const attFor = async (url) => waitFor(`(() => {
+      const m = (S.messages.get(S.channelId) || []).find((x) => (x.attachments || []).some((a) => a.url === ${JSON.stringify(url)}));
+      const a = m && m.attachments.find((x) => x.url === ${JSON.stringify(url)});
+      return a || false;
+    })()`, 15000);
+
+    console.log('\n[2] a suspicious file warns on the message itself');
+    const susAtt = await attFor(sus.up.url);
+    check(!!susAtt && susAtt.scanVerdict === 'suspicious', 'the message is told which band it landed in', susAtt);
+    check(!!susAtt && susAtt.scan === 'clean', '...and that it is servable', susAtt && susAtt.scan);
+    check(!!susAtt && !('scanVerdict' in (await attFor(clean.up.url) || {})), 'a clean file is told nothing of the sort');
+    const warnEl = await evaluate(`(() => {
+      const all = [...document.querySelectorAll('.att-warn')];
+      const el = all[0];
+      return { count: all.length, text: el ? el.textContent.trim() : '', id: el ? el.dataset.attId : '', icon: el ? !!el.querySelector('svg') : false,
+        isButton: el ? el.tagName === 'BUTTON' : false };
+    })()`);
+    check(warnEl.count === 1, 'exactly one attachment carries the marker', warnEl);
+    check(/Potentially malicious/.test(warnEl.text), 'and it says what it is', warnEl.text);
+    check(warnEl.icon && warnEl.isButton, 'with a warning glyph on a real button (no emoji, keyboard-reachable)', warnEl);
+    check(warnEl.id === (susAtt && susAtt.id), 'bound to its OWN attachment', warnEl.id);
+    // Served, not blocked — the whole point of the band, and of warning about it.
+    const susKey = sus.up.url.split('?')[0].replace('/uploads/', '');
+    check(fs.existsSync(path.join(uploads, susKey)), 'the suspicious bytes are still on disk');
+    check((await fetch(`http://127.0.0.1:${PORT}${sus.up.url}`)).status === 200, 'and the file is still servable');
+
+    await evaluate(`(() => { document.querySelector('.att-warn').click(); return true; })()`);
+    const susPanel = await waitFor(`(() => { const v = document.querySelector('#modal-body .hb-v'); return v ? v.textContent : false; })()`, 10000);
+    check(/^Suspicious/.test(susPanel || ''), 'the marker opens the panel, reading the band', susPanel);
+    check(/score 0\.\d{4}/.test(susPanel || ''), 'with the score behind it', susPanel);
+    const susNote = await evaluate(`(() => { const n = document.querySelector('#modal-body .hb-note'); return n ? n.textContent : ''; })()`);
+    check(/served/i.test(susNote), 'and why a flagged file was served at all', susNote);
+    await evaluate(`(() => { document.querySelector('#modal-ok').click(); return true; })()`);
+    await sleep(250);
+
+    console.log('\n[3] the attachment menu offers "Harbin info" — and only on attachments');
     const menuFor = async (selector) => evaluate(`(() => {
       const el = document.querySelector(${JSON.stringify(selector)});
       if (!el) return { missing: true };
@@ -258,7 +300,7 @@ async function main() {
     check(msgMenu.open && !msgMenu.labels.includes('Harbin info'), 'a click on the message still gets the message menu', msgMenu.labels);
     await closeMenu();
 
-    console.log('\n[3] the panel shows the stored verdict, not a fresh guess');
+    console.log('\n[4] the panel shows the stored verdict, not a fresh guess');
     const openPanel = async (selector) => {
       await evaluate(`(() => {
         const el = document.querySelector(${JSON.stringify(selector)});
@@ -309,7 +351,7 @@ async function main() {
     await evaluate(`(() => { document.querySelector('#modal-ok').click(); return true; })()`);
     await sleep(200);
 
-    console.log('\n[4] a long-press on a touch device gets the same item in the sheet');
+    console.log('\n[5] a long-press on a touch device gets the same item in the sheet');
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true });
     await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
     await sleep(300);

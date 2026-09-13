@@ -255,15 +255,32 @@ async function scanStatus(key) {
 }
 
 // Batch version for message hydration (one query per page, not per file).
-async function scanStatusMap(keys) {
+// Carries the ENGINE's band alongside the effective status, because the two are
+// not the same thing: a file in Harbin's suspicious band is served (that band is
+// not blocked — see HARBIN_BLOCK_SUSPICIOUS), so its status is `clean` and the
+// only way a message can say "the engine hesitated about this" is to be told.
+async function scanInfoMap(keys) {
   const out = new Map();
   const uniq = [...new Set((keys || []).filter(Boolean))];
   if (!uniq.length || !slotOn()) return out;
   try {
     const ph = uniq.map(() => '?').join(',');
-    const rows = await db.prepare(`SELECT key, status, gated FROM file_scans WHERE key IN (${ph})`).all(...uniq);
-    for (const r of rows) out.set(r.key, effectiveStatus(r.status, r.gated));
+    const rows = await db.prepare(`SELECT key, status, gated, verdict, score FROM file_scans WHERE key IN (${ph})`).all(...uniq);
+    for (const r of rows) {
+      out.set(r.key, {
+        status: effectiveStatus(r.status, r.gated),
+        verdict: r.verdict || null,
+        score: r.score == null ? null : Number(r.score),
+      });
+    }
   } catch {}
+  return out;
+}
+
+// The effective status alone, for callers that only gate on it.
+async function scanStatusMap(keys) {
+  const out = new Map();
+  for (const [k, v] of await scanInfoMap(keys)) out.set(k, v.status);
   return out;
 }
 
@@ -946,7 +963,7 @@ function startVirusScan() {
 
 module.exports = {
   startVirusScan, kickVirusScan, queueFileScan, dropScan,
-  scanStatus, scanStatusMap, scanGating, setScanHooks, getScanStats,
+  scanStatus, scanStatusMap, scanInfoMap, scanGating, setScanHooks, getScanStats,
   scanDetail, effectiveStatus,
   scanningEnabled: () => SCANNING,
   emitScanChange: emitChange,

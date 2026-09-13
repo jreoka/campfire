@@ -292,10 +292,16 @@ async function main() {
   check((server.match(/a\.spoiler \|\| 0, a\.w \|\| 0, a\.h \|\| 0, a\.gif_slug \|\| null, a\.gif_thumb \|\| null, a\.gif_mp4 \|\| null, now\(\)/g) || []).length === 2,
     'and bind it for both');
   // One shared wire shape (attWire) feeds both hydrations, so the pair can only
-  // be handed to the client in one place — and the GIF identity with it.
+  // be handed to the client in one place — and the GIF identity, and the
+  // engine's band, with it.
   check((server.match(/w: Number\(a\.w\) \|\| 0, h: Number\(a\.h\) \|\| 0/g) || []).length === 1
-    && /function attWire\(a, scan\)/.test(server) && (server.match(/attWire\(a, \(sk && scanMap\.get\(sk\)\) \|\| 'clean'\)/g) || []).length === 2,
+    && /function attWire\(a, info\)/.test(server) && (server.match(/attWire\(a, sk && scanMap\.get\(sk\)\)/g) || []).length === 2,
     'both message payloads hand the pair to the client');
+  // A file in Harbin's SUSPICIOUS band is served, so its `scan` is `clean` and
+  // the band is the only thing that can tell a message to warn about it.
+  check((server.match(/scanInfoMap\(attRows\.map\(\(a\) => scanKeyForUrl\(a\.url\)\)\)/g) || []).length === 2
+    && /scanVerdict: info\.verdict/.test(server),
+    'and carry the engine\'s band, so a suspicious file can be warned about');
 
   console.log('\n[4] the client reserves the box');
   check(/const d = attDimsFor\(a\);/.test(markSource) && /width:min\(\$\{d\.w\}px,100%,420px,calc\(var\(--att-max-h,320px\) \* \$\{r\}\)\)/.test(markSource),

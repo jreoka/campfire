@@ -585,6 +585,14 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   the STORED verdict (words, score, tone, findings, and why the file was removed
   or kept — and no model trivia) with one way out rather than two; and a
   long-press on an emulated touch device gets the same item in the phone's sheet.
+  It also covers the **suspicious band's marker**: a file the engine puts between
+  its suspicious and malicious thresholds is SERVED, so the test asserts the
+  message is handed the band, that exactly one attachment carries the amber
+  triangle-`!` chip ("Potentially malicious"), that it is a real button bound to
+  its OWN attachment, that the clean files beside it carry nothing — and that the
+  bytes are still on disk and still servable, because "warned about" must never
+  quietly become "blocked". Clicking it has to open the panel reading the band,
+  with the score and the reason it was served anyway.
   Both it and the pipeline test run the engine through
   `HARBIN_BIN=scripts/fake-harbin.js` — a `.js` value is invoked with the current
   Node binary (see `harbinCommand` in virus-scan.js), so neither needs a Rust

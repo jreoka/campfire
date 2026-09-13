@@ -965,6 +965,15 @@ body.ub-open #lightbox #lb-stage{padding-top:calc(4.4rem + var(--safe-t) + var(-
 .reply-quote.deleted{cursor:default;font-style:italic;opacity:.75}
 .reply-quote.deleted:hover{color:var(--muted)}
 .msg-atts{display:flex;flex-direction:column;align-items:flex-start;gap:.45rem;margin-top:.35rem}
+/* The suspicious-file marker (Harbin's middle band: served, not blocked). It is
+   a SIBLING of the attachment inside the same flex column, so the negative
+   bottom margin is what binds it to the file BELOW it rather than leaving it
+   floating between two attachments — the gap it pulls against is the column's
+   own .45rem. Amber because this is a caution, not a verdict. */
+.att-warn{display:flex;align-items:center;gap:.4rem;background:rgba(251,191,36,.11);border:1px solid rgba(251,191,36,.38);color:var(--amber);border-radius:9px;padding:.32rem .6rem;font-size:.75rem;font-weight:650;font-family:inherit;max-width:420px;text-align:left;cursor:pointer;margin-bottom:-.22rem;transition:background var(--t-fast),border-color var(--t-fast)}
+.att-warn:active{background:rgba(251,191,36,.24)}
+.att-warn svg{width:15px;height:15px;flex-shrink:0}
+.att-warn span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .msg-atts img.att-img{max-width:100%;max-height:320px;border-radius:12px;cursor:zoom-in;object-fit:contain;background:#000}
 .msg-atts video.att-vid{max-width:100%;max-height:320px;border-radius:12px;background:#000}
 .att-wrap{position:relative;display:inline-block;max-width:420px;--att-max-h:320px}
@@ -3133,4 +3142,5 @@ html.wrapper-app input,html.wrapper-app textarea,html.wrapper-app .codebox,html.
   .send-btn.is-off:hover{background:var(--panel-3)}
   .send-btn.is-off:hover svg{transform:none}
   #btn-plus:hover,#btn-more:hover{background:color-mix(in srgb, var(--text) 15%, transparent);color:var(--text)}
+  .att-warn:hover{background:rgba(251,191,36,.18);border-color:rgba(251,191,36,.55)}
 }

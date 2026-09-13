@@ -5371,13 +5371,13 @@ async function hydrateDm(rows, meId) {
     const ph = ids.map(() => '?').join(',');
     const attRows = await db.prepare(`SELECT * FROM dm_attachments WHERE message_id IN (${ph}) ORDER BY created_at ASC`).all(...ids);
     let scanMap = new Map();
-    try { scanMap = await require('./virus-scan').scanStatusMap(attRows.map((a) => scanKeyForUrl(a.url))); } catch {}
+    try { scanMap = await require('./virus-scan').scanInfoMap(attRows.map((a) => scanKeyForUrl(a.url))); } catch {}
     for (const a of attRows) {
       const sk = scanKeyForUrl(a.url);
       // View-once media is never handed out as a normal attachment: it stays
       // gated behind /viewonce/open, and the card only carries its shape.
       if (voIds.has(a.message_id)) { voBy[a.message_id] = { kind: a.kind, mime: a.mime, name: a.filename }; continue; }
-      (attBy[a.message_id] = attBy[a.message_id] || []).push(attWire(a, (sk && scanMap.get(sk)) || 'clean'));
+      (attBy[a.message_id] = attBy[a.message_id] || []).push(attWire(a, sk && scanMap.get(sk)));
     }
     for (const r of await db.prepare(`SELECT message_id, emoji, user_id FROM dm_reactions WHERE message_id IN (${ph})`).all(...ids)) {
       const t = (reactBy[r.message_id] = reactBy[r.message_id] || {});
@@ -5457,10 +5457,19 @@ function cleanGifMeta(a) {
 // The attachment shape the client renders from. The GIF identity only rides
 // along when there is one (and then all three fields do, so the star never has
 // to fall back to a URL it cannot use).
-function attWire(a, scan) {
+function attWire(a, info) {
+  const scan = (info && info.status) || 'clean';
+  // The engine's own band, when it has something to say beyond "clean". A file
+  // Harbin puts in its SUSPICIOUS band is served — that band is deliberately not
+  // blocked (see HARBIN_BLOCK_SUSPICIOUS) — so its `scan` is `clean` and this is
+  // the only thing that lets the message warn about it instead of looking like
+  // any other file.
+  const flagged = info && info.verdict && info.verdict !== 'clean'
+    ? { scanVerdict: info.verdict, ...(Number.isFinite(info.score) ? { scanScore: info.score } : {}) }
+    : {};
   return {
     id: a.id, url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind,
-    spoiler: !!a.spoiler, w: Number(a.w) || 0, h: Number(a.h) || 0, scan,
+    spoiler: !!a.spoiler, w: Number(a.w) || 0, h: Number(a.h) || 0, scan, ...flagged,
     ...(a.gif_slug
       ? { gif_slug: a.gif_slug, gif_thumb: a.gif_thumb || null, gif_mp4: a.gif_mp4 || null }
       : {}),
@@ -6246,12 +6255,14 @@ async function hydrateMessages(rows, meId) {
   if (ids.length) {
     const ph = ids.map(() => '?').join(',');
     const attRows = await db.prepare(`SELECT * FROM attachments WHERE message_id IN (${ph}) ORDER BY created_at ASC`).all(...ids);
-    // Virus-scan verdicts, one query per page (missing row = clean).
+    // Virus-scan verdicts, one query per page (missing row = clean). The map
+    // carries the engine's band too — a `suspicious` file is SERVED, and the
+    // message needs to know so it can warn about it (see attWire).
     let scanMap = new Map();
-    try { scanMap = await require('./virus-scan').scanStatusMap(attRows.map((a) => scanKeyForUrl(a.url))); } catch {}
+    try { scanMap = await require('./virus-scan').scanInfoMap(attRows.map((a) => scanKeyForUrl(a.url))); } catch {}
     for (const a of attRows) {
       const sk = scanKeyForUrl(a.url);
-      (attBy[a.message_id] = attBy[a.message_id] || []).push(attWire(a, (sk && scanMap.get(sk)) || 'clean'));
+      (attBy[a.message_id] = attBy[a.message_id] || []).push(attWire(a, sk && scanMap.get(sk)));
     }
     for (const r of await db.prepare(`SELECT message_id, emoji, user_id FROM message_reactions WHERE message_id IN (${ph})`).all(...ids)) {
       const t = (reactBy[r.message_id] = reactBy[r.message_id] || {});

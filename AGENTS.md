@@ -335,6 +335,20 @@ admin console's engine line and in `scripts/verify-harbin.js`, which is where
 "is this really the detector?" gets asked. `engineLabel()` is therefore just the
 name, which is also what the `engine` column stores; that column is not
 decoration, it is the bucket sweep's ledger marker.
+A third surface covers the band in between: a file in Harbin's **suspicious**
+band is SERVED, so its `scan` is `clean` and nothing would ever have told the
+reader the engine hesitated. `scanInfoMap` therefore carries the engine's band
+alongside the effective status, `attWire` puts it on the attachment as
+`scanVerdict`/`scanScore`, and `attWarnHTML` paints an amber triangle-`!` chip —
+"Potentially malicious — details" — as a SIBLING of the attachment inside
+`.msg-atts`/`.pin-atts` (both are flex columns, and the chip's negative
+`margin-bottom` is what binds it to the file below it rather than letting it
+float between two attachments). It sits OUTSIDE `.att-wrap`, so a spoiler veil
+can never swallow a security warning and no click handler that reads a click on
+the media — the lightbox, a video's play button — can see the chip's own; the
+chip is a real `<button>` whose label opens the Harbin info panel, because a
+warning whose reason is not one tap away is a warning people learn to ignore.
+Never warn for `infected` (that is the red card) or `pending`.
 Coverage is the whole media tree: chat/DM attachments and **stories**
 through the flag-driven queue, and **profile media** (avatars, banners, sidebar
 banners, server icons, custom emoji, webhook avatars, the profile picker's
