@@ -65,10 +65,18 @@ function el(cls, attrs = {}) {
     },
     get firstChild() { return e.children[0] || null; },
     get firstElementChild() { return e.children[0] || null; },
+    // The real DOM exposes the parent under both names; the app checks
+    // parentNode before removing a displaced node.
+    get parentNode() { return e.parent; },
     get nextElementSibling() {
       if (!e.parent) return null;
       const i = e.parent.children.indexOf(e);
       return i < 0 ? null : (e.parent.children[i + 1] || null);
+    },
+    get previousElementSibling() {
+      if (!e.parent) return null;
+      const i = e.parent.children.indexOf(e);
+      return i <= 0 ? null : (e.parent.children[i - 1] || null);
     },
     insertBefore(node, ref) {
       if (!node) return node;
@@ -116,7 +124,7 @@ function find(root, sel) {
 }
 
 // ---------- the harness ----------
-function harness() {
+function harness(opts = {}) {
   const box = el('messages');
   box._box = box;
   box.clientHeight = 400;
@@ -144,11 +152,13 @@ function harness() {
   // ids were painted (and it is what readds the nodes to the box), fmtDay groups
   // them, shouldGroup is the real 5-minute rule.
   const painted = [];
-  const fmtDay = (ts) => 'd' + Math.floor(ts / 100000);
+  // The real fmtDay (core.js) when a test is about the day dividers themselves;
+  // the grouping is identical either way.
+  const fmtDay = opts.fmtDay || ((ts) => 'd' + Math.floor(ts / 100000));
   const shouldGroup = (prev, m) => !!prev && (m.created_at - prev.created_at) <= 300000
     && !(prev.sys || m.sys) && (prev.user ? prev.user.id : null) === (m.user ? m.user.id : null);
   const messageEl = (m, opts = {}) => {
-    const node = el('msg' + (opts.grouped ? ' grouped' : ''), { mid: m.id });
+    const node = el('msg' + (opts.grouped ? ' grouped' : ''), { mid: m.id, time: String(m.created_at || 0) });
     for (const n of walk(box)) if (n.dataset.counted === m.id) return node; // no double-paint
     node.dataset.counted = m.id;
     painted.push(m.id);
@@ -174,7 +184,7 @@ function harness() {
   `);
   const apiFns = fn(ctx);
   return {
-    box, calls, S, painted, HIST_PAGE: apiFns.HIST_PAGE,
+    box, calls, S, painted, HIST_PAGE: apiFns.HIST_PAGE, fmtDay,
     fn: apiFns,
     setReply: (r) => { reply = r; },
     setFail: (v) => { fail = v; },
@@ -185,7 +195,7 @@ function harness() {
       let lastDay = '';
       let prev = null;
       for (const m of msgs) {
-        const d = fmtDay(m.created_at);
+        const d = this.fmtDay(m.created_at);
         if (d !== lastDay) { lastDay = d; prev = null; const node = el('day'); node.textContent = d; box.appendChild(node); }
         box.appendChild(messageEl(m, { grouped: shouldGroup(prev, m) }));
         prev = m;
@@ -203,6 +213,10 @@ function harness() {
     },
     msgNode: (mid) => find(box, '[data-mid="' + mid + '"]'),
     bar: () => find(box, '.hist-top'),
+    // The painted list in document order: a 'day' entry for every divider and
+    // 'msg' for every message — which is exactly what the reader sees.
+    items: () => walk(box).filter((n) => n.classList.contains('day') || n.classList.contains('msg'))
+      .map((n) => (n.classList.contains('day') ? 'day:' + n.textContent : 'msg:' + n.dataset.mid)),
     ids: () => walk(box).filter((n) => n.classList.contains('msg')).map((n) => n.dataset.mid),
   };
 }
@@ -363,6 +377,104 @@ console.log('\n[8] a page that lands after the reader moved on is dropped');
   await p;
   check(h.S.messages.get('ch1').length === 80, 'the stale page was never spliced into the old conversation');
   check(h.ids().length === 80, 'and nothing was painted into the list the reader left');
+}
+
+// ---------- 9. the day dividers stay in order through a prepend ------------
+// The report: at the beginning of a chat the reader saw "THU, SEP 10" ABOVE
+// "WED, SEP 9". A divider is emitted whenever a message's day differs from the
+// one before it, so the dividers are the painted list's own proof of order —
+// this drives the paging block with the REAL fmtDay (core.js) and reads the
+// dividers back off a Date-based day string, where a wrong cursor or a
+// mis-sorted splice shows up as a repeat or a step backwards.
+console.log('\n[9] a prepended page keeps the day dividers in chronological order');
+{
+  const realFmtDay = (ts) => new Date(ts).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const DAY = 86400000;
+  const day0 = Date.UTC(2026, 8, 9, 18, 0); // Wed, Sep 9 2026
+  const mk = (id, ts, user = 'u1') => ({ id, created_at: ts, user: { id: user }, content: 'x' });
+  // Realistic page sizes: paging only exists at HIST_PAGE, so a page that is not
+  // a full 80 ends the conversation (correctly) and proves nothing here.
+  // The tail is two days from `day0`; the page behind it is the three days
+  // before that. Both arrive oldest-first, as the API returns them.
+  const span = 2 * DAY / 80;
+  const older = Array.from({ length: 80 }, (_, i) => mk('a' + i, day0 - DAY - 3 * DAY + i * span));
+  const tail = Array.from({ length: 80 }, (_, i) => mk('b' + i, day0 + i * span));
+  check(pagingSrc.includes('function dropOrphanDayDividers'), 'the orphaned-divider cleanup is part of the paging block');
+  const h = harness({ fmtDay: realFmtDay });
+  h.S.messages.set('ch1', tail);
+  h.paint(tail);
+  h.fn.historyAfterTail(h.fn.historyKey(), tail, tail, tail, { msgs: tail });
+  check(h.fn.histStateFor(h.fn.historyKey()).done === false, 'a full page leaves the conversation pageable');
+  h.setReply({ messages: older });
+  h.box.scrollTop = 40;
+  await h.fn.loadOlderMessages(h.box);
+  check(h.calls.length === 1, 'the older page was requested', h.calls);
+  const items = h.items();
+  const days = items.filter((x) => x.startsWith('day:')).map((x) => x.slice(4));
+  // Days only need to be ordered, not parsed: comparing the rendered weekday
+  // names would be locale work, so compare the day divider sequence against the
+  // sequence the loaded array implies.
+  const expected = [];
+  let last = '';
+  for (const m of h.S.messages.get('ch1')) {
+    const d = realFmtDay(m.created_at);
+    if (d !== last) { last = d; expected.push(d); }
+  }
+  check(days.join(' | ') === expected.join(' | '),
+    'the dividers the reader sees are exactly the loaded messages in order', { painted: days, expected });
+  check(new Set(days).size === days.length, 'no day is divided twice', days);
+  const idx = (id) => items.indexOf('msg:' + id);
+  check(items[0].startsWith('day:') && items[1] === 'msg:a0',
+    'the oldest message of the prepended page heads the list, under its own divider', items.slice(0, 2));
+  check(idx('a79') < idx('b0'), 'the seam runs oldest-to-newest across the page boundary', items.slice(-4));
+  check(idx('b0') < idx('b79') && idx('a0') < idx('a79'), 'and both pages keep their own order');
+  check(h.box.scrollTop > 0, 'the reader was left inside the list, not thrown to the top', h.box.scrollTop);
+}
+
+// ---------- 10. the seam where the two pages share a day ----------------------
+// The common case is duller than the reported one and just as easy to get
+// wrong: the page behind reaches into the SAME day the tail starts on. Both the
+// displaced divider and the page's own carry that day, so a naive splice leaves
+// it printed twice — a divider in the middle of its own day's messages.
+console.log('\n[10] a page that reaches into the tail\'s first day divides it once');
+{
+  const realFmtDay = (ts) => new Date(ts).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const DAY = 86400000;
+  const day0 = Date.UTC(2026, 8, 9, 18, 0); // Wed, Sep 9 2026
+  const mk = (id, ts) => ({ id, created_at: ts, user: { id: 'u1' }, content: 'x' });
+  const span = 2 * DAY / 80;
+  const tail = Array.from({ length: 80 }, (_, i) => mk('b' + i, day0 + i * span));
+  // Ends 30 seconds before the tail's first message, on the SAME day.
+  const older = Array.from({ length: 80 }, (_, i) => mk('a' + i, day0 - 2 * DAY + i * span));
+  const h = harness({ fmtDay: realFmtDay });
+  h.S.messages.set('ch1', tail);
+  h.paint(tail);
+  h.fn.historyAfterTail(h.fn.historyKey(), tail, tail, tail, { msgs: tail });
+  h.setReply({ messages: older });
+  h.box.scrollTop = 40;
+  await h.fn.loadOlderMessages(h.box);
+  const items = h.items();
+  const days = items.filter((x) => x.startsWith('day:')).map((x) => x.slice(4));
+  const expected = [];
+  let last = '';
+  for (const m of h.S.messages.get('ch1')) {
+    const d = realFmtDay(m.created_at);
+    if (d !== last) { last = d; expected.push(d); }
+  }
+  check(days.join(' | ') === expected.join(' | '),
+    'the shared day is divided exactly once, in the right place', { painted: days, expected });
+  check(new Set(days).size === days.length, 'no day appears twice across the seam', days);
+  const idx = (id) => items.indexOf('msg:' + id);
+  check(idx('a79') < idx('b0') && idx('a0') < idx('a79'), 'the seam still runs oldest-to-newest');
+  // The shared day's divider must LEAD its messages: the element right below it
+  // is a message of that same day. (A leftover divider would be followed by the
+  // page's last divider, or by a message of a later page boundary.)
+  const sysFmt = (ts) => new Date(Number(ts)).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const sharedLabel = sysFmt(day0);
+  const di = items.indexOf('day:' + sharedLabel);
+  const after = di >= 0 ? h.box.children[di + 1] : null;
+  check(di >= 0 && after && after.classList.contains('msg') && sysFmt(after.dataset.time) === sharedLabel,
+    'and it leads its own messages', { after: after && (after.dataset.mid || after.className), label: sharedLabel });
 }
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

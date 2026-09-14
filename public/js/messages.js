@@ -812,6 +812,10 @@ async function votePoll(mid, optionId) {
 }
 function messageEl(m, opts = {}) {
   const div = document.createElement('div');
+  // The painted node carries its own timestamp: a day divider belongs to the day
+  // of the messages under it, and this is how anything checking that (a test, or
+  // a future seam fixup) can judge it without re-walking the model.
+  div.dataset.time = String(m.created_at || 0);
   if (m.sys) {
     div.className = 'msg sys';
     div.dataset.mid = m.id;
@@ -1494,6 +1498,41 @@ async function loadOlderMessages(box) {
     renderHistoryTopBar('Could not load older messages — retry');
   }
 }
+// The day divider that heads the list before a prepend becomes an orphan when
+// the new page is spliced in above it. The page brought its own divider for the
+// day it starts with, and the message the old one headed now sits under that one
+// instead — left in place it printed a divider with no messages under it and,
+// when the two pages started on different days, a LATER day above an earlier one
+// ("THU, SEP 10" above "WED, SEP 9"). The seam divider is not necessarily the
+// head any more (the status row and the page's own dividers land above it), so
+// the orphan is identified by what it IS — the earlier of two dividers for the
+// same day — which leaves every legitimate divider below the seam alone and
+// needs no date parsing.
+function dropOrphanDayDividers(box) {
+  try {
+    const dividers = [...box.children].filter((c) => c.classList && c.classList.contains('day'));
+    // From the end: the LAST divider for a day is the honest one (its messages
+    // follow it), and anything earlier with the same label is the orphan.
+    // Removing only the earlier copies can never leave a day headless.
+    const seen = new Set();
+    for (let i = dividers.length - 1; i >= 0; i--) {
+      const d = dividers[i];
+      if (seen.has(d.textContent)) d.remove();
+      else seen.add(d.textContent);
+    }
+  } catch {}
+}
+// The divider that owns the day of the list's first message, or null when
+// something else (a status row) heads it or no message is painted.
+function leadingDayDivider(box, firstMsg) {
+  try {
+    if (!firstMsg) return null;
+    let i = box.children.indexOf(firstMsg);
+    if (i <= 0) return null;
+    const above = box.children[i - 1];
+    return (above && above.classList && above.classList.contains('day')) ? above : null;
+  } catch { return null; }
+}
 // Splice one older page in above what is already painted, holding the reader's
 // place with their anchor message. Only two seams need attention: a day divider
 // that was the list's first element is now interior (the page brought its own),
@@ -1507,6 +1546,11 @@ function prependOlderMessages(box, older, anchor, seamId) {
   // the scrollTop correction below as an upward scroll (or re-pin a bottom hold).
   box._jumpHold = true;
   try {
+    // The divider heading the first message belongs to the day of that message.
+    // The page goes in front of IT (not merely in front of the message), or the
+    // displaced divider would be left above the page's own dividers — a later
+    // day printed above an earlier one.
+    const anchorNode = leadingDayDivider(box, firstMsg) || firstMsg;
     let lastDay = '';
     let prev = null;
     const out = [];
@@ -1523,18 +1567,14 @@ function prependOlderMessages(box, older, anchor, seamId) {
       out.push(messageEl(m, { grouped: shouldGroup(prev, m) }));
       prev = m;
     }
-    box.insertBefore(out[0], firstMsg);
-    for (let k = 1; k < out.length; k++) box.insertBefore(out[k], firstMsg);
-    // Seam 1: a divider that used to head the list now sits between two
-    // messages of the same day — the page's own divider is the honest one.
-    const head = box.querySelector('.msg');
-    for (;;) {
-      const f = box.firstElementChild;
-      if (!f || !f.classList || !f.classList.contains('day')) break;
-      if (f.nextElementSibling !== head) break;
-      f.remove();
-      break;
-    }
+    for (const node of out) box.insertBefore(node, anchorNode);
+    // Seam 1: the divider that used to head the list is orphaned now — the page
+    // brought its own divider for the day it starts with, and the message the old
+    // one headed sits under that one instead. Left in place it printed a divider
+    // with no messages under it and, when the two pages started on different
+    // days, put a LATER day above an earlier one ("THU, SEP 10" above
+    // "WED, SEP 9").
+    dropOrphanDayDividers(box);
     // Seam 2: the first painted message lost its predecessor, so re-render it
     // with grouping recomputed against the newest message we just prepended.
     if (seamId) {
