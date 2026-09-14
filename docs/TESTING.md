@@ -1145,6 +1145,24 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   back on the left half and close on the right half (and the header fits, so the
   close is never clipped), back returns to the menu, the detail title comes off
   the row label, and the view classes are inert on desktop.
+
+  `node scripts/test-server-invite-row.js` covers the server settings → Invites
+  rows fitting the screen (offline static checks plus headless Chrome at a phone,
+  a narrow-desktop and a desktop viewport, skipping without Chrome). It drives
+  the real `renderInviteLinks` (`security.js`) inside the real settings shell
+  built by `renderServerTab` (`.srvset-wrap` > `.srv-subtabs.vertical` +
+  `.srvset-content`), against the real `index.html` markup and `styles.css`, and
+  asserts what the reported bug broke: the content column is never wider than
+  the pane, the pane has no horizontal overflow, every row and every one of its
+  Copy / Rename / Revoke buttons stays inside the pane and inside the viewport,
+  and each row still names its own full link in the DOM (ellipsised visually,
+  never truncated in the text). Re-run it after touching `.srvset-wrap`,
+  `.srvset-content`, `.set-row` or the invite rows in `renderInviteLinks` — the
+  wrapper is `align-items:flex-start`, so `.srvset-content` MUST keep
+  `align-self:stretch`: as a plain `flex:1` item its cross-size in the mobile
+  COLUMN direction was fit-content, and one nowrap invite URL widened the whole
+  column past the pane and pushed Revoke off the right of the phone.
+
   `node scripts/test-tab-spinner.js` covers the loading spinner for the settings
   rail and the admin console's tab panes (static checks plus a headless-Chrome
   run against the real markup + `styles.css`; skips without Chrome). The shared
