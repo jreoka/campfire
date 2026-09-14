@@ -219,10 +219,9 @@ The owner will iterate on features **without ever losing persistent data**.
   the media bucket under `blobs/` doubled what the account stored inside the
   SAME Cloudflare account that held the media — no vendor separation, so it
   could not survive losing that account, and it bought nothing but the bill.
-  Consequence, stated plainly: **the media bucket is the only copy of the
-  media.** The dump + Secrets are the doomsday copy; no code path can return a
-  media byte from the backup bucket, and `--restore-media` is an audit that
-  names what is unaccounted for. `scripts/purge-backup-blobs.js` deleted the old
+  Consequence, stated plainly: **no backup can return a media byte.** The dump +
+  Secrets are the doomsday copy; `--restore-media` is an audit that
+  names what is unaccounted for, not a restore. `scripts/purge-backup-blobs.js` deleted the old
   mirror (dry-run first); `prune()` in `backup.js` reaps whatever is left.
   **Secrets are captured as the app's environment**, which is what keeps a
   snapshot self-contained on a host with no Kubernetes API: `docker-compose.yml`
@@ -233,13 +232,16 @@ The owner will iterate on features **without ever losing persistent data**.
   rebuild starts from the settings the app actually ran with. Values are never
   logged — the snapshot's log line prints names, and that file is
   plaintext-equivalent, exactly as the k8s Secret capture always was.
-  **Open risk, stated plainly:** media and backups live in ONE Cloudflare
-  account, so losing that account costs the live media and the only copies of
-  everything else at once. They used to sit with two different vendors, which is
-  what prevented exactly that. Moving the backups to a third vendor (Backblaze
-  B2, free at this size) restores the separation for the database and Secrets —
-  and a copy somewhere else is the only thing that would make media recoverable
-  again.
+  **Vendor separation is back** (2026-09-14): media lives in **OVHcloud** object
+  storage and the snapshots in **Cloudflare R2**, so losing either account no
+  longer takes the other with it — which is the split `r2.js` was built for. The
+  remaining risk is narrower and worth stating just as plainly: **the media has
+  exactly one live copy**, because a snapshot records an inventory and never the
+  bytes. The R2 bucket `campfire-media` still holds a complete second copy (that
+  is why deleting it is the last step of the OVH migration, not the first); once
+  it is gone, a second copy means mirroring the OVH bucket somewhere else
+  (`rclone sync` to B2/Storj, or another provider's bucket) if the media is worth
+  more than the storage it costs to duplicate.
 - Schema changes must be **guarded migrations** (`CREATE TABLE IF NOT EXISTS`,
   `ALTER TABLE ... ADD COLUMN` only when the column is missing — see
   `columnExists`/`addColumn` in `db.js`) so existing databases upgrade in
@@ -280,9 +282,14 @@ Runbook: **`deploy/ovh/README.md`**. See **Deployment** below for how to ship.
 db, so the headroom is thinner). The move was db-dump-and-restore plus a tunnel
 connector swap; **no DNS change was needed for `campfire.dill.moe`**, because
 that name points at Cloudflare and the connector moved, not the record. Only
-`turn.dill.moe` (a DNS-only A record) had to be repointed. The old Hetzner host
-is stopped, `docker.service` disabled, so it cannot rejoin the tunnel — its
-`/root/pre-migration-*` holds a dump + `.env` for rollback.
+`turn.dill.moe` (a DNS-only A record) had to be repointed. **The old Hetzner VPS
+was deleted outright** once the move was verified, so there is no retired host to
+worry about rejoining the tunnel, and no rollback host. What that costs: the
+one-off pre-migration pg_dump that lived on it is gone (it was redundant - the
+running database held the same data - but it is not recoverable now). The durable
+recovery path is unchanged and vendor-separated: the OVH media bucket plus the
+Cloudflare R2 snapshots below, restorable onto a fresh host with
+`deploy/ovh/provision.sh` and `deploy/ovh/README.md`.
 
 **The app is replica-safe and ready to scale past one node** (owner requirement:
 it must load-balance across nodes when the deployment grows). Scale-out is a
@@ -390,8 +397,8 @@ with room to spare, where the single-vCPU node did not.
 
 **Uploads live in OVHcloud object storage** (bucket `campfire`), not on disk — so
 a replica needs no shared filesystem, and because media kept on a host filesystem
-is media no replica and no backup can see. It is also the **only** copy:
-`backup.js` records a media inventory (key + size) and never the bytes — see the
+is media no replica and no backup can see. `backup.js` records a media inventory
+(key + size) and never the bytes — see the
 data-safety contract. **Moved off Cloudflare R2 on 2026-09-14** (`scripts/migrate-r2-to-ovh.js`):
 360 objects / 265.8 MiB, copied with the source bucket only ever read from, every
 destination key verified by size, and 32 objects re-downloaded from both stores

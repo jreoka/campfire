@@ -182,7 +182,11 @@ the rollback target. Its settings are archived at
 `/root/r2-media-settings.before-ovh.env` on the host, so a rollback is a `.env`
 edit and a recreate. **Do not delete `campfire-media` until you are satisfied
 OVH is serving everything**: it is currently the second copy of media that
-otherwise exists in exactly one place.
+otherwise exists in exactly one place. Note the one-off pre-migration pg_dump is
+**not** part of this picture - it lived on the Hetzner VPS, which has since been
+deleted, so there is no host to roll back to. That dump was redundant (the
+database was fully migrated and every 12-hourly snapshot still holds one), but it
+is gone, which is worth knowing before anyone goes looking for it.
 
 ### Credentials
 
@@ -363,13 +367,14 @@ not, and inheriting them makes presence and the bus lie.
    that, mirror the OVH bucket off-site (`rclone sync` to B2/Storj on a
    schedule, or a second provider's bucket) if the media is worth more than the
    storage it costs to duplicate.
-2. **Retired infrastructure is still provisioned and still billing**: the old
-   Kubernetes cluster is scaled to zero (not deleted), its object store is
-   untouched, and the Hetzner VPS is stopped with `docker.service` disabled
-   (deliberately - two connectors on one tunnel is a load-balancing hazard).
-   Nothing in production uses any of them. Decommission them from the providers'
-   dashboards once satisfied, and delete their API keys with them - but read
-   item 1 first: the R2 bucket is still the rollback copy of the media.
+2. **Retired infrastructure**: the old Kubernetes cluster is scaled to zero (not
+   deleted) and its object store is untouched. The **Hetzner VPS has been deleted
+   entirely** (2026-09-14, once the move was verified) - so it is no longer a
+   tunnel hazard, and also no longer a rollback host. See §Media storage for what
+   that means for the one-off pre-migration dump that lived on it. Still to
+   decommission from the providers' dashboards: the scaled-to-zero cluster, its
+   object store, and the API keys that go with them - but read item 1 first: the
+   R2 bucket is still the rollback copy of the media.
 3. No HA. One host, one Postgres, one of everything. A reboot is downtime.
 4. Rotate the credentials that were pasted into a chat during the migrations: the
    Cloudflare Global API Key, the Hetzner API token, and - if the OVH media
