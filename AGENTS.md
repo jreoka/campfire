@@ -445,6 +445,16 @@ capture whose encode produced no bytes), text-only stories on a picked gradient,
 and markup over the shot — draggable/rotatable/scalable text and emoji stickers plus freehand
 drawing with colours and undo, all rendered over the media by the viewer and by
 the view-once player (the markup travels with the post, not in the pixels).
+A URL typed into a story — the caption, or the text of a text-only story, which
+IS the story — is a real link (`linkifyHTML`, embeds.js) and gets ONE preview
+card under it (`#sv-links` in the viewer's `.sv-below` bar, `storyLinkEmbedsHTML`:
+always the compact unfurl card, never a player, because the bar has to stay a
+strip on a landscape phone's short stage). The bar is `pointer-events:none` so
+the prev/next zones keep stepping the story — the anchors, the card and
+`.ov-layer.ov-view` (which has to out-stack `.sv-zone`) are the only opt-ins;
+the view-once caption/markup linkify too and its stage's click guard ignores an
+`a[href]` so following a link cannot consume the one-shot view.
+`scripts/test-story-links.js` + `test-story-links-browser.js` cover it.
 A story sent to an individual friend is delivered as a view-once DM instead of
 a tray entry (`POST /api/dm/viewonce` with `storyId` re-files the story's bytes
 under the gated `viewonce/` prefix), and picks alongside a broadcast audience

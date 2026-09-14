@@ -111,8 +111,11 @@ async function openViewOnce(mid) {
   stage.querySelectorAll(':scope > img, :scope > video').forEach((n) => n.remove());
   voState = { mid, replay: info.state === 'replayable', consumed: false, info };
   const cap = $('#vo-cap');
-  cap.textContent = info.caption || '';
-  cap.classList.toggle('hidden', !info.caption);
+  const capText = String(info.caption || '');
+  // Same prose rule as the story viewer's caption: a URL in it is a real link
+  // (no preview card here — the stage is one-shot and holds one picture).
+  cap.innerHTML = capText && typeof linkifyHTML === 'function' ? linkifyHTML(capText) : esc(capText);
+  cap.classList.toggle('hidden', !capText);
   // The window is for STARTING the replay, never for watching it: once the
   // replay is open it plays out, and closing it is what ends the item.
   const secs = voWindowSecs(info);
@@ -164,7 +167,7 @@ function voPaintOverlays(info) {
   const media = stage.querySelector(':scope > video, :scope > img');
   if (!media) return;
   if (!ovFitLayer(layer, stage, media)) return;
-  ovPaintLayer(layer, ovs, { editable: false });
+  ovPaintLayer(layer, ovs, { editable: false, links: true });
 }
 function voRefitOverlays() {
   if (!voState || !voState.info) return;
@@ -215,7 +218,10 @@ async function sendViewOnce(payload) {
 }
 // ---------- wiring ----------
 $('#vo-close').onclick = () => closeViewOnce();
-$('#vo-stage').onclick = () => closeViewOnce();
+// A link in the caption or in the markup is the one thing a tap on the stage
+// must NOT do: closing consumes the item (one view, then the replay window), so
+// following a link would burn the view the reader came for.
+$('#vo-stage').onclick = (e) => { if (e.target.closest && e.target.closest('a[href]')) return; closeViewOnce(); };
 $('#vo-hint').onclick = () => closeViewOnce();
 document.addEventListener('keydown', (e) => { if (voState && e.key === 'Escape') { e.preventDefault(); closeViewOnce(); } });
 document.addEventListener('visibilitychange', () => { if (document.hidden && voState) closeViewOnce(); });

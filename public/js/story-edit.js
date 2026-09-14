@@ -235,7 +235,13 @@ function ovPaintLayer(layer, list, opts = {}) {
       el.style.color = ovColor(o.color);
       el.style.fontSize = 'calc(' + OV_TEXT_BASE + ' * var(--ov-h))';
       el.classList.toggle('ov-pill', o.bg === 'pill');
-      el.textContent = String(o.text == null ? '' : o.text);
+      const txt = String(o.text == null ? '' : o.text);
+      // The reader's copy is prose, so a URL in it is a real link. The
+      // composer's copy is the thing being edited and stays inert text: a link
+      // there would fight the drag/scale gestures and swallow the tap that
+      // selects the sticker. `links` is the caller's explicit opt-in.
+      if (!opts.editable && opts.links && typeof linkifyHTML === 'function') el.innerHTML = linkifyHTML(txt);
+      else el.textContent = txt;
     } else {
       el.style.fontSize = 'calc(' + OV_EMOJI_BASE + ' * var(--ov-h))';
       el.innerHTML = ovEmojiHTML(o.e);

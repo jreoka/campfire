@@ -275,6 +275,49 @@ function linkEmbedsHTML(text) {
   return out.length ? '<div class="embeds">' + out.join('') + '</div>' : '';
 }
 
+// ---------- plain-prose surfaces: story captions, story markup text ----------
+// A caption and the text of a text-only story are typed prose, not chat markup:
+// they keep their exact shape (every whitespace character, no markdown) and the
+// only thing that changes is that a URL becomes a real link. Escaped HTML out,
+// so callers assign it with innerHTML.
+function linkifyHTML(text) {
+  const src = String(text == null ? '' : text);
+  const re = /https?:\/\/[^\s<>"'`]+/g;
+  let out = '';
+  let last = 0;
+  let m;
+  while ((m = re.exec(src))) {
+    const url = cleanEmbedUrl(m[0]);
+    if (!url) continue;
+    out += eh(src.slice(last, m.index))
+      + '<a href="' + eh(url) + '" target="_blank" rel="noopener nofollow ugc">' + eh(url) + '</a>'
+      + eh(src.slice(m.index + url.length, m.index + m[0].length));
+    last = m.index + m[0].length;
+  }
+  return out + eh(src.slice(last));
+}
+// A link in a story gets ONE preview card under the caption, and that card is
+// always the compact unfurl card — never a player. A story is a picture first:
+// chat's embeds are conversation furniture, and an iframe (Spotify, X, a Twitch
+// player), a 16:9 YouTube facade or a full-size image would cover the thing the
+// reader opened. The compact card is small enough (favicon, site, title, a
+// square thumbnail) that the picture keeps its room on a phone held sideways as
+// well as one held upright.
+function storyLinkEmbedsHTML(text) {
+  if (!previewsOn) return '';
+  const src = stripEmbedIgnored(text);
+  const re = /https?:\/\/[^\s<>"'`]+/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const url = cleanEmbedUrl(m[0]);
+    if (!url) continue;
+    // Nothing known for this URL (or the server had nothing): try the next one.
+    const card = linkCardHTML(url, true);
+    if (card) return '<div class="embeds">' + card + '</div>';
+  }
+  return '';
+}
+
 // ---------- generic link cards (server-side unfurl) ----------
 // A message renders instantly with a hostname-only card; the metadata lands
 // asynchronously and is cached, so re-renders paint the finished card inline.
@@ -411,4 +454,4 @@ function installLinkCards() {
 if (typeof document !== 'undefined') installLinkCards();
 
 // Node test hook (browsers ignore: `module` is undefined there).
-try { if (typeof module !== 'undefined') module.exports = { linkEmbedsHTML, embedForUrl, cleanEmbedUrl, stripEmbedIgnored, cardBodyHTML, linkCardHTML, setLinkPreviews, __cardCache: cardCache }; } catch {}
+try { if (typeof module !== 'undefined') module.exports = { linkEmbedsHTML, linkifyHTML, storyLinkEmbedsHTML, embedForUrl, cleanEmbedUrl, stripEmbedIgnored, cardBodyHTML, linkCardHTML, setLinkPreviews, __cardCache: cardCache }; } catch {}
