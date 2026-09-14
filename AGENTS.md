@@ -266,13 +266,22 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
 
 ## Current state
 
-Live at https://campfire.dill.moe — **one Hetzner Cloud VPS** (CX33, 4 vCPU /
-8 GB, Nuremberg `nbg1`) running Docker Compose, fronted by a **Cloudflare
+Live at https://campfire.dill.moe — **one OVHcloud VPS** (`40.160.90.108`,
+2 vCPU / 4 GB, Ubuntu 26.04) running Docker Compose, fronted by a **Cloudflare
 Tunnel** (outbound-only, so no inbound 80/443 and no certificates to renew),
 with coturn on the host network for TURN and **Harbin compiled into the app
 image for upload scanning** (no scanner container — see below). Media lives in
 Cloudflare R2; the doomsday backups do too.
 Runbook: **`deploy/hetzner/README.md`**. See **Deployment** below for how to ship.
+
+**Migrated off Hetzner on 2026-09-14** (cost; the OVH box is smaller — 2 vCPU /
+4 GB vs CX33's 4 vCPU / 8 GB — and the stack's own limits are `2g` app + `1g`
+db, so the headroom is thinner). The move was db-dump-and-restore plus a tunnel
+connector swap; **no DNS change was needed for `campfire.dill.moe`**, because
+that name points at Cloudflare and the connector moved, not the record. Only
+`turn.dill.moe` (a DNS-only A record) had to be repointed. The old Hetzner host
+is stopped, `docker.service` disabled, so it cannot rejoin the tunnel — its
+`/root/pre-migration-*` holds a dump + `.env` for rollback.
 
 **The app is replica-safe and ready to scale past one node** (owner requirement:
 it must load-balance across nodes when the deployment grows). Scale-out is a
@@ -566,11 +575,30 @@ permission to commit, push, and deploy to production — never ask for it first,
 and never pause to confirm a deploy.** The owner granted that up front, for
 every task, in this file.
 - Local repo commits to `origin/main` (`https://github.com/jreoka/campfire`).
-- Production is **one Hetzner VPS** (`46.225.214.40`, Nuremberg), running Docker
+- Production is **one OVHcloud VPS** (`40.160.90.108`), running Docker
   Compose from `/opt/campfire/app`:
-  `ssh root@46.225.214.40`, then `cd /opt/campfire/app && git pull && docker
+  `ssh root@40.160.90.108`, then `cd /opt/campfire/app && git pull && docker
   compose -f docker-compose.yml -f deploy/hetzner/docker-compose.hetzner.yml up
-  -d --build`. Full runbook: **`deploy/hetzner/README.md`**.
+  -d --build`. Full runbook: **`deploy/hetzner/README.md`**. The compose overlay
+  keeps its `hetzner` name (it is provider-agnostic — cloudflared + coturn — and
+  renaming it would mean touching every documented command for no behaviour).
+- **SSH on that host is key-only.** `PasswordAuthentication no` lives in the MAIN
+  `/etc/ssh/sshd_config`, not in a drop-in: on Ubuntu 26.04 / OpenSSH 10.2p1 the
+  first value OpenSSH obtains wins, and `sshd_config.d/50-cloud-init.conf` ships
+  `PasswordAuthentication yes` and sorts first, so nothing later could override
+  it. That file is now `no`. Confirm with `sshd -T | grep -i passwordauth`.
+- **ufw alone does not contain Docker's published ports.** Measured on this host:
+  `-p 8888:80` listened on `0.0.0.0:8888` with no ufw rule for it and answered
+  from the public internet. `/usr/local/sbin/docker-user-firewall.sh` (run by
+  `docker-user-firewall.service` on every docker start and by its `.timer` after
+  boot, since Docker flushes `DOCKER-USER`) drops that traffic. The app itself
+  publishes on `127.0.0.1` (`BIND=127.0.0.1`), so the tunnel is unaffected — but
+  the rules are what keep a future `-p` from being public by accident. Note the
+  Docker-docs `--ctstate RELATED,ESTABLISHED` snippet does NOT match container
+  reply traffic here; the working shape is `-s 172.16.0.0/12` then conntrack then
+  DROP, and a destination-subnet accept must never be added (DNAT rewrites inbound
+  connections to the container's own subnet before FORWARD sees them, which
+  silently re-opens every published port).
 - Production builds its own image on the host from its own checkout, and the
   repo **publishes no container image anywhere** — the old GHCR workflow is gone
   (nothing ever pulled it, and a private package nothing consumes is just a
@@ -609,9 +637,10 @@ every task, in this file.
   `secrets.json` is plaintext-equivalent and contains the R2 keys themselves.
 - Voice/TURN: coturn runs on the VPS host network (`network_mode: host`; 3478/udp+tcp,
   3479/tcp, relay 49160-49200/udp) so it binds the public IP directly.
-  `turn.dill.moe` is a **DNS-only** A record to `46.225.214.40` — Cloudflare's
+  `turn.dill.moe` is a **DNS-only** A record to `40.160.90.108` — Cloudflare's
   proxy does not carry UDP, so TURN can never use the tunnel. Test it with
-  `turnutils_uclient -y` from inside the coturn container.
+  `turnutils_uclient -y` from inside the coturn container. This is the one record
+  that has to be repointed when the host moves.
 - Two facts about object stores, both measured against endpoints this app has
   used: an object store is not S3-shaped by default (aws-sdk v3 sends a
   streaming Body as a chunked PUT with a checksum trailer, and not every store
