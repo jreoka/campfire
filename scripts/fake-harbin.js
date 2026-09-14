@@ -2,9 +2,10 @@
 // scripts/fake-harbin.js
 //
 // A stand-in for the real Harbin engine: same one-argument contract, same exit
-// codes, same report shape. It exists so the upload pipeline can be exercised
-// end to end on any machine — no Rust toolchain, no compiled binary, and no
-// dependence on what a particular model happens to score.
+// codes, same report shape, and the same `HARBIN_VERBOSE` model line. It exists
+// so the upload pipeline can be exercised end to end on any machine — no Rust
+// toolchain, no compiled binary, and no dependence on what a particular model
+// happens to score.
 //
 // Point the app at it with HARBIN_BIN. A `.js` path is run with the current
 // Node binary rather than executed directly (virus-scan.js harbinCommand), so
@@ -28,9 +29,11 @@
 //                         is milliseconds, too fast to observe the `pending`
 //                         state; a test sets this to make it deterministic.
 //   FAKE_HARBIN_VERDICT   clean | suspect | malware — force it, ignore content
-//   FAKE_HARBIN_MODEL     =none reports a model-less build, which the probe
-//                         must refuse (a scanner that answers CLEAN to
-//                         everything is worse than none)
+//   FAKE_HARBIN_MODEL     =none reports a model-less build, and =silent prints
+//                         no model diagnostics at all; the probe must refuse
+//                         BOTH (a scanner that answers CLEAN to everything is
+//                         worse than none, and one that cannot say what model
+//                         it loaded has not proved it has one)
 //   FAKE_HARBIN_LOG       append one JSON line per answered scan
 //                         ({"tag","size","path"}) — how a test asserts WHICH
 //                         bytes were put in front of the engine, and how many
@@ -54,25 +57,28 @@ const EICAR = [
 
 const args = process.argv.slice(2);
 
-if (args.includes('--model-info')) {
-  if (String(process.env.FAKE_HARBIN_MODEL || '').toLowerCase() === 'none') {
-    console.log('harbin embedded model: none (built without model/harbin.model)');
-    process.exit(0);
-  }
-  console.log('harbin embedded model');
-  console.log('  feature dimension : 4117');
-  console.log('  trees             : 258');
-  console.log('  nodes             : 17042');
-  console.log('  model bytes       : 341900');
-  process.exit(0);
-}
-
 const target = args.find((a) => !a.startsWith('--'));
 if (!target) {
   console.error('Harbin - machine-learning static malware scanner');
   console.error('');
   console.error('usage: harbin <file-or-directory>');
   process.exit(2);
+}
+
+// The model diagnostics a REAL shipped Harbin build writes to stderr when
+// HARBIN_VERBOSE is set. Its `--model-info` flag is compiled out of the release
+// binary (upstream's `devtools` feature), so a line like this, printed during a
+// real scan, is the only way left to prove the engine came up carrying a model —
+// which is what virus-scan.js's probeEngine reads it for. Order matters: the
+// real engine reports the model before it reports the file.
+const FAKE_MODEL = String(process.env.FAKE_HARBIN_MODEL || '').toLowerCase();
+if (process.env.HARBIN_VERBOSE) {
+  if (FAKE_MODEL === 'none') {
+    console.error('harbin: running without a detection model');
+  } else if (FAKE_MODEL !== 'silent') {
+    console.error('harbin: model 258 trees / 17042 nodes / 15448 leaves / 4117 features / max depth 12');
+  }
+  // 'silent' is the shape of a build that says nothing at all about its model.
 }
 
 const delay = Math.max(0, parseInt(process.env.FAKE_HARBIN_DELAY_MS || '0', 10) || 0);

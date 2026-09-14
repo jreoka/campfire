@@ -17,6 +17,12 @@
 // A report line carries the score and the structural evidence, which is what
 // the chat card and the admin panel surface.
 //
+// That one argument is the engine's whole interface, by upstream design: every
+// internal flag (the old `--model-info` included) is compiled out of the
+// shipped binary behind Harbin's `devtools` feature, so this module never
+// passes one. The model's shape — the proof that the binary really carries a
+// detector — is read from `HARBIN_VERBOSE=1` on a real scan (see probeEngine).
+//
 // Flow:
 // - /api/upload (and every image uploader) stores the bytes, then
 //   queueFileScan(key) records a `pending` row in file_scans.
@@ -101,6 +107,11 @@ const TIMEOUT_BASE_MS = Math.max(1000, parseInt(process.env.HARBIN_TIMEOUT_MS ||
 // Staged objects are named with this prefix so a restart can tell its own
 // leftovers from anything else living in the temp dir.
 const TEMP_PREFIX = 'cf-scan-';
+// The engine probe's own scratch file. Deliberately NOT under TEMP_PREFIX:
+// cleanTempDir() unlinks everything carrying that prefix, and a probe may be
+// running when it does — unlinking the file out from under a running scan would
+// read as a dead engine.
+const PROBE_PREFIX = 'cf-engine-probe-';
 const KICK_MS = 500;
 const IDLE_MS = 10000;
 const MAX_ATTEMPTS = 3;
@@ -139,7 +150,7 @@ let noEngine = false; // binary missing — fail open
 let engineFailed = false; // binary present but broken — fail open, loudly
 let engineStarting = false;
 let engineReady = false;
-let engineModel = null; // what `harbin --model-info` reported
+let engineModel = null; // the model shape probeEngine read off the engine
 let lastProbeAt = 0;
 let loggedNoEngine = false;
 const hooks = { onScanChange: null };
@@ -324,8 +335,11 @@ function harbinCommand(arg) {
 
 // One engine run. Never rejects: the caller decides what a bad exit means.
 // `code` is the process exit status, or null when it never ran (missing
-// binary, killed on timeout) — `error` then says why.
-function runHarbinRaw(arg, timeoutMs) {
+// binary, killed on timeout) — `error` then says why. `env` is for the probe,
+// which needs engine diagnostics on stderr; Node REPLACES the child's
+// environment rather than merging, so whatever is passed has to carry
+// process.env with it.
+function runHarbinRaw(arg, timeoutMs, env) {
   const { cmd, args } = harbinCommand(arg);
   return new Promise((resolve) => {
     let done = false;
@@ -337,6 +351,7 @@ function runHarbinRaw(arg, timeoutMs) {
         killSignal: 'SIGKILL',
         maxBuffer: 8 * 1024 * 1024, // a directory scan's report, never a file's
         windowsHide: true,
+        ...(env ? { env: { ...process.env, ...env } } : {}),
       }, (err, stdout, stderr) => {
         const out = String(stdout || '');
         const errOut = String(stderr || '');
@@ -362,25 +377,47 @@ function runHarbinRaw(arg, timeoutMs) {
   });
 }
 
-// `harbin --model-info` both proves the binary runs AND proves an embedded
-// model is actually there — a model-less build would answer CLEAN to
-// everything, which is worse than no scanner because it is believed.
+// The engine, probed by RUNNING it: the binary starts, the embedded model
+// loads, and a real file comes back with a verdict. That is strictly more than
+// the old `harbin --model-info` flag proved, and it is now the only way to ask:
+// upstream compiles every internal flag out of the shipped binary, so
+// `--model-info` is not there to call. `HARBIN_VERBOSE=1` is the shipped
+// build's own diagnostic — it prints the loaded model's shape to stderr during
+// a scan, and says in as many words when there is no detection model at all.
+// That last answer is the one that must be refused: a model-less build answers
+// CLEAN to everything, which is worse than no scanner because it is believed.
 async function probeEngine() {
-  const r = await runHarbinRaw('--model-info', 20000);
-  if (r.error) return { ok: false, why: r.error };
-  const out = r.stdout + r.stderr;
-  if (r.code !== 0) return { ok: false, why: 'model_info_exit_' + r.code };
-  if (/embedded model:\s*none/i.test(out)) return { ok: false, why: 'no_detection_model' };
-  const num = (re) => { const m = re.exec(out); return m ? Number(m[1]) : 0; };
-  return {
-    ok: true,
-    model: {
-      trees: num(/trees\s*:\s*(\d+)/),
-      nodes: num(/nodes\s*:\s*(\d+)/),
-      features: num(/feature dimension\s*:\s*(\d+)/),
-      bytes: num(/model bytes\s*:\s*(\d+)/),
-    },
-  };
+  const probePath = path.join(TMP_DIR, PROBE_PREFIX + process.pid + '.bin');
+  try {
+    ensureTmpDir();
+    // Harmless ASCII, and deliberately not anything the engine has an opinion
+    // about: the probe is about the engine coming up, not about what it scores.
+    fs.writeFileSync(probePath, Buffer.from('campfire engine probe: harmless text\n', 'utf8'));
+    const r = await runHarbinRaw(probePath, 20000, { HARBIN_VERBOSE: '1', HARBIN_QUIET: '1' });
+    if (r.error) return { ok: false, why: r.error };
+    const out = r.stdout + '\n' + r.stderr;
+    if (/without a detection model/i.test(out)) return { ok: false, why: 'no_detection_model' };
+    const num = (re) => { const m = re.exec(out); return m ? Number(m[1]) : 0; };
+    const trees = num(/model\s+(\d+)\s+trees/i);
+    // No model line at all: the engine either could not run (exit 2), or it
+    // answered something this parser does not recognise. Neither is a working
+    // scanner, so neither may read as one.
+    if (!trees) return { ok: false, why: r.code === 2 ? 'engine_exit_2' : 'no_model_reported' };
+    return {
+      ok: true,
+      model: {
+        trees,
+        nodes: num(/(\d+)\s+nodes/i),
+        leaves: num(/(\d+)\s+leaves/i),
+        features: num(/(\d+)\s+features/i),
+        depth: num(/max depth\s+(\d+)/i),
+      },
+    };
+  } catch (e) {
+    return { ok: false, why: String((e && e.message) || e) };
+  } finally {
+    try { fs.unlinkSync(probePath); } catch {}
+  }
 }
 
 async function ensureEngine() {
@@ -410,7 +447,7 @@ async function ensureEngine() {
     engineFailed = false;
     noEngine = false;
     log('Harbin engine ready (' + HARBIN_BIN + ': ' + engineModel.trees + ' trees, '
-      + engineModel.features + ' features, ' + Math.round(engineModel.bytes / 1024) + ' KiB model)');
+      + engineModel.nodes + ' nodes, ' + engineModel.features + ' features)');
     kickVirusScan();
   } catch (e) {
     engineFailed = true;

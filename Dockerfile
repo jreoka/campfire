@@ -11,23 +11,36 @@
 FROM rust:1-alpine AS harbin
 RUN apk add --no-cache build-base git
 ARG HARBIN_REPO=https://github.com/jreoka/harbin
-ARG HARBIN_REF=865422217159ff47bf876db48426d62ee67ee401
+ARG HARBIN_REF=fb95ae1b99ad25fa12f70d4a44aebf17ae4ed442
 WORKDIR /src
 # A full clone rather than a shallow one: the repository is well under a
 # megabyte, and a pinned commit that is no longer the branch head still has to
 # check out.
+#
+# The SHIPPED binary, deliberately: Harbin keeps every internal option
+# (`--model-info`, `--dump-features`, ...) behind its `devtools` feature so the
+# released scanner exposes exactly the one positional argument it documents —
+# so this must not build with `--features devtools`.
 RUN git clone --quiet "$HARBIN_REPO" . \
  && git checkout --quiet "$HARBIN_REF" \
  && cargo build --release --locked
-# Prove it here, where a failure costs a build, rather than in production, where
-# it would mean uploads silently failing open. A build with no embedded model
-# answers CLEAN to everything, which is worse than no scanner — so refuse it,
-# and print the loaded model's shape into the build log while we are at it.
-RUN target/release/harbin --model-info > /tmp/model-info.txt \
- && if grep -q 'model: none' /tmp/model-info.txt; then \
+# Prove the engine here, where a failure costs a build, rather than in
+# production, where it would mean uploads silently failing open. A build with no
+# embedded model answers CLEAN to everything, which is worse than no scanner, so
+# refuse it — and print the loaded model's shape into the build log while we are
+# at it. `HARBIN_VERBOSE=1` is the shipped build's own way to report that shape
+# (the flag was devtools-only and is now compiled out); it goes to stderr during
+# a real scan, which is the same line virus-scan.js's probe reads at runtime.
+RUN set -e; \
+    printf 'campfire build probe: harmless text\n' > /tmp/probe.bin; \
+    HARBIN_VERBOSE=1 HARBIN_QUIET=1 target/release/harbin /tmp/probe.bin > /tmp/probe.log 2>&1 || true; \
+    cat /tmp/probe.log; \
+    if grep -q 'without a detection model' /tmp/probe.log; then \
       echo "harbin built without a detection model" >&2; exit 1; \
-    fi \
- && cat /tmp/model-info.txt
+    fi; \
+    if ! grep -q 'trees' /tmp/probe.log; then \
+      echo "harbin reported no loaded model - the engine did not run" >&2; exit 1; \
+    fi
 
 FROM node:22-alpine
 

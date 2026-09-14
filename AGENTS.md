@@ -335,6 +335,21 @@ scanned in place), and its **`suspicious` band (>= 0.60) is served, not blocked*
 — the shipped operating point is the malicious threshold (0.95), so the band is
 counted, logged and shown in the admin panel, and `HARBIN_BLOCK_SUSPICIOUS=1`
 refuses it too at a real false-positive cost.
+**Ask the engine by scanning it, never by a flag**: every internal option
+(`--model-info` included) is compiled out of the shipped binary behind Harbin's
+own `devtools` feature — `harbin --model-info` on a shipped build prints usage
+and exits 2 — so `probeEngine` (virus-scan.js) runs a real scan of a harmless
+probe file with `HARBIN_VERBOSE=1`, which is upstream's shipped-build way to
+print the loaded model's shape (`harbin: model N trees / N nodes / N leaves /
+N features / max depth N`) or to say it has none. That line is the proof of a
+live detector, and the Dockerfile's build-time proof reads the same line, so a
+model-less build fails the BUILD rather than failing open in production. Never
+build the image with `--features devtools` to get the old flag back — the whole
+point of the pin and that feature gate is that production runs the shipped
+interface, exactly one positional argument. The engine also keeps a per-user
+adaptive file (`adaptive.json`) that only exists once operator feedback
+(`HARBIN_FEEDBACK`) is used, which this app never sets: no state of ours is
+written, and a stale one is discarded on a model change.
 Two surfaces sit on top of that verdict, both new with the engine swap.
 **`bucket-scan.js`** closes the hole the upload path cannot: it lists the stored
 tree and queues the keys NO Harbin verdict covers (the era scanning was off,
@@ -670,8 +685,11 @@ every task, in this file.
   and `up -d --force-recreate campfire`.
 - Confirm the deploy: `curl https://campfire.dill.moe/api/version` (the
   fingerprint changes) and `docker compose ps` → everything Up, `db` healthy.
-  There is no scanner container to check any more; `docker compose exec campfire
-  harbin --model-info` is the engine's own proof that it is there with a model.
+  There is no scanner container to check any more, and no diagnostic flag to
+  pass either: `docker compose exec campfire node scripts/verify-harbin.js` is
+  the engine's own proof that it is there with a model (it scans), and the
+  app's own startup line — `Harbin engine ready (harbin: 245 trees, ...)` in
+  `docker compose logs campfire` — is the running app saying the same thing.
 - Postgres is the `pgdata` Docker volume on that host. Never delete it and never
   `docker compose down -v` — that destroys the database. The data-safety contract
   below applies unchanged.

@@ -14,7 +14,9 @@
 //      `Number(null)` is 0, so a killed process must never read as "clean".
 //   3. `probeEngine` — that the engine runs AND carries a model. A build with
 //      no embedded model answers CLEAN to everything, which is worse than no
-//      scanner because it is believed.
+//      scanner because it is believed. It asks by SCANNING: the shipped engine
+//      compiles `--model-info` out (upstream's `devtools` feature) and reports
+//      its model over `HARBIN_VERBOSE=1` instead, so silence must not pass.
 //
 // Usage: node scripts/test-virus-scan.js
 
@@ -122,12 +124,23 @@ const verdict = (over) => { try { return vs._verdictFrom(run(over)); } catch (e)
   console.log('\n[4] probeEngine: the engine must run AND carry a model');
   const ok = await vs._probeEngine();
   check('the stand-in engine probes ready', ok.ok === true, JSON.stringify(ok));
-  check('...and reports the loaded model', !!ok.model && ok.model.trees === 258, JSON.stringify(ok.model));
+  check('...and reports the loaded model', !!ok.model && ok.model.trees === 258
+    && ok.model.nodes === 17042 && ok.model.features === 4117 && ok.model.depth === 12,
+    JSON.stringify(ok.model));
 
   process.env.FAKE_HARBIN_MODEL = 'none';
   const none = await vs._probeEngine();
   check('a model-less build is REFUSED (it would answer clean to everything)',
     none.ok === false && none.why === 'no_detection_model', JSON.stringify(none));
+
+  // The other way to arrive at "cannot say what model I loaded": answer the scan
+  // and volunteer nothing. A shipped Harbin build reports its model over
+  // HARBIN_VERBOSE (the --model-info flag is compiled out), so silence is not a
+  // pass — it is an engine that has not proved it carries a detector.
+  process.env.FAKE_HARBIN_MODEL = 'silent';
+  const silent = await vs._probeEngine();
+  check('an engine that reports no model at all is REFUSED too',
+    silent.ok === false && silent.why === 'no_model_reported', JSON.stringify(silent));
   delete process.env.FAKE_HARBIN_MODEL;
 
   const savedBin = process.env.HARBIN_BIN;

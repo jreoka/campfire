@@ -12,7 +12,10 @@
 //
 //   1. the engine runs AND has a model - a build with no embedded model answers
 //      CLEAN to everything, which is worse than no scanner because it is
-//      believed. `harbin --model-info` is the one probe that proves both.
+//      believed. The probe runs a real scan with HARBIN_VERBOSE=1 and reads the
+//      model's shape off that (see probeEngine in virus-scan.js): the shipped
+//      binary exposes no diagnostic flags at all, by upstream design, so asking
+//      is a scan rather than a flag.
 //   2. a synthetic all-writable-and-executable PE is detected. This is a
 //      deterministic precision anchor, so it is a positive control that does
 //      not require writing a virus signature anywhere.
@@ -84,7 +87,7 @@ async function scanBuffer(dir, label, buf, timeoutMs) {
   }
   const m = probe.model;
   check('engine runs with a detection model', true,
-    `${m.trees} trees, ${m.features} features, ${Math.round(m.bytes / 1024)} KiB model`);
+    `${m.trees} trees, ${m.nodes} nodes, ${m.features} features, max depth ${m.depth}`);
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-verify-harbin-'));
   try {
