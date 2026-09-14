@@ -146,8 +146,6 @@ function run(chrome, html, size) {
 }
 
 function main() {
-  const chrome = findChrome();
-  if (!chrome) return skip('no Chrome/Edge found — set CHROME_PATH');
   const html = pageHtml();
 
   // `node scripts/test-session-rows.js --html out.html` writes the exact page
@@ -159,6 +157,9 @@ function main() {
     console.log('wrote ' + out);
     return;
   }
+
+  const chrome = findChrome();
+  if (!chrome) return skip('no Chrome/Edge found — set CHROME_PATH');
 
   console.log('\n[0] the CSS can actually clip the text column');
   // The bug in one line: `.grow` is a <span>, and an inline box ignores
