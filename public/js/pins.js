@@ -437,8 +437,18 @@ async function jumpToPin(ctx, mid) {
     ({ messages: msgs } = await api(url));
   } catch { toast('Message not found'); return; }
   if (!sameCtx(pinsCtx(), ctx)) return;
-  if (ctx.kind === 'dm') S.dmMessages.set(ctx.id, msgs);
-  else S.messages.set(ctx.id, msgs);
+  // The window around the jump REPLACES the list, so paging must follow the
+  // window — unless older history is loaded behind it, in which case that page
+  // stays the base and the gap fills in on the way back. Either way the paging
+  // cursor always sits on a loaded message (the Jump-to-present pill owns the
+  // way back to the live tail).
+  const loaded = ctx.kind === 'dm' ? S.dmMessages.get(ctx.id) : S.messages.get(ctx.id);
+  const older = historyExtendedWindow(loaded, msgs);
+  const base = (older && older.length) ? older.concat(msgs) : msgs;
+  if (ctx.kind === 'dm') S.dmMessages.set(ctx.id, base);
+  else S.messages.set(ctx.id, base);
+  resetHistoryTop();
+  if (older && older.length) markHistoryExtended(historyKeyFor(ctx));
   S.histMode = { ...ctx };
   S.histNew = 0;
   if (ctx.kind === 'dm') renderDmMessages();
@@ -465,16 +475,27 @@ function jumpToPresent() {
   }
 }
 async function reloadLatest(ctx) {
+  // Back to the live tail, from wherever the reader was (a context window
+  // around a pin/quote, or the New-messages pill). What was already loaded is
+  // kept behind the fresh page, so the work of paging back is not thrown away
+  // and no hole is left for the cursor to step over — the history stays
+  // walkable from the bottom it just landed on.
   try {
     if (ctx.kind === 'dm') {
-      const { messages } = await api(`/api/dms/${ctx.id}/messages?limit=80`);
+      const loaded = S.dmMessages.get(ctx.id) || [];
+      const limit = Math.max(80, loaded.length);
+      const { messages } = await api(`/api/dms/${ctx.id}/messages?limit=${Math.min(limit, 100)}`);
       if (!sameCtx(pinsCtx(), ctx)) return;
-      S.dmMessages.set(ctx.id, messages);
+      const tail = historyAfterTail(historyKeyFor(ctx), messages, loaded, messages, { msgs: loaded });
+      S.dmMessages.set(ctx.id, tail.list);
       renderDmMessages(true);
     } else {
-      const { messages } = await api(`/api/servers/${ctx.serverId}/channels/${ctx.id}/messages?limit=80`);
+      const loaded = S.messages.get(ctx.id) || [];
+      const limit = Math.max(80, loaded.length);
+      const { messages } = await api(`/api/servers/${ctx.serverId}/channels/${ctx.id}/messages?limit=${Math.min(limit, 100)}`);
       if (!sameCtx(pinsCtx(), ctx)) return;
-      S.messages.set(ctx.id, messages);
+      const tail = historyAfterTail(historyKeyFor(ctx), messages, loaded, messages, { msgs: loaded });
+      S.messages.set(ctx.id, tail.list);
       renderMessages(true);
     }
   } catch { toast('Could not load messages'); }
@@ -571,6 +592,16 @@ async function selectDmThread(id, opts = {}) {
   S.histMode = null;
   S.histNew = 0;
   const cachedDm = S.dmMessages.get(id);
+  resetHistoryTop();
+  // Same as selectChannel: a conversation nobody has paged back through starts
+  // on its newest page; an open one keeps the paging state it built up.
+  const histKey = `dm:${id}`;
+  histStateFor(histKey);
+  // Where the loaded history reached before this open, captured while the cache
+  // is still there (see historyAfterTail/selectChannel). Only a cache longer
+  // than one tail page means the reader had paged back through it.
+  const cachedAtLeast = { msgs: cachedDm };
+  if (cachedDm && cachedDm.length > HIST_PAGE) histStateFor(histKey).extended = true;
   // Restore a saved mid-read position, or hold the live bottom — never
   // both (see selectChannel: a stale restore yank kills the bottom hold).
   const wantMidDm = wantsMidReadRestore({ kind: 'dm', id });
@@ -583,7 +614,8 @@ async function selectDmThread(id, opts = {}) {
   try {
     const { messages } = await api(`/api/dms/${id}/messages?limit=80`);
     if (S.dmThreadId !== id) return;
-    S.dmMessages.set(id, messages);
+    const tail = historyAfterTail(histKey, messages, cachedDm, messages, cachedAtLeast);
+    S.dmMessages.set(id, tail.list);
     S.editing = null;
     S.histMode = null;
     S.histNew = 0;
@@ -661,6 +693,7 @@ function renderDmMessages(force = false) {
   if (force || nearBottom) anchorBottom(box);
   else if (typeof pinAnchorWhileSettling === 'function') pinAnchorWhileSettling(box, restoreListAnchor(box, anchor, keepDist));
   else restoreListAnchor(box, anchor, keepDist);
+  paintHistoryTop();
   updatePill();
 }
 function sendDm(content, opts = {}) {

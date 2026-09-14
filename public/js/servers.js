@@ -622,6 +622,18 @@ async function selectChannel(id, opts = {}) {
   S.histMode = null;
   S.histNew = 0;
   const cached = S.messages.get(id);
+  resetHistoryTop();
+  // A conversation nobody has paged back through yet starts on its newest page;
+  // this is the state that lets the first scroll-up ask the server for older
+  // messages (see messages.js — history paging). An open one keeps its own.
+  const histKey = `s:${S.serverId}:${id}`;
+  histStateFor(histKey);
+  // Where the loaded history reached before this open, captured while the cache
+  // is still there: the fetch below merges behind it rather than pruning the
+  // reader's place away (see historyAfterTail). Only a cache longer than one
+  // tail page means they had actually paged back through it.
+  const cachedAtLeast = { msgs: cached };
+  if (cached && cached.length > HIST_PAGE) histStateFor(histKey).extended = true;
   // Restore a saved mid-read position, or hold the live bottom — never
   // both: a stale-layout restore yank trips the hold's takeover check and
   // strands cold opens scrolled-up with the Jump pill showing.
@@ -636,7 +648,11 @@ async function selectChannel(id, opts = {}) {
   try {
     const { messages } = await api(`/api/servers/${S.serverId}/channels/${id}/messages?limit=80`);
     if (S.channelId !== id) return; // moved on while loading — stale
-    S.messages.set(id, messages);
+    // A conversation the reader already walked back through keeps what it
+    // loaded: the fresh page is merged behind it instead of pruning the history
+    // out from under the place they were reading.
+    const tail = historyAfterTail(histKey, messages, cached, messages, cachedAtLeast);
+    S.messages.set(id, tail.list);
     S.editing = null;
     S.histMode = null;
     S.histNew = 0;

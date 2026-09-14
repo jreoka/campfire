@@ -576,6 +576,12 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #chat.dropping #messages{outline:2px dashed var(--accent);outline-offset:-10px;background:var(--accent-dim);border-radius:var(--r-lg)}
 .day{display:flex;align-items:center;gap:.7rem;color:var(--faint);font-size:.72rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;text-align:center;margin:.8rem 0 .45rem}
 .day::before,.day::after{content:'';flex:1;height:1px;background:var(--line-soft)}
+/* Older-messages status at the head of the list (messages.js history paging):
+   a quiet caption that only exists while a page is in flight or after one
+   failed, so it is never a permanent fixture above the newest page. It is a
+   real row, not an overlay — the list grows by exactly this much when it
+   appears, which is why it is empty (and pulled out) the rest of the time. */
+.hist-top{display:flex;align-items:center;justify-content:center;min-height:22px;margin-bottom:.3rem;font-size:.76rem;font-weight:650;color:var(--muted);letter-spacing:.01em}
 .msg{display:flex;gap:.7rem;padding:.45rem .6rem;border-radius:10px;-webkit-touch-callout:none;transition:background var(--t-fast)}
 
 .msg .avatar{width:38px;height:38px}

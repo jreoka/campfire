@@ -387,6 +387,7 @@ function setScrollTop(box, v, intent) {
   try {
     box.scrollTop = v;
     box._autoTop = box.scrollTop; // the clamped value our own scroll event will report
+    box._lastTop = box.scrollTop; // ...and the baseline the reader's next move is read against
     if (intent) box.dataset.atBottom = intent;
   } catch {}
 }
@@ -423,13 +424,25 @@ function watchBottomState(box) {
     // the history is not the reader leaving the bottom, and re-pinning mid
     // animation would cut it short.
     if (box._smoothUntil && Date.now() < box._smoothUntil) { box._smoothUntil = Date.now() + 250; return; }
-    if (box.dataset.atBottom === '1' && !userDrove()) {
+    // Older messages are paged in from the reader's OWN movement upward near the
+    // top of the list. Input alone is not enough to believe it: a finger resting
+    // on the screen while late media grows the list moves scrollTop too, and
+    // treating that as "scrolling up" would demote a reader who is holding the
+    // live bottom. Direction — the top is smaller than the last position we
+    // placed or observed — is what makes the movement theirs. (setScrollTop
+    // keeps that baseline in step, so our own placements never read as a scroll
+    // up and can never ask for a page on the reader's behalf.)
+    const top = box.scrollTop;
+    const up = box._lastTop != null && top < box._lastTop - 2;
+    box._lastTop = top;
+    if (box.dataset.atBottom === '1' && !(up && userDrove())) {
       // Nobody asked for this — hold the bottom the reader never left.
       setScrollTop(box, box.scrollHeight, '1');
       try { if (typeof updatePill === 'function') updatePill(); } catch {}
       return;
     }
     markBottomState(box);
+    if (up && userDrove()) { try { if (typeof maybeLoadOlderMessages === 'function') maybeLoadOlderMessages(box); } catch {} }
   }, { passive: true });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden || box.dataset.atBottom !== '1') return;
@@ -1281,6 +1294,261 @@ function pruneLiveTop(box, n) {
     }
     if (!nearBottom) setScrollTop(box, Math.max(0, box.scrollTop - (h0 - box.scrollHeight)), '0');
   } catch {}
+}
+// ---------- history paging: older messages on demand ----------
+// A conversation opens on its newest page (80) and stops there. Scrolling up
+// near the top pages the next-older 80 in, until the server answers short.
+// That is what "no cap" has to mean here: every message stays reachable, but
+// the client only ever holds what the reader actually walked back through,
+// never the whole archive. Four things make it safe. The cursor is the OLDEST
+// LOADED message's own `created_at` — the same strictly-older comparison the
+// server already pages on — so the window can never drift onto a message that
+// was deleted or re-timestamped. Only a genuinely upward scroll by the reader
+// asks for a page (see watchBottomState): growth under a finger is not a
+// request. The prepended nodes go in ABOVE the reader with their exact place
+// held by an anchor message, and the top of the list carries its own quiet
+// status slot — absent until a full page has proved there is an older one,
+// then it announces the next page while it is in flight, or the retry when it
+// failed. A reader who never scrolls up never sees it and never pays for it.
+const HIST_PAGE = 80;          // messages per older page
+const HIST_LOAD_PX = 600;      // how close to the top counts as "asking for more"
+const histState = new Map();   // convo key -> { done, loading, error, extended }
+function historyKey() {
+  try {
+    if (S.view === 'home') return S.dmThreadId ? 'dm:' + S.dmThreadId : null;
+    return (S.serverId && S.channelId) ? 's:' + S.serverId + ':' + S.channelId : null;
+  } catch { return null; }
+}
+// Same key, for a caller holding a pins ctx ({kind,id,serverId?}) instead of
+// the live S.view — a jump into a conversation pages from that window's oldest
+// message, not from whatever the reader was looking at a moment ago.
+function historyKeyFor(ctx) {
+  try {
+    if (!ctx) return null;
+    return ctx.kind === 'dm' ? 'dm:' + ctx.id : ('s:' + ctx.serverId + ':' + ctx.id);
+  } catch { return null; }
+}
+// The reader's conversation just changed: drop the status row left in the
+// reused box (the paging state itself is per conversation and is kept).
+function resetHistoryTop() {
+  try { document.querySelector('#messages > .hist-top')?.remove(); } catch {}
+}
+// Every conversation's paging state, created on first use — opening a chat and
+// scrolling straight up has to ask for older messages even if nothing declared
+// the conversation pageable first.
+function histStateFor(key) {
+  if (!key) return null;
+  let st = histState.get(key);
+  if (!st) { st = { done: false, loading: false, error: false, extended: false }; histState.set(key, st); }
+  return st;
+}
+// A fresh tail page (or a jump window) arrived, and "is there anything older
+// loaded behind it?" is decided HERE, where both halves are known. A page
+// shorter than a full one in front of an already-loaded history still has older
+// messages waiting behind its cursor, so an extended conversation stays pageable
+// and the merge checked out below keeps the loaded history instead of pruning it
+// back to the newest page.
+//
+// Returns { list, extended } — `list` is the array to hand to the cache, and
+// is the SAME array when nothing needed merging. That matters: a live append
+// holds a reference to it (socket.js), so a needless copy on every channel
+// open would be pure waste.
+function historyAfterTail(key, fetched, loaded, checkedOut, atLeast) {
+  const st = histStateFor(key);
+  if (!st) return { list: checkedOut, extended: false };
+  const fresh = Array.isArray(fetched) ? fetched : [];
+  const had = Array.isArray(loaded) ? loaded : [];
+  // `atLeast` is how a jump declares what was loaded when it started: `{ msgs }`
+  // is the window around the jump — the state of the world the caller can still
+  // page from — which the fetched page does not reach back to. A context jump
+  // into a deep conversation therefore stays pageable instead of stranding the
+  // reader in a 60-message window.
+  const bound = atLeast && atLeast.msgs && atLeast.msgs.length ? atLeast.msgs : null;
+  const olderLoaded = !!bound
+    ? (fresh.length > bound.length || (fresh.length && bound[0].created_at < fresh[0].created_at))
+    : (had.length > HIST_PAGE && had.length > fresh.length
+      && had[0] && fresh.length && had[0].created_at < fresh[0].created_at);
+  const ext = !!(st.extended && had.length > HIST_PAGE) || olderLoaded;
+  st.loading = false;
+  st.error = false;
+  st.extended = ext;
+  // A short page ends the conversation only when nothing older is loaded behind
+  // it; a shorter one in front of loaded history leaves its own cursor to pull
+  // from, which the next scroll does.
+  st.done = fresh.length < HIST_PAGE && !ext;
+  const base = ext ? (bound || had) : null;
+  if (!ext || !base || !base.length || !fresh.length) return { list: checkedOut, extended: ext };
+  // Union, not replacement: everything already walked back through stays put,
+  // and anything missed while away (a socket gap, a deploy) fills in behind the
+  // tail. Both sides are ordered and deduped by id, so the oldest loaded
+  // message — the paging cursor — is still the oldest.
+  const seen = new Set(base.map((m) => m.id));
+  const add = fresh.filter((m) => m && m.id && !seen.has(m.id));
+  const list = add.length
+    ? base.concat(add).sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1))
+    : base;
+  return { list, extended: ext };
+}
+// The oldest loaded page in a list that is longer than one tail page — the
+// array a paging cursor can be taken from after a replace. Null when the list
+// is just the newest page.
+function historyExtendedWindow(loaded, fetched) {
+  const had = Array.isArray(loaded) ? loaded : [];
+  const fresh = Array.isArray(fetched) ? fetched : [];
+  if (had.length <= HIST_PAGE) return null;
+  if (fresh.length && had[0] && had[0].created_at >= fresh[0].created_at) return null;
+  return had.slice(0, Math.max(0, had.length - fresh.length)) || null;
+}
+// A context jump kept older history as its base: say so, or the next
+// historyAfterTail would call the freshly-painted short window "the whole
+// conversation" and stop paging into it.
+function markHistoryExtended(key) {
+  const st = histStateFor(key);
+  if (!st) return;
+  st.extended = true;
+  st.done = false;
+  st.error = false;
+}
+// A full render is a clean slate — the in-flight spinner went with the old
+// nodes — so re-offer the status row (it is only ever news before a load).
+function paintHistoryTop() {
+  try {
+    const st = histState.get(historyKey());
+    if (!st) return;
+    if (st.loading) renderHistoryTopBar('Loading older messages…');
+    else if (st.error) renderHistoryTopBar('Could not load older messages — retry');
+  } catch {}
+}
+function renderHistoryTopBar(text) {
+  try {
+    const box = $('#messages');
+    if (!box) return;
+    let bar = box.querySelector(':scope > .hist-top');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.className = 'hist-top';
+      box.insertBefore(bar, box.firstChild);
+    }
+    bar.textContent = text || '';
+    if (!text) bar.remove();
+  } catch {}
+}
+// Called from the scroll watcher once the reader's own movement has carried
+// them into the top band of the first loaded page.
+async function maybeLoadOlderMessages(box) {
+  const key = historyKey();
+  if (!key || !box || box._jumpHold) return;
+  const st = histStateFor(key);
+  if (st.done || st.loading || st.error) return;
+  // A pin/quote/search jump replaced the list with a window around one message
+  // and set histMode; paging behind that window is a different intent (the
+  // Jump-to-present pill owns the way back), so a scroll inside it must not
+  // rewrite the context out from under the reader.
+  if (S.histMode) return;
+  if (box.scrollTop > HIST_LOAD_PX + box.clientHeight) return;
+  await loadOlderMessages(box);
+}
+async function loadOlderMessages(box) {
+  const key = historyKey();
+  if (!key) return;
+  const st = histStateFor(key);
+  if (st.done || st.loading) return;
+  const arr = S.view === 'home' ? S.dmMessages.get(S.dmThreadId) : S.messages.get(S.channelId);
+  if (!arr || !arr.length) return;
+  const oldest = arr[0];
+  if (!oldest || !oldest.created_at) return;
+  const cursor = oldest.created_at;
+  const url = S.view === 'home'
+    ? `/api/dms/${S.dmThreadId}/messages?limit=${HIST_PAGE}&before=${cursor}`
+    : `/api/servers/${S.serverId}/channels/${S.channelId}/messages?limit=${HIST_PAGE}&before=${cursor}`;
+  st.loading = true;
+  st.error = false;
+  renderHistoryTopBar('Loading older messages…');
+  // Hold the topmost visible message rather than a distance from the bottom:
+  // the page is prepended, so the anchor keeps the exact line under their eye.
+  const anchor = captureListAnchor(box) || (oldest.id ? { mid: oldest.id, off: 0 } : null);
+  const seamId = (() => { const f = box.querySelector('.msg'); return f ? f.dataset.mid || null : null; })();
+  try {
+    const { messages } = await api(url);
+    if (historyKey() !== key) { st.loading = false; return; } // moved on mid-flight
+    const have = new Set(arr.map((m) => m.id));
+    const older = [];
+    for (const m of (messages || [])) {
+      if (!m || !m.id || have.has(m.id) || m.created_at >= cursor) continue;
+      have.add(m.id);
+      older.push(m);
+    }
+    st.loading = false;
+    // A short page is the beginning of the conversation; a full one keeps the
+    // door open for the pull after this.
+    st.done = (messages || []).length < HIST_PAGE;
+    if (older.length) {
+      arr.unshift(...older);
+      arr.sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1));
+      prependOlderMessages(box, older, anchor, seamId);
+    }
+    renderHistoryTopBar('');
+  } catch {
+    st.loading = false;
+    st.error = true; // the row becomes the retry — never a silent dead end
+    renderHistoryTopBar('Could not load older messages — retry');
+  }
+}
+// Splice one older page in above what is already painted, holding the reader's
+// place with their anchor message. Only two seams need attention: a day divider
+// that was the list's first element is now interior (the page brought its own),
+// and the first painted message may now group with the newest prepended one.
+function prependOlderMessages(box, older, anchor, seamId) {
+  if (!box || !older.length) return;
+  const firstMsg = box.querySelector('.msg');
+  if (!firstMsg) return;
+  const wasHeld = box._jumpHold;
+  // Our own layout movement, not the reader's scroll: the watcher must not read
+  // the scrollTop correction below as an upward scroll (or re-pin a bottom hold).
+  box._jumpHold = true;
+  try {
+    let lastDay = '';
+    let prev = null;
+    const out = [];
+    for (const m of [...older].sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1))) {
+      const day = fmtDay(m.created_at);
+      if (day !== lastDay) {
+        lastDay = day;
+        prev = null;
+        const d = document.createElement('div');
+        d.className = 'day';
+        d.textContent = day;
+        out.push(d);
+      }
+      out.push(messageEl(m, { grouped: shouldGroup(prev, m) }));
+      prev = m;
+    }
+    box.insertBefore(out[0], firstMsg);
+    for (let k = 1; k < out.length; k++) box.insertBefore(out[k], firstMsg);
+    // Seam 1: a divider that used to head the list now sits between two
+    // messages of the same day — the page's own divider is the honest one.
+    const head = box.querySelector('.msg');
+    for (;;) {
+      const f = box.firstElementChild;
+      if (!f || !f.classList || !f.classList.contains('day')) break;
+      if (f.nextElementSibling !== head) break;
+      f.remove();
+      break;
+    }
+    // Seam 2: the first painted message lost its predecessor, so re-render it
+    // with grouping recomputed against the newest message we just prepended.
+    if (seamId) {
+      const sm = older.find((m) => m.id === seamId);
+      if (sm) { try { firstMsg.replaceWith(messageEl(sm, { grouped: false })); } catch {} }
+    }
+    if (anchor && anchor.mid) {
+      const el = box.querySelector('[data-mid="' + CSS.escape(anchor.mid) + '"]');
+      if (el) setScrollTop(box, box.scrollTop + ((el.getBoundingClientRect().top - box.getBoundingClientRect().top) - anchor.off), '0');
+    }
+  } catch {
+  } finally {
+    box._jumpHold = wasHeld;
+  }
 }
 function replyPreviewOf(m) {
   const t = String(m?.content || '').trim().slice(0, 60);

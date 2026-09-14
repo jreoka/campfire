@@ -575,7 +575,13 @@ async function jumpToMessage(id) {
   if (S.view === 'home' && S.dmThreadId) {
     try {
       const { messages } = await api(`/api/dms/${S.dmThreadId}/messages?limit=60&around=${encodeURIComponent(id)}`);
-      S.dmMessages.set(S.dmThreadId, messages);
+      // Same rule as jumpToPin: a context window replaces the list, but older
+      // history already loaded behind it stays the base so paging continues.
+      const older = historyExtendedWindow(S.dmMessages.get(S.dmThreadId), messages);
+      const base = (older && older.length) ? older.concat(messages) : messages;
+      S.dmMessages.set(S.dmThreadId, base);
+      resetHistoryTop();
+      if (older && older.length) markHistoryExtended('dm:' + S.dmThreadId);
       S.histMode = { kind: 'dm', id: S.dmThreadId };
       S.histNew = 0;
       renderDmMessages();
@@ -591,7 +597,11 @@ async function jumpToMessage(id) {
     const ctx = pinsCtx();
     if (!ctx || ctx.kind !== 'server') throw new Error('no_message');
     const { messages: msgs } = await api(`/api/servers/${ctx.serverId}/channels/${ctx.id}/messages?limit=60&around=${encodeURIComponent(id)}`);
-    S.messages.set(ctx.id, msgs);
+    const older = historyExtendedWindow(S.messages.get(ctx.id), msgs);
+    const base = (older && older.length) ? older.concat(msgs) : msgs;
+    S.messages.set(ctx.id, base);
+    resetHistoryTop();
+    if (older && older.length) markHistoryExtended(historyKeyFor(ctx));
     S.histMode = { ...ctx };
     S.histNew = 0;
     renderMessages();
