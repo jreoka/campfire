@@ -1,7 +1,7 @@
-# Campfire on a single Hetzner VPS - ingress and TURN alongside the app.
+# Campfire on a single OVHcloud VPS - ingress and TURN alongside the app.
 #
 #   cd /opt/campfire/app
-#   docker compose -f docker-compose.yml -f deploy/hetzner/docker-compose.hetzner.yml up -d
+#   docker compose -f docker-compose.yml -f deploy/ovh/docker-compose.ovh.yml up -d
 #
 # The base docker-compose.yml is unchanged: db + campfire. This overlay adds the
 # two services the app needs beside them, and nothing else:
@@ -55,7 +55,7 @@ services:
       - TURN_USER=${TURN_USER:?Set TURN_USER in .env}
       - TURN_PASS=${TURN_PASS:?Set TURN_PASS in .env}
     volumes:
-      - ./deploy/hetzner/coturn/turnserver.conf:/etc/coturn-base/turnserver.conf:ro
+      - ./deploy/ovh/coturn/turnserver.conf:/etc/coturn-base/turnserver.conf:ro
     # coturn reads exactly ONE config file, and the credential is a secret, so
     # render base + user line into a temp file at start - the same trick the
     # cluster used with a ConfigMap + emptyDir. `$$` is a literal $ for the

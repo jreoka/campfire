@@ -1,31 +1,39 @@
-# Campfire on a single Hetzner VPS
+# Campfire on a single OVHcloud VPS
 
-Production since 2026-09-13.
+Production since 2026-09-13 (on Hetzner), moved to OVHcloud on 2026-09-14.
 
 | | |
 |---|---|
-| Host | Hetzner Cloud `campfire` (#165647738), **CX33** - 4 vCPU / 8 GB / 80 GB NVMe |
-| Location | Nuremberg, **`nbg1-dc3`** |
-| Address | `46.225.214.40` (IPv6 `2a01:4f8:1c19:6888::/64`) |
-| OS | Ubuntu 26.04.1, Docker 29.1.3 + Compose 2.40.3 |
+| Host | OVHcloud VPS `vps-74850aa1`, **2 vCPU / 4 GB / 38 GB** |
+| Address | `40.160.90.108` (IPv6 `2604:2dc0:101:200::49bd`) |
+| OS | Ubuntu 26.04, Docker 29.1.3 + Compose 2.40.3 |
 | Ingress | Cloudflare Tunnel only - **no inbound 80/443**, so no certs to renew |
-| Cost | ~$10.4/mo |
+| Media | OVH object storage, bucket `campfire` (see §Media storage) |
+| Cost | cheaper than the Hetzner CX33 it replaced - that was the reason for the move |
 
-## Why we moved
+## Why we moved, twice
 
-The old deployment ran on a single-vCPU node with **`cpu=890m`,
-`mem=1193460Ki` (~1165 MiB) allocatable**. The resident scanner then in use
+**Off the old single-vCPU node (onto Hetzner).** That node had **`cpu=890m`,
+`mem=1193460Ki` (~1165 MiB) allocatable**, and the resident scanner then in use
 needed about a gigabyte - 996 MiB measured on production - so it ran
 `VIRUS_SCAN=0`. That was an accepted trade-off, not an oversight: AV scanning was
-the one feature that node could not afford. This host has 8 GB, so **scanning is
-back on**, the box is cheaper than that node plus its object store, and the app
-got 4 cores instead of 1 - which was the other long-standing complaint (two
-niced ffmpeg encodes made the app feel sluggish on one vCPU).
+the one feature that node could not afford. The CX33 had 8 GB, so **scanning came
+back on**, and the app got 4 cores instead of 1 - which was the other long-standing
+complaint (two niced ffmpeg encodes made the app feel sluggish on one vCPU).
 
-Scanning is **Harbin** now, one self-contained binary rather than a resident
-daemon, so there is no scanner container and no signature volume at all - and
-roughly 3 GB that the old daemon and its database held is back. See "Uploads,
-scanning and compression" below.
+**Off Hetzner to here (2026-09-14), for cost.** The honest trade: this box is
+*smaller* - 2 vCPU / 4 GB against the CX33's 4 vCPU / 8 GB - and the stack's own
+limits are `2g` (app) + `1g` (db) plus cloudflared and coturn, so the headroom is
+thinner than it was, not fatter. It idles around 700 MB used with ~3 GB available
+and no OOM events so far, but the two concurrent niced ffmpeg encodes are the
+thing to watch on this host. Nothing about the app itself changed in the move: it
+was a database dump-and-restore plus a tunnel connector swap, and the media moved
+separately to OVH object storage in the same session.
+
+Scanning is **Harbin**, one self-contained binary rather than a resident daemon,
+so there is no scanner container and no signature volume at all - and roughly
+3 GB that the old daemon and its database held is back. See "Uploads, scanning
+and compression" below.
 
 ## Layout on the host
 
@@ -43,7 +51,7 @@ patches - a deploy is a `git pull` and a `compose up`.
 ## Services
 
 `docker-compose.yml` (unchanged from the repo) plus
-`deploy/hetzner/docker-compose.hetzner.yml`, which adds the two services the app
+`deploy/ovh/docker-compose.ovh.yml`, which adds the two services the app
 needs beside the app and database:
 
 | service | why | memory limit |
@@ -67,7 +75,7 @@ There is **no Caddy**. TLS terminates at Cloudflare, and
 ## Provisioning a fresh host
 
 ```bash
-scp deploy/hetzner/provision.sh root@<ip>:/root/provision.sh
+scp deploy/ovh/provision.sh root@<ip>:/root/provision.sh
 ssh root@<ip> bash /root/provision.sh
 ```
 
@@ -86,7 +94,7 @@ Then:
 mkdir -p /opt/campfire && git clone https://github.com/jreoka/campfire /opt/campfire/app
 # write /opt/campfire/app/.env  (see "Secrets" below)
 cd /opt/campfire/app
-docker compose -f docker-compose.yml -f deploy/hetzner/docker-compose.hetzner.yml up -d --build
+docker compose -f docker-compose.yml -f deploy/ovh/docker-compose.ovh.yml up -d --build
 ```
 
 ## Deploying a change
@@ -94,7 +102,7 @@ docker compose -f docker-compose.yml -f deploy/hetzner/docker-compose.hetzner.ym
 ```bash
 cd /opt/campfire/app
 git pull
-docker compose -f docker-compose.yml -f deploy/hetzner/docker-compose.hetzner.yml up -d --build
+docker compose -f docker-compose.yml -f deploy/ovh/docker-compose.ovh.yml up -d --build
 ```
 
 There is one replica, so this is a few seconds of 502 rather than a rolling
@@ -236,7 +244,7 @@ Two consequences worth knowing:
 Verify the scanner for real, from inside the app container:
 
 ```bash
-docker compose -f docker-compose.yml -f deploy/hetzner/docker-compose.hetzner.yml \
+docker compose -f docker-compose.yml -f deploy/ovh/docker-compose.ovh.yml \
   exec -T campfire node scripts/verify-harbin.js
 ```
 
@@ -327,7 +335,7 @@ docker compose ... exec -T campfire node scripts/restore-from-r2.js --list
 docker compose ... run --rm --no-deps campfire \
   node scripts/restore-from-r2.js --fetch --out /data/restore
 # /data/restore now holds campfire.dump, manifest.json, secrets.json and restored.env
-bash deploy/hetzner/restore-db.sh data/restore/campfire.dump
+bash deploy/ovh/restore-db.sh data/restore/campfire.dump
 ```
 
 Take a snapshot now instead of waiting for the slot (same lock and retention as

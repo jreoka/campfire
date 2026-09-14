@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# deploy/hetzner/provision.sh
+# deploy/ovh/provision.sh
 #
-# One-shot provisioning for a fresh Ubuntu Hetzner Cloud VPS that will run
+# One-shot provisioning for a fresh Ubuntu OVHcloud VPS that will run
 # Campfire. Idempotent — safe to re-run.
 #
-#   scp deploy/hetzner/provision.sh root@<ip>:/root/provision.sh
+#   scp deploy/ovh/provision.sh root@<ip>:/root/provision.sh
 #   ssh root@<ip> bash /root/provision.sh
 #
 # Deliberate choices:

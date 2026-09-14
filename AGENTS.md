@@ -212,7 +212,7 @@ The owner will iterate on features **without ever losing persistent data**.
   destructive one-offs without explicit confirmation. Twice-daily off-site
   snapshots (database + every Secret) go to a **Cloudflare R2 bucket**,
   `campfire-backup`, written by `backup.js` — runbook
-  `deploy/hetzner/README.md`. Nothing writes to a media bucket's `backups/`
+  `deploy/ovh/README.md`. Nothing writes to a media bucket's `backups/`
   prefix any more.
   **Media is deliberately NOT in the backup** (owner decision): a snapshot
   carries a media *inventory* (key + size), never the bytes, because mirroring
@@ -273,7 +273,7 @@ Tunnel** (outbound-only, so no inbound 80/443 and no certificates to renew),
 with coturn on the host network for TURN and **Harbin compiled into the app
 image for upload scanning** (no scanner container — see below). Media lives in
 **OVHcloud object storage**; the doomsday backups are still in Cloudflare R2.
-Runbook: **`deploy/hetzner/README.md`**. See **Deployment** below for how to ship.
+Runbook: **`deploy/ovh/README.md`**. See **Deployment** below for how to ship.
 
 **Migrated off Hetzner on 2026-09-14** (cost; the OVH box is smaller — 2 vCPU /
 4 GB vs CX33's 4 vCPU / 8 GB — and the stack's own limits are `2g` app + `1g`
@@ -412,7 +412,7 @@ break the other. Addressing style is a property of the endpoint, not a preferenc
 — **Hetzner Object Storage answers only virtual-host**, R2 and OVH both answer
 path-style — which is what `S3_FORCE_PATH_STYLE` exists for. Config
 and secrets live in `/opt/campfire/app/.env` on the host, mode 600 and
-gitignored; `deploy/hetzner/README.md` has the cluster-Secret → env mapping.
+gitignored; `deploy/ovh/README.md` has the cluster-Secret → env mapping.
 
 Shipped: auth, servers/invites, text channels, voice rooms (mesh WebRTC, sidebar
 occupants + VAD rings), uploads, emoji (Emojibase set + custom + Klipy GIFs whose
@@ -593,10 +593,12 @@ every task, in this file.
 - Production is **one OVHcloud VPS** (`40.160.90.108`), running Docker
   Compose from `/opt/campfire/app`:
   `ssh root@40.160.90.108`, then `cd /opt/campfire/app && git pull && docker
-  compose -f docker-compose.yml -f deploy/hetzner/docker-compose.hetzner.yml up
-  -d --build`. Full runbook: **`deploy/hetzner/README.md`**. The compose overlay
-  keeps its `hetzner` name (it is provider-agnostic — cloudflared + coturn — and
-  renaming it would mean touching every documented command for no behaviour).
+  compose -f docker-compose.yml -f deploy/ovh/docker-compose.ovh.yml up
+  -d --build`. Full runbook: **`deploy/ovh/README.md`** (renamed from
+  `deploy/hetzner/` on 2026-09-14, and the overlay from
+  `docker-compose.hetzner.yml` to `docker-compose.ovh.yml`, so the names describe
+  the provider that is actually running). The overlay is provider-agnostic —
+  cloudflared + coturn — and is what a fresh host of any vendor would use.
 - **SSH on that host is key-only.** `PasswordAuthentication no` lives in the MAIN
   `/etc/ssh/sshd_config`, not in a drop-in: on Ubuntu 26.04 / OpenSSH 10.2p1 the
   first value OpenSSH obtains wins, and `sshd_config.d/50-cloud-init.conf` ships

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# deploy/hetzner/restore-db.sh
+# deploy/ovh/restore-db.sh
 #
 # Restore a pg_dump produced by `restore-from-r2.js --fetch` into the local
 # Postgres container. Run from /opt/campfire/app.
 #
 #   docker compose run --rm --no-deps campfire \
 #     node scripts/restore-from-r2.js --fetch --out /data/restore
-#   bash deploy/hetzner/restore-db.sh [dump-path-on-host]
+#   bash deploy/ovh/restore-db.sh [dump-path-on-host]
 #
 # The R2 script deliberately does not run pg_restore for you (--clean drops and
 # recreates tables in a live database), so this is the deliberate step. It is

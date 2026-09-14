@@ -246,8 +246,8 @@ async function main() {
     console.log(`
 Next steps (run these deliberately):
 
-  # 1. database -- the production host is Docker Compose (deploy/hetzner):
-  bash deploy/hetzner/restore-db.sh ${path.join(dir, dumpName)}
+  # 1. database -- the production host is Docker Compose (deploy/ovh):
+  bash deploy/ovh/restore-db.sh ${path.join(dir, dumpName)}
   #    restore-db.sh runs pg_restore --clean --if-exists and then TRUNCATEs the
   #    runtime tables (bus_*, live_sessions, voice_occupants, rate_limits,
   #    webauthn_challenges), so the first boot is unambiguous.
