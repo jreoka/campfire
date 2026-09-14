@@ -1034,6 +1034,13 @@ NEXT: iterate per owner feedback on the live site.
   equivalent check after touching `server.js` or the WS protocol.
 - **Bump `service-worker.js` CACHE version on any `public/` change** or clients
   keep stale cached shells.
+- **A `flex:1` column needs `align-self:stretch`, not just `min-width:0`.** In a
+  flex container with `align-items:flex-start` (server settings `.srvset-wrap`),
+  a child's CROSS size is fit-content, so one nowrap child — an invite URL in
+  `.srvset-content` — widened the mobile COLUMN past its pane and pushed the
+  row's Copy/Rename/Revoke buttons off the right of the phone. `align-self:stretch`
+  pins the column to the pane and the URL ellipsises;
+  `scripts/test-server-invite-row.js` measures it at phone/narrow/desktop widths.
 - Static-only changes need no server restart (Express serves from disk).
 
 ## Upload pipeline hazards (learned the hard way)
