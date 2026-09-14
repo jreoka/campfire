@@ -206,10 +206,11 @@ declared in the manifest); no tray/watcher on mobile — that Rust code is
 
 The owner will iterate on features **without ever losing persistent data**.
 - Code and data are separate: Postgres data lives in the `pgdata` Docker
-  volume, media in the R2 bucket `campfire-media`. Never `rm -rf data`, never
+  volume, media in the OVH object-storage bucket `campfire` (Cloudflare R2
+  `campfire-media` until 2026-09-14). Never `rm -rf data`, never
   drop the database, never delete the volume or the bucket, never write
   destructive one-offs without explicit confirmation. Twice-daily off-site
-  snapshots (database + every Secret) go to a **second Cloudflare R2 bucket**,
+  snapshots (database + every Secret) go to a **Cloudflare R2 bucket**,
   `campfire-backup`, written by `backup.js` — runbook
   `deploy/hetzner/README.md`. Nothing writes to a media bucket's `backups/`
   prefix any more.
@@ -271,7 +272,7 @@ Live at https://campfire.dill.moe — **one OVHcloud VPS** (`40.160.90.108`,
 Tunnel** (outbound-only, so no inbound 80/443 and no certificates to renew),
 with coturn on the host network for TURN and **Harbin compiled into the app
 image for upload scanning** (no scanner container — see below). Media lives in
-Cloudflare R2; the doomsday backups do too.
+**OVHcloud object storage**; the doomsday backups are still in Cloudflare R2.
 Runbook: **`deploy/hetzner/README.md`**. See **Deployment** below for how to ship.
 
 **Migrated off Hetzner on 2026-09-14** (cost; the OVH box is smaller — 2 vCPU /
@@ -387,15 +388,29 @@ each, memory-guarded against the container's limit) instead of one file per 2s
 breather. Two, not more (owner request) — a request the 4-core box now honours
 with room to spare, where the single-vCPU node did not.
 
-**Uploads live in the Cloudflare R2 media bucket** (`campfire-media`), not on
-disk — so a replica needs no shared filesystem, and because media kept on a host
-filesystem is media no replica and no backup can see. It is also the **only**
-copy: `backup.js` records a media inventory (key + size) and never the bytes —
-see the data-safety contract. The credential
-is an R2 token **scoped to that bucket alone**, so the key the app holds cannot
-reach the backup bucket. Addressing style is a property of the endpoint, not a
-preference — **Hetzner Object Storage answers only virtual-host, R2 answers
-both** — which is what `S3_FORCE_PATH_STYLE` exists for. Config
+**Uploads live in OVHcloud object storage** (bucket `campfire`), not on disk — so
+a replica needs no shared filesystem, and because media kept on a host filesystem
+is media no replica and no backup can see. It is also the **only** copy:
+`backup.js` records a media inventory (key + size) and never the bytes — see the
+data-safety contract. **Moved off Cloudflare R2 on 2026-09-14** (`scripts/migrate-r2-to-ovh.js`):
+360 objects / 265.8 MiB, copied with the source bucket only ever read from, every
+destination key verified by size, and 32 objects re-downloaded from both stores
+and compared byte-for-byte — the store is addressed by KEY, so no database row
+and no cached URL changed. Live config: `S3_ENDPOINT=https://s3.us-east-va.io.cloud.ovh.us`,
+`S3_REGION=us-east-va`, `S3_BUCKET=campfire`, `S3_FORCE_PATH_STYLE=1` (OVH answers
+path-style; verified, along with virtual-host, in `scripts/migrate-r2-to-ovh.js`'s
+probe ancestor). The old R2 bucket `campfire-media` still holds a complete copy and
+is the rollback target; its settings are archived at
+`/root/r2-media-settings.before-ovh.env` on the host. Two consequences worth
+knowing: **backups taken before the move name the R2 bucket in their manifest**, so
+a restore from one of those describes media in a bucket the app no longer reads
+(the inventory is a description, not a copy — nothing was lost, but read the
+`source.bucket` field before trusting an old manifest); and `r2.js`/`R2_*` are
+**unchanged** — backups still go to the separate Cloudflare `campfire-backup`
+bucket, deliberately a different vendor from the media so getting one wrong cannot
+break the other. Addressing style is a property of the endpoint, not a preference
+— **Hetzner Object Storage answers only virtual-host**, R2 and OVH both answer
+path-style — which is what `S3_FORCE_PATH_STYLE` exists for. Config
 and secrets live in `/opt/campfire/app/.env` on the host, mode 600 and
 gitignored; `deploy/hetzner/README.md` has the cluster-Secret → env mapping.
 
@@ -647,8 +662,9 @@ every task, in this file.
   accepts that — `storage.js` and `r2.js` buffer the body, which also pins
   ContentLength so a short read can never be stored as a whole object); and
   addressing style belongs to the ENDPOINT, not to taste (Hetzner Object Storage
-  answers only virtual-host, R2 answers both), which is what
-  `S3_FORCE_PATH_STYLE` exists for.
+  answers only virtual-host; R2 and OVH both answer path-style), which is what
+  `S3_FORCE_PATH_STYLE` exists for. Measured on the live OVH bucket: path-style
+  works, and the media has since moved there — see §Current state.
 
 Non-obvious rules (learned the hard way): uploads must live on the
 persistent volume (never the image layer); new uploads get `?v=` cache keys;

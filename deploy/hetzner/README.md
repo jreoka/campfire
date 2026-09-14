@@ -114,7 +114,7 @@ POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD
 JWT_SECRET, DOMAIN, ORIGIN, KLIPY_KEY,
 TURNSTILE_SECRET, TURNSTILE_SITEKEY,
 TURN_URL, TURN_USER, TURN_PASS
-S3_*                                          the media bucket
+S3_*                                          the media bucket (OVH, bucket `campfire`)
 R2_*                                          the backup bucket
 TUNNEL_TOKEN                                  the Cloudflare tunnel
 ```
@@ -122,11 +122,66 @@ TUNNEL_TOKEN                                  the Cloudflare tunnel
 `JWT_SECRET` **must** keep its value or every session is invalidated - that is
 why users stayed logged in across the move.
 
-## Media storage: Cloudflare R2, not Hetzner Object Storage
+## Media storage: OVHcloud object storage (was Cloudflare R2)
 
-Media lives in the R2 bucket **`campfire-media`**, served through the app at the
-same `/uploads/<sub>/<file>` paths as before. `storage.js`'s URL contract is
-backend-agnostic, so the move changed no database row and no cached URL.
+Media lives in the OVH bucket **`campfire`**, served through the app at the
+same `/uploads/<sub>/<file>` paths as always. `storage.js`'s URL contract is
+key-based and backend-agnostic, so moving the bytes changed no database row and
+no cached URL.
+
+| | |
+|---|---|
+| Endpoint | `https://s3.us-east-va.io.cloud.ovh.us` |
+| Region | `us-east-va` |
+| Bucket | `campfire` |
+| Addressing | path-style (`S3_FORCE_PATH_STYLE=1`) - path-style and virtual-host were both tested and both work |
+
+**How it was moved** (`scripts/migrate-r2-to-ovh.js`, free of charge and with the
+site live the whole time): list the source, list the destination, read each
+missing key from R2 and PUT it to OVH, then verify. The tool refuses to delete
+from the source at all, never overwrites a key that already exists, and does
+nothing without `--apply`. The run that mattered: **360 objects / 265.8 MiB**,
+0 failures, destination count and byte total both matching, and 32 objects
+re-downloaded from *both* stores and compared by SHA-256 - all identical. The
+run is restartable: already-present keys are skipped, so a partial copy is
+resumed rather than redone.
+
+    node scripts/migrate-r2-to-ovh.js              # dry run: inventory both stores
+    node scripts/migrate-r2-to-ovh.js --apply      # copy what is missing
+    node scripts/migrate-r2-to-ovh.js --apply --verify
+
+Inside the running container - the script has to be in the image, and
+`docker compose run` builds from the image, not the host tree:
+
+    docker cp scripts/migrate-r2-to-ovh.js campfire:/app/scripts/
+    docker exec campfire node scripts/migrate-r2-to-ovh.js --apply --verify
+
+**Prove the backend works, not just that it is configured**: `scripts/storage-selftest.js`
+drives the app's OWN `storage.js` (PUT, HEAD, GET, DELETE, list, and a byte
+round-trip comparison) so it exercises the real code path and the real
+credentials rather than a hand-rolled client:
+
+    docker cp scripts/storage-selftest.js campfire:/app/scripts/
+    docker exec campfire node scripts/storage-selftest.js
+
+**The switch itself** is only `.env`: repoint `S3_ENDPOINT`, `S3_REGION`,
+`S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_FORCE_PATH_STYLE` at OVH and
+recreate the app (`storage.js` builds its client once at module load, so a
+restart is required). No rebuild needed.
+
+**The old R2 bucket is still there, complete** - 360 objects, 265.8 MiB - and is
+the rollback target. Its settings are archived at
+`/root/r2-media-settings.before-ovh.env` on the host, so a rollback is a `.env`
+edit and a recreate. **Do not delete `campfire-media` until you are satisfied
+OVH is serving everything**: it is currently the second copy of media that
+otherwise exists in exactly one place.
+
+### Credentials
+
+`S3_*` is now an OVH S3 user (access key + secret, both 32 hex chars) scoped to
+the `campfire` bucket. It cannot reach the backup bucket, which is a different
+vendor entirely (`R2_*`, Cloudflare). That separation is deliberate and is worth
+keeping.
 
 ### Why not Hetzner Object Storage
 
@@ -151,20 +206,8 @@ the same symptom.
 
 The other thing the exercise proved: **addressing style belongs to the
 endpoint.** Hetzner Object Storage answers only virtual-host (path-style 403s);
-R2, which is what the app uses, accepts both. `storage.js` reads
-`S3_FORCE_PATH_STYLE` for this, defaulting to path-style.
-
-### Credentials
-
-`S3_*` is an R2 API token scoped to **`campfire-media` alone** (permission
-`Workers R2 Storage Bucket Item Write`), so the credential the app holds cannot
-reach the backup bucket. The access key id is the token's id and the secret is
-the SHA-256 of the token's value.
-
-Note the bucket's R2 location is **ENAM** (US east) while the VPS is in `nbg1` -
-R2 no longer honours `locationHint` on creation, and this is permanent. It costs
-roughly 90 ms per media fetch over the in-region alternative. Acceptable, not
-ideal.
+R2 and OVH answer both. `storage.js` reads `S3_FORCE_PATH_STYLE` for this,
+defaulting to path-style.
 
 ## Uploads, scanning and compression
 
@@ -225,7 +268,7 @@ trusting it, and read the `Malware sweep:` line for what the last pass did.
 
 `coturn` runs on the host network and binds the public IP directly, so no
 `external-ip` is needed. `turn.dill.moe` is a **DNS-only** A record to
-`46.225.214.40`; Cloudflare's proxy cannot carry UDP, so it must never be
+`40.160.90.108`; Cloudflare's proxy cannot carry UDP, so it must never be
 orange-clouded. ufw opens 3478/tcp+udp, 3479/tcp and the relay range
 49160-49200/udp.
 
@@ -301,29 +344,31 @@ not, and inheriting them makes presence and the bus lie.
 
 ## Open items
 
-1. **Biggest risk: media and backups share one Cloudflare account, and the media
-   has no second copy at all.** They used to sit with two different vendors, which
-   is what kept a lost media store from costing the backups too. Now one account
-   holds live media *and* the only copies of everything else — and since
-   snapshots stopped mirroring the media (see §Backups), a lost `campfire-media`
-   bucket loses the media outright. Two fixes, in order: move **backups** to a
-   third vendor (Backblaze B2 has a 10 GB free tier, so at ~250 MiB of media it
-   stays free), which restores the separation `r2.js` was built for; and give the
-   media its own out-of-account copy (`rclone sync` to B2/Storj on a schedule, or
-   a second provider's bucket) if that media is worth more than the storage it
-   costs to duplicate.
+1. **Partly fixed by the OVH move; the rest is still open.** Media now lives in
+   **OVHcloud** object storage and backups in **Cloudflare R2**, so the two are
+   with different vendors again - losing either account no longer takes the
+   other with it, which is the separation `r2.js` was built for. What is *not*
+   fixed: **the media still has exactly one live copy** (snapshots record an
+   inventory, never the bytes - see §Backups). The R2 bucket `campfire-media`
+   still holds a complete second copy, which is why deleting it is the last step
+   of the migration and not the first. To keep a genuine second copy after
+   that, mirror the OVH bucket off-site (`rclone sync` to B2/Storj on a
+   schedule, or a second provider's bucket) if the media is worth more than the
+   storage it costs to duplicate.
 2. **Retired infrastructure is still provisioned and still billing**: the old
-   Kubernetes cluster is scaled to zero (not deleted) and its object store is
-   untouched. Nothing here uses either, and the object store holds a pre-R2 copy
-   of the media — so delete both from the provider's dashboard once you are
-   satisfied that R2 is serving everything, and delete that provider's API key
-   with them.
+   Kubernetes cluster is scaled to zero (not deleted), its object store is
+   untouched, and the Hetzner VPS is stopped with `docker.service` disabled
+   (deliberately - two connectors on one tunnel is a load-balancing hazard).
+   Nothing in production uses any of them. Decommission them from the providers'
+   dashboards once satisfied, and delete their API keys with them - but read
+   item 1 first: the R2 bucket is still the rollback copy of the media.
 3. No HA. One host, one Postgres, one of everything. A reboot is downtime.
-4. Rotate the credentials that were pasted into a chat during the migration: the
-   Cloudflare Global API Key and the Hetzner API token. The R2 media token and the
-   R2 backup keys are live and should stay, but the **Cloudflare Global API Key is
-   not needed by anything running here** - it was only used to create the bucket
-   and the scoped token.
+4. Rotate the credentials that were pasted into a chat during the migrations: the
+   Cloudflare Global API Key, the Hetzner API token, and - if the OVH media
+   access key was shared the same way - the OVH S3 user's keys, which are now
+   live in `.env`. The **Cloudflare Global API Key is not needed by anything
+   running here**; it was only used to create the bucket and the scoped token.
+   The R2 *backup* keys are live and should stay.
 
 ## One thing to remember about the tunnel
 
