@@ -672,11 +672,16 @@ function renderDmMessages(force = false) {
   const box = $('#messages');
   const msgs = S.dmMessages.get(S.dmThreadId) || [];
   const dmCtx = 'dm:' + (S.dmThreadId || '');
+  // Same rule as renderMessages: the pin state (either way) is only trusted for
+  // the conversation this box is actually showing — a switch restores its own
+  // anchor — and a reader who scrolled up a notch in THIS one stays where they
+  // are through a repaint instead of being snapped back to the bottom.
+  const sameCtx = box.dataset.ctx === dmCtx;
   // Fade in only on a real conversation change (see convoSwapPulse): an
   // incoming message re-renders this same list and must not flicker.
-  if (box.dataset.ctx && box.dataset.ctx !== dmCtx) convoSwapPulse();
+  if (box.dataset.ctx && !sameCtx) convoSwapPulse();
   box.dataset.ctx = dmCtx; // see renderMessages/saveScrollPos
-  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+  const nearBottom = nearLiveBottom(box, sameCtx);
   // Same anchor preservation as renderMessages: rebuilding resets scrollTop
   // to 0, which used to yank scrolled-up readers upward on updates.
   const anchor = nearBottom ? null : captureListAnchor(box);

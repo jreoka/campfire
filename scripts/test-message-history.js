@@ -312,9 +312,16 @@ console.log('\n[4] a short page means the beginning, and paging stops there');
 
 // ---------- 5. the reader's own movement is what asks -------------------------
 console.log('\n[5] only the reader scrolling up (not the list growing) asks for a page');
-check(new RegExp("const top = box\\.scrollTop;\\s*\\n\\s*const up = box\\._lastTop != null && top < box\\._lastTop - 2;").test(messages),
+check(new RegExp("const prevTop = box\\._lastTop;\\s*\\n\\s*const top = box\\.scrollTop;").test(messages)
+  && /const up = prevTop != null && top < prevTop - 2;/.test(messages),
   'the watcher compares against the last position placed or observed');
-check(/if \(up && userDrove\(\)\) \{ try \{ if \(typeof maybeLoadOlderMessages === 'function'\)/.test(messages),
+// The reader's own input carries a direction too (box._userUp, recorded by the
+// wheel/touch listeners): native scroll anchoring rewrites scrollTop under late
+// media, so a notch UP can arrive looking like a move DOWN.
+check(/box\._userScrollAt = Date\.now\(\);\s*\n\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*if \(typeof up === 'boolean'\) box\._userUp = up;/.test(messages)
+  && /noteUser\(e\.deltaY \? e\.deltaY < 0 : undefined\)/.test(messages),
+  'and the direction of the reader\'s own input is recorded');
+check(/if \(userUp && drove\) \{\s*\n\s*box\._userUpAt = Date\.now\(\);[\s\S]{0,240}?maybeLoadOlderMessages\(box\)/.test(messages),
   'and only a reader-driven upward move may ask for older messages');
 check(/S\.histMode\) return;/.test(pagingSrc), 'a pin/quote context window is left alone (the jump pill owns the way back)');
 

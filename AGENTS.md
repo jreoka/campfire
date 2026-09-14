@@ -998,7 +998,23 @@ clamping when the viewport shrinks, native scroll anchoring under late media)
 and reading them as "the reader scrolled up" is what stranded pinned views
 mid-history after a refresh; the container must also be observed by the stick
 ResizeObserver, or a shrunken viewport silently leaves the reader short of the
-bottom.
+bottom. The other half of that rule is just as load-bearing: input that IS the
+reader's leaves the pin OFF, at any distance. A reader's own upward movement
+demotes it immediately (`box._userUpAt`), the 200px near-bottom band may not
+hand it back while the box is still travelling up, and `nearLiveBottom()` — the
+one predicate every repaint, append, prune and resize asks — treats an explicit
+'0' as final until they come back down. One wheel notch is ~100–120px, so
+without that a reader who nudged up still counted as pinned and the next resize
+(a lazy picture landing above, a reaction bar appearing, a scan card flipping
+into its picture) put them back at the bottom: they could never get more than a
+notch away, so they could never leave. Two traps found fixing it. **Native
+scroll anchoring rewrites `scrollTop`**, so a notch UP can reach the scroll
+handler looking exactly like a move DOWN — the direction of the reader's input
+(`wheel` deltaY, touch Y travel, recorded by `noteUser`) is what counts, not
+only the position delta. And the ResizeObserver must skip a box the reader has
+driven input into since our last placement while it is off the bottom, because
+a growth can land in the SAME frame as the notch and the scroll event that
+demotes them has not run yet.
 The story composer is one control, not a mode switch: the shutter takes a photo
 on a tap and records while held (220 ms arming; the click path stays for
 keyboard and is ignored right after a pointer gesture), a two-finger pinch

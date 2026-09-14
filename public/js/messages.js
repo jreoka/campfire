@@ -379,6 +379,23 @@ const stickH = typeof WeakMap !== 'undefined' ? new WeakMap() : new Map(); // ta
 function markBottomState(box) {
   try { box.dataset.atBottom = (box.scrollHeight - box.scrollTop - box.clientHeight < 200) ? '1' : '0'; } catch {}
 }
+// "Is the reader still on the live bottom?" — the question every repaint and
+// every resize asks before it follows the tail instead of holding the reader's
+// place. An explicit demotion ('0', written only by the reader's own upward
+// movement) is FINAL until they come back down; the 200px band is inference,
+// for a box nothing has seeded yet, and letting it overrule a deliberate
+// scroll-up is what drags a reader back down a wheel notch at a time (see
+// watchBottomState). `sameCtx` is false for a box still showing another
+// conversation, whose flag is not this list's to trust.
+function nearLiveBottom(box, sameCtx = true) {
+  try {
+    if (!box) return false;
+    const at = sameCtx ? box.dataset.atBottom : undefined;
+    if (at === '0') return false;
+    if (at === '1') return true;
+    return box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+  } catch { return false; }
+}
 // Programmatic placement. Records where we put the box so the scroll listener
 // can tell our own moves (bottom holds, anchor restores, jumps) apart from the
 // reader's — only theirs may un-pin the view. `intent` states the resulting
@@ -401,10 +418,31 @@ function watchBottomState(box) {
   // any of those as "the reader scrolled up" is how a pinned view gets
   // stranded partway up the history with the Jump-to-present pill as the only
   // way back — so only wheel/touch/drag/keyboard input may un-pin it.
-  const noteUser = () => { box._userScrollAt = Date.now(); };
-  box.addEventListener('wheel', noteUser, { passive: true });
-  box.addEventListener('touchstart', noteUser, { passive: true });
-  box.addEventListener('touchmove', noteUser, { passive: true });
+  // `up` is the direction of the reader's OWN input when it has one, which is
+  // not the same thing as the direction the box moved: native scroll anchoring
+  // rewrites scrollTop under late media (a picture growing above the viewport
+  // adds its own height to scrollTop), so a notch UP can reach the scroll
+  // handler looking exactly like a move DOWN. Input is the only trustworthy
+  // statement of intent, so record it where it exists.
+  const noteUser = (up) => {
+    box._userScrollAt = Date.now();
+    // Booleans only: the listeners with no direction to report are wired
+    // straight to this function, and their Event must not pass for one.
+    if (typeof up === 'boolean') box._userUp = up;
+  };
+  box.addEventListener('wheel', (e) => { noteUser(e.deltaY ? e.deltaY < 0 : undefined); }, { passive: true });
+  box.addEventListener('touchstart', (e) => {
+    box._touchY = (e.touches && e.touches[0]) ? e.touches[0].clientY : null;
+    noteUser();
+  }, { passive: true });
+  box.addEventListener('touchmove', (e) => {
+    const y = (e.touches && e.touches[0]) ? e.touches[0].clientY : null;
+    // A finger travelling DOWN pulls the content down with it: scrolling up the
+    // history.
+    if (y != null && box._touchY != null && Math.abs(y - box._touchY) > 3) noteUser(y > box._touchY);
+    else noteUser();
+    if (y != null) box._touchY = y;
+  }, { passive: true });
   box.addEventListener('keydown', noteUser, { passive: true });
   box.addEventListener('focusin', noteUser, { passive: true });
   box.addEventListener('pointerdown', (e) => { box._scrollPointer = e.pointerId; }, { passive: true });
@@ -424,25 +462,46 @@ function watchBottomState(box) {
     // the history is not the reader leaving the bottom, and re-pinning mid
     // animation would cut it short.
     if (box._smoothUntil && Date.now() < box._smoothUntil) { box._smoothUntil = Date.now() + 250; return; }
-    // Older messages are paged in from the reader's OWN movement upward near the
-    // top of the list. Input alone is not enough to believe it: a finger resting
-    // on the screen while late media grows the list moves scrollTop too, and
-    // treating that as "scrolling up" would demote a reader who is holding the
-    // live bottom. Direction — the top is smaller than the last position we
-    // placed or observed — is what makes the movement theirs. (setScrollTop
-    // keeps that baseline in step, so our own placements never read as a scroll
-    // up and can never ask for a page on the reader's behalf.)
+    const prevTop = box._lastTop;
     const top = box.scrollTop;
-    const up = box._lastTop != null && top < box._lastTop - 2;
+    // Older messages are paged in from the reader's OWN movement upward. Input
+    // alone is not enough to believe a movement is theirs: a finger resting on
+    // the screen while late media grows the list moves scrollTop too. Direction
+    // is what makes it theirs — and where the reader's input HAS a direction,
+    // that is the direction (the position test cannot see through native scroll
+    // anchoring; see noteUser). Otherwise: the top is smaller than the last
+    // position we placed or observed. (setScrollTop keeps that baseline in
+    // step, so our own placements never read as a scroll up.)
+    const up = prevTop != null && top < prevTop - 2;
+    const moved = prevTop == null || Math.abs(top - prevTop) > 0.5;
     box._lastTop = top;
-    if (box.dataset.atBottom === '1' && !(up && userDrove())) {
+    const drove = userDrove();
+    const userUp = up || (drove && box._userUp === true);
+    // The reader's own upward movement ends the pin — however small it is, and
+    // for the rest of the gesture. One wheel notch is ~100–120px, so a reader
+    // who moved up still reads as "near the bottom" to any 200px band; if the
+    // band is allowed to hand the pin straight back, the next thing that
+    // resizes the list (a picture landing above, a reaction bar appearing, an
+    // upload's scan card flipping into its picture) follows the tail by putting
+    // them at the bottom again. They can never get more than a notch away, so
+    // they can never leave — the "one notch flicks me back down" trap.
+    if (userUp && drove) {
+      box._userUpAt = Date.now();
+      if (box.dataset.atBottom !== '0') { try { box.dataset.atBottom = '0'; } catch {} }
+      try { if (typeof maybeLoadOlderMessages === 'function') maybeLoadOlderMessages(box); } catch {}
+      return;
+    }
+    if (box.dataset.atBottom === '1') {
       // Nobody asked for this — hold the bottom the reader never left.
       setScrollTop(box, box.scrollHeight, '1');
       try { if (typeof updatePill === 'function') updatePill(); } catch {}
       return;
     }
+    // Still travelling up (a phone's momentum after the finger lifts is not
+    // input any more, but it is still the reader's own scroll), or a stray
+    // event inside the gesture that demoted the pin: the demotion stands.
+    if (userUp || (!moved && Date.now() - (box._userUpAt || 0) < 900)) return;
     markBottomState(box);
-    if (up && userDrove()) { try { if (typeof maybeLoadOlderMessages === 'function') maybeLoadOlderMessages(box); } catch {} }
   }, { passive: true });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden || box.dataset.atBottom !== '1') return;
@@ -475,6 +534,15 @@ function observeStick(el) {
             if (h > prev) growth = h - prev;
             stickH.set(e.target, h);
           } catch {}
+          // Input that arrived since our last placement, with the box no longer
+          // at the bottom, IS the reader — and one wheel notch can land in the
+          // SAME frame as the growth it sets off, so the scroll event that
+          // demotes them has not run yet and the flag still reads '1'. Re-pinning
+          // here would swallow the notch: leave them to the scroll handler,
+          // which demotes a moment later. (A pinned reader whose box really is
+          // at the bottom is untouched by this — nothing has moved.)
+          if (Date.now() - (box._userScrollAt || 0) < 900 &&
+              box.scrollHeight - box.scrollTop - box.clientHeight > 4) continue;
           // Explicit state beats inference: '1' = the reader is on the live
           // bottom, '0' = they scrolled up (never yank those back, however big
           // the growth). Only when nothing has seeded the box yet do we fall
@@ -1089,7 +1157,7 @@ function removeMessageNode(box, arr, mid) {
       S.editing = null;
       try { if (S.editRemovals) S.editRemovals.clear(); } catch {}
     }
-    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+    const nearBottom = nearLiveBottom(box);
     // Anchor on a message that SURVIVES (never the deleted one) so the
     // restore below is exact no matter what shrank above it — and content
     // removed below the viewport correctly compensates to zero.
@@ -1157,7 +1225,7 @@ function patchMessageReactions(mid, box) {
   if (!m || m.sys) return false;
   const body = node.querySelector('.body');
   if (!body) return false;
-  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+  const nearBottom = nearLiveBottom(box);
   const html = reactionsHTML(m);
   const cur = body.querySelector(':scope > .reactions');
   // Snapshot the counts first: the pill is rebuilt below, so "did this one go
@@ -1207,14 +1275,17 @@ function renderMessages(force = false) {
   // band without a single scroll event, and demoting a pinned view there is
   // exactly the "refresh left me up in the history" failure. Only trusted for
   // the conversation already on screen — this box is reused across channels,
-  // and a switch must still restore its own anchor.
-  const pinned = box.dataset.ctx === ctx && box.dataset.atBottom === '1';
+  // and a switch must still restore its own anchor. The same rule has to cut
+  // the other way too, or a reader who scrolled up a notch here is put back at
+  // the bottom by the next repaint: nearLiveBottom reads the flag, and falls
+  // back to the band only when the box has no state for this conversation.
+  const sameCtx = box.dataset.ctx === ctx;
   // A different conversation than the one on screen: fade the list in so the
   // swap reads as one surface changing rather than two pages cutting. Checked
   // before the stamp below overwrites the old value.
-  if (box.dataset.ctx && box.dataset.ctx !== ctx) convoSwapPulse();
+  if (box.dataset.ctx && !sameCtx) convoSwapPulse();
   box.dataset.ctx = ctx;
-  const nearBottom = pinned || box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+  const nearBottom = nearLiveBottom(box, sameCtx);
   // Rebuilding the list resets scrollTop to 0 — anchor on the topmost
   // visible message so scrolled-up readers keep their exact place through
   // every background update (reaction, edit, thread reply, status change…).
@@ -1247,8 +1318,10 @@ function appendLiveMessage(box, arr, msg) {
     // fall back so ordering stays correct.
     if (prev && (msg.created_at || 0) < (prev.created_at || 0)) return false;
     // Same rule as renderMessages: a pinned reader follows the live tail even
-    // if late growth already drifted the geometry out of the near-bottom band.
-    const nearBottom = box.dataset.atBottom === '1' || box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+    // if late growth already drifted the geometry out of the near-bottom band —
+    // and a reader who scrolled up a notch is NOT dragged down to it by a
+    // message arriving (they get the "N new messages" pill instead).
+    const nearBottom = nearLiveBottom(box);
     let groupPrev = prev;
     if (!prev || fmtDay(prev.created_at) !== fmtDay(msg.created_at)) {
       const d = document.createElement('div');
@@ -1282,7 +1355,7 @@ function trimLiveTail(arr, cap) {
 function pruneLiveTop(box, n) {
   try {
     if (!box || !box.isConnected || !(n > 0)) return;
-    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+    const nearBottom = nearLiveBottom(box);
     const h0 = box.scrollHeight;
     for (let i = 0; i < n; i++) {
       const first = box.querySelector('.msg');
