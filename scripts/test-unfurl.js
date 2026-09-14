@@ -122,6 +122,30 @@ ok(sniffImage(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script/></sv
   eq(unfurl.publicEmbed(null), null, 'publicEmbed(null) is null');
 }
 
+// ---------- provider oEmbed routing ----------
+// YouTube's watch page carries no og: tags inside UNFURL_MAX_HTML (megabytes of
+// inline JSON), so scraping it returned nothing at all and a YouTube link
+// rendered as a bare "youtube.com" card. The video's own oEmbed endpoint has the
+// title, channel and thumbnail, so known providers are asked directly.
+{
+  const { directOembed } = unfurl._internals;
+  const want = 'https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+  for (const u of ['https://youtu.be/dQw4w9WgXcQ', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    'https://m.youtube.com/watch?v=dQw4w9WgXcQ', 'https://music.youtube.com/watch?v=dQw4w9WgXcQ',
+    'https://www.youtube.com/shorts/dQw4w9WgXcQ', 'https://www.youtube.com/live/dQw4w9WgXcQ',
+    'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ']) {
+    eq(directOembed(u), want, 'oEmbed endpoint for ' + u);
+  }
+  // Not a single video: no endpoint, so the normal scrape handles it.
+  for (const u of ['https://www.youtube.com/playlist?list=PL123', 'https://www.youtube.com/@SomeChannel',
+    'https://www.youtube.com/', 'https://youtu.be/', 'https://example.com/watch?v=dQw4w9WgXcQ',
+    'not a url', 'ftp://youtube.com/watch?v=dQw4w9WgXcQ']) {
+    eq(directOembed(u), '', 'no oEmbed endpoint for ' + u);
+  }
+  // The endpoint it builds has to survive parseTarget (it is fetched directly).
+  ok(parseTarget(directOembed('https://youtu.be/dQw4w9WgXcQ')) !== null, 'the built oEmbed url is fetchable');
+}
+
 // ---------- live (network) ----------
 async function live() {
   console.log('\n-- live fetches');
@@ -130,6 +154,13 @@ async function live() {
     const r = await unfurlUrl(url);
     ok(!!r && !!r.title, 'unfurled ' + url + ' (' + (Date.now() - t0) + 'ms)', r);
     if (r) console.log('   ', r.site, '|', r.title, '|', r.image ? 'image' : 'no image');
+  }
+  // A YouTube link must come back as a real card — this is the case that broke.
+  for (const url of ['https://youtu.be/dQw4w9WgXcQ', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ']) {
+    const r = await unfurlUrl(url);
+    ok(!!r && !!r.title && /youtube/i.test(r.site) && !!r.image,
+      'youtube oEmbed gave a titled, thumbnailed card: ' + url, r);
+    if (r) console.log('   ', r.site, '|', r.title, '|', r.description, '|', r.image ? 'image' : 'no image');
   }
   // A 302 to a link-local address must be refused *after* the first hop.
   try {

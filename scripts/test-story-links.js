@@ -201,7 +201,28 @@ console.log('\n[2] a story takes the compact card, never chat\'s players');
   check(!/function svPaintLinks\(/.test(stories), 'and nothing paints one', null);
 }
 {
-  check(storyLinkEmbedsHTML('no links at all') === '', 'a story with no link paints nothing', null);
+  // A YouTube link has to look like a video card BEFORE any unfurl lands: the
+  // poster frame is a stable URL on YouTube's own CDN, so it is seeded into the
+  // card (the unfurl fills the title and channel in a moment later, and a
+  // deployment with UNFURL=0 still gets the thumbnail). Without this a YouTube
+  // sticker showed a bare "youtube.com" — which is exactly what was reported.
+  for (const u of ['https://youtu.be/dQw4w9WgXcQ', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    'https://www.youtube.com/shorts/dQw4w9WgXcQ']) {
+    const card = storyTextHTML(u);
+    check(card.includes('src="https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"'),
+      'a YouTube sticker carries a poster frame with no unfurl at all: ' + u, card);
+    check(/>YouTube</.test(card), 'and names the site', card);
+  }
+  setLinkPreviews(false);
+  check(storyTextHTML('https://youtu.be/dQw4w9WgXcQ').includes('i.ytimg.com'),
+    'the poster frame survives UNFURL=0 (a link is never just a bare hostname)', null);
+  setLinkPreviews(true);
+  const plain = storyTextHTML('https://example.com/x');
+  check(!plain.includes('el-img') && /example\.com/.test(plain), 'a link nobody can describe yet stays the hostname chip', plain);
+  const playlist = storyTextHTML('https://www.youtube.com/playlist?list=PL123');
+  check(!playlist.includes('i.ytimg.com'), 'a YouTube URL that is not one video seeds no poster frame', playlist);
+}
+{
   check(storyLinkEmbedsHTML('') === '' && storyLinkEmbedsHTML(null) === '', 'empty input is empty output', null);
   check(storyLinkEmbedsHTML('||https://example.com/hidden||') === '',
     'a spoilered link is not previewed (a thumb would leak it)', null);

@@ -336,7 +336,6 @@ function storyTextHTML(text) {
 // One card per story, and the caller asks for it with `keep` so a page the
 // unfurl found nothing for still shows its little card instead of nothing.
 function storyLinkEmbedsHTML(text) {
-  if (!previewsOn) return '';
   const src = stripEmbedIgnored(text);
   const re = /https?:\/\/[^\s<>"'`]+/g;
   let m;
@@ -384,6 +383,25 @@ function cardBodyHTML(d, url) {
   }
   return h;
 }
+// The little we can say about a link without asking anybody: a YouTube video's
+// poster frame is a stable URL on YouTube's own CDN (the chat facade already
+// loads it straight from there), so the card has a thumbnail the instant it is
+// painted. The unfurl fills the title and channel in a moment later; an unfurl
+// that finds nothing, or is switched off, still leaves a card worth tapping
+// instead of a bare hostname.
+function seedMeta(url) {
+  const id = ytIdFromUrl(url);
+  if (!id) return null;
+  return {
+    host: embedHost(url) || 'youtube.com',
+    site: 'YouTube',
+    title: '',
+    description: '',
+    image: 'https://i.ytimg.com/vi/' + id + '/hqdefault.jpg',
+    imageW: 480,
+    imageH: 360,
+  };
+}
 // The first card for a message gets the full-width treatment; the next few
 // collapse to Discord's compact row (thumbnail on the right) so three links
 // don't fill the whole channel.
@@ -393,12 +411,16 @@ function cardBodyHTML(d, url) {
 // still keeps the little card with the site on it, rather than leaving the
 // reader with a bare underlined URL.
 function linkCardHTML(url, compact, keep) {
-  if (!previewsOn) return '';
+  const seed = seedMeta(url);
+  // Previews off means no card — EXCEPT one that needs no fetch at all (a
+  // YouTube poster frame). Chat has always shown its YouTube facade with
+  // UNFURL=0; a story's card should not be blinder than that.
+  if (!previewsOn && !seed) return '';
   const cached = cardCache.get(url);
-  if (cached === null && !keep) return '';     // asked before, nothing to show
+  if (cached === null && !keep && !seed) return '';   // asked before, nothing to show
   return '<a class="embed embed-link' + (compact ? ' compact' : '') + '" href="' + eh(url) + '" target="_blank" rel="noopener nofollow ugc"'
     + ' data-unfurl="' + eh(url) + '"' + (compact ? ' data-compact="1"' : '') + (cached ? ' data-carded="1"' : '') + (keep ? ' data-keep="1"' : '') + '>'
-    + cardBodyHTML(cached, url) + '</a>';
+    + cardBodyHTML(cached || seed, url) + '</a>';
 }
 function cardAuthHeader() {
   try { return (typeof store !== 'undefined' && store.token) ? { Authorization: 'Bearer ' + store.token } : {}; }

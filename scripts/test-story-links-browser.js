@@ -382,6 +382,26 @@ async function main() {
     check(!!comp && comp.itemEvents === 'auto', 'while the sticker around it still takes the drag', comp);
     await evaluate('document.querySelector("#cbox").remove()');
 
+    console.log('\n[youtube] a video link is a card before any unfurl lands');
+    // Parked fetch again: what is on screen here has to be the card the client
+    // built by itself, not something the unfurl handed back. This is the case
+    // that was reported — a YouTube sticker that said nothing but "youtube.com".
+    await evaluate('window.__unfurl = null');
+    await evaluate('window.__buildTextStory("https://youtu.be/dQw4w9WgXcQ")');
+    await sleep(700);
+    const yt = await evaluate('(() => { const c = document.querySelector("#sv-ov .embed-link"); if (!c) return null;'
+      + ' const img = c.querySelector(".el-img"); const r = img && img.getBoundingClientRect();'
+      + ' return { site: (c.querySelector(".el-site") || {}).textContent || "",'
+      + ' img: img ? img.getAttribute("src") : "", w: r ? Math.round(r.width) : 0, h: r ? Math.round(r.height) : 0 }; })()');
+    check(!!yt && yt.site === 'YouTube', 'the card names YouTube', yt);
+    check(!!yt && /i\.ytimg\.com\/vi\/dQw4w9WgXcQ\/hqdefault\.jpg$/.test(yt.img), 'with the video poster frame', yt);
+    check(!!yt && yt.w > 0 && yt.h > 0, 'painted, not collapsed', yt);
+    const ytPt = await evaluate('window.__points("#sv-ov .embed-link")');
+    const ytHit = ytPt && await evaluate('window.__hit(' + ytPt.link.x + ',' + ytPt.link.y + ')');
+    check(!!ytHit && ytHit.link, 'and the video card is tappable', ytHit);
+    const ytShot = (await sess('Page.captureScreenshot', { format: 'png' }));
+    fs.writeFileSync(path.join(os.tmpdir(), 'campfire-story-youtube.png'), Buffer.from(ytShot.data, 'base64'));
+
     console.log('\n[view-once] a link in a one-shot does not consume the view');
     await sess('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     await evaluate('window.__buildVo()');

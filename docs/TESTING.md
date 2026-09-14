@@ -10,7 +10,13 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
 
 - **Tests:** `node scripts/test-unfurl.js [--live]` covers the link-preview parser
   and the SSRF guard (offline by default; `--live` also fetches real pages and
-  proves a 302 to a link-local address is refused).
+  proves a 302 to a link-local address is refused). It also pins the provider
+  oEmbed routing — `directOembed` builds the endpoint for youtu.be / watch /
+  shorts / live / embed / nocookie (and none for a playlist, a channel, a
+  non-YouTube host or junk), and the live half asserts a YouTube link actually
+  comes back with a title, a site and a thumbnail. That routing exists because
+  YouTube's watch page carries no og: tags inside `UNFURL_MAX_HTML`, so the
+  scrape returned nothing and a YouTube link rendered as a bare "youtube.com".
   `node scripts/test-friends-voice.js` covers the Active Now IN VOICE rail
   against a throwaway database: the friend-scoped `friends-voice` push, joinable
   rooms carrying server/channel vs nameless unreachable ones, invisible friends

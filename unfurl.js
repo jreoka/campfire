@@ -358,10 +358,56 @@ async function fetchOembed(href) {
   };
 }
 
+// oEmbed endpoints we can call WITHOUT the page's discovery link. YouTube is why
+// this exists: a watch page is megabytes of inline JSON and its og: tags never
+// survive UNFURL_MAX_HTML, so the scrape came back with no title at all and a
+// YouTube link rendered as a bare "youtube.com" card — while YouTube's own
+// oEmbed endpoint answers with the video's title, channel and thumbnail in one
+// small JSON response. Ask it first, and only fall back to the scrape.
+const YT_ID = /^[A-Za-z0-9_-]{6,20}$/;
+function directOembed(href) {
+  let p;
+  try { p = new URL(href); } catch { return ''; }
+  if (p.protocol !== 'http:' && p.protocol !== 'https:') return '';
+  const host = p.hostname.toLowerCase().replace(/^(www|m|music)\./, '');
+  let id = '';
+  if (host === 'youtu.be') id = p.pathname.slice(1).split('/')[0];
+  else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+    if (p.pathname === '/watch') id = p.searchParams.get('v') || '';
+    else {
+      const m = p.pathname.match(/^\/(?:shorts|live|embed|v)\/([A-Za-z0-9_-]{6,20})/);
+      if (m) id = m[1];
+    }
+  }
+  if (!YT_ID.test(id)) return '';
+  return 'https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent('https://www.youtube.com/watch?v=' + id);
+}
+
 // ---------- the unfurl itself ----------
 async function unfurlUrl(rawUrl) {
   const target = parseTarget(rawUrl);
   if (!target) return null;
+  // A provider with a known oEmbed endpoint is asked DIRECTLY, before any page
+  // is fetched: one small JSON answer instead of half a megabyte of HTML that
+  // may not even carry og: tags (see directOembed).
+  const direct = directOembed(target.href);
+  if (direct) {
+    const oe = await fetchOembed(direct).catch(() => null);
+    if (oe && oe.title) {
+      return {
+        url: target.href,
+        host: 'youtube.com',
+        site: oe.provider || 'YouTube',
+        title: oe.title,
+        description: oe.author || '',
+        image: oe.image || '',
+        imageW: oe.imageW || 0,
+        imageH: oe.imageH || 0,
+        icon: 'https://www.youtube.com/favicon.ico',
+      };
+    }
+    // oEmbed having a bad day: scrape it like anything else rather than give up.
+  }
   const res = await safeRequest(target.href, {
     maxBytes: MAX_HTML,
     headers: { Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8' },
@@ -619,5 +665,5 @@ module.exports = {
   sign,
   proxyPath,
   // exported for tests
-  _internals: { ipIsBlocked, parseHtml, parseTarget, sniffImage, decodeEntities, tidy, unfurlUrl, safeRequest },
+  _internals: { ipIsBlocked, parseHtml, parseTarget, sniffImage, decodeEntities, tidy, unfurlUrl, safeRequest, directOembed, fetchOembed },
 };

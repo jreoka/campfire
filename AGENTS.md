@@ -461,6 +461,15 @@ an iframe (Spotify, X, a Twitch player), a 16:9 YouTube facade or a full-size
 image would cover the picture the reader opened — one card per story, and it is
 asked for with `keep` so a page the unfurl had nothing for still shows its little
 card with the site on it instead of vanishing the way a chat stub does.
+**A YouTube link is the case that proved scraping is not enough**: a watch page
+is megabytes of inline JSON and its og: tags never survive `UNFURL_MAX_HTML`, so
+the unfurl answered nothing and the card sat there saying "youtube.com". So the
+server asks a provider's own **oEmbed endpoint directly** when it knows one
+(`directOembed` in unfurl.js, before any page is fetched — YouTube's answers with
+the title, channel and thumbnail in one small JSON response), and the client
+seeds the poster frame from `i.ytimg.com` in `linkCardHTML` so the video card
+looks like a video card *before* any unfurl lands (the same CDN URL chat's
+facade already loads, and it survives `UNFURL=0`, where a card needs no fetch).
 Three traps found doing it, all about absolutely positioned boxes:
 `.ov-item` and `.sv-cap`/`.vo-cap` set `left` with `right:auto`, so each was laid
 out in the space to its RIGHT — a sticker at x:0.5 and a 200-character caption on
