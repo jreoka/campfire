@@ -312,7 +312,7 @@ function storyLinkEmbedsHTML(text) {
     const url = cleanEmbedUrl(m[0]);
     if (!url) continue;
     // Nothing known for this URL (or the server had nothing): try the next one.
-    const card = linkCardHTML(url, true);
+    const card = linkCardHTML(url, true, true);
     if (card) return '<div class="embeds">' + card + '</div>';
   }
   return '';
@@ -355,12 +355,17 @@ function cardBodyHTML(d, url) {
 // The first card for a message gets the full-width treatment; the next few
 // collapse to Discord's compact row (thumbnail on the right) so three links
 // don't fill the whole channel.
-function linkCardHTML(url, compact) {
+//
+// `keep` is the story's rule: there, the card IS the embed, so it must never
+// vanish — a page the unfurl found nothing on (or one already asked about)
+// still keeps the little card with the site on it, rather than leaving the
+// reader with a bare underlined URL.
+function linkCardHTML(url, compact, keep) {
   if (!previewsOn) return '';
   const cached = cardCache.get(url);
-  if (cached === null) return '';     // asked before, nothing to show
+  if (cached === null && !keep) return '';     // asked before, nothing to show
   return '<a class="embed embed-link' + (compact ? ' compact' : '') + '" href="' + eh(url) + '" target="_blank" rel="noopener nofollow ugc"'
-    + ' data-unfurl="' + eh(url) + '"' + (compact ? ' data-compact="1"' : '') + (cached ? ' data-carded="1"' : '') + '>'
+    + ' data-unfurl="' + eh(url) + '"' + (compact ? ' data-compact="1"' : '') + (cached ? ' data-carded="1"' : '') + (keep ? ' data-keep="1"' : '') + '>'
     + cardBodyHTML(cached, url) + '</a>';
 }
 function cardAuthHeader() {
@@ -393,10 +398,12 @@ async function fillCard(el) {
   if (!url) return;
   const d = await fetchCard(url);
   // No data (or the request never landed): drop the stub rather than leave a
-  // bare hostname chip. Nothing is negative-cached on a network error, so a
-  // later re-render tries again.
+  // bare hostname chip — except where the card was asked for with `keep` (a
+  // story, where the card is the whole embed and the hostname chip is still
+  // worth more than nothing). Nothing is negative-cached on a network error, so
+  // a later re-render tries again.
   if (!el.isConnected) return;
-  if (!d) { el.remove(); return; }
+  if (!d) { if (!el.dataset.keep) el.remove(); return; }
   el.innerHTML = cardBodyHTML(d, url);
 }
 function scanLinkCards(root) {

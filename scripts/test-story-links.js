@@ -34,7 +34,7 @@ function check(cond, name, detail) {
 global.esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const embeds = require(path.join(ROOT, 'public/embeds.js'));
-const { linkifyHTML, storyLinkEmbedsHTML, storyEmbedForUrl, linkEmbedsHTML, cleanEmbedUrl, setLinkPreviews } = embeds;
+const { linkifyHTML, storyLinkEmbedsHTML, linkEmbedsHTML, cleanEmbedUrl, setLinkPreviews, __cardCache } = embeds;
 
 console.log('\n[1] a URL in typed prose becomes a real link — and nothing else moves');
 {
@@ -81,7 +81,7 @@ console.log('\n[1] a URL in typed prose becomes a real link — and nothing else
   const cap = fs.readFileSync(path.join(ROOT, 'public/js/story-edit.js'), 'utf8');
   check(/opts\.links && typeof linkifyHTML === 'function'\) el\.innerHTML = linkifyHTML\(txt\)/.test(cap),
     'the markup renderer linkifies text only when the caller opts in', null);
-  check(/else el\.textContent = txt;/.test(cap), 'and otherwise paints it as inert text (the composer\'s editable copy)', null);
+  check(/else el\.textContent = txt;/.test(cap), 'and otherwise paints it as inert text', null);
 }
 
 console.log('\n[2] a story takes the compact card, never chat\'s players');
@@ -116,6 +116,37 @@ console.log('\n[2] a story takes the compact card, never chat\'s players');
   const one = storyLinkEmbedsHTML('a https://example.com/a b https://example.com/a');
   check((one.match(/data-unfurl=/g) || []).length === 1, 'a repeated link is one card', one);
   check(/^<div class="embeds">/.test(one) && /<\/div>$/.test(one), 'the card rides in the embeds wrapper', one);
+}
+{
+  // A story's card is the embed, so it must not vanish when the unfurl has
+  // nothing for the page: chat drops the empty stub, a story keeps the little
+  // card with the site on it (and `keep` is also what survives a re-render
+  // after the negative answer is cached).
+  const bare = 'https://nothing-here.example/page';
+  __cardCache.set(bare, null);
+  const story = storyLinkEmbedsHTML(bare);
+  check(story.includes('data-keep="1"') && story.includes('data-unfurl="' + bare + '"'),
+    'a story keeps its card when the server had nothing for the page', story);
+  check(story.includes('nothing-here.example'), 'and the card still names the site', story);
+  check(!linkEmbedsHTML(bare).includes(bare), 'chat still drops a card nothing was found for', linkEmbedsHTML(bare));
+}
+{
+  // A sticker is display text at 8.5% of the picture's height: a raw URL there
+  // wraps into a ladder of characters, so it renders as a chip instead — in the
+  // composer too, where it is dead (the drag owns the sticker).
+  const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
+  const edit = fs.readFileSync(path.join(ROOT, 'public/js/story-edit.js'), 'utf8');
+  const stories = fs.readFileSync(path.join(ROOT, 'public/js/stories.js'), 'utf8');
+  check(/\.ov-item\{[^}]*width:max-content[^}]*max-width:96%/.test(css),
+    'a sticker can use the picture\'s full width (no half-width ladder)', null);
+  check(/\.ov-layer \.ov-item a\{[^}]*white-space:nowrap[^}]*text-overflow:ellipsis/.test(css),
+    'the URL on a sticker is a one-line chip', null);
+  check(/\.ov-editable \.ov-item a\{pointer-events:none\}/.test(css),
+    'and the composer\'s chip is dead so the drag still owns the sticker', null);
+  check(/if \(opts\.links && typeof linkifyHTML === 'function'\) el\.innerHTML = linkifyHTML\(txt\);\s*else el\.textContent = txt;/.test(edit),
+    'the markup renderer linkifies on the caller\'s opt-in (composer AND viewer)', null);
+  check(/ovPaintLayer\(layer, sc\.ovs, \{ editable: true, selected: sc\.draw \? null : sc\.sel, links: true \}\)/.test(stories),
+    'the composer asks for it, so the preview shows what gets posted', null);
 }
 {
   check(storyLinkEmbedsHTML('no links at all') === '', 'a story with no link paints nothing', null);

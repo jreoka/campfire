@@ -449,11 +449,24 @@ A URL typed into a story — the caption, or the text of a text-only story, whic
 IS the story — is a real link (`linkifyHTML`, embeds.js) and gets ONE preview
 card under it (`#sv-links` in the viewer's `.sv-below` bar, `storyLinkEmbedsHTML`:
 always the compact unfurl card, never a player, because the bar has to stay a
-strip on a landscape phone's short stage). The bar is `pointer-events:none` so
+strip on a landscape phone's short stage). That card is asked for with `keep`, so
+it never vanishes the way a chat stub does when the unfurl had nothing for the
+page — there the card IS the embed. The bar is `pointer-events:none` so
 the prev/next zones keep stepping the story — the anchors, the card and
 `.ov-layer.ov-view` (which has to out-stack `.sv-zone`) are the only opt-ins;
 the view-once caption/markup linkify too and its stage's click guard ignores an
 `a[href]` so following a link cannot consume the one-shot view.
+Two traps found doing it, both in `.ov-item` (styles.css) and both about a
+sticker being display text at 8.5% of the picture's height. An absolutely
+positioned box with `left` set and `right:auto` is laid out in the space to its
+RIGHT, so a sticker at x:0.5 wrapped at HALF the picture's width and a pasted URL
+came out as a ten-line ladder running off the shot top and bottom —
+`width:max-content` before `max-width:96%` is what lets it use the whole width.
+And a URL that big is a ladder even when it fits, so the reader's copy wears it
+as a one-line chip (`.ov-layer .ov-item a`, site visible, ellipsis for the rest)
+while the composer's copy is the same chip but dead
+(`.ov-editable .ov-item a{pointer-events:none}`), because the preview has to
+match the post and the drag has to keep owning the sticker.
 `scripts/test-story-links.js` + `test-story-links-browser.js` cover it.
 A story sent to an individual friend is delivered as a view-once DM instead of
 a tray entry (`POST /api/dm/viewonce` with `storyId` re-files the story's bytes

@@ -2843,10 +2843,27 @@ body.story-open{overflow:hidden}
   --ov-outline:-.055em -.055em 0 #000,.055em -.055em 0 #000,-.055em .055em 0 #000,.055em .055em 0 #000,0 -.062em 0 #000,0 .062em 0 #000,-.062em 0 0 #000,.062em 0 0 #000}
 .ov-layer.ov-empty{display:none}
 .ov-draw{position:absolute;left:0;top:0;pointer-events:none}
-.ov-item{position:absolute;transform-origin:50% 50%;white-space:pre-wrap;overflow-wrap:anywhere;text-align:center;line-height:1.14;font-weight:800;letter-spacing:.01em;text-shadow:var(--ov-outline);max-width:96%;will-change:transform}
+/* `width:max-content` before the cap is load-bearing, not decoration: an
+   absolutely positioned box with `left` set and `right:auto` is laid out in the
+   space to its RIGHT, so a text sticker at x:0.5 wrapped at half the picture's
+   width — a pasted URL came out as a ten-line ladder of characters running off
+   the top and bottom of the shot. max-content (capped at 96%) lets it use the
+   whole width and wrap like a paragraph, still centred on the point it was
+   dropped at. */
+.ov-item{position:absolute;transform-origin:50% 50%;white-space:pre-wrap;overflow-wrap:anywhere;text-align:center;line-height:1.14;font-weight:800;letter-spacing:.01em;text-shadow:var(--ov-outline);width:max-content;max-width:96%;will-change:transform}
 .ov-emchar{display:block;line-height:1}
 .ov-em{display:block;height:1em;width:auto;filter:drop-shadow(0 1px 3px rgba(0,0,0,.55))}
 .ov-pill{background:rgba(9,12,20,.8);padding:.14em .5em;border-radius:.42em;text-shadow:none}
+/* A URL on a sticker is not prose: at sticker size (8.5% of the picture's
+   height) a raw URL is a ladder of characters. It becomes a little card instead
+   — a chip on the line the author left it on, one line with the site at the
+   front and an ellipsis for the rest (a link's job is to be tapped, and the card
+   under the story carries the title). Both copies wear it: the composer asks
+   for the same markup so the preview matches the post, where the chip is dead
+   (pointer-events:none) or it would steal the drag that moves the sticker. */
+.ov-layer .ov-item a{display:inline-block;vertical-align:middle;font-size:.5em;line-height:1.32;padding:.14em .5em;border-radius:.45em;background:rgba(9,12,20,.72);color:#cdd4ff;text-decoration:none;text-shadow:none;max-width:11em;white-space:nowrap;overflow-wrap:normal;overflow:hidden;text-overflow:ellipsis}
+.ov-layer .ov-item a:hover{background:rgba(9,12,20,.88);color:#e7eaff}
+.ov-editable .ov-item a{pointer-events:none}
 .ov-item.ov-sel{outline:2px dashed rgba(255,255,255,.9);outline-offset:.2em;border-radius:.18em}
 /* In the composer the layer has to swallow taps so a tap on empty space can
    deselect; the viewer's copy stays transparent to its tap zones. */

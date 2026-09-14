@@ -82,10 +82,14 @@ ${voView}
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-// A file:// page has no /api/unfurl, and a card that resolves (or 404s) would
-// swap itself out mid-measurement: park every fetch forever so the unfilled card
-// is what gets hit-tested.
-window.fetch = () => new Promise(() => {});
+// A file:// page has no /api/unfurl. By default every fetch is parked forever,
+// so the card under test is the unfilled stub; setting __unfurl makes the next
+// one resolve, which is how the FILLED card is checked.
+window.__unfurl = null;
+window.fetch = (url) => {
+  if (window.__unfurl) return Promise.resolve({ ok: true, json: () => Promise.resolve(window.__unfurl) });
+  return new Promise(() => {});
+};
 </script>
 <script>${embeds}</script>
 <script>${edit}</script>
@@ -116,6 +120,38 @@ window.__buildStory = async (mode) => {
   ovPaintLayer(ov, [{ t: 'text', text, x: 0.5, y: 0.3, r: 0, s: 1, color: '#ffffff' }], { editable: false, links: true });
   return true;
 };
+// A text-only story: a generated gradient (the composer's own shape — a flat
+// picture) with the author's text as the markup, and no caption (that field is
+// hidden for a text story; the text IS the story). This is the surface the
+// owner posts a link on, so it gets its own scenario.
+window.__buildTextStory = async (text) => {
+  document.querySelector('#vo-view').classList.add('hidden');
+  const sv = document.querySelector('#story-view');
+  sv.classList.remove('hidden');
+  document.body.classList.add('story-open');
+  const stage = document.querySelector('#sv-stage');
+  const img = document.querySelector('#sv-img');
+  img.src = ${JSON.stringify('data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1280"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2b3a8f"/><stop offset="1" stop-color="#7b2d63"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#g)"/></svg>').toString('base64'))};
+  await img.decode().catch(() => {});
+  const cap = document.querySelector('#sv-cap');
+  cap.innerHTML = '';
+  cap.classList.add('hidden');
+  const links = document.querySelector('#sv-links');
+  links.innerHTML = storyLinkEmbedsHTML(text);
+  links.classList.toggle('hidden', !links.innerHTML);
+  const ov = document.querySelector('#sv-ov');
+  ovFitLayer(ov, stage, img);
+  ovPaintLayer(ov, [{ t: 'text', text, x: 0.5, y: 0.42, r: 0, s: 1, color: '#ffffff' }], { editable: false, links: true });
+  return true;
+};
+// How many text lines a box actually took, from its height and its font.
+window.__lines = (sel) => {
+  const el = document.querySelector(sel);
+  if (!el) return null;
+  const cs = getComputedStyle(el);
+  const lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) * 1.14);
+  return Math.round(el.getBoundingClientRect().height / lh);
+};
 window.__buildVo = async () => {
   document.querySelector('#story-view').classList.add('hidden');
   const vo = document.querySelector('#vo-view');
@@ -132,6 +168,37 @@ window.__buildVo = async () => {
   ovFitLayer(ov, stage, img);
   ovPaintLayer(ov, [{ t: 'text', text: 'in markup https://example.com/ov', x: 0.5, y: 0.3, r: 0, s: 1, color: '#ffffff' }], { editable: false, links: true });
   return true;
+};
+// The composer's copy: a bare overlay layer, fitted to a stage and painted the
+// way storyPaintOv paints it (editable + links), to prove the editor shows the
+// same chip the reader will see — and that the chip is dead under the finger
+// there, or it would steal the drag that moves the sticker.
+window.__buildComposer = async (text) => {
+  const host = document.createElement('div');
+  host.id = 'cbox';
+  host.style.cssText = 'position:fixed;left:0;top:0;width:390px;height:700px;z-index:200';
+  const img = document.createElement('img');
+  img.src = SHOT;
+  host.appendChild(img);
+  const layer = document.createElement('div');
+  layer.className = 'ov-layer ov-editable';
+  host.appendChild(layer);
+  document.body.appendChild(host);
+  await img.decode().catch(() => {});
+  ovFitLayer(layer, host, img);
+  ovPaintLayer(layer, [{ t: 'text', text, x: 0.5, y: 0.42, r: 0, s: 1, color: '#ffffff' }], { editable: true, selected: null, links: true });
+  return true;
+};
+window.__composer = () => {
+  const a = document.querySelector('#cbox .ov-item a');
+  if (!a) return null;
+  return {
+    text: a.textContent,
+    lines: Math.round(a.getBoundingClientRect().height / (parseFloat(getComputedStyle(a).lineHeight) || 1)),
+    events: getComputedStyle(a).pointerEvents,
+    boxH: Math.round(a.closest('.ov-item').getBoundingClientRect().height),
+    itemEvents: getComputedStyle(a.closest('.ov-item')).pointerEvents,
+  };
 };
 // What a finger at (x,y) lands on, and whether that element is (or is inside) a
 // link — which is exactly the question the zones' pointerup listener asks.
@@ -291,6 +358,49 @@ async function main() {
       const plainHit = await evaluate('window.__hit(' + plain.x + ',' + plain.y + ')');
       check(!plainHit.link && /sv-zone/.test(plainHit.at), 'a text sticker with no link is still a tap on the story', plainHit);
     }
+
+    console.log('\n[text story] the link is a card under a sticker that still reads');
+    await sess('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+    await sess('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+    // The card FILLS: this is the path that matters (an unfurled title, site and
+    // thumbnail), and the one the parked-fetch scenario above cannot see.
+    await evaluate(`window.__unfurl = { embed: { host: 'example.com', site: 'Example', title: 'A page worth opening', description: 'The unfurled summary lands in the card.', image: SHOT } }`);
+    const URL_TXT = 'read this https://example.com/a/very/long/path/that/keeps/going';
+    await evaluate('window.__buildTextStory(' + JSON.stringify(URL_TXT) + ')');
+    await sleep(400);
+    const filled = await evaluate('(() => { const c = document.querySelector("#sv-links a.embed-link");'
+      + ' return c ? { title: (c.querySelector(".el-title") || {}).textContent || "", site: (c.querySelector(".el-site") || {}).textContent || "", img: !!c.querySelector(".el-img") } : null; })()');
+    check(!!filled && filled.title === 'A page worth opening' && filled.site === 'Example' && filled.img,
+      'the card fills in from the unfurl (title, site and thumbnail)', filled);
+
+    const stick = await evaluate('window.__rect("#sv-ov .ov-item")');
+    const anchor = await evaluate('window.__rect("#sv-ov .ov-item a")');
+    const stage2 = await evaluate('window.__rect("#sv-stage")');
+    const lines = await evaluate('window.__lines("#sv-ov .ov-item a")');
+    check(!!anchor, 'the URL in the sticker is a real anchor', anchor);
+    // The URL is one unbroken token, so it has to wrap — but a sticker that
+    // wraps it a handful of characters to a line reads as a ladder, not a link.
+    check(lines !== null && lines <= 3, 'the URL wraps into at most three lines', { lines, stick, anchor });
+    check(!!stick && !!stage2 && stick.x >= stage2.x - 1 && stick.right <= stage2.right + 1,
+      'the sticker stays inside the picture', { stick, stage2 });
+    const cardPt = await evaluate('window.__points("#sv-links a")');
+    const cardHit = cardPt && await evaluate('window.__hit(' + cardPt.link.x + ',' + cardPt.link.y + ')');
+    check(!!cardHit && cardHit.link, 'and the filled card is tappable', cardHit);
+    const shotPng = (await sess('Page.captureScreenshot', { format: 'png' }));
+    const shotPath = path.join(os.tmpdir(), 'campfire-story-link.png');
+    fs.writeFileSync(shotPath, Buffer.from(shotPng.data, 'base64'));
+    console.log('  (screenshot: ' + shotPath + ')');
+
+    console.log('\n[composer] the preview shows the same chip, and it is dead while editing');
+    await evaluate('window.__buildComposer(' + JSON.stringify(URL_TXT) + ')');
+    await sleep(200);
+    const comp = await evaluate('window.__composer()');
+    check(!!comp && comp.text === 'https://example.com/a/very/long/path/that/keeps/going',
+      'the composer renders the URL as a chip, not a ladder', comp);
+    check(!!comp && comp.lines === 1, 'and the chip is one line', comp);
+    check(!!comp && comp.events === 'none', 'the chip cannot be clicked mid-edit', comp);
+    check(!!comp && comp.itemEvents === 'auto', 'while the sticker around it still takes the drag', comp);
+    await evaluate('document.querySelector("#cbox").remove()');
 
     console.log('\n[view-once] a link in a one-shot does not consume the view');
     await sess('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });

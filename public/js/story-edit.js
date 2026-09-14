@@ -236,11 +236,11 @@ function ovPaintLayer(layer, list, opts = {}) {
       el.style.fontSize = 'calc(' + OV_TEXT_BASE + ' * var(--ov-h))';
       el.classList.toggle('ov-pill', o.bg === 'pill');
       const txt = String(o.text == null ? '' : o.text);
-      // The reader's copy is prose, so a URL in it is a real link. The
-      // composer's copy is the thing being edited and stays inert text: a link
-      // there would fight the drag/scale gestures and swallow the tap that
-      // selects the sticker. `links` is the caller's explicit opt-in.
-      if (!opts.editable && opts.links && typeof linkifyHTML === 'function') el.innerHTML = linkifyHTML(txt);
+      // The reader's copy is prose, so a URL in it is a real link; the
+      // composer asks for the same markup so the preview matches what gets
+      // posted (CSS makes it a chip there — a dead one: the anchor is
+      // pointer-events:none while editing, so the drag still owns the sticker).
+      if (opts.links && typeof linkifyHTML === 'function') el.innerHTML = linkifyHTML(txt);
       else el.textContent = txt;
     } else {
       el.style.fontSize = 'calc(' + OV_EMOJI_BASE + ' * var(--ov-h))';

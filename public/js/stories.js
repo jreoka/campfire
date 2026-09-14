@@ -2409,7 +2409,7 @@ function storyPaintOv() {
   if (!layer || !sc) return;
   if (sc.step !== 'preview') { layer.classList.add('hidden'); storyPaintTools(); return; }
   ovFitLayer(layer, stage, storyOvMedia());
-  ovPaintLayer(layer, sc.ovs, { editable: true, selected: sc.draw ? null : sc.sel });
+  ovPaintLayer(layer, sc.ovs, { editable: true, selected: sc.draw ? null : sc.sel, links: true });
   layer.classList.toggle('ov-drawing', !!sc.draw);
   const edit = $('#sc-edit');
   // The colour row takes the caption's slot: a drawing is not a caption, and a

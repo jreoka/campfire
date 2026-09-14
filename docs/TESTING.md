@@ -801,18 +801,19 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   plus the static wiring of the three surfaces). What it locks in: a URL in
   typed prose becomes a real anchor and NOTHING else moves (no markdown/emoji
   pass, exact whitespace, trailing punctuation and balanced closers handled, raw
-  HTML escaped, `javascript:`/`ftp:` refused); a story takes the cheap end of the
-  embed set — the click-to-play YouTube facade and direct media — while every
-  provider that gets an iframe in chat (Spotify, X, Twitch) gets an unfurl card
-  instead, capped at two and never a spoilered or code-quoted URL; and that the
-  story viewer's caption + markup, the view-once caption + markup and the
-  bottom-bar card slot are all wired to it (the bar stays pointer-transparent so
-  the prev/next zones keep stepping the story, a tap on a link in a one-shot
-  player does not consume the view). Skips nothing; no database or browser.
+  HTML escaped, `javascript:`/`ftp:` refused); a story takes the compact unfurl
+  card and never a player (no iframe, no 16:9 facade, no full-size image), one
+  card per story, never for a spoilered or code-quoted URL; that the card is
+  asked for with `keep` so a page the unfurl found nothing for still keeps its
+  little card instead of vanishing the way a chat stub does; and that the story
+  viewer's caption + markup, the view-once caption + markup and the
+  bottom-bar card slot are all wired to it, with the sticker chip rendered in the
+  composer too but dead (`pointer-events:none`) so the drag still owns the
+  sticker. Skips nothing; no database or browser.
   Re-run it after touching `embeds.js`, the story viewer's caption/markup, or
   the view-once caption.
   `node scripts/test-story-links-browser.js` is the same feature's TAP CONTRACT
-  in headless Chrome, against the REAL index.html dialogs and the REAL
+  and LAYOUT in headless Chrome, against the REAL index.html dialogs and the REAL
   stylesheet (skips when Chrome is missing). A story is a full-bleed picture
   under two transparent prev/next buttons, so three rules have to line up for a
   link to be clickable at all — the bar is `pointer-events:none` and the anchors
@@ -822,9 +823,14 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   the caption link, a link inside a text sticker, the card, and (the control)
   that a bare sticker, the sticker's own words around its link, and the gap in
   the bar still step the story. Also that the bar stays inside the stage and
-  leaves most of the picture visible, and that in the view-once player the tap
-  lands on the link element the stage's own guard looks for. Re-run it after
-  touching the story bar, the overlay layers or `styles.css`.
+  leaves most of the picture visible, that a text-only story's URL wraps into at
+  most three lines (the `width:max-content` half-width-ladder trap) inside the
+  picture, that the card really FILLS from a stubbed unfurl (site, title,
+  thumbnail) and stays tappable, that the composer paints the same one-line chip
+  with the drag still on the sticker, and that in the view-once player the tap
+  lands on the link element the stage's own guard looks for. Writes
+  campfire-story-link.png to the temp dir. Re-run it after touching the story
+  bar, the overlay layers or `styles.css`.
   `node scripts/test-story-ring.js` covers the rail ring's cookie-cutter
   thumbnail (offline; runs the real `storyRing()` extracted from `stories.js`,
   plus the overlay model inlined from `story-edit.js`, against the real
