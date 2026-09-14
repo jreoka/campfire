@@ -797,40 +797,44 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   routes.
   `node scripts/test-story-links.js` covers links on the prose surfaces — a
   story's caption and the text of a text-only story (offline; runs the real
-  `linkifyHTML`/`storyLinkEmbedsHTML`/`linkEmbedsHTML` out of `public/embeds.js`,
-  plus the static wiring of the three surfaces). What it locks in: a URL in
-  typed prose becomes a real anchor and NOTHING else moves (no markdown/emoji
-  pass, exact whitespace, trailing punctuation and balanced closers handled, raw
-  HTML escaped, `javascript:`/`ftp:` refused); a story takes the compact unfurl
-  card and never a player (no iframe, no 16:9 facade, no full-size image), one
-  card per story, never for a spoilered or code-quoted URL; that the card is
-  asked for with `keep` so a page the unfurl found nothing for still keeps its
-  little card instead of vanishing the way a chat stub does; and that the story
-  viewer's caption + markup, the view-once caption + markup and the
-  bottom-bar card slot are all wired to it, with the sticker chip rendered in the
-  composer too but dead (`pointer-events:none`) so the drag still owns the
-  sticker. Skips nothing; no database or browser.
+  `linkifyHTML`/`storyTextHTML`/`storyLinkEmbedsHTML`/`linkEmbedsHTML` out of
+  `public/embeds.js`, plus the static wiring of the surfaces). What it locks in:
+  a URL in typed prose becomes a real anchor and NOTHING else moves (no
+  markdown/emoji pass, exact whitespace, trailing punctuation and balanced
+  closers handled, raw HTML escaped, `javascript:`/`ftp:` refused); on a STICKER
+  the URL is replaced by the card itself (a sticker that is only a URL IS the
+  card, words around it keep their line and the card lands under them, a second
+  link stays a real link, and with `UNFURL=0` the URL falls back to a link rather
+  than being swallowed); a story takes the compact unfurl card and never a player
+  (no iframe, no 16:9 facade, no full-size image), one card per story, never for
+  a spoilered or code-quoted URL; that the card is asked for with `keep` so a page
+  the unfurl found nothing for still shows its little card instead of vanishing
+  the way a chat stub does; that there is NO bottom-of-story card slot; and the
+  CSS the card depends on (sized in `em` off the sticker with a px floor, the
+  sticker's outline/800 weight reset, not underlined, dead in the composer). The
+  composer is checked for asking for the same markup, so the preview matches the
+  post. Skips nothing; no database or browser.
   Re-run it after touching `embeds.js`, the story viewer's caption/markup, or
   the view-once caption.
   `node scripts/test-story-links-browser.js` is the same feature's TAP CONTRACT
   and LAYOUT in headless Chrome, against the REAL index.html dialogs and the REAL
   stylesheet (skips when Chrome is missing). A story is a full-bleed picture
-  under two transparent prev/next buttons, so three rules have to line up for a
-  link to be clickable at all — the bar is `pointer-events:none` and the anchors
-  opt back in, the markup layer out-stacks the zones, the card is a real target —
-  and at three viewports (desktop / phone portrait / phone landscape, touch
-  emulated) it asks `document.elementFromPoint` what a finger actually lands on:
-  the caption link, a link inside a text sticker, the card, and (the control)
-  that a bare sticker, the sticker's own words around its link, and the gap in
-  the bar still step the story. Also that the bar stays inside the stage and
-  leaves most of the picture visible, that a text-only story's URL wraps into at
-  most three lines (the `width:max-content` half-width-ladder trap) inside the
-  picture, that the card really FILLS from a stubbed unfurl (site, title,
-  thumbnail) and stays tappable, that the composer paints the same one-line chip
-  with the drag still on the sticker, and that in the view-once player the tap
-  lands on the link element the stage's own guard looks for. Writes
-  campfire-story-link.png to the temp dir. Re-run it after touching the story
-  bar, the overlay layers or `styles.css`.
+  under two transparent prev/next buttons, so the rules have to line up for a
+  link to be clickable at all — the caption and the card are
+  `pointer-events:none` with the links opting back in, and the markup layer
+  out-stacks the zones — and at three viewports (desktop / phone portrait / phone
+  landscape, touch emulated) it asks `document.elementFromPoint` what a finger
+  actually lands on: the caption link, the card inside a sticker, and (the
+  control) that a bare sticker, the sticker's own words above the card, and a
+  text sticker with no link still step the story. Also that the sticker (card
+  included) stays inside the stage and that the card stays legible at every size
+  (the px floor), that a text-only story's card really FILLS from a stubbed
+  unfurl (site, title, thumbnail) and stays tappable with the URL text gone from
+  the sticker, that the composer paints the same card with the drag still on the
+  sticker, and that in the view-once player the tap lands on the link element the
+  stage's own guard looks for. Writes campfire-story-link.png to the temp dir.
+  Re-run it after touching the story caption, the overlay layers or
+  `styles.css`.
   `node scripts/test-story-ring.js` covers the rail ring's cookie-cutter
   thumbnail (offline; runs the real `storyRing()` extracted from `stories.js`,
   plus the overlay model inlined from `story-edit.js`, against the real

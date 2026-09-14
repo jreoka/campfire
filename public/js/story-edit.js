@@ -236,11 +236,12 @@ function ovPaintLayer(layer, list, opts = {}) {
       el.style.fontSize = 'calc(' + OV_TEXT_BASE + ' * var(--ov-h))';
       el.classList.toggle('ov-pill', o.bg === 'pill');
       const txt = String(o.text == null ? '' : o.text);
-      // The reader's copy is prose, so a URL in it is a real link; the
-      // composer asks for the same markup so the preview matches what gets
-      // posted (CSS makes it a chip there — a dead one: the anchor is
-      // pointer-events:none while editing, so the drag still owns the sticker).
-      if (opts.links && typeof linkifyHTML === 'function') el.innerHTML = linkifyHTML(txt);
+      // The reader's copy is prose, and a URL in it is the little card itself
+      // (storyTextHTML) — the URL text is REPLACED by the card, so a sticker
+      // that is just a link IS the card. The composer asks for the same markup
+      // so the preview matches what gets posted; CSS keeps the card dead there
+      // (pointer-events:none) so the drag still owns the sticker.
+      if (opts.links && typeof storyTextHTML === 'function') el.innerHTML = storyTextHTML(txt);
       else el.textContent = txt;
     } else {
       el.style.fontSize = 'calc(' + OV_EMOJI_BASE + ' * var(--ov-h))';

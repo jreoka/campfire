@@ -280,6 +280,9 @@ function linkEmbedsHTML(text) {
 // they keep their exact shape (every whitespace character, no markdown) and the
 // only thing that changes is that a URL becomes a real link. Escaped HTML out,
 // so callers assign it with innerHTML.
+function anchorHTML(url) {
+  return '<a href="' + eh(url) + '" target="_blank" rel="noopener nofollow ugc">' + eh(url) + '</a>';
+}
 function linkifyHTML(text) {
   const src = String(text == null ? '' : text);
   const re = /https?:\/\/[^\s<>"'`]+/g;
@@ -289,20 +292,49 @@ function linkifyHTML(text) {
   while ((m = re.exec(src))) {
     const url = cleanEmbedUrl(m[0]);
     if (!url) continue;
-    out += eh(src.slice(last, m.index))
-      + '<a href="' + eh(url) + '" target="_blank" rel="noopener nofollow ugc">' + eh(url) + '</a>'
+    out += eh(src.slice(last, m.index)) + anchorHTML(url)
       + eh(src.slice(m.index + url.length, m.index + m[0].length));
     last = m.index + m[0].length;
   }
   return out + eh(src.slice(last));
 }
-// A link in a story gets ONE preview card under the caption, and that card is
-// always the compact unfurl card — never a player. A story is a picture first:
-// chat's embeds are conversation furniture, and an iframe (Spotify, X, a Twitch
-// player), a 16:9 YouTube facade or a full-size image would cover the thing the
-// reader opened. The compact card is small enough (favicon, site, title, a
-// square thumbnail) that the picture keeps its room on a phone held sideways as
-// well as one held upright.
+// A link on a story STICKER turns into the little card itself — that is what the
+// sticker shows instead of the URL. A sticker is display text at 8.5% of the
+// picture's height, where a raw URL is a ladder of characters, and the card is
+// the thing worth looking at. Words around the link keep their line and the card
+// lands under them; a sticker that is nothing but a URL IS the card. Anything
+// the card cannot cover — previews off, a second link in the same sticker —
+// stays a real link, so a URL can never be swallowed.
+function storyTextHTML(text) {
+  const src = String(text == null ? '' : text);
+  const sole = /^\s*(https?:\/\/[^\s<>"'`]+)\s*$/.exec(src);
+  if (sole) {
+    const url = cleanEmbedUrl(sole[1]);
+    const card = url ? storyLinkEmbedsHTML(url) : '';
+    if (card) return card;
+  }
+  const re = /https?:\/\/[^\s<>"'`]+/g;
+  let out = '';
+  let last = 0;
+  let placed = false;
+  let m;
+  while ((m = re.exec(src))) {
+    const url = cleanEmbedUrl(m[0]);
+    if (!url) continue;
+    let html = '';
+    if (!placed) { html = storyLinkEmbedsHTML(url); if (html) placed = true; }
+    // Punctuation the URL did not own stays in the sentence, outside the card.
+    out += eh(src.slice(last, m.index)) + (html || anchorHTML(url))
+      + eh(src.slice(m.index + url.length, m.index + m[0].length));
+    last = m.index + m[0].length;
+  }
+  return out + eh(src.slice(last));
+}
+// The card a story shows. Always the compact unfurl card — never a player: a
+// story is a picture first, and an iframe (Spotify, X, a Twitch player), a 16:9
+// YouTube facade or a full-size image would cover the thing the reader opened.
+// One card per story, and the caller asks for it with `keep` so a page the
+// unfurl found nothing for still shows its little card instead of nothing.
 function storyLinkEmbedsHTML(text) {
   if (!previewsOn) return '';
   const src = stripEmbedIgnored(text);
@@ -461,4 +493,4 @@ function installLinkCards() {
 if (typeof document !== 'undefined') installLinkCards();
 
 // Node test hook (browsers ignore: `module` is undefined there).
-try { if (typeof module !== 'undefined') module.exports = { linkEmbedsHTML, linkifyHTML, storyLinkEmbedsHTML, embedForUrl, cleanEmbedUrl, stripEmbedIgnored, cardBodyHTML, linkCardHTML, setLinkPreviews, __cardCache: cardCache }; } catch {}
+try { if (typeof module !== 'undefined') module.exports = { linkEmbedsHTML, linkifyHTML, storyTextHTML, storyLinkEmbedsHTML, embedForUrl, cleanEmbedUrl, stripEmbedIgnored, cardBodyHTML, linkCardHTML, setLinkPreviews, __cardCache: cardCache }; } catch {}

@@ -1030,20 +1030,6 @@ function svPaintOverlays() {
   if (!ovFitLayer(layer, $('#sv-stage'), media)) return;
   ovPaintLayer(layer, ovs, { editable: false, links: true });
 }
-// Every link a story carries, gathered from the two places the author can type
-// one — the caption and the text of a text-only story (which IS the story, so
-// it usually holds the link a caption would) — and painted as a preview card in
-// the bottom bar. The text itself is hyperlinked where it already sits (the
-// caption here, the markup by ovPaintLayer); this is the card underneath.
-function svPaintLinks(it) {
-  const box = $('#sv-links');
-  if (!box) return;
-  let text = String((it && it.caption) || '');
-  for (const o of ovParse(it && it.overlays)) if (o && o.t === 'text') text += '\n' + String(o.text == null ? '' : o.text);
-  const html = typeof storyLinkEmbedsHTML === 'function' ? storyLinkEmbedsHTML(text) : '';
-  box.innerHTML = html;
-  box.classList.toggle('hidden', !html);
-}
 function svTeardown() {
   if (!sv) return;
   cancelAnimationFrame(sv.raf);
@@ -1125,13 +1111,12 @@ function svShow(ti, ii) {
   }
   sv.fill = bars.children[ii] ? bars.children[ii].firstChild : null;
 
-  // caption: prose the author typed, so a URL in it is a real link (and the
-  // preview card for it lands in the bottom bar — see svPaintLinks).
+  // caption: prose the author typed, so a URL in it is a real link. A story's
+  // card lives on the markup sticker itself (storyTextHTML), not down here.
   const cap = $('#sv-cap');
   const capText = String(it.caption || '');
   cap.innerHTML = capText && typeof linkifyHTML === 'function' ? linkifyHTML(capText) : esc(capText);
   cap.classList.toggle('hidden', !capText);
-  svPaintLinks(it);
 
   // media
   // Nothing is shown until the bytes actually decode: while an upload is still

@@ -111,9 +111,6 @@ window.__buildStory = async (mode) => {
   const cap = document.querySelector('#sv-cap');
   cap.innerHTML = linkifyHTML(CAPTION);
   cap.classList.remove('hidden');
-  const links = document.querySelector('#sv-links');
-  links.innerHTML = storyLinkEmbedsHTML(CAPTION);
-  links.classList.remove('hidden');
   const ov = document.querySelector('#sv-ov');
   ovFitLayer(ov, stage, img);
   const text = mode === 'plain' ? 'plain sticker' : 'tap https://e.co/x';
@@ -123,7 +120,7 @@ window.__buildStory = async (mode) => {
 // A text-only story: a generated gradient (the composer's own shape — a flat
 // picture) with the author's text as the markup, and no caption (that field is
 // hidden for a text story; the text IS the story). This is the surface the
-// owner posts a link on, so it gets its own scenario.
+// owner posts a link on, and the one where the link becomes the card itself.
 window.__buildTextStory = async (text) => {
   document.querySelector('#vo-view').classList.add('hidden');
   const sv = document.querySelector('#story-view');
@@ -136,9 +133,6 @@ window.__buildTextStory = async (text) => {
   const cap = document.querySelector('#sv-cap');
   cap.innerHTML = '';
   cap.classList.add('hidden');
-  const links = document.querySelector('#sv-links');
-  links.innerHTML = storyLinkEmbedsHTML(text);
-  links.classList.toggle('hidden', !links.innerHTML);
   const ov = document.querySelector('#sv-ov');
   ovFitLayer(ov, stage, img);
   ovPaintLayer(ov, [{ t: 'text', text, x: 0.5, y: 0.42, r: 0, s: 1, color: '#ffffff' }], { editable: false, links: true });
@@ -190,14 +184,15 @@ window.__buildComposer = async (text) => {
   return true;
 };
 window.__composer = () => {
-  const a = document.querySelector('#cbox .ov-item a');
-  if (!a) return null;
+  const item = document.querySelector('#cbox .ov-item');
+  const card = item && item.querySelector('.embed-link');
+  if (!card) return { cards: 0 };
   return {
-    text: a.textContent,
-    lines: Math.round(a.getBoundingClientRect().height / (parseFloat(getComputedStyle(a).lineHeight) || 1)),
-    events: getComputedStyle(a).pointerEvents,
-    boxH: Math.round(a.closest('.ov-item').getBoundingClientRect().height),
-    itemEvents: getComputedStyle(a.closest('.ov-item')).pointerEvents,
+    cards: item.querySelectorAll('.embed-link').length,
+    leftovers: /https?:\\/\\//.test(item.textContent),
+    events: getComputedStyle(card).pointerEvents,
+    itemEvents: getComputedStyle(item).pointerEvents,
+    boxW: Math.round(card.getBoundingClientRect().width),
   };
 };
 // What a finger at (x,y) lands on, and whether that element is (or is inside) a
@@ -308,47 +303,33 @@ async function main() {
         check(hit.link, 'a tap on the caption link reaches the link (not the prev/next zone)', hit);
       }
       const ovP = await evaluate('window.__points("#sv-ov .ov-item a")');
-      check(!!ovP, 'the markup link is in the layout', ovP);
+      check(!!ovP, 'the card is in the sticker (the URL became it)', ovP);
       if (ovP) {
         const hit = await evaluate('window.__hit(' + ovP.link.x + ',' + ovP.link.y + ')');
-        check(hit.link, 'a tap on a link in the markup reaches it (it out-stacks the zone)', hit);
+        check(hit.link, 'a tap on the sticker\'s card reaches it (it out-stacks the zone)', hit);
         const head = await evaluate('window.__hit(' + ovP.head.x + ',' + ovP.head.y + ')');
         check(!head.link && /sv-zone/.test(head.at),
-          'the sticker\'s own words around the link still step the story', head);
-      }
-
-      // The rest of the bar must leave the tap alone.
-      const capBox = await evaluate('window.__rect("#sv-cap")');
-      const linkBox = await evaluate('window.__rect("#sv-links")');
-      if (capBox && linkBox) {
-        const gapY = (capBox.bottom + linkBox.y) / 2;
-        const hit = await evaluate('window.__hit(' + (vp.w / 2) + ',' + gapY + ')');
-        check(!hit.link, 'the gap in the bar still steps the story', hit);
+          'the sticker\'s own words above the card still step the story', head);
       }
 
       // The opt-ins, while the linked sticker is still the one on screen.
-      check(await evaluate('window.__css(".sv-below", "pointerEvents")') === 'none', 'the bar declares pointer-events:none', null);
+      check(await evaluate('window.__css(".sv-cap", "pointerEvents")') === 'none', 'the caption declares pointer-events:none', null);
       check(await evaluate('window.__css(".sv-cap a", "pointerEvents")') === 'auto', 'the caption anchor opts back in', null);
-      check(await evaluate('window.__css(".sv-links .embed-link", "pointerEvents")') === 'auto', 'the card opts back in', null);
-      check(await evaluate('window.__css("#sv-ov a", "pointerEvents")') === 'auto', 'and a markup anchor does too', null);
+      check(await evaluate('window.__css("#sv-ov .ov-item a", "pointerEvents")') === 'auto', 'the sticker\'s card opts back in', null);
+      check(await evaluate('window.__css("#sv-ov .embed", "fontWeight")') === '400',
+        'and the sticker\'s 800 weight/outline does not leak into the card', await evaluate('window.__css("#sv-ov .embed", "textShadow")'));
 
-      // The preview card is a real target, and the bar never leaves the stage.
-      const card = await evaluate('window.__points("#sv-links a")');
-      check(!!card, 'the preview card is in the layout', card);
-      if (card) {
-        const hit = await evaluate('window.__hit(' + card.link.x + ',' + card.link.y + ')');
-        check(hit.link, 'a tap on the card opens it', hit);
-      }
+      // The card is a real target, and the sticker it lives in never leaves the
+      // picture.
+      const stick = await evaluate('window.__rect("#sv-ov .ov-item")');
       const stage = await evaluate('window.__rect("#sv-stage")');
-      const bar = await evaluate('window.__rect(".sv-below")');
-      check(!!stage && !!bar && bar.x >= stage.x - 1 && bar.right <= stage.right + 1,
-        'the bar stays inside the stage', { stage, bar });
-      check(!!stage && !!bar && bar.y >= stage.y - 1 && bar.bottom <= stage.bottom + 1,
-        'and never overflows the picture', { stage, bar });
-      check(!!bar && bar.w <= vp.w, 'and fits the viewport', { bar, vw: vp.w });
-      // The stage is the short one on a phone held sideways: a story bar that
-      // eats most of it leaves no picture to look at.
-      check(!!stage && !!bar && bar.h <= stage.h * 0.62, 'and leaves most of the picture visible', { barH: bar && Math.round(bar.h), stageH: stage && Math.round(stage.h) });
+      check(!!stick && !!stage && stick.x >= stage.x - 1 && stick.right <= stage.right + 1,
+        'the sticker stays inside the stage', { stick, stage });
+      check(!!stick && !!stage && stick.y >= stage.y - 1 && stick.bottom <= stage.bottom + 1,
+        'and never overflows the picture', { stick, stage });
+      check(!!stick && stick.w <= vp.w, 'and fits the viewport', { stick, vw: vp.w });
+      const cardFont = await evaluate('parseFloat(getComputedStyle(document.querySelector("#sv-ov .embed")).fontSize)');
+      check(cardFont >= 10, 'the card is legible at this size (it has a px floor)', { cardFont });
 
       // A sticker with no link at all is inert — that is what makes the link
       // inside the other one a targeted change rather than "the layer is live".
@@ -357,9 +338,11 @@ async function main() {
       const plain = await evaluate('(() => { const el = document.querySelector("#sv-ov .ov-item"); const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()');
       const plainHit = await evaluate('window.__hit(' + plain.x + ',' + plain.y + ')');
       check(!plainHit.link && /sv-zone/.test(plainHit.at), 'a text sticker with no link is still a tap on the story', plainHit);
+      check((await evaluate('document.querySelectorAll("#sv-ov .embed-link").length')) === 0,
+        'and grows no card at all', null);
     }
 
-    console.log('\n[text story] the link is a card under a sticker that still reads');
+    console.log('\n[text story] the link IS the card');
     await sess('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     await sess('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
     // The card FILLS: this is the path that matters (an unfurled title, site and
@@ -368,22 +351,20 @@ async function main() {
     const URL_TXT = 'read this https://example.com/a/very/long/path/that/keeps/going';
     await evaluate('window.__buildTextStory(' + JSON.stringify(URL_TXT) + ')');
     await sleep(400);
-    const filled = await evaluate('(() => { const c = document.querySelector("#sv-links a.embed-link");'
+    const filled = await evaluate('(() => { const c = document.querySelector("#sv-ov .embed-link");'
       + ' return c ? { title: (c.querySelector(".el-title") || {}).textContent || "", site: (c.querySelector(".el-site") || {}).textContent || "", img: !!c.querySelector(".el-img") } : null; })()');
     check(!!filled && filled.title === 'A page worth opening' && filled.site === 'Example' && filled.img,
-      'the card fills in from the unfurl (title, site and thumbnail)', filled);
-
-    const stick = await evaluate('window.__rect("#sv-ov .ov-item")');
-    const anchor = await evaluate('window.__rect("#sv-ov .ov-item a")');
+      'the sticker\'s card fills in from the unfurl (title, site and thumbnail)', filled);
+    const stuck = await evaluate('(() => { const it = document.querySelector("#sv-ov .ov-item");'
+      + ' return { text: it.textContent, cards: it.querySelectorAll(".embed-link").length, leftovers: /https?:\\/\\//.test(it.textContent) }; })()');
+    check(stuck.cards === 1, 'the sticker holds exactly one card', stuck);
+    check(!stuck.leftovers && /read this/.test(stuck.text), 'the URL text is gone — the card replaced it — and the words around it stayed', stuck);
+    const stick2 = await evaluate('window.__rect("#sv-ov .ov-item")');
     const stage2 = await evaluate('window.__rect("#sv-stage")');
-    const lines = await evaluate('window.__lines("#sv-ov .ov-item a")');
-    check(!!anchor, 'the URL in the sticker is a real anchor', anchor);
-    // The URL is one unbroken token, so it has to wrap — but a sticker that
-    // wraps it a handful of characters to a line reads as a ladder, not a link.
-    check(lines !== null && lines <= 3, 'the URL wraps into at most three lines', { lines, stick, anchor });
-    check(!!stick && !!stage2 && stick.x >= stage2.x - 1 && stick.right <= stage2.right + 1,
-      'the sticker stays inside the picture', { stick, stage2 });
-    const cardPt = await evaluate('window.__points("#sv-links a")');
+    check(!!stick2 && !!stage2 && stick2.x >= stage2.x - 1 && stick2.right <= stage2.right + 1
+      && stick2.y >= stage2.y - 1 && stick2.bottom <= stage2.bottom + 1,
+    'the sticker — card included — stays inside the picture', { stick2, stage2 });
+    const cardPt = await evaluate('window.__points("#sv-ov .embed-link")');
     const cardHit = cardPt && await evaluate('window.__hit(' + cardPt.link.x + ',' + cardPt.link.y + ')');
     check(!!cardHit && cardHit.link, 'and the filled card is tappable', cardHit);
     const shotPng = (await sess('Page.captureScreenshot', { format: 'png' }));
@@ -391,14 +372,13 @@ async function main() {
     fs.writeFileSync(shotPath, Buffer.from(shotPng.data, 'base64'));
     console.log('  (screenshot: ' + shotPath + ')');
 
-    console.log('\n[composer] the preview shows the same chip, and it is dead while editing');
+    console.log('\n[composer] the preview shows the same card, and it is dead while editing');
     await evaluate('window.__buildComposer(' + JSON.stringify(URL_TXT) + ')');
     await sleep(200);
     const comp = await evaluate('window.__composer()');
-    check(!!comp && comp.text === 'https://example.com/a/very/long/path/that/keeps/going',
-      'the composer renders the URL as a chip, not a ladder', comp);
-    check(!!comp && comp.lines === 1, 'and the chip is one line', comp);
-    check(!!comp && comp.events === 'none', 'the chip cannot be clicked mid-edit', comp);
+    check(!!comp && comp.cards === 1, 'the composer renders the URL as the card, not a ladder', comp);
+    check(!!comp && !comp.leftovers, 'with the URL text replaced there too (the preview matches the post)', comp);
+    check(!!comp && comp.events === 'none', 'the card cannot be clicked mid-edit', comp);
     check(!!comp && comp.itemEvents === 'auto', 'while the sticker around it still takes the drag', comp);
     await evaluate('document.querySelector("#cbox").remove()');
 

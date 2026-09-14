@@ -445,29 +445,35 @@ capture whose encode produced no bytes), text-only stories on a picked gradient,
 and markup over the shot — draggable/rotatable/scalable text and emoji stickers plus freehand
 drawing with colours and undo, all rendered over the media by the viewer and by
 the view-once player (the markup travels with the post, not in the pixels).
-A URL typed into a story — the caption, or the text of a text-only story, which
-IS the story — is a real link (`linkifyHTML`, embeds.js) and gets ONE preview
-card under it (`#sv-links` in the viewer's `.sv-below` bar, `storyLinkEmbedsHTML`:
-always the compact unfurl card, never a player, because the bar has to stay a
-strip on a landscape phone's short stage). That card is asked for with `keep`, so
-it never vanishes the way a chat stub does when the unfurl had nothing for the
-page — there the card IS the embed. The bar is `pointer-events:none` so
-the prev/next zones keep stepping the story — the anchors, the card and
-`.ov-layer.ov-view` (which has to out-stack `.sv-zone`) are the only opt-ins;
-the view-once caption/markup linkify too and its stage's click guard ignores an
-`a[href]` so following a link cannot consume the one-shot view.
-Two traps found doing it, both in `.ov-item` (styles.css) and both about a
-sticker being display text at 8.5% of the picture's height. An absolutely
-positioned box with `left` set and `right:auto` is laid out in the space to its
-RIGHT, so a sticker at x:0.5 wrapped at HALF the picture's width and a pasted URL
-came out as a ten-line ladder running off the shot top and bottom —
-`width:max-content` before `max-width:96%` is what lets it use the whole width.
-And a URL that big is a ladder even when it fits, so the reader's copy wears it
-as a one-line chip (`.ov-layer .ov-item a`, site visible, ellipsis for the rest)
-while the composer's copy is the same chip but dead
-(`.ov-editable .ov-item a{pointer-events:none}`), because the preview has to
-match the post and the drag has to keep owning the sticker.
-`scripts/test-story-links.js` + `test-story-links-browser.js` cover it.
+A URL typed into a story is handled in one of two ways, and the difference is
+whether the author put it on the picture or in the caption. On a **sticker** the
+URL is REPLACED BY the card itself (`storyTextHTML`, embeds.js): a sticker is
+display text at 8.5% of the picture's height, where a raw URL is a ladder of
+characters, and the card is the thing worth looking at — words around the link
+keep their line and the card lands under them, a sticker that is nothing but a
+URL IS the card, and a sticker is the markup item, so the card travels with it
+(scaled, rotated, positioned) into the viewer and into the view-once player.
+There is deliberately **no card at the bottom of a story**: an earlier cut put
+one in a `#sv-links` bar under the caption and the owner asked for it in place
+instead. In a **caption** (prose, not markup) the URL stays a hyperlink
+(`linkifyHTML`). The card is always the compact unfurl card and never a player —
+an iframe (Spotify, X, a Twitch player), a 16:9 YouTube facade or a full-size
+image would cover the picture the reader opened — one card per story, and it is
+asked for with `keep` so a page the unfurl had nothing for still shows its little
+card with the site on it instead of vanishing the way a chat stub does.
+Three traps found doing it, all about absolutely positioned boxes:
+`.ov-item` and `.sv-cap`/`.vo-cap` set `left` with `right:auto`, so each was laid
+out in the space to its RIGHT — a sticker at x:0.5 and a 200-character caption on
+a 390px phone wrapped at HALF the picture's width (the sticker's URL came out as
+a ten-line ladder running off the shot, the caption at ~195px), and
+`width:max-content` before the `max-width` is the fix in both. And the sticker's
+display type (outline `text-shadow`, weight 800) leaks into a card built inside
+it, so `.ov-item .embed` resets both — sized in `em` off the sticker's font with
+a px floor (`max(.3em,10px)`), because a landscape phone's stage is short and a
+proportional-only card became a thumbnail of a thumbnail. The composer asks for
+the same markup so the preview matches the post, with the card dead there
+(`.ov-editable .ov-item a{pointer-events:none}`) so the drag keeps owning the
+sticker. `scripts/test-story-links.js` + `test-story-links-browser.js` cover it.
 A story sent to an individual friend is delivered as a view-once DM instead of
 a tray entry (`POST /api/dm/viewonce` with `storyId` re-files the story's bytes
 under the gated `viewonce/` prefix), and picks alongside a broadcast audience

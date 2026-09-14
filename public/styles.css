@@ -1984,7 +1984,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .vo-tag{font-size:.66rem;font-weight:900;letter-spacing:.14em;color:#fff;background:rgba(255,255,255,.14);border-radius:999px;padding:.25rem .7rem}
 .vo-stage{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center;margin:.55rem 0;cursor:pointer}
 .vo-stage img,.vo-stage video{max-width:100%;max-height:100%;border-radius:14px;object-fit:contain;background:#000}
-.vo-cap{position:absolute;left:50%;bottom:1rem;transform:translateX(-50%);max-width:min(680px,92%);background:rgba(0,0,0,.62);border-radius:12px;padding:.5rem .85rem;font-size:.92rem;text-align:center;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none}
+.vo-cap{position:absolute;left:50%;bottom:1rem;transform:translateX(-50%);width:max-content;max-width:min(680px,92%);background:rgba(0,0,0,.62);border-radius:12px;padding:.5rem .85rem;font-size:.92rem;text-align:center;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none}
 .vo-foot{display:flex;align-items:center;gap:.6rem;justify-content:space-between;flex-shrink:0;font-size:.76rem;color:rgba(255,255,255,.7)}
 .vo-hint{font-weight:700;color:#fff}
 .sc-vo-note{margin:.4rem 0 0;text-align:center;font-size:.76rem;color:rgba(255,255,255,.62);font-weight:650}
@@ -2661,41 +2661,21 @@ body.story-open{overflow:hidden}
 .sv-ico svg{display:block}
 .sv-stage{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center;margin:.55rem 0;touch-action:none}
 #sv-img,#sv-vid{max-width:100%;max-height:100%;border-radius:14px;object-fit:contain;background:#000;display:block}
-/* The story's bottom bar: its caption, and a preview card for the first link in
-   it (or in a text-only story's text). The bar itself is invisible to pointers
-   — the stage's prev/next zones have to keep stepping the story when the reader
-   taps the picture — so only the links and the cards opt back in. The scrim
-   under a story is black in every theme, which is why the link colour is fixed
-   instead of a theme var (in the light theme --accent-hover on black is dim). */
-.sv-below{position:absolute;left:50%;bottom:1rem;transform:translateX(-50%);width:min(680px,92%);display:flex;flex-direction:column;align-items:center;gap:.5rem;z-index:2;pointer-events:none}
-.sv-cap{max-width:100%;background:rgba(0,0,0,.62);border-radius:12px;padding:.5rem .85rem;font-size:.92rem;text-align:center;white-space:pre-wrap;overflow-wrap:anywhere}
+/* The story's caption. It stays transparent to pointers — the stage's prev/next
+   zones have to keep stepping the story when the reader taps the picture — so
+   only its links opt back in. The scrim under a story is black in every theme,
+   which is why the link colour is fixed rather than a theme var (in the light
+   theme --accent-hover on black is dim). `width:max-content` is the same trap
+   the markup items had: an absolutely positioned box with `left` set and
+   `right:auto` is laid out in the space to its RIGHT, so a 200-character caption
+   on a 390px phone wrapped at ~195px instead of 92% of the stage. */
+.sv-cap{position:absolute;left:50%;bottom:1rem;transform:translateX(-50%);width:max-content;max-width:min(680px,92%);background:rgba(0,0,0,.62);border-radius:12px;padding:.5rem .85rem;font-size:.92rem;text-align:center;white-space:pre-wrap;overflow-wrap:anywhere;z-index:2;pointer-events:none}
 .sv-cap a,.vo-cap a,.ov-view a{color:#b9c2ff;text-decoration:underline;text-underline-offset:.15em}
 .sv-cap a,.vo-cap a,.ov-view a{pointer-events:auto}
 .sv-cap a:hover,.vo-cap a:hover,.ov-view a:hover{color:#d6dbff}
-.sv-links{width:100%;max-width:min(460px,100%)}
-.sv-links .embeds{margin-top:0;max-width:100%;pointer-events:auto}
-.sv-links .embed{background:rgba(8,11,20,.86);border-color:rgba(255,255,255,.14)}
-.sv-links .embed-link{color:#fff}
-.sv-links .embed-link:hover{background:rgba(255,255,255,.08)}
-.sv-links .el-title{color:#fff}
-.sv-links .el-site{color:rgba(255,255,255,.62)}
-.sv-links .el-desc{color:rgba(255,255,255,.78)}
-/* A story's link card is the compact one (embeds.js never builds a player for a
-   story), tightened so the bar stays a strip rather than a panel. */
-.sv-links .embed-link.compact{padding:.5rem .6rem;gap:.6rem}
-.sv-links .embed-link.compact .el-img{width:60px;height:60px}
-.sv-links .embed-link.compact .el-desc{-webkit-line-clamp:2}
-/* A phone held sideways is ~390px tall, so the stage is short and the caption +
-   card have to pay for less of it. */
-@media (max-height:560px) and (pointer:coarse){
-  .sv-cap{font-size:.82rem;padding:.4rem .7rem}
-  .sv-links .embed-link.compact{padding:.4rem .5rem}
-  .sv-links .embed-link.compact .el-img{width:46px;height:46px}
-  .sv-links .embed-link.compact .el-desc{-webkit-line-clamp:1}
-}
-/* A story's markup sits above the prev/next zones: an anchor inside a text
-   sticker is only clickable if nothing else is painted over it. The layer as a
-   whole stays pointer-events:none, so only the anchor takes the tap. */
+/* A story's markup sits above the prev/next zones: a link inside a text sticker
+   is only clickable if nothing else is painted over it. The layer as a whole
+   stays pointer-events:none, so only the link itself takes the tap. */
 .ov-layer.ov-view{z-index:2}
 /* Story wait pill: a plain flat ring stacked above the label. Shared by the
    viewer (Processing…) and the composer (Starting camera…). (It used the
@@ -2854,15 +2834,27 @@ body.story-open{overflow:hidden}
 .ov-emchar{display:block;line-height:1}
 .ov-em{display:block;height:1em;width:auto;filter:drop-shadow(0 1px 3px rgba(0,0,0,.55))}
 .ov-pill{background:rgba(9,12,20,.8);padding:.14em .5em;border-radius:.42em;text-shadow:none}
-/* A URL on a sticker is not prose: at sticker size (8.5% of the picture's
-   height) a raw URL is a ladder of characters. It becomes a little card instead
-   — a chip on the line the author left it on, one line with the site at the
-   front and an ellipsis for the rest (a link's job is to be tapped, and the card
-   under the story carries the title). Both copies wear it: the composer asks
-   for the same markup so the preview matches the post, where the chip is dead
-   (pointer-events:none) or it would steal the drag that moves the sticker. */
-.ov-layer .ov-item a{display:inline-block;vertical-align:middle;font-size:.5em;line-height:1.32;padding:.14em .5em;border-radius:.45em;background:rgba(9,12,20,.72);color:#cdd4ff;text-decoration:none;text-shadow:none;max-width:11em;white-space:nowrap;overflow-wrap:normal;overflow:hidden;text-overflow:ellipsis}
-.ov-layer .ov-item a:hover{background:rgba(9,12,20,.88);color:#e7eaff}
+/* A URL on a sticker is the card itself (storyTextHTML replaces the URL with
+   it): at sticker size a raw URL is a ladder of characters, and the card is the
+   thing worth looking at. Sized in em off the sticker's own font, so it stays
+   proportional to the picture and scales with the sticker — with a px floor,
+   because a phone held sideways is a short stage and a proportional-only card
+   turned into a thumbnail of a thumbnail. The sticker's outline text-shadow and
+   800 weight must not leak into card typography. Both copies wear it — the
+   composer asks for the same markup so the preview matches the post — and the
+   composer's card is dead (pointer-events:none) or it would steal the drag that
+   moves the sticker. */
+.ov-item .embeds{margin-top:.35em}
+.ov-item .embeds:first-child{margin-top:0}
+.ov-item .embed{width:15em;max-width:100%;font-size:max(.3em,10px);border-radius:.7em;line-height:1.4;font-weight:400;letter-spacing:normal;text-shadow:none;white-space:normal;background:rgba(8,11,20,.9);border-color:rgba(255,255,255,.14)}
+.ov-item .embed-link{padding:.7em .85em;border-left-width:.22em;color:#fff;text-decoration:none}
+.ov-item .embed-link:hover{background:rgba(255,255,255,.08)}
+.ov-item .embed-link.compact{padding:.6em .7em;gap:.6em}
+.ov-item .el-site{font-size:.8em;color:rgba(255,255,255,.62)}
+.ov-item .el-title{font-size:1.05em;color:#fff}
+.ov-item .el-desc{font-size:.88em;margin-top:.28em;color:rgba(255,255,255,.78)}
+.ov-item .el-fav{width:1.15em;height:1.15em;border-radius:.25em}
+.ov-item .embed-link.compact .el-img{width:2.9em;height:2.9em;border-radius:.4em}
 .ov-editable .ov-item a{pointer-events:none}
 .ov-item.ov-sel{outline:2px dashed rgba(255,255,255,.9);outline-offset:.2em;border-radius:.18em}
 /* In the composer the layer has to swallow taps so a tap on empty space can

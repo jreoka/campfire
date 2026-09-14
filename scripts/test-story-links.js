@@ -34,7 +34,7 @@ function check(cond, name, detail) {
 global.esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const embeds = require(path.join(ROOT, 'public/embeds.js'));
-const { linkifyHTML, storyLinkEmbedsHTML, linkEmbedsHTML, cleanEmbedUrl, setLinkPreviews, __cardCache } = embeds;
+const { linkifyHTML, storyTextHTML, storyLinkEmbedsHTML, linkEmbedsHTML, cleanEmbedUrl, setLinkPreviews, __cardCache } = embeds;
 
 console.log('\n[1] a URL in typed prose becomes a real link — and nothing else moves');
 {
@@ -77,10 +77,10 @@ console.log('\n[1] a URL in typed prose becomes a real link — and nothing else
   check(!/<a /i.test(linkifyHTML('ftp://example.com/x')), 'a non-http scheme is not linkified', linkifyHTML('ftp://example.com/x'));
 }
 {
-  // The same anchors have to be safe inside the scaled/rotated markup box too.
+  // The same markup has to be safe inside the scaled/rotated sticker box too.
   const cap = fs.readFileSync(path.join(ROOT, 'public/js/story-edit.js'), 'utf8');
-  check(/opts\.links && typeof linkifyHTML === 'function'\) el\.innerHTML = linkifyHTML\(txt\)/.test(cap),
-    'the markup renderer linkifies text only when the caller opts in', null);
+  check(/opts\.links && typeof storyTextHTML === 'function'\) el\.innerHTML = storyTextHTML\(txt\)/.test(cap),
+    'the markup renderer builds the card only when the caller opts in', null);
   check(/else el\.textContent = txt;/.test(cap), 'and otherwise paints it as inert text', null);
 }
 
@@ -131,22 +131,74 @@ console.log('\n[2] a story takes the compact card, never chat\'s players');
   check(!linkEmbedsHTML(bare).includes(bare), 'chat still drops a card nothing was found for', linkEmbedsHTML(bare));
 }
 {
-  // A sticker is display text at 8.5% of the picture's height: a raw URL there
-  // wraps into a ladder of characters, so it renders as a chip instead — in the
-  // composer too, where it is dead (the drag owns the sticker).
+  // A sticker is display text at 8.5% of the picture's height, where a raw URL
+  // is a ladder of characters — so the URL is REPLACED by the card itself. A
+  // sticker that is nothing but a URL IS the card; words around it keep their
+  // line and the card lands under them.
+  const cardOf = (t) => storyTextHTML(t);
+  const sole = cardOf('https://example.com/a/very/long/path');
+  check(sole.includes('data-unfurl="https://example.com/a/very/long/path"') && sole.includes('embed-link compact'),
+    'a sticker that is only a URL becomes the card', sole);
+  check(!/https?:\/\//.test(sole.replace(/data-unfurl="[^"]*"|href="[^"]*"/g, '')), 'and the URL text is gone', sole);
+  const withWords = cardOf('read this https://example.com/page now');
+  check(/^read this <div class="embeds">/.test(withWords), 'words before the link keep their line', withWords);
+  check(/\n? now$| now$/.test(withWords), 'and the words after it stay after the card', JSON.stringify(withWords));
+  const punc = cardOf('go https://example.com/x.');
+  check(punc.endsWith('</div>.'), 'punctuation the URL did not own stays outside the card', JSON.stringify(punc));
+  const spaced = cardOf('  https://example.com/trim  ');
+  check(/^<div class="embeds">/.test(spaced) && !/^\s/.test(spaced), 'a lone URL with padding around it is still just the card', JSON.stringify(spaced.slice(0, 30)));
+  const two = cardOf('one https://a.example/1 two https://b.example/2');
+  check((two.match(/data-unfurl=/g) || []).length === 1 && two.includes('<a href="https://b.example/2"'),
+    'one card, and the second link stays a real link', two);
+  check(!/https?:\/\//.test(cardOf('<img src=x onerror=alert(1)>')), 'no URL, no card, and the HTML is escaped',
+    cardOf('<img src=x onerror=alert(1)>'));
+  check(storyTextHTML('') === '' && storyTextHTML(null) === '', 'empty input is empty output', null);
+  setLinkPreviews(false);
+  const off = cardOf('see https://example.com/a');
+  check(off.includes('<a href="https://example.com/a"') && !off.includes('embed-link'),
+    'UNFURL=0 leaves the URL a link — a card can never swallow it', off);
+  setLinkPreviews(true);
+}
+{
+  // A story's card is the embed, so it must not vanish when the unfurl has
+  // nothing for the page: chat drops the empty stub, a story keeps the little
+  // card with the site on it (and `keep` is also what survives a re-render
+  // after the negative answer is cached).
+  const bare = 'https://nothing-here.example/page';
+  __cardCache.set(bare, null);
+  const story = storyLinkEmbedsHTML(bare);
+  check(story.includes('data-keep="1"') && story.includes('data-unfurl="' + bare + '"'),
+    'a story keeps its card when the server had nothing for the page', story);
+  check(story.includes('nothing-here.example'), 'and the card still names the site', story);
+  check(!linkEmbedsHTML(bare).includes(bare), 'chat still drops a card nothing was found for', linkEmbedsHTML(bare));
+  check(storyTextHTML(bare).includes('data-keep="1"'), 'so the sticker keeps its card too', null);
+}
+{
+  // The stylesheet the sticker's card depends on: sized off the sticker's own
+  // font (so it is proportional to the picture) with a px floor (so a
+  // landscape phone, whose stage is short, still gets a readable card), and
+  // none of the sticker's display-text styling leaking into it.
   const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
   const edit = fs.readFileSync(path.join(ROOT, 'public/js/story-edit.js'), 'utf8');
   const stories = fs.readFileSync(path.join(ROOT, 'public/js/stories.js'), 'utf8');
+  const html = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
   check(/\.ov-item\{[^}]*width:max-content[^}]*max-width:96%/.test(css),
     'a sticker can use the picture\'s full width (no half-width ladder)', null);
-  check(/\.ov-layer \.ov-item a\{[^}]*white-space:nowrap[^}]*text-overflow:ellipsis/.test(css),
-    'the URL on a sticker is a one-line chip', null);
+  check(/\.ov-item \.embed\{[^}]*font-size:max\(\.3em,10px\)/.test(css),
+    'the card is sized off the sticker with a legibility floor', null);
+  check(/\.ov-item \.embed\{[^}]*font-weight:400[^}]*text-shadow:none/.test(css),
+    'and the sticker\'s outline and 800 weight do not leak into it', null);
+  check(/\.ov-item \.embed-link\{[^}]*text-decoration:none/.test(css),
+    'the card is not underlined like a link', null);
   check(/\.ov-editable \.ov-item a\{pointer-events:none\}/.test(css),
-    'and the composer\'s chip is dead so the drag still owns the sticker', null);
-  check(/if \(opts\.links && typeof linkifyHTML === 'function'\) el\.innerHTML = linkifyHTML\(txt\);\s*else el\.textContent = txt;/.test(edit),
-    'the markup renderer linkifies on the caller\'s opt-in (composer AND viewer)', null);
+    'the composer\'s card is dead so the drag still owns the sticker', null);
+  check(/if \(opts\.links && typeof storyTextHTML === 'function'\) el\.innerHTML = storyTextHTML\(txt\);\s*else el\.textContent = txt;/.test(edit),
+    'the markup renderer asks for the card on the caller\'s opt-in (composer AND viewer)', null);
   check(/ovPaintLayer\(layer, sc\.ovs, \{ editable: true, selected: sc\.draw \? null : sc\.sel, links: true \}\)/.test(stories),
     'the composer asks for it, so the preview shows what gets posted', null);
+  // The card lives on the sticker, NOT in a strip at the bottom of the story.
+  check(!html.includes('sv-links') && !html.includes('sv-below'), 'there is no bottom-of-story card slot', null);
+  check(!/function svPaintLinks\(/.test(stories), 'and nothing paints one', null);
 }
 {
   check(storyLinkEmbedsHTML('no links at all') === '', 'a story with no link paints nothing', null);
@@ -168,14 +220,10 @@ console.log('\n[3] the three surfaces are wired to it');
   const vo = fs.readFileSync(path.join(ROOT, 'public/js/viewonce.js'), 'utf8');
   const sw = fs.readFileSync(path.join(ROOT, 'public/service-worker.js'), 'utf8');
 
-  check(/<div class="sv-below">\s*<div class="sv-cap hidden" id="sv-cap"><\/div>\s*<div class="sv-links hidden" id="sv-links"><\/div>/.test(html),
-    'the viewer\'s bottom bar holds the caption and the card slot', null);
+  check(/<div class="ov-layer ov-view" id="sv-ov"[^>]*><\/div>\s*<div class="sv-cap hidden" id="sv-cap"><\/div>/.test(html),
+    'the viewer has its markup layer and its caption — and no bottom card slot', null);
   check(/const cap = \$\('#sv-cap'\);\s*const capText = String\(it\.caption \|\| ''\);\s*cap\.innerHTML = capText && typeof linkifyHTML === 'function' \? linkifyHTML\(capText\) : esc\(capText\);/.test(js.replace(/\n\s*/g, '\n  ')),
     'the viewer linkifies its caption', null);
-  check(/svPaintLinks\(it\);/.test(js), 'and asks for the preview card in the same breath', null);
-  check(/function svPaintLinks\(it\) \{/.test(js) && /for \(const o of ovParse\(it && it\.overlays\)\) if \(o && o\.t === 'text'\) text \+= '\\n' \+ String\(o\.text == null \? '' : o\.text\);/.test(js),
-    'svPaintLinks gathers the caption AND the text-only story\'s text', null);
-  check(/box\.innerHTML = html;/.test(js) && /box\.classList\.toggle\('hidden', !html\);/.test(js), 'it paints the cards and hides the slot when there are none', null);
   check(/ovPaintLayer\(layer, ovs, \{ editable: false, links: true \}\);/.test(js), 'the viewer\'s markup layer opts into links', null);
 
   check(/ovPaintLayer\(layer, ovs, \{ editable: false, links: true \}\);/.test(vo), 'the view-once player does too', null);
@@ -183,17 +231,17 @@ console.log('\n[3] the three surfaces are wired to it');
   check(/\$\('#vo-stage'\)\.onclick = \(e\) => \{ if \(e\.target\.closest && e\.target\.closest\('a\[href\]'\)\) return; closeViewOnce\(\); \};/.test(vo),
     'a tap on a link does not consume the one-shot view', null);
 
-  // The bar is pointer-transparent so the prev/next zones keep stepping the
-  // story; only the links and the card opt back in.
-  check(/\.sv-below\{[^}]*pointer-events:none/.test(css), 'the bottom bar does not eat taps meant for the story', null);
+  // The caption and the card are pointer-transparent so the prev/next zones keep
+  // stepping the story; only the links and the card opt back in.
+  check(/\.sv-cap\{[^}]*pointer-events:none/.test(css), 'the caption does not eat taps meant for the story', null);
   check(/\.sv-cap\{[^}]*white-space:pre-wrap/.test(css), 'the caption still renders pre-wrap', null);
-  check(!/\.sv-cap\{[^}]*position:absolute/.test(css), 'the caption is laid out by the bar, not pinned on its own', null);
-  check(/\.sv-cap a,\.vo-cap a,\.ov-view a\{[^}]*pointer-events:auto/.test(css), 'the anchors opt back in (caption, view-once caption, markup)', null);
+  check(/\.sv-cap\{[^}]*width:max-content/.test(css) && /\.vo-cap\{[^}]*width:max-content/.test(css),
+    'and both captions pay for the half-width absolute-positioning trap', null);
+  check(/\.sv-cap a,\.vo-cap a,\.ov-view a\{[^}]*pointer-events:auto/.test(css), 'the links opt back in (caption, view-once caption, markup)', null);
   check(/\.sv-cap a,\.vo-cap a,\.ov-view a\{[^}]*color:#b9c2ff/.test(css), 'and are a readable link colour on the always-dark scrim', null);
-  check(/\.sv-links \.embeds\{[^}]*pointer-events:auto/.test(css), 'the card slot is tappable', null);
   check(/\.ov-layer\.ov-view\{z-index:2\}/.test(css) && /\.sv-zone\{[^}]*z-index:1/.test(css),
     'a link in the markup is painted above the prev/next zones', null);
-  check(/\.sv-links \.embed\{[^}]*background:rgba\(8,11,20,\.86\)/.test(css),
+  check(/\.ov-item \.embed\{[^}]*background:rgba\(8,11,20,\.9\)/.test(css),
     'the card wears the story scrim, not the theme panel (light theme included)', null);
   check(sw.includes("'/embeds.js'"), 'embeds.js is still in the app-shell cache', null);
   check(/const CACHE = 'campfire-v\d+';/.test(sw), 'the service worker still names a cache version', null);
