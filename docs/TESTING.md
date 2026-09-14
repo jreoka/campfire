@@ -8,8 +8,7 @@ you should re-run it after.
 It is kept out of `AGENTS.md` on purpose: that file is auto-loaded into every
 session under a byte budget, and this catalogue is roughly 40 KB of it.
 
-- **Tests:** `node scripts/test-unfurl.js [--live]` covers the link-preview parser
-  and the SSRF guard (offline by default; `--live` also fetches real pages and
+- **Tests:** `node scripts/test-unfurl.js [--live]` covers the link-preview parser  and the SSRF guard (offline by default; `--live` also fetches real pages and
   proves a 302 to a link-local address is refused). It also pins the provider
   oEmbed routing — `directOembed` builds the endpoint for youtu.be / watch /
   shorts / live / embed / nocookie (and none for a playlist, a channel, a
@@ -1021,6 +1020,27 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   `storage.js`'s S3 client (its timeout/retry config is what stops a silent
   object store from holding an upload request open forever) wants the upload
   routes re-checked with `scripts/test-upload-pipeline.js`.
+  `node scripts/test-composer-drop.js` covers what the composer's drop zone
+  accepts (headless Chrome, skipping without Chrome; it slices the REAL
+  drag-and-drop block out of `messages.js` and drives it with real `DragEvent`s
+  carrying a real `File`, with `uploadAndAttach`/`toast`/`$` stubbed, so what it
+  reports is what the listeners did with the gesture). It exists because
+  dragging a photo that is already in a message and letting go over the window
+  used to attach the same picture again: Chrome hands a dragged `<img>` over as
+  a temporary FILE, so the "does this drag carry files?" test — the thing that
+  keeps a stray drop from navigating the tab to the file and wiping a half-typed
+  message — answered yes. Locked in: an external file drop is still claimed
+  (dragenter/dragover/drop prevented, the overlay comes up, the file reaches
+  `uploadAndAttach`, the composer takes focus back, the overlay clears); a
+  files-less drag is ignored; a drag that STARTED in the window is refused
+  whatever it carries (no overlay, nothing uploaded, nothing toasted) — for a
+  synthetic gesture and for a real `<img>` with `dragstart` on it — and the mark
+  is not sticky (a real file drop right after an internal drag still attaches,
+  and dragging out of the window clears it); plus the static half: the media
+  renderers carry `draggable="false"` and `img,video{-webkit-user-drag:none}` is
+  what stops the drag starting at all. Re-run it after touching the drop zone,
+  the attachment/media renderers, or anything that makes an image draggable
+  again.
   `node scripts/test-attachment-gap.js` covers the distance between the composer
   and the attachment cards above it (headless Chrome, skipping without Chrome;
   it builds the real chat column from `index.html`'s markup + the real

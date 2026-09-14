@@ -985,6 +985,14 @@ body.ub-open #lightbox #lb-stage{padding-top:calc(4.4rem + var(--safe-t) + var(-
 .att-warn span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .msg-atts img.att-img{max-width:100%;max-height:320px;border-radius:12px;cursor:zoom-in;object-fit:contain;background:#000}
 .msg-atts video.att-vid{max-width:100%;max-height:320px;border-radius:12px;background:#000}
+/* Nothing the app RENDERS is a drag source. Chrome hands a dragged <img> over as
+   a temporary FILE, so dragging a photo out of a message and letting go over the
+   composer read as a file drop and re-attached the same picture — the drop zone
+   refuses drags that started in this window (messages.js, which is what covers
+   Firefox too), and this stops the drag from starting at all, ghost image and
+   all, on Blink/WebKit. The flip side, by design: dragging media out to the
+   desktop is gone — Save image / the download chip do that. */
+img,video{-webkit-user-drag:none}
 .att-wrap{position:relative;display:inline-block;max-width:420px;--att-max-h:320px}
 /* The width/height ATTRIBUTES a measured picture carries are its intrinsic size,
    and only `width:auto;height:auto` makes the browser treat them that way: as a

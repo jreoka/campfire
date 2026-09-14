@@ -240,9 +240,9 @@ function attachmentBodyHTML(a) {
     // over, which is the wrap, the image, the download chip or the star — one
     // read from the wrap covers all of them (see attFromEl in actions.js).
     const meta = attMeta(a, 'image');
-    return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}${d ? ' ar' : ' no-ar'}"${style}${meta}><span class="att-ph" aria-hidden="true"><span class="att-spin"></span></span><img class="att-img" src="${esc(thumb || a.url)}" alt="${esc(a.name)}" loading="lazy" decoding="async"${d ? ` width="${d.w}" height="${d.h}"` : ''}${thumb ? ' data-fb-thumb="1"' : ''} data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${attFavHTML(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+    return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}${d ? ' ar' : ' no-ar'}"${style}${meta}><span class="att-ph" aria-hidden="true"><span class="att-spin"></span></span><img class="att-img" draggable="false" src="${esc(thumb || a.url)}" alt="${esc(a.name)}" loading="lazy" decoding="async"${d ? ` width="${d.w}" height="${d.h}"` : ''}${thumb ? ' data-fb-thumb="1"' : ''} data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${attFavHTML(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   }
-  if (a.kind === 'video') return `<span class="att-wrap loading${a.spoiler ? ' spoiler' : ''}"${attMeta(a, 'video')}><video class="att-vid" src="${esc(a.url)}" controls preload="metadata" playsinline></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+  if (a.kind === 'video') return `<span class="att-wrap loading${a.spoiler ? ' spoiler' : ''}"${attMeta(a, 'video')}><video class="att-vid" draggable="false" src="${esc(a.url)}" controls preload="metadata" playsinline></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'audio') return audioPlayerHTML(a);
   if (textPreviewable(a)) return textFileHTML(a);
   return `<a class="file-card" href="${esc(a.url)}" target="_blank" rel="noopener"${attMeta(a, 'file')}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span><span class="fname">${esc(a.name)}</span><br/><span class="fsize">${fmtSize(a.size)}</span></span></a>`;
@@ -2201,8 +2201,25 @@ document.addEventListener('paste', (e) => {
 // Document-level (not just #chat) so drops on the sidebar / member list work
 // too — and so a stray drop can never navigate the tab away to the file,
 // which would wipe a half-typed message.
+//
+// A drag that STARTED in this window is never a file drop. Chrome hands a
+// dragged <img> over as a temporary FILE, so `dataTransfer.types` really does
+// say "Files" — which is why dragging a photo out of a message and letting go
+// over the composer used to attach the same picture all over again. `dragstart`
+// at capture marks the gesture and it stays marked until the drag ends, so the
+// mark cannot be lost by dragging in and out of the page. (Images the app
+// renders are also non-draggable now — see the media rules in styles.css — but
+// this is the guarantee that does not depend on every render path remembering.)
 let dropDepth = 0;
-const dragHasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+let draggedInApp = false;
+const dragHasFiles = (e) => !draggedInApp && [...(e.dataTransfer?.types || [])].includes('Files');
+const dropReset = () => {
+  draggedInApp = false;
+  dropDepth = 0;
+  $('#chat').classList.remove('dropping');
+};
+document.addEventListener('dragstart', () => { draggedInApp = true; }, true);
+document.addEventListener('dragend', () => { dropReset(); }, true);
 document.addEventListener('dragenter', (e) => {
   if (!dragHasFiles(e)) return;
   e.preventDefault();
@@ -2215,15 +2232,18 @@ document.addEventListener('dragover', (e) => {
   e.dataTransfer.dropEffect = 'copy';
 });
 document.addEventListener('dragleave', (e) => {
+  // relatedTarget is null once the pointer leaves the window: whatever was being
+  // dragged is out of our hands, so a mark left over from an internal drag must
+  // not survive it (that would refuse the NEXT real file drop).
+  if (!e.relatedTarget) draggedInApp = false;
   if (!dragHasFiles(e)) return;
   if (--dropDepth <= 0) { dropDepth = 0; $('#chat').classList.remove('dropping'); }
 });
 document.addEventListener('drop', (e) => {
-  if (!dragHasFiles(e)) return;
+  if (!dragHasFiles(e)) { dropReset(); return; }
   e.preventDefault();
-  dropDepth = 0;
-  $('#chat').classList.remove('dropping');
   const files = [...(e.dataTransfer.files || [])];
+  dropReset();
   if (!files.length) return;
   if (!composerTargetReady()) { toast('Pick a chat first, then drop'); return; }
   files.slice(0, 5).forEach((f) => uploadAndAttach(f));

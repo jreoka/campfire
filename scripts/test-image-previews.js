@@ -189,7 +189,7 @@ async function main() {
     'the backups/ rule is untouched');
 
   console.log('\n[3] the client asks for the preview, with the original one error away');
-  check(/class="att-img" src="\$\{esc\(thumb \|\| a\.url\)\}"/.test(markSource), 'the markup prefers the derived preview');
+  check(/class="att-img"[^>]*\ssrc="\$\{esc\(thumb \|\| a\.url\)\}"/.test(markSource), 'the markup prefers the derived preview');
   check(/data-fb-thumb="1"/.test(markSource) && /data-fb-url="\$\{esc\(a\.url\)\}"/.test(markSource),
     'and carries the original it falls back to');
   check(/loading="lazy"/.test(markSource), 'integration with native lazy loading is kept');

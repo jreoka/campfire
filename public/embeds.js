@@ -223,10 +223,10 @@ function directMediaEmbedHTML(url) {
   let path = '';
   try { path = new URL(url).pathname.toLowerCase(); } catch { return null; }
   if (/\.(png|jpe?g|gif|webp|avif|bmp|svg)$/.test(path)) {
-    return '<div class="embed embed-media"><img class="embed-img" src="' + esc(url) + '" alt="" loading="lazy" /></div>';
+    return '<div class="embed embed-media"><img class="embed-img" draggable="false" src="' + esc(url) + '" alt="" loading="lazy" /></div>';
   }
   if (/\.(mp4|webm|mov|m4v)$/.test(path)) {
-    return '<div class="embed embed-media"><video class="embed-vid" src="' + esc(url) + '" controls preload="metadata" playsinline></video></div>';
+    return '<div class="embed embed-media"><video class="embed-vid" draggable="false" src="' + esc(url) + '" controls preload="metadata" playsinline></video></div>';
   }
   if (/\.(mp3|ogg|oga|wav|flac|m4a|opus)$/.test(path)) {
     return '<div class="embed embed-media"><audio src="' + esc(url) + '" controls preload="metadata"></audio></div>';
@@ -378,7 +378,7 @@ function cardBodyHTML(d, url) {
   let h = '<span class="el-body">' + cardTextHTML(d, url) + '</span>';
   if (d && d.image) {
     const dims = (d.imageW && d.imageH) ? ' width="' + d.imageW + '" height="' + d.imageH + '"' : '';
-    h += '<span class="el-media"><img class="el-img" src="' + eh(d.image) + '"' + dims
+    h += '<span class="el-media"><img class="el-img" draggable="false" src="' + eh(d.image) + '"' + dims
       + ' alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.closest(\'.el-media\').remove()" /></span>';
   }
   return h;

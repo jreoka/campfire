@@ -773,7 +773,19 @@ empties `#upload-list`; gating on `activeUploadCount` instead was wrong twice
 for a 650ms exit, so the chip and its toggle appeared under a card that was still
 the thing being looked at). `attCardOnStage()` is the test, and anything that
 reads `S.pendingAtts` for the composer must go through `renderComposerMeta`'s
-combined view (it appends the `attHere` held ones) or a chip will be missing. The typing strip above the
+combined view (it appends the `attHere` held ones) or a chip will be missing.
+**The drop zone refuses drags that STARTED in this window** (`messages.js`):
+Chrome hands a dragged `<img>` over as a temporary FILE, so dragging a photo out
+of a message and letting go over the composer read as a file drop and attached
+the picture again. `dragstart` at capture marks the gesture, the mark survives
+dragging in and out of the page (only `dragend`, a drop, or a `dragleave` with no
+`relatedTarget` clears it) and `dragHasFiles` refuses a marked drag — that is the
+browser-independent guarantee, and `img,video{-webkit-user-drag:none}` plus
+`draggable="false"` on `.att-img`/`.att-vid`/`.embed-img`/`.embed-vid`/`.el-img`
+stops the drag starting at all in the first place. The trade, on purpose:
+dragging media out to the desktop is gone; Save image / the download chip do
+that. `scripts/test-composer-drop.js` drives the real sliced block in Chrome.
+The typing strip above the
 composer always keeps its slot (`--strip-h`, one text line, transparent, text
 fades) — hiding it resizes `#messages` and shoves the conversation up/down.
 `#messages` pays for that slot by giving up its bottom padding, and anything
