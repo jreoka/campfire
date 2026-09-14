@@ -131,6 +131,21 @@ async function pool(items, limit, fn) {
   need('S3_OVH_ACCESS_KEY', DST.key);
   need('S3_OVH_SECRET_KEY', DST.secret);
 
+  // After the cutover, S3_* IS the OVH destination, so a re-run would compare
+  // the bucket against itself and cheerfully report success while copying
+  // nothing. Catch that rather than let it read as a verified migration.
+  const sameBucket = SRC.endpoint.replace(/\/+$/, '') === DST.endpoint.replace(/\/+$/, '')
+    && SRC.bucket === DST.bucket;
+  if (sameBucket) {
+    console.error('source and destination are the same bucket:');
+    console.error('  ', SRC.endpoint, '/', SRC.bucket);
+    console.error('This migration has already been applied. S3_* points at the');
+    console.error('destination, so there is nothing to copy from. To move a');
+    console.error('different bucket in, point S3_* at it (or set S3_OVH_* at the');
+    console.error('new destination) and run this again.');
+    process.exit(2);
+  }
+
   console.log('source     :', SRC.endpoint, '/', SRC.bucket, `(pathStyle=${SRC.pathStyle})`);
   console.log('destination:', DST.endpoint, '/', DST.bucket, `(pathStyle=${DST.pathStyle})`);
   console.log('mode       :', APPLY ? 'APPLY (will write)' : 'DRY RUN (no writes)');
