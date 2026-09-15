@@ -122,22 +122,36 @@ function storyAgo(ts) {
 }
 
 // ---------- data ----------
-async function loadStories() {
-  if (storyFetch) return storyFetch;
-  storyFetch = api('/api/stories')
+// Which /api/stories answer is allowed to land. A request that was already in
+// flight when something changed on this client (a delete, say) is answering
+// about a world that no longer exists, and `storyFetch` below would happily
+// coalesce the refresh INTO it — so the deletion's own refresh re-applied a
+// payload that still carried the deleted story and the sidebar kept painting it
+// until the next full page load. Bumping the generation makes every in-flight
+// request stale, and its result is dropped instead of written.
+let storyGen = 0;
+async function loadStories(fresh) {
+  // `fresh` skips the coalescing: it is what a story MUTATION asks for, because
+  // the request sitting in `storyFetch` started before that mutation and is
+  // therefore guaranteed to be stale.
+  if (storyFetch && !fresh) return storyFetch;
+  const gen = storyGen;
+  const p = api('/api/stories')
     .then((d) => {
+      if (gen !== storyGen) return storyData; // a mutation happened: this answer is old news
       storyData = { mine: d.mine || null, friends: d.friends || [], everyone: d.everyone || [], servers: d.servers || [] };
       return storyData;
     })
     .catch(() => storyData)
-    .finally(() => { storyFetch = null; });
-  return storyFetch;
+    .finally(() => { if (storyFetch === p) storyFetch = null; });
+  storyFetch = p;
+  return p;
 }
 // Coalesce bursts (several friends posting at once, view receipts, …).
 function scheduleStoryRefresh(ms = 600) {
   clearTimeout(storyRefreshT);
   storyRefreshT = setTimeout(async () => {
-    await loadStories();
+    await loadStories(true);
     renderStorySurfaces();
     if (sv) svSyncState();
   }, ms);
@@ -243,7 +257,10 @@ function storyThumbWithMarkup(media, cls, ovs) {
     if (!wrap.isConnected) return;
     try {
       if (!ovFitLayer(layer, wrap, media, 'cover')) return;
-      ovPaintLayer(layer, ovs, { editable: false });
+      // `links: true`, like the viewer, the view-once player and the composer:
+      // a URL on a sticker is the card itself, and a preview that painted the
+      // raw URL while the story shows a card would be lying about the post.
+      ovPaintLayer(layer, ovs, { editable: false, links: true });
     } catch {}
   };
   const refit = () => requestAnimationFrame(fit);
@@ -1344,6 +1361,9 @@ function storyViewsUpdated(storyId, views) {
 }
 // An item vanished for everyone (deleted, or its 24h ran out).
 function storyRemoved(storyId) {
+  // Anything already in flight is answering about a story that is gone (the
+  // sidebar row kept painting it until a reload without this).
+  storyGen++;
   const drop = (list) => (list || []).filter((t) => (t.items = (t.items || []).filter((i) => i.id !== storyId)).length);
   storyData.friends = drop(storyData.friends);
   storyData.everyone = drop(storyData.everyone);

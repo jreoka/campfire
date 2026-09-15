@@ -138,22 +138,42 @@ function ovContentRect(el, fit = 'contain') {
   const w = nw * k, h = nh * k;
   return { left: r.left + (r.width - w) / 2, top: r.top + (r.height - h) / 2, width: w, height: h };
 }
-// Lay `layer` exactly over the media's content box inside `stage`, and hand it
-// the pixel size as CSS vars so items can size themselves in em/percent.
+// Lay `layer` exactly over the media's VISIBLE content box inside `stage`, and
+// hand it the pixel size as CSS vars so items can size themselves in em/percent.
+//
+// "Visible" is the load-bearing word under `cover`: the content rect can hang
+// outside the element's own box, and only the intersection of the two is
+// painted. Fitting the layer to the whole content rect instead (what this did)
+// measured every item — and the font size, 8.5% of the layer's height — against
+// a box that is mostly off-screen, so a portrait story's markup came out with a
+// 166px font on the story center's 162px-tall hero banner and its card landed
+// outside the picture entirely. `contain` never hangs outside, so the viewer, the
+// view-once player and the composer are untouched by the clamp.
 function ovFitLayer(layer, stage, mediaEl, fit) {
   if (!layer || !stage) return null;
   const sr = stage.getBoundingClientRect();
   const cr = ovContentRect(mediaEl, fit);
   if (!cr || !cr.width || !cr.height) { layer.classList.add('hidden'); return null; }
-  const x = cr.left - sr.left, y = cr.top - sr.top;
+  let x = cr.left - sr.left, y = cr.top - sr.top;
+  let w = cr.width, h = cr.height;
+  const er = mediaEl && mediaEl.getBoundingClientRect ? mediaEl.getBoundingClientRect() : null;
+  if (er && er.width && er.height) {
+    const il = Math.max(cr.left, er.left), it = Math.max(cr.top, er.top);
+    const ir = Math.min(cr.left + cr.width, er.left + er.width);
+    const ib = Math.min(cr.top + cr.height, er.top + er.height);
+    if (ir - il > 0 && ib - it > 0) {
+      x = il - sr.left; y = it - sr.top;
+      w = ir - il; h = ib - it;
+    }
+  }
   layer.style.left = x + 'px';
   layer.style.top = y + 'px';
-  layer.style.width = cr.width + 'px';
-  layer.style.height = cr.height + 'px';
-  layer.style.setProperty('--ov-w', cr.width + 'px');
-  layer.style.setProperty('--ov-h', cr.height + 'px');
+  layer.style.width = w + 'px';
+  layer.style.height = h + 'px';
+  layer.style.setProperty('--ov-w', w + 'px');
+  layer.style.setProperty('--ov-h', h + 'px');
   layer.classList.remove('hidden');
-  return { x, y, w: cr.width, h: cr.height };
+  return { x, y, w, h };
 }
 
 /* ---------- rendering ---------- */

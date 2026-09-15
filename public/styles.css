@@ -2586,8 +2586,17 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 .st-ring.muted .st-thumb{filter:grayscale(.85) brightness(.72)}
 /* A ring thumbnail that carries the post's markup (storyThumbWithMarkup):
    the wrapper IS the circle, the media fills it and the overlay layer is
-   fitted on top of the photo with the same cover crop the ring uses. */
-.st-thumb-ov{display:block;overflow:hidden}
+   fitted on top of the photo with the same cover crop the ring uses.
+   It is positioned EXACTLY like `.st-thumb` (inset 4.5px — the overfill that
+   covers the avatar's widest face circle) plus `position`, which is
+   load-bearing rather than decoration: the layer inside it is
+   `position:absolute` and ovFitLayer() writes its offsets in the WRAPPER's own
+   coordinates, so without a positioned wrapper those offsets are resolved
+   against whatever ancestor happens to be positioned — on the story center's
+   hero that was the whole banner, which laid the sticker (and its font size,
+   8.5% of the layer's height) out against a 1100x162 banner and spilled the
+   text across the title and the Watch/Add buttons. */
+.st-thumb-ov{position:absolute;inset:4.5px;width:calc(100% - 9px);height:calc(100% - 9px);display:block;overflow:hidden}
 .st-thumb-ov>.st-thumb-media{width:100%;height:100%;object-fit:cover;border-radius:50%;display:block}
 /* While a thumbnail is in the ring the face behind it is only a fallback (it
    returns by itself if the media fails — storyThumbEl removes the element). It
