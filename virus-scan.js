@@ -1,34 +1,25 @@
-// Virus scanning for uploads (Harbin) + gated serving until clean.
+// Virus scanning for uploads (ClamAV) + gated serving until clean.
 //
 // Why scan everything, not just .exe: beyond blocking obviously dangerous
 // types, anyone can rename malware.exe to photo.jpg, share it, and tell
 // people to rename it back after downloading. Content sniffing by
 // extension is theater — so every uploaded file is scanned by content.
 //
-// Why Harbin (https://github.com/jreoka/harbin): it decides with a
-// machine-learned model compiled into the executable, so there is no daemon to
-// supervise, no signature database to download, no signature-reload schedule and
-// no network in the detection path — no resident engine taking the largest share
-// of the box's memory. One binary, one argument:
-//
-//     harbin <file-or-directory>
-//
-// Exit code 0 = nothing found, 1 = a threat was found, 2 = it could not run.
-// A report line carries the score and the structural evidence, which is what
-// the chat card and the admin panel surface.
-//
-// That one argument is the engine's whole interface, by upstream design: every
-// internal flag (the old `--model-info` included) is compiled out of the
-// shipped binary behind Harbin's `devtools` feature, so this module never
-// passes one. The model's shape — the proof that the binary really carries a
-// detector — is read from `HARBIN_VERBOSE=1` on a real scan (see probeEngine).
+// Why ClamAV (https://www.clamav.net), in its own container: it is the
+// reference open-source signature engine, and a signature engine is only worth
+// running with current signatures — a database to hold, a downloader on a
+// schedule, and a daemon that keeps the database loaded in RAM. That is a
+// service, so it is a sibling `clamav/clamav` container (see docker-compose.yml)
+// and this app is a client of it over TCP. Nothing about that database belongs in
+// the app's image or its process, and nothing about the app's filesystem needs to
+// be visible to the daemon: uploads are STREAMED to it with `INSTREAM` (see
+// clamav.js), so a scan costs no staging copy and needs no shared volume.
 //
 // Flow:
 // - /api/upload (and every image uploader) stores the bytes, then
 //   queueFileScan(key) records a `pending` row in file_scans.
-// - The worker below hands Harbin a PATH. On local disk the stored file is
-//   scanned in place; in S3 mode the object is written to a temp file first,
-//   because Harbin takes a path and never a stream. One file per slot.
+// - The worker below STREAMS those bytes into clamd (from disk, or straight
+//   from the object store — neither is ever staged) in one file per slot.
 // - /uploads/* refuses to serve files/ keys until the row is `clean`
 //   (423 while pending, 410 once an infected file is deleted). Message
 //   attachments carry the row status, so chat renders a scanning /
@@ -49,8 +40,19 @@
 //   messages (hooked via setScanHooks) so scanning cards flip to the
 //   real file without a refresh.
 //
+// Verdicts are recorded against the ENGINE THAT MADE THEM (`engine`, e.g.
+// `clamav/1.4.6`) rather than against "ClamAV" as a word. That column is the
+// bucket sweep's ledger (bucket-scan.js): a row whose engine is not the engine
+// running now — an upload from before the swap, or from a ClamAV generation
+// before this one — is exactly what a background pass re-judges. Upgrading
+// ClamAV is therefore what re-verifies the stored tree, with no migration step
+// and no flag to remember. Signature UPDATES within one generation are
+// deliberately not a new generation: a daily database bump re-scanning every
+// stored object would be an unbounded job for no security gain, and every new
+// upload is judged by the current database anyway.
+//
 // Failure posture is fail-OPEN with loud logs + admin visibility: without
-// working AV (binary missing in local dev, an unreadable embedded model)
+// working AV (no clamd in local dev, a daemon that cannot load its database)
 // uploads must keep working, never wedge in `pending` forever.
 //
 // Env:
@@ -58,32 +60,21 @@
 //                            while the slot compresses them, provided
 //                            MEDIA_COMPRESS is on; with both off they record
 //                            `clean` immediately.
-//   HARBIN_BIN               engine binary (default `harbin`, i.e. PATH). A path
-//                            ending in .js/.cjs/.mjs is run with the current
-//                            Node binary instead — that is how the test suite
-//                            drops in a stand-in engine, and it keeps the
-//                            pipeline testable on a box with no Rust toolchain.
-//   HARBIN_TMP_DIR           where S3 objects are staged for a scan (default
-//                            the OS temp dir)
-//   HARBIN_TIMEOUT_MS        base per-file scan timeout in ms (default 120000,
+//   CLAMAV_HOST              clamd host (default `clamav`, the compose service)
+//   CLAMAV_PORT              clamd TCP port (default 3310)
+//   CLAMAV_TIMEOUT_MS        base per-file scan timeout in ms (default 120000,
 //                            plus the file's own size; capped at 10 minutes)
-//   HARBIN_BLOCK_SUSPICIOUS  =1 also refuses Harbin's `suspicious` band
-//                            (score >= 0.60). Off by default, deliberately:
-//                            Harbin's shipped operating point is the malicious
-//                            threshold (0.95), where its recall was 1.00000 with
-//                            4 false positives in 70,300 benign files. The band
-//                            is counted and logged either way.
+//   CLAMAV_VERIFY_EICAR=1    the probe also proves the daemon detects the EICAR
+//                            test string (set in the Docker image)
+//   VIRUS_SCAN_CONCURRENCY   scan slots (default 3, max 10)
 'use strict';
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
-const { execFile } = require('child_process');
-const { pipeline } = require('stream/promises');
 
 const db = require('./db');
 const storage = require('./storage');
+const clamav = require('./clamav');
 
 const now = () => Date.now();
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'data', 'uploads');
@@ -97,21 +88,6 @@ function compressing() {
 }
 function slotOn() { return SCANNING || compressing(); }
 
-// The engine. `harbin` on PATH by default; the Docker image installs exactly
-// that, and HARBIN_BIN is the escape hatch for a local build or a stand-in.
-const HARBIN_BIN = process.env.HARBIN_BIN || 'harbin';
-const HARBIN_IS_SCRIPT = /\.(js|cjs|mjs)$/i.test(HARBIN_BIN);
-const BLOCK_SUSPICIOUS = process.env.HARBIN_BLOCK_SUSPICIOUS === '1';
-const TMP_DIR = process.env.HARBIN_TMP_DIR || os.tmpdir();
-const TIMEOUT_BASE_MS = Math.max(1000, parseInt(process.env.HARBIN_TIMEOUT_MS || '120000', 10) || 120000);
-// Staged objects are named with this prefix so a restart can tell its own
-// leftovers from anything else living in the temp dir.
-const TEMP_PREFIX = 'cf-scan-';
-// The engine probe's own scratch file. Deliberately NOT under TEMP_PREFIX:
-// cleanTempDir() unlinks everything carrying that prefix, and a probe may be
-// running when it does — unlinking the file out from under a running scan would
-// read as a dead engine.
-const PROBE_PREFIX = 'cf-engine-probe-';
 const KICK_MS = 500;
 const IDLE_MS = 10000;
 const MAX_ATTEMPTS = 3;
@@ -125,15 +101,16 @@ const S3_DELETE_TIMEOUT_MS = 30000;
 // headroom) is presumed wedged — release the claim + count an attempt so
 // another slot retries. The dangling op, if it ever lands, is idempotent.
 const SLOT_TIMEOUT_MS = 12 * 60 * 1000;
-// Parallel scan slots. Harbin is a short-lived process that reads at most the
-// first 256 KiB of content plus up to 4 MiB of synthesised memory image, so a
-// slot costs a process and a temp file rather than a share of a resident
-// engine — which is why this can be wider than a daemon-backed box could afford.
+// Parallel scan slots. Each slot holds one connection to clamd and streams one
+// file through it; the daemon's own MaxThreads (see the compose file) is the
+// ceiling on how many it can serve, so this stays well under it. Memory per slot
+// is one 64 KiB chunk in flight (nothing is buffered whole), which is why this
+// can be a handful rather than a queue of one.
 const _conc = parseInt(process.env.VIRUS_SCAN_CONCURRENCY || '3', 10);
 const CONCURRENCY = Math.min(10, Math.max(1, Number.isFinite(_conc) ? _conc : 3));
 // How long a broken engine waits before it is probed again. A transient
-// failure (a fork storm, an OOM kill) must not turn scanning off for the
-// lifetime of the process.
+// failure (a daemon reloading its database, an OOM kill) must not turn scanning
+// off for the lifetime of the process.
 const ENGINE_RETRY_MS = 30000;
 
 const log = (...a) => console.log('[virusscan]', ...a);
@@ -146,16 +123,17 @@ const claimed = new Set(); // keys held by in-flight slots (single process)
 const claimAt = new Map(); // key -> claim timestamp (watchdog)
 let timer = null;
 let lastStuckWarn = 0;
-let noEngine = false; // binary missing — fail open
-let engineFailed = false; // binary present but broken — fail open, loudly
+let noEngine = false; // clamd not reachable — fail open
+let engineFailed = false; // reachable but unusable — fail open, loudly
 let engineStarting = false;
 let engineReady = false;
-let engineModel = null; // the model shape probeEngine read off the engine
+let engineIdentity = null; // 'clamav/1.4.6' — the ledger mark written on every verdict
+let engineInfo = null; // { engine, db, dbDate, raw } — the admin line's detail
 let lastProbeAt = 0;
 let loggedNoEngine = false;
 const hooks = { onScanChange: null };
 const stats = {
-  startedAt: 0, ticks: 0, scanned: 0, clean: 0, infected: 0, suspicious: 0, errors: 0,
+  startedAt: 0, ticks: 0, scanned: 0, clean: 0, infected: 0, errors: 0,
   lastTickAt: 0, lastScan: null, lastError: null,
 };
 
@@ -177,12 +155,15 @@ async function ensureTables() {
   await db.exec('ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS claimed_at BIGINT');
   await db.exec('CREATE INDEX IF NOT EXISTS idx_file_scans_claim ON file_scans(status, claimed_at)');
   // What the ENGINE said, kept so a verdict can be explained later instead of
-  // being a status with no reasoning behind it (the attachment menu's "Harbin
-  // info" reads these; the label in `error` alone cannot say what was found or
-  // how sure the engine was).
+  // being a status with no reasoning behind it (the attachment menu's "Scan
+  // info" reads these; a status alone cannot say what was found or by which
+  // engine generation).
   await db.exec("ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS verdict TEXT");
   await db.exec('ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS score REAL');
   await db.exec("ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS evidence TEXT NOT NULL DEFAULT ''");
+  // The engine generation ('clamav/1.4.6'), never the word "ClamAV": this column
+  // is the bucket sweep's ledger marker, and a generation change is what makes
+  // the stored tree get re-judged (see the header).
   await db.exec("ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS engine TEXT NOT NULL DEFAULT ''");
   // Whether a `pending` row holds serving back. 1 = yes, which is every upload:
   // the bytes must not be published before the verdict lands. 0 = a BACKGROUND
@@ -265,24 +246,14 @@ async function scanStatus(key) {
 }
 
 // Batch version for message hydration (one query per page, not per file).
-// Carries the ENGINE's band alongside the effective status, because the two are
-// not the same thing: a file in Harbin's suspicious band is served (that band is
-// not blocked — see HARBIN_BLOCK_SUSPICIOUS), so its status is `clean` and the
-// only way a message can say "the engine hesitated about this" is to be told.
 async function scanInfoMap(keys) {
   const out = new Map();
   const uniq = [...new Set((keys || []).filter(Boolean))];
   if (!uniq.length || !slotOn()) return out;
   try {
     const ph = uniq.map(() => '?').join(',');
-    const rows = await db.prepare(`SELECT key, status, gated, verdict, score FROM file_scans WHERE key IN (${ph})`).all(...uniq);
-    for (const r of rows) {
-      out.set(r.key, {
-        status: effectiveStatus(r.status, r.gated),
-        verdict: r.verdict || null,
-        score: r.score == null ? null : Number(r.score),
-      });
-    }
+    const rows = await db.prepare(`SELECT key, status, gated FROM file_scans WHERE key IN (${ph})`).all(...uniq);
+    for (const r of rows) out.set(r.key, { status: effectiveStatus(r.status, r.gated) });
   } catch {}
   return out;
 }
@@ -294,7 +265,7 @@ async function scanStatusMap(keys) {
   return out;
 }
 
-// The RAW record, for the "Harbin info" panel: the effective status hides the
+// The RAW record, for the "Scan info" panel: the effective status hides the
 // fact that a background re-scan is queued, and hides `attempts`/`error`
 // entirely, and this view exists to show the reader exactly that.
 async function scanDetail(key) {
@@ -322,102 +293,15 @@ async function emitChange(key, status) {
   catch (e) { warn('onScanChange failed: ' + String((e && e.message) || e).slice(0, 160)); }
 }
 
-// ---------- the Harbin engine ----------
+// ---------- the ClamAV engine ----------
 
-// `harbin <path>`, or `<node> <stand-in.js> <path>` when HARBIN_BIN names a
-// script. No shell is ever involved, so a file name can never be read as a
-// command — which matters, because these paths are derived from uploads.
-function harbinCommand(arg) {
-  return HARBIN_IS_SCRIPT
-    ? { cmd: process.execPath, args: [HARBIN_BIN, arg] }
-    : { cmd: HARBIN_BIN, args: [arg] };
-}
-
-// One engine run. Never rejects: the caller decides what a bad exit means.
-// `code` is the process exit status, or null when it never ran (missing
-// binary, killed on timeout) — `error` then says why. `env` is for the probe,
-// which needs engine diagnostics on stderr; Node REPLACES the child's
-// environment rather than merging, so whatever is passed has to carry
-// process.env with it.
-function runHarbinRaw(arg, timeoutMs, env) {
-  const { cmd, args } = harbinCommand(arg);
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = (v) => { if (!done) { done = true; resolve(v); } };
-    let child = null;
-    try {
-      child = execFile(cmd, args, {
-        timeout: timeoutMs,
-        killSignal: 'SIGKILL',
-        maxBuffer: 8 * 1024 * 1024, // a directory scan's report, never a file's
-        windowsHide: true,
-        ...(env ? { env: { ...process.env, ...env } } : {}),
-      }, (err, stdout, stderr) => {
-        const out = String(stdout || '');
-        const errOut = String(stderr || '');
-        if (!err) return finish({ code: 0, stdout: out, stderr: errOut, error: null });
-        // Only a real numeric status is a verdict. `err.code` is the STRING
-        // 'ENOENT' for a missing binary and null for a signalled kill, and
-        // Number(null) is 0 — reading either as "exit 0" would turn a dead
-        // engine into a clean verdict, which is the one failure that must
-        // never be silent.
-        const code = typeof err.code === 'number' ? err.code : null;
-        // A non-zero exit is a verdict, not a failure; anything without an exit
-        // status (ENOENT, ETIMEDOUT, a signal) is a failure.
-        if (code !== null) return finish({ code, stdout: out, stderr: errOut, error: null });
-        const why = err.killed ? 'harbin_timeout'
-          : err.code === 'ENOENT' ? 'harbin_binary_not_found'
-          : String(err.code || err.message || 'harbin_failed');
-        finish({ code: null, stdout: out, stderr: errOut, error: why });
-      });
-    } catch (e) {
-      return finish({ code: null, stdout: '', stderr: '', error: String((e && e.message) || e) });
-    }
-    if (child && child.stdin) { try { child.stdin.end(); } catch {} }
-  });
-}
-
-// The engine, probed by RUNNING it: the binary starts, the embedded model
-// loads, and a real file comes back with a verdict. That is strictly more than
-// the old `harbin --model-info` flag proved, and it is now the only way to ask:
-// upstream compiles every internal flag out of the shipped binary, so
-// `--model-info` is not there to call. `HARBIN_VERBOSE=1` is the shipped
-// build's own diagnostic — it prints the loaded model's shape to stderr during
-// a scan, and says in as many words when there is no detection model at all.
-// That last answer is the one that must be refused: a model-less build answers
-// CLEAN to everything, which is worse than no scanner because it is believed.
-async function probeEngine() {
-  const probePath = path.join(TMP_DIR, PROBE_PREFIX + process.pid + '.bin');
-  try {
-    ensureTmpDir();
-    // Harmless ASCII, and deliberately not anything the engine has an opinion
-    // about: the probe is about the engine coming up, not about what it scores.
-    fs.writeFileSync(probePath, Buffer.from('campfire engine probe: harmless text\n', 'utf8'));
-    const r = await runHarbinRaw(probePath, 20000, { HARBIN_VERBOSE: '1', HARBIN_QUIET: '1' });
-    if (r.error) return { ok: false, why: r.error };
-    const out = r.stdout + '\n' + r.stderr;
-    if (/without a detection model/i.test(out)) return { ok: false, why: 'no_detection_model' };
-    const num = (re) => { const m = re.exec(out); return m ? Number(m[1]) : 0; };
-    const trees = num(/model\s+(\d+)\s+trees/i);
-    // No model line at all: the engine either could not run (exit 2), or it
-    // answered something this parser does not recognise. Neither is a working
-    // scanner, so neither may read as one.
-    if (!trees) return { ok: false, why: r.code === 2 ? 'engine_exit_2' : 'no_model_reported' };
-    return {
-      ok: true,
-      model: {
-        trees,
-        nodes: num(/(\d+)\s+nodes/i),
-        leaves: num(/(\d+)\s+leaves/i),
-        features: num(/(\d+)\s+features/i),
-        depth: num(/max depth\s+(\d+)/i),
-      },
-    };
-  } catch (e) {
-    return { ok: false, why: String((e && e.message) || e) };
-  } finally {
-    try { fs.unlinkSync(probePath); } catch {}
-  }
+// The engine generation every verdict is recorded against. `clamav/<version>`,
+// deliberately not the signature database revision: a new ClamAV is what
+// re-verifies the stored tree (bucket-scan.js), while a daily signature bump
+// must not turn into a nightly full-bucket rescan.
+function identityFor(info) {
+  const engine = (info && info.engine) || '';
+  return engine ? 'clamav/' + engine : '';
 }
 
 async function ensureEngine() {
@@ -426,28 +310,31 @@ async function ensureEngine() {
   lastProbeAt = now();
   engineStarting = true;
   try {
-    const probe = await probeEngine();
+    const probe = await clamav.probe();
     if (!probe.ok) {
-      if (probe.why === 'harbin_binary_not_found') {
+      if (probe.why === 'clamav_unreachable') {
         noEngine = true;
         engineFailed = false;
         if (!loggedNoEngine) {
           loggedNoEngine = true;
-          warn('Harbin engine not found at "' + HARBIN_BIN + '" — uploads fail open as clean until it is installed (see the Dockerfile)');
+          warn('ClamAV not reachable at ' + clamav.host() + ':' + clamav.port()
+            + ' — uploads fail open as clean until the clamav service is up (see docker-compose.yml)');
         }
       } else {
         noEngine = false;
         engineFailed = true;
-        warn('Harbin engine unusable (' + probe.why + ') — uploads fail open, admin alerted');
+        warn('ClamAV unusable (' + probe.why + ') — uploads fail open, admin alerted');
       }
       return;
     }
-    engineModel = probe.model;
+    engineInfo = { engine: probe.engine, db: probe.db, dbDate: probe.dbDate };
+    engineIdentity = identityFor(probe);
     engineReady = true;
     engineFailed = false;
     noEngine = false;
-    log('Harbin engine ready (' + HARBIN_BIN + ': ' + engineModel.trees + ' trees, '
-      + engineModel.nodes + ' nodes, ' + engineModel.features + ' features)');
+    log('ClamAV engine ready (' + clamav.host() + ':' + clamav.port() + ' — ' + probe.engine
+      + ', signatures ' + probe.db + ' ' + probe.dbDate
+      + (clamav.eicarVerification() ? ', EICAR detected' : '') + ')');
     kickVirusScan();
   } catch (e) {
     engineFailed = true;
@@ -457,61 +344,59 @@ async function ensureEngine() {
   }
 }
 
-// The verdict, parsed from the report line and the exit code. Harbin prints
-// `[CLEAN|SUSPECT|MALWARE|ERROR] <path>  score N.NNNN  (size)` and follows it
-// with evidence lines. The tag is authoritative — a `SUSPECT` file exits 0 —
-// so the exit code is only the fallback when no report line is readable.
+// The verdict, built from the daemon's own answer. ClamAV has exactly two
+// outcomes — a signature matched, or nothing did — so there is no middle band to
+// carry: `clean: false` is a detection, and `signature` is the name of the
+// signature that matched, which is the finding worth storing.
 //   { clean: true,  detail }                  nothing found
-//   { clean: true,  suspicious, detail }      the suspicious band, served
-//   { clean: false, virus, detail }           a threat
-// `detail` carries what the engine actually said (verdict, score, findings) so
-// it can be stored and explained later rather than being a bare status.
-// Throws on anything that means "the engine did not answer".
-function verdictFrom(run) {
-  const out = run.stdout + '\n' + run.stderr;
-  const tag = /^\s*\[(CLEAN|SUSPECT|MALWARE|ERROR)\]/m.exec(out);
-  const rawScore = (/score\s+([0-9.]+)/.exec(out) || [])[1] || '';
-  const score = rawScore === '' ? null : Number(rawScore);
-  const findings = (out.match(/^\s*(?:indicator|evidence):\s*(.+)$/gm) || [])
-    .map((l) => l.replace(/^\s*(?:indicator|evidence):\s*/, '').trim().replace(/\s+/g, ' ').slice(0, 160))
-    .filter(Boolean)
-    .slice(0, 8);
-  const label = (kind) => ('Harbin: ' + (findings[0] || kind) + (rawScore ? ' (' + rawScore + ')' : '')).slice(0, 120);
-  const detail = (verdict) => ({ verdict, score: Number.isFinite(score) ? score : null, findings });
-
-  if (run.error) throw new Error(run.error);
-  const kind = tag ? tag[1] : null;
-
-  if (kind === 'ERROR') {
-    // "cannot read: ..." — the engine ran but could not judge the bytes.
-    const why = (/cannot read:\s*(.+)$/m.exec(out) || [])[1];
-    throw new Error('harbin_unreadable' + (why ? ':' + why.trim().slice(0, 100) : ''));
-  }
-  if (kind === 'MALWARE' || (!kind && run.code === 1)) return { clean: false, virus: label('malware detected'), detail: detail('malicious') };
-  if (kind === 'SUSPECT') return { clean: true, suspicious: label('suspicious'), detail: detail('suspicious') };
-  if (kind === 'CLEAN') return { clean: true, detail: detail('clean') };
-  if (run.code === 2) throw new Error('harbin_could_not_run');
-  // No report line at all and a clean exit: nothing was found worth printing.
-  return { clean: true, detail: detail('clean') };
+//   { clean: false, signature, detail }       a detection
+// Throws on anything that means "the engine did not answer" (see clamav.js).
+// Callers reach it through scanStream(), which is what guarantees the engine
+// identity exists first.
+async function verdictFor(stream, opts) {
+  const res = await clamav.scanStream(stream, opts);
+  const detail = {
+    verdict: res.clean ? 'clean' : 'malicious',
+    signature: res.signature || null,
+    bytes: res.bytes,
+    db: engineInfo && engineInfo.db ? engineInfo.db : null,
+  };
+  if (res.clean) return { clean: true, detail };
+  return { clean: false, signature: res.signature || 'malware', detail };
 }
 
-// The engine's identity, captured AT SCAN TIME. Deliberately just the name: the
-// model's shape (trees, features) is an operator's diagnostic — it belongs in
-// the admin panel's engine line and in scripts/verify-harbin.js, which is where
-// "is this really the detector?" is asked — and reading it back on a file's scan
-// record was noise in a panel a reader opens to find out what happened to their
-// file. What the model WAS is fixed by the image anyway (HARBIN_REF).
-function engineLabel() {
-  return 'Harbin';
+// Test-only: put the module in the state a successful probe leaves it in, so a
+// unit test can exercise the verdict path with no database (startVirusScan is
+// what normally probes, and it owns a migration this module's other tests do not
+// need). Never called by the app.
+function setEngineForTest(info) {
+  engineInfo = { engine: info.engine, db: info.db, dbDate: info.dbDate };
+  engineIdentity = identityFor(engineInfo);
+  engineReady = true;
+  engineFailed = false;
+  noEngine = false;
 }
-// Flatten a verdict into the row's columns.
+
+// The label stored in the row's `error` column: what the chat card and the
+// admin panel show in one line. Names the engine, because a verdict is only
+// meaningful with the engine that produced it.
+function virusLabel(signature) {
+  return ('ClamAV: ' + String(signature || 'malware')).slice(0, 120);
+}
+
+// Flatten a verdict into the row's columns. The engine generation is written on
+// every verdict — it is the bucket sweep's ledger mark (see the header).
 function detailFor(v) {
   const d = (v && v.detail) || {};
+  const lines = [];
+  if (d.signature) lines.push('signature: ' + d.signature);
+  if (d.db) lines.push('signatures: ' + d.db);
+  if (Number.isFinite(d.bytes)) lines.push('bytes scanned: ' + d.bytes);
   return {
     verdict: String(d.verdict || 'clean').slice(0, 20),
-    score: Number.isFinite(d.score) ? d.score : null,
-    evidence: ((d.findings || []).join('\n')).slice(0, 600),
-    engine: engineLabel().slice(0, 120),
+    score: null,
+    evidence: lines.join('\n').slice(0, 600),
+    engine: String(engineIdentity || '').slice(0, 120),
   };
 }
 
@@ -523,36 +408,21 @@ function withTimeout(p, ms, label) {
     try { t.unref(); } catch {}
     Promise.resolve(p).then(
       (v) => { clearTimeout(t); resolve(v); },
-      (e) => { clearTimeout(t); reject(e); }
+      (e) => { clearTimeout(t); reject(e); },
     );
   });
 }
 
-// The staging dir is created on first use rather than only by the startup
-// sweep: `materialize` writes into it, so a scan must not depend on a cleanup
-// pass having run first (and it may be pointed somewhere else entirely by
-// HARBIN_TMP_DIR, including at a path that does not exist yet).
-let tmpDirReady = false;
-function ensureTmpDir() {
-  if (tmpDirReady) return;
-  try { fs.mkdirSync(TMP_DIR, { recursive: true }); tmpDirReady = true; } catch {}
-}
-
-function tempPathFor(key) {
-  ensureTmpDir();
-  const ext = (path.extname(String(key || '')) || '').toLowerCase();
-  const safeExt = /^\.[a-z0-9]{1,8}$/.test(ext) ? ext : '';
-  return path.join(TMP_DIR, TEMP_PREFIX + crypto.randomBytes(16).toString('hex') + safeExt);
-}
-
-// A path for Harbin to read. Local disk needs no copy at all — the stored file
-// IS the path. S3 does, because the engine takes a path and not a stream.
-// Returns {path, size, temp} or null when the bytes are already gone.
+// The bytes for one key, as a STREAM the daemon can be fed — nothing is ever
+// staged to disk for a scan, which is the point of INSTREAM (see the clamav.js
+// header): the object store's own body is piped through, and a local file is
+// read where it lies.
+// Returns { stream, size, where, close } or null when the bytes are already gone.
 // Genuinely-missing objects (NoSuchKey) fall through to null (the row is
 // dropped); any other storage failure THROWS so the row retries with
 // attempts++ instead of being mistaken for gone (an error is fail-open but
 // stays visible, a wrong null would silently skip the scan).
-async function materialize(key) {
+async function openBytes(key) {
   const isGone = (e) => {
     const code = e?.$metadata?.httpStatusCode;
     return code === 404 || code === 403 || e?.name === 'NoSuchKey' || e?.name === 'NotFound';
@@ -572,15 +442,7 @@ async function materialize(key) {
         if (!isGone(e)) throw e;
       }
       if (data && data.Body) {
-        const dest = tempPathFor(key);
-        try {
-          await withTimeout(pipeline(data.Body, fs.createWriteStream(dest)), S3_GET_TIMEOUT_MS, 's3get_timeout');
-          const st = await fs.promises.stat(dest);
-          return { path: dest, size: st.size, temp: true };
-        } catch (e) {
-          try { await fs.promises.unlink(dest); } catch {}
-          throw e;
-        }
+        return { stream: data.Body, size: Number(head.ContentLength) || 0, where: 's3', close: () => { try { data.Body.destroy(); } catch {} } };
       }
       if (data && !data.Body) return null;
       // head ok but get failed-gone: fall through to disk before giving up.
@@ -588,11 +450,13 @@ async function materialize(key) {
   }
   const p = path.join(UPLOAD_DIR, key);
   if (!path.resolve(p).startsWith(path.resolve(UPLOAD_DIR))) return null;
+  let st = null;
   try {
-    const st = await fs.promises.stat(p);
-    if (!st.isFile()) return null;
-    return { path: p, size: st.size, temp: false };
+    st = await fs.promises.stat(p);
   } catch { return null; }
+  if (!st.isFile()) return null;
+  const stream = fs.createReadStream(p);
+  return { stream, size: st.size, where: 'disk', close: () => { try { stream.destroy(); } catch {} } };
 }
 
 async function deleteBytes(key) {
@@ -606,22 +470,24 @@ async function deleteBytes(key) {
   }
 }
 
-function scanTimeoutFor(size) {
-  return Math.min(600000, TIMEOUT_BASE_MS + (Number(size) || 0));
-}
-
-// Judge one path. Throws when the engine did not answer (the caller's retry
+// Judge one stream. Throws when the engine did not answer (the caller's retry
 // path); returns a verdict otherwise. The engine being ready is normally
 // guaranteed by the caller — this re-check is the safety net for any other
 // entry point, and it goes through the same state machine so a successful
 // probe here leaves the module consistent rather than half-initialised.
-async function scanPath(p, size) {
+async function scanStream(src, opts) {
   if (!engineReady) {
     await ensureEngine();
-    if (!engineReady) throw new Error(noEngine ? 'harbin_binary_not_found' : 'harbin_unavailable');
+    if (!engineReady) throw new Error(noEngine ? 'clamav_unreachable' : 'clamav_unavailable');
   }
-  const run = await runHarbinRaw(p, scanTimeoutFor(size));
-  return verdictFrom(run);
+  const label = (opts && opts.label) || 'upload';
+  if (!engineIdentity) {
+    // A verdict must be marked with the engine that made it or the bucket
+    // sweep would re-queue it forever; the probe is the only source of that.
+    await ensureEngine();
+    if (!engineIdentity) throw new Error('clamav_unavailable');
+  }
+  return verdictFor(src.stream, { size: src.size, label });
 }
 
 // ---------- worker ----------
@@ -727,16 +593,22 @@ async function reapStuckClaims() {
 // Scan a candidate file the compressor produced (a local temp path) BEFORE
 // anything is published: true = publish the smaller bytes, false = the
 // candidate is dropped and the original (already verified) file stays.
-// The engine takes the path directly, so unlike the original upload this costs
-// no download at all. An engine failure throws — media-compress leaves the
-// original bytes and the row queued (compressed = 0, the sweeper retries) while
-// the caller falls back to publishing the verdict for the original bytes.
+// The candidate is streamed in from the compressor's own temp file, so this
+// costs one more pass over bytes that are already on local disk.
+// An engine failure throws — media-compress leaves the original bytes and the
+// row queued (compressed = 0, the sweeper retries) while the caller falls back
+// to publishing the verdict for the original bytes.
 async function scanCandidate(cand) {
   if (!cand || !cand.path) return true;
-  const verdict = await scanPath(cand.path, cand.size);
-  if (verdict.clean) return true;
-  warn('compressed output flagged (' + String(verdict.virus || 'malware').slice(0, 80) + ') — keeping the original bytes');
-  return false;
+  const src = { stream: fs.createReadStream(cand.path), size: Number(cand.size) || 0, close: () => {} };
+  try {
+    const verdict = await scanStream(src, { label: 'compressed candidate' });
+    if (verdict.clean) return true;
+    warn('compressed output flagged (' + virusLabel(verdict.signature) + ') — keeping the original bytes');
+    return false;
+  } finally {
+    src.close();
+  }
 }
 
 // Single-pass media processing, run inside the slot before the bytes are
@@ -806,9 +678,9 @@ async function processRow(row) {
   // broken engine is re-probed on the retry interval, so a transient failure
   // recovers instead of leaving scanning off for the life of the process.
   if (noEngine) {
-    // Re-probe on the retry interval: installing the engine starts scanning
-    // without a restart, and the probe is throttled so a dev box without one
-    // is not asking the filesystem per upload.
+    // Re-probe on the retry interval: bringing the clamav service up starts
+    // scanning without a restart, and the probe is throttled so a dev box
+    // without a daemon is not opening a socket per upload.
     ensureEngine().catch(() => {});
     await markRow(row.key, 'clean', '');
     stats.scanned++; stats.clean++;
@@ -830,29 +702,14 @@ async function processRow(row) {
   }
   let src = null;
   try {
-    src = await materialize(row.key);
+    src = await openBytes(row.key);
     if (!src) {
       // Bytes already gone (deleted message, sweep) — nothing to gate.
       try { await db.prepare('DELETE FROM file_scans WHERE key = ?').run(row.key); } catch {}
       return 'done';
     }
-    const verdict = await scanPath(src.path, src.size);
+    const verdict = await scanStream(src, { label: row.key });
     stats.scanned++;
-    if (verdict.suspicious) {
-      // Above Harbin's suspicious band (0.60) but below its shipped operating
-      // point (0.95). Reported, never blocked, unless the operator asks for it.
-      stats.suspicious++;
-      stats.lastScan = { key: row.key, result: 'suspicious:' + verdict.suspicious, at: now() };
-      if (BLOCK_SUSPICIOUS) {
-        await markRow(row.key, 'infected', verdict.suspicious, detailFor(verdict));
-        stats.infected++;
-        await deleteBytes(row.key);
-        warn('SUSPICIOUS (HARBIN_BLOCK_SUSPICIOUS=1): deleted bytes for ' + row.key + ' — ' + verdict.suspicious);
-        await emitChange(row.key, 'infected');
-        return 'done';
-      }
-      log('suspicious (served): ' + row.key + ' — ' + verdict.suspicious);
-    }
     if (verdict.clean) {
       // The bytes the client will actually get are verified before this
       // verdict is published (see processMedia): scan -> compress -> scan.
@@ -863,7 +720,7 @@ async function processRow(row) {
       await emitChange(finalKey, 'clean');
       log('clean: ' + finalKey);
     } else {
-      const virus = String(verdict.virus || 'malware').slice(0, 120);
+      const virus = virusLabel(verdict.signature);
       await markRow(row.key, 'infected', virus, detailFor(verdict));
       stats.infected++;
       stats.lastScan = { key: row.key, result: 'infected:' + virus, at: now() };
@@ -883,13 +740,13 @@ async function processRow(row) {
     } else {
       try { await db.prepare('UPDATE file_scans SET attempts = attempts + 1, error = ? WHERE key = ?').run(err, row.key); } catch {}
     }
-    if (/harbin_unavailable|harbin_binary_not_found/.test(err)) {
+    if (/clamav_unavailable|clamav_unreachable|clamav_connect|clamav_timeout/.test(err)) {
       engineReady = false;
       ensureEngine().catch(() => {});
     }
     return 'done';
   } finally {
-    if (src && src.temp) { try { await fs.promises.unlink(src.path); } catch {} }
+    if (src) { try { src.close(); } catch {} }
   }
   } finally {
     claimed.delete(row.key);
@@ -938,21 +795,6 @@ function kickVirusScan() {
   schedule(KICK_MS);
 }
 
-// Staged downloads are unlinked when a scan finishes; a crash mid-scan leaves
-// them behind. Only this process's own prefix is touched, and a single startup
-// pass keeps the temp dir from growing across restarts.
-async function cleanTempDir() {
-  ensureTmpDir();
-  let names = [];
-  try { names = await fs.promises.readdir(TMP_DIR); } catch { return; }
-  let removed = 0;
-  for (const n of names) {
-    if (!n.startsWith(TEMP_PREFIX)) continue;
-    try { await fs.promises.unlink(path.join(TMP_DIR, n)); removed++; } catch {}
-  }
-  if (removed) log('cleared ' + removed + ' leftover staged file(s) from ' + TMP_DIR);
-}
-
 async function getScanStats() {
   const counts = { pending: 0, clean: 0, infected: 0, error: 0 };
   try {
@@ -965,14 +807,15 @@ async function getScanStats() {
     enabled: slotOn(), scanning: SCANNING, compressing: compressing(),
     mode: SCANNING ? 'scan' : slotOn() ? 'compress' : 'off',
     engine: !SCANNING ? 'off' : noEngine ? 'none' : engineFailed ? 'failed' : engineReady ? 'ready' : 'starting',
-    engineReady, engineBinary: HARBIN_BIN, model: engineModel,
-    blockSuspicious: BLOCK_SUSPICIOUS,
+    engineReady, engineIdentity, engineInfo,
+    engineHost: clamav.host() + ':' + clamav.port(),
+    eicarVerified: clamav.eicarVerification(),
     counts,
     concurrency: CONCURRENCY, active, busy: active > 0,
     stuck: [...claimAt].map(([key, at]) => ({ key, ageMs: now() - at })).filter((x) => x.ageMs > 60000),
     startedAt: stats.startedAt, ticks: stats.ticks,
     scanned: stats.scanned, clean: stats.clean, infected: stats.infected,
-    suspicious: stats.suspicious, errors: stats.errors,
+    errors: stats.errors,
     lastTickAt: stats.lastTickAt, lastScan: stats.lastScan, lastError: stats.lastError,
   };
 }
@@ -984,15 +827,15 @@ function startVirusScan() {
   ensureTables().then(() => {
     stats.startedAt = now();
     // No scanner: the slot's whole job is to settle each upload's bytes before
-    // they are published, so there is no engine to probe and no model to load.
+    // they are published, so there is no engine to probe and no signatures to
+    // load.
     if (!SCANNING) {
       log('worker on (compression-only slot: no engine — uploads wait for compression, then serve)');
       schedule(2000);
       return;
     }
-    log('worker on (Harbin at "' + HARBIN_BIN + '", staging in ' + TMP_DIR + ')');
+    log('worker on (ClamAV at ' + clamav.host() + ':' + clamav.port() + ', streaming with INSTREAM)');
     schedule(2000);
-    cleanTempDir().catch(() => {});
     ensureEngine().catch(() => {});
   }).catch((e) => warn('migration failed: ' + String((e && e.message) || e).slice(0, 200)));
 }
@@ -1002,10 +845,15 @@ module.exports = {
   scanStatus, scanStatusMap, scanInfoMap, scanGating, setScanHooks, getScanStats,
   scanDetail, effectiveStatus,
   scanningEnabled: () => SCANNING,
+  // The engine generation running right now ('clamav/1.4.6'), for callers that
+  // need to say whether a stored verdict came from this engine or an earlier one
+  // (the Scan info panel). Cheap: it is the identity the last probe recorded.
+  engineNow: () => engineIdentity,
   emitScanChange: emitChange,
-  // exported for unit tests (the stand-in engine, the parser, and the S3
-  // staging path, which is the shape production runs and the local test
+  // exported for unit tests (the ClamAV client, the identity it records, and the
+  // object-store path, which is the shape production runs and the local test
   // server does not):
-  _runHarbinRaw: runHarbinRaw, _verdictFrom: verdictFrom, _probeEngine: probeEngine,
-  _materialize: materialize, _tempPathFor: tempPathFor, TEMP_PREFIX,
+  _openBytes: openBytes, _probeEngine: () => clamav.probe(), _identityFor: identityFor,
+  _virusLabel: virusLabel, _detailFor: detailFor,
+  _scanStream: scanStream, _setEngineForTest: setEngineForTest,
 };

@@ -293,15 +293,17 @@ async function main() {
     'and bind it for both');
   // One shared wire shape (attWire) feeds both hydrations, so the pair can only
   // be handed to the client in one place — and the GIF identity, and the
-  // engine's band, with it.
+  // scanner's effective status, with it.
   check((server.match(/w: Number\(a\.w\) \|\| 0, h: Number\(a\.h\) \|\| 0/g) || []).length === 1
     && /function attWire\(a, info\)/.test(server) && (server.match(/attWire\(a, sk && scanMap\.get\(sk\)\)/g) || []).length === 2,
     'both message payloads hand the pair to the client');
-  // A file in Harbin's SUSPICIOUS band is served, so its `scan` is `clean` and
-  // the band is the only thing that can tell a message to warn about it.
+  // ClamAV has two outcomes — a signature matched or none did — so the wire
+  // carries the effective STATUS and nothing else: there is no middle band for a
+  // message to warn about, and `scanVerdict`/`scanScore` are gone with the engine
+  // that had one.
   check((server.match(/scanInfoMap\(attRows\.map\(\(a\) => scanKeyForUrl\(a\.url\)\)\)/g) || []).length === 2
-    && /scanVerdict: info\.verdict/.test(server),
-    'and carry the engine\'s band, so a suspicious file can be warned about');
+    && !/scanVerdict/.test(server) && !/scanScore/.test(server),
+    'and carry only the scan status — the suspicious-band fields are gone');
 
   console.log('\n[4] the client reserves the box');
   check(/const d = attDimsFor\(a\);/.test(markSource) && /width:min\(\$\{d\.w\}px,100%,420px,calc\(var\(--att-max-h,320px\) \* \$\{r\}\)\)/.test(markSource),

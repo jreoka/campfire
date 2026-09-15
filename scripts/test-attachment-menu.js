@@ -2,7 +2,7 @@
 // conventions).
 //
 // The ask: media must not open a dedicated menu of its own any more. A message
-// that carries attachments grows those rows — copy / save / link, and Harbin
+// that carries attachments grows those rows — copy / save / link, and Scan
 // info — inside the menu the message already has, so one right-click or
 // long-press on a message with media covers both. The two things that were easy
 // to get wrong and are checked here:
@@ -45,11 +45,11 @@ if (!attSrc) { console.log('FAILED: could not slice the attachment builders out 
 const SVG = '<svg></svg>';
 const attBuild = new Function(
   'IMG_COPY_SVG', 'SAVE_SVG', 'LINK_SVG', 'OPEN_SVG',
-  'toast', 'copyTextNow', 'copyImageToClipboard', 'saveMediaFile', 'openMediaLink', 'harbinInfoItem',
+  'toast', 'copyTextNow', 'copyImageToClipboard', 'saveMediaFile', 'openMediaLink', 'scanInfoItem',
   attSrc + '\nreturn { attFromEl, attItemsFor, attMenuItems, msgAttItems };'
 );
 const att = attBuild(SVG, SVG, SVG, SVG, () => {}, () => {}, () => {}, () => {}, () => {},
-  (a) => (a && a.id ? { label: 'Harbin info', icon: SVG, fn: () => {} } : null));
+  (a) => (a && a.id ? { label: 'Scan info', icon: SVG, fn: () => {} } : null));
 const labels = (items) => items.map((i) => i.label || ('[' + i.head + ']'));
 
 // ---- the message menu itself, out of the real module ----
@@ -79,7 +79,7 @@ console.log('\n[1] one attachment grows the message menu with its rows');
 const one = seq(messageMenuItems(post([img('a1', 'cat.png')]), 'm1', 0, 0));
 check(one.includes('Copy text') && one.includes('Mark unread') && one.includes('Bookmark message'),
   'the message actions are all still there', one);
-for (const want of ['Copy image', 'Save image', 'Copy image link', 'Open image link', 'Harbin info']) {
+for (const want of ['Copy image', 'Save image', 'Copy image link', 'Open image link', 'Scan info']) {
   check(one.includes(want), 'and the picture adds ' + want, one);
 }
 check(one.indexOf('Copy text') < one.indexOf('Copy image') && one.indexOf('Open image link') < one.indexOf('Mark unread'),
@@ -88,7 +88,7 @@ check(!one.includes('[cat.png]'), 'a single attachment needs no heading — the 
 
 console.log('\n[2] a message with no media is unchanged');
 const none = seq(messageMenuItems(post([]), 'm1', 0, 0));
-check(!none.some((l) => /Harbin|Save |Copy image|Copy link/.test(l)), 'no attachment rows at all', none);
+check(!none.some((l) => /Scan info|Save |Copy image|Copy link/.test(l)), 'no attachment rows at all', none);
 check(none.length === one.length - 7, 'exactly the attachment\'s five rows and their two separators are missing', { none: none.length, one: one.length });
 
 console.log('\n[3] several attachments name their own rows');
@@ -115,20 +115,20 @@ check(seq(messageMenuItems(post([img('a1', 'cat.png')]), 'm1', 0, 0, sameEl)).fi
 
 console.log('\n[5] nothing that cannot work is offered');
 const shapes = {
-  video: { label: ['Save video', 'Copy video link', 'Open video link', 'Harbin info'] },
-  audio: { label: ['Save audio', 'Copy link', 'Harbin info'] },
-  file: { label: ['Save file', 'Copy link', 'Harbin info'] },
+  video: { label: ['Save video', 'Copy video link', 'Open video link', 'Scan info'] },
+  audio: { label: ['Save audio', 'Copy link', 'Scan info'] },
+  file: { label: ['Save file', 'Copy link', 'Scan info'] },
 };
 for (const [kind, want] of Object.entries(shapes)) {
   const got = labels(att.attItemsFor({ id: 'x', url: '/uploads/files/x', name: 'x', kind, scan: 'clean' }));
   check(JSON.stringify(got) === JSON.stringify(want.label), 'a ' + kind + ' gets its own save/link wording', got);
-  check(got.includes('Harbin info'), 'and the scanner row', got);
+  check(got.includes('Scan info'), 'and the scanner row', got);
 }
 const vid = labels(att.attItemsFor({ id: 'v', url: '/uploads/files/v.mp4', name: 'v.mp4', kind: 'video', scan: 'clean' }));
 check(!vid.some((l) => /^Copy video$/.test(l)), 'a video never promises to put its bytes on the clipboard', vid);
 for (const scan of ['infected', 'pending']) {
   const gone = labels(att.attItemsFor({ id: 'x', url: '/uploads/files/x', name: 'x', kind: 'image', scan }));
-  check(JSON.stringify(gone) === JSON.stringify(['Harbin info']),
+  check(JSON.stringify(gone) === JSON.stringify(['Scan info']),
     'a ' + scan + ' file offers the explanation and nothing that would 404', gone);
 }
 check(labels(att.attItemsFor({ id: '', url: '/uploads/files/x', name: 'x', kind: 'file', scan: 'clean' })).length === 2,

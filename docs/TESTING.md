@@ -535,17 +535,18 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   the server already reports as lapsed paints the tombstone outright. Re-run it
   after touching the view-once card, its ticker, or the window copy.
   `node scripts/test-upload-pipeline.js` covers the whole upload pipeline
-  end-to-end against a throwaway database with a slow STAND-IN engine
-  (`scripts/fake-harbin.js`, pointed at by `HARBIN_BIN`), in the two shapes
-  production runs. **Scan mode** (`VIRUS_SCAN=1`): the message renders the file as
-  pending, exactly ONE `message-updated` follows carrying bytes the scanner also
-  approved, the old key is deleted on a format change and `file_scans` follows
-  the new one; a file the engine refuses is deleted, its row goes `infected` with
-  the engine's own evidence on it, the gate answers 410 and the message is
-  re-broadcast as blocked; the sweeper fallback still compresses a file the slot
-  never saw. What the engine was ASKED is read from its log
-  (`FAKE_HARBIN_LOG`), because a process contract only reports the verdict — that
-  is how "the rewritten bytes were re-scanned before publishing" stays a real
+  end-to-end against a throwaway database with a slow STAND-IN clamd
+  (`scripts/fake-clamd.js`, handed to the app as `CLAMAV_HOST`/`CLAMAV_PORT`), in
+  the two shapes production runs. **Scan mode** (`VIRUS_SCAN=1`): the message
+  renders the file as pending, exactly ONE `message-updated` follows carrying
+  bytes the scanner also approved, the old key is deleted on a format change and
+  `file_scans` follows the new one; a file the daemon refuses is deleted, its row
+  goes `infected` naming the signature that matched, the gate answers 410 and the
+  message is re-broadcast as blocked; the sweeper fallback still compresses a file
+  the slot never saw. What the daemon was ASKED is read from its log
+  (`FAKE_CLAMAV_LOG`) — the candidate's own byte count is the tell, because a scan
+  of the original bytes and a scan of the compressor's output are different sizes
+  — so "the rewritten bytes were re-scanned before publishing" stays a real
   assertion. **Compression-only mode** (the server is restarted with
   `VIRUS_SCAN=0`, no engine at all): a candidate upload
   is gated (423) until the slot publishes it and then raises ONE transition with
@@ -570,53 +571,56 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   come back byte-identical, the second counted as `skippedText`; a second dry
   pass reports zero candidates, which is the ledger doing its job; the admin
   payload carries the scan state). Skips without ffmpeg or Postgres.
-  `node scripts/verify-harbin.js` is the acceptance check against a REAL engine
-  (the deployed binary, not the stand-in): it proves the engine runs with a
-  detection model embedded — a model-less build answers CLEAN to everything and
-  is refused — detects a synthetic all-RWX PE and the EICAR test string, clears a
-  harmless body (so it is not always-guilty), and accepts a full-size 50 MB body.
-  The EICAR check reports SKIPPED when a host-side antivirus quarantines the temp
-  file before Harbin can read it (Windows Defender does, reliably), which says
-  nothing about Harbin; the synthetic PE
-  (`scripts/rwx-pe.js`) is the positive control that works everywhere, because it
-  is a precision anchor rather than a virus signature. Run it on the server, where
-  nothing else watches the temp dir, after touching `virus-scan.js` or bumping
-  `HARBIN_REF` in the Dockerfile.
-  `node scripts/test-virus-scan.js` covers the scan module offline (no server,
-  no database, no network): `materialize` turning a stored object into the PATH
-  the engine takes — the local-disk branch, the S3 branch production actually
-  runs (stubbed here rather than left to a deploy to discover), a missing object
-  answering null, and a key that tries to escape the upload dir; `verdictFrom`
-  mapping a report line and an exit code to a verdict, including the trap that a
-  killed process has a null exit status and `Number(null)` is 0, so "no numeric
-  status" must never read as clean; `probeEngine` refusing a model-less build
-  (which would answer CLEAN to everything) and a missing binary; and the
-  **bucket sweep's classification**, which is the one piece of it that must never
-  be wrong — a key Harbin already judged is never re-queued, a key an earlier
-  engine judged IS adopted, an infected key is left alone (its row is the record
-  of the removal the chat card reads), and a row that never got a verdict is
-  retried only while the engine is answering.
-  `node scripts/test-harbin-info.js` drives the attachment menu and the panel
+  `node scripts/verify-clamav.js` is the acceptance check against a REAL daemon —
+  the container, not the stand-in. Run it on the server:
+  `docker compose exec campfire node scripts/verify-clamav.js`. It checks that the
+  daemon answers and names which ClamAV and which signature revision it is, how old
+  the database is (a daemon serving a stale database is a real and silent failure
+  mode, so past `VERIFY_STALE_DAYS` is a warning with the command to fix it), that
+  the **EICAR test string is detected** — the check that catches a ClamAV whose
+  database failed to load, which answers OK to everything and is worse than no
+  scanner because it is believed — that a harmless body comes back clean (so it is
+  not always-guilty), that a **50 MB** body is accepted through `INSTREAM` rather
+  than refused for exceeding a stream limit (a refusal is an error, not a clean
+  verdict, so a daemon left on its default `StreamMaxLength` would stall big
+  uploads), and that the app's own `clamav.js` file path returns the same
+  detection. It never writes EICAR to disk as a literal in this repo — the string
+  is assembled from fragments in `clamav.js` so a checkout-time AV scan cannot
+  quarantine the file. Re-run it after touching `clamav.js`/`virus-scan.js`, and
+  after any change to the `clamav` service in `docker-compose.yml`.
+  `node scripts/test-virus-scan.js` covers the scan module offline (no server, no
+  database, no real ClamAV): `openBytes` turning a stored object into a STREAM the
+  daemon can be fed — the local-disk branch, the S3 branch production actually
+  runs (stubbed here rather than left to a deploy to discover), and a missing
+  object answering null; `parseVersion`/`parseScanReply` mapping the daemon's own
+  words to an engine identity and a verdict, including the trap that ANY reply
+  other than `stream: OK` / `stream: <Signature> FOUND` is a refusal and must
+  throw rather than read as clean; `probe` refusing a daemon that does not detect
+  EICAR (it would answer clean to everything) and one that cannot say which ClamAV
+  it is; and the **bucket sweep's classification**, which is the one piece of it
+  that must never be wrong — a key the current engine generation already judged is
+  never re-queued, a key a PREVIOUS engine judged (including every row the old
+  machine-learned engine left behind) IS adopted, an infected key is left alone
+  (its row is the record of the removal the chat card reads), and a row that never
+  got a verdict is retried only while the engine is answering.
+  `node scripts/test-scan-info.js` drives the attachment menu and the panel
   behind it in headless Chrome against a real server (skips without Chrome or
-  Postgres), with the stand-in engine: a right-click offers "Harbin info" on a
+  Postgres), with the stand-in daemon: a right-click offers "Scan info" on a
   picture, a text preview, a plain file card and the card standing in for a
   removed file, offers nothing that could not work when the bytes are gone, and
   still leaves the message menu to the message's own pixels; picking it paints
-  the STORED verdict (words, score, tone, findings, and why the file was removed
-  or kept — and no model trivia) with one way out rather than two; and a
-  long-press on an emulated touch device gets the same item in the phone's sheet.
-  It also covers the **suspicious band's marker**: a file the engine puts between
-  its suspicious and malicious thresholds is SERVED, so the test asserts the
-  message is handed the band, that exactly one attachment carries the amber
-  triangle-`!` chip ("Potentially malicious"), that it is a real button bound to
-  its OWN attachment, that the clean files beside it carry nothing — and that the
-  bytes are still on disk and still servable, because "warned about" must never
-  quietly become "blocked". Clicking it has to open the panel reading the band,
-  with the score and the reason it was served anyway.
-  Both it and the pipeline test run the engine through
-  `HARBIN_BIN=scripts/fake-harbin.js` — a `.js` value is invoked with the current
-  Node binary (see `harbinCommand` in virus-scan.js), so neither needs a Rust
-  toolchain and both behave the same on Windows, macOS and Linux.
+  the STORED verdict (words, tone, the engine generation and signature revision
+  behind it, the signature that matched, and why the file was removed or kept)
+  with one way out rather than two; and a long-press on an emulated touch device
+  gets the same item in the phone's sheet. It also pins the band's REMOVAL:
+  ClamAV has no suspicious band, so the message is handed no band at all and no
+  attachment carries the old amber chip.
+  Both it and the pipeline test run the scanner through
+  `scripts/fake-clamd.js`, which speaks the real clamd wire protocol in-process —
+  so neither needs ClamAV, a container or a signature database, and both behave
+  the same on Windows, macOS and Linux. Its own switch is `FAKE_CLAMAV_VERDICT`
+  (force clean/malware/error) and `FAKE_CLAMAV_DELAY_MS` (make the `pending` state
+  observable).
   `node scripts/test-compress-types.js` covers the compressor's **coverage
   contract** offline (no server, no database): that there is no size floor
   (`MIN_BYTES` all zero, so a 174-byte png / 300-byte mp4 / 2 KB wav are all

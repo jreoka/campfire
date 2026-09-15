@@ -2233,7 +2233,7 @@ app.post('/api/messages/:mid/unread', authRequired, async (req, res) => {
   res.json({ ok: true, kind: 'dm', threadId: t.id, unread });
 });
 
-// ---------- "Harbin info": what the scanner said about one attachment ----------
+// ---------- "Scan info": what ClamAV said about one attachment ----------
 // The verdict is already stored (file_scans), so this route only has to decide
 // whether the asker may see it — the same rule the message it hangs off was
 // served under: a server attachment needs membership of that server, a DM
@@ -2278,12 +2278,17 @@ app.get('/api/attachments/:aid/scan', authRequired, async (req, res) => {
     // that is what the reader's file actually did (see effectiveStatus).
     status: key ? await vs.scanStatus(key) : 'clean',
     scanningEnabled: vs.scanningEnabled(),
+    // The generation running now, so the panel can say when a stored verdict came
+    // from an earlier engine (which the background sweep is re-judging).
+    engineNow: vs.engineNow(),
     scan: d ? {
       status: d.status,
       verdict: d.verdict || null,
-      score: d.score == null ? null : Number(d.score),
-      evidence: d.evidence ? String(d.evidence).split('\n').filter(Boolean) : [],
+      // What ClamAV found, and which generation + signature database said so.
+      // The generation is what the bucket sweep compares against, so showing it
+      // is showing the reader which engine actually judged their file.
       engine: d.engine || '',
+      evidence: d.evidence ? String(d.evidence).split('\n').filter(Boolean) : [],
       error: d.error || '',
       attempts: Number(d.attempts) || 0,
       background: d.status === 'pending' && Number(d.gated) === 0,
@@ -5531,19 +5536,16 @@ function cleanGifMeta(a) {
 // The attachment shape the client renders from. The GIF identity only rides
 // along when there is one (and then all three fields do, so the star never has
 // to fall back to a URL it cannot use).
+// `info` is the scanner's verdict for this key (see virus-scan.js scanInfoMap):
+// its effective status, and nothing else. ClamAV has two outcomes — a signature
+// matched or none did — so there is no middle band to carry to the client, and
+// the only thing a message has to render differently is a file that is still
+// being judged (`pending`) or one whose bytes were removed (`infected`).
 function attWire(a, info) {
   const scan = (info && info.status) || 'clean';
-  // The engine's own band, when it has something to say beyond "clean". A file
-  // Harbin puts in its SUSPICIOUS band is served — that band is deliberately not
-  // blocked (see HARBIN_BLOCK_SUSPICIOUS) — so its `scan` is `clean` and this is
-  // the only thing that lets the message warn about it instead of looking like
-  // any other file.
-  const flagged = info && info.verdict && info.verdict !== 'clean'
-    ? { scanVerdict: info.verdict, ...(Number.isFinite(info.score) ? { scanScore: info.score } : {}) }
-    : {};
   return {
     id: a.id, url: a.url, name: a.filename, mime: a.mime, size: a.size, kind: a.kind,
-    spoiler: !!a.spoiler, w: Number(a.w) || 0, h: Number(a.h) || 0, scan, ...flagged,
+    spoiler: !!a.spoiler, w: Number(a.w) || 0, h: Number(a.h) || 0, scan,
     ...(a.gif_slug
       ? { gif_slug: a.gif_slug, gif_thumb: a.gif_thumb || null, gif_mp4: a.gif_mp4 || null }
       : {}),
@@ -7556,7 +7558,7 @@ async function boot() {
   // Chat-upload compressor (images/GIFs/video/audio): one file at a time,
   // niced + single-threaded, so the VPS never feels it.
   try { require('./media-compress').startMediaCompress(); } catch (e) { console.error('[media] scheduler failed to start:', (e && e.message) || e); }
-  // Virus scanner (Harbin): every upload scanned by content, files gated
+  // Virus scanner (ClamAV): every upload scanned by content, files gated
   // until clean. Orphan sweep: unreferenced bytes deleted daily (backups/
   // never listed).
   try {
@@ -7565,10 +7567,11 @@ async function boot() {
     vs.startVirusScan();
   } catch (e) { console.error('[virusscan] scheduler failed to start:', (e && e.message) || e); }
   try { require('./storage-sweep').startStorageSweep(); } catch (e) { console.error('[sweep] scheduler failed to start:', (e && e.message) || e); }
-  // Whole-bucket malware scan: adopt every stored object no Harbin verdict
-  // covers (the era scanning was off, files from before the engine existed) and
-  // let the scan queue judge them. Ungated, so a background verdict can only
-  // ever remove malware — never briefly take a working file from a reader.
+  // Whole-bucket malware scan: adopt every stored object the engine running now
+  // has never judged — the era scanning was off, files from before the engine
+  // existed, and everything an earlier engine cleared — and let the scan queue
+  // judge them. Ungated, so a background verdict can only ever remove malware,
+  // never briefly take a working file from a reader.
   try { require('./bucket-scan').startBucketScan(); } catch (e) { console.error('[scansweep] scheduler failed to start:', (e && e.message) || e); }
   // Shapes for the images that predate `w`/`h` (see att-dims.js): newest first,
   // a small bounded batch per tick, so a channel backlog reserves its boxes

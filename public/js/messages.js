@@ -78,9 +78,6 @@ function attFavHTML(a) {
 }
 // Shield mark for the virus-scan cards (inline SVG keeps UI chrome emoji-free).
 const SCAN_SHIELD_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 3.5v5.2c0 5-3.4 9.4-8 10.8-4.6-1.4-8-5.8-8-10.8V5.5z"/><path d="M9 11.5l2.2 2.2L15.5 9.5"/></svg>';
-// The suspicious-band marker: a plain triangle with a bang, the one warning
-// glyph nobody has to be taught.
-const ATT_WARN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
 // Media downloads go through plain anchor navigation (works in every WebView),
 // so confirm them with a toast — otherwise the file just lands in Downloads
 // with no indication anything happened. Native behavior is untouched.
@@ -88,19 +85,6 @@ document.addEventListener('click', (e) => {
   const dl = e.target.closest ? e.target.closest('a.att-dl') : null;
   if (!dl) return;
   toast(`Downloading ${(dl.getAttribute('download') || 'file').slice(0, 60)}…`);
-});
-// The suspicious marker opens the same panel the attachment menu's "Harbin info"
-// does. The whole chip is the target (it is a button, so it is focusable and
-// answers Enter/Space for free), and it sits OUTSIDE the .att-wrap, so nothing
-// that reads a click on the file — the lightbox, a video's play button — can see
-// it.
-document.addEventListener('click', (e) => {
-  const w = e.target.closest ? e.target.closest('.att-warn[data-att-id]') : null;
-  if (!w) return;
-  e.preventDefault();
-  e.stopPropagation();
-  const a = typeof attFromEl === 'function' ? attFromEl(w) : null;
-  if (a && typeof openHarbinInfo === 'function') openHarbinInfo(a);
 });
 // Full-size chat images are what makes opening a channel crawl on a slow link:
 // one photo is 10-30x the bytes of its own 640px preview, and a backlog is
@@ -178,7 +162,7 @@ function imageSrcFor(a) {
 // (desktop right-click, the phone's long-press sheet) resolve from the element
 // the pointer is actually over, so a rendering that does not carry this is an
 // attachment nothing can act on. `data-att-id` is what the attachment menus look
-// up (and what the "Harbin info" panel asks the server about); `data-fb-*` is
+// up (and what the "Scan info" panel asks the server about); `data-fb-*` is
 // the media identity the copy/save/link items and the lightbox already read.
 // The scanning and infected CARDS carry it too — those are the ones a reader
 // most wants explained, and they have no `.att-wrap` to inherit it from.
@@ -187,34 +171,13 @@ function attMeta(a, kind) {
   return ` data-att-id="${esc((a && a.id) || '')}" data-fb-url="${esc((a && a.url) || '')}"`
     + ` data-fb-name="${esc((a && a.name) || '')}" data-fb-kind="${esc(k)}" data-fb-scan="${esc((a && a.scan) || 'clean')}"`;
 }
-// A file in Harbin's SUSPICIOUS band is served — that band is deliberately not
-// blocked (see HARBIN_BLOCK_SUSPICIOUS: its shipped operating point is the
-// malicious threshold, and blocking the band below it refuses installer stubs
-// and self-extracting archives wholesale). Served silently is the wrong half of
-// that trade: the reader gets a file the engine hesitated about and no hint of
-// it. So the message says so — a marker under the media, above the file card,
-// tied to its own file by the flex gap — and it opens the same panel the
-// attachment menu's "Harbin info" opens, because a warning whose reason is not
-// one tap away is a warning people learn to ignore.
-//
-// Deliberately NOT shown for a spoilered attachment separately: the veil hides
-// the pixels, and this is about the file, so the marker stays outside the wrap
-// and the veil can never swallow it.
-function attWarnHTML(a) {
-  if (a.scan !== 'clean' || a.scanVerdict !== 'suspicious') return '';
-  const score = Number.isFinite(Number(a.scanScore)) ? Number(a.scanScore).toFixed(2) : '';
-  const what = 'Harbin put this file above its suspicious threshold, below the level this server blocks, so it is served'
-    + (score ? ' (score ' + score + ')' : '') + '. Open Harbin info for the evidence.';
-  return `<button type="button" class="att-warn"${attMeta(a)} title="${esc(what)}">${ATT_WARN_SVG}`
-    + `<span>Potentially malicious — details</span></button>`;
-}
 function attachmentHTML(a) {
   // Virus-scan states (see virus-scan.js): pending files render an
   // animated scanning card and infected files a greyed-out warning —
   // never the bytes, no preview, no download link anywhere.
   if (a.scan === 'infected') return `<div class="scan-block infected"${attMeta(a)}><span class="scan-ic">${SCAN_SHIELD_SVG}</span><span class="scan-tx"><b>${esc(a.name)}</b><span>Virus detected — this file was removed and can't be downloaded.</span></span></div>`;
   if (a.scan === 'pending') return `<div class="scan-block scanning"${attMeta(a)}><span class="scan-tx"><b>${esc(a.name)} (${fmtSize(a.size)})</b><span>Processing file<span class="scan-dots"></span></span><span class="scan-track"><span class="scan-fill"></span></span></span></div>`;
-  return attWarnHTML(a) + attachmentBodyHTML(a);
+  return attachmentBodyHTML(a);
 }
 // The attachment itself, whatever shape it takes. Split out so the suspicious
 // marker can precede every one of them without four copies of the call.

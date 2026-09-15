@@ -926,11 +926,12 @@ body.ub-open #lightbox #lb-stage{padding-top:calc(4.4rem + var(--safe-t) + var(-
 .scan-block.infected .scan-ic{color:var(--red);background:rgba(237,66,69,.1)}
 .scan-block.infected .scan-tx>span{color:var(--red)}
 @media (prefers-reduced-motion:reduce){.scan-fill,.scanning .scan-ic,.scan-dots::after{animation:none}}
-/* ---------- "Harbin info" (the scan record for one attachment) ----------
-   A read-only panel inside the shared modal: the verdict first, then what the
-   engine is, when it ran and the findings it based the verdict on. Tone is
-   carried by one class (ok/warn/bad) on the shield and the verdict line, so the
-   same markup serves a clean file, the suspicious band and a detection. */
+/* ---------- "Scan info" (the scan record for one attachment) ----------
+   A read-only panel inside the shared modal: the verdict first, then which
+   engine generation and signature revision produced it, when it ran and what
+   ClamAV found. Tone is carried by one class (ok/warn/bad) on the shield and the
+   verdict line, so the same markup serves a clean file, an unjudged one and a
+   detection. */
 .hb-head{display:flex;align-items:center;gap:.7rem;margin-bottom:.9rem}
 .hb-ic{width:38px;height:38px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--muted);background:var(--panel-3);border:1px solid var(--line-soft)}
 .hb-ic svg{width:19px;height:19px}
@@ -974,15 +975,6 @@ body.ub-open #lightbox #lb-stage{padding-top:calc(4.4rem + var(--safe-t) + var(-
 .reply-quote.deleted{cursor:default;font-style:italic;opacity:.75}
 .reply-quote.deleted:hover{color:var(--muted)}
 .msg-atts{display:flex;flex-direction:column;align-items:flex-start;gap:.45rem;margin-top:.35rem}
-/* The suspicious-file marker (Harbin's middle band: served, not blocked). It is
-   a SIBLING of the attachment inside the same flex column, so the negative
-   bottom margin is what binds it to the file BELOW it rather than leaving it
-   floating between two attachments — the gap it pulls against is the column's
-   own .45rem. Amber because this is a caution, not a verdict. */
-.att-warn{display:flex;align-items:center;gap:.4rem;background:rgba(251,191,36,.11);border:1px solid rgba(251,191,36,.38);color:var(--amber);border-radius:9px;padding:.32rem .6rem;font-size:.75rem;font-weight:650;font-family:inherit;max-width:420px;text-align:left;cursor:pointer;margin-bottom:-.22rem;transition:background var(--t-fast),border-color var(--t-fast)}
-.att-warn:active{background:rgba(251,191,36,.24)}
-.att-warn svg{width:15px;height:15px;flex-shrink:0}
-.att-warn span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .msg-atts img.att-img{max-width:100%;max-height:320px;border-radius:12px;cursor:zoom-in;object-fit:contain;background:#000}
 .msg-atts video.att-vid{max-width:100%;max-height:320px;border-radius:12px;background:#000}
 /* Nothing the app RENDERS is a drag source. Chrome hands a dragged <img> over as

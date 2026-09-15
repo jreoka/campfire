@@ -207,7 +207,7 @@ function attItemsFor(a) {
   const url = absUrl(a.url);
   const items = [];
   // Nothing to copy, save or link to when the bytes were removed or are not
-  // published yet: the reader gets the explanation instead (Harbin info), and
+  // published yet: the reader gets the explanation instead (Scan info), and
   // nothing that would 404 at them.
   if (a.scan !== 'infected' && a.scan !== 'pending' && a.url) {
     if (img) items.push({ label: 'Copy image', icon: IMG_COPY_SVG, fn: () => copyImageToClipboard(a) });
@@ -218,8 +218,8 @@ function attItemsFor(a) {
     });
     if (img || video) items.push({ label: img ? 'Open image link' : 'Open video link', icon: OPEN_SVG, fn: () => openMediaLink(url) });
   }
-  const hb = harbinInfoItem(a);
-  if (hb) items.push(hb);
+  const si = scanInfoItem(a);
+  if (si) items.push(si);
   return items;
 }
 // An attachment's rows on their own, for a surface with no message menu to
@@ -257,37 +257,35 @@ function mediaSheetHead(el) {
   return { title: a.name, sub: label, glyph: a.kind === 'video' ? '▶' : a.kind === 'audio' ? '♪' : '■', color: 'var(--panel-3)' };
 }
 
-/* ================= "Harbin info" =================
+/* ================= "Scan info" =================
  * What the scanner concluded about one attachment, and why.
  *
  * The verdict is READ, never recomputed: it is stored when the scan runs (see
  * virus-scan.js), which is the only way to explain a file whose bytes are
- * already gone, and the only honest way to show a verdict beside the model that
- * actually made it. The chat card can only ever say a file was blocked — the
- * reason lives here.
+ * already gone, and the only honest way to show a verdict beside the engine
+ * generation that actually made it. The chat card can only ever say a file was
+ * blocked — the reason lives here.
  */
-const HB_SHIELD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.3-2.9 7.7-7 9-4.1-1.3-7-4.7-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>';
-function harbinInfoItem(a) {
+const SCAN_SHIELD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.3-2.9 7.7-7 9-4.1-1.3-7-4.7-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>';
+function scanInfoItem(a) {
   // No attachment id means nothing the server could look up — an optimistic
   // local attachment, say. The rest of the menu still applies.
   if (!a || !a.id) return null;
-  return { label: 'Harbin info', icon: HB_SHIELD, fn: () => openHarbinInfo(a) };
+  return { label: 'Scan info', icon: SCAN_SHIELD, fn: () => openScanInfo(a) };
 }
 // The verdict, as a tone (`ok`/`warn`/`bad`, which is all the CSS needs) and the
 // words for it. `status` is the operational state and wins where it exists: a
-// row can be `infected` or in `error` whatever the engine's own band was.
-function hbVerdict(sc) {
+// row can be `infected` or in `error` whatever the engine's own answer was.
+function scanVerdictText(sc) {
   if (!sc) return { tone: '', text: 'No verdict recorded' };
-  const score = sc.score == null ? '' : ' · score ' + Number(sc.score).toFixed(4);
-  if (sc.status === 'infected') return { tone: 'bad', text: 'Malware detected' + score };
+  if (sc.status === 'infected') return { tone: 'bad', text: 'Malware detected' };
   if (sc.status === 'error') return { tone: 'warn', text: 'Could not be judged' };
   if (sc.status === 'pending') return { tone: '', text: 'Scanning…' };
-  if (sc.verdict === 'suspicious') return { tone: 'warn', text: 'Suspicious' + score };
-  if (sc.verdict === 'malicious') return { tone: 'bad', text: 'Malware detected' + score };
-  if (sc.verdict === 'clean') return { tone: 'ok', text: 'Clean' + score };
+  if (sc.verdict === 'malicious') return { tone: 'bad', text: 'Malware detected' };
+  if (sc.verdict === 'clean') return { tone: 'ok', text: 'Clean' };
   return { tone: '', text: 'No verdict recorded' };
 }
-function hbNote(r, v) {
+function scanNote(r, v) {
   const sc = r.scan;
   if (!r.local) return 'This attachment is not a stored upload, so there was nothing to scan.';
   if (!sc) {
@@ -303,54 +301,60 @@ function hbNote(r, v) {
   }
   if (sc.background) return 'A background re-scan of the stored bucket is queued for this file. It stays available while the verdict is pending.';
   if (sc.status === 'pending') return 'Waiting for the verdict.';
-  if (v.tone === 'warn') return 'Harbin placed this above its suspicious threshold but below the level this server blocks, so it was served.';
   if (!r.scanningEnabled) return 'Scanning is off on this server right now; this is the verdict it recorded when it was on.';
+  // A verdict is only meaningful beside the engine generation that produced it:
+  // a file judged by an older engine is re-judged by the bucket sweep, and this
+  // is where a reader can see which one actually looked at their file.
+  if (r.engineNow && sc.engine && sc.engine !== r.engineNow) {
+    return 'This verdict came from an earlier scanner generation (' + sc.engine + '); the background scan re-judges it with the current engine.';
+  }
   return '';
 }
-function hbWhen(ts) {
+function scanWhen(ts) {
   if (!ts) return '—';
   try { return agoStr(ts); } catch { return new Date(ts).toLocaleString(); }
 }
-function hbInfoHTML(r) {
+function scanInfoHTML(r) {
   const sc = r.scan;
-  const v = hbVerdict(sc);
-  // No "Engine" row: the panel is called Harbin info and every verdict in it
-  // came from Harbin, so the row only ever repeated the title. The model's
-  // shape (trees, features) is an operator's diagnostic and lives in the admin
-  // console's engine line and scripts/verify-harbin.js instead.
+  const v = scanVerdictText(sc);
   const rows = [];
-  rows.push(['Scanned', sc && sc.scannedAt ? hbWhen(sc.scannedAt) : 'not yet']);
+  rows.push(['Scanned', sc && sc.scannedAt ? scanWhen(sc.scannedAt) : 'not yet']);
   if (sc && sc.attempts > 1) rows.push(['Attempts', String(sc.attempts)]);
   // Derived from BOTH the key and `local`, so a missing field can never turn
   // into a false claim about where the file lives: no key AND no local flag
   // reads as "a stored upload" rather than "not a stored upload".
   const where = r.local ? (r.key || 'a stored upload') : 'not a stored upload';
   rows.push(['File', where + (r.size ? ' · ' + fmtSize(r.size) : '')]);
-  const findings = (sc && sc.evidence) || [];
+  // The engine generation, and the signature revision inside it — an operator's
+  // "is this deployment current?" answered where the verdict is read.
+  if (sc && sc.engine) rows.push(['Engine', sc.engine]);
+  const sig = (sc && (sc.evidence || []).find((l) => /^signatures:\s/.test(l))) || '';
+  if (sig) rows.push(['Signatures', sig.replace(/^signatures:\s*/, '')]);
+  const findings = ((sc && sc.evidence) || []).filter((l) => !/^signatures:\s/.test(l));
   return `<div class="hb-head">
-    <span class="hb-ic${v.tone ? ' ' + v.tone : ''}">${HB_SHIELD}</span>
+    <span class="hb-ic${v.tone ? ' ' + v.tone : ''}">${SCAN_SHIELD}</span>
     <span class="hb-t"><b>${esc(r.name || 'file')}</b><span class="hb-v${v.tone ? ' ' + v.tone : ''}">${esc(v.text)}</span></span>
   </div>
   <div class="hb-rows">${rows.map(([k, val]) => `<div class="hb-row"><span>${esc(k)}</span><span class="hb-val">${esc(val)}</span></div>`).join('')}</div>
   ${findings.length ? `<div class="hb-sect">Findings</div><ul class="hb-find">${findings.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
-  ${(() => { const n = hbNote(r, v); return n ? `<div class="hb-note">${esc(n)}</div>` : ''; })()}`;
+  ${(() => { const n = scanNote(r, v); return n ? `<div class="hb-note">${esc(n)}</div>` : ''; })()}`;
 }
 // One request per open, and the panel is dismissed (or replaced) freely while it
 // is in flight: the sequence number is what stops a late answer painting into a
 // dialog somebody else now owns.
-let hbSeq = 0;
-async function openHarbinInfo(a) {
-  const seq = ++hbSeq;
-  openModal('Harbin info', '<p class="muted small">Reading the scan record…</p>', 'Close', null, { hideCancel: true });
+let scanSeq = 0;
+async function openScanInfo(a) {
+  const seq = ++scanSeq;
+  openModal('Scan info', '<p class="muted small">Reading the scan record…</p>', 'Close', null, { hideCancel: true });
   let r = null;
   try { r = await api('/api/attachments/' + encodeURIComponent(a.id) + '/scan'); }
   catch (e) {
-    if (seq !== hbSeq) return;
+    if (seq !== scanSeq) return;
     $('#modal-body').innerHTML = `<p class="muted small">Could not read the scan record (${esc(prettyError(e.message))}).</p>`;
     return;
   }
-  if (seq !== hbSeq || $('#modal-backdrop').classList.contains('hidden')) return;
-  $('#modal-body').innerHTML = hbInfoHTML(r);
+  if (seq !== scanSeq || $('#modal-backdrop').classList.contains('hidden')) return;
+  $('#modal-body').innerHTML = scanInfoHTML(r);
 }
 
 function messageMenuItems(m, mid, x, y, el) {

@@ -23,17 +23,18 @@ complaint (two niced ffmpeg encodes made the app feel sluggish on one vCPU).
 
 **Off Hetzner to here (2026-09-14), for cost.** The honest trade: this box is
 *smaller* - 2 vCPU / 4 GB against the CX33's 4 vCPU / 8 GB - and the stack's own
-limits are `2g` (app) + `1g` (db) plus cloudflared and coturn, so the headroom is
-thinner than it was, not fatter. It idles around 700 MB used with ~3 GB available
-and no OOM events so far, but the two concurrent niced ffmpeg encodes are the
-thing to watch on this host. Nothing about the app itself changed in the move: it
-was a database dump-and-restore plus a tunnel connector swap, and the media moved
-separately to OVH object storage in the same session.
+limits are `1.5g` (app) + `1g` (db) + `1.5g` (clamav) plus cloudflared and coturn,
+so the headroom is thinner than it was, not fatter. It idles around 700 MB used
+with ~3 GB available and no OOM events so far, but the two concurrent niced
+ffmpeg encodes are the thing to watch on this host. Nothing about the app itself
+changed in the move: it was a database dump-and-restore plus a tunnel connector
+swap, and the media moved separately to OVH object storage in the same session.
 
-Scanning is **Harbin**, one self-contained binary rather than a resident daemon,
-so there is no scanner container and no signature volume at all - and roughly
-3 GB that the old daemon and its database held is back. See "Uploads, scanning
-and compression" below.
+Scanning is **ClamAV in its own container** and it is the largest single consumer
+on the box: a loaded `clamd` holds ~1.0 GiB of signatures resident (measured, see
+"Uploads, scanning and compression"). That is the price of signature-based
+detection and it is why the app's own limit came down from `2g` to `1.5g` when
+the scanner arrived - the three limits now add up to what the host actually has.
 
 ## Layout on the host
 
@@ -56,14 +57,17 @@ needs beside the app and database:
 
 | service | why | memory limit |
 |---|---|---|
-| `campfire` | the app, malware scanner included | 2g |
+| `campfire` | the app | 1.5g |
+| `clamav` | the malware scanner (`clamav/clamav`, named volume `clamdb`) | 1.5g |
 | `db` | Postgres 18, named volume `pgdata` | 1g |
 | `cloudflared` | the only ingress; outbound-only | - |
 | `coturn` | TURN relay, `network_mode: host` so it binds the public IP | - |
 
-There is no scanner service. Harbin is a binary inside the app image (built by
-the Dockerfile's `harbin` stage) rather than a sibling container: it needs no
-daemon, no signature volume, no healthcheck and no compose network hop.
+The scanner is part of the app's function, so it lives in the BASE compose file
+(not this overlay) and every self-hosting shape gets it. It is never published to
+the host: the app dials it by service name on the compose network
+(`CLAMAV_HOST=clamav`) and streams each upload to it with `INSTREAM`, so the two
+containers share no volume.
 
 The limits are deliberate: with no orchestrator to arbitrate, one runaway encode
 or a burst of uploads must not be able to starve Postgres. Limits are ceilings,
@@ -110,6 +114,16 @@ update. The code is still replica-safe (the Postgres bus and `db.LOCKS`), so
 scaling out later means adding a host and a load balancer, not a rewrite.
 
 Env-only changes need no rebuild: edit `.env`, then `up -d --force-recreate campfire`.
+
+**The first deploy that brings the scanner up has one long step and one backlog.**
+The `clamav` container downloads ~300 MB of signatures into the `clamdb` volume
+before `clamd` can answer, so `docker compose ps` shows it unhealthy for a few
+minutes while the app runs normally (scanning fails open, and the log says so).
+After it answers, the daily bucket sweep re-judges every stored file, because they
+all carry the PREVIOUS engine's generation — expect `Malware sweep:` to report a
+full pass over the bucket (capped at `BUCKET_SCAN_MAX_JOBS` per pass) and the
+`Virus scan:` line's pending count to work through it. Nothing is gated while that
+happens: an adopted key is served while its verdict is pending.
 
 ## Secrets
 
@@ -223,58 +237,73 @@ defaulting to path-style.
 
 ## Uploads, scanning and compression
 
-`VIRUS_SCAN=1`. The engine is **Harbin** (https://github.com/jreoka/harbin) — a
-static, machine-learned malware detector that is one binary with one argument, an
-embedded model and no runtime, no network and no signature updates. The
-Dockerfile builds it from a pinned commit and copies it into the app image, so
-there is no scanner container, no signature volume and no healthcheck to watch.
-The pipeline is **scan -> compress -> scan**, and only the last clean verdict is
+`VIRUS_SCAN=1`. The engine is **ClamAV**, in the `clamav` container — a signature
+engine needs a signature database on disk, a downloader on a schedule (freshclam,
+which the image runs) and a daemon holding that database in RAM, so none of it
+belongs in the app's image or process. The app streams every upload to `clamd`
+over TCP (`INSTREAM`), one connection per file, so **no volume is shared** between
+the two containers and the daemon never needs to see a path in the app's. The
+pipeline is **scan -> compress -> scan**, and only the last clean verdict is
 published, so clients still see exactly one `pending -> final` transition.
 
-Two consequences worth knowing:
+Things worth knowing about this shape:
 
-* **The engine reads a path, not a stream.** In S3 mode the object is written to
-  a temp file (`HARBIN_TMP_DIR`) before the scan and unlinked when the verdict
-  lands; on local disk the stored file is scanned in place. A startup pass clears
-  any `cf-scan-*` left behind by a crash, so the temp dir cannot grow across
-  restarts.
-* **Harbin's `suspicious` band is served, not blocked.** Its shipped operating
-  point is the malicious threshold (0.95), where recall measured 1.00000 with 4
-  false positives across 70,300 benign files; the 0.60 band is counted, logged
-  and shown in the admin panel instead. `HARBIN_BLOCK_SUSPICIOUS=1` refuses it
-  too, at a real false-positive cost on installer stubs and self-extracting
-  archives.
+* **Memory is the constraint, and it is measured, not guessed.** A loaded `clamd`
+  on this database holds **~1.0 GiB resident** (951 MiB–1.02 GiB observed; the
+  files on disk are only ~170 MB — the rest is the parsed matcher), and it stays
+  there: a 50 MB stream scan takes ~3.6 s and moves the number by ~10 MB. The
+  container is capped at `1.5g` and the app's own limit came down from `2g` to
+  `1.5g` when the scanner arrived, because 1g + 1.5g + 1.5g is what the host has.
+  Watch it with `docker stats` after a signature update lands; if `clamd` is ever
+  OOM-killed repeatedly, lower `CLAMD_CONF_MaxThreads` first.
+* **The signature volume is disposable.** `clamdb` holds the database; losing it
+  costs a re-download (~300 MB) on the next start, never data. The first boot with
+  an empty volume downloads before `clamd` can answer, which is why the app's
+  `depends_on` for it is `service_started` and not `service_healthy`: the site
+  comes up meanwhile and scanning fails OPEN until the daemon answers.
+* **The daemon is never published to the host.** No `ports:` on the service — the
+  app reaches `clamav:3310` on the compose network, and `clamd` over TCP is
+  unauthenticated, so exposing it would hand anyone on the host a free scanner and
+  a way to make it chew memory.
+* **A failed database load is caught at startup, not discovered later.** The app's
+  probe scans the EICAR test string against the running daemon
+  (`CLAMAV_VERIFY_EICAR=1`) and refuses an engine that does not detect it — a
+  ClamAV whose database did not load answers OK to everything, which is worse than
+  no scanner because it is believed.
 
 Verify the scanner for real, from inside the app container:
 
 ```bash
 docker compose -f docker-compose.yml -f deploy/ovh/docker-compose.ovh.yml \
-  exec -T campfire node scripts/verify-harbin.js
+  exec -T campfire node scripts/verify-clamav.js
 ```
 
-It checks that the engine runs **with a detection model embedded** (a build with
-no model answers CLEAN to everything, which is worse than no scanner), that a
-synthetic all-writable+executable PE is detected, that the EICAR test string is
-detected, that a harmless body is cleared (so it is not an always-guilty engine),
-and that a **50 MB** body is accepted - the largest thing an upload can hand it.
-
-EICAR is written to a temp file for the duration of that check, because Harbin
-takes a path. On a dev machine with endpoint antivirus the file is quarantined
-before Harbin can read it and the check reports SKIPPED with that reason; on this
-host nothing else is watching the temp dir, so it runs for real.
+It checks that the daemon answers and says which ClamAV and which signature
+revision it is, how old the database is (a stale database is a real, silent
+failure mode), that the **EICAR test string is detected**, that a harmless body is
+cleared (so it is not an always-guilty engine), that a **50 MB** body is accepted
+through `INSTREAM` rather than refused for exceeding a stream limit (the largest
+thing an upload can hand it — `CLAMD_CONF_StreamMaxLength` must stay above
+`MAX_FILE_MB`), and that the app's own file path returns the same detection.
 
 **The whole bucket is swept daily** (`bucket-scan.js`): the upload path only ever
 judges what it just received, so anything stored while scanning was
-`VIRUS_SCAN=0` — or before Harbin existed — has no verdict at all, and the
+`VIRUS_SCAN=0` — or judged by an **earlier engine** (the machine-learned detector
+this app used before ClamAV) — has no verdict from the engine running now, and the
 `/uploads` gate serves an unknown key. The sweep lists the stored tree and queues
-the keys no Harbin verdict covers. A key it has already judged is never
-re-queued (the row is the ledger, so the first pass is the big one and later ones
-only pick up what is genuinely new), `backups/` and `thumbs/` are never listed,
-and an adopted key is queued **ungated** — it stays servable while its background
-verdict is pending, so the sweep can only ever remove malware, never briefly take
-a working file away from a reader. Size a first pass from the admin console's
-Media tab ("Check scan coverage" is a dry run, "Scan bucket now" runs it) before
-trusting it, and read the `Malware sweep:` line for what the last pass did.
+the keys the current engine **generation** has not judged, so the ClamAV swap
+itself is what re-verifies the stored tree: the first pass after this deploy
+re-judges every existing file, with no migration to run. A key already judged by
+this generation is never re-queued (the row is the ledger), `backups/` and
+`thumbs/` are never listed, and an adopted key is queued **ungated** — it stays
+servable while its background verdict is pending, so the sweep can only ever
+remove malware, never briefly take a working file away from a reader. Size a first
+pass from the admin console's Media tab ("Check scan coverage" is a dry run,
+"Scan bucket now" runs it) before trusting it, and read the `Malware sweep:` line
+for what the last pass did. A **signature** update deliberately does not trigger a
+re-scan (only a new ClamAV version does), or every freshclam run would re-scan the
+whole bucket for no security gain — new uploads are judged by the current database
+anyway.
 
 ## Voice / TURN
 

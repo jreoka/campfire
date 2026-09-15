@@ -395,16 +395,18 @@ function scanLine(sc) {
     return `Virus scan: OFF (no engine) · uploads wait for compression, then serve · pending ${c.pending || 0} · errors ${c.error || 0}`;
   }
   const eng = { off: 'OFF', none: 'NO ENGINE (fail-open)', starting: 'STARTING', ready: 'READY', failed: 'ENGINE FAILED (fail-open)' }[sc.engine || ''] || String(sc.engine || '?');
-  // Harbin carries its model inside the binary, so there is no signature age to
-  // report and nothing to update. What proves the engine is really detecting is
-  // the shape of the loaded model, so that is what the line carries instead.
-  const m = sc.model;
-  const mdl = (m && m.trees)
-    ? `model ${m.trees} trees / ${m.features} features`
-    : sc.engine === 'ready' ? 'model unreadable' : 'no model loaded';
-  // The suspicious band is served by default, deliberately: see HARBIN_BLOCK_SUSPICIOUS.
-  const susp = sc.suspicious ? ` · suspicious ${sc.suspicious}${sc.blockSuspicious ? ' (blocked)' : ' (served)'}` : '';
-  return `Virus scan: ${esc(eng)} · pending ${c.pending || 0} · infected ${c.infected || 0} · errors ${c.error || 0}${susp} · ${esc(mdl)}`;
+  // ClamAV is a signature engine, so the two things worth reporting are the
+  // engine generation every verdict is recorded against (a new one is what makes
+  // the bucket sweep re-judge the stored tree, see virus-scan.js) and the
+  // signature revision + its date. Nothing here is a "model": what proves the
+  // daemon is really detecting is CLAMAV_VERIFY_EICAR at boot (see the
+  // Dockerfile) and scripts/verify-clamav.js.
+  const info = sc.engineInfo;
+  const sig = info && info.db
+    ? `sig ${info.db} (${info.dbDate})`
+    : sc.engine === 'ready' ? 'signatures unreadable' : 'no signatures loaded';
+  const id = sc.engineIdentity ? `${esc(sc.engineIdentity)} · ` : '';
+  return `Virus scan: ${esc(eng)} · pending ${c.pending || 0} · infected ${c.infected || 0} · errors ${c.error || 0} · ${id}${esc(sig)}${sc.engineHost ? ' · ' + esc(sc.engineHost) : ''}`;
 }
 function sweepLine(sw) {
   if (!sw) return '';
@@ -459,13 +461,14 @@ function storageCard(usage, tracked) {
     </div>
     <div id="adm-sweep-out" class="muted small"></div>`;
 }
-// The malware sweep: it adopts every stored object no Harbin verdict covers —
-// what was uploaded while scanning was off, or before the engine existed — and
-// lets the scan queue judge them. A key Harbin has already judged is never
-// re-queued (the row is the ledger), so a pass is bounded by what is genuinely
-// unjudged. Adopted objects are queued UNGATED: they stay servable while the
-// verdict is pending, so the sweep can only ever remove malware, never briefly
-// take a working file away from a reader.
+// The malware sweep: it adopts every stored object the engine running now has
+// never judged — what was uploaded while scanning was off, before the engine
+// existed, or while an earlier engine was in place — and lets the scan queue
+// judge them. A key the current engine has already judged is never re-queued
+// (the row is the ledger), so a pass is bounded by what is genuinely unjudged.
+// Adopted objects are queued UNGATED: they stay servable while the verdict is
+// pending, so the sweep can only ever remove malware, never briefly take a
+// working file away from a reader.
 function scanSweepLine(s) {
   if (!s) return '';
   if (!s.enabled) return ' · Malware sweep: OFF';
@@ -622,7 +625,7 @@ async function loadAdminMedia() {
         const x = res.result || {};
         out.textContent = x.skipped === 'scanning_off'
           ? 'Scanning is off (VIRUS_SCAN=0) — there is no engine to sweep with.'
-          : `${x.listed || 0} objects · ${x.judged || 0} already judged by Harbin · ${x.candidates || 0} would be scanned`
+          : `${x.listed || 0} objects · ${x.judged || 0} already judged by this engine · ${x.candidates || 0} would be scanned`
             + (x.errored ? ` · ${x.errored} in error` : '')
             + (x.would && x.would.length ? ` · first: ${x.would.slice(0, 3).map((w) => w.key.split('/').pop()).join(', ')}` : '');
       } catch (e) { out.textContent = prettyError(e.message); }

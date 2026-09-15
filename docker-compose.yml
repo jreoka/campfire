@@ -14,6 +14,48 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+  # The malware scanner. ClamAV is a signature engine: a database to hold, a
+  # downloader on a schedule (freshclam, which the image runs) and a daemon that
+  # keeps the database loaded in RAM. That is a service, so it is one — the app
+  # only streams uploads to it over TCP (see clamav.js) and shares no volume with
+  # it, because INSTREAM means the daemon never needs the app's files.
+  clamav:
+    image: clamav/clamav:${CLAMAV_TAG:-1.4}
+    container_name: campfire-clamav
+    restart: unless-stopped
+    # The signatures live in a named volume, not the image layer: the first boot
+    # downloads them (~300 MB) and every later boot reuses them, updating in
+    # place. Losing the volume costs a re-download, never data.
+    volumes:
+      - clamdb:/var/lib/clamav
+    environment:
+      # No mail in this stack, so no milter daemon and 64 MB of RSS saved.
+      - CLAMAV_NO_MILTERD=true
+      # clamd is reached over the compose network only (never published to the
+      # host), so its TCP listener is enough; the socket file is left alone.
+      # StreamMaxLength must clear the app's own upload cap (MAX_FILE_MB, 50 MB)
+      # or a big upload would be refused by the daemon instead of judged, and
+      # MaxThreads is the ceiling on the app's VIRUS_SCAN_CONCURRENCY.
+      - CLAMD_CONF_StreamMaxLength=64M
+      - CLAMD_CONF_MaxFileSize=64M
+      - CLAMD_CONF_MaxScanSize=256M
+      - CLAMD_CONF_MaxThreads=4
+      # freshclam checks 24 times a day (default is 1). The image reloads clamd
+      # when the database changes; the checks are cheap and cached by the CDN.
+      - FRESHCLAM_CONF_Checks=24
+    # Loading a fresh database is memory-hungry (the signature set is ~1.3 GB
+    # resident once loaded, and clamd is briefly much larger while it parses).
+    # Bounded here so a load spike can never take Postgres down with it; the
+    # host's headroom is in deploy/ovh/README.md.
+    mem_limit: 1600m
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # Generous: the very first boot downloads the whole database before clamd
+      # can answer at all.
+      start_period: 300s
   campfire:
     build: .
     container_name: campfire
@@ -35,6 +77,10 @@ services:
       - PGUSER=${POSTGRES_USER:-campfire}
       - PGPASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       - "JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env (generate with openssl rand -base64 32)}"
+      # Malware scanning: clamd, by service name. Set VIRUS_SCAN=0 in .env to run
+      # the slot as compress-only (see virus-scan.js).
+      - CLAMAV_HOST=clamav
+      - CLAMAV_PORT=3310
       # Voice (WebRTC) NAT traversal: STUN + TURN relay for strict NATs.
       # Set these in .env (server provisioning: scripts/setup-turn.sh).
       - STUN_URL=${STUN_URL:-stun:stun.l.google.com:19302}
@@ -47,6 +93,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      # Not `service_healthy`: a first boot spends minutes downloading
+      # signatures, and the app must come up meanwhile (an unreachable daemon is
+      # a fail-open state, see virus-scan.js) rather than hold the site down.
+      clamav:
+        condition: service_started
 
 volumes:
   pgdata:
+  clamdb:

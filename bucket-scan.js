@@ -1,11 +1,19 @@
-// Whole-bucket malware scan: adopt every stored object Harbin has never judged.
+// Whole-bucket malware scan: adopt every stored object the CURRENT engine has
+// never judged.
 //
 // Why this exists. `file_scans` only ever holds what the upload path queued, and
 // the serving gate treats an unknown key as clean. So anything stored while
 // scanning was off, anything from before the feature existed, and anything an
-// earlier engine judged has no HARBIN verdict at all — and nothing would ever
-// give it one. This worker closes that hole on a schedule: it lists the stored
-// tree, queues the keys with no Harbin verdict behind them, and stops there.
+// EARLIER ENGINE judged (the machine-learned engine this app used before ClamAV)
+// has no verdict from the engine running now — and nothing would ever give it
+// one. This worker closes that hole on a schedule: it lists the stored tree,
+// queues the keys with no current-engine verdict behind them, and stops there.
+//
+// A ClamAV upgrade is therefore a re-verification pass over the whole stored
+// tree, with no migration and no flag to remember. A daily signature bump is
+// deliberately NOT: verdicts are recorded against the engine generation
+// (`clamav/1.4.6`, see virus-scan.js), not against the database revision, so a
+// new database re-judges new uploads and leaves settled ones alone.
 //
 // The work itself is virus-scan.js's, deliberately: the queue, the engine call,
 // the deletion of an infected object and the live re-broadcast all already
@@ -13,10 +21,10 @@
 // only a reconciler.
 //
 // Three properties make it safe to point at a live bucket:
-//   - A key Harbin has already judged is never re-queued. The row IS the
-//     ledger (`engine` is set exactly when a Harbin verdict was recorded), so
-//     a pass is bounded by what is genuinely unjudged, and a file is never
-//     re-scanned — and so never re-judged — just because a day went by.
+//   - A key the current engine has already judged is never re-queued. The row IS
+//     the ledger (`engine` holds the generation that judged it), so a pass is
+//     bounded by what is genuinely unjudged, and a file is never re-scanned —
+//     and so never re-judged — just because a day went by.
 //   - An adopted key is queued UNGATED. A file a reader can already fetch is
 //     served while its background verdict is pending (see effectiveStatus in
 //     virus-scan.js), so a scan can only ever remove malware; it can never
@@ -66,20 +74,26 @@ const stats = { lastRunAt: 0, lastResult: null, lastError: null, runs: 0 };
 
 // Which stored keys are already settled, and which are candidates. One read of
 // the table (a few columns, no joins) rather than a query per object.
-function classify(rows, engineReady) {
+// `engineNow` is the engine generation running right now (`clamav/1.4.6` — see
+// virus-scan.js): a clean row marked with anything else was judged by an earlier
+// engine and is exactly what a pass exists to re-judge.
+function classify(rows, engineReady, engineNow) {
   const skip = new Set();
   let judged = 0;
   let errored = 0;
+  const current = String(engineNow || '');
   for (const r of rows) {
     if (!r.key) continue;
     if (r.status === 'infected') { skip.add(r.key); continue; }   // bytes are gone; the row is the record
     if (r.status === 'pending') { skip.add(r.key); continue; }    // already in flight
-    if (r.status === 'clean' && r.engine) { skip.add(r.key); judged++; continue; }
-    // A row with no engine is a file NO HARBIN VERDICT ever covered: an upload
-    // from the era when the scanner was off, or one an earlier engine judged.
-    // A row in `error` is the same hole with a failed attempt recorded — retried
-    // only while the engine is actually answering, so a broken engine cannot
-    // turn every pass into the same pile of failures.
+    if (r.status === 'clean' && current && r.engine === current) { skip.add(r.key); judged++; continue; }
+    // A row whose `engine` is empty, or names a generation other than this one,
+    // is a file the engine RUNNING NOW has never judged: an upload from the era
+    // when the scanner was off, one an earlier engine cleared, or one the
+    // previous machine-learned engine cleared. A row in `error` is the same hole
+    // with a failed attempt recorded — retried only while the engine is actually
+    // answering, so a broken engine cannot turn every pass into the same pile of
+    // failures.
     if (r.status === 'error') {
       errored++;
       if (!engineReady) skip.add(r.key);
@@ -98,7 +112,24 @@ async function runOnce(opts) {
   const result = { dry: false, listed: 0, judged: 0, candidates: 0, queued: 0, capped: false, ms: 0 };
   try {
     let engineReady = false;
-    try { const st = await vs.getScanStats(); engineReady = !!(st && st.engine === 'ready'); } catch {}
+    let engineNow = '';
+    try {
+      const st = await vs.getScanStats();
+      engineReady = !!(st && st.engine === 'ready');
+      // With no engine answering there is no generation to compare against, so a
+      // pass must not re-queue the whole bucket on a guess: everything is left
+      // exactly as it is until the engine answers again.
+      engineNow = engineReady ? (st.engineIdentity || '') : '';
+    } catch {}
+    // An engine that is down must not turn a pass into "adopt everything": with
+    // no generation to compare against, every clean row would look unjudged. The
+    // next pass picks the work up once the daemon answers again.
+    if (!engineReady || !engineNow) {
+      log('scan sweep skipped: no engine generation to judge against (engine ' + (engineReady ? 'unnamed' : 'not answering') + ')');
+      result.skipped = 'no_engine';
+      result.ms = Date.now() - t0;
+      return result;
+    }
 
     const stored = await require('./storage-sweep').listStored({ maxPages: MAX_PAGES });
     // The same key can appear twice across backends (pre-migration leftovers);
@@ -108,7 +139,7 @@ async function runOnce(opts) {
     result.listed = byKey.size;
 
     const rows = await db.prepare('SELECT key, status, engine FROM file_scans').all();
-    const { skip, judged, errored } = classify(rows, engineReady);
+    const { skip, judged, errored } = classify(rows, engineReady, engineNow);
     result.judged = judged;
     result.errored = errored;
 
@@ -125,7 +156,7 @@ async function runOnce(opts) {
       result.dry = true;
       result.would = candidates.slice(0, 200).map((f) => ({ key: f.key, where: f.where, size: f.size || 0, mtime: f.mtime || 0 }));
       result.ms = Date.now() - t0;
-      log(`scan sweep (dry): ${result.listed} stored, ${judged} already judged by Harbin, would adopt ${candidates.length}`);
+      log(`scan sweep (dry): ${result.listed} stored, ${judged} already judged by ${engineNow || 'this engine'}, would adopt ${candidates.length}`);
       return result;
     }
 

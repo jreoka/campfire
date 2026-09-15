@@ -50,11 +50,16 @@ campfire/
   db.js              # Postgres wrapper + schema (initDb: CREATE TABLE IF NOT EXISTS + guarded migrations)
   unfurl.js          # link previews: server-side OpenGraph/oEmbed unfurl, SSRF-guarded fetch,
                      # Postgres cache, signed thumbnail proxy (/api/unfurl, /api/unfurl/img)
-  virus-scan.js      # Harbin (machine-learned) scanning + gated serving
-                     # (+ inline media compression per upload)
-  bucket-scan.js     # whole-bucket malware sweep: adopts stored objects no
-                     # Harbin verdict covers and feeds them to the scan queue
-                     # (ungated, so it can only ever remove malware)
+  clamav.js           # the ClamAV daemon client: the clamd wire protocol over TCP
+                     # (VERSION/PING/INSTREAM), streaming scans, and the startup
+                     # probe (engine identity + EICAR detection)
+  virus-scan.js      # ClamAV-backed scanning + gated serving, the engine
+                     # GENERATION every verdict is recorded against, and the
+                     # scan -> compress -> scan slot (+ inline media compression)
+  bucket-scan.js     # whole-bucket malware sweep: adopts stored objects the
+                     # engine generation running now has not judged and feeds
+                     # them to the scan queue (ungated, so it can only ever
+                     # remove malware)
   media-compress.js  # ffmpeg re-encode of over-large media: single-pass in the scan slot,
                      # the flag-driven queue (chat/DM/stories), the bucket reconciler
                      # (profile media + anything the flags never saw), and the key ledger
@@ -62,13 +67,14 @@ campfire/
   att-dims.js        # backfill measuring media posted before the shape record existed
                      # (newest-first, bounded per tick, leader-locked)
   package.json       # deps (express, ws, jsonwebtoken, bcryptjs, cookie-parser)
-  Dockerfile         # multi-stage: rust builds Harbin, node:22-alpine runs the app
-  scripts/rwx-pe.js  # synthetic all-RWX PE: a detection positive control that is
-                     # not a virus signature (Harbin's tier-1 precision anchor)
-  scripts/fake-harbin.js   # stand-in engine (HARBIN_BIN): the pipeline's test harness
-  scripts/verify-harbin.js # acceptance check against a REAL engine
+  Dockerfile         # node:22-alpine; the scanner is a CONTAINER (compose
+                     # `clamav`), not something built or installed here
+  scripts/fake-clamd.js    # stand-in clamd (real wire protocol, in-process):
+                     # the pipeline/browser tests' scanner
+  scripts/verify-clamav.js # acceptance check against the REAL daemon/container
   scripts/test-virus-scan.js # offline unit tests for the scan module
-  docker-compose.yml # one service, ./data volume, requires JWT_SECRET in .env
+  docker-compose.yml # db + clamav + campfire, ./data + clamdb volumes,
+                     # requires JWT_SECRET in .env
   .env.example       # template (copy to .env)
   app/               # Windows Tauri app (Tauri v2, WebView2) — release-built on
                      # GitHub Actions, not in the Docker deploy
@@ -272,14 +278,16 @@ proxying `/` and upgrading `/ws`. See README for Caddy/Nginx snippets.
 Live at https://campfire.dill.moe — **one OVHcloud VPS** (`40.160.90.108`,
 2 vCPU / 4 GB, Ubuntu 26.04) running Docker Compose, fronted by a **Cloudflare
 Tunnel** (outbound-only, so no inbound 80/443 and no certificates to renew),
-with coturn on the host network for TURN and **Harbin compiled into the app
-image for upload scanning** (no scanner container — see below). Media lives in
+with coturn on the host network for TURN and **ClamAV in its own `clamav`
+container for upload scanning** (signatures in the `clamdb` volume; the app is a
+TCP client of it — see below). Media lives in
 **OVHcloud object storage**; the doomsday backups are still in Cloudflare R2.
 Runbook: **`deploy/ovh/README.md`**. See **Deployment** below for how to ship.
 
 **Migrated off Hetzner on 2026-09-14** (cost; the OVH box is smaller — 2 vCPU /
-4 GB vs CX33's 4 vCPU / 8 GB — and the stack's own limits are `2g` app + `1g`
-db, so the headroom is thinner). The move was db-dump-and-restore plus a tunnel
+4 GB vs CX33's 4 vCPU / 8 GB — and the stack's own limits are `1.5g` app +
+`1.5g` clamav + `1g` db, so the headroom is thinner). The move was
+db-dump-and-restore plus a tunnel
 connector swap; **no DNS change was needed for `campfire.dill.moe`**, because
 that name points at Cloudflare and the connector moved, not the record. Only
 `turn.dill.moe` (a DNS-only A record) had to be repointed. **The old Hetzner VPS
@@ -309,120 +317,81 @@ new build raises a banner at the top of the shell with an Update button
 (`#update-banner`, `body.ub-open` makes every full-height surface pay for its
 height).
 
-**The app runs with `VIRUS_SCAN=1` and `MEDIA_COMPRESS` on.** That is the whole
-point of the Hetzner move: the old node had ~1.14 GiB allocatable and the
-resident scanner of the day needed ~1 GB, so the cluster ran with scanning
-**off**. Scanning is now **Harbin**
-(`https://github.com/jreoka/harbin`) — a static, machine-learned detector that is
-one binary with one argument, an embedded model and no runtime, no network and no
-signature updates — so there is no scanner container, no signature volume and no
-signature-reload schedule, and the ~3 GB they held is back. The
-Dockerfile's `harbin` stage builds it from a pinned commit (`HARBIN_REF`, a
-cached layer) and copies it to `/usr/local/bin/harbin`; `HARBIN_BIN` overrides
-the path, and a `.js` value is run with the current Node binary, which is how the
-pipeline test drops in a stand-in engine with no Rust toolchain. The slot is
-still a real **scan -> compress -> scan** pipeline and only the last clean
-verdict is published — clients still see exactly one `pending -> final`
+**The app runs with `VIRUS_SCAN=1` and `MEDIA_COMPRESS` on.** Scanning is
+**ClamAV in its own container** (`clamav/clamav`, the `clamav` service in the BASE
+`docker-compose.yml`, named volume `clamdb` for the signature database) — a
+signature engine is a database on disk plus a downloader on a schedule
+(freshclam, which the image runs) plus a daemon holding the parsed database in
+RAM, so none of it belongs in the app's image or its process. The app is a client:
+`clamav.js` speaks the daemon's TCP protocol directly (VERSION / PING / INSTREAM)
+so there is no ClamAV client dependency, and every upload is **streamed** to the
+daemon in length-prefixed chunks. That is why the two containers share no volume:
+the daemon never needs to see a path in the app's filesystem, and a 50 MB upload
+is never staged to disk on its way to being judged. `CLAMAV_HOST`/`CLAMAV_PORT`
+point at it (default `clamav:3310`); the port is deliberately never published to
+the host, because clamd over TCP is unauthenticated. `StreamMaxLength` must stay
+above `MAX_FILE_MB` (the compose file sets 64M/64M/256M for StreamMaxLength /
+MaxFileSize / MaxScanSize) or the daemon refuses a big upload instead of judging
+it — and a refusal is an **error, not a clean verdict**, so uploads would fail
+open instead of being served unscanned. Memory is the constraint on this host: a
+loaded clamd holds **~1.0 GiB resident** (measured; the database files are only
+~170 MB) and a 50 MB stream scan moves that by ~10 MB, which is why the scanner's
+compose limit is 1500m and the app's own came down from 2g to 1500m.
+The slot is still a real **scan -> compress -> scan** pipeline and only the last
+clean verdict is published — clients still see exactly one `pending -> final`
 transition, and a file a running player already holds is never swapped
-underneath it. Prove the engine rather than assuming it:
-`node scripts/verify-harbin.js` (the engine runs *with a model embedded* — a
-model-less build answers CLEAN to everything and is refused — a synthetic
-all-RWX PE and EICAR both detected, a harmless body cleared so it is not an
-always-guilty engine, and a full-size 50 MB body accepted). Two rules about the
-engine itself: it takes a **path, never a stream** (S3 objects are staged to
-`HARBIN_TMP_DIR` and unlinked on verdict; on local disk the stored file is
-scanned in place), and its **`suspicious` band (>= 0.60) is served, not blocked**
-— the shipped operating point is the malicious threshold (0.95), so the band is
-counted, logged and shown in the admin panel, and `HARBIN_BLOCK_SUSPICIOUS=1`
-refuses it too at a real false-positive cost.
-The **container stage** is what makes that verdict worth anything — a detector
-that scores the wrapper is defeated by wrapping, so Harbin opens what it is
-handed and scores what is inside. As of the 2026-09-15 revision that means the
-ZIP/archive family, 7z, **RAR (every generation through RAR 7)**, CAB (stored,
-MSZIP, LZX and **Quantum**, with each data block's checksum verified), OLE/CFB
-walked as its
-storage *tree* (so a stream carries its storage path), **PDF** (embedded files
-recovered from the object graph even when the document's xref table is absent or
-wrong), and **disk images** — VHD/VHDX, MBR/GPT, and the FAT, ext2/3/4 and NTFS
-filesystems inside them. Four codec crates came in with that (`rars`, `lzxd`,
-`compcol`, and the `fatfs`/`ext4-view`/`ntfs` readers): they are *readers*, never
-detectors,
-and they link at build time, so the shipped binary still has no runtime
-dependencies and there is still no scanner container — but the `harbin` build
-stage is a real Rust compile now, not a two-second one. Quantum is the one that
-needed a decoder fed something the cabinet does not contain: its coder restarts
-every 32 KiB frame and the format's driver synthesises a `0xFF` after every
-block so the decoder's frame realignment can find it, so the plain concatenation
-of a folder's blocks decodes to nothing (`src/quantum.rs` puts that byte back).
-Two rules hold across all
-of it: a parse that cannot be completed is **named in the evidence** ("could not
-be read" must never pass for "nothing inside"), and every parser runs behind a
-`catch_unwind` guard (`container::guarded`, with `panic = "unwind"` in the release
-profile) so a malformed upload costs that file's member listing rather than the
-whole scan. `node scripts/verify-harbin.js` carries a sixth check for exactly
-this: the same all-RWX PE from check 2, detected *inside a PDF wrapper* whose
-xref table is missing — if a wrapper could hide a payload, everything else is
-decoration.
-**Ask the engine by scanning it, never by a flag**: every internal option
-(`--model-info` included) is compiled out of the shipped binary behind Harbin's
-own `devtools` feature — `harbin --model-info` on a shipped build prints usage
-and exits 2 — so `probeEngine` (virus-scan.js) runs a real scan of a harmless
-probe file with `HARBIN_VERBOSE=1`, which is upstream's shipped-build way to
-print the loaded model's shape (`harbin: model N trees / N nodes / N leaves /
-N features / max depth N`) or to say it has none. That line is the proof of a
-live detector, and the Dockerfile's build-time proof reads the same line, so a
-model-less build fails the BUILD rather than failing open in production. Never
-build the image with `--features devtools` to get the old flag back — the whole
-point of the pin and that feature gate is that production runs the shipped
-interface, exactly one positional argument. The engine also keeps a per-user
-adaptive file (`adaptive.json`) that only exists once operator feedback
-(`HARBIN_FEEDBACK`) is used, which this app never sets: no state of ours is
-written, and a stale one is discarded on a model change.
-Two surfaces sit on top of that verdict, both new with the engine swap.
-**`bucket-scan.js`** closes the hole the upload path cannot: it lists the stored
-tree and queues the keys NO Harbin verdict covers (the era scanning was off,
-files from before the engine existed), because the gate serves an unknown key.
-The row IS the ledger — `engine` is set exactly when a Harbin verdict was
-recorded, so a key already judged is never re-queued and a pass is bounded by
-what is genuinely unjudged; an `infected` key is never touched (its bytes are
-gone and the row is the record the chat card reads); a row in `error` is retried,
-but only while the engine is answering, so a broken engine cannot turn every pass
-into the same pile of failures. Adopted keys are queued **ungated** (`gated = 0`),
-which is the load-bearing part: `effectiveStatus` reports a pending ungated row
-as `clean`, so a background verdict can only ever REMOVE malware — it can never
-421/423 a file a reader can already fetch, or blink a chat card back to
-"Processing". An upload's own row keeps `gated = 1`, because that promise is
-about bytes nobody has been handed yet. Leader-locked, `BUCKET_SCAN_*` env,
-`backups/` and `thumbs/` never listed, admin routes
-`POST /api/admin/scan/run[?dry=1]` and the Media tab's two buttons.
-**"Harbin info"** is the reader's side of it: every attachment rendering carries
+underneath it. Prove the daemon rather than assuming it:
+`node scripts/verify-clamav.js` (run it in the app container) checks that it
+answers and names its ClamAV version, how old the signature database is, that
+**EICAR is detected** — a daemon whose database failed to load answers OK to
+everything, which is worse than no scanner because it is believed — that a
+harmless body is cleared so it is not always-guilty, that a full-size 50 MB body
+is accepted through INSTREAM, and that the app's own file path returns the same
+detection. The app's startup probe asks the same EICAR question
+(`CLAMAV_VERIFY_EICAR=1`) and **refuses** a daemon that does not detect it, so a
+broken database is a loud fail-open with an admin line rather than a silent one.
+There is no "band" to reason about any more: ClamAV reports a signature or
+nothing, so a verdict is `clean` or `infected` and the old suspicious-band
+machinery (`scanVerdict`/`scanScore`, `attWarnHTML`, `HARBIN_BLOCK_SUSPICIOUS`)
+is gone. Nested content (archives, OLE/CFB, PDF, disk images) is ClamAV's own
+business now — it is what its signatures are written against — so the app has no
+container/parser code at all.
+**Verdicts are recorded against the ENGINE GENERATION that made them**
+(`engine` = `clamav/1.4.6`, from the daemon's own VERSION line), never against the
+word "ClamAV" and never against the signature revision. That single rule is what
+makes an engine swap self-healing: `bucket-scan.js` closes the hole the upload
+path cannot by listing the stored tree and queueing the keys the generation
+running NOW has not judged — the era scanning was off, files from before any
+engine, and **everything the previous machine-learned engine cleared**. The row IS
+the ledger, so a key this generation already judged is never re-queued and a pass
+is bounded by what is genuinely unjudged; an `infected` key is never touched (its
+bytes are gone and the row is the record the chat card reads); a row in `error` is
+retried, but only while the engine is answering, so a broken engine cannot turn
+every pass into the same pile of failures — and a pass with **no** generation to
+compare against is skipped outright rather than adopting the whole bucket on a
+guess. Adopted keys are queued **ungated** (`gated = 0`), which is the
+load-bearing part: `effectiveStatus` reports a pending ungated row as `clean`, so
+a background verdict can only ever REMOVE malware — it can never 421/423 a file a
+reader can already fetch, or blink a chat card back to "Processing". An upload's
+own row keeps `gated = 1`, because that promise is about bytes nobody has been
+handed yet. Leader-locked, `BUCKET_SCAN_*` env, `backups/` and `thumbs/` never
+listed, admin routes `POST /api/admin/scan/run[?dry=1]` and the Media tab's two
+buttons. A signature UPDATE deliberately does not change the generation: a daily
+database bump re-scanning the whole bucket would be an unbounded job for no
+security gain, and new uploads are judged by the current database anyway.
+**"Scan info"** is the reader's side of it: every attachment rendering carries
 `data-att-id`, and the row the message menu merges in from it opens a read-only panel
 (`GET /api/attachments/:aid/scan`, membership-checked exactly like the message it
-hangs off) showing the STORED verdict — words, score, tone, when, the findings,
-and why the file was removed or kept. It reads no bytes,
+hangs off) showing the STORED verdict — words, tone, when, the engine generation,
+the signature revision, the signature that matched, and why the file was removed
+or kept. It reads no bytes,
 which is the point: an infected file's bytes are gone and explaining that is the
 whole job. The verdict is never recomputed, so the panel can never disagree with
-what actually happened to the file. **No "Engine" row**: every verdict in a panel
-called Harbin info came from Harbin, so it only ever repeated the title, and the
-model's shape (trees, features) is an operator's diagnostic — it lives in the
-admin console's engine line and in `scripts/verify-harbin.js`, which is where
-"is this really the detector?" gets asked. `engineLabel()` is therefore just the
-name, which is also what the `engine` column stores; that column is not
-decoration, it is the bucket sweep's ledger marker.
-A third surface covers the band in between: a file in Harbin's **suspicious**
-band is SERVED, so its `scan` is `clean` and nothing would ever have told the
-reader the engine hesitated. `scanInfoMap` therefore carries the engine's band
-alongside the effective status, `attWire` puts it on the attachment as
-`scanVerdict`/`scanScore`, and `attWarnHTML` paints an amber triangle-`!` chip —
-"Potentially malicious — details" — as a SIBLING of the attachment inside
-`.msg-atts`/`.pin-atts` (both are flex columns, and the chip's negative
-`margin-bottom` is what binds it to the file below it rather than letting it
-float between two attachments). It sits OUTSIDE `.att-wrap`, so a spoiler veil
-can never swallow a security warning and no click handler that reads a click on
-the media — the lightbox, a video's play button — can see the chip's own; the
-chip is a real `<button>` whose label opens the Harbin info panel, because a
-warning whose reason is not one tap away is a warning people learn to ignore.
-Never warn for `infected` (that is the red card) or `pending`.
+what actually happened to the file, and the engine generation is shown rather than
+hidden because it is the ledger mark: a verdict from an older generation says so,
+which is exactly what the background sweep is about to re-judge. The panel's
+`.hb-*` class names are retained from its predecessor (they are generic panel
+styling — do not rename them to "scan" in the stylesheet without a reason).
 Coverage is the whole media tree: chat/DM attachments and **stories**
 through the flag-driven queue, and **profile media** (avatars, banners, sidebar
 banners, server icons, custom emoji, webhook avatars, the profile picker's
@@ -558,7 +527,7 @@ attachments — its own record, plus the identity of the element under the point
 when the record does not cover it — into Copy image / Save image / Copy image
 link / Open image link for media (a browser cannot put video bytes on the
 clipboard, so that flavour is never offered), Save file / Copy link for the
-rest, and **Harbin info** on all of them, pushed between the content actions and
+rest, and **Scan info** on all of them, pushed between the content actions and
 Mark unread. A message with no attachment grows nothing; one attachment needs no
 heading, several get their own file name above their rows (`.ctx-head`, a
 caption, not a row). So `ctxFor` resolves the `[data-mid]` message branch FIRST
@@ -569,7 +538,7 @@ el)` for anything inside a message. `attFromEl` reads the identity and the
 `a:not([data-att-id])` exemption in the contextmenu guard is what lets a file
 card through without taking the browser's own link menu away from ordinary links.
 A file whose bytes were removed (`infected`) or are not published yet
-(`pending`) offers ONLY "Harbin info", because there is nothing left to save.
+(`pending`) offers ONLY "Scan info", because there is nothing left to save.
 The message menu adds Mark unread,
 Bookmark message and Create reminder… beside Copy text, and View reactions
 whenever the message has any. Mark unread moves the WATERMARK
@@ -712,12 +681,16 @@ every task, in this file.
 - Env-only changes need **no rebuild**: edit `/opt/campfire/app/.env` (mode 600)
   and `up -d --force-recreate campfire`.
 - Confirm the deploy: `curl https://campfire.dill.moe/api/version` (the
-  fingerprint changes) and `docker compose ps` → everything Up, `db` healthy.
-  There is no scanner container to check any more, and no diagnostic flag to
-  pass either: `docker compose exec campfire node scripts/verify-harbin.js` is
-  the engine's own proof that it is there with a model (it scans), and the
-  app's own startup line — `Harbin engine ready (harbin: 245 trees, ...)` in
-  `docker compose logs campfire` — is the running app saying the same thing.
+  fingerprint changes) and `docker compose ps` → everything Up, `db` healthy —
+  and on the FIRST deploy that brings the scanner up, `clamav` sits **unhealthy
+  for a few minutes** while it downloads ~300 MB of signatures into the `clamdb`
+  volume, which is expected (the app runs and fails open meanwhile). Confirm the
+  engine itself with `docker compose exec campfire node scripts/verify-clamav.js`
+  — it scans, and it refuses a daemon whose database did not load — and read the
+  app's own startup line in `docker compose logs campfire`:
+  `ClamAV engine ready (clamav:3310 — 1.4.6, signatures 28122 ...)`. The daily
+  bucket sweep then re-judges the whole stored tree (every row still carries the
+  previous engine's generation), which is the migration.
 - Postgres is the `pgdata` Docker volume on that host. Never delete it and never
   `docker compose down -v` — that destroys the database. The data-safety contract
   below applies unchanged.
@@ -1176,8 +1149,8 @@ NEXT: iterate per owner feedback on the live site.
   the entries for the area you are touching instead of loading it every time.
 - **Upload pipeline E2E:** `node scripts/test-upload-pipeline.js` (needs ffmpeg
   + the dev Postgres, skips otherwise) boots a real server against a throwaway
-  database with a slow STAND-IN engine (`scripts/fake-harbin.js`, handed to the
-  app as `HARBIN_BIN`) and asserts the single-transition compression flow
+  database with a slow STAND-IN clamd (`scripts/fake-clamd.js`, handed to the
+  app as `CLAMAV_HOST`/`CLAMAV_PORT`) and asserts the single-transition compression flow
   for the scan-integrated path plus the detection path (a flagged upload is
   deleted, its row goes `infected`, the gate answers 410, and the message is
   re-broadcast as blocked), then **restarts it with `VIRUS_SCAN=0`** to
@@ -1189,11 +1162,13 @@ NEXT: iterate per owner feedback on the live site.
   avatar to a smaller object; an unreferenced object and a pasted-link-only
   object come back byte-identical; a second pass finds nothing left, which is
   the ledger doing its job). Re-run it after touching `virus-scan.js`,
-  `media-compress.js`, `storage-sweep.js`, or the upload routes.
-  What the engine was ASKED is read from its own log (`FAKE_HARBIN_LOG`),
-  because a process contract only tells you the verdict — and because the
-  stand-in is a `.js` file run through this Node binary, the test needs no Rust
-  toolchain and behaves the same in PowerShell and Git Bash.
+  `clamav.js`, `media-compress.js`, `storage-sweep.js`, or the upload routes.
+  What the scanner was ASKED is read from the stand-in's own log
+  (`FAKE_CLAMAV_LOG`) — the candidate's byte count is the tell, since the
+  original and the compressor's output are different sizes — and because the
+  stand-in speaks the real protocol in-process, the test needs no ClamAV, no
+  container and no signature database, and behaves the same in PowerShell and
+  Git Bash.
 - Smoke test API: `curl localhost:3000/api/config`, register/login flow.
 - E2E (register → create server → invite-join → WS live message → history →
   channel create/delete → voice-join signaling) was verified passing; re-run an
@@ -1235,8 +1210,9 @@ are load-bearing:
 - **Compression is scan -> compress -> scan, and only the last verdict gets
   published.** On a clean verdict the `virus-scan` slot compresses the file
   itself (`processMedia` -> `media-compress.processUpload`), hands the candidate
-  output to the engine (a local temp file — never re-downloaded, since Harbin
-  takes the path directly), and only commits it once that verdict is clean. So
+  output to the scanner (streamed in from the compressor's own temp file — the
+  daemon takes a stream, so the candidate is never published to disk first), and
+  only commits it once that verdict is clean. So
   clients see exactly one `pending -> final` transition and a playing file is
   never swapped out from under a running player. Never hand unscanned bytes to
   ffmpeg or publish unscanned output.

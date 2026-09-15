@@ -299,7 +299,7 @@ async function main() {
     })()`);
     await sleep(150);
     const imgMenu = await labels();
-    for (const want of ['Copy image', 'Save image', 'Copy image link', 'Open image link', 'Harbin info']) {
+    for (const want of ['Copy image', 'Save image', 'Copy image link', 'Open image link', 'Scan info']) {
       check(imgMenu.some((l) => l.includes(want)), 'right-clicking the picture carries ' + want, imgMenu);
     }
     check(imgMenu.filter((l) => l.includes('Save image')).length === 1, 'the picture\'s rows appear exactly once', imgMenu);

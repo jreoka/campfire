@@ -3,18 +3,18 @@
 #   cd /opt/campfire/app
 #   docker compose -f docker-compose.yml -f deploy/ovh/docker-compose.ovh.yml up -d
 #
-# The base docker-compose.yml is unchanged: db + campfire. This overlay adds the
-# two services the app needs beside them, and nothing else:
+# The base docker-compose.yml is unchanged: db + clamav + campfire. This overlay
+# adds the two services the app needs beside them, and nothing else:
 #
 #   cloudflared  the site's only ingress. Outbound-only, so ufw never opens
 #                80/443. Its tunnel routes campfire.dill.moe -> http://campfire:3000
 #   coturn       the TURN relay, on the host network so it binds the VPS's public
 #                IP directly - which is why there is no port mapping here
 #
-# There is no scanner service. Malware scanning is Harbin, which is one
-# self-contained binary inside the app image (see the Dockerfile's harbin
-# stage): no daemon, no signature volume, no ~1 GB resident engine to keep warm
-# and nothing to reach over the compose network.
+# The scanner is the `clamav` service in the base file, not here: it is part of
+# the app's function, so a self-hosted deployment of any shape gets it. It is
+# never published to the host - the app reaches it by service name on the compose
+# network - and its signature database lives in the `clamdb` volume.
 #
 # Not here: Caddy. TLS terminates at Cloudflare, and the base overlay for a
 # direct-TLS VPS (docker-compose.prod.yml) is a different, unused shape.
@@ -24,12 +24,20 @@ services:
     # A single host has no kubelet to arbitrate, so a runaway encode or a burst
     # of uploads must not be able to take Postgres down with it. S3 mode buffers
     # every upload in RAM (MAX_FILE_MB=50 across VIRUS_SCAN_CONCURRENCY slots)
-    # and the compressor holds more while ffmpeg runs, so 2g is headroom rather
-    # than a target - the cluster ran the same process under an 896Mi limit.
-    mem_limit: 2g
+    # and the compressor holds more while ffmpeg runs, so this is headroom rather
+    # than a target. Tightened from 2g when the scanner container arrived: the
+    # host has 4 GB and 1g (db) + 1.5g (clamav) + 1.5g (app) is what fits.
+    mem_limit: 1500m
 
   db:
     mem_limit: 1g
+
+  # Measured, not guessed: a loaded clamd holds ~1.02 GiB of signatures and
+  # scans a 50 MB stream in ~3.6s without moving that number (see the note in
+  # deploy/ovh/README.md). 1.5g covers the daemon with room for a large nested
+  # scan, and is the third share of the box's 4 GB.
+  clamav:
+    mem_limit: 1500m
 
   cloudflared:
     image: cloudflare/cloudflared:latest

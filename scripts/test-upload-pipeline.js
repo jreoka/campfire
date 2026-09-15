@@ -6,8 +6,8 @@
 // as a clean file, the sweeper compressed it a few seconds later, and the
 // follow-up verdict re-broadcast the message with a new URL — which reset
 // playback under anyone listening. Here we boot a real server against a
-// throwaway Postgres database with a slow STAND-IN Harbin engine
-// (scripts/fake-harbin.js, pointed at by HARBIN_BIN) and assert:
+// throwaway Postgres database with a slow STAND-IN ClamAV daemon
+// (scripts/fake-clamd.js) and assert:
 //   - the message shows the file as pending first,
 //   - exactly ONE message-updated follows, already pointing at compressed
 //     bytes that the engine approved,
@@ -32,8 +32,9 @@ const WebSocket = require('ws');
 const ROOT = path.join(__dirname, '..');
 const TEST_DB = 'campfire_test';
 const PORT = parseInt(process.env.TEST_PORT || '3411', 10);
-const FAKE_ENGINE = path.join(__dirname, 'fake-harbin.js');
+const DAEMON_PORT = parseInt(process.env.TEST_CLAMAV_PORT || '3412', 10);
 const SCAN_DELAY_MS = 1500; // a slow stand-in keeps the upload pending long enough to observe
+const fake = require(path.join(__dirname, 'fake-clamd'));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log('[test]', ...a);
@@ -57,11 +58,13 @@ function readEnvFile() {
   return out;
 }
 
-// ---------- the stand-in engine's log ----------
-// The engine answers over a process exit code and a report line, so what it was
-// ASKED is only visible through what it wrote down. fake-harbin.js appends one
-// JSON line per answered scan when FAKE_HARBIN_LOG is set, which is how the
-// assertions below stay honest about *which bytes* reached the scanner.
+// ---------- the stand-in daemon's log ----------
+// The daemon answers over a socket, so what it was ASKED is only visible through
+// what it wrote down. fake-clamd.js appends one JSON line per answered scan when
+// FAKE_CLAMAV_LOG is set ({"command","size","reply"}), which is how the
+// assertions below stay honest about *which bytes* reached the scanner: the
+// candidate's size is the tell, because a scan of the original bytes and a scan
+// of the compressor's output are different byte counts.
 // Declared at module scope because readEngineLog() runs outside main(), where
 // the path is decided — a `const` inside main() would leave the helper reading
 // a binding that is not in scope, and its catch would silently return [].
@@ -184,25 +187,32 @@ async function main() {
     jpg: path.join(tmp, 'noise.jpg'),
     small: path.join(tmp, 'thumb.png'), // tiny, but still a candidate: there is no size floor
     txt: path.join(tmp, 'notes.txt'), // not media at all — the compressor must never gate it
-    bad: path.join(tmp, 'payload.txt'), // what the stand-in engine refuses (see fake-harbin.js)
+    bad: path.join(tmp, 'payload.txt'), // what the stand-in daemon refuses (see fake-clamd.js)
   };
   fs.writeFileSync(media.txt, 'not media, just a text file\n');
   // Content, never a file name — and a deliberately innocent name, so the check
   // proves the pipeline blocks on what the bytes ARE, not what they are called.
-  fs.writeFileSync(media.bad, 'holiday photo attachment\n' + 'FAKE-HARBIN-MALWARE-MARKER' + '\nmore harmless-looking text\n');
+  fs.writeFileSync(media.bad, 'holiday photo attachment\n' + fake.MARKER + '\nmore harmless-looking text\n');
   if (!ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=20,volume=0.4', '-ac', '1', '-c:a', 'pcm_s16le', media.wav])
     || !ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'nullsrc=s=2048x2048,geq=random(1)*255:128:128', '-frames:v', '1', '-q:v', '1', media.jpg])
     || !ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x334155:s=64x64', '-frames:v', '1', media.small])) {
     return skip('ffmpeg could not generate test media');
   }
 
-  let child = null, db = null;
+  let child = null, db = null, daemon = null;
   let serverLog = '';
   try {
     await admin.query(`DROP DATABASE IF EXISTS ${TEST_DB} WITH (FORCE)`);
     await admin.query(`CREATE DATABASE ${TEST_DB}`);
     await admin.end();
 
+    // The stand-in daemon the app streams uploads to: it speaks the real clamd
+    // protocol in-process, so this test needs no ClamAV and no container, and
+    // behaves the same on Windows, macOS and Linux.
+    process.env.FAKE_CLAMAV_DELAY_MS = String(SCAN_DELAY_MS);
+    process.env.FAKE_CLAMAV_LOG = engineLog;
+    const daemonHandle = await fake.start({ port: DAEMON_PORT });
+    daemon = daemonHandle;
     const baseEnv = {
       ...process.env,
       PORT: String(PORT),
@@ -210,12 +220,8 @@ async function main() {
       JWT_SECRET: 'test-single-pass-secret',
       UPLOAD_DIR: uploads,
       VIRUS_SCAN: '1',
-      // The stand-in engine, invoked through the current Node binary (a .js
-      // HARBIN_BIN — see virus-scan.js), so this test needs no Rust toolchain
-      // and behaves the same on Windows, macOS and Linux.
-      HARBIN_BIN: FAKE_ENGINE,
-      FAKE_HARBIN_DELAY_MS: String(SCAN_DELAY_MS),
-      FAKE_HARBIN_LOG: engineLog,
+      CLAMAV_HOST: '127.0.0.1',
+      CLAMAV_PORT: String(daemonHandle.port),
       MEDIA_COMPRESS_ACTIVE_MS: '250',
       MEDIA_COMPRESS_EVERY_MS: '5000',
       ORPHAN_SWEEP: '1', // exercised below (dry run + real sweep on a planted orphan)
@@ -304,8 +310,8 @@ async function main() {
     const servedBytes = Buffer.from(await served.arrayBuffer());
     check('compressed file is served through the scan gate', served.status === 200 && servedBytes.length === aAtt.size, 'status=' + served.status + ' bytes=' + servedBytes.length);
     const aScans = readEngineLog();
-    check('candidate output was scanned too (the engine saw the mp3)',
-      aScans.some((s) => s.size === aAtt.size), 'engine saw sizes ' + aScans.map((s) => s.size).join(','));
+    check('candidate output was scanned too (the daemon saw the mp3)',
+      aScans.some((s) => Number(s.size) === aAtt.size), 'daemon saw sizes ' + aScans.map((s) => s.size).join(','));
 
     console.log('\n-- image: jpeg upload -> inline compression (same key) --');
     const b = await roundTrip(media.jpg, 'noise.jpg', 'image/jpeg');
@@ -316,7 +322,7 @@ async function main() {
     check('cache-buster rotated', !!bAtt && bAtt.url !== b.up.url);
     check('final bytes are smaller', !!bAtt && bAtt.size < b.up.size, bAtt && (bAtt.size + ' < ' + b.up.size));
     check('rewritten bytes scanned before publishing',
-      readEngineLog().some((s) => s.size === bAtt.size), 'engine saw sizes ' + readEngineLog().map((s) => s.size).join(','));
+      readEngineLog().some((s) => Number(s.size) === bAtt.size), 'daemon saw sizes ' + readEngineLog().map((s) => s.size).join(','));
     const bKey = bAtt.url.split('?')[0].replace('/uploads/', '');
     check('scan verdict clean for the key', (await scanRow(bKey) || {}).status === 'clean');
     const bOnDisk = fs.statSync(path.join(uploads, bKey)).size;
@@ -347,7 +353,7 @@ async function main() {
     }
 
     console.log('\n-- detection: a flagged upload is deleted, gated and re-broadcast --');
-    // The stand-in engine refuses this one on CONTENT (see fake-harbin.js), and
+    // The stand-in daemon refuses this one on CONTENT (see fake-clamd.js), and
     // the file is named like an innocent holiday photo on purpose: the point of
     // content scanning is that a renamed extension buys an attacker nothing.
     const badConn = await connectWs(token);
@@ -367,8 +373,11 @@ async function main() {
     check('the message is re-broadcast as blocked', !!badDone, badDone ? '' : 'no infected update within 30s');
     const badKey = badUp.url.split('?')[0].replace('/uploads/', '');
     const badRow = await scanRow(badKey);
-    check('the verdict names the engine and its evidence',
-      !!badRow && /^Harbin: .+ \(0\.\d+\)$/.test(badRow.error || ''), badRow && badRow.error);
+    check('the verdict names the engine and the signature that matched',
+      !!badRow && /^ClamAV: .+/.test(badRow.error || ''), badRow && badRow.error);
+    check('...and records the engine generation that judged it',
+      !!badRow && /^clamav\//.test((await db.query('SELECT engine FROM file_scans WHERE key = $1', [badKey])).rows[0]?.engine || ''),
+      JSON.stringify((await db.query('SELECT engine, verdict, evidence FROM file_scans WHERE key = $1', [badKey])).rows[0] || null));
     check('the infected bytes were deleted', !fs.existsSync(path.join(uploads, badKey)));
     check('the scan row is kept so the chat can still explain itself',
       !!badRow && badRow.status === 'infected');
@@ -503,8 +512,7 @@ async function main() {
     const pAtt = pDone && pDone.message.attachments[0];
     check('final bytes are compressed + clean', !!pAtt && pAtt.mime === 'audio/mpeg' && pAtt.size < pUp.size, pAtt && (pAtt.mime + ' ' + pAtt.size + ' < ' + pUp.size));
     check('the engine was not asked anything at all',
-      readEngineLog().length === scansBefore, 'extra scans=' + (readEngineLog().length - scansBefore));
-    const pServed = await fetch(`http://127.0.0.1:${PORT}${pAtt ? pAtt.url : ''}`);
+      readEngineLog().length === scansBefore, 'extra scans=' + (readEngineLog().length - scansBefore));    const pServed = await fetch(`http://127.0.0.1:${PORT}${pAtt ? pAtt.url : ''}`);
     check('the published file is servable through the gate', pServed.status === 200, 'status=' + pServed.status);
     check('old scan row dropped, new key carries the verdict', (await scanRow(pUp.url.split('?')[0].replace('/uploads/', ''))) === null && !!(await scanRow(pAtt && pAtt.url.split('?')[0].replace('/uploads/', ''))));
 
@@ -741,6 +749,8 @@ async function main() {
   } finally {
     try { if (db) await db.end(); } catch {}
     try { if (child) child.kill(); } catch {}
+    try { if (daemon) await daemon.close(); } catch {}
+    try { await fake.closeAll(); } catch {}
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
     try {
       const drop = new Client({ ...pg, database: 'postgres', connectionTimeoutMillis: 4000 });

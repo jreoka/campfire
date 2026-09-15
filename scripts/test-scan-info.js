@@ -1,4 +1,4 @@
-// "Harbin info": the attachment rows in the message menu, and the panel behind
+// "Scan info": the attachment rows in the message menu, and the panel behind
 // them.
 //
 // The chat card can only ever say a file was blocked; the REASON lives in the
@@ -9,18 +9,20 @@
 //   - an attachment has no menu of its own any more: right-clicking a rendering
 //     that carries an attachment identity — a picture, an audio player, a file
 //     card, and the card that stands in for a file the scanner removed — opens
-//     the MESSAGE's menu with that file's rows in it, "Harbin info" among them,
+//     the MESSAGE's menu with that file's rows in it, "Scan info" among them,
 //     and a message with no media at all grows none of them;
-//   - picking it fetches the stored verdict and paints the panel: the verdict
-//     and score, the engine that made it, when it ran, and the findings;
+//   - picking it fetches the stored verdict and paints the panel: the verdict,
+//     the engine generation and signature revision behind it, when it ran, and
+//     what the scanner found;
 //   - the panel is read-only: one way out, not two;
 //   - a long-press on a touch device gets the same item in the phone's sheet.
 //
-// The engine is the stand-in (scripts/fake-harbin.js) so this needs no Rust
-// toolchain: it refuses a file whose BYTES carry the malware marker, which is
-// what makes "a renamed file is still caught" testable.
+// The engine is the stand-in daemon (scripts/fake-clamd.js) which speaks the
+// real wire protocol in-process, so this needs no ClamAV and no container: it
+// refuses a file whose BYTES carry the malware marker, which is what makes "a
+// renamed file is still caught" testable.
 //
-// Usage: node scripts/test-harbin-info.js
+// Usage: node scripts/test-scan-info.js
 
 'use strict';
 
@@ -30,11 +32,13 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { Client } = require('pg');
 const WebSocket = require('ws');
+const fake = require('./fake-clamd');
 
 const ROOT = path.join(__dirname, '..');
-const TEST_DB = 'campfire_test_harbininfo';
+const TEST_DB = 'campfire_test_scaninfo';
 const PORT = parseInt(process.env.TEST_PORT || '3431', 10);
 const CDP_PORT = parseInt(process.env.TEST_CDP_PORT || '9431', 10);
+const DAEMON_PORT = parseInt(process.env.TEST_CLAMAV_PORT || '3432', 10);
 
 let passed = 0;
 const failures = [];
@@ -70,10 +74,8 @@ function readEnvFile() {
 }
 
 // A file whose NAME is innocent and whose BYTES are the marker the stand-in
-// engine refuses (see fake-harbin.js): the pipeline decides on content.
-const MARKER = 'FAKE-HARBIN-MALWARE-MARKER';
-// The middle band the stand-in has too: flagged, but under the block level.
-const SUSPECT_MARKER = 'FAKE-HARBIN-SUSPECT-MARKER';
+// daemon refuses (see fake-clamd.js): the pipeline decides on content.
+const MARKER = fake.MARKER;
 
 async function main() {
   const chromePath = findChrome();
@@ -90,7 +92,7 @@ async function main() {
   try { await admin.connect(); }
   catch (e) { return skip('Postgres unreachable (' + ((e && e.message) || e) + ') — docker compose up -d db'); }
 
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-hbinfo-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-scaninfo-'));
   const uploads = path.join(tmp, 'uploads');
   fs.mkdirSync(uploads, { recursive: true });
 
@@ -100,20 +102,25 @@ async function main() {
     await admin.query(`CREATE DATABASE ${TEST_DB}`);
     await admin.end();
 
+    // The daemon the app will talk to. A slow answer is what makes the `pending`
+    // state (and the card that renders it) observable at all.
+    process.env.FAKE_CLAMAV_DELAY_MS = '250';
+    const daemon = await fake.start({ port: DAEMON_PORT });
+
     child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
       cwd: ROOT,
       env: {
         ...process.env,
         PORT: String(PORT),
         PGHOST: pg.host, PGPORT: String(pg.port), PGUSER: pg.user, PGPASSWORD: pg.password, PGDATABASE: TEST_DB,
-        JWT_SECRET: 'test-harbin-info-secret',
+        JWT_SECRET: 'test-scan-info-secret',
         UPLOAD_DIR: uploads,
         VIRUS_SCAN: '1',
         MEDIA_COMPRESS: '0', // the pipeline is not what this test is about
         BUCKET_SCAN_FIRST_MS: '3600000',
         UNFURL: '0',
-        HARBIN_BIN: path.join(__dirname, 'fake-harbin.js'),
-        FAKE_HARBIN_DELAY_MS: '250',
+        CLAMAV_HOST: '127.0.0.1',
+        CLAMAV_PORT: String(daemon.port),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -184,12 +191,12 @@ async function main() {
 
     console.log('\n[1] sign in, make a server, post an attachment of each shape');
     await evaluate(`(async () => {
-      const r = await fetch('/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'hbinfo', displayName: 'HB Info', password: 'passw0rd!x' }) });
+      const r = await fetch('/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'scaninfo', displayName: 'Scan Info', password: 'passw0rd!x' }) });
       const d = await r.json();
       store.token = d.token; store.sid = d.sid;
     })()`);
     await send('Page.reload');
-    if (!(await waitFor(`S.me && S.me.username === 'hbinfo'`))) return fail('never booted signed in');
+    if (!(await waitFor(`S.me && S.me.username === 'scaninfo'`))) return fail('never booted signed in');
     const srv = await evaluate(`(async () => {
       const r = await api('/api/servers', { method: 'POST', body: JSON.stringify({ name: 'Info Lab' }) });
       await refreshServers(r.server.id);
@@ -228,11 +235,6 @@ async function main() {
     check(cleanZip.scan === 'clean', 'and so is a plain file', cleanZip.scan);
     const bad = await postFile('holiday-photo-2019.txt', 'text/plain', 'innocent looking\n' + MARKER + '\nmore innocent looking text\n');
     check(bad.scan === 'infected', 'a file whose BYTES are flagged is blocked, whatever it is called', bad.scan);
-    // Harbin's MIDDLE band: above its suspicious threshold, below the level this
-    // server blocks. That file is served — and served silently was the wrong
-    // half of the trade, so the message has to say so.
-    const sus = await postFile('maybe-not-fine.txt', 'text/plain', 'looks harmless\n' + SUSPECT_MARKER + '\n');
-    check(sus.scan === 'clean', 'a file in the suspicious band is SERVED, not gated', sus.scan);
 
     const attFor = async (url) => waitFor(`(() => {
       const m = (S.messages.get(S.channelId) || []).find((x) => (x.attachments || []).some((a) => a.url === ${JSON.stringify(url)}));
@@ -240,34 +242,19 @@ async function main() {
       return a || false;
     })()`, 15000);
 
-    console.log('\n[2] a suspicious file warns on the message itself');
-    const susAtt = await attFor(sus.up.url);
-    check(!!susAtt && susAtt.scanVerdict === 'suspicious', 'the message is told which band it landed in', susAtt);
-    check(!!susAtt && susAtt.scan === 'clean', '...and that it is servable', susAtt && susAtt.scan);
-    check(!!susAtt && !('scanVerdict' in (await attFor(clean.up.url) || {})), 'a clean file is told nothing of the sort');
+    console.log('\n[2] a clean file carries no warning band (ClamAV has no middle band)');
+    const cleanAtt = await attFor(clean.up.url);
+    check(!!cleanAtt && cleanAtt.scan === 'clean', 'the clean file is servable', cleanAtt && cleanAtt.scan);
+    check(!!cleanAtt && !('scanVerdict' in cleanAtt), 'and the message is told nothing about a band', cleanAtt);
     const warnEl = await evaluate(`(() => {
       const all = [...document.querySelectorAll('.att-warn')];
-      const el = all[0];
-      return { count: all.length, text: el ? el.textContent.trim() : '', id: el ? el.dataset.attId : '', icon: el ? !!el.querySelector('svg') : false,
-        isButton: el ? el.tagName === 'BUTTON' : false };
+      return { count: all.length, css: !!document.querySelector('style') ? document.styleSheets.length : 0 };
     })()`);
-    check(warnEl.count === 1, 'exactly one attachment carries the marker', warnEl);
-    check(/Potentially malicious/.test(warnEl.text), 'and it says what it is', warnEl.text);
-    check(warnEl.icon && warnEl.isButton, 'with a warning glyph on a real button (no emoji, keyboard-reachable)', warnEl);
-    check(warnEl.id === (susAtt && susAtt.id), 'bound to its OWN attachment', warnEl.id);
-    // Served, not blocked — the whole point of the band, and of warning about it.
-    const susKey = sus.up.url.split('?')[0].replace('/uploads/', '');
-    check(fs.existsSync(path.join(uploads, susKey)), 'the suspicious bytes are still on disk');
-    check((await fetch(`http://127.0.0.1:${PORT}${sus.up.url}`)).status === 200, 'and the file is still servable');
-
-    await evaluate(`(() => { document.querySelector('.att-warn').click(); return true; })()`);
-    const susPanel = await waitFor(`(() => { const v = document.querySelector('#modal-body .hb-v'); return v ? v.textContent : false; })()`, 10000);
-    check(/^Suspicious/.test(susPanel || ''), 'the marker opens the panel, reading the band', susPanel);
-    check(/score 0\.\d{4}/.test(susPanel || ''), 'with the score behind it', susPanel);
-    const susNote = await evaluate(`(() => { const n = document.querySelector('#modal-body .hb-note'); return n ? n.textContent : ''; })()`);
-    check(/served/i.test(susNote), 'and why a flagged file was served at all', susNote);
-    await evaluate(`(() => { document.querySelector('#modal-ok').click(); return true; })()`);
-    await sleep(250);
+    check(warnEl.count === 0, 'no attachment carries a suspicious marker', warnEl);
+    const badKey = bad.up.url.split('?')[0].replace('/uploads/', '');
+    check(!fs.existsSync(path.join(uploads, badKey)), 'the flagged bytes were deleted from disk');
+    check((await fetch(`http://127.0.0.1:${PORT}${bad.up.url}`)).status === 410, 'and the gate refuses them (410)');
+    check(fs.existsSync(path.join(uploads, clean.up.url.split('?')[0].replace('/uploads/', ''))), 'the clean bytes are still there');
 
     console.log('\n[3] the attachment rows are part of the message menu — and only for media');
     const menuFor = async (selector) => evaluate(`(() => {
@@ -280,23 +267,23 @@ async function main() {
     const closeMenu = () => evaluate(`(() => { const b = document.querySelector('#ctx-menu'); if (b) b.remove(); return true; })()`);
 
     const zipMenu = await menuFor('.file-card[data-att-id]');
-    check(zipMenu.open && zipMenu.labels.includes('Harbin info'), 'a plain file card offers it', zipMenu.labels);
+    check(zipMenu.open && zipMenu.labels.includes('Scan info'), 'a plain file card offers it', zipMenu.labels);
     check(zipMenu.labels.includes('Copy text') && zipMenu.labels.includes('Bookmark message'),
       'from the message menu it now rides in', zipMenu.labels);
     await closeMenu();
 
     const txtMenu = await menuFor('.txtfile[data-att-id]');
-    check(txtMenu.open && txtMenu.labels.includes('Harbin info'), 'a text preview offers it', txtMenu.labels);
+    check(txtMenu.open && txtMenu.labels.includes('Scan info'), 'a text preview offers it', txtMenu.labels);
     await closeMenu();
 
     const imgMenu = await menuFor('img.att-img[data-att-id], .att-wrap[data-att-id]');
-    check(imgMenu.open && imgMenu.labels.includes('Harbin info'), 'a picture offers it (beside copy/save)', imgMenu.labels);
+    check(imgMenu.open && imgMenu.labels.includes('Scan info'), 'a picture offers it (beside copy/save)', imgMenu.labels);
     check(imgMenu.labels.includes('Copy image') && imgMenu.labels.includes('Mark unread'),
       'with the picture\'s rows and the message\'s in ONE menu', imgMenu.labels);
     await closeMenu();
 
     const blockedMenu = await menuFor('.scan-block.infected[data-att-id]');
-    check(blockedMenu.open && blockedMenu.labels.includes('Harbin info'), 'the card standing in for a removed file offers it', blockedMenu.labels);
+    check(blockedMenu.open && blockedMenu.labels.includes('Scan info'), 'the card standing in for a removed file offers it', blockedMenu.labels);
     check(!blockedMenu.labels.some((l) => /^(?:Save |Copy link$|Copy (?:image|video) link|Open (?:image|video) link)/.test(l)),
       'and offers nothing that could not work — the bytes are gone', blockedMenu.labels);
     await closeMenu();
@@ -310,7 +297,7 @@ async function main() {
       const m = document.querySelector('#ctx-menu');
       return { open: !!m, labels: m ? [...m.querySelectorAll('.ctx-item span:last-child')].map((s) => s.textContent) : [] };
     })()`);
-    check(msgMenu.open && msgMenu.labels.includes('Harbin info') && msgMenu.labels.includes('Copy text'),
+    check(msgMenu.open && msgMenu.labels.includes('Scan info') && msgMenu.labels.includes('Copy text'),
       'a click on the message body gets the message menu, its attachment\'s rows in it', msgMenu.labels);
     await closeMenu();
 
@@ -329,7 +316,7 @@ async function main() {
       return { open: !!m, labels: m ? [...m.querySelectorAll('.ctx-item span:last-child')].map((s) => s.textContent) : [] };
     })()`);
     check(plainMenu.open && plainMenu.labels.includes('Copy text'), 'its menu opens as usual', plainMenu.labels);
-    check(!plainMenu.labels.some((l) => /Harbin info|Save |Copy image|Copy link|Open image/.test(l)),
+    check(!plainMenu.labels.some((l) => /Scan info|Save |Copy image|Copy link|Open image/.test(l)),
       'with no attachment rows at all', plainMenu.labels);
     await closeMenu();
 
@@ -339,10 +326,10 @@ async function main() {
         const el = document.querySelector(${JSON.stringify(selector)});
         el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 240, clientY: 240 }));
         const m = document.querySelector('#ctx-menu');
-        const b = [...m.querySelectorAll('.ctx-item')].find((x) => /Harbin info/.test(x.textContent));
+        const b = [...m.querySelectorAll('.ctx-item')].find((x) => /Scan info/.test(x.textContent));
         b.click();
       })()`);
-      const ok = await waitFor(`(() => { const t = document.querySelector('#modal-title'); return t && t.textContent === 'Harbin info' && document.querySelector('#modal-body .hb-head'); })()`, 15000);
+      const ok = await waitFor(`(() => { const t = document.querySelector('#modal-title'); return t && t.textContent === 'Scan info' && document.querySelector('#modal-body .hb-head'); })()`, 15000);
       if (!ok) return null;
       return evaluate(`(() => {
         const b = document.querySelector('#modal-body');
@@ -364,9 +351,9 @@ async function main() {
     check(!!blockedPanel, 'the panel opens from the blocked card');
     if (blockedPanel) {
       check(/Malware detected/.test(blockedPanel.verdict), 'it names the verdict', blockedPanel.verdict);
-      check(/score 0\.\d{4}/.test(blockedPanel.verdict), 'with the score the engine gave', blockedPanel.verdict);
+      check(!/score/.test(blockedPanel.verdict), 'with no score — ClamAV reports a signature, not a score', blockedPanel.verdict);
       check(blockedPanel.tone.includes('bad'), 'tone matches the verdict', blockedPanel.tone);
-      check(blockedPanel.findings.length >= 1, 'it lists the findings the verdict was based on', blockedPanel.findings);
+      check(blockedPanel.findings.some((f) => /signature:/.test(f)), 'it names the signature that matched', blockedPanel.findings);
       check(/removed|no longer/i.test(blockedPanel.text), 'and says the file was removed', blockedPanel.text.slice(0, 200));
       check(blockedPanel.text.includes('files/'), 'it names the stored object the verdict hangs off', blockedPanel.rows);
       check(!/not a stored upload/.test(blockedPanel.text), 'and never says the file is not a stored upload', blockedPanel.rows);
@@ -382,10 +369,18 @@ async function main() {
       check(/^Clean/.test(cleanPanel.verdict), 'a clean file reads as clean', cleanPanel.verdict);
       check(cleanPanel.tone.includes('ok'), 'with the clean tone', cleanPanel.tone);
       check(cleanPanel.closeHidden && cleanPanel.cancelButtons === 1, 'and it is read-only as well', { buttons: cleanPanel.cancelButtons });
+      // The engine generation is what the bucket sweep compares against, so the
+      // panel has to name it: this is the check that would catch the row being
+      // stored without it (which would make every file be re-judged forever).
+      // `rows` is innerText with its newline flattened to ': ', and `.hb-row`'s
+      // value span is uppercased by its own styling — hence the loose patterns.
+      check(/Engine: clamav\//i.test(cleanPanel.rows.join(' | ')), 'it names the engine generation that judged it', cleanPanel.rows);
+      check(/Signatures: \d+/i.test(cleanPanel.rows.join(' | ')), 'and the signature revision it used', cleanPanel.rows);
       // A local upload must name its key. This is the check that would have
       // caught the response dropping `key` while the panel rendered it.
       check(/\bfiles\/[0-9a-f]{16,}\./.test(cleanPanel.text), 'it names the storage key', cleanPanel.rows);
       check(!/not a stored upload/.test(cleanPanel.text), 'and does not claim a local upload is not stored', cleanPanel.rows);
+      check(!/earlier scanner generation/.test(cleanPanel.text), 'a verdict from the engine running now is not called stale', cleanPanel.rows);
     }
     await evaluate(`(() => { document.querySelector('#modal-ok').click(); return true; })()`);
     await sleep(200);
@@ -410,12 +405,13 @@ async function main() {
       return sh ? [...sh.querySelectorAll('.sheet-item, button')].map((b) => b.textContent.trim()).filter(Boolean) : null;
     })()`);
     check(!!sheet, 'the long-press opens the phone sheet', sheet);
-    check(!!sheet && sheet.some((l) => /Harbin info/.test(l)), 'and it carries the same item', sheet);
+    check(!!sheet && sheet.some((l) => /Scan info/.test(l)), 'and it carries the same item', sheet);
     check(!!sheet && sheet.some((l) => /Copy text/.test(l)),
       'in the message sheet the hold opened — the attachment has no sheet of its own', sheet);
     await evaluate(`(() => { const b = document.querySelector('#sheet-backdrop'); if (b) b.click(); return true; })()`);
 
     check(pageErrors.length === 0, 'no uncaught page errors through the whole run', pageErrors.slice(0, 3));
+    await daemon.close();
   } catch (e) {
     console.error('\n[test] FAILED:', (e && e.stack) || e);
     failures.push('exception: ' + ((e && e.message) || e));
@@ -423,6 +419,7 @@ async function main() {
     try { if (ws) ws.close(); } catch {}
     try { if (chrome) chrome.kill(); } catch {}
     try { if (child) child.kill(); } catch {}
+    try { await fake.closeAll(); } catch {}
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
     try {
       const drop = new Client({ ...pg, database: 'postgres', connectionTimeoutMillis: 4000 });
@@ -434,7 +431,7 @@ async function main() {
 
   console.log(`\n${passed} checks passed, ${failures.length} failed`);
   if (failures.length) { for (const f of failures) console.log('  - ' + f); process.exit(1); }
-  console.log('Harbin info: OK');
+  console.log('Scan info: OK');
 }
 
 main().catch((e) => { console.error('[test] FAILED:', (e && e.stack) || e); process.exit(1); });
