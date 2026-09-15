@@ -143,21 +143,25 @@ const STORY_PX = ${JSON.stringify(STORY_PX)};
 // A text-only story exactly as the composer posts one: the picture is the
 // generated gradient, the author's text is the markup (overlays JSON), and
 // there is no caption at all.
-window.__item = function (text) {
+window.__item = function (text, twoStickers) {
+  const ovs = [{ t: 'text', text, x: 0.5, y: twoStickers ? 0.52 : 0.42, r: 0, s: 1, color: '#ffffff' }];
+  // The reported post: a link card and, under it, the words (the two placements
+  // that collided in the preview).
+  if (twoStickers) ovs.push({ t: 'text', text: 'good song', x: 0.5, y: 0.68, r: 0, s: 1, color: '#ffffff' });
   return {
     id: 's1', kind: 'image', url: STORY_PX, seen: false, views: 0,
     created_at: Date.now(), expires_at: Date.now() + 82800000,
-    overlays: JSON.stringify([{ t: 'text', text, x: 0.5, y: 0.42, r: 0, s: 1, color: '#ffffff' }]),
+    overlays: JSON.stringify(ovs),
   };
 };
 // Build the thumbnail the way each surface does, INTO the REAL host element
 // (the hero's, the card's, the ring's) so the real CSS decides its box.
-window.__build = async function (which, text) {
+window.__build = async function (which, text, twoStickers) {
   document.querySelectorAll('#hero .sp-hero-media,#hero .st-thumb-ov').forEach((n) => n.remove());
   document.querySelectorAll('#grid .sp-card-media,#grid .st-thumb-ov').forEach((n) => n.remove());
   document.querySelectorAll('#rail .st-thumb,#rail .st-thumb-ov').forEach((n) => n.remove());
   document.querySelectorAll('#row-av .st-thumb,#row-av .st-thumb-ov').forEach((n) => n.remove());
-  const item = window.__item(text);
+  const item = window.__item(text, twoStickers);
   let el = null;
   if (which === 'hero') el = storyThumbEl(item, 'sp-hero-media');
   else if (which === 'card') el = storyThumbEl(item, 'sp-card-media');
@@ -310,11 +314,10 @@ async function main() {
     check(hero.layerIsContainingBlock, 'so the overlay layer resolves against the thumbnail, not the banner', hero.layerParent);
     check(!!hero.itemFont && !!hero.cardFont,
       'the sticker and its card both render in the hero preview', { cardFont: hero.cardFont, itemFont: hero.itemFont });
-    // The hero shows the post as a PORTRAIT PREVIEW (the post's own shape) at
-    // its left, not stretched across a 7:1 band. That shape is the whole point:
-    // a band that wide cannot hold a portrait post's composition, and measuring
-    // the markup against the cropped band is what put the post's words on top of
-    // its own link card. `layerFit` below is 'the layer IS the picture's box'.
+    // The hero's picture IS the card's background: full-bleed, with the hero's
+    // own title/stats/buttons on top of it. The layer is that visible crop, and
+    // the markup is measured against it — which is what keeps the post's words
+    // and its link card apart at this size.
     const heroBox = await evaluate(`(() => {
       const hero = document.getElementById('hero').getBoundingClientRect();
       const wrapEl = document.querySelector('#hero .st-thumb-ov');
@@ -324,12 +327,28 @@ async function main() {
         left: Math.round(wrap.left - hero.left),
         tail: Math.round(hero.right - wrap.right) };
     })()`);
-    check(heroBox.wrap[0] >= 90 && heroBox.wrap[0] <= 140 && heroBox.wrap[1] >= 120,
-      'the post renders as a portrait preview column, not a full-width band', heroBox);
-    check(heroBox.left < 24 && heroBox.tail > 100,
-      'and it sits at the hero\'s left, with the hero\'s own text beside it', heroBox);
-    check(!hero.zoom || hero.zoom === 1,
-      'with no crop zoom left to distort the composition', hero.zoom);
+    check(Math.abs(heroBox.wrap[0] - heroBox.hero[0]) <= TOL && Math.abs(heroBox.wrap[1] - heroBox.hero[1]) <= TOL
+      && heroBox.left <= TOL && heroBox.tail <= TOL,
+      'the preview is the card\'s full-width background', heroBox);
+    // The embed must NOT be held at its px floor here (that is what crossed the
+    // words): it is the sticker's own .3em, the same share of the picture the
+    // viewer gives it. Its floor stays for the viewer and the composer.
+    check(!!hero.itemFont && !!hero.cardFont
+      && Math.abs((hero.cardFont / hero.itemFont) - 0.3) < 0.02,
+      'and its card is proportional (.3em), not a px floor that crosses the words',
+      { cardFont: hero.cardFont, itemFont: hero.itemFont });
+    // The two stickers must not collide in the preview, and this is the measured
+    // fault: with the embed held at its px floor the card's box reached ~3px into
+    // the words below it. Rebuilt here with the post's two real placements.
+    await evaluate('window.__build("hero", window.__url, true)');
+    const gap = await evaluate(`(() => {
+      const items = [...document.querySelectorAll('#hero .ov-item')];
+      if (items.length < 2) return null;
+      const a = items[0].getBoundingClientRect(), b = items[1].getBoundingClientRect();
+      return { items: items.length, gap: +(b.top - a.bottom).toFixed(1) };
+    })()`);
+    check(!!gap && gap.items === 2 && gap.gap >= 0, 'the post\'s own stickers do not collide', gap);
+    await evaluate('window.__build("hero", window.__url)');
     const vis = await evaluate('window.__visible("#hero", "#hero .embed-link")');
     check(vis.area > 0 && vis.seen >= vis.area * 0.99, 'and the whole card is visible inside the hero (nothing clipped away)', vis);
     // Fault 3, measured: the layer must be the rectangle the photo actually

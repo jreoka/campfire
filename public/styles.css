@@ -2715,30 +2715,30 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 #sp-body{display:flex;flex-direction:column}
 .sp-sec{font-size:.68rem;letter-spacing:.09em;font-weight:800;color:var(--faint);padding:1.15rem 0 .45rem}
 /* --- the hero: your story ---
-   The hero is a wide card and a story is a tall post, so the hero shows the post
-   as a PORTRAIT PREVIEW at its left — the same shape the viewer gives it — and
-   never stretches it across the card. Nothing about the post is computed here:
-   storyThumbEl() fits the markup to whatever box the preview has, and the
-   viewer's own rule (8.5% of the picture's height, a card at .3em of that) then
-   lands the post's words and its link card exactly where the real story puts
-   them, at this size. A full-width band cannot do that: a portrait post cropped
-   to 7:1 puts the sticker's box at ~1.2x its own width there, which is what
-   squeezed the words on top of the post's own link card. */
-.sp-hero{--sp-hero-prev:110px;--sp-hero-prev-gap:14px;
-  position:relative;display:flex;align-items:center;min-height:164px;margin-top:.55rem;border-radius:var(--r-xl);overflow:hidden;background:var(--panel-2);border:1px solid var(--line-soft);padding:1.05rem 1.15rem}
+   The hero's picture is the card's full-width background (object-fit:cover), so
+   the post is shown as a CROP of itself with the hero's own title, stats and
+   buttons on top of it. The markup is measured against that visible crop, which
+   keeps it in the place the post put it.
+   The embed has NO px floor here (the viewer and the composer keep theirs): this
+   layer is a fraction of the picture's height, and holding the card at 10px while
+   8.5%-of-height words scaled under it made the card 2.5x its proportional height
+   — its bottom crossed the words above it by ~3px. Proportional, it measures the
+   same share of the picture here as it does in the viewer (0.12 vs 0.11). */
+.sp-hero{position:relative;display:flex;align-items:center;min-height:164px;margin-top:.55rem;border-radius:var(--r-xl);overflow:hidden;background:var(--panel-2);border:1px solid var(--line-soft);padding:1.05rem 1.15rem}
 .sp-hero-empty{background:var(--panel);border-style:dashed;min-height:132px}
-.sp-hero-media{position:absolute;top:11px;bottom:11px;left:11px;right:auto;width:var(--sp-hero-prev);height:auto;object-fit:cover;display:block;border-radius:12px;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
-.sp-hero-media>.st-thumb-media{border-radius:12px}
-/* A preview is a picture in its own right, so the full-bleed scrim (below) does
-   not apply to it — there is no photo under the card's own text to darken. */
-.sp-hero:not(.sp-hero-empty) .sp-hero-media{-webkit-mask-image:none;mask-image:none}
-.sp-hero-in{padding-left:calc(var(--sp-hero-prev) + var(--sp-hero-prev-gap))}
-/* The card's scrim is a MASK on the picture, never a second element painted over
-   it. The two layers would each get their own antialiased clip at the rounded
+.sp-hero-media{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+.sp-hero-media>.st-thumb-media{border-radius:0}
+.sp-hero-media .ov-item .embed{font-size:.3em}
+/* The scrim is a MASK on the picture, never a second element painted over it.
+   The two layers would each get their own antialiased clip at the rounded
    corner, so at a corner pixel the picture survived at partial coverage
    underneath a scrim that only covered that same fraction of the pixel — a
-   hairline of the photo along the curve. (The hero's picture is a boxed portrait
-   preview, so it has no full-bleed photo to fade and no scrim rule at all.) */
+   hairline of the photo along the curve, loudest on the left where the scrim is
+   darkest, and gone the moment each pixel is painted once. The hero's own
+   surface is the scrim's base colour, and the mask alpha is 1 minus the old
+   scrim's alpha, so the picture still fades into the same near-black. */
+.sp-hero:not(.sp-hero-empty){background:#05070c}
+.sp-hero-media{-webkit-mask-image:linear-gradient(90deg,rgba(0,0,0,.06) 12%,rgba(0,0,0,.4) 58%,rgba(0,0,0,.72));mask-image:linear-gradient(90deg,rgba(0,0,0,.06) 12%,rgba(0,0,0,.4) 58%,rgba(0,0,0,.72))}
 .sp-hero-in{position:relative;display:flex;align-items:center;gap:.9rem;flex-wrap:wrap;width:100%;min-width:0}
 .sp-hero-badge{position:relative;width:56px;height:56px;flex-shrink:0;border-radius:50%;background:var(--panel-3);color:var(--muted);display:inline-flex;align-items:center;justify-content:center}
 .sp-hero-badge>svg{width:22px;height:22px}
@@ -2801,9 +2801,7 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
    the wall keeps two columns of smaller cards. */
 @media (max-width:700px),(max-height:560px) and (pointer:coarse){
   #stories-page{padding:.9rem .8rem 1.6rem}
-  /* The hero keeps a portrait preview on a phone too, just a narrower one. */
-  .sp-hero{--sp-hero-prev:78px;--sp-hero-prev-gap:11px;padding:.85rem .9rem;min-height:0}
-  .sp-hero-media{top:9px;bottom:9px;left:9px}
+  .sp-hero{padding:.85rem .9rem;min-height:0}
   .sp-hero-in{align-items:flex-start;gap:.7rem}
   .sp-hero-badge,.sp-hero-badge .avatar{width:46px;height:46px}
   .sp-hero-txt{min-width:120px}

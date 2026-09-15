@@ -73,18 +73,12 @@ if (!/function spHero/.test(centerSrc) || !/function spCard/.test(centerSrc)) {
 console.log('\n[1] one paint, not a scrim layer over the picture');
 check(!/sp-hero-scrim|sp-card-scrim/.test(stories), 'no scrim element is built any more');
 check(!/sp-hero-scrim|sp-card-scrim/.test(css), 'no scrim rule is left in the stylesheet');
+check(/\.sp-hero-media\{[^}]*mask-image:linear-gradient\(90deg/.test(css), 'the hero photo carries the left-to-right mask (.css)');
+check(/\.sp-hero:not\(\.sp-hero-empty\)\{background:#05070c\}/.test(css), 'the hero surface is the scrim base colour (.css)');
 check(/\.sp-card-media\{[^}]*mask-image:linear-gradient\(to top/.test(css), 'the card photo carries the bottom-up mask (.css)');
 check(/\.sp-card:has\(> \.sp-card-media\)\{background:#05070c\}/.test(css), 'the card surface is the scrim base colour (.css)');
-// The hero's story is no longer the card's background: it is a portrait preview
-// (the post's own shape) beside the hero's text, so there is no photo under that
-// text to darken and the scrim opts out for it — while the rule itself stays for
-// the surfaces whose picture IS their background.
-check(/\.sp-hero:not\(\.sp-hero-empty\) \.sp-hero-media\{-webkit-mask-image:none;mask-image:none\}/.test(css),
-  'the hero\'s portrait preview opts out of the scrim (.css)');
-check(/\.sp-hero-media\{position:absolute;top:11px;bottom:11px;left:11px;right:auto;width:var\(--sp-hero-prev\)/.test(css),
-  'and is laid out as a portrait column at the card\'s left (.css)');
-// The hero has no full-bleed photo left, so its scrim rule is gone with it.
-check(!/\.sp-hero-media\{[^}]*-webkit-mask-image:linear-gradient/.test(css), 'and carries no full-bleed scrim of its own any more');
+// 1 - the old alphas: .94/.6/.28 for the hero, .92/.35/.05 for the card.
+check(/mask-image:linear-gradient\(90deg,rgba\(0,0,0,\.06\) 12%,rgba\(0,0,0,\.4\) 58%,rgba\(0,0,0,\.72\)\)/.test(css), "the hero mask matches the old scrim's alpha ramp");
 check(/mask-image:linear-gradient\(to top,rgba\(0,0,0,\.08\) 4%,rgba\(0,0,0,\.65\) 42%,rgba\(0,0,0,\.95\) 70%\)/.test(css), "the card mask matches the old scrim's alpha ramp");
 
 const chromePath = findChrome();
@@ -229,26 +223,27 @@ async function main() {
         background: cs.backgroundColor,
         media: mr ? { x: mr.x, y: mr.y, w: mr.width, h: mr.height } : null }; })()`);
     check(hero.radius > 8 && hero.border >= 1, 'the hero really is rounded with a hairline', hero);
-    // The story is a portrait preview at the card's left (the post's own shape),
-    // so the hero's surface is its normal panel colour — there is no full-bleed
-    // photo left for the scrim to fade, and nothing to leak at its corners.
-    check(!!hero.media && hero.media.w <= 130 && hero.media.w >= 60 && hero.media.x - hero.x < 24,
-      'the story renders as a portrait preview at the hero\'s left', hero.media);
-    check(/^rgb\(/.test(hero.background) && hero.background !== 'rgb(5, 7, 12)',
-      'and the hero surface is the panel, not the old scrim base colour', { background: hero.background });
+    // The picture is the card's full-width background again (the post is shown as
+    // a crop of itself), so the scrim applies exactly as it always did.
+    check(!!hero.media && Math.abs(hero.media.w - hero.w) <= 2 && Math.abs(hero.media.h - hero.h) <= 2,
+      'the picture is the hero\'s full-bleed background', hero.media);
+    check(hero.background === 'rgb(5, 7, 12)', 'and the hero surface is the scrim base colour', { background: hero.background });
+    // The flat ramp, sampled across the middle of the hero: the reference a
+    // corner pixel has to match at its own x. (Absolute check too: a white photo
+    // must still read near-black at the left end and bright at the right, or the
+    // scrim itself is gone and the relative check below would pass vacuously.)
+    const ref = await band(hero, 'x');
+    // The hairline's own brightness, sampled on the straight left edge: the
+    // brightest legitimately-painted thing the corner can blend into.
+    const borderLum = (await shot({ x: hero.x, y: hero.y + Math.round(hero.h / 2), width: 2, height: 4 }, 'border')).px.reduce((m, p) => Math.max(m, p[2]), 0);
+    check(borderLum < 120, 'the hero hairline is a subtle line, not a bright ring', { borderLum });
+    check(at(ref, 6) !== null && at(ref, 6) < 60, 'the left end of a white photo is scrimmed near-black', { l: at(ref, 6) });
+    check(at(ref, Math.round(hero.w) - 6) > 120, 'and the right end still shows the photo', { r: at(ref, Math.round(hero.w) - 6) });
     for (const [name, corner] of [['top-left', 'tl'], ['bottom-left', 'bl'], ['top-right', 'tr'], ['bottom-right', 'br']]) {
       const box = cornerBox(hero, corner);
       const img = await shot(box.clip, 'hero-' + corner);
-      // A white photo behind these corners would show as a bright pixel right at
-      // the clip. The preview column is a boxed picture 11px in from them, so
-      // only the pixels OUTSIDE its box are the surface's to answer for.
-      const m = hero.media;
-      const bright = img.px.reduce((mx, p) => {
-        const cx = cssX(box.clip, p[0]), cy = cssY(box.clip, p[1]);
-        const inPreview = m && cx >= m.x - 1 && cx <= m.x + m.w + 1 && cy >= m.y - 1 && cy <= m.y + m.h + 1;
-        return inPreview ? mx : Math.max(mx, p[2]);
-      }, 0);
-      check(bright < 90, 'no photo leaks into the hero\'s ' + name + ' corner', { bright });
+      const excess = maxExcess(img, box.clip, hero, ref, 'x', borderLum);
+      check(excess !== null && excess <= 8, 'no photo leaks into the hero\'s ' + name + ' corner', { excess, borderLum });
     }
 
     console.log('\n[3] same for a portrait story card');
