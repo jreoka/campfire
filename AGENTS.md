@@ -748,7 +748,21 @@ card for that author. Any new admin route that changes an account must call the
 same guard. Presence is
 server-scoped **and** friend-scoped: a friend with no shared server would
 otherwise look permanently offline (see `notifyFriends`/`presenceForUsers` in
-`server.js`) — any new presence surface must respect both. Friends' voice
+`server.js`) — any new presence surface must respect both. The avatar-corner
+phone indicator is presence's one **derived** fact, and it is a lease, not a
+latch: `live_sessions.visible_at` records when a socket last said its page was
+in front, the client re-asserts that every ~25s while it really is
+(`public/js/socket.js`), and `phonesFromRows` (server.js) decides per account —
+a phone claiming a live lease wins, a fresh DESKTOP beats a phone whose claim
+lapsed, and a phone that merely went quiet still counts while nothing else is
+renewing (a locked phone is not a phone that stopped existing). "Any live phone
+socket" was the first rule and it read as ON MOBILE for minutes after its owner
+had moved to a desktop, so do not go back to it. Which value the clients were
+last TOLD lives in `users.mobile_flag`, and `announceMobile` pushes only a real
+change (one compare-and-set, so replicas cannot double-push); because a lease
+must be able to expire with no frame from anyone, the leader-locked
+`reconcileReplicaState` pass re-derives every online account on a clock.
+Friends' voice
 activity (`friends-voice`, the Active Now IN VOICE rail) is friend-scoped too:
 it is derived from `voiceRooms`, so any path that adds/removes a socket there
 must go through `leaveVoice`/`pushFriendsVoice` or the rail shows ghosts. View-once media

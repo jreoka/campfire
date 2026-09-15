@@ -6,6 +6,16 @@ function sendVisibility() {
 // Tell the server when the tab is foregrounded/backgrounded so it stops
 // suppressing pushes for hidden/closed mobile tabs.
 document.addEventListener('visibilitychange', sendVisibility);
+// …and re-assert it on a timer, because the server reads it as a LEASE, not a
+// latch: which device the account's phone indicator follows is decided by the
+// most recent "my page is in front" claim among the account's sockets (see
+// phonesFromRows/MOBILE_LEASE_MS in server.js). Without this a frame lost while
+// you moved from the phone to the desktop would leave the phone claiming the
+// indicator until its socket died. Only a page that is genuinely in front
+// renews — a hidden one already cleared its own claim via the listener above.
+setInterval(() => {
+  try { if (document.visibilityState === 'visible') sendVisibility(); } catch {}
+}, 25000);
 // ---------- connection overlay (full-page "Connecting..." state) ----------
 // A themed campfire splash covers the stale app whenever the live socket
 // drops, until the server is reachable again. A short grace delay keeps fast

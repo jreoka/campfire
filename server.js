@@ -6163,20 +6163,29 @@ async function fullMessage(id, meId) {
 // Each replica registers its own sockets in live_sessions so ANY replica can
 // answer "who is online" and "are they looking at the app" for the whole
 // cluster, not just for whichever pod happens to hold them.
-async function presenceUpsert(ws) {
+// `opts.lease` marks a write that carries a REAL page-visibility statement (the
+// client's own report, and the periodic re-assert of it). Only those may set or
+// clear `visible_at`: the connect-time default (visible:true) is a guess about a
+// page nobody has reported on yet, and letting it claim the lease would hand the
+// phone indicator to a tab that is in the background for a minute after it
+// connects — the very staleness this column exists to remove.
+async function presenceUpsert(ws, opts) {
   const m = ws && ws.meta;
   if (!m || !ws.lsid) return;
   const status = m.status || 'online';
+  const leaseAt = opts && opts.lease ? (m.visible ? Date.now() : 0) : null;
   try {
     await db.prepare(
-      `INSERT INTO live_sessions (sid, user_id, pod_id, status, invisible, visible, is_admin, device, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?)
+      `INSERT INTO live_sessions (sid, user_id, pod_id, status, invisible, visible, visible_at, is_admin, device, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT (sid) DO UPDATE SET
          user_id = EXCLUDED.user_id, pod_id = EXCLUDED.pod_id, status = EXCLUDED.status,
          invisible = EXCLUDED.invisible, visible = EXCLUDED.visible,
+         visible_at = COALESCE(?, live_sessions.visible_at),
          is_admin = EXCLUDED.is_admin, device = EXCLUDED.device, updated_at = EXCLUDED.updated_at`
     ).run(ws.lsid, m.userId, bus.POD_ID, status, status === 'invisible' ? 1 : 0,
-      m.visible ? 1 : 0, m.is_admin ? 1 : 0, m.device === 'mobile' ? 'mobile' : '', Date.now());
+      m.visible ? 1 : 0, leaseAt || 0, m.is_admin ? 1 : 0, m.device === 'mobile' ? 'mobile' : '',
+      Date.now(), leaseAt);
   } catch (e) { console.error('[presence] upsert failed:', (e && e.message) || e); }
 }
 async function presenceForget(ws) {
@@ -6239,38 +6248,90 @@ async function presenceForUsers(ids, forUserId) {
 // The same registry, read for one extra fact: a socket that told us at connect
 // it is a phone. Rides alongside every presence roster as a SECOND map, so the
 // client paints the avatar-corner indicator as a phone glyph in the person's
-// own status colour. Two deliberate choices:
-//   * "any live mobile socket", not "the newest/visible one" — locking a phone
-//     clears the page-visibility flag, and an indicator that flickers off on
-//     every screen lock is worse than useless;
+// own status colour. Three deliberate choices:
+//   * the flag follows the device whose page is IN FRONT, not merely a device
+//     that is connected. "Any live mobile socket" was the first rule, and it
+//     read wrong the moment its owner moved to a desktop: a phone left in a
+//     pocket with the app still open (its socket alive, answering pings, for as
+//     long as the OS lets it) kept painting a phone until that socket happened
+//     to die — minutes, or never. So a socket holds the claim through a LEASE:
+//     the client re-asserts "my page is in front" every ~25s while it really is
+//     (public/js/socket.js), and a claim that stops being renewed loses to one
+//     that keeps being renewed (MOBILE_LEASE_MS, well over that interval);
+//   * a phone that has merely gone QUIET still counts while nothing else is
+//     renewing — a phone locked in a pocket is not a phone that stopped
+//     existing, and an indicator that blinks off on every screen lock is worse
+//     than useless (the reason the first rule existed at all);
 //   * cluster-wide, like every other presence fact (live_sessions), so a phone
 //     on another replica counts exactly the same.
+const MOBILE_LEASE_MS = Math.max(1000, parseInt(process.env.MOBILE_LEASE_MS || '', 10) || 75 * 1000);
+// One place decides the whole rule, from rows carrying (user_id, device,
+// visible_at) — the three readers below differ only in which rows they ask for.
+function phonesFromRows(rows, nowMs) {
+  const at = nowMs || Date.now();
+  const st = new Map(); // user_id -> { anyPhone, fresh, freshPhone }
+  for (const r of rows) {
+    const uid = r.user_id;
+    let s = st.get(uid);
+    if (!s) { s = { anyPhone: false, fresh: false, freshPhone: false }; st.set(uid, s); }
+    const isPhone = r.device === 'mobile';
+    if (isPhone) s.anyPhone = true;
+    if ((Number(r.visible_at) || 0) > at - MOBILE_LEASE_MS) { s.fresh = true; if (isPhone) s.freshPhone = true; }
+  }
+  const out = new Set();
+  for (const [uid, s] of st) {
+    // A device in front wins outright (a fresh DESKTOP beats a lapsed phone);
+    // with nobody renewing, a live phone socket is still the best answer left.
+    if (s.freshPhone || (!s.fresh && s.anyPhone)) out.add(uid);
+  }
+  return out;
+}
 async function mobileUsersFor(ids) {
   const out = {};
   if (!ids || !ids.size) return out;
   const list = [...ids];
   const ph = list.map(() => '?').join(',');
   const rows = await db.prepare(
-    `SELECT DISTINCT user_id FROM live_sessions WHERE device = 'mobile' AND user_id IN (${ph})`
+    `SELECT user_id, device, visible_at FROM live_sessions WHERE user_id IN (${ph})`
   ).all(...list);
-  for (const r of rows) out[r.user_id] = 1;
+  for (const uid of phonesFromRows(rows)) out[uid] = 1;
   return out;
 }
 async function mobileForServer(serverId) {
   const out = {};
   const rows = await db.prepare(
-    `SELECT DISTINCT s.user_id FROM live_sessions s
-       JOIN server_members m ON m.user_id = s.user_id AND m.server_id = ?
-      WHERE s.device = 'mobile'`
+    `SELECT s.user_id, s.device, s.visible_at FROM live_sessions s
+       JOIN server_members m ON m.user_id = s.user_id AND m.server_id = ?`
   ).all(serverId);
-  for (const r of rows) out[r.user_id] = 1;
+  for (const uid of phonesFromRows(rows)) out[uid] = 1;
   return out;
 }
 async function userOnMobile(userId) {
   try {
-    const r = await db.prepare("SELECT 1 AS ok FROM live_sessions WHERE user_id = ? AND device = 'mobile'").get(userId);
-    return !!r;
+    const rows = await db.prepare('SELECT user_id, device, visible_at FROM live_sessions WHERE user_id = ?').all(userId);
+    return phonesFromRows(rows).has(userId);
   } catch { return false; }
+}
+// Tell everyone who can see this account what its phone flag is NOW. Every path
+// that can move it goes through here: a phone socket closing, a dead replica's
+// rows being reaped, a device coming to the front, and the lease simply lapsing
+// (see the reconcile sweep). The write is a compare-and-set against
+// users.mobile_flag — the value clients were last TOLD — so this announces a
+// CHANGE and nothing else: two replicas racing can neither double-push nor miss,
+// and a caller never has to know the previous answer.
+async function writeMobileFlag(userId, onPhone) {
+  try {
+    const r = await db.prepare('UPDATE users SET mobile_flag = ? WHERE id = ? AND mobile_flag <> ? RETURNING id')
+      .get(onPhone, userId, onPhone);
+    return !!r;
+  } catch (e) { console.error('[presence] phone flag write failed:', (e && e.message) || e); return false; }
+}
+async function announceMobile(userId, servers) {
+  const onPhone = (await userOnMobile(userId)) ? 1 : 0;
+  if (!(await writeMobileFlag(userId, onPhone))) return;
+  const sids = servers || (await db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(userId)).map((r) => r.server_id);
+  for (const sid of sids) broadcastToServer(sid, { t: 'user-mobile', serverId: sid, userId, mobile: onPhone });
+  notifyFriends(userId, { t: 'user-mobile', userId, mobile: onPhone });
 }
 // Send a payload to every live socket of the given user's friends.
 function notifyFriends(userId, obj) {
@@ -6708,6 +6769,8 @@ function voiceKickEverywhere(userId, scope) {
 // A replica that dies leaves its voice_occupants and live_sessions rows behind.
 // Nobody can be sitting in a room, or online at all, on a replica that no longer
 // exists — and without this a crashed pod's users would read as present forever.
+// It is also the pass that lets the phone flag's lease EXPIRE (a quiet device
+// sends no frame, so only a clock can notice), see the tail of the body.
 // Leader-only, and driven off bus_replicas (the same heartbeat table that
 // decides liveness everywhere else), so it settles about half a minute after a
 // crash.
@@ -6745,12 +6808,27 @@ async function reconcileReplicaState() {
         // live on a replica that IS alive, so recompute per affected user
         // instead of assuming anything.
         for (const uid of new Set(gone.map((r) => r.user_id))) {
-          const onPhone = (await userOnMobile(uid)) ? 1 : 0;
           const sids = (await db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(uid)).map((r) => r.server_id);
-          for (const sid of sids) broadcastToServer(sid, { t: 'user-mobile', serverId: sid, userId: uid, mobile: onPhone });
-          notifyFriends(uid, { t: 'user-mobile', userId: uid, mobile: onPhone });
+          await announceMobile(uid, sids);
         }
         try { await pushAdminPresence(); } catch {}
+      }
+      // And every account still online, because a LEASE has to be able to expire
+      // on a clock: a phone that goes quiet (app paused, screen off, no hidden
+      // frame that ever arrives) sends nothing at all, so no write of its own
+      // can move its flag — only time passing can, and nothing else is watching
+      // the clock. One query re-derives every online account through the SAME
+      // rule (phonesFromRows), and the compare-and-set inside announceMobile
+      // pushes a real move only, so a pass that changes nothing costs one query.
+      const live = await db.prepare(
+        `SELECT s.user_id, s.device, s.visible_at, u.mobile_flag
+           FROM live_sessions s JOIN users u ON u.id = s.user_id`
+      ).all();
+      const onPhone = phonesFromRows(live);
+      const announced = new Map();
+      for (const r of live) announced.set(r.user_id, r.mobile_flag ? 1 : 0);
+      for (const [uid, was] of announced) {
+        if (was !== (onPhone.has(uid) ? 1 : 0)) await announceMobile(uid);
       }
     });
   } catch (e) { console.error('[reconcile] failed:', (e && e.message) || e); }
@@ -6988,7 +7066,19 @@ wss.on('connection', async (ws, req) => {
     const me = ws.meta;
     if (!me) return;
 
-    if (msg.t === 'visibility') { me.visible = msg.visible !== false; await presenceUpsert(ws); return; }
+    // A page-visibility report is also a LEASE, and it is what decides which
+    // device the account's phone indicator follows (see phonesFromRows). The
+    // client re-asserts it every ~25s while its page really is in front, so a
+    // device that stopped being used stops claiming the indicator. A frame can
+    // move the account's answer with no socket closing for anyone to notice, so
+    // the announcement rides the write (announceMobile is a compare-and-set and
+    // pushes only a real change).
+    if (msg.t === 'visibility') {
+      me.visible = msg.visible !== false;
+      await presenceUpsert(ws, { lease: true });
+      await announceMobile(me.userId, me.servers);
+      return;
+    }
     if (msg.t === 'ping') { safeSend(ws, { t: 'pong' }); return; } // client liveness probe
 
     if (msg.t === 'subscribe') {
@@ -7010,6 +7100,10 @@ wss.on('connection', async (ws, req) => {
         const onPhone = (await userOnMobile(me.userId)) ? 1 : 0;
         for (const sid of me.servers) broadcastToServer(sid, { t: 'user-online', serverId: sid, userId: me.userId, status: me.status || 'online', mobile: onPhone }, ws);
         notifyFriends(me.userId, { t: 'user-online', userId: me.userId, status: me.status || 'online', mobile: onPhone });
+        // Record what that announcement just told everyone, without a second
+        // push: the registry and the clients have to agree, or the next
+        // compare-and-set would fire a redundant frame (see announceMobile).
+        await writeMobileFlag(me.userId, onPhone);
       }
       // send current voice occupancy for my servers
       for (const [key, set] of voiceRooms) {
@@ -7331,11 +7425,7 @@ wss.on('connection', async (ws, req) => {
       // that: with a desktop socket still holding the account open this is
       // mobile:0, not offline. Read from live_sessions (this socket's row is
       // already deleted), so a phone on another replica still counts.
-      if (ws.meta.device === 'mobile') {
-        const onPhone = (await userOnMobile(ws.meta.userId)) ? 1 : 0;
-        for (const sid of ws.meta.servers || []) broadcastToServer(sid, { t: 'user-mobile', serverId: sid, userId: ws.meta.userId, mobile: onPhone });
-        notifyFriends(ws.meta.userId, { t: 'user-mobile', userId: ws.meta.userId, mobile: onPhone });
-      }
+      if (ws.meta.device === 'mobile') await announceMobile(ws.meta.userId, ws.meta.servers);
       await pushAdminPresence();
     }
     } catch (e) { console.error('[ws] close handler failed:', (e && e.message) || e); }
@@ -7580,8 +7670,11 @@ async function boot() {
   // Link previews: one fetch per URL (cached in link_embeds), swept monthly.
   try { await db.withLock(db.LOCKS.unfurlPrune, () => require('./unfurl').prune()); } catch (e) { console.error('[unfurl] prune failed:', (e && e.message) || e); }
   safeLockedInterval('unfurl', db.LOCKS.unfurlPrune, () => require('./unfurl').prune(), 6 * 3600 * 1000);
-  // Reap voice occupancy and live sessions left by a replica that died.
-  safeInterval(() => reconcileReplicaState(), 30 * 1000);
+  // Reap voice occupancy and live sessions left by a replica that died — and,
+  // in the same leader-locked pass, let the phone flag's lease expire. The
+  // period is env-tunable because a test needs to watch a lapsed lease settle
+  // without waiting out the production cadence.
+  safeInterval(() => reconcileReplicaState(), Math.max(1000, parseInt(process.env.RECONCILE_EVERY_MS || '', 10) || 30 * 1000));
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`[campfire] listening on :${PORT}  pg=${process.env.PGHOST || 'localhost'}:${process.env.PGPORT || '5432'}/${process.env.PGDATABASE || 'campfire'}`);
     try { require('./backup').startBackups(); } catch (e) { console.error('[backup] scheduler failed to start:', (e && e.message) || e); }

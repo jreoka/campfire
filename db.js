@@ -683,6 +683,12 @@ CREATE INDEX IF NOT EXISTS idx_dm_attachments_unmeasured ON dm_attachments(creat
   await addColumn('users', 'tz_offset', 'BIGINT');
   await addColumn('users', 'nsfw_ok', 'BIGINT NOT NULL DEFAULT 0');
   await addColumn('users', 'theme', "TEXT NOT NULL DEFAULT ''");
+  // The phone flag every client was last TOLD for this account (see
+  // announceMobile in server.js). Presence itself is derived from
+  // live_sessions, but "which value do the clients currently hold" is not — and
+  // without it a push could only ever be sent when a socket changed, never when
+  // a claim simply lapsed on a clock.
+  await addColumn('users', 'mobile_flag', 'BIGINT NOT NULL DEFAULT 0');
   await db.exec(`
 CREATE TABLE IF NOT EXISTS webhooks (
   id TEXT PRIMARY KEY,
@@ -901,11 +907,17 @@ CREATE TABLE IF NOT EXISTS live_sessions (
   status TEXT NOT NULL DEFAULT 'online',
   invisible BIGINT NOT NULL DEFAULT 0,
   visible BIGINT NOT NULL DEFAULT 0,
+  -- WHEN this socket last told us its page was in the foreground (0 while it is
+  -- hidden). The visible flag says whether the claim is set, this says when — and
+  -- the when is what lets the phone indicator follow the device actually in front
+  -- instead of any phone socket that happens to still be open (see
+  -- phonesFromRows in server.js).
+  visible_at BIGINT NOT NULL DEFAULT 0,
   is_admin BIGINT NOT NULL DEFAULT 0,
   -- 'mobile' when the socket said so at connect (/ws?device=mobile), '' for
   -- everything else. Per SOCKET, like the rest of this row: the avatar-corner
-  -- phone indicator asks "does this user have any live phone socket", so one
-  -- row is enough to answer it.
+  -- phone indicator asks which of this user's devices is in front, so every
+  -- socket gets a say and the rows together answer it.
   device TEXT NOT NULL DEFAULT '',
   updated_at BIGINT NOT NULL
 );
@@ -914,6 +926,7 @@ CREATE INDEX IF NOT EXISTS idx_live_sessions_pod ON live_sessions(pod_id);
 CREATE INDEX IF NOT EXISTS idx_live_sessions_online ON live_sessions(invisible, user_id);
 `);
   await addColumn('live_sessions', 'device', "TEXT NOT NULL DEFAULT ''");
+  await addColumn('live_sessions', 'visible_at', 'BIGINT NOT NULL DEFAULT 0');
   await db.exec(`
 -- Shared rate limiting and other short-lived security state. All of this used to
 -- live in a per-process Map, which multiplies every limit by the replica count:

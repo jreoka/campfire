@@ -11,7 +11,10 @@
 //
 //   1. the SERVER knows a socket is a phone (`/ws?device=mobile` -> a
 //      live_sessions row -> `mobile` maps on every presence roster and a
-//      `user-mobile` push when a phone socket goes away), and
+//      `user-mobile` push when a phone socket goes away) AND which of the
+//      account's devices is in front (`visible_at`, a lease the client renews
+//      every ~25s) — "any live phone socket" read as ON A PHONE for minutes
+//      after its owner had moved to a desktop, and
 //   2. every avatar-corner dot in the client is painted through the ONE helper
 //      that reads that map (dotHTML) — a row that inlines its own
 //      `<span class="status-dot …">` would silently stay a dot.
@@ -255,6 +258,9 @@ async function protocolPhase() {
         PORT: String(PORT),
         PGHOST: pg.host, PGPORT: String(pg.port), PGUSER: pg.user, PGPASSWORD: pg.password, PGDATABASE: TEST_DB,
         JWT_SECRET: 'test-mobile-ind-secret', UPLOAD_DIR: path.join(tmp, 'uploads'),
+        // The lease-expiry check watches the leader-locked reconcile pass move a
+        // flag that no frame can move, so it must not wait out the 30s cadence.
+        RECONCILE_EVERY_MS: '1500',
         VIRUS_SCAN: '0', MEDIA_COMPRESS: '0', UNFURL: '0',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -358,6 +364,62 @@ async function protocolPhase() {
     check(!a.events.some((e) => e.t === 'user-offline' && e.userId === bee.user.id),
       'and NOT offline — the desktop socket still holds the account', a.events.filter((e) => e.t === 'user-offline').map((e) => e.userId));
     check(JSON.stringify(await devicesOf(bee.user.id)) === '[""]', 'the reaped phone row is gone from the registry', await devicesOf(bee.user.id));
+
+    // ---- the lease: which device is IN FRONT decides, and it can lapse ----
+    // Driven by the account's own second socket (the observer), so it needs no
+    // friendship and no other account: a client is exactly as good a witness of
+    // "they moved to the desktop" as anybody else.
+    console.log('\n[7b] the page-in-front lease decides the flag');
+    const eve = await reg('eve', 'Eve');
+    await req('POST', '/api/servers/join', { token: eve.token, body: { inviteCode: made.invite.code } });
+    const lastMobile = (w) => [...w.events].reverse().find((e) => e.t === 'user-mobile' && e.userId === eve.user.id);
+    const edesk = await open(eve.token);
+    sockets.push(edesk);
+    edesk.send(JSON.stringify({ t: 'subscribe' }));
+    await sleep(300);
+    edesk.send(JSON.stringify({ t: 'visibility', visible: true })); // the desktop is in front
+    await sleep(400);
+    const ephone = await open(eve.token, 'mobile');
+    sockets.push(ephone);
+    ephone.send(JSON.stringify({ t: 'subscribe' }));
+    ephone.send(JSON.stringify({ t: 'visibility', visible: true })); // the phone is in hand
+    const lm1 = await waitFor(() => { const e = lastMobile(edesk); return e && e.mobile === 1 ? e : null; });
+    check(!!lm1, 'a phone that reports its page in front is announced as mobile', lastMobile(edesk) || null);
+
+    // The reported bug, end to end: the phone is put down (its page goes
+    // hidden) and the desktop keeps being used.
+    ephone.send(JSON.stringify({ t: 'visibility', visible: false }));
+    const lm0 = await waitFor(() => { const e = lastMobile(edesk); return e && e.mobile === 0 ? e : null; });
+    check(!!lm0, 'the phone going to the background hands the indicator back to the desktop at once', lastMobile(edesk) || null);
+    check(JSON.stringify(await devicesOf(eve.user.id)) === '["","mobile"]',
+      'the phone socket is still live and registered — only the claim moved', await devicesOf(eve.user.id));
+
+    // A phone that never reports hidden (app paused, screen off, the visibility
+    // frame lost) is the case no frame can cover: its claim has to lapse on a
+    // CLOCK. Age its lease in the registry and let the reconcile pass find it —
+    // no frame arrives from the phone, and the desktop's own renewal alone could
+    // not tell that anything had changed.
+    ephone.send(JSON.stringify({ t: 'visibility', visible: true }));
+    await waitFor(() => { const e = lastMobile(edesk); return e && e.mobile === 1 ? e : null; });
+    await db.query("UPDATE live_sessions SET visible_at = $1 WHERE user_id = $2 AND device = 'mobile'",
+      [Date.now() - 10 * 60 * 1000, eve.user.id]);
+    const swept = await waitFor(() => { const e = lastMobile(edesk); return e && e.mobile === 0 ? e : null; }, 20000);
+    check(!!swept, 'a phone that went quiet without reporting hidden loses the flag on the sweep', lastMobile(edesk) || null);
+    // (int8 arrives as a string on this raw client — the app's own wrapper is
+    // what parses it back to a number.)
+    check(Number((await db.query('SELECT mobile_flag FROM users WHERE id = $1', [eve.user.id])).rows[0].mobile_flag) === 0,
+      'and the registry of what clients were told moved with it');
+
+    // Locked in a pocket with nothing else in front is still a phone — the
+    // fallback that keeps the indicator from blinking off on a screen lock.
+    edesk.send(JSON.stringify({ t: 'visibility', visible: false }));
+    const lmBack = await waitFor(() => { const e = lastMobile(edesk); return e && e.mobile === 1 ? e : null; });
+    check(!!lmBack, 'with no device in front, the live phone socket counts again', lastMobile(edesk) || null);
+    // …and the desktop coming back to the front takes it away without any frame
+    // from the phone at all.
+    edesk.send(JSON.stringify({ t: 'visibility', visible: true }));
+    const lmOff = await waitFor(() => { const e = lastMobile(edesk); return e && e.mobile === 0 ? e : null; });
+    check(!!lmOff, 'and the desktop being used takes the indicator back on its own renewal', lastMobile(edesk) || null);
   } catch (e) {
     check(false, 'the protocol harness ran', (e && e.message) || e);
   } finally {
@@ -419,6 +481,8 @@ async function main() {
   console.log('\n[3] the server carries the flag');
   check(/device TEXT NOT NULL DEFAULT ''/.test(db) && /addColumn\('live_sessions', 'device'/.test(db),
     'live_sessions.device is a guarded migration (existing databases upgrade in place)');
+  check(/visible_at BIGINT NOT NULL DEFAULT 0/.test(db) && /addColumn\('live_sessions', 'visible_at'/.test(db),
+    'and so is live_sessions.visible_at, the page-in-front lease');
   check(/url\.searchParams\.get\('device'\) === 'mobile' \? 'mobile' : ''/.test(server),
     'socketAuth whitelists the claim instead of trusting the query string');
   check(/return \{ u, p, device \};/.test(server), 'and hands it to the connection');
@@ -427,8 +491,24 @@ async function main() {
   check(/async function mobileUsersFor\(ids\)/.test(server) && /async function mobileForServer\(serverId\)/.test(server)
     && /async function userOnMobile\(userId\)/.test(server),
     'three readers over the SAME registry: friend roster, server roster, one user');
-  check(/AND user_id IN \(\$\{ph\}\)/.test(server) && /WHERE s\.device = 'mobile'/.test(server),
-    'read from live_sessions, so a phone on another replica counts (replica-safe)');
+  check(/for \(const uid of phonesFromRows\(rows\)\) out\[uid\] = 1;/.test(server)
+    && (server.match(/SELECT user_id, device, visible_at FROM live_sessions/g) || []).length >= 1
+    && /SELECT s\.user_id, s\.device, s\.visible_at FROM live_sessions s/.test(server),
+    'and all three resolve it in one place, from device + the lease (replica-safe, one query per roster)');
+  check(/await presenceUpsert\(ws, \{ lease: true \}\);\r?\n\s*await announceMobile\(me\.userId, me\.servers\);/.test(server),
+    'a visibility frame refreshes the lease and announces any move it made');
+  check(/UPDATE users SET mobile_flag = \? WHERE id = \? AND mobile_flag <> \? RETURNING id/.test(server),
+    'and the announcement is a compare-and-set against what clients were last told (only a real change is pushed)');
+  check(/await writeMobileFlag\(me\.userId, onPhone\);/.test(server),
+    'a connect records the flag its user-online already announced, so no redundant frame follows');
+  check(/const live = await db\.prepare\(\s*`SELECT s\.user_id, s\.device, s\.visible_at, u\.mobile_flag/.test(server)
+    && /if \(was !== \(onPhone\.has\(uid\) \? 1 : 0\)\) await announceMobile\(uid\);/.test(server),
+    'and the leader-locked reconcile pass lets a lease EXPIRE — a quiet device sends no frame for anyone to react to');
+  check(/const leaseAt = opts && opts\.lease \? \(m\.visible \? Date\.now\(\) : 0\) : null;/.test(server)
+    && /visible_at = COALESCE\(\?, live_sessions\.visible_at\)/.test(server),
+    'the lease is only written by an explicit visibility frame (the connect-time default cannot claim it)');
+  check(/await presenceUpsert\(ws\);\r?\n\s*if \(ws\.readyState !== 1\)/.test(server),
+    'and a connect registers its row WITHOUT one');
   check(/t: 'presence', serverId: sid, online: await presenceFor\(sid, me\.userId\), mobile: await mobileForServer\(sid\)/.test(server),
     'the server roster ships a mobile map beside the status map');
   check(/t: 'presence', online: await presenceForUsers\(ids, userId\), mobile: await mobileUsersFor\(ids\)/.test(server)
@@ -437,12 +517,42 @@ async function main() {
   check(/const onPhone = \(await userOnMobile\(me\.userId\)\) \? 1 : 0;/.test(server)
     && /userId: me\.userId, status: me\.status \|\| 'online', mobile: onPhone/.test(server),
     'user-online announces it once per account, not once per server');
-  check(/if \(ws\.meta\.device === 'mobile'\) \{[\s\S]{0,400}t: 'user-mobile'/.test(server),
+  check(/if \(ws\.meta\.device === 'mobile'\) await announceMobile\(ws\.meta\.userId, ws\.meta\.servers\);/.test(server),
     'a phone socket going away pushes user-mobile (mobile:0 while a desktop socket remains)');
+  check(/async function announceMobile\(userId, servers\)/.test(server)
+    && /mobile: onPhone \}\);/.test(slice(server, 'async function announceMobile(', '// Send a payload to every live socket')),
+    'and every path that can move it — that close, a visibility frame, a reaped replica — goes through ONE announcer');
   check(/if \(ws\.readyState !== 1\) earlyCleanup\(\);/.test(server) && /const earlyCleanup = \(\) => \{ clients\.delete\(ws\); presenceForget\(ws\)/.test(server),
     'and a socket that dies inside the handshake is deregistered too (its readyState is re-read after the insert)');
-  check(/new Set\(gone\.map\(\(r\) => r\.user_id\)\)/.test(server) && /t: 'user-mobile', serverId: sid, userId: uid, mobile: onPhone/.test(server),
+  check(/new Set\(gone\.map\(\(r\) => r\.user_id\)\)/.test(server) && /await announceMobile\(uid, sids\);/.test(server),
     'and the dead-replica reconciler clears phone flags it reaped');
+
+  console.log('\n[3b] the rule: the device in FRONT, not any live phone socket');
+  const PHONES_SRC = slice(server, 'const MOBILE_LEASE_MS', 'async function mobileUsersFor(ids)');
+  const phones = new Function('rows', 'nowMs', PHONES_SRC + '\n;return phonesFromRows(rows, nowMs);');
+  const NOW = 1_700_000_000_000;
+  const row = (user_id, device, bornMs) => ({ user_id, device, visible_at: NOW - bornMs });
+  const onPhone = (rows) => phones(rows, NOW).has('u');
+  // This is the reported bug, in one line: a phone whose last page-in-front
+  // report is minutes old must NOT keep painting a phone over a desktop that is
+  // renewing its own claim right now.
+  check(onPhone([row('u', 'mobile', 4 * 60e3), row('u', '', 0)]) === false,
+    'a desktop in front beats a phone that went quiet minutes ago');
+  check(onPhone([row('u', 'mobile', 0), row('u', '', 0)]) === true,
+    'but a phone in front wins over a desktop (it is the device being held)');
+  check(onPhone([row('u', 'mobile', 0), row('u', '', 9 * 60e3)]) === true,
+    'a fresh phone beats a desktop whose claim lapsed');
+  check(onPhone([row('u', 'mobile', 20 * 60e3)]) === true,
+    'a phone that went quiet with nothing else renewing still counts (locked in a pocket is still a phone)');
+  check(onPhone([row('u', '', 0), row('u', 'mobile', 20 * 60e3)]) === false,
+    'which is the whole point: the desktop being used takes the indicator back');
+  check(onPhone([row('u', '', 4 * 60e3)]) === false, 'a desktop that went quiet is not a phone');
+  check(onPhone([row('u', 'mobile', 20 * 60e3), row('u', '', 0)]) === false,
+    'rows of one user are aggregated, not decided by the first one seen');
+  check(phones([row('u', 'mobile', 0), row('v', '', 0)], NOW).has('v') === false,
+    'and one user\'s phone never marks another as one');  check(/MOBILE_LEASE_MS = Math\.max\(1000, parseInt\(process\.env\.MOBILE_LEASE_MS/.test(server)
+    && /75 \* 1000/.test(server),
+    'the lease window is 75s — three missed renewals of the client\'s 25s timer');
 
   console.log('\n[4] the client applies it');
   check(/&device=mobile/.test(socket) && /const dev = deviceIsMobile\(\) \? '&device=mobile' : '';/.test(socket),
@@ -457,6 +567,10 @@ async function main() {
     'going offline drops the phone flag with the status');
   check(/repaintFriendsIfVisible\(\)/.test(slice(socket, "case 'user-mobile':", "case 'user-offline':")),
     'the live path repaints the rows it changes (friends list + member list)');
+  check(/setInterval\(\(\) => \{\s*try \{ if \(document\.visibilityState === 'visible'\) sendVisibility\(\); \} catch \{\}\s*\}, 25000\)/.test(socket),
+    'and the page renews its own "in front" lease on a timer (a latch would strand the indicator on a lost frame)');
+  check(/document\.addEventListener\('visibilitychange', sendVisibility\)/.test(socket),
+    'while a hidden page clears its claim at once through the existing listener');
 
   console.log('\n[5] the CSS paints it');
   check(/--phone-glyph:url\("data:image\/svg\+xml,/.test(css), 'the phone glyph is one mask shape');
