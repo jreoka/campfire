@@ -261,6 +261,9 @@ async function protocolPhase() {
         // The lease-expiry check watches the leader-locked reconcile pass move a
         // flag that no frame can move, so it must not wait out the 30s cadence.
         RECONCILE_EVERY_MS: '1500',
+        // Same for the timed-status sweep: a lapse has to be watchable without
+        // waiting out the production minute.
+        STATUS_SWEEP_EVERY_MS: '1000',
         VIRUS_SCAN: '0', MEDIA_COMPRESS: '0', UNFURL: '0',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -420,6 +423,89 @@ async function protocolPhase() {
     edesk.send(JSON.stringify({ t: 'visibility', visible: true }));
     const lmOff = await waitFor(() => { const e = lastMobile(edesk); return e && e.mobile === 0 ? e : null; });
     check(!!lmOff, 'and the desktop being used takes the indicator back on its own renewal', lastMobile(edesk) || null);
+
+    // ---- the other half of presence: online → Away → Online ----
+    // Two things the account has to get right, and both are visible here:
+    //   * WHERE an untimed Away came from. Only the idle clock's may be silently
+    //     undone by activity, on ANY of the account's devices — a per-browser
+    //     localStorage marker let a mouse move on the desktop undo an Away the
+    //     user had just picked on the phone.
+    //   * a TIMED state lapsing back to Online reaching every audience. Friends
+    //     with no shared server were skipped entirely, so a friend who went
+    //     invisible (told 'user-offline') stayed a grey dot forever.
+    console.log('\n[7c] the idle auto-away is account state, and its lapse is announced');
+    const ivy = await reg('ivy', 'Ivy');
+    await req('POST', '/api/servers/join', { token: ivy.token, body: { inviteCode: made.invite.code } });
+    await db.query('INSERT INTO friendships (user_a, user_b, status, action_by, created_at) VALUES ($1,$2,$3,$4,$5)',
+      [alf.user.id < ivy.user.id ? alf.user.id : ivy.user.id, alf.user.id < ivy.user.id ? ivy.user.id : alf.user.id, 'accepted', alf.user.id, Date.now()]);
+    a.send(JSON.stringify({ t: 'subscribe' }));
+    await sleep(300);
+
+    const setPresence = async (token, body) => (await req('PATCH', '/api/me', { token, body })).user;
+    const autoOf = (u) => Number(u.presence_auto);
+    let got = await setPresence(ivy.token, { status: 'away', presenceAuto: true });
+    check(got.status === 'away' && autoOf(got) === 1,
+      'the idle flip records WHERE the Away came from (account state, so every device agrees)', { status: got.status, auto: got.presence_auto });
+    check(autoOf((await req('GET', '/api/me', { token: ivy.token })).user) === 1, 'and it is durable — a reload reads the same answer');
+    got = await setPresence(ivy.token, { status: 'away' });
+    check(autoOf(got) === 0, 'picking the SAME state by hand clears it (the Away is the user\'s from now on)', got.presence_auto);
+    await setPresence(ivy.token, { status: 'away', presenceAuto: true });
+    got = await setPresence(ivy.token, { status: 'online' });
+    check(autoOf(got) === 0, 'and any other status clears it too', got.presence_auto);
+    got = await setPresence(ivy.token, { status: 'away', presenceExpiresAt: Date.now() + 3600e3, presenceAuto: true });
+    check(autoOf(got) === 0, 'a timed Away is never the idle clock\'s — it owns its own revert', got.presence_auto);
+
+    // Two clocks, one account: a phone in a pocket (hidden) must not read its
+    // owner away while the desktop is plainly being used — the desktop's next
+    // mouse move would drag them straight back, on a loop nobody can read. A
+    // hidden device whose account has NOTHING in front is still allowed to flip:
+    // that is the single backgrounded tab whose owner walked off.
+    console.log('\n[7c2] a hidden device\'s clock yields to a device that is in front');
+    const idesk = await open(ivy.token);
+    sockets.push(idesk);
+    idesk.send(JSON.stringify({ t: 'subscribe' }));
+    idesk.send(JSON.stringify({ t: 'visibility', visible: true }));
+    await sleep(400);
+    await setPresence(ivy.token, { status: 'online', presenceAuto: false });
+    let hidden = await setPresence(ivy.token, { status: 'away', presenceAuto: true, presenceVisible: false });
+    check(hidden.status === 'online' && autoOf(hidden) === 0,
+      'a hidden device cannot move the account away while the desktop holds a page-in-front lease', { status: hidden.status, auto: hidden.presence_auto });
+    hidden = await setPresence(ivy.token, { status: 'away', presenceAuto: true, presenceVisible: true });
+    check(hidden.status === 'away' && autoOf(hidden) === 1, 'the device that IS in front still can', { status: hidden.status, auto: hidden.presence_auto });
+    await setPresence(ivy.token, { status: 'online' });
+    idesk.close();
+    await sleep(300);
+    hidden = await setPresence(ivy.token, { status: 'away', presenceAuto: true, presenceVisible: false });
+    check(hidden.status === 'away' && autoOf(hidden) === 1,
+      'and once nothing is in front, the hidden device flips the account again (the walked-away background tab)', { status: hidden.status, auto: hidden.presence_auto });
+    await setPresence(ivy.token, { status: 'online' });
+
+    // Invisible with a 1.5s timer: friends hear 'user-offline' at once, and the
+    // lapse has to be announced to the SAME audience.
+    let at = a.events.length;
+    await setPresence(ivy.token, { status: 'invisible', presenceExpiresAt: Date.now() + 1500 });
+    check(await waitFor(() => a.events.slice(at).find((e) => e.t === 'user-offline' && e.userId === ivy.user.id), 6000),
+      'going invisible reads as offline to a friend');
+    at = a.events.length;
+    const lap = await waitFor(() => a.events.slice(at).find((e) => e.t === 'user-status' && e.userId === ivy.user.id && e.status === 'online' && !e.serverId), 20000);
+    check(!!lap, 'the timed invisible LAPSING reaches the friend-scoped audience (no shared server needed)', lap || null);
+
+    console.log('\n[7d] a status frame carries the phone flag, so invisible→visible gets its glyph back');
+    const iphone = await open(ivy.token, 'mobile');
+    sockets.push(iphone);
+    iphone.send(JSON.stringify({ t: 'subscribe' }));
+    iphone.send(JSON.stringify({ t: 'visibility', visible: true }));
+    await waitFor(() => { const e = [...a.events].reverse().find((x) => x.t === 'user-online' && x.userId === ivy.user.id); return e && e.mobile === 1 ? e : null; });
+    at = a.events.length;
+    await setPresence(ivy.token, { status: 'invisible' });
+    check(await waitFor(() => a.events.slice(at).find((e) => e.t === 'user-offline' && e.userId === ivy.user.id), 6000),
+      'invisible tells friends offline — which is what drops the phone glyph with the status');
+    at = a.events.length;
+    await setPresence(ivy.token, { status: 'online' });
+    const restored = await waitFor(() => a.events.slice(at).find((e) => e.t === 'user-status' && e.userId === ivy.user.id && e.status === 'online' && e.mobile === 1));
+    check(!!restored, 'coming back online RESTORES it on the status frame (before, no frame carried the flag and the glyph never returned)', restored || null);
+    check(Number((await db.query('SELECT mobile_flag FROM users WHERE id = $1', [ivy.user.id])).rows[0].mobile_flag) === 1,
+      'and what clients were told is recorded with it');
   } catch (e) {
     check(false, 'the protocol harness ran', (e && e.message) || e);
   } finally {
@@ -517,8 +603,28 @@ async function main() {
   check(/const onPhone = \(await userOnMobile\(me\.userId\)\) \? 1 : 0;/.test(server)
     && /userId: me\.userId, status: me\.status \|\| 'online', mobile: onPhone/.test(server),
     'user-online announces it once per account, not once per server');
-  check(/if \(ws\.meta\.device === 'mobile'\) await announceMobile\(ws\.meta\.userId, ws\.meta\.servers\);/.test(server),
-    'a phone socket going away pushes user-mobile (mobile:0 while a desktop socket remains)');
+  check(/await announceMobile\(ws\.meta\.userId, ws\.meta\.servers\);\r?\n\s*await pushAdminPresence\(\);/.test(server),
+    'EVERY socket close re-derives the phone flag — closing the desktop hands the account back to a pocketed phone that is still live');
+  check(!/device === 'mobile'\) await announceMobile/.test(server), 'and no longer only a phone\'s own close (which left that hand-back to the sweep)');
+  check(/const anywhere = !!\(await db\.prepare\('SELECT 1 AS ok FROM live_sessions WHERE user_id = \? LIMIT 1'\)\.get\(ws\.meta\.userId\)\);/.test(server)
+    && !/const stillLive = \[\.\.\.clients\]\.some/.test(server),
+    'liveness on close is a CLUSTER read (live_sessions), not this replica\'s socket set — a phone on pod A closing used to declare a desktop on pod B offline');
+  check(/const alive = !!\(await db\.prepare\('SELECT 1 AS ok FROM live_sessions WHERE user_id = \? LIMIT 1'\)\.get\(uid\)\);/.test(server)
+    && /if \(!alive\) \{/.test(server) && /notifyFriends\(uid, \{ t: 'user-offline', userId: uid \}\)/.test(server),
+    'a replica that died runs no close handler, so the sweep that reaps its rows announces those users offline');
+  check(/t: 'user-status', serverId: sid, userId: u\.id, status: u\.status, mobile: onPhone/.test(server)
+    && /notifyFriends\(u\.id, \{ t: 'user-status', userId: u\.id, status: u\.status, mobile: onPhone \}\)/.test(server),
+    'every status frame carries the phone flag (going invisible dropped the glyph, and nothing ever restored it)');
+  check(/if \(typeof m\.mobile === 'number'\) \{ if \(m\.mobile\) S\.presenceMobile\[m\.userId\] = 1; else delete S\.presenceMobile\[m\.userId\]; \}/.test(socket),
+    'and the client applies it on a status frame');
+  check(/notifyFriends\(id, \{ t: 'user-status', userId: id, status: 'online', mobile: onPhone \}\)/.test(server),
+    'a timed Away/invisible LAPSING tells friends too — the no-shared-server audience was skipped entirely, so an invisible friend stayed a grey dot');
+  check(/UPDATE users SET status = 'online', presence_expires_at = NULL, presence_auto = 0 WHERE/.test(server),
+    'and the lapse clears the idle-Away marker with the status');
+  check(/if \(await userInVoice\(id\)\) \{ try \{ await pushFriendsVoice\(id\); \} catch \{\} \}/.test(server),
+    'an invisible user in a voice room comes back onto the Active Now rail with their status');
+  check(/const sids = \(await db\.prepare\('SELECT server_id FROM server_members WHERE user_id = \?'\)\.all\(id\)\)\.map\(\(r\) => r\.server_id\);/.test(server),
+    'the sweep names its audience from the DATABASE — the leader runs it, and the lapsed user\'s devices may all be on a peer');
   check(/async function announceMobile\(userId, servers\)/.test(server)
     && /mobile: onPhone \}\);/.test(slice(server, 'async function announceMobile(', '// Send a payload to every live socket')),
     'and every path that can move it — that close, a visibility frame, a reaped replica — goes through ONE announcer');

@@ -1966,10 +1966,15 @@ function wirePresenceWidget(card) {
 // State picks keep whatever timer is already counting; picking Online drops it.
 async function choosePresence(s, ms) {
   const cur = (S.me || {}).status || 'online';
-  // A hand-picked presence must survive the next mouse move (only the idle
-  // auto-away is revertible), including re-picking the state you are in.
+  // An idle Away is the one state a re-pick still has to WRITE: tapping "Away"
+  // while the idle clock put you there is the user claiming it, and only the
+  // server write clears presence_auto. The local clear below is the other half —
+  // it stops the clock racing this request and flipping you back to Online in
+  // between. Any other re-pick of the state you are already in stays a no-op, and
+  // it must: a request there would clear a live timer.
+  const claimingIdle = !!(S.me && S.me.presence_auto) && s === cur && !presenceExpiry();
   if (typeof markPresenceManual === 'function') markPresenceManual();
-  if (ms === undefined && s === cur) { renderPresenceWidget($('#usercard')); return; } // nothing changed: never clear a live timer
+  if (ms === undefined && s === cur && !claimingIdle) { renderPresenceWidget($('#usercard')); return; }
   const exp = ms === undefined ? (presenceExpiry() || null) : ms;
   try { await setStatus(s, s === 'online' ? null : exp); } catch {}
 }

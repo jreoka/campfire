@@ -761,7 +761,26 @@ had moved to a desktop, so do not go back to it. Which value the clients were
 last TOLD lives in `users.mobile_flag`, and `announceMobile` pushes only a real
 change (one compare-and-set, so replicas cannot double-push); because a lease
 must be able to expire with no frame from anyone, the leader-locked
-`reconcileReplicaState` pass re-derives every online account on a clock.
+`reconcileReplicaState` pass re-derives every online account on a clock — and
+that pass is also the only thing that can announce the users of a replica that
+DIED, since a crash runs no close handler. Every status flip carries the phone
+flag with it (`user-status` frames have `mobile`), because going invisible tells
+friends `user-offline` — which drops the glyph with the status — and without the
+flag on the frame back there was nothing to restore it. And the automatic
+Online → Away → Online behaviour keys off `users.presence_auto`, not a
+per-browser marker: only the IDLE clock's Away may be silently undone by
+activity, that is a property of the ACCOUNT (picking Away on the phone must not
+be undone by a mouse move on the desktop), the client's flip says
+`presenceAuto:true` and every plain status write clears it. The clock itself is a
+wall-time stamp read by a slow tick, never one long `setTimeout` — a throttled or
+suspended tab never fires it, and a fired timeout is not re-armed when a timed
+Away lapses back to Online. A device that is NOT in front yields: the flip
+carries `presenceVisible`, and the server drops the whole request while any
+socket of that account holds a page-in-front lease (`anyoneInFront`), so a phone
+in a pocket cannot read its owner away while the desktop is in use — the two
+clocks would fight, amber/green/amber every few minutes. A hidden device with
+nothing in front is still free to flip (the background tab whose owner walked
+off).
 Friends' voice
 activity (`friends-voice`, the Active Now IN VOICE rail) is friend-scoped too:
 it is derived from `voiceRooms`, so any path that adds/removes a socket there

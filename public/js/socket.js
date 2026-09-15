@@ -598,6 +598,11 @@ function onWS(m) {
     case 'user-status':
       if (m.status === 'invisible') delete S.presenceAll[m.userId];
       else S.presenceAll[m.userId] = m.status;
+      // A status frame carries the account's phone flag when the server has one
+      // to state: going invisible tells friends 'user-offline', which drops the
+      // glyph with the status, and the flip back has to be able to restore it —
+      // a plain status frame used to leave them with no glyph at all.
+      if (typeof m.mobile === 'number') { if (m.mobile) S.presenceMobile[m.userId] = 1; else delete S.presenceMobile[m.userId]; }
       if (m.serverId === S.serverId) {
         if (m.status === 'invisible') delete S.online[m.userId];
         else S.online[m.userId] = m.status;

@@ -584,19 +584,35 @@ async function sweepExpiredStatuses() {
     for (const id of ids) { try { await broadcastUserUpdate(await freshUser(id)); } catch {} }
   }
   // Timed away/dnd/invisible lapses back to online (drives dots everywhere).
+  // presence_auto goes with it: the idle clock's marker must not outlive the
+  // Away it described, or the account would read as "away by itself" while it
+  // is plainly online (see PATCH /api/me and final.js poke()).
   let pids = [];
   try { pids = (await db.prepare('SELECT id FROM users WHERE presence_expires_at IS NOT NULL AND presence_expires_at <= ?').all(t)).map((r) => r.id); } catch {}
   if (!pids.length) return;
-  try { await db.prepare("UPDATE users SET status = 'online', presence_expires_at = NULL WHERE presence_expires_at IS NOT NULL AND presence_expires_at <= ?").run(t); } catch {}
+  try { await db.prepare("UPDATE users SET status = 'online', presence_expires_at = NULL, presence_auto = 0 WHERE presence_expires_at IS NOT NULL AND presence_expires_at <= ?").run(t); } catch {}
   for (const id of pids) {
     try {
       const u = await freshUser(id);
       await broadcastUserUpdate(u);
-      for (const sid of [...clients].filter((c) => c.meta && c.meta.userId === id).flatMap((c) => [...c.meta.servers])) {
-        broadcastToServer(sid, { t: 'user-status', serverId: sid, userId: id, status: 'online' });
-      }
+      // The audience comes from the DATABASE, not from whichever sockets happen
+      // to be on this replica: the leader runs this sweep, and the lapsed user's
+      // devices may all be connected to a peer. Naming the memberships here is
+      // what lets the fan-out reach them (broadcastToServer publishes).
+      const sids = (await db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(id)).map((r) => r.server_id);
+      const onPhone = (await userOnMobile(id)) ? 1 : 0;
+      for (const sid of sids) broadcastToServer(sid, { t: 'user-status', serverId: sid, userId: id, status: 'online', mobile: onPhone });
+      // Friends see it even with no shared server — and this is the half that
+      // used to be missing entirely: an INVISIBLE user lapses back into view,
+      // their friends were told 'user-offline' when they hid, and nothing ever
+      // told them otherwise (they stayed a grey dot until something else
+      // refreshed the roster). Same frame the PATCH path sends for the same flip.
+      notifyFriends(id, { t: 'user-status', userId: id, status: 'online', mobile: onPhone });
       for (const c of clients) if (c.meta && c.meta.userId === id) c.meta.status = 'online';
       await presenceSetStatus(id, 'online');
+      // …and an invisible user sitting in a voice room comes back onto the
+      // Active Now rail with them.
+      if (await userInVoice(id)) { try { await pushFriendsVoice(id); } catch {} }
     } catch {}
   }
   // An invisible user lapsed back to online: the admin panel's count moved.
@@ -608,7 +624,7 @@ function publicUser(u) {
     id: u.id, username: u.username, display_name: u.display_name, avatar_color: u.avatar_color || '#5865f2',
     avatar_url: u.avatar_url || null, banner_url: u.banner_url || null,
     sidebar_banner_url: u.sidebar_banner_url || null,
-    status: u.status || 'online', status_text: statusTextVisible(u), status_expires_at: statusExpiryVisible(u), presence_expires_at: presenceExpiryVisible(u), playing_game: u.playing_game || null, streaming_game: u.streaming_game || null, bio: u.bio || '',
+    status: u.status || 'online', status_text: statusTextVisible(u), status_expires_at: statusExpiryVisible(u), presence_expires_at: presenceExpiryVisible(u), presence_auto: u.presence_auto ? 1 : 0, playing_game: u.playing_game || null, streaming_game: u.streaming_game || null, bio: u.bio || '',
     name_color: u.name_color || '', name_gradient: u.name_gradient || '',
     card_color: u.card_color || '', card_gradient: u.card_gradient || '',
     avatar_decoration: AVATAR_DECOS.includes(u.avatar_decoration) ? u.avatar_decoration : '',
@@ -644,7 +660,7 @@ function blockedByOwnerLock(req, res, target) {
 }
 // Avatar decorations (settings → profile). IDs must match AVATAR_DECOS in public/js/core.js.
 const AVATAR_DECOS = ['ember', 'fireflies', 'aurora', 'neon', 'tide', 'stardust'];
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, playing_game, streaming_game, bio, name_color, name_gradient, card_color, card_gradient, avatar_decoration, active_tag_server_id, active_tag, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset, nsfw_ok, theme';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, presence_auto, playing_game, streaming_game, bio, name_color, name_gradient, card_color, card_gradient, avatar_decoration, active_tag_server_id, active_tag, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset, nsfw_ok, theme';
 
 // ---------- shared rate limiting ----------
 // Every limiter lives in the rate_limits table rather than in process memory,
@@ -3513,6 +3529,16 @@ app.delete('/api/me/banner', authRequired, async (req, res) => {
 const STATUSES = ['online', 'away', 'dnd', 'invisible'];
 app.patch('/api/me', authRequired, async (req, res) => {
   const { displayName, status, statusText } = req.body || {};
+  // The idle clock of a device that is NOT in front yields to one that is. An
+  // account is away only when nothing of theirs is being used, so the phone in a
+  // pocket whose clock fires must not drag the desktop user away — and the
+  // desktop's next mouse move would drag them back, on a loop nobody can read.
+  // The request is dropped whole (the client is handed the unchanged user, so it
+  // simply keeps showing Online); a hidden device with NOTHING in front is still
+  // allowed to flip, which is the single backgrounded tab whose owner walked off.
+  if (req.body?.presenceAuto === true && req.body.presenceVisible === false && (await anyoneInFront(req.user.id))) {
+    return res.json({ user: publicUser(req.user) });
+  }
   const sets = [], vals = [];
   if (displayName !== undefined) {
     const d = String(displayName).trim().slice(0, 32);
@@ -3562,6 +3588,16 @@ app.patch('/api/me', authRequired, async (req, res) => {
   }
   if (finalStatus === 'online') finalPresence = null;
   if (finalPresence !== undefined) { sets.push('presence_expires_at = ?'); vals.push(finalPresence); }
+  // …and WHERE that Away came from. Only the idle clock's may be silently undone
+  // by activity on any of the account's devices (see final.js poke()), so the
+  // origin has to be account state rather than a per-browser memory. A plain
+  // status write is a PICK and clears it; the idle flip is the one caller that
+  // says presenceAuto:true, and only an untimed Away can carry it (an idle flip
+  // never has a timer, and a timed state owns its own revert).
+  let finalAuto = undefined; // undefined = leave the column alone
+  if (status !== undefined || req.body?.presenceAuto !== undefined) finalAuto = 0;
+  if (req.body?.presenceAuto === true && finalStatus === 'away' && finalPresence == null) finalAuto = 1;
+  if (finalAuto !== undefined) { sets.push('presence_auto = ?'); vals.push(finalAuto); }
   if (req.body?.bio !== undefined) {
     sets.push('bio = ?'); vals.push(squashBreaks(req.body.bio).trim().slice(0, 300));
   }
@@ -3644,13 +3680,25 @@ app.patch('/api/me', authRequired, async (req, res) => {
   // races this request — must observe the new status, never the old one.
   await presenceSetStatus(u.id, u.status);
   await broadcastUserUpdate(u);
+  // The account's PHONE flag rides every status frame, because a status flip is
+  // exactly when a client's copy of it can go stale: going invisible tells
+  // friends 'user-offline', which drops the phone glyph with the status, and
+  // coming back with a plain status frame left them with no glyph at all —
+  // forever, since the compare-and-set in announceMobile saw no change to push.
+  // One read, one answer for every listener (the flag belongs to the account).
+  const onPhone = (await userOnMobile(u.id)) ? 1 : 0;
   for (const sid of [...clients].filter((c) => c.meta && c.meta.userId === u.id).flatMap((c) => [...c.meta.servers])) {
-    broadcastToServer(sid, { t: 'user-status', serverId: sid, userId: u.id, status: u.status });
+    broadcastToServer(sid, { t: 'user-status', serverId: sid, userId: u.id, status: u.status, mobile: onPhone });
   }
   // Friends outside my servers follow my status too. Invisible reads as a
   // plain offline to everyone else (only your own clients know you're hidden).
   if (u.status === 'invisible') notifyFriends(u.id, { t: 'user-offline', userId: u.id });
-  else notifyFriends(u.id, { t: 'user-status', userId: u.id, status: u.status });
+  else {
+    notifyFriends(u.id, { t: 'user-status', userId: u.id, status: u.status, mobile: onPhone });
+    // Record what that just told everyone: the phone map and the registry have
+    // to agree, or the next compare-and-set would fire a redundant frame.
+    await writeMobileFlag(u.id, onPhone);
+  }
   // sync live sockets' presence state: the local copy for this pod (the shared
   // registry was already updated above, before the broadcasts).
   for (const c of clients) if (c.meta && c.meta.userId === u.id) c.meta.status = u.status;
@@ -6337,6 +6385,21 @@ async function userOnMobile(userId) {
     return phonesFromRows(rows).has(userId);
   } catch { return false; }
 }
+// Is ANY of this account's sockets in front right now? The same page-in-front
+// lease the phone indicator reads (visible_at, re-asserted every ~25s by a page
+// that really is in front), asked about one user. The idle clock uses it to
+// decide whether a device that is NOT in front may speak for the account: a
+// phone in a pocket must not read its owner away while the desktop is being
+// used, or the two clocks fight — amber, green, amber every few minutes, and
+// no dot means anything. A hidden device whose account has nothing in front is
+// still free to flip (the single backgrounded tab whose owner walked off).
+async function anyoneInFront(userId) {
+  try {
+    const r = await db.prepare('SELECT 1 AS ok FROM live_sessions WHERE user_id = ? AND visible_at > ? LIMIT 1')
+      .get(userId, Date.now() - MOBILE_LEASE_MS);
+    return !!r;
+  } catch { return false; }
+}
 // Tell everyone who can see this account what its phone flag is NOW. Every path
 // that can move it goes through here: a phone socket closing, a dead replica's
 // rows being reaped, a device coming to the front, and the lease simply lapsing
@@ -6870,11 +6933,21 @@ async function reconcileReplicaState() {
         console.log(`[reconcile] reaped ${deadVoice.length} voice, ${gone.length} session, ${deadRl.length} limiter, ${deadWac.length} challenge row(s)`);
       }
       if (gone.length) {
-        // And the phone flags those rows were holding: the account may still be
-        // live on a replica that IS alive, so recompute per affected user
-        // instead of assuming anything.
+        // A replica that DIED never runs a close handler, so nobody was ever
+        // told its sockets went away — the rows sat in the registry and every
+        // other client kept painting those people online until something
+        // happened to refresh a roster. Reaping the rows is also the moment to
+        // say so. The account may still be live on a replica that IS alive, so
+        // ask per affected user instead of assuming anything: only one with no
+        // row left anywhere is actually gone, and the phone flag is recomputed
+        // either way.
         for (const uid of new Set(gone.map((r) => r.user_id))) {
           const sids = (await db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(uid)).map((r) => r.server_id);
+          const alive = !!(await db.prepare('SELECT 1 AS ok FROM live_sessions WHERE user_id = ? LIMIT 1').get(uid));
+          if (!alive) {
+            for (const sid of sids) broadcastToServer(sid, { t: 'user-offline', serverId: sid, userId: uid });
+            notifyFriends(uid, { t: 'user-offline', userId: uid });
+          }
           await announceMobile(uid, sids);
         }
         try { await pushAdminPresence(); } catch {}
@@ -7489,19 +7562,28 @@ wss.on('connection', async (ws, req) => {
     await presenceForget(ws);
     if (ws.meta) {
       if (ws.meta.voice) await leaveVoice(ws);
-      for (const sid of ws.meta.servers || []) {
-        // only broadcast offline if no other socket for this user still in server
-        const stillOn = [...clients].some((c) => c.meta && c.meta.userId === ws.meta.userId && c.meta.servers.has(sid));
-        if (!stillOn) broadcastToServer(sid, { t: 'user-offline', serverId: sid, userId: ws.meta.userId });
+      // "Is this account still here?" is a CLUSTER question, and live_sessions
+      // is the cluster's answer (this socket's row is already gone). Asking the
+      // local `clients` set instead declared a whole account offline the moment
+      // one of its devices disconnected from a replica that held no other
+      // socket — the phone closing on pod A while the desktop sat on pod B read
+      // as offline to everyone, and nothing ever put it back.
+      const anywhere = !!(await db.prepare('SELECT 1 AS ok FROM live_sessions WHERE user_id = ? LIMIT 1').get(ws.meta.userId));
+      if (!anywhere) {
+        for (const sid of ws.meta.servers || []) {
+          broadcastToServer(sid, { t: 'user-offline', serverId: sid, userId: ws.meta.userId });
+        }
+        // Friends see the flip even with no shared server (last socket only).
+        notifyFriends(ws.meta.userId, { t: 'user-offline', userId: ws.meta.userId });
       }
-      // Friends see the flip even with no shared server (last socket only).
-      const stillLive = [...clients].some((c) => c.meta && c.meta.userId === ws.meta.userId);
-      if (!stillLive) notifyFriends(ws.meta.userId, { t: 'user-offline', userId: ws.meta.userId });
-      // A phone that went away takes the phone indicator with it — but only
-      // that: with a desktop socket still holding the account open this is
-      // mobile:0, not offline. Read from live_sessions (this socket's row is
-      // already deleted), so a phone on another replica still counts.
-      if (ws.meta.device === 'mobile') await announceMobile(ws.meta.userId, ws.meta.servers);
+      // The phone indicator is re-derived on EVERY close, not only a phone's:
+      // which device is "in front" is a question about the sockets that are
+      // LEFT, so closing the desktop hands the account back to a phone that is
+      // still live (a pocketed phone's claim lapsed, and nothing else would have
+      // noticed until the reconcile sweep). announceMobile is a compare-and-set
+      // against what clients were last told, so a close that moves nothing —
+      // the common case — pushes nothing.
+      await announceMobile(ws.meta.userId, ws.meta.servers);
       await pushAdminPresence();
     }
     } catch (e) { console.error('[ws] close handler failed:', (e && e.message) || e); }
@@ -7699,8 +7781,12 @@ async function boot() {
     try { await db.prepare('UPDATE users SET streaming_game = NULL WHERE streaming_game IS NOT NULL').run(); } catch {}
   });
   // Expired custom statuses clear within a minute (reads mask them instantly).
+  // The cadence is env-tunable for the same reason the reconcile pass is: a test
+  // has to watch a timed Away actually LAPSE (and tell friends about it) without
+  // waiting out the production minute.
   await db.withLock(db.LOCKS.sweepStatuses, sweepExpiredStatuses);
-  safeLockedInterval('statuses', db.LOCKS.sweepStatuses, sweepExpiredStatuses, 60 * 1000);
+  safeLockedInterval('statuses', db.LOCKS.sweepStatuses, sweepExpiredStatuses,
+    Math.max(1000, parseInt(process.env.STATUS_SWEEP_EVERY_MS || '', 10) || 60 * 1000));
   // Stories expire after 24h: rows + their uploaded bytes go together.
   await db.withLock(db.LOCKS.reapStories, reapStories);
   safeLockedInterval('stories', db.LOCKS.reapStories, reapStories, 20 * 60 * 1000);

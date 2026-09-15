@@ -334,47 +334,141 @@ async function main() {
   check(statusCalls.length === 1 && statusCalls[0][0] === 'away' && Math.abs(statusCalls[0][1] - (t0b + 3600e3)) < 5000, 'picking a timer mid-lapse still applies Away + the span', statusCalls);
 
   console.log('\n[11] activity reverts only the idle auto-away');
-  // The other half: poke() runs on every mousemove/keydown/click, and its old
-  // "untimed away → Online" rule undid a hand-picked Away on the next mouse
-  // move. Drive the real block out of final.js with captured timers.
+  // The other half: poke() runs on every input event, and its old "untimed away
+  // → Online" rule undid a hand-picked Away on the next mouse move. Drive the
+  // real block out of final.js with a stubbed document + captured intervals; the
+  // deadline itself is moved by reaching into lastActive, because the clock is a
+  // wall-time stamp rather than a single 5-minute timeout.
   const idlePrelude = `
-const S = { me: { id: 'me', status: 'online', presence_expires_at: null } };
+const __sent = [];
+const __ticks = [];
+const __listeners = {};
+const __api = { ok: true, drop: false, calls: 0 };
+let __seq = 0;
+const S = { me: { id: 'me', status: 'online', presence_expires_at: null, presence_auto: 0 } };
 const api = async (p, o) => {
+  __api.calls++;
+  if (!__api.ok) throw new Error('offline'); // what api() does on a dead network
   const body = JSON.parse(o.body);
-  return { user: { status: body.status, presence_expires_at: body.presenceExpiresAt ?? null } };
+  __sent.push(body);
+  // What the server answers when it DROPS a hidden device's auto-away because
+  // another device of the account is in front: the user, unchanged.
+  if (__api.drop && body.presenceAuto) return { user: { ...S.me } };
+  return { user: { status: body.status, presence_expires_at: body.presenceExpiresAt ?? null, presence_auto: body.presenceAuto ? 1 : 0 } };
 };
 function paintMe() {}
 function renderMembers() {}
 function renderDmMembers() {}
 function refreshOwnPresence() {}
-const document = { addEventListener() {} };
-const __ls = new Map();
-const localStorage = { getItem: (k) => (__ls.has(k) ? __ls.get(k) : null), setItem: (k, v) => __ls.set(k, String(v)), removeItem: (k) => __ls.delete(k) };
-let __timers = [], __seq = 0;
-function setTimeout(fn, ms) { const id = ++__seq; __timers.push({ id, fn, ms }); return id; }
-function clearTimeout(id) { __timers = __timers.filter((t) => t.id !== id); }
-function __fireIdle() { const t = __timers.find((x) => x.ms === 5 * 60 * 1000); if (!t) return false; clearTimeout(t.id); t.fn(); return true; }
+const document = {
+  visibilityState: 'visible',
+  addEventListener(ev, fn) { (__listeners[ev] = __listeners[ev] || []).push(fn); },
+};
+function setInterval(fn, ms) { const id = ++__seq; __ticks.push({ id, fn, ms }); return id; }
+function clearInterval() {}
 `;
   const idle = eval(idlePrelude + slice(finalSrc, 'function presenceExpiry() {', '// ---------- global closers')
-    + '\n;({ poke, markPresenceManual, __S: S, __fireIdle, __ls })');
+    + '\n;({ poke, markPresenceManual, idleTick, idleAwayIsOurs, idleAwayDue, __S: S, __sent, __ticks, __listeners, __api, __doc: document,'
+    + ' __reset: () => { idleRetryAt = 0; }, __setLast: (ms) => { lastActive = Date.now() - ms; } })');
   const tick = () => new Promise((r) => setTimeout(r, 0));
+  const awaySends = () => idle.__sent.filter((b) => b.status === 'away');
   idle.poke();
-  check(idle.__fireIdle() === true, 'the idle timer is armed on activity');
-  await tick();
-  check(idle.__S.me.status === 'away', 'and flips to Away on its own');
-  check(idle.__ls.get('cf_idle_away:me') === '1', 'an idle Away is marked (revertible across a reload), a picked one is not');
+  check(idle.__ticks.length === 1 && idle.__ticks[0].ms === 20000,
+    'activity starts a slow idle tick (not one 5-minute timeout a throttled tab can swallow)', idle.__ticks.map((t) => t.ms));
+  check(!idle.__ticks.some((t) => t.ms === 5 * 60 * 1000), 'and nothing arms a lone 5-minute timeout any more');
+  check(Array.isArray(idle.__listeners.visibilitychange) && idle.__listeners.visibilitychange.length === 1,
+    'coming back to the tab counts as activity (a throttled tab resumes on exactly that event)');
+  check(['mousemove', 'keydown', 'click', 'wheel', 'touchstart'].every((ev) => Array.isArray(idle.__listeners[ev])),
+    'and so do touch and wheel — a phone user scrolling a chat is not "away"', Object.keys(idle.__listeners));
+  check(idle.__S.me.status === 'online', 'nothing happens at boot beyond arming the clock');
+  idle.__setLast(4 * 60e3);
+  idle.idleTick(); await tick();
+  check(idle.__S.me.status === 'online', 'four quiet minutes is not away yet');
+  idle.__setLast(6 * 60e3);
+  idle.idleTick(); await tick();
+  check(idle.__S.me.status === 'away', 'past five quiet minutes it flips to Away on its own');
+  check(idle.__S.me.presence_auto === 1, 'and the Away is recorded as the IDLE clock\'s');
+  check(awaySends().some((b) => b.presenceAuto === true),
+    'the request says so (presenceAuto is what lets any of the account\'s devices undo it)', awaySends());
   idle.poke(); await tick();
   check(idle.__S.me.status === 'online', 'activity clears the idle Away');
-  idle.poke(); idle.__fireIdle(); await tick();
+  check(idle.__S.me.presence_auto === 0, 'and the idle marker goes with it');
+
+  // A hand-picked Away is the user's: activity must leave it alone. The pick
+  // clears the marker locally (so the clock cannot race the request) and the
+  // server clears the column for real.
+  idle.__setLast(6 * 60e3); idle.idleTick(); await tick();
+  check(idle.__S.me.status === 'away' && idle.__S.me.presence_auto === 1, 'idle again → away again');
   idle.markPresenceManual(); // e.g. the user picked a state on their card
-  check(idle.__ls.get('cf_idle_away:me') === undefined, 'a pick drops the idle marker');
+  check(idle.__S.me.presence_auto === 0, 'a pick drops the idle marker');
   idle.poke(); await tick();
-  check(idle.__S.me.status === 'away', 'a hand-picked Away survives the next mouse move');
+  check(idle.__S.me.status === 'away', 'so a hand-picked Away survives the next mouse move');
   idle.__S.me.status = 'away';
   idle.__S.me.presence_expires_at = Date.now() + 3600e3;
   idle.poke(); await tick();
   check(idle.__S.me.status === 'away', 'a timed Away still keeps its own revert');
+
+  // The edge case a lone timeout could never cover: a timed Away lapses back to
+  // Online (the server sweep writes that) while the user is still not there. The
+  // 5-minute timer had fired hours earlier, so nothing was left to notice — the
+  // account sat Online all night. The wall clock notices.
+  idle.__S.me.status = 'online';
+  idle.__S.me.presence_expires_at = null;
+  idle.__S.me.presence_auto = 0;
+  idle.__setLast(30 * 60e3);
+  idle.idleTick(); await tick();
+  check(idle.__S.me.status === 'away', 'a lapse while nobody is there goes back to Away on the next tick');
+  check(idle.__S.me.presence_auto === 1, 'as the idle clock\'s Away again');
+  // …but a lapse while the user IS there must not bounce them straight to Away.
+  idle.__S.me.status = 'online'; idle.__S.me.presence_auto = 0;
+  idle.poke(); // input right now
+  idle.idleTick(); await tick();
+  check(idle.__S.me.status === 'online', 'a lapse the user is present for does not bounce back to Away');
+
+  // A flip that fails (offline, server down) must not be marked as ours, and
+  // must not be retried on every single tick.
+  idle.__reset();
+  idle.__S.me.status = 'online'; idle.__S.me.presence_auto = 0;
+  idle.__api.ok = false; idle.__api.calls = 0;
+  idle.__setLast(10 * 60e3);
+  idle.idleTick(); await tick(); await tick();
+  idle.idleTick(); await tick();
+  check(idle.__S.me.status === 'online' && idle.__S.me.presence_auto === 0, 'a failed flip leaves the account Online and unmarked');
+  check(idle.__api.calls === 1, 'and the clock backs off instead of hammering the server on every tick', idle.__api.calls);
+  idle.__api.ok = true;
+
+  // A DROPPED flip — the server refusing a hidden device's clock because another
+  // device of the account is in front — is not an error, but it must back off the
+  // same way rather than ask again on every 20s tick for as long as the desktop
+  // is being used.
+  idle.__reset();
+  idle.__doc.visibilityState = 'hidden'; // this device is a phone in a pocket
+  idle.__S.me.status = 'online'; idle.__S.me.presence_auto = 0;
+  idle.__api.drop = true; idle.__api.calls = 0;
+  idle.__setLast(10 * 60e3);
+  idle.idleTick(); await tick(); await tick();
+  idle.idleTick(); await tick();
+  check(idle.__S.me.status === 'online' && idle.__S.me.presence_auto === 0, 'a hidden device whose account is in front elsewhere stays Online');
+  check(idle.__api.calls === 1, 'and backs off there too', idle.__api.calls);
+  check(idle.__sent.some((b) => b.presenceAuto === true && b.presenceVisible === false),
+    'the flip tells the server whether THIS device is the one being looked at', idle.__sent.filter((b) => b.presenceAuto));
+  idle.__api.drop = false;
+  idle.__doc.visibilityState = 'visible';
+
+  check(/if \(req\.body\?\.presenceAuto === true && req\.body\.presenceVisible === false && \(await anyoneInFront\(req\.user\.id\)\)\)/.test(fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8')),
+    'and the server drops exactly that request while a device of the account holds a page-in-front lease');
+  check(/async function anyoneInFront\(userId\)/.test(fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8')),
+    'read from the same visible_at lease as the phone indicator');
+
   check(/if \(typeof markPresenceManual === 'function'\) markPresenceManual\(\)/.test(pickers), 'choosePresence marks a pick as not auto');
+  check(/const claimingIdle = !!\(S\.me && S\.me\.presence_auto\) && s === cur && !presenceExpiry\(\);/.test(pickers),
+    'and re-picking the state the idle clock put you in still WRITES (only the server clears presence_auto)');
+  check(/if \(ms === undefined && s === cur && !claimingIdle\)/.test(pickers), 'while every other re-pick stays the no-op that never clears a live timer');
+  check(!/localStorage/.test(slice(finalSrc, 'function idleAwayIsOurs()', '// ---------- the idle clock')), 'the origin is account state now, not a per-browser localStorage marker');
+  check(/presence_auto: u\.presence_auto \? 1 : 0/.test(fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8')),
+    'the server ships it on the user object every client reads');
+  check(/addColumn\('users', 'presence_auto'/.test(fs.readFileSync(path.join(ROOT, 'db.js'), 'utf8')),
+    'as a guarded migration (existing databases upgrade in place)');
 
   console.log('');
   if (failures.length) {

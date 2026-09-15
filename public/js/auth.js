@@ -475,5 +475,11 @@ function showMain() {
   $('#view-auth').classList.add('hidden');
   $('#view-main').classList.remove('hidden');
   paintMe();
+  // Arm the idle clock. It used to be armed ONLY from the first mousemove/
+  // keydown/click, so a page that was loaded and then left alone — a desktop
+  // opened at 9am and never touched, a phone propped up on a chat — never went
+  // Away at all, however long it sat there. Loading the app IS activity; the
+  // clock starts here and takes it from there.
+  if (typeof poke === 'function') poke();
 }
 

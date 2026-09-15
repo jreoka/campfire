@@ -208,6 +208,16 @@ CREATE INDEX IF NOT EXISTS idx_members_user ON server_members(user_id);
   await addColumn('users', 'status_text', "TEXT NOT NULL DEFAULT ''");
   await addColumn('users', 'status_expires_at', 'BIGINT');
   await addColumn('users', 'presence_expires_at', 'BIGINT');
+  // Was the current Away the IDLE CLOCK's rather than the user's pick? That is a
+  // property of the ACCOUNT, not of one browser: the account may be away because
+  // the desktop went quiet and then be touched on the phone, and only the idle
+  // one may be silently undone by activity (see final.js poke()). A localStorage
+  // marker got every cross-device case wrong — a stale marker let a mouse move
+  // undo an Away the user had just picked somewhere else — so the origin is
+  // recorded here and rides the user object to every one of the account's
+  // clients. Any plain status write clears it; only an explicit presenceAuto:true
+  // from the idle flip sets it (see PATCH /api/me).
+  await addColumn('users', 'presence_auto', 'INTEGER NOT NULL DEFAULT 0');
   await addColumn('users', 'avatar_url', 'TEXT');
   await addColumn('users', 'streaming_game', 'TEXT');
   await addColumn('users', 'banner_url', 'TEXT');

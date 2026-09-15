@@ -122,26 +122,36 @@ function takeNativeDeepLink() {
 // live on your own user card now (see presenceWidgetHTML in pickers.js), and
 // clicking the avatar opens that card like every other avatar does.
 function presenceExpiry() { const ts = +((S.me || {}).presence_expires_at || 0); return ts > Date.now() ? ts : 0; }
-// Was the current away set by the idle timer? That is the one presence activity
+// Was the current away set by the IDLE CLOCK? That is the one presence activity
 // may silently undo. A state the user picked by hand (even a timerless Away,
 // which carries no expiry yet) is theirs to keep — the old blanket "untimed
 // away → online on activity" rule undid the pick on the very next mouse move, so
-// the status looked like it never changed. The flag lives in storage (keyed per
-// account) so a reload keeps an idle Away revertible without turning a picked
-// one sticky; the read only happens while the status is an untimed away.
-const IDLE_AWAY_KEY = 'cf_idle_away:';
-function setIdleAway(v) {
-  try { if (v) localStorage.setItem(IDLE_AWAY_KEY + S.me.id, '1'); else localStorage.removeItem(IDLE_AWAY_KEY + S.me.id); } catch {}
-}
+// the status looked like it never changed. The origin is recorded SERVER-side
+// (users.presence_auto, set only by the idle flip below and cleared by every
+// plain status write) because it belongs to the ACCOUNT: with a per-browser
+// localStorage marker, picking Away on the phone left the desktop's stale marker
+// behind and the next mouse move there undid the pick.
 function idleAwayIsOurs() {
   if (!S.me || S.me.status !== 'away' || presenceExpiry()) return false;
-  try { return localStorage.getItem(IDLE_AWAY_KEY + S.me.id) === '1'; } catch { return false; }
+  return !!S.me.presence_auto;
 }
-function markPresenceManual() { setIdleAway(false); }
-async function setStatus(s, presenceExpiresAt) {
+// The client half of a pick: clear the marker the instant the user taps one, so
+// the idle clock cannot race the request and revert it back to Online between
+// the tap and the server's answer. The server clears the column for real.
+function markPresenceManual() { if (S.me) S.me.presence_auto = 0; }
+async function setStatus(s, presenceExpiresAt, opts) {
   try {
     const body = { status: s };
     if (s === 'online' || presenceExpiresAt !== undefined) body.presenceExpiresAt = s === 'online' ? null : (presenceExpiresAt ?? null);
+    if (opts && opts.auto) {
+      body.presenceAuto = true; // "the idle clock put me here"
+      // …and whether THIS device is the one being looked at. The server drops the
+      // flip when a hidden device's clock fires while another device of the
+      // account is in front (see anyoneInFront in server.js): a phone in a pocket
+      // must not read its owner away while the desktop is in use, or the two
+      // clocks fight and the dot flaps between amber and green.
+      body.presenceVisible = document.visibilityState === 'visible';
+    }
     const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify(body) });
     S.me = { ...S.me, ...user };
     paintMe(); renderMembers();
@@ -149,18 +159,76 @@ async function setStatus(s, presenceExpiresAt) {
     // Keep the open user card's dot/label + switcher honest too (this path also
     // fires for the idle auto-away flip, not just the card's own chips).
     try { refreshOwnPresence(); } catch {}
-  } catch {}
+    return true;
+  } catch { return false; }
 }
-let idleTimer = null;
+
+// ---------- the idle clock ----------
+// Online → Away on its own after five quiet minutes, and back to Online on the
+// next thing the user does. Three rules make that hold up:
+//   * the deadline is a WALL-CLOCK stamp (lastActive) read by a slow tick, never
+//     a lone 5-minute setTimeout. A background tab has its timers throttled and
+//     a suspended one has none at all, so a single timeout silently never fires;
+//     and, the other way, a fired timeout is never re-armed when the status
+//     moves on its own — a timed Away lapsing back to Online at 2am used to
+//     leave the account Online for the rest of the night.
+//   * ACTIVITY is the user's own input, never the app's. An auto-scroll from an
+//     arriving message, a repaint or a game beacon must not count, or a busy
+//     channel would pin an empty chair Online forever.
+//   * only the idle clock's own Away is reverted (idleAwayIsOurs), and it is
+//     reverted on ANY of the account's devices — see markPresenceManual.
+const IDLE_AWAY_MS = 5 * 60 * 1000;
+const IDLE_TICK_MS = 20 * 1000;   // how late the flip can be: ≤20s visible, ≤60s throttled
+const IDLE_RETRY_MS = 60 * 1000;  // a failed flip waits its turn instead of hammering
+let lastActive = Date.now();
+let idleTicker = null, idlePending = false, idleRetryAt = 0;
+// The one question the clock asks.
+function idleAwayDue() {
+  if (!S.me) return false;
+  if ((S.me.status || 'online') !== 'online') return false; // dnd/invisible/away are not ours to move
+  if (presenceExpiry()) return false;                       // a timed state owns its own revert
+  return Date.now() - lastActive >= IDLE_AWAY_MS;
+}
+function idleGoAway() {
+  const at = lastActive;
+  return setStatus('away', undefined, { auto: true }).then((ok) => {
+    if (!ok) return false;
+    if (S.me.status !== 'away') {
+      // The server DROPPED it: this device is hidden and another device of the
+      // account is in front. Not an error — back off, and let the world change
+      // (the desktop going quiet is what makes the next try land).
+      idleRetryAt = Date.now() + IDLE_RETRY_MS;
+      return true;
+    }
+    // The user came back while the request was in flight: the Away is written
+    // now, so take it back rather than leave them Away until the next input.
+    if (lastActive !== at) { markPresenceManual(); setStatus('online'); }
+    return true;
+  });
+}
+function idleTick() {
+  if (idlePending || Date.now() < idleRetryAt) return;
+  if (!idleAwayDue() || idleAwayIsOurs()) return;
+  idlePending = true;
+  idleGoAway().then((ok) => { if (!ok) idleRetryAt = Date.now() + IDLE_RETRY_MS; })
+    .catch(() => {})
+    .then(() => { idlePending = false; });
+}
+function startIdleWatch() { if (!idleTicker) idleTicker = setInterval(() => { try { idleTick(); } catch {} }, IDLE_TICK_MS); }
+// Every kind of input the user makes is activity: the deadline moves, and an
+// idle Away (ours — never a picked one) goes back to Online. touchstart and
+// wheel matter as much as the mouse pair: a phone user reading by scrolling
+// never fires mousemove, and they are exactly who an "away" dot misreads.
 function poke() {
   if (!S.me) return;
-  clearTimeout(idleTimer);
-  // A timed Away owns its own revert, and so does a picked one — only the idle
-  // auto-away may be cleared by activity.
+  lastActive = Date.now();
+  startIdleWatch();
   if (idleAwayIsOurs()) { markPresenceManual(); setStatus('online'); }
-  idleTimer = setTimeout(() => { if (S.me && S.me.status === 'online') { setIdleAway(true); setStatus('away'); } }, 5 * 60 * 1000);
 }
-['mousemove', 'keydown', 'click'].forEach((ev) => document.addEventListener(ev, poke, { passive: true }));
+['mousemove', 'keydown', 'click', 'wheel', 'touchstart'].forEach((ev) => document.addEventListener(ev, poke, { passive: true }));
+// Coming back to the tab is activity too — and, just as importantly, the moment
+// every throttled timer starts running again at full speed.
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') poke(); });
 
 // ---------- swipe-down-to-dismiss (mobile panels) ----------
 // Drag a full-screen mobile panel (the profile page, the me-bar card sheet)
