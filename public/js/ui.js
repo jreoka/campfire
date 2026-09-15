@@ -198,7 +198,60 @@ $('#left').addEventListener('click', (e) => {
   if (!document.body.classList.contains('nav-open')) return;
   if (e.target.closest && e.target.closest('#btn-friends, #btn-stories')) document.body.classList.remove('nav-open');
 });
-$('#btn-members').onclick = (e) => { e.stopPropagation(); document.body.classList.toggle('members-open'); };
+/* ---------- the members bar: a drawer on a phone, a column on a desktop ----------
+   One control, two meanings, and the LAYOUT picks which (membersDrawerLayout,
+   core.js — the same condition as the stylesheet's members block). In drawer
+   shape the button opens and closes an overlay; in column shape the panel is
+   part of the shell, so the same button collapses it out of the layout and
+   brings it back.
+
+   The two states are deliberately kept apart: the drawer's open/close is
+   transient (nothing about it survives a reload, and crossing the breakpoint
+   drops it), while a desktop collapse is a preference a reader who wants the
+   width back should keep. */
+const MEMBERS_PREF = 'cf_members_collapsed';
+const membersCollapsedPref = () => { try { return localStorage.getItem(MEMBERS_PREF) === '1'; } catch { return false; } };
+// The button's own state is painted from the panel it controls, never from the
+// click that toggled it, so the phone's ⋯ sheet (which just calls b.click()) and
+// a restored preference can never disagree with what is on screen.
+function paintMembersToggle() {
+  const b = $('#btn-members');
+  if (!b) return;
+  const open = membersDrawerLayout()
+    ? document.body.classList.contains('members-open')
+    : !document.body.classList.contains('members-collapsed');
+  b.setAttribute('aria-expanded', open ? 'true' : 'false');
+  b.title = open ? 'Hide members' : 'Show members';
+}
+// The collapsed class is only ever applied in the static-column shape: in the
+// drawer shape the panel is off-screen on its own terms, and a remembered
+// collapse must not follow the reader onto a phone.
+function applyMembersBar() {
+  document.body.classList.toggle('members-collapsed', !membersDrawerLayout() && membersCollapsedPref());
+  paintMembersToggle();
+}
+function setMembersCollapsed(v) {
+  try { v ? localStorage.setItem(MEMBERS_PREF, '1') : localStorage.removeItem(MEMBERS_PREF); } catch {}
+  applyMembersBar();
+}
+$('#btn-members').onclick = (e) => {
+  e.stopPropagation();
+  if (membersDrawerLayout()) { document.body.classList.toggle('members-open'); paintMembersToggle(); return; }
+  setMembersCollapsed(!document.body.classList.contains('members-collapsed'));
+};
+applyMembersBar();
+// Crossing the breakpoint by resizing hands the panel back in the new shape:
+// the drawer's transient flag is dropped for the column, and the remembered
+// collapse is re-applied (or shelved) without ever being forgotten.
+if (window.matchMedia) {
+  const membersMQ = matchMedia(MEMBERS_MQ);
+  const onMembersLayout = () => {
+    if (!membersDrawerLayout()) document.body.classList.remove('members-open');
+    applyMembersBar();
+  };
+  if (membersMQ.addEventListener) membersMQ.addEventListener('change', onMembersLayout);
+  else if (membersMQ.addListener) membersMQ.addListener(onMembersLayout);
+}
 // Mobile header overflow (⋯): the phone header hides its secondary rails behind
 // this sheet (see styles.css), so the sheet lists exactly what is available:
 // a `.hidden` class means the app switched that control off (pins with nothing

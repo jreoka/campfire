@@ -18,6 +18,14 @@ const isCoarse = () => window.matchMedia && matchMedia('(hover: none)').matches;
 // styles.css — the two must be kept in sync.
 const PHONE_MQ = '(max-width:700px), (max-height:560px) and (pointer:coarse)';
 const phoneLayout = () => !!(window.matchMedia && matchMedia(PHONE_MQ).matches);
+// The members bar is ONE surface in two shapes, and the @media block in
+// styles.css that draws them is what decides which: at <=900px (or in a short
+// touch viewport) it is a drawer over the chat, toggled by body.members-open and
+// transient by nature; above that it is a static column, which the header's
+// members button collapses and expands as a remembered preference. Same
+// condition as the stylesheet, in one place (see ui.js's members block).
+const MEMBERS_MQ = '(max-width:900px), (max-height:560px) and (pointer:coarse)';
+const membersDrawerLayout = () => !!(window.matchMedia && matchMedia(MEMBERS_MQ).matches);
 // What DEVICE this is, which is not the same question as phoneLayout(): a
 // narrow desktop window and a phone held sideways are both "phone layout" on a
 // device nobody would call a phone, and the server only ever hears this once,

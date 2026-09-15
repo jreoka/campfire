@@ -864,6 +864,15 @@ persistent columns with the chat beside them — Discord's landscape shape. The
 members panel stays a right drawer, and `#btn-menu` / `#btn-nav-close` are hidden
 because there is nothing left to overlay; `body.nav-open` is inert there. Never
 re-add the full-page nav to landscape, and never key this on width alone.
+The members bar is the ONE surface with a breakpoint of its own, and it is
+deliberate: below 900px it is a drawer over the chat and above it a static 244px
+column, so `MEMBERS_MQ`/`membersDrawerLayout()` in `core.js` is that same 900px
+condition (never `phoneLayout()`, which is narrower). One header button drives
+both — ui.js routes by layout — and only the column shape collapses, as a
+remembered preference (`cf_members_collapsed`); the drawer's open/close is
+transient, a remembered collapse is shelved in drawer shape, and the stylesheet's
+`body.members-collapsed #members{display:flex}` override is the belt to that
+brace. `scripts/test-members-collapse.js` owns all of it.
 `#server-ui` is the sidebar's one scroll region (`#home-ui` already was): its
 list scrolls under a sticky `#server-header` so a server with more channels than
 fit never pushes the me bar off the bottom.
