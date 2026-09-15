@@ -333,6 +333,76 @@ async function main() {
         check(rolled.end.me === true && /Viewer/.test(rolled.end.title || ''),
           'and the pill knows I am on it, with the tooltip updated', { me: rolled.end.me, title: rolled.end.title });
 
+        // The drum's geometry, measured rather than eyeballed: the window hugs
+        // the digits (a full line-height window leaves a hole between the two
+        // halves), the ink fits inside it at rest, and the two copies stay
+        // exactly one cell apart for the whole roll — a rigid strip, which is
+        // what "odometer" means. Two easing curves moving the halves at
+        // different rates is what made it look like it morphed.
+        const drum = await evaluate(`(() => {
+          const count = document.querySelector(${JSON.stringify(pillSel)} + ' .rcount');
+          const cv = document.createElement('canvas').getContext('2d');
+          const cs = getComputedStyle(count);
+          cv.font = cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily;
+          const m = cv.measureText('9');
+          const box = count.getBoundingClientRect();
+          const W = parseFloat(cs.height);
+          const T = m.fontBoundingBoxAscent + m.fontBoundingBoxDescent;
+          const baseline = (W - T) / 2 + m.fontBoundingBoxAscent;
+          return { W: +W.toFixed(2), ink: +m.actualBoundingBoxAscent.toFixed(2), color: cs.color,
+            inkTop: +(baseline - m.actualBoundingBoxAscent).toFixed(2), inkBottom: +baseline.toFixed(2),
+            restH: +box.height.toFixed(2), lineH: cs.lineHeight, fontSize: cs.fontSize };
+        })()`);
+        check(drum.W < parseFloat(drum.fontSize) * 1.1, 'the drum window is tighter than a full line box', drum);
+        check(drum.inkTop >= 0 && drum.inkBottom <= drum.W, 'and the digits sit inside it uncut', drum);
+
+        // UP (somebody else adds) then DOWN (they take it back), watched by a
+        // MutationObserver so the transient roll cannot be missed.
+        await evaluate(`(() => {
+          window.__rolls = [];
+          new MutationObserver((muts) => {
+            for (const m of muts) for (const n of (m.addedNodes || [])) {
+              if (n.nodeType !== 1) continue;
+              const wrap = n.classList && n.classList.contains('rc-roll') ? n : (n.querySelector ? n.querySelector('.rc-roll') : null);
+              if (!wrap || wrap.dataset.logged) continue;
+              wrap.dataset.logged = '1';
+              const o = wrap.querySelector('.rc-old'), nw = wrap.querySelector('.rc-new');
+              const wr = wrap.getBoundingClientRect();
+              const rec = { cls: wrap.className, wrapH: +wr.height.toFixed(2),
+                gap: +((nw.getBoundingClientRect().top - wr.top) - (o.getBoundingClientRect().top - wr.top)).toFixed(2),
+                from: o.textContent, to: nw.textContent };
+              requestAnimationFrame(() => requestAnimationFrame(() => {
+                rec.anims = [...o.getAnimations(), ...nw.getAnimations()].map((a) => a.animationName + ':' + a.playState);
+                window.__rolls.push(rec);
+              }));
+            }
+          }).observe(document.body, { childList: true, subtree: true });
+          return true;
+        })()`);
+        const heartSel = `#messages .msg[data-mid="${vmid}"] .reaction[data-emoji="❤️"]`;
+        await post(`/api/messages/${vmid}/reactions`, third.token, { emoji: '❤️' });
+        check(!!(await waitFor(`document.querySelector(${JSON.stringify(heartSel)})`)), 'a heart pill appears (no roll yet — it is new)');
+        // My own reaction, through the real click path: the local patch rolls it
+        // and the socket echo a few ms later must not cut that short.
+        await evaluate(`toggleReaction(${JSON.stringify(vmid)}, '❤️')`);
+        check(!!(await waitFor(`(() => { const p = document.querySelector(${JSON.stringify(heartSel)}); return p && (p.querySelector('.rcount') || {}).textContent === '2' })()`)),
+          'a second person on it rolls it up to 2');
+        await sleep(400);
+        await post(`/api/messages/${vmid}/reactions`, third.token, { emoji: '❤️' });
+        check(!!(await waitFor(`(() => { const p = document.querySelector(${JSON.stringify(heartSel)}); return p && (p.querySelector('.rcount') || {}).textContent === '1' })()`)),
+          'and taking one back rolls it down to 1');
+        await sleep(400);
+
+        const rolls = await evaluate(`window.__rolls`);
+        check(rolls.length === 2, 'both changes rolled (the removal did not just snap)', rolls);
+        const [up, down] = rolls;
+        check(!!up && up.cls === 'rc-roll' && up.from === '1' && up.to === '2', 'the addition rolled upwards', up);
+        check(!!down && down.cls === 'rc-roll down' && down.from === '2' && down.to === '1', 'the removal rolled downwards', down);
+        for (const r of [up, down]) {
+          check(!!r && Math.abs(Math.abs(r.gap) - r.wrapH) <= 0.6, 'the two digits stay exactly one cell apart (a rigid strip)', r);
+          check(!!r && r.anims.every((a) => a.endsWith(':running')), 'with both halves animating', r && r.anims);
+        }
+
         const refused = await evaluate(`(async () => {
           const m = msgById(${JSON.stringify(vmid)});
           const max = Number(S.maxReactions) || 20;

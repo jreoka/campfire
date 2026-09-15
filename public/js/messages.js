@@ -670,26 +670,39 @@ function reactionsHTML(m) {
     return `<button class="reaction${r.me ? ' me' : ''}" data-act="react" data-emoji="${esc(r.emoji)}" title="${esc(reactionTitle(r))}" aria-label="${esc(reactionTitle(r))}">${label} <span class="rcount">${r.count}</span></button>`;
   }).join('') + '</div>';
 }
-// The number a pill is showing. While a roll is running the digit lives inside
-// TWO stacked copies, so the count element's textContent reads "12" for 1 -> 2 —
-// the pending copy is the only honest answer, and asking the wrong question here
-// makes a later increase look like no change at all.
+// What a rolling value is SHOWING. While the two copies are stacked the
+// container's textContent is both of them run together ("12" for 1 -> 2), so the
+// pending copy is the only honest answer — asking the wrong question makes a
+// later increase look like no change at all.
+function rollShownText(el) {
+  if (!el) return '';
+  const pending = el.querySelector ? el.querySelector('.rc-new') : null;
+  return ((pending || el).textContent || '');
+}
+// The number a pill is showing (see rollShownText for why it is not just
+// textContent).
 function pillCount(b) {
   const el = b && b.querySelector('.rcount');
   if (!el) return null;
-  const pending = el.querySelector('.rc-new');
-  const n = parseInt(((pending || el).textContent || ''), 10);
+  const n = parseInt(rollShownText(el), 10);
   return Number.isFinite(n) ? n : null;
 }
-// Count went up on an existing pill: roll the number like an odometer tick
+// Count changed on an existing pill: roll the number like an odometer tick
 // instead of swapping the digit under the reader's eye. Two stacked copies
-// animate past each other, then collapse back to plain text.
-function rollReactionCount(el, from, to) {
+// animate past each other inside a one-digit window, then collapse back to plain
+// text. UP when a reaction is added (the new number rises in), DOWN when one is
+// taken back (it drops in from above) — the direction is the whole point of the
+// gesture, so a removal never just snaps.
+function rollReactionCount(el, from, to, dir) { rollValue(el, from, to, dir, ''); }
+// The roll itself, shared by the reaction count (a digit-sized window) and the
+// me bar's sub-line (a `wide`, text-sized one — see the stylesheet). `extra`
+// names the window size, `dir` which way the strip travels.
+function rollValue(el, from, to, dir, extra) {
   try {
     if (!el) return;
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = String(to); return; }
     const wrap = document.createElement('span');
-    wrap.className = 'rc-roll';
+    wrap.className = 'rc-roll' + (extra ? ' ' + extra : '') + (dir === 'down' ? ' down' : '');
     const a = document.createElement('span'); a.className = 'rc-old'; a.textContent = String(from);
     const b = document.createElement('span'); b.className = 'rc-new'; b.textContent = String(to);
     wrap.append(a, b);
@@ -1592,11 +1605,11 @@ function patchMessageReactions(mid, box) {
         // Unchanged: leave the node — and any roll still running inside it — as
         // it is. This is the line that lets the odometer survive the echo.
         if (was != null && now === was) continue;
-        // A decrease (or a number we could not read) is written straight in: an
-        // odometer is for a count going UP, and rolling a taken-back reaction
-        // backwards would say "more" while it moves.
-        if (was == null || now < was) { if (el.textContent !== String(now)) el.textContent = String(now); continue; }
-        rollReactionCount(el, was, now);
+        // Either way it ROLLS: up for a reaction added, down for one taken back.
+        // A number with no readable predecessor is the one case that is written
+        // straight in — there is nothing to roll from.
+        if (was == null) { if (el.textContent !== String(now)) el.textContent = String(now); continue; }
+        rollReactionCount(el, was, now, now < was ? 'down' : 'up');
       }
       // A kind the bar did not have yet (somebody's first reaction with it).
       for (const nb of want.values()) cur.appendChild(nb);

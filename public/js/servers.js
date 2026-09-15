@@ -783,6 +783,38 @@ function paintSidebarBanner(el, url, base) {
   el.style.backgroundPosition = '0 0, 0 0, right center';
   el.style.backgroundRepeat = 'no-repeat';
 }
+// ---------- the me bar's sub-line: what I am doing, or my handle on hover ----------
+// The line under my name carries ONE thing, in this order: streaming, my custom
+// status, the game I am playing, and failing all three my presence WORD — so it
+// always says something ("Online", "Away", "Do not disturb", "Invisible"), which
+// is also what gives the hover roll below something to roll away from.
+//
+// Hovering the avatar+name+status area rolls it UP to my handle (the plain
+// username, no @ — owner request) and leaving rolls it back DOWN, the same
+// two-copy strip the reaction count uses, in a text-sized window. Hover only: a
+// tap on a touch screen leaves the synthetic :hover behind, and a handle stuck
+// on the bar would be exactly the artifact the rest of the shell avoids.
+let meSubState = { status: '', game: false, stream: false, hover: false };
+function meHandleText() { return (S.me && S.me.username) || ''; }
+function paintMeSub(rollDir) {
+  const sub = $('#me-sub');
+  if (!sub) return;
+  const want = meSubState.hover ? meHandleText() : meSubState.status;
+  if (!want) { sub.textContent = ''; sub.title = ''; sub.style.display = 'none'; return; }
+  const visible = sub.style.display !== 'none';
+  sub.style.display = '';
+  sub.classList.toggle('ugame', !meSubState.hover && meSubState.game);
+  sub.classList.toggle('ustream', !meSubState.hover && meSubState.stream);
+  sub.title = want;
+  const cur = (typeof rollShownText === 'function') ? rollShownText(sub) : sub.textContent;
+  // Unchanged → leave the node alone, which is what lets a roll in flight finish
+  // (a presence tick during the hover must not cut the handle's roll short).
+  if (cur === want) { if (!sub.querySelector('.rc-roll')) sub.textContent = want; return; }
+  // Nothing was on the bar yet (first paint, or a sub-line that was hidden):
+  // there is nothing to roll from, so it is placed.
+  if (!visible || !cur) { sub.textContent = want; return; }
+  rollValue(sub, cur, want, rollDir === 'down' ? 'down' : 'up', 'wide');
+}
 function paintMe() {
   if (!S.me) return;
   paintAvatar($('#me-avatar'), S.me);
@@ -805,19 +837,35 @@ function paintMe() {
   else card.style.backgroundImage = '';
   card.classList.toggle('off', off);
   card.classList.toggle('has-banner', !!(S.me.sidebar_banner_url && !off));
-  // One sub-line max: streaming wins, then custom status, otherwise the game.
-  // The game itself always gets the controller/art badge so rows never grow.
-  const sub = $('#me-sub');
+  // One sub-line max: streaming wins, then a custom status, otherwise the game,
+  // otherwise my presence word (so the line is never empty — it is what the
+  // hover roll reveals the handle from).
   const showGameText = !off && !streaming && S.me.playing_game && !S.me.status_text;
-  const stxt = streaming ? ('Streaming ' + S.me.streaming_game) : ((!off && S.me.status_text) ? S.me.status_text : (showGameText ? 'Playing ' + S.me.playing_game : ''));
-  if (stxt) { sub.textContent = stxt; sub.title = stxt; sub.style.display = ''; }
-  else { sub.textContent = ''; sub.style.display = 'none'; }
-  sub.classList.toggle('ugame', !!showGameText);
-  sub.classList.toggle('ustream', !!streaming);
+  const stxt = streaming ? ('Streaming ' + S.me.streaming_game)
+    : ((!off && S.me.status_text) ? S.me.status_text
+      : (showGameText ? 'Playing ' + S.me.playing_game
+        : (STATUS_TEXT[st] || 'Online')));
+  meSubState.status = stxt;
+  meSubState.game = !!showGameText;
+  meSubState.stream = !!streaming;
+  paintMeSub('up');
   const gb = $('#me-game-badge');
   if (gb) {
     if (!off && S.me.playing_game) { gb.style.display = ''; gb.dataset.game = S.me.playing_game; paintGameBadge(gb); }
     else { gb.style.display = 'none'; gb.innerHTML = ''; gb.dataset.game = ''; }
+  }
+}
+// The reveal itself, wired only where hover exists (see the note above).
+if (window.matchMedia && matchMedia('(hover:hover)').matches) {
+  const open = $('#me-open');
+  if (open) {
+    const reveal = () => { if (meSubState.hover) return; meSubState.hover = true; paintMeSub('up'); };
+    const restore = () => { if (!meSubState.hover) return; meSubState.hover = false; paintMeSub('down'); };
+    open.addEventListener('mouseenter', reveal);
+    open.addEventListener('mouseleave', restore);
+    // Keyboard parity: tabbing to the target reveals the handle too.
+    open.addEventListener('focus', reveal);
+    open.addEventListener('blur', restore);
   }
 }
 function mentionsMe(msg) {

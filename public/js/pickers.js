@@ -1864,7 +1864,7 @@ function wireStatusBubble(card) {
 // cascades that state's timer underneath it. It replaces the status readout line
 // on your own card (the collapsed row IS the readout), so the avatar can just
 // open the card like every other avatar does.
-const STATUS_TEXT = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' };
+// STATUS_TEXT (the words a presence state is called) is shared from core.js.
 const PRESENCE_STATES = [['online', 'Online'], ['away', 'Away'], ['dnd', 'Do not disturb'], ['invisible', 'Invisible']];
 // How long away/dnd/invisible lasts before lapsing back to Online.
 const PRESENCE_DURATIONS = [

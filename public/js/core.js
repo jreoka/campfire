@@ -83,6 +83,10 @@ function haptic(pattern = 9) {
 // the app shell match; applied via <html data-theme> before CSS paints
 // (see the inline head script in index.html — this keeps it live after).
 const THEME_IDS = ['dark', 'light', 'dracula', 'oled'];
+// The words a presence state is called, in one place: the status picker, the
+// user card and the me bar's sub-line all say the same thing. It lives here, in
+// the first script, because the me bar paints before the later files are parsed.
+const STATUS_TEXT = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' };
 function validTheme(t) { return THEME_IDS.includes(t) ? t : null; }
 function localTheme() {
   try { return validTheme(localStorage.getItem('cf_theme')); } catch { return null; }

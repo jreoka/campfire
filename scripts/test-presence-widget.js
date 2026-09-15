@@ -65,6 +65,9 @@ global.setStatus = async (s, exp) => {
   S.me = { ...S.me, status: s, presence_expires_at: s === 'online' ? null : (exp ?? null) };
 };
 global.$ = () => null;
+// The words a presence state is called are shared from core.js (the me bar paints
+// before the later files parse), so a slice that leans on them declares them.
+global.STATUS_TEXT = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' };
 
 // statusLineHTML + the switcher live between wireStatusBubble and clearMyStatus.
 const code = slice(core, 'function esc(s) {', '// Layout size of a popup')
@@ -109,6 +112,9 @@ window.dotOf = (st, t) => (t && !isOff(st)) ? 'streaming' : (st === 'invisible' 
 window.$ = (s) => document.querySelector(s);
 window.presenceExpiry = () => +((S.me && S.me.presence_expires_at) || 0);
 window.clampUserCard = () => {};
+// The words a presence state is called come from core.js (shared with the me
+// bar), so the slice needs them declared here like its other dependencies.
+const STATUS_TEXT = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' };
 // Mirror the server's PATCH: an expiry has to be a future epoch or it is a 400
 // (bad_expiry), which the real setStatus swallows.
 window.__sent = [];

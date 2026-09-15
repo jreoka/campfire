@@ -107,6 +107,10 @@ window.dotOf = (st) => st;
 window.onMobileNow = () => false;
 window.nameStyleFor = () => '';
 window.paintGameBadge = () => {};
+// The words a presence state is called are shared from core.js (the me bar
+// paints before the later files are parsed) — one dependency of the sliced
+// range, stubbed like the rest.
+const STATUS_TEXT = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' };
 // A tag-returning tagHTML: if paintMe ever inserts one into the me row again,
 // the harness sees it.
 window.tagHTML = (u) => (u && u.active_tag ? '<span class="usertag">' + u.active_tag + '</span>' : '');

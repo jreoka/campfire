@@ -462,7 +462,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #me-card .avwrap .status-dot{position:absolute;bottom:-3px;right:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2.5px var(--panel-2);z-index:2}
 #me-card .mnames{display:flex;flex-direction:column;min-width:0;flex:1;line-height:1.25}
 #me-card #me-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#me-card .mstatus{font-size:.72rem;color:var(--muted);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#me-card .mstatus{font-size:.72rem;color:var(--muted);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.35}
 #me-card .mstatus.ugame{color:var(--accent)}
 .avatar{width:38px;height:38px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:700;color:#fff;flex-shrink:0;font-size:.85rem;background:var(--panel-3)}
 #voice-bar{display:flex;flex-direction:column;gap:.55rem;margin:0 .6rem 0 calc(.6rem - var(--rail-w));padding:.65rem .75rem;background:var(--panel-2);border:1px solid rgba(52,211,153,.35);border-bottom:0;font-size:.85rem;border-radius:12px 12px 0 0}
@@ -1185,14 +1185,43 @@ img,video{-webkit-user-drag:none}
 img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-align:-0.2em}
 .msg-actions img.cemoi{width:20px;height:20px;object-fit:contain;vertical-align:middle}
 .reaction img.cemoi{width:1.65em;height:1.3em;object-fit:contain;border-radius:4px;vertical-align:-0.18em}
-/* reaction count tick: the new number scrolls up as the old one scrolls out */
-.reaction .rcount{display:inline-block;vertical-align:baseline}
-.rc-roll{display:inline-grid;overflow:hidden;vertical-align:baseline}
-.rc-roll>span{grid-area:1/1}
-.rc-old{animation:rc-out .24s ease-in forwards}
-.rc-new{animation:rc-in .24s cubic-bezier(.2,.9,.3,1.15) forwards}
-@keyframes rc-in{from{transform:translateY(105%);opacity:0}to{transform:translateY(0);opacity:1}}
-@keyframes rc-out{from{transform:translateY(0);opacity:1}to{transform:translateY(-105%);opacity:0}}
+/* Reaction count tick: the number rolls like an odometer — the new one rises in
+   as the old one leaves, both cut off by a window one digit tall. UP when a
+   reaction is added (.rc-roll), DOWN when one is taken back (.rc-roll.down).
+
+   Three things make this read as a roll instead of a morph, and all three are
+   deliberate:
+     - NO crossfade. Two half-digits at partial opacity in the same place is
+       exactly what "morphs"; the clip alone is the effect.
+     - no overshoot in the incoming curve. A spring past its resting place pokes
+       the top of the new digit through the window's top edge, which then has to
+       settle back — the top of the number visibly wobbles.
+     - the SAME curve on both copies, so they move as one rigid strip. Different
+       easings let the incoming digit finish while the outgoing one is still
+       leaving, and the pair stretches apart as it goes — the other half of what
+       reads as a morph.
+     - the window HUGS the digits (MEASURED: at .82rem the line box is 15px but
+       the ink is 10px, so a full line-height window leaves a permanent 5px hole
+       between the outgoing and incoming digits — the two halves look like they
+       are drifting apart). .95em leaves 2.5px, and the text baseline does not
+       move: the box is centred in the pill either way (measured 0.01px). */
+.reaction .rcount{display:inline-block;height:.95em;line-height:.95em;vertical-align:baseline}
+.rc-roll{display:inline-grid;overflow:hidden;height:.95em;line-height:.95em;vertical-align:baseline}
+.rc-roll>span{grid-area:1/1;display:block;line-height:.95em;--rc-in:100%;--rc-out:-100%}
+.rc-roll.down>span{--rc-in:-100%;--rc-out:100%}
+/* …and the same roll sized for a line of TEXT (the me bar swaps its status line
+   for the handle). Text has ascenders and descenders where a digit has neither,
+   so the window is taller: MEASURED at the sub-line's .72rem, a descender-bearing
+   line needs 15.3px to sit uncut, and the line box this replaced
+   (line-height:normal) was 15.0px — which clipped every descender by a hair.
+   1.35em is 15.55px. It is also the SAME line-height the sub-line uses at rest
+   (#me-card .mstatus), or the bar would grow a fraction mid-roll. */
+.rc-roll.wide{height:1.35em;line-height:1.35em}
+.rc-roll.wide>span{line-height:1.35em}
+.rc-old{animation:rc-out .24s cubic-bezier(.22,.68,.24,1) forwards}
+.rc-new{animation:rc-in .24s cubic-bezier(.22,.68,.24,1) forwards}
+@keyframes rc-in{from{transform:translateY(var(--rc-in))}to{transform:translateY(0)}}
+@keyframes rc-out{from{transform:translateY(0)}to{transform:translateY(var(--rc-out))}}
 /* reaction hover tooltip (desktop): emoji + reactor names */
 #reaction-tip{position:fixed;z-index:350;display:flex;align-items:center;gap:.5rem;max-width:min(320px,calc(100vw - 16px));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:.5rem .7rem;font-size:.8rem;pointer-events:none;box-shadow:0 8px 28px rgba(0,0,0,.45)}
 #reaction-tip .rt-emoji{font-size:1.25rem;line-height:1;flex-shrink:0}
