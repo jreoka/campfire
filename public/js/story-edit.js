@@ -123,13 +123,36 @@ function ovIsEmpty(list) {
 }
 
 /* ---------- geometry: where the picture actually paints ---------- */
+// The box a media element OCCUPIES (its layout box), which is what the overlay
+// coordinates are measured against. `getBoundingClientRect()` is not that once a
+// surface zooms the picture: a preview that shows a zoomed-in crop magnifies the
+// media, and every rect the element reports comes back multiplied by it.
+//
+// The scale is read from the element's own transform rather than from a CSS
+// variable: a variable can be set on any ancestor and read back as "" from a
+// descendant (that is how custom properties inherit), while the transform is
+// always there and always the thing that actually moved the rect. Only a
+// UNIFORM scale is undone — a translate or a rotate leaves X/Y or the picture's
+// aspect alone, and `ovContentRect` must keep seeing those.
+function ovLayoutRect(el) {
+  if (!el || !el.getBoundingClientRect) return null;
+  const r = el.getBoundingClientRect();
+  let m = null;
+  try { m = new DOMMatrixReadOnly(getComputedStyle(el).transform); } catch { m = null; }
+  const sx = m ? Math.hypot(m.a, m.b) : 1;
+  const sy = m ? Math.hypot(m.c, m.d) : 1;
+  // A uniform scale that actually magnifies: anything else is left alone.
+  if (!m || !(sx > 1.001 && sy > 1.001) || Math.abs(sx - sy) > 0.001) return r;
+  const w = r.width / sx, h = r.height / sy;
+  return { left: r.left + (r.width - w) / 2, top: r.top + (r.height - h) / 2, right: r.left + (r.width + w) / 2, bottom: r.top + (r.height + h) / 2, width: w, height: h };
+}
 // The content box of an <img>/<video> inside its own element box. `fit` is the
 // object-fit the element is painted with: 'contain' (the composer's shot and
 // the viewer's media letterbox inside their box) or 'cover' (the rail's ring
 // thumbnails crop). Both give the rectangle the pixels really cover — the box
 // the overlay coordinates are normalised to — only 'cover' can hang outside it.
 function ovContentRect(el, fit = 'contain') {
-  const r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+  const r = ovLayoutRect(el);
   if (!r) return null;
   const nw = Number(el.naturalWidth || el.videoWidth || 0);
   const nh = Number(el.naturalHeight || el.videoHeight || 0);
@@ -140,6 +163,10 @@ function ovContentRect(el, fit = 'contain') {
 }
 // Lay `layer` exactly over the media's VISIBLE content box inside `stage`, and
 // hand it the pixel size as CSS vars so items can size themselves in em/percent.
+//
+// Everything here is LAYOUT space (see ovLayoutRect): a surface that zooms the
+// picture with a CSS transform must not make the layer measure itself larger,
+// or the markup would be positioned for a picture that is not on screen.
 //
 // "Visible" is the load-bearing word under `cover`: the content rect can hang
 // outside the element's own box, and only the intersection of the two is
@@ -156,7 +183,7 @@ function ovFitLayer(layer, stage, mediaEl, fit) {
   if (!cr || !cr.width || !cr.height) { layer.classList.add('hidden'); return null; }
   let x = cr.left - sr.left, y = cr.top - sr.top;
   let w = cr.width, h = cr.height;
-  const er = mediaEl && mediaEl.getBoundingClientRect ? mediaEl.getBoundingClientRect() : null;
+  const er = ovLayoutRect(mediaEl);
   if (er && er.width && er.height) {
     const il = Math.max(cr.left, er.left), it = Math.max(cr.top, er.top);
     const ir = Math.min(cr.left + cr.width, er.left + er.width);

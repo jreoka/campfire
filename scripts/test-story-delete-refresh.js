@@ -57,6 +57,18 @@ function slice(from, to) {
   if (a < 0 || b < 0) { console.error('[test] could not find the "' + from + '" block in public/js/stories.js'); process.exit(1); }
   return src.slice(a, b);
 }
+// The sidebar row paints its face with core.js's paintAvatar, which is also what
+// puts an avatar DECORATION (a `deco-*` class) on an element. Cut it out of
+// core.js — AV_COLORS through paintAvatar, with every dependency between them
+// (`avatarColorFor`, `avatar`) inside the slice — instead of stubbing it, because
+// the leftover decoration after a delete is exactly a paintAvatar/empty-state
+// interaction.
+const core = fs.readFileSync(path.join(ROOT, 'public/js/core.js'), 'utf8');
+function coreSlice(from, to) {
+  const a = core.indexOf(from); const b = core.indexOf(to, a + from.length);
+  if (a < 0 || b < 0) { console.error('[test] could not find the "' + from + '" block in public/js/core.js'); process.exit(1); }
+  return core.slice(a, b);
+}
 // Every piece renderHomeStories() leans on, verbatim from the module.
 const parts = {
   svg: slice('const svSvg = {', '\n// Trays as the API returns them'),
@@ -68,7 +80,9 @@ const parts = {
   data: slice('// ---------- data ----------', '\nfunction markStorySeen'),
   home: slice('function renderHomeStories()', '\n// ---------- rings on other people\'s rows ----------'),
 };
-// The row itself (public/index.html), so the test paints the real thing.
+// The row itself (public/index.html), so the test paints the real thing — the
+// real .avwrap containing the real #stories-nav-av, which is what the empty
+// state has to leave clean.
 const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
 function rowMarkup() {
   const a = index.indexOf('<div id="stories-nav-wrap">');
@@ -76,18 +90,19 @@ function rowMarkup() {
   if (a < 0 || b < 0) { console.error('[test] could not find the Stories row in public/index.html'); process.exit(1); }
   return index.slice(a, b);
 }
+const ROW = rowMarkup();
 
 function pageHtml() {
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
 <link rel="stylesheet" href="file:///${ROOT.replace(/\\/g, '/')}/public/styles.css">
 </head><body>
-<div id="sidebar">${rowMarkup()}</div>
+<div id="sidebar">${ROW}</div>
 <script>
 function $(s) { return document.querySelector(s); }
-// core.js's paintAvatar, cut down to the part the row's assertion reads (the
-// face it would paint). The real one is covered by its own tests.
 window.S = { me: { id: 'me', username: 'me', display_name: 'Jordan' } };
-function paintAvatar(el, u) { el.innerHTML = ''; el.dataset.painted = (u && (u.display_name || u.username)) || '?'; }
+// core.js's paintAvatar, verbatim, so the deco-* class the row's face carries
+// (and must not leave behind) is the real one.
+${coreSlice('const AV_COLORS =', '\nfunction msgAuthor(')}
 // The face branch is the DOM it paints; core.js's paintAvatar also empties the
 // element, so 'no img and no marker' is 'nothing was painted here'.
 const FRESH = { mine: null, friends: [], everyone: [], servers: [] };
@@ -123,13 +138,19 @@ window.__sidebar = () => {
     // renderHomeStories' camera fallback), or nothing at all.
     img: !!av.querySelector('img'),
     camera: !!av.querySelector('svg'),
+    // An avatar DECORATION is a deco-* class plus the background it rides on,
+    // so a bare mark must have neither: left behind it is a stale glow around
+    // the empty Stories circle until a reload.
+    deco: [...av.classList].filter((c) => c.indexOf('deco-') === 0),
+    background: av.style.background,
+    letter: av.textContent,
     sub: document.getElementById('stories-nav-sub').textContent,
     badge: document.getElementById('stories-nav-count').textContent,
     hidden: document.getElementById('stories-nav-count').classList.contains('hidden'),
   };
 };
 window.__setStory = () => {
-  const me = { id: 'me', display_name: 'Jordan', username: 'me' };
+  const me = { id: 'me', display_name: 'Jordan', username: 'me', avatar_decoration: 'tide' };
   // storyView() (server.js) stamps every item with its author, which is what
   // makes the row paint a face rather than a bare mark.
   const s = { id: 's1', kind: 'image', url: 'x.png', created_at: Date.now(), expires_at: Date.now() + 72000e3, seen: true, views: 0, reactions: [], author: me };
@@ -197,7 +218,10 @@ async function main() {
 
     console.log('\n[1] a live story paints the row, and its delete clears it');
     const before = await evaluate('window.__setStory(); window.__sidebar()');
-    check(before.painted === 'Jordan' && !before.camera, 'the row paints the poster\'s face once the story is live', before);
+    check(before.letter === 'J' && !before.camera, 'the row paints the poster\'s face once the story is live', before);
+    check(before.deco.length === 1, 'and the face wears the poster\'s avatar decoration', before.deco);
+    check(before.background !== 'transparent' && before.background !== 'var(--panel-3)',
+      'over the face\'s own colour (not the empty circle\'s)', before.background);
     check(before.sub !== 'No stories yet — be the first', 'and its label speaks about the live story', before.sub);
     // The delete path itself, with no fetch in flight: local state is dropped
     // and the row repaints from it.
@@ -205,6 +229,8 @@ async function main() {
     const afterLocal = await evaluate('window.__sidebar()');
     check(!afterLocal.img && afterLocal.camera, 'deleting the story clears the avatar at once (the mark is back)', afterLocal);
     check(afterLocal.camera, 'and the row falls back to the camera mark', afterLocal);
+    check(afterLocal.deco.length === 0 && afterLocal.background === 'var(--panel-3)',
+      'and the empty circle keeps no avatar decoration or its background', afterLocal);
     check(/No stories yet/.test(afterLocal.sub), 'with the empty label back', afterLocal.sub);
     check(afterLocal.hidden, 'and no badge', afterLocal);
 
@@ -249,7 +275,7 @@ async function main() {
       renderStorySurfaces();
       return window.__sidebar();
     })()`);
-    check(later.painted === 'Ada', 'and the next live story paints again (the guard is per-mutation)', later);
+    check(later.letter === 'A' && !later.camera, 'and the next live story paints again (the guard is per-mutation)', later);
     check(later.badge === '1' && !later.hidden, 'with its unseen badge', later);
   } catch (e) {
     console.error('[test] ' + (e && e.message));

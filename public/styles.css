@@ -2715,10 +2715,26 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 #sp-body{display:flex;flex-direction:column}
 .sp-sec{font-size:.68rem;letter-spacing:.09em;font-weight:800;color:var(--faint);padding:1.15rem 0 .45rem}
 /* --- the hero: your story --- */
+/* The story center's hero previews your latest post, and the preview is a CROP
+   of it. Two things follow from that, and both are paid for here:
+   --sp-hero-zoom is how far the preview is zoomed into the post. The card is
+   landscape while a story is not, so the picture is already cropped by
+   object-fit:cover; zooming it makes that a deliberate crop of the post's own
+   composition instead of the whole thing squeezed into a 162px band. Only the
+   PICTURE is magnified: the markup layer stays the picture's crop box (it is
+   what --ov-h, the 8.5%-of-height sticker font, is measured from) and rides the
+   picture as its child, so the words keep their size relative to the crop.
+   The embed then has to scale WITH the sticker: .3em of an 8.5%-of-height
+   sticker is a handful of px on a card this short, and the old px floor held it
+   at 10px while the words around it shrank, so the card came out the wrong size
+   against the post's own text. Proportional here, floor in the viewer and the
+   composer, where the sticker is large enough for .3em to be legible. */
+#stories-page{--sp-hero-zoom:1.6}
 .sp-hero{position:relative;display:flex;align-items:center;min-height:164px;margin-top:.55rem;border-radius:var(--r-xl);overflow:hidden;background:var(--panel-2);border:1px solid var(--line-soft);padding:1.05rem 1.15rem}
 .sp-hero-empty{background:var(--panel);border-style:dashed;min-height:132px}
 .sp-hero-media{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
-.sp-hero-media>.st-thumb-media{border-radius:0}
+.sp-hero-media>.st-thumb-media{border-radius:0;transform:scale(var(--sp-hero-zoom,1));transform-origin:50% 50%}
+.sp-hero-media .ov-item .embed{font-size:.3em}
 /* The scrim is a MASK on the picture, never a second element painted over it.
    The two layers would each get their own antialiased clip at the rounded
    corner, so at a corner pixel the picture survived at partial coverage
@@ -2759,6 +2775,11 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 .sp-card:has(> .sp-card-media){background:#05070c}
 .sp-card-media{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;transition:transform .25s ease}
 .sp-card-media>.st-thumb-media{border-radius:0;width:100%;height:100%;object-fit:cover;display:block}
+/* Same crop rule as the hero (see above): the PICTURE is shown zoomed into, and
+   the markup layer stays its crop box, so a card in the wall previews the post
+   the way the hero does. */
+.sp-card-media>.st-thumb-media{transform:scale(var(--sp-hero-zoom,1));transform-origin:50% 50%}
+.sp-card .ov-item .embed{font-size:.3em}
 .sp-card-media{-webkit-mask-image:linear-gradient(to top,rgba(0,0,0,.08) 4%,rgba(0,0,0,.65) 42%,rgba(0,0,0,.95) 70%);mask-image:linear-gradient(to top,rgba(0,0,0,.08) 4%,rgba(0,0,0,.65) 42%,rgba(0,0,0,.95) 70%)}
 .sp-card:hover .sp-card-media{transform:scale(1.04)}
 .sp-card.seen .sp-card-media{filter:grayscale(.4) brightness(.82)}

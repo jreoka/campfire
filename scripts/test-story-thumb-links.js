@@ -100,6 +100,9 @@ function pageHtml() {
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
 <link rel="stylesheet" href="file:///${ROOT.replace(/\\/g, '/')}/public/styles.css">
 </head><body>
+<!-- The hero lives inside #stories-page in the app, which is where the crop
+     zoom is declared — so the test hosts it there too. -->
+<div id="stories-page">
 <div id="hero" class="sp-hero">
   <div class="sp-hero-in">
     <span class="sp-hero-badge"></span>
@@ -119,6 +122,7 @@ function pageHtml() {
 </div>
 <div id="grid" class="sp-grid">
   <button type="button" class="sp-card"><span class="sp-card-ago">just now</span></button>
+</div>
 </div>
 <div id="rail" class="st-ring"><span class="avatar"></span></div>
 <div id="row"><span id="row-av" class="avatar" style="width:40px;height:40px"></span></div>
@@ -208,6 +212,21 @@ window.__probe = function (hostSel, thumbSel) {
     layerBox: box(layer),
     itemBox: box(item),
     cardFont: card ? parseFloat(getComputedStyle(card).fontSize) : null,
+    // The sticker's own font, so the card can be measured AGAINST it: the card
+    // must be a fixed fraction of the sticker on every surface (see the
+    // proportional-embed rule in styles.css), never a px floor that holds it at
+    // one size while the words around it scale.
+    itemFont: item ? parseFloat(getComputedStyle(item).fontSize) : null,
+    // The picture's crop zoom, as the real rule computes it for this surface.
+    // (A backslash-d escape would be eaten by the JS template this page is
+    // built from, so the matrix is parsed as plain text.)
+    zoom: (() => {
+      const media = document.querySelector(thumbSel + ' .st-thumb-media');
+      if (!media) return null;
+      const t = getComputedStyle(media).transform;
+      const m = t.indexOf('matrix(') === 0 ? t.slice(7).split(',')[0] : null;
+      return m == null ? (t === 'none' ? 1 : null) : +(+m).toFixed(3);
+    })(),
     host: { x: Math.round(hr.left), y: Math.round(hr.top), w: Math.round(hr.width), h: Math.round(hr.height), bottom: Math.round(hr.bottom) },
     wrapBox: box(wrap),
   };
@@ -289,13 +308,22 @@ async function main() {
       'and carries the video poster frame', hero.poster);
     check(!!hero.wrapPos && hero.wrapPos !== 'static', 'the wrapper is a positioned box', hero.wrapPos);
     check(hero.layerIsContainingBlock, 'so the overlay layer resolves against the thumbnail, not the banner', hero.layerParent);
-    check(!!hero.cardFont && hero.cardFont >= 10 && hero.cardFont <= 12,
-      'the card is sticker-sized (its 10px floor), not 40px of clipped text', { cardFont: hero.cardFont });
+    check(!!hero.itemFont && !!hero.cardFont
+      && Math.abs((hero.cardFont / hero.itemFont) - 0.3) < 0.02,
+      'the card is the sticker\'s own .3em (proportional), not a px floor',
+      { cardFont: hero.cardFont, itemFont: hero.itemFont });
+    // The preview is a CROP: the picture (and the markup riding it) is zoomed
+    // into, so the post reads as a zoomed crop of itself rather than being
+    // compressed into the hero's 162px band.
+    check(!!hero.zoom && hero.zoom > 1,
+      'and the picture carries the crop zoom (--sp-hero-zoom)', hero.zoom);
     const vis = await evaluate('window.__visible("#hero", "#hero .embed-link")');
     check(vis.area > 0 && vis.seen >= vis.area * 0.99, 'and the whole card is visible inside the hero (nothing clipped away)', vis);
     // Fault 3, measured: the layer must be the rectangle the photo actually
     // paints. Fitted to the image's whole `cover` content box it was 1098x1952
     // — 12x the hero's height — which is what sized the sticker out of frame.
+    // Both rects are post-transform (the picture and the layer ride the same
+    // crop zoom), so they are compared to each other.
     check(!!hero.layerBox && !!hero.wrapBox && Math.abs(hero.layerBox.h - hero.wrapBox.h) <= TOL && Math.abs(hero.layerBox.w - hero.wrapBox.w) <= TOL,
       'the layer is the picture\'s VISIBLE box, the same rectangle the photo paints', { layer: hero.layerBox, wrap: hero.wrapBox });
     check(!!hero.itemBox && !!hero.host && hero.itemBox.y >= hero.host.y - TOL && hero.itemBox.bottom <= hero.host.bottom + TOL,
@@ -305,9 +333,25 @@ async function main() {
     await evaluate('window.__build("card", window.__url)');
     const card = await evaluate('window.__probe("#grid .sp-card", ".sp-card-media")');
     check(card.cards === 1 && card.leftOver === false && card.site === 'YouTube', 'the portrait card paints the card too', card);
+    check(!!card.itemFont && !!card.cardFont
+      && Math.abs((card.cardFont / card.itemFont) - 0.3) < 0.02,
+      'and sizes it against the sticker the same way the hero does',
+      { cardFont: card.cardFont, itemFont: card.itemFont });
     check(!!card.itemBox && !!card.wrapBox && card.itemBox.y >= card.wrapBox.y - TOL && card.itemBox.bottom <= card.wrapBox.bottom + TOL
       && card.itemBox.x >= card.wrapBox.x - TOL && card.itemBox.right <= card.wrapBox.right + TOL,
     'and it stays inside the picture', { item: card.itemBox, wrap: card.wrapBox });
+    // The card is a stamp INSIDE the post's own text box: its size is written
+    // as a share of the visible picture, so it must stay a fraction of it and
+    // sit where the sticker put it (y 0.42 in the fixture), not run off it —
+    // and it must not be the whole picture either, which is what a px floor
+    // fighting the sticker's own scale produced.
+    check(!!card.itemBox && !!card.wrapBox
+      && (card.itemBox.w / card.wrapBox.w) <= 1 && (card.itemBox.h / card.wrapBox.h) <= 1
+      && (card.itemBox.y - card.wrapBox.y) / card.wrapBox.h > 0.05 && (card.itemBox.y - card.wrapBox.y) / card.wrapBox.h < 0.5,
+    'and keeps its share of the picture (a stamp on the sticker, not the whole card)', {
+      shareW: card.itemBox.w / card.wrapBox.w, shareH: card.itemBox.h / card.wrapBox.h,
+      atY: (card.itemBox.y - card.wrapBox.y) / card.wrapBox.h,
+    });
     await evaluate('window.__build("ring", window.__url)');
     const ring = await evaluate('window.__probe("#rail", ".st-thumb")');
     check(ring.cards === 1 && ring.leftOver === false, 'the ring thumbnail paints it as well (what the viewer shows)', ring);

@@ -690,6 +690,14 @@ function renderHomeStories() {
     else if (first && first.items && first.items[0] && first.items[0].author) paintAvatar(av, first.items[0].author);
     else {
       av.textContent = '';
+      // paintAvatar() is what put the last story's avatar DECORATION on this
+      // element (`deco-*`) and the picture-owning styles that go with it, so an
+      // empty row has to take them back off itself: deleting your last story
+      // used to leave the poster's decoration glowing around the camera mark
+      // until a reload, because only paintAvatar ever clears it and the empty
+      // branch never calls it.
+      for (const c of [...av.classList]) if (c.indexOf('deco-') === 0) av.classList.remove(c);
+      av.style.boxShadow = 'none';
       av.style.background = 'var(--panel-3)';
       av.innerHTML = svSvg.camera;
     }
