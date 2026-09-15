@@ -3018,8 +3018,16 @@ body.story-open{overflow:hidden}
     width:max(100%,var(--tap));height:max(100%,var(--tap));
   }
   /* The composer's + is deliberately smaller than the field it sits in, so its
-     thumb target comes from a hit box that may overhang the field. */
-  #btn-plus,#btn-more{position:relative}
+     thumb target comes from a hit box that overhangs the field. It is pinned to
+     the field's left gutter by `#btn-plus{position:absolute;left:.4rem}` — and
+     it must STAY absolute: this block used to make it `position:relative` like
+     the in-flow controls above, which dropped the + out of the gutter and into
+     the composer row's own flow, so on every touch device it came to rest at the
+     right end of the box, beside the emoji and GIF keys (proved by driving real
+     touch emulation through CDP — an unemulated headless Chrome reports a fine
+     pointer, so no browser test had ever entered this block). An absolutely
+     positioned box is already the containing block for its own ::after, so the
+     hit box needs no `position:relative` either. */
   #btn-plus::after,#btn-more::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--tap);height:var(--tap)}
   /* The chat GIF star is pinned to a corner, so it is already a containing block
      for its own hit box (see the note above) — no `position:relative`. The
