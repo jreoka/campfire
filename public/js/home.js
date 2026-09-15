@@ -516,10 +516,15 @@ function renderFriendLists() {
     b.classList.toggle('active', b.dataset.ftab === S.friendTab);
     b.onclick = () => { S.friendTab = b.dataset.ftab; renderFriendLists(); };
   });
+  // The Pending TAB lists both directions, so its own label counts both. The
+  // red badge on the Friends row (like the campfire button's `#home-badge`) is
+  // INCOMING only: a request you sent is waiting on somebody else, and a red
+  // count for it read as an unread item you had to go deal with (owner report).
   const nReq = f.pendingIn.length + f.pendingOut.length;
   $('#req-count').textContent = nReq ? ` (${nReq})` : '';
+  const nIn = f.pendingIn.length;
   const nbc = $('#friends-nav-count');
-  if (nbc) { nbc.textContent = nReq > 99 ? '99+' : String(nReq); nbc.classList.toggle('hidden', !nReq); }
+  if (nbc) { nbc.textContent = nIn > 99 ? '99+' : String(nIn); nbc.classList.toggle('hidden', !nIn); }
   // pending requests tab
   const rq = $('#friend-reqs');
   rq.innerHTML = '';
