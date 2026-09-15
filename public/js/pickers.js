@@ -951,6 +951,7 @@ async function openThread(rootId, opts = {}) {
     const { root, replies } = await api(`/api/servers/${S.serverId}/channels/${S.channelId}/threads/${rootId}`);
     S.thread = { rootId, channelId: S.channelId, root, replies };
     S.threadReplyTo = null; renderThreadComposerMeta();
+    clearThreadTyping(); // a strip from the thread that was open a moment ago
     $('#thread-sub').textContent = '#' + chanName(S.channelId);
     $('#thread-panel').classList.remove('hidden');
     rememberView(); // a reload lands you back in the thread you had open
@@ -978,6 +979,7 @@ function closeThread(silent) {
   flushDrafts();
   S.thread = null;
   S.threadReplyTo = null; renderThreadComposerMeta();
+  clearThreadTyping(); // a closed panel has no strip to keep anyone in
   const p = $('#thread-panel');
   if (p) p.classList.add('hidden');
   if (!silent) rememberView();

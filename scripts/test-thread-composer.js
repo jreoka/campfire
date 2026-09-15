@@ -431,6 +431,78 @@ async function main() {
     check(!!restored && restored.draft === 'half-written reply', 'the half-written reply comes back with the thread', restored);
     check(!!restored && /later\.txt/.test(restored.chip), 'and so does the file staged for it', restored);
 
+    console.log('\n[10] typing says WHERE it is: the thread strip, not the channel one');
+    // A second account on a real socket: typing frames come from the SERVER, and
+    // the routing (thread strip vs channel strip) is exactly what is under test.
+    const invite = await evaluate(`(async () => {
+      const r = await api('/api/servers/' + S.serverId + '/invites', { method: 'POST', body: JSON.stringify({}) });
+      return r.invite && r.invite.code;
+    })()`);
+    check(!!invite, 'the server minted an invite for a second account', invite);
+    const reg = await (await fetch(`http://127.0.0.1:${PORT}/api/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'threadmate', displayName: 'Thread Mate', password: 'passw0rd!x' }),
+    })).json();
+    const joined = await (await fetch(`http://127.0.0.1:${PORT}/api/servers/join`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + reg.token },
+      body: JSON.stringify({ inviteCode: invite }),
+    })).json();
+    check(!!reg.token && !joined.error, 'and the second account joined the server', joined);
+    const peer = new WebSocket(`ws://127.0.0.1:${PORT}/ws?token=${encodeURIComponent(reg.token)}`, { perMessageDeflate: false });
+    await new Promise((res, rej) => { peer.once('open', res); peer.once('error', rej); });
+    await sleep(400);
+    peer.send(JSON.stringify({ t: 'subscribe' }));
+    await sleep(400);
+    const typeFrame = (extra) => peer.send(JSON.stringify({ t: 'typing', serverId: srv.sid, channelId: srv.cid, ...extra }));
+
+    typeFrame({ threadRoot: rootId });
+    const inThread = await waitFor(`(() => {
+      const bar = document.querySelector('#thread-typing-bar');
+      return bar && bar.classList.contains('show') ? document.querySelector('#thread-typing').textContent.trim() : false;
+    })()`, 8000);
+    check(!!inThread && /Thread Mate is typing/.test(inThread), 'a reply being written shows in the thread\'s own strip', inThread);
+    check(!(await evaluate(`document.querySelector('#typing-bar').classList.contains('show')`)),
+      'while the channel strip stays quiet (a thread reply is not a channel message)');
+    check(await evaluate(`Math.round(document.querySelector('#thread-typing-bar').getBoundingClientRect().height) === Math.round(document.querySelector('#typing-bar').getBoundingClientRect().height)`),
+      'and it is the same reserved slot as the chat\'s (nothing in the panel moves when it appears)');
+    check(await waitFor(`!document.querySelector('#thread-typing-bar').classList.contains('show')`, 8000),
+      'the strip clears itself when the typing stops (a lease, not a latch)');
+
+    typeFrame({});
+    const inChan = await waitFor(`(() => {
+      const bar = document.querySelector('#typing-bar');
+      return bar && bar.classList.contains('show') ? document.querySelector('#typing').textContent.trim() : false;
+    })()`, 8000);
+    check(!!inChan && /Thread Mate is typing/.test(inChan), 'a channel message shows in the channel strip', inChan);
+    check(!(await evaluate(`document.querySelector('#thread-typing-bar').classList.contains('show')`)),
+      'and never in the thread strip');
+    await waitFor(`!document.querySelector('#typing-bar').classList.contains('show')`, 8000);
+
+    typeFrame({ threadRoot: 'not-a-real-message' });
+    await sleep(700);
+    const neither = await evaluate(`({
+      thread: document.querySelector('#thread-typing-bar').classList.contains('show'),
+      chan: document.querySelector('#typing-bar').classList.contains('show'),
+    })`);
+    check(!neither.thread && !neither.chan,
+      'an unknown thread root is dropped by the server, not downgraded to channel typing', neither);
+    try { peer.close(); } catch {}
+
+    console.log('\n[11] closing the thread takes its typing strip with it');
+    typeFrame({ threadRoot: rootId });
+    await waitFor(`document.querySelector('#thread-typing-bar').classList.contains('show')`, 8000);
+    await evaluate(`(() => { closeThread(true); return true; })()`);
+    check(await waitFor(`!document.querySelector('#thread-typing-bar').classList.contains('show')`),
+      'a closed panel shows nobody typing in it');
+    await evaluate(`(() => { openThread(${JSON.stringify(rootId)}); return true; })()`);
+    await waitFor(`(() => { const p = document.querySelector('#thread-panel'); return p && !p.classList.contains('hidden'); })()`);
+    check(!(await evaluate(`document.querySelector('#thread-typing-bar').classList.contains('show')`)),
+      'and reopening it does not resurrect the strip from the thread that was open before');
+    // A stale peer entry must not haunt the reopened thread either.
+    typeFrame({ threadRoot: rootId });
+    await waitFor(`document.querySelector('#thread-typing-bar').classList.contains('show')`, 8000);
+    try { peer.close(); } catch {}
+
     check(pageErrors.length === 0, 'no uncaught page errors through the whole run', pageErrors.slice(0, 3));
   } catch (e) {
     console.error('\n[test] FAILED:', (e && e.stack) || e);

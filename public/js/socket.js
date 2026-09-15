@@ -702,7 +702,12 @@ function onWS(m) {
       }
       break;
     case 'typing':
-      if (m.channelId === S.channelId) showTyping(m.userId, m.display_name);
+      // A reply's typing belongs to its thread: the channel strip must not claim
+      // somebody is writing a channel message when they are answering in a thread
+      // (and vice versa).
+      if (m.threadRoot) {
+        if (S.thread && S.thread.rootId === m.threadRoot) showThreadTyping(m.userId, m.display_name);
+      } else if (m.channelId === S.channelId) showTyping(m.userId, m.display_name);
       break;
     case 'member-left':
       if (m.serverId === S.serverId) selectServer(S.serverId);

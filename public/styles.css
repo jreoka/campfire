@@ -890,18 +890,21 @@ body.ub-open #lightbox #lb-stage{padding-top:calc(4.4rem + var(--safe-t) + var(-
 .att-chip .chip-sub{font-size:.72rem;color:var(--muted);font-variant-numeric:tabular-nums}
 /* ---------- composer upload progress ---------- */
 #upload-list{display:flex;flex-direction:column;gap:.45rem;padding:.55rem .9rem;background:var(--panel)}
-/* With attachment cards on screen the composer gives back most of the air it
+/* With attachment cards on screen the composer gives back some of the air it
    keeps above them: the always-reserved typing strip (see #typing-bar) already
-   supplies that separation, so a full .9rem on top of it made both stages of an
-   upload read as "quite far from the message box" (reported). The strip keeps
-   its height, so nothing below the cards moves — only the plain gap shrinks.
+   supplies separation, so a full .9rem on top of it read as "quite far from the
+   message box" (reported). But .25rem then read as the two stages sitting ON
+   the box (reported the other way): the stage cards — the upload card and the
+   chip with its Spoiler toggle — need a visible gap from the field they are
+   about to be sent from, which is the .55rem below. The strip keeps its height,
+   so nothing below the cards moves — only the plain gap changes.
    Keyed on #chat's DESCENDANTS: `#composer:has(~ #attach-preview…)` — a sibling
    combinator inside :has() — is accepted by CSS.supports but never matches in
    Chrome 152, so that form silently did nothing. Also note padding cannot go
    negative (calc(.9rem - var(--strip-h)) clamps to 0), which is why this is a
    smaller positive value rather than an overlap.
    scripts/test-attachment-gap.js measures the real gap at both breakpoints. */
-#chat:has(#attach-preview:not(.hidden)) #composer,#chat:has(#upload-list:not(.hidden)) #composer{padding-top:.25rem}
+#chat:has(#attach-preview:not(.hidden)) #composer,#chat:has(#upload-list:not(.hidden)) #composer{padding-top:.55rem}
 .up-card{display:flex;align-items:center;gap:.65rem;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:.55rem .7rem;max-width:430px;animation:up-in .18s ease}
 @keyframes up-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .up-ic{position:relative;width:36px;height:36px;border-radius:10px;background:var(--panel-3);color:var(--muted);display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden}
@@ -1719,12 +1722,21 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
    the box it sends from. The replies list is the only thing that gives height. */
 #thread-composer-row{display:flex;gap:.55rem;align-items:flex-end;flex:0 0 auto}
 #thread-composer-box{position:relative;flex:1;min-width:0;display:flex}
-/* Same reasoning as the chat bar's rule: cards on screen hand back the air above
-   them. Keyed on the panel's DESCENDANTS (a sibling inside :has() never matches). */
+/* Same reasoning as the chat bar's rule: cards on screen hand back some of the air
+   above them, and the typing strip supplies the rest. Keyed on the panel's
+   DESCENDANTS (a sibling inside :has() never matches). */
 #thread-panel:has(#thread-attach-preview:not(.hidden)) #thread-composer,
-#thread-panel:has(#thread-upload-list:not(.hidden)) #thread-composer{padding-top:.3rem}
-#thread-attach-preview{display:flex;gap:.5rem;flex-wrap:wrap;padding:.55rem .7rem 0;flex:0 0 auto}
-#thread-upload-list{display:flex;flex-direction:column;gap:.45rem;padding:.55rem .7rem 0;flex:0 0 auto}
+#thread-panel:has(#thread-upload-list:not(.hidden)) #thread-composer{padding-top:.55rem}
+#thread-attach-preview{display:flex;gap:.5rem;flex-wrap:wrap;padding:.55rem .7rem;flex:0 0 auto}
+#thread-upload-list{display:flex;flex-direction:column;gap:.45rem;padding:.55rem .7rem;flex:0 0 auto}
+/* The thread's own typing strip, exactly the chat's (#typing-bar): the slot is
+   always reserved and only the text fades, so a reply being written — or the
+   stage above the box changing — never resizes the panel or shoves the bar. It
+   is also what keeps the attachment cards off the reply box (same 1.2rem the
+   chat's strip gives them). */
+#thread-typing-bar{display:flex;align-items:center;flex:0 0 auto;height:var(--strip-h);padding:0 .7rem}
+#thread-typing{font-size:.78rem;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;visibility:hidden;transition:opacity .14s ease,visibility .14s ease}
+#thread-typing-bar.show #thread-typing{opacity:1;visibility:visible}
 /* The panel is 330px wide (and the chips are 290px wide): a card that could grow
    to the chat list's 430px would run out of the panel. */
 #thread-upload-list .up-card,#thread-attach-preview .att-chip{max-width:100%}

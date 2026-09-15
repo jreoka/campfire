@@ -846,18 +846,26 @@ composer always keeps its slot (`--strip-h`, one text line, transparent, text
 fades) — hiding it resizes `#messages` and shoves the conversation up/down.
 `#messages` pays for that slot by giving up its bottom padding, and anything
 anchored to the composer top stacks `var(--strip-h)` on `var(--composer-h)`.
+The thread panel has the same strip for the same reason (`#thread-typing-bar`,
+`#thread-typing`): a reply being written in a thread is not somebody writing a
+channel message, so `typing` frames carry their `threadRoot` (the server checks
+it is a real message in that channel and drops it otherwise — never downgrading
+it to channel typing), the client keeps a separate `threadTypingNames` map, and
+the two strips never light each other up.
 Attachment cards live in that gap (`#attach-preview` for finished chips,
 `#upload-list` for in-flight cards), so with a card on screen the composer
-shrinks its top padding to `.25rem` (`#chat:has(#attach-preview:not(.hidden))
-#composer`) — a full `.9rem` on top of the strip read as "quite far from the
-message box" (reported), and the strip keeps its height so nothing below the
-cards moves. Two traps found doing it: **padding cannot go negative**
+shrinks its top padding to `.55rem` (`#chat:has(#attach-preview:not(.hidden))
+#composer`), and the thread panel mirrors it. `.9rem` on top of the strip read as
+"quite far from the message box" (reported); `.25rem` then read as the two
+stages — the upload card and the chip with its Spoiler toggle — sitting ON the
+field (reported the other way), so the gap is now a real one, and the strip
+keeps its height so nothing below the cards moves. Two traps found doing it: **padding cannot go negative**
 (`calc(.9rem - var(--strip-h))` clamps to 0, so an overlap has to be a negative
 MARGIN, not padding), and **a sibling combinator inside `:has()` never matches**
 — `#composer:has(~ #attach-preview)` passes `CSS.supports` yet matched nothing in
 Chrome 152, so the rule silently did nothing; key `:has()` on descendants of a
 shared ancestor instead. `scripts/test-attachment-gap.js` measures the real gap
-at both breakpoints.
+on BOTH bars at both breakpoints.
 **A scrolled-up reader's line is held by the app, never left to the browser**
 (`armLineGuard`, messages.js): the last message whose top is still inside the
 viewport is the reference, and a layout change that moves it on screen is undone

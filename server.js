@@ -7217,7 +7217,17 @@ wss.on('connection', async (ws, req) => {
     if (msg.t === 'typing') {
       const { serverId } = msg;
       if (serverId && me.servers.has(serverId)) {
-        broadcastToServer(serverId, { t: 'typing', serverId, channelId: msg.channelId, userId: me.userId, display_name: me.display_name }, ws);
+        // A reply's typing carries its thread root, so the fan-out can be routed
+        // to the thread's own strip instead of the channel's. A root that is not
+        // a message in this channel is dropped rather than downgraded to channel
+        // typing — a bogus id must not make the channel claim someone is writing.
+        let threadRoot = String(msg.threadRoot || '').slice(0, 64) || null;
+        if (threadRoot) {
+          const rr = await db.prepare('SELECT id FROM messages WHERE id = ? AND server_id = ? AND channel_id = ?')
+            .get(threadRoot, serverId, String(msg.channelId || ''));
+          if (!rr) return;
+        }
+        broadcastToServer(serverId, { t: 'typing', serverId, channelId: msg.channelId, userId: me.userId, display_name: me.display_name, threadRoot }, ws);
       }
       return;
     }

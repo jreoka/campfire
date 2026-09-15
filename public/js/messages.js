@@ -2703,6 +2703,16 @@ $('#in-message').addEventListener('input', () => {
     else S.ws.send(JSON.stringify({ t: 'typing', serverId: S.serverId, channelId: S.channelId }));
   }
 });
+// …and the reply box says so in ITS thread. The frame carries the root, so the
+// server's fan-out (and every reader's strip) can tell a thread reply from a
+// channel message without a second event type.
+$('#in-thread').addEventListener('input', () => {
+  const t = Date.now();
+  if (t - S.lastThreadTypingSent > 2500 && S.ws?.readyState === 1 && S.thread) {
+    S.lastThreadTypingSent = t;
+    S.ws.send(JSON.stringify({ t: 'typing', serverId: S.serverId, channelId: S.channelId, threadRoot: S.thread.rootId }));
+  }
+});
 function paintTyping() {
   const el = $('#typing');
   const bar = $('#typing-bar');
@@ -2723,6 +2733,40 @@ function clearTyping() {
   if (el) el.textContent = '';
   const bar = $('#typing-bar');
   if (bar) bar.classList.remove('show');
+  // Whatever clears the channel strip (a channel / server / DM switch) leaves the
+  // open thread behind with it, so its strip goes too.
+  try { clearThreadTyping(); } catch {}
+}
+// The thread panel's own strip — same wording, same 2.5s lease, a separate map,
+// because the two are on screen at once and answer different questions.
+function paintThreadTyping() {
+  const el = $('#thread-typing');
+  const bar = $('#thread-typing-bar');
+  if (!el) return;
+  const entries = [...S.threadTypingNames.entries()].filter(([, n]) => n);
+  if (!entries.length) { el.textContent = ''; if (bar) bar.classList.remove('show'); return; }
+  const bit = ([id, nm]) => esc(nm) + tagHTML(memberById(id));
+  if (entries.length === 1) el.innerHTML = `${bit(entries[0])} is typing…`;
+  else if (entries.length === 2) el.innerHTML = `${bit(entries[0])} and ${bit(entries[1])} are typing…`;
+  else el.innerHTML = `${bit(entries[0])}, ${bit(entries[1])} and ${entries.length - 2} other${entries.length - 2 === 1 ? '' : 's'} are typing…`;
+  if (bar) bar.classList.add('show');
+}
+function clearThreadTyping() {
+  for (const t of S.threadTypingTimers.values()) clearTimeout(t);
+  S.threadTypingTimers.clear();
+  S.threadTypingNames.clear();
+  paintThreadTyping();
+}
+function showThreadTyping(userId, name) {
+  if (userId === S.me.id) return;
+  S.threadTypingNames.set(userId, name || 'Someone');
+  paintThreadTyping();
+  clearTimeout(S.threadTypingTimers.get(userId));
+  S.threadTypingTimers.set(userId, setTimeout(() => {
+    S.threadTypingTimers.delete(userId);
+    S.threadTypingNames.delete(userId);
+    paintThreadTyping();
+  }, 2500));
 }
 function fmtSlow(secs) {
   secs = Number(secs) || 0;

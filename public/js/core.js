@@ -187,6 +187,11 @@ const S = {
   typingTimers: new Map(),
   typingNames: new Map(),
   lastTypingSent: 0,
+  // The thread panel's own typing strip: a reply being written in a thread is
+  // not somebody writing a channel message, so the two never share a map.
+  threadTypingTimers: new Map(),
+  threadTypingNames: new Map(),
+  lastThreadTypingSent: 0,
 };
 
 // ---------- tiny helpers ----------
