@@ -24,16 +24,20 @@ function fmtDate(ts) {
 // "how long until this account is purged", for the pending-deletion badge: the
 // grace period is days long, so days is the unit that matters, with hours/minutes
 // as it runs out (and "any moment now" rather than a negative number once the
-// deadline has passed and the sweep has yet to reach it).
+// deadline has passed and the sweep has yet to reach it). Sub-units round UP —
+// a countdown that says "in 4h" with 4h59m left reads as a mistake, and the
+// deadline is the thing being counted down to.
 function fmtCountdown(ts) {
   const ms = Number(ts) - Date.now();
   if (!Number.isFinite(ms)) return '';
   if (ms <= 0) return 'any moment now';
-  const mins = Math.floor(ms / 60000);
-  if (mins < 60) return mins <= 1 ? 'in under a minute' : `in ${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 48) return `in ${hours}h`;
-  return `in ${Math.ceil(hours / 24)}d`;
+  const mins = ms / 60000;
+  const wholeMins = Math.max(1, Math.ceil(mins));
+  if (wholeMins < 60) return `in ${wholeMins}m`;
+  const hours = mins / 60;
+  const wholeHours = Math.max(1, Math.ceil(hours));
+  if (wholeHours < 48) return `in ${wholeHours}h`;
+  return `in ${Math.max(1, Math.round(hours / 24))}d`;
 }
 
 function isSiteAdmin() { return !!(S.me && S.me.is_admin); }
