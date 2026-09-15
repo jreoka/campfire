@@ -870,6 +870,15 @@ out after the page's anchor correction), a reaction bar or link embed appearing
 under their eye, and an unshaped picture's bytes. `scripts/test-scroll-up-hold.js`
 boots the real app and drives it in Chrome to prove it: it fails without the
 guard, with the slide measured in pixels.
+Being NEAR the live bottom is not being ON it (`AT_BOTTOM_PX`, `markBottomState`):
+the 200px band only ever KEEPS a pin that already exists (a picture landing above
+a reader who is following the tail must not strand them), while promoting a
+reader to the pin takes them actually arriving — a wheel notch or a flick lands a
+few px short of the clamp, and that is still the bottom. Handing the pin out from
+the band is the "scrolling down nearly to the bottom glitches you to the bottom"
+half of the same report: the pin was set 200px early, and the next scroll event
+of the reader's own gesture (or a stray one from the browser's anchoring under
+late media) was read as "hold the bottom" and finished the scroll for them.
 Every sidebar banner (the me bar, member rows, DM rows) is painted through
 `paintSidebarBanner` in `servers.js` — never inline the gradient again. Those
 rows are fractional-width, and `background-size: cover` with the default

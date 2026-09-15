@@ -339,8 +339,23 @@ const stickH = typeof WeakMap !== 'undefined' ? new WeakMap() : new Map(); // ta
 // hundreds of px up with the Jump-to-present pill as their only way back.
 // So the flag only changes when someone *asks*: the reader's own scrolling, or
 // a placement we make on their behalf ('1' pinned, '0' an anchor restore).
+//
+// Being NEAR the bottom is not being ON it. Promoting a reader to the pin takes
+// them actually arriving — a wheel notch or a flick lands a few px short of the
+// clamp, which is still the bottom — while the 200px band only ever KEEPS a pin
+// that already exists, so a picture landing above a reader who is following the
+// tail cannot strand them. Promoting from the band was the "scrolling down
+// nearly to the bottom glitches you to the bottom" report: the pin was handed
+// out 200px early, and the next scroll event of the reader's own gesture (or a
+// stray one from the browser's anchoring under late media) was read as "hold
+// the bottom", finishing the scroll for them.
+const AT_BOTTOM_PX = 4; // a landing short of the clamp is still a landing
 function markBottomState(box) {
-  try { box.dataset.atBottom = (box.scrollHeight - box.scrollTop - box.clientHeight < 200) ? '1' : '0'; } catch {}
+  try {
+    const dist = box.scrollHeight - box.scrollTop - box.clientHeight;
+    const at = dist <= AT_BOTTOM_PX || (box.dataset.atBottom === '1' && dist < 200);
+    box.dataset.atBottom = at ? '1' : '0';
+  } catch {}
 }
 // "Is the reader still on the live bottom?" — the question every repaint and
 // every resize asks before it follows the tail instead of holding the reader's

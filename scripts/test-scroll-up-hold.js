@@ -641,6 +641,52 @@ async function main() {
     check(a3.slides.length === 0, '[3] the messages under the reader did not slide when the clip\'s box changed',
       { slides: a3.slides.slice(0, 4) });
 
+    // ---------------------------------------------------------------------
+    // Coming back DOWN: a reader who stops short of the bottom must be left
+    // there. `markBottomState` calls anything within 200px of the bottom "at
+    // the bottom", and the scroll watcher then re-pins the box to the very
+    // bottom on the next event — so a deliberate stop 100px up is thrown away.
+    console.log('\n[4] scrolling back down and stopping short of the bottom');
+    const geom4 = await evaluate(`(() => {
+      const box = document.getElementById('messages');
+      setScrollTop(box, 0, '0');
+      return { max: box.scrollHeight - box.clientHeight };
+    })()`);
+    // Park 700px above the bottom, then wheel down five notches (600px): the
+    // reader ends ~100px short of it and stops.
+    await evaluate(`(() => { const box = document.getElementById('messages'); setScrollTop(box, Math.max(0, ${geom4.max} - 700), '0'); })()`);
+    await sleep(400);
+    await evaluate(`__ev = []`);
+    await evaluate(`__start()`);
+    const before4 = await evaluate(`__geom()`);
+    await wheel(NOTCH, 5);
+    const mid4 = await evaluate(`__geom()`);
+    await sleep(2000);           // nothing else happens: no input, no new messages
+    const after4 = await evaluate(`__geom()`);
+    // How far the reader was from the bottom when their wheel stopped, and
+    // where they are after a beat with no input at all.
+    const shortOf = (g) => g.max - g.top;
+    console.log('  before ' + JSON.stringify(before4) + ' after wheel ' + JSON.stringify(mid4) +
+      ' settled ' + JSON.stringify(after4));
+    check(shortOf(mid4) > 40, 'the wheel really did stop short of the bottom', { shortOf: shortOf(mid4) });
+    check(shortOf(after4) > 40, '[4] a reader who stopped short of the bottom was left there',
+      { shortOfWhenTheyStopped: shortOf(mid4), shortOfAfter: shortOf(after4),
+        calls: (await evaluate(`__ev`)).filter((e) => e.k === 'setScrollTop').slice(0, 6) });
+    // The state that matters is the pin: while they rest short of the bottom,
+    // ANY scroll event can arrive with no input behind it (the browser's own
+    // anchoring under late media, a clamp, the tail of a flick). If the band
+    // handed the pin back, that event is read as "hold the bottom" and the
+    // reader is snapped the rest of the way down.
+    const at4 = await evaluate(`document.getElementById('messages').dataset.atBottom`);
+    await evaluate(`(() => { const box = document.getElementById('messages'); box.scrollTop = box.scrollTop - 6; })()`);
+    await sleep(600);
+    const after4b = await evaluate(`__geom()`);
+    console.log('  after a stray 6px scroll: ' + JSON.stringify(after4b) + ' (pin was ' + at4 + ')');
+    check(at4 !== '1', '[4] resting short of the bottom is not "on the bottom"', { pin: at4 });
+    check(shortOf(after4b) > 40, '[4] and a stray scroll there does not snap them to it',
+      { shortOfAfter: shortOf(after4b),
+        calls: (await evaluate(`__ev`)).filter((e) => e.k === 'setScrollTop').slice(-4) });
+
     console.log(`\n${passed} passed, ${failures.length} failed`);
     if (failures.length) { console.log(failures.map((f) => '  - ' + f).join('\n')); process.exitCode = 1; }
   } finally {
