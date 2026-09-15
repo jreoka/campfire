@@ -364,12 +364,12 @@ async function loadGifSearch(q) {
   } catch { gifResults = []; gifFailed = true; }
   if (S.picker) renderGifTab();
 }
-function sendGif(g) {
+// ---------- a picked GIF is an attachment like any other ----------
+// The attachment a picker GIF travels as — the one object BOTH paths below hand
+// to the server (post it on the click, or stage it on the message first).
+function gifAttachment(g) {
   const url = g.gif || g.mp4;
-  const pick = S.gifPick;
-  closePicker();
-  if (pick === 'avatar' || pick === 'banner' || pick === 'sidebar') { if (url) applyProfileUrl(pick, url); return; }
-  const att = {
+  return {
     url, name: (g.title || 'gif').slice(0, 80) + '.gif', mime: 'image/gif', size: 0, kind: 'image',
     // The Klipy identity travels with the post so the GIF can be starred from
     // the chat it lands in (see cleanGifMeta in server.js / attFavHTML in
@@ -377,16 +377,59 @@ function sendGif(g) {
     gifSlug: g.slug || '', gifThumb: g.thumb || '', gifMp4: g.mp4 || '',
     w: g.w || 0, h: g.h || 0,
   };
+}
+// Is there a conversation for the composer to attach to? The same two shapes the
+// post-on-the-click path requires.
+function gifComposerReady() {
+  return S.view === 'home' ? !!S.dmThreadId : !!(S.serverId && S.channelId);
+}
+// Is a message already being written here — words in the box, or files already
+// staged (and a pending reply rides along either way)? Then a picked GIF belongs
+// to THAT message (see sendGif).
+function composerHasDraft() {
+  const inp = $('#in-message');
+  return !!((inp && inp.value.trim()) || (S.pendingAtts || []).length);
+}
+// Stage the GIF as a chip on the composer. False when the message is already at
+// the 5-attachment cap a pick / drop / paste obeys.
+function stageGif(att) {
+  syncPendingAttsCtx(); // the list on screen is the open conversation's own
+  if ((S.pendingAtts || []).length + activeUploadCount(attsCtxNow()) >= 5) {
+    toast('Max 5 attachments per message');
+    return false;
+  }
+  // The chip's tile is the Klipy THUMB: the gif behind it can be megabytes, and
+  // a 40px chip has no use for the animation (the chat paints the thumb too).
+  setAttPreview(att.url, att.gifThumb || att.url);
+  S.pendingAtts.push(att);
+  haptic(10); // the pick ticks, like an emoji does
+  renderComposerMeta();
+  try { $('#in-message').focus(); } catch {}
+  return true;
+}
+function sendGif(g) {
+  const pick = S.gifPick;
+  closePicker();
+  const att = gifAttachment(g);
+  const url = att.url;
+  if (pick === 'avatar' || pick === 'banner' || pick === 'sidebar') { if (url) applyProfileUrl(pick, url); return; }
+  if (!url) return;
+  // A GIF picked while a message is being written JOINS it, instead of going out
+  // on its own: the words, the GIF, any staged files and a pending reply all
+  // leave together on the reader's own Send. With an empty composer it still
+  // posts on the click, which is the whole gesture for the common "just a GIF"
+  // case.
+  if (gifComposerReady() && composerHasDraft()) { stageGif(att); return; }
   // A pending reply (main composer chip or in-thread chip) rides along —
   // otherwise the GIF lands as a standalone message.
   if (S.view === 'home') {
-    if (!S.dmThreadId || !url) return;
+    if (!S.dmThreadId) return;
     sendDm('', { attachments: [att], replyTo: S.replyTo?.id || null });
     S.replyTo = null;
     renderComposerMeta();
     return;
   }
-  if (!S.serverId || !S.channelId || !url) return;
+  if (!S.serverId || !S.channelId) return;
   if (S.threadReplyTo && S.thread) {
     sendChat('', { attachments: [att], threadRoot: S.thread.rootId, replyTo: S.threadReplyTo.id });
     S.threadReplyTo = null;

@@ -1826,6 +1826,12 @@ function pruneAttPreviews() {
 }
 const CHIP_IMG_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
 const CHIP_VID_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="14" height="16" rx="3"/><path d="M16 10l6-3v10l-6-3z"/></svg>';
+// A picked Klipy GIF carries no bytes of ours (size 0), so "0 B" as its chip
+// readout would look like a broken file. It is a GIF, and that is the label.
+function attChipSub(a) {
+  const remoteGif = a.kind === 'image' && a.mime === 'image/gif' && !a.size && /^https:\/\//.test(String(a.url || ''));
+  return (remoteGif ? 'GIF' : fmtSize(a.size)) + (a.spoiler ? ' · Spoiler' : '');
+}
 // Thumbnail + name/size stack: media chips get a preview tile (or a
 // placeholder icon while a video frame is still being grabbed), other
 // attachments just get the two-line name/size layout.
@@ -1836,7 +1842,7 @@ function attChipHTML(a) {
     : src ? `<img class="chip-thumb" src="${esc(src)}" alt="" />`
       : `<span class="chip-thumb ph">${a.kind === 'video' ? CHIP_VID_ICON : CHIP_IMG_ICON}</span>`;
   return `${thumb}<span class="chip-info"><span class="chip-name">${esc(a.name)}</span>`
-    + `<span class="chip-sub">${fmtSize(a.size)}${a.spoiler ? ' · Spoiler' : ''}</span></span>`;
+    + `<span class="chip-sub">${attChipSub(a)}</span></span>`;
 }
 function renderComposerMeta() {
   syncPendingAttsCtx(); // the open conversation's own attachments (see pendingByCtx)
