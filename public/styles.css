@@ -1141,8 +1141,22 @@ img,video{-webkit-user-drag:none}
 .msg-actions button{border:0;background:transparent;color:var(--text);border-radius:8px;padding:.2rem .35rem;font-size:1rem;line-height:1.2;cursor:pointer;min-width:30px;transition:background var(--t-fast)}
 .msg-actions button:hover{background:var(--panel-3)}
 .msg.flip-actions .msg-actions{top:2px}
-.thread-link{border:0;background:transparent;color:var(--accent-hover);font-size:.78rem;font-weight:650;cursor:pointer;padding:.15rem 0}
-.thread-link:hover{text-decoration:underline}
+/* The thread card under a root message: a labelled summary plus the thread's
+   latest reply, so a thread can be judged without opening the panel. One
+   button, so the reading target and the click target are the same thing. */
+.thread-link{display:flex;flex-direction:column;gap:.4rem;align-items:stretch;margin-top:.42rem;padding:.55rem .7rem;border:1px solid var(--line-soft);border-radius:12px;background:var(--panel-2);color:var(--text);font:inherit;text-align:left;cursor:pointer;max-width:min(440px,100%);transition:background var(--t-fast),border-color var(--t-fast)}
+.thread-link:hover{background:var(--panel-3);border-color:var(--line)}
+.thread-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tc-top{display:flex;align-items:baseline;gap:.5rem;font-size:.82rem;line-height:1.2}
+.tc-label{font-weight:750;letter-spacing:-.005em}
+.tc-count{color:var(--accent-hover);font-weight:650;font-size:.8rem}
+.tc-last{display:flex;align-items:center;gap:.4rem;min-width:0;font-size:.78rem;color:var(--muted)}
+.thread-link .tc-av{width:20px;height:20px;font-size:.68rem}
+.tc-who{flex:none;max-width:8.5rem;font-weight:650;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc-react{flex:none;display:inline-flex;align-items:center;background:var(--panel-3);border-radius:6px;padding:.04rem .32rem;font-size:.78rem;line-height:1.45}
+.tc-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc-text.att{font-style:italic;color:var(--faint)}
+.tc-when{flex:none;margin-left:auto;padding-left:.3rem;font-size:.72rem;color:var(--faint)}
 .edited{font-size:.7rem;color:var(--faint)}
 .mention{background:var(--accent-container);color:var(--on-container);border-radius:6px;padding:.05rem .3rem;font-weight:650}
 .mention.me{background:var(--accent);color:var(--on-accent)}

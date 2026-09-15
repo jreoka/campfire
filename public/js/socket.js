@@ -252,9 +252,16 @@ function onWS(m) {
       if (m.serverId !== S.serverId) break;
       const dnd = S.me && S.me.status === 'dnd';
       if (msg.threadRoot) {
-        updateMsgInCaches(msg.threadRoot, (r) => { r.threadCount = (r.threadCount || 0) + 1; });
+        // The card under the root shows the reply count AND the newest reply, so
+        // both travel together — a push that moved the count but left the
+        // preview on the older reply would read as a card that missed a message.
+        updateMsgInCaches(msg.threadRoot, (r) => {
+          r.threadCount = (r.threadCount || 0) + 1;
+          // Newest wins, so an out-of-order frame can never walk the preview back.
+          if (!r.threadLast || (msg.created_at || 0) >= (r.threadLast.created_at || 0)) r.threadLast = threadLastFromMsg(msg);
+        });
         // Thread replies don't change the channel list itself — just patch
-        // the root's reply-count link in place (no rebuild, no scroll jump).
+        // the root's card in place (no rebuild, no scroll jump).
         if (m.channelId === S.channelId) paintThreadCount(msg.threadRoot);
         if (S.thread && S.thread.rootId === msg.threadRoot) {
           S.thread.replies.push(msg);
@@ -293,6 +300,12 @@ function onWS(m) {
     }
     case 'message-updated': {
       updateMsgInCaches(m.message.id, (old) => Object.assign(old, m.message));
+      // An edit to the reply the root's card previews has to reach the card —
+      // the card is a snapshot, and a stale snapshot of an edited message is
+      // exactly the kind of thing nobody thinks to reload to fix.
+      if (m.message.threadRoot) updateMsgInCaches(m.message.threadRoot, (r) => {
+        if (r.threadLast && r.threadLast.id === m.message.id) r.threadLast = threadLastFromMsg(m.message);
+      });
       const inHistUp = S.histMode && S.histMode.kind === 'server' && S.histMode.id === m.channelId;
       if (m.channelId === S.channelId && !inHistUp) renderMessages();
       if (S.thread && (S.thread.rootId === m.message.id || S.thread.replies.some((r) => r.id === m.message.id))) renderThread();
@@ -303,6 +316,14 @@ function onWS(m) {
         old.reactions = (m.reactions || []).map((r) => ({ emoji: r.emoji, count: r.count, me: (r.users || []).includes(S.me.id), users: r.users || [] }));
       });
       try { if (typeof reactionDetailCache !== 'undefined') reactionDetailCache.delete(m.messageId); } catch {}
+      // The card under a root mirrors the first reaction on the reply it
+      // previews — including when that reaction is taken back (the chip then
+      // becomes the next one, or disappears).
+      for (const [, arr] of S.messages) for (const x of arr) {
+        if (!x.threadLast || x.threadLast.id !== m.messageId) continue;
+        x.threadLast.emoji = (m.reactions && m.reactions.length) ? (m.reactions[0].emoji || null) : null;
+        if (m.channelId === S.channelId) paintThreadCount(x.id);
+      }
       const inHistRx = S.histMode && S.histMode.kind === 'server' && S.histMode.id === m.channelId;
       // Patch the one reaction bar in place — a full list rebuild jumps the
       // scroll on Safari for a change that touches a single element.
@@ -317,7 +338,7 @@ function onWS(m) {
       const arr = prev.filter((x) => x.id !== m.messageId);
       S.messages.set(m.channelId, arr);
       scrubReplyPreview(m.messageId);
-      // A deleted reply drops the root's live reply count (drives the N-replies link).
+      // A deleted reply drops the root's live reply count (drives the thread card).
       if (m.threadRoot) updateMsgInCaches(m.threadRoot, (r) => { r.threadCount = Math.max(0, (r.threadCount || 1) - 1); });
       if (S.thread) {
         if (S.thread.rootId === m.messageId) closeThread();
@@ -330,6 +351,18 @@ function onWS(m) {
         // Else: unrelated to the open thread — leave the panel alone
         // (it used to rebuild here on every channel delete).
       }
+      // The card previews the NEWEST reply, so deleting exactly that one leaves
+      // it quoting a message that no longer exists — a deleted reply's words
+      // must never stand in the card. The open panel's list is the only place
+      // the reply before it is known (there is no per-reply "before" endpoint),
+      // so use that when the thread is open and drop to the bare label
+      // otherwise; a reload re-reads the real newest reply from the server.
+      if (m.threadRoot) updateMsgInCaches(m.threadRoot, (r) => {
+        if (!r.threadLast || r.threadLast.id !== m.messageId) return;
+        const reps = (S.thread && S.thread.rootId === m.threadRoot) ? S.thread.replies : null;
+        const prev = reps && reps.length ? reps[reps.length - 1] : null;
+        r.threadLast = prev ? threadLastFromMsg(prev) : null;
+      });
       const inHistDel = S.histMode && S.histMode.kind === 'server' && S.histMode.id === m.channelId;
       if (m.channelId === S.channelId && !inHistDel) {
         const box = $('#messages');

@@ -1116,10 +1116,15 @@ async function votePoll(mid, optionId) {
 // about what it holds: the account's own list (topReactions — most reacted-with,
 // then most recent), then More / Reply / menu.
 function quickReactHTML(e) {
-  const em = S.emojiAll[e.slice(1, -1)];
-  const label = (e.startsWith(':') && e.endsWith(':') && em)
+  return `<button data-act="react" data-emoji="${esc(e)}" title="${esc(e)}">${emojiGlyphHTML(e)}</button>`;
+}
+// One emoji rendered the way the app renders it everywhere: a custom emoji is
+// its own image, anything else is the glyph itself.
+function emojiGlyphHTML(e) {
+  e = String(e == null ? '' : e);
+  const em = S.emojiAll && S.emojiAll[e.slice(1, -1)];
+  return (e.startsWith(':') && e.endsWith(':') && em)
     ? `<img class="cemoi" src="${esc(em.url)}" alt="${esc(e)}">` : esc(e);
-  return `<button data-act="react" data-emoji="${esc(e)}" title="${esc(e)}">${label}</button>`;
 }
 function quickReactsHTML() {
   return topReactions().map(quickReactHTML).join('')
@@ -1135,6 +1140,64 @@ function paintQuickReacts() {
     bar.querySelectorAll('button[data-emoji]').forEach((b) => b.remove());
     bar.insertAdjacentHTML('afterbegin', html);
   }
+}
+// ---------- the thread card under a root message ----------
+// A root with replies wears a compact card instead of a bare "N replies" line:
+// the label and reply count, then the thread's LATEST reply — author, the first
+// reaction on it, the snippet, when it landed. The whole card is one button
+// (`data-act="thread"` is wired where every other message action is), so the
+// click target is the thing being read rather than a word at the end of it.
+// The server sends `threadLast` with every hydrated message; a reply that
+// arrives live is folded into it by socket.js through the same shape.
+function threadSnippetOf(t) {
+  if (!t) return '';
+  const s = String(t.content || '').trim().replace(/\s+/g, ' ');
+  if (s) return s;
+  const n = Number(t.attachments) || 0;
+  if (n) return n === 1 ? 'sent an attachment' : 'sent ' + n + ' attachments';
+  if (t.poll) return 'sent a poll';
+  return '';
+}
+// A live message (from the socket or the open panel) turned into the card's
+// preview line. Mirrors the server's threadLastOf so a card painted from a push
+// and one painted from a reload read the same.
+function threadLastFromMsg(m) {
+  if (!m) return null;
+  return {
+    id: m.id,
+    created_at: m.created_at,
+    content: String(m.content || '').replace(/\s+/g, ' ').trim().slice(0, 140),
+    user: m.user || null,
+    webhook: m.webhook || null,
+    attachments: (m.attachments || []).length,
+    poll: !!m.poll,
+    emoji: (m.reactions && m.reactions.length) ? (m.reactions[0].emoji || null) : null,
+  };
+}
+function threadCardHTML(m) {
+  const n = m.threadCount || 0;
+  let inner = '<span class="tc-top"><span class="tc-label">Thread</span>'
+    + `<span class="tc-count">${n} ${n === 1 ? 'Message' : 'Messages'} ›</span></span>`;
+  const last = m.threadLast;
+  if (last) {
+    const au = msgAuthor(last);
+    const who = au ? (au.display_name || au.username || '?') : 'deleted';
+    let row = `<span class="avatar tc-av"></span><span class="tc-who" style="${nameStyleFor(au)}">${esc(who)}</span>`;
+    if (last.emoji) row += `<span class="tc-react">${emojiGlyphHTML(last.emoji)}</span>`;
+    const snip = threadSnippetOf(last);
+    if (snip) row += `<span class="tc-text${String(last.content || '').trim() ? '' : ' att'}">${esc(snip)}</span>`;
+    const ago = fmtAgo(last.created_at);
+    if (ago) row += `<span class="tc-when">${esc(ago)}</span>`;
+    inner += '<span class="tc-last">' + row + '</span>';
+  }
+  return `<button class="thread-link" data-act="thread" title="Open thread">${inner}</button>`;
+}
+// The avatar is the one part of the card that is not markup: paintAvatar owns
+// photos, initials, colours and decorations, and the card must match a message
+// head exactly.
+function paintThreadCardAvatar(card, m) {
+  const av = card && card.querySelector('.tc-av');
+  if (av) paintAvatar(av, m && m.threadLast ? msgAuthor(m.threadLast) : null);
 }
 function messageEl(m, opts = {}) {
   const div = document.createElement('div');
@@ -1189,13 +1252,14 @@ function messageEl(m, opts = {}) {
   if (m.poll) inner += pollHTML(m);
   inner += reactionsHTML(m);
   if (!opts.inThread && !m.threadRoot && m.threadCount > 0) {
-    inner += `<button class="thread-link" data-act="thread">${m.threadCount} ${m.threadCount === 1 ? 'reply' : 'replies'} →</button>`;
+    inner += threadCardHTML(m);
   }
   inner += '</div>';
   // hover bar: my quick reactions + more + reply + overflow menu
   inner += '<div class="msg-actions">' + quickReactsHTML() + '</div>';
   div.innerHTML = inner;
   if (!grouped) paintAvatar(div.querySelector('.avatar'), au);
+  if (m.threadLast) paintThreadCardAvatar(div.querySelector('.thread-link'), m);
   try {
     div.querySelectorAll('video.att-vid').forEach((v) => { requestVideoPoster(v); observeStick(v); });
     // Images grow 0 -> full height on load and shove bottom-pinned readers
@@ -1447,19 +1511,23 @@ function removeMessageNode(box, arr, mid) {
     return true;
   } catch { return false; }
 }
-// A thread reply changes only its root's reply-count link — patch that one
-// button in place instead of rebuilding the whole list (a full rebuild
-// re-creates every avatar/media node and used to visibly jump the scroll).
+// A thread reply changes only its root's thread card — repaint that one card in
+// place instead of rebuilding the whole list (a full rebuild re-creates every
+// avatar/media node and used to visibly jump the scroll). The card carries the
+// newest reply as well as the count, so it is rebuilt from the root's model.
 function paintThreadCount(rootId) {
   try {
     const el = document.querySelector('#messages [data-mid="' + CSS.escape(rootId) + '"]');
     const root = (S.messages.get(S.channelId) || []).find((x) => x.id === rootId);
     const n = root ? (root.threadCount || 0) : 0;
     const link = el && el.querySelector('.thread-link');
-    if (link) {
-      if (n > 0) link.textContent = n + ' ' + (n === 1 ? 'reply' : 'replies') + ' →';
-      else link.remove();
-    } else if (el && n > 0) renderMessages();
+    if (!link) { if (el && n > 0) renderMessages(); return; }
+    if (n <= 0) { link.remove(); return; }
+    const tmp = document.createElement('div');
+    tmp.innerHTML = threadCardHTML(root);
+    const next = tmp.firstElementChild;
+    link.replaceWith(next);
+    paintThreadCardAvatar(next, root);
   } catch { try { renderMessages(); } catch {} }
 }
 // A reaction change touches exactly one message's reaction bar. Patch that

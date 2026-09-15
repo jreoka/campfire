@@ -6372,6 +6372,24 @@ function fmtMsg(r) {
     user: r.user_id ? publicUser({ id: r.user_id, username: r.username, display_name: r.display_name, avatar_color: r.avatar_color, avatar_url: r.avatar_url }) : null,
   };
 }
+// The thread card's preview line: who spoke last in a thread, what they said
+// (or that they sent a file), when, and the first reaction on it. Deliberately
+// shaped like a message so the client renders the author through the same
+// msgAuthor rules — a webhook reply wears the webhook's own name and avatar.
+function threadLastOf(r) {
+  if (!r) return null;
+  const content = String(r.content == null ? '' : r.content).replace(/\s+/g, ' ').trim();
+  return {
+    id: r.id,
+    created_at: r.created_at,
+    content: content.slice(0, 140),
+    user: r.user_id ? publicUser({ id: r.user_id, username: r.username, display_name: r.display_name, avatar_color: r.avatar_color, avatar_url: r.avatar_url }) : null,
+    webhook: r.webhook_id ? { id: r.webhook_id, name: r.webhook_name || 'Webhook', avatar_url: r.webhook_avatar || null } : null,
+    attachments: Number(r.att_count) || 0,
+    poll: !!Number(r.has_poll),
+    emoji: r.react_emoji || null,
+  };
+}
 // Batch-load attachments, reaction tallies, and reply counts for a page of messages.
 // Reply quotes on attachment-only parents read 'sent an attachment' instead
 // of rendering an empty quote. Both hydrates batch-load parent attachment
@@ -6387,7 +6405,7 @@ function patchAttachmentSnippets(out, parentAttBy) {
 }
 async function hydrateMessages(rows, meId) {
   const ids = rows.map((r) => r.id);
-  const attBy = {}, reactBy = {}, countBy = {}, parentAttBy = {};
+  const attBy = {}, reactBy = {}, countBy = {}, parentAttBy = {}, lastBy = {};
   const pollBy = await pollsForMessages('server', ids);
   if (ids.length) {
     const ph = ids.map(() => '?').join(',');
@@ -6409,6 +6427,28 @@ async function hydrateMessages(rows, meId) {
     for (const c of await db.prepare(`SELECT thread_root_id r, COUNT(*) c FROM messages WHERE thread_root_id IN (${ph}) GROUP BY thread_root_id`).all(...ids)) {
       countBy[c.r] = c.c;
     }
+    // The thread card under a root carries its latest reply, so a reader can
+    // judge a thread without opening the panel. One extra query per page, and
+    // only for roots that actually have replies (DISTINCT ON takes the newest
+    // per root), so a list with no threads costs nothing.
+    const rootIds = rows.map((r) => r.id).filter((id) => countBy[id]);
+    if (rootIds.length) {
+      const rph = rootIds.map(() => '?').join(',');
+      const lastRows = await db.prepare(`
+        SELECT DISTINCT ON (m.thread_root_id)
+               m.id, m.thread_root_id, m.content, m.created_at, m.user_id,
+               m.webhook_id, m.webhook_name, m.webhook_avatar,
+               u.username, u.display_name, u.avatar_color, u.avatar_url,
+               (SELECT COUNT(*) FROM attachments a WHERE a.message_id = m.id) AS att_count,
+               (SELECT COUNT(*) FROM polls p WHERE p.message_id = m.id) AS has_poll,
+               (SELECT r.emoji FROM message_reactions r WHERE r.message_id = m.id
+                 ORDER BY r.created_at ASC, r.emoji ASC LIMIT 1) AS react_emoji
+        FROM messages m LEFT JOIN users u ON u.id = m.user_id
+        WHERE m.thread_root_id IN (${rph})
+        ORDER BY m.thread_root_id, m.created_at DESC, m.id DESC
+      `).all(...rootIds);
+      for (const l of lastRows) lastBy[l.thread_root_id] = l;
+    }
     const parentIds = [...new Set(rows.filter((r) => r.reply_to_id && !String(r.p_content || '').trim()).map((r) => r.reply_to_id))];
     if (parentIds.length) {
       const pph = parentIds.map(() => '?').join(',');
@@ -6424,6 +6464,7 @@ async function hydrateMessages(rows, meId) {
     const tally = Object.values(reactBy[r.id] || {});
     m.reactions = tally.map((t) => ({ emoji: t.emoji, count: t.count, me: t.users.includes(meId), users: t.users }));
     m.threadCount = countBy[r.id] || 0;
+    m.threadLast = m.threadCount ? threadLastOf(lastBy[r.id]) : null;
     return m;
   }), parentAttBy);
 }
