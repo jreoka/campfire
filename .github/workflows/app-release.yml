@@ -160,7 +160,16 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
+      # `packages` is spelled out because the action's default is
+      # "tools platform-tools", and the legacy `tools` package is gone from
+      # Google's SDK repo: the sdkmanager the action downloads (cmdline-tools
+      # 16.0, since the runner's preinstalled one is too old for the action)
+      # answers "Failed to find package 'tools'" and exits 1 before anything is
+      # built. cmdline-tools IS the replacement for `tools` and is already
+      # installed, so platform-tools (adb) is all that is wanted here.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
