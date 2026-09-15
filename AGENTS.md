@@ -335,6 +335,27 @@ scanned in place), and its **`suspicious` band (>= 0.60) is served, not blocked*
 — the shipped operating point is the malicious threshold (0.95), so the band is
 counted, logged and shown in the admin panel, and `HARBIN_BLOCK_SUSPICIOUS=1`
 refuses it too at a real false-positive cost.
+The **container stage** is what makes that verdict worth anything — a detector
+that scores the wrapper is defeated by wrapping, so Harbin opens what it is
+handed and scores what is inside. As of the 2026-09-15 revision that means the
+ZIP/archive family, 7z, **RAR (every generation through RAR 7)**, CAB (stored,
+MSZIP and LZX, with each data block's checksum verified), OLE/CFB walked as its
+storage *tree* (so a stream carries its storage path), **PDF** (embedded files
+recovered from the object graph even when the document's xref table is absent or
+wrong), and **disk images** — VHD/VHDX, MBR/GPT, and the FAT, ext2/3/4 and NTFS
+filesystems inside them. Three codec crates came in with that (`rars`, `lzxd`,
+and the `fatfs`/`ext4-view`/`ntfs` readers): they are *readers*, never detectors,
+and they link at build time, so the shipped binary still has no runtime
+dependencies and there is still no scanner container — but the `harbin` build
+stage is a real Rust compile now, not a two-second one. Two rules hold across all
+of it: a parse that cannot be completed is **named in the evidence** ("could not
+be read" must never pass for "nothing inside"), and every parser runs behind a
+`catch_unwind` guard (`container::guarded`, with `panic = "unwind"` in the release
+profile) so a malformed upload costs that file's member listing rather than the
+whole scan. `node scripts/verify-harbin.js` carries a sixth check for exactly
+this: the same all-RWX PE from check 2, detected *inside a PDF wrapper* whose
+xref table is missing — if a wrapper could hide a payload, everything else is
+decoration.
 **Ask the engine by scanning it, never by a flag**: every internal option
 (`--model-info` included) is compiled out of the shipped binary behind Harbin's
 own `devtools` feature — `harbin --model-info` on a shipped build prints usage

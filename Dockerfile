@@ -1,9 +1,12 @@
 # ---- Harbin: the malware scanner, built from source --------------------------
 # Harbin (https://github.com/jreoka/harbin) decides with a machine-learned model
 # compiled into the executable: one binary, one argument, no daemon, no
-# signature database, no runtime and no network in the detection path. It is a
-# zero-dependency Rust crate, so it builds in seconds and the toolchain can stay
-# in this throwaway stage instead of the runtime image.
+# signature database, no runtime and no network in the detection path. It still
+# has no *runtime* dependencies — the container decompressors it uses (RAR, 7z,
+# LZX, the filesystem readers) are Rust crates linked in at build time, so the
+# shipped binary stays self-contained — but it is no longer a trivial compile:
+# expect a few minutes here on the first build of a new pin, and seconds once the
+# layer is cached. The toolchain still lives only in this throwaway stage.
 #
 # HARBIN_REF pins the exact commit, so a deploy is reproducible and picking up a
 # new model is a one-line change. The clone + build is a cached layer, so it is
@@ -11,7 +14,7 @@
 FROM rust:1-alpine AS harbin
 RUN apk add --no-cache build-base git
 ARG HARBIN_REPO=https://github.com/jreoka/harbin
-ARG HARBIN_REF=6b3ca944728c7050898b1462a3b3bd5a33831e76
+ARG HARBIN_REF=8b45114bac882fbb105f16bf73850d878dad0687
 WORKDIR /src
 # A full clone rather than a shallow one: the repository is well under a
 # megabyte, and a pinned commit that is no longer the branch head still has to

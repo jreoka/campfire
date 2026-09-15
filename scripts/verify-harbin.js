@@ -8,7 +8,7 @@
 //   node scripts/verify-harbin.js
 //   HARBIN_BIN=./harbin node scripts/verify-harbin.js
 //
-// Five checks, in order of how much it would hurt to get them wrong:
+// Six checks, in order of how much it would hurt to get them wrong:
 //
 //   1. the engine runs AND has a model - a build with no embedded model answers
 //      CLEAN to everything, which is worse than no scanner because it is
@@ -30,6 +30,10 @@
 //      engine.
 //   5. a full-size body (MAX_FILE_MB, 50 by default) is scanned and cleared.
 //      Nothing about the pipeline may refuse the largest upload the app allows.
+//   6. the same anchor from (2) is detected *inside a wrapper* - as a PDF's
+//      `/EmbeddedFile`, in a document with no xref table. This is the one check
+//      that proves the container stage does its job: if a payload can be hidden
+//      inside a document and served, everything above it is decoration.
 //
 // Exit code 0 only if every check that ran held.
 
@@ -38,6 +42,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const zlib = require('zlib');
 
 const ROOT = path.join(__dirname, '..');
 const vs = require(path.join(ROOT, 'virus-scan'));
@@ -51,6 +56,33 @@ const EICAR = [
   'EICAR-STANDARD-ANTIVIRUS-TEST-FILE!',
   '$H+H*',
 ].join('');
+
+// The same synthetic PE the check above uses, carried as a PDF's `/EmbeddedFile`.
+//
+// This document has **no xref table at all**, on purpose. A PDF's index is
+// optional and is routinely wrong in exactly the documents worth reading, so the
+// engine has to recover the object graph by scanning for objects. That makes this
+// the acceptance test for the container stage's whole reason to exist: the
+// wrapper's own bytes are inert, and the only way to flag this file is to look
+// inside it. A clean verdict here means someone could hide an executable in a
+// document and have it served.
+function pdfWithEmbeddedPe(pe) {
+  const stream = zlib.deflateSync(pe);
+  const head = Buffer.from(
+    '%PDF-1.7\n'
+    + '1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles '
+    + '<< /Names [ (payload.exe) 4 0 R ] >> >> >>\nendobj\n'
+    + '2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n'
+    + '4 0 obj\n<< /Type /Filespec /F (payload.exe) /UF (payload.exe) '
+    + '/EF << /F 5 0 R >> >>\nendobj\n'
+    + '5 0 obj\n<< /Type /EmbeddedFile /Length ' + stream.length
+    + ' /Filter /FlateDecode >>\nstream\n',
+    'latin1',
+  );
+  const tail = Buffer.from(
+    '\nendstream\nendobj\ntrailer\n<< /Root 1 0 R /Size 6 >>\n%%EOF\n', 'latin1');
+  return Buffer.concat([head, stream, tail]);
+}
 
 const results = [];
 function check(name, ok, detail, skipped) {
@@ -126,6 +158,18 @@ async function scanBuffer(dir, label, buf, timeoutMs) {
     check(`scans a ${LARGE_MB} MB body`, okBig,
       big.error ? `${big.error} (a refusal here means the largest allowed upload could never be scanned)`
         : okBig ? `clean in ${secs}s` : 'flagged a body of repeated bytes');
+
+    // ---- 6. a payload hidden inside a wrapper ----
+    // The whole point of the container stage: a detector that scores the wrapper
+    // is defeated by wrapping. This carries the check-2 anchor as a PDF's
+    // `/EmbeddedFile` in a document with no xref table, so recovering the object
+    // graph is the only way to see it.
+    const pdfRun = await scanBuffer(dir, 'embedded-payload.pdf', pdfWithEmbeddedPe(rwxPe()), 60000);
+    const pdfHit = !!pdfRun.verdict && pdfRun.verdict.clean === false;
+    check('detects a PE embedded in a PDF', pdfHit,
+      pdfRun.error ? pdfRun.error
+        : pdfHit ? pdfRun.verdict.virus
+          : 'cleared a document carrying the anchor as an /EmbeddedFile: a wrapper is hiding a payload');
   } finally {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }
@@ -136,7 +180,7 @@ async function scanBuffer(dir, label, buf, timeoutMs) {
     console.log(`\n${failed.length} check(s) FAILED${skipped ? ` (${skipped} skipped)` : ''}`);
     process.exit(1);
   }
-  console.log(`\nall checks passed${skipped ? ` (${skipped} skipped)` : ''} - this engine detects, clears, and accepts a full-size upload`);
+  console.log(`\nall checks passed${skipped ? ` (${skipped} skipped)` : ''} - this engine detects, clears, sees inside a wrapper, and accepts a full-size upload`);
   process.exit(0);
 })().catch((e) => {
   console.error(`verify-harbin: ${(e && e.stack) || e}`);
