@@ -525,16 +525,26 @@ fn set_unread_count(app: AppHandle, count: u32) {
 // arrive silently — the page hands the title/body here instead (final.js
 // `nativeNotify`). The app is always running with a live socket, so there is
 // nothing to keep alive: this is the whole desktop story.
+//
+// Windows needs an explicit sound, and the reason is not obvious. The plugin
+// forwards to notify-rust, which passes "no sound chosen" down as
+// `Toast::sound(None)` — and that crate renders `None` as the literal toast XML
+// `<audio silent="true"/>` (tauri-winrt-notification, `Toast::sound`), so every
+// toast this app ever showed was a SILENT one by construction: the banner
+// appeared, nothing was played, and the Windows sound settings never got a say.
+// "Default" is the one value that maps to an empty audio element instead, i.e.
+// "let Windows play the user's own notification sound" — which also keeps
+// honouring the per-app "Play a sound" switch in Windows Settings. macOS/Linux
+// are deliberately left alone: there, an unset sound means the platform's own
+// default, and naming one is not portable.
 #[cfg(desktop)]
 #[tauri::command]
 fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
     use tauri_plugin_notification::NotificationExt;
-    app.notification()
-        .builder()
-        .title(title)
-        .body(body)
-        .show()
-        .map_err(|e| e.to_string())
+    let note = app.notification().builder().title(title).body(body);
+    #[cfg(windows)]
+    let note = note.sound("Default");
+    note.show().map_err(|e| e.to_string())
 }
 
 #[cfg(desktop)]

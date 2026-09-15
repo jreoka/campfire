@@ -34,7 +34,13 @@ Native wrapper around the Campfire web app. Built with **Tauri v2**:
     Notification API, so the app shows them itself: a hidden window's message
     hands its title/body to `tauri-plugin-notification` through the `notify`
     command (see `socket.js` → `nativeNotify`). Nothing to enable, and no web
-    push endpoint is registered from the desktop shell.
+    push endpoint is registered from the desktop shell. **Windows toasts must
+    name a sound** (`notify` in `src-tauri/src/lib.rs` passes `"Default"`):
+    leaving it unset makes notify-rust emit `<audio silent="true"/>` in the
+    toast XML, so the banner shows and nothing is heard. "Default" is the value
+    that omits the audio element, i.e. Windows plays the user's own notification
+    sound; a Windows-wide "Play a sound" switch or Focus Assist can still
+    silence it.
 - **Android** — same web app in a native shell (full Campfire experience
   including voice; no tray/watcher/autostart — mobile has none). Needs
   Android 7+. Microphone/camera permissions are requested in-app when voice
