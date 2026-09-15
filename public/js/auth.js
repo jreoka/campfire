@@ -235,6 +235,7 @@ function prettyError(e) {
     captcha_required: 'Complete the captcha to continue.', captcha_failed: 'Captcha check failed — please try again.',
     bad_color: 'Pick a valid color.', cannot_kick_admin: 'Only the owner can remove admins.',
     admin_only: 'Only site admins can do that.', account_disabled: 'This account has been disabled.',
+    pending_deletion: 'This account is scheduled for deletion. A site admin can restore it until then.',
     owner_protected: 'The instance owner\'s account can\'t be closed from Settings.',
     wrong_password: 'That password is not right.', bad_code: 'That code is not right.',
     confirm_mismatch: 'Type your username exactly to confirm.',
@@ -318,6 +319,7 @@ async function boot() {
     if (cfg?.iceServers?.length) S.iceServers = cfg.iceServers;
     if (cfg?.maxUploadMb) S.maxUploadMb = Number(cfg.maxUploadMb) || S.maxUploadMb;
     if (cfg?.maxReactions) S.maxReactions = Number(cfg.maxReactions) || S.maxReactions;
+    if (cfg?.deleteGraceDays) S.deleteGraceDays = Number(cfg.deleteGraceDays) || S.deleteGraceDays;
     // Link previews are a server-side fetch (UNFURL=0 disables them fleet-wide).
     if (cfg && cfg.linkPreviews === false && typeof setLinkPreviews === 'function') setLinkPreviews(false);
     const { user } = await api('/api/me');

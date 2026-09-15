@@ -690,6 +690,20 @@ CREATE INDEX IF NOT EXISTS idx_dm_attachments_unmeasured ON dm_attachments(creat
   await addColumn('server_members', 'folder_id', 'TEXT');
   await addColumn('users', 'is_admin', 'BIGINT NOT NULL DEFAULT 0');
   await addColumn('users', 'disabled', 'BIGINT NOT NULL DEFAULT 0');
+  // Closing an account (by its owner from Settings → Account, or by a site
+  // admin) is a REQUEST, not a purge: the row is disabled immediately and the
+  // actual delete happens once this deadline passes, so an admin can restore
+  // the account inside the grace window (see requestAccountDeletion /
+  // purgeDueAccounts in server.js). `deletion_prev_disabled` remembers whether
+  // the account was already disabled, so a restore puts back what was there.
+  await addColumn('users', 'deletion_scheduled_at', 'BIGINT');
+  await addColumn('users', 'deletion_requested_at', 'BIGINT');
+  await addColumn('users', 'deletion_requested_by', 'TEXT');
+  await addColumn('users', 'deletion_prev_disabled', 'BIGINT NOT NULL DEFAULT 0');
+  // Partial, because the purge sweep only ever asks for the handful of accounts
+  // with a deadline — the index stays empty on an instance where nobody is
+  // closing an account.
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_users_deletion_due ON users(deletion_scheduled_at) WHERE deletion_scheduled_at IS NOT NULL`);
   await addColumn('users', 'tz_offset', 'BIGINT');
   await addColumn('users', 'nsfw_ok', 'BIGINT NOT NULL DEFAULT 0');
   await addColumn('users', 'theme', "TEXT NOT NULL DEFAULT ''");
@@ -1043,6 +1057,7 @@ const LOCKS = {
   reminders: 771016,      // deliver due reminders (one replica rings, never N)
   bucketScan: 771017,     // bucket-scan.js: adopt stored objects no verdict covers
   viewOnceReplay: 771018, // reap view-once replay windows nobody came back for
+  accountPurge: 771019,   // purge accounts whose deletion grace period has run out
 };
 
 // Try to take the lock without waiting. Resolves { ran: false } when another

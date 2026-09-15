@@ -1,8 +1,11 @@
-// Closing your own account from Settings → Account.
+// Closing your own account from Settings → Account, and closing somebody
+// else's from the admin console — both now a 7-DAY GRACE PERIOD rather than an
+// instant purge, with a site admin able to restore inside the window.
 //
 // Static half (always runs): the pane exists and is rendered with the account
 // tab, both routes exist, the delete route checks the typed username server-side,
-// the shared purge is used by the admin route too, and the local device memories
+// the grace period is one constant with one shared request/restore/purge path,
+// the restore route and the sweep are registered, and the local device memories
 // are cleared on delete.
 //
 // API half (skips without Postgres): a throwaway database, a real TOTP secret
@@ -10,10 +13,14 @@
 // a wrong password and a wrong 2FA code each leave the account intact; disable
 // signs the account out everywhere and blocks sign-in until a site admin
 // re-enables it; delete needs the username typed as well (a backup code works
-// in place of the authenticator); afterwards the account is gone, its sessions
-// are dead, its memberships cascaded and its messages stay in their chats with
-// no author; the instance owner's account is refused; and wrong passwords are
-// braked.
+// in place of the authenticator); deleting CLOSES the account at once (sessions
+// dead, sign-in refused with `pending_deletion`, memberships and messages
+// untouched) and schedules the purge 7 days out; a site admin restores it and
+// the same account signs back in with 2FA intact; enabling through PATCH
+// cancels a pending deletion too; the owner's account is refused; and once the
+// deadline is actually past, the leader-locked sweep purges the row for real —
+// messages stay in their chats with no author, memberships cascade, and a
+// restore afterwards is refused. Wrong passwords are braked.
 //
 // Usage: node scripts/test-account-close.js
 'use strict';
@@ -92,6 +99,8 @@ function totpNow(secret) {
 
 const security = fs.readFileSync(path.join(ROOT, 'public/js/security.js'), 'utf8');
 const serverSrc = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+const dbSrc = fs.readFileSync(path.join(ROOT, 'db.js'), 'utf8');
+const adminJs = fs.readFileSync(path.join(ROOT, 'public/js/admin.js'), 'utf8');
 const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
 const auth = fs.readFileSync(path.join(ROOT, 'public/js/auth.js'), 'utf8');
 
@@ -103,13 +112,41 @@ check(/if \(isOwnerAccount\(me\)\) \{ res\.status\(403\)\.json\(\{ error: 'owner
 check(/if \(!pw \|\| !\(await bcrypt\.compare\(pw, me\.password_hash\)\)\)/.test(serverSrc), 'the password is required and checked');
 check(/if \(me\.totp_enabled && !\(await check2faCode\(me\.id, me\.totp_secret, req\.body\?\.code\)\)\)/.test(serverSrc), 'a 2FA code is required when 2FA is on (backup codes included, via check2faCode)');
 check(/String\(req\.body\?\.confirm \|\| ''\)\.trim\(\)\.toLowerCase\(\) !== me\.username/.test(serverSrc), 'the typed username is checked server-side, not just in the dialog');
-check(/await purgeAccount\(target\);\n  res\.json\(\{ ok: true \}\);\n\}\);/.test(serverSrc.replace(/\r\n/g, '\n')), 'the admin route shares one purge');
-check(/async function purgeAccount\(target\)/.test(serverSrc) && /DELETE FROM users WHERE id = \?/.test(serverSrc), 'the purge deletes the row last');
 check(/const brake = await rateHit\('acct:' \+ me\.id, 10, 60e3\);/.test(serverSrc), 'wrong passwords are braked');
 check(/'cf_drafts_', 'cf_view_', 'cf_home_tab_', 'cf_chanunread_', 'cf_pinseen_'/.test(security), 'delete forgets this account\'s device memories');
 check(/owner_protected: /.test(auth) && /wrong_password: /.test(auth) && /bad_code: /.test(auth), 'the errors people will actually see are worded');
+check(/pending_deletion: /.test(auth), 'and so is the one a closed account meets at sign-in');
 check(/cancelLabel: 'Keep my account'/.test(security) && /danger: true/.test(security), 'the dialog is a danger dialog with an explicit "keep"');
 check(/ok\.disabled = !\(pw && pw\.value\)/.test(security), 'the confirm button stays off until the gate is filled in');
+check(/A site admin can restore it inside that window/.test(security), 'the delete warning promises the grace period in words');
+check(/can restore it until then/.test(security), 'and says so again after the account is closed');
+
+console.log('\n[1b] deleting is a request, not a purge');
+check(/const DELETE_GRACE_DAYS = Math\.max\(0, parseInt\(process\.env\.ACCOUNT_DELETE_GRACE_DAYS \|\| '', 10\) \|\| 7\)/.test(serverSrc), 'one 7-day constant (env-tunable, defaulting to a week)');
+check(/async function requestAccountDeletion\(target, by\)/.test(serverSrc), 'one shared "close this account" path');
+check(/async function restoreAccount\(target\)/.test(serverSrc), 'and one shared restore');
+check(/const scheduledAt = await requestAccountDeletion\(me, 'self'\);/.test(serverSrc), 'the account owner\'s own route schedules it');
+check(/const scheduledAt = await requestAccountDeletion\(target, req\.user\.username\);/.test(serverSrc), 'so does the admin route');
+check(/app\.post\('\/api\/admin\/users\/:id\/restore', authRequired, requireSiteAdmin/.test(serverSrc), 'a site admin can undo it');
+check(/if \(!target\.deletion_scheduled_at\) return res\.status\(409\)\.json\(\{ error: 'not_pending' \}\);/.test(serverSrc), 'and restoring something that is not pending is refused');
+check(!/await purgeAccount\(me\);/.test(serverSrc), 'nothing purges an account straight off a request');
+check(/async function purgeAccount\(target\)/.test(serverSrc) && /DELETE FROM users WHERE id = \?/.test(serverSrc), 'the purge still deletes the row last');
+check(/async function purgeDueAccounts\(\)/.test(serverSrc), 'a sweep is what actually purges');
+check(/db\.withKeyLock\(accountLockKey\(row\.id\)/.test(serverSrc) && /db\.withKeyLock\(accountLockKey\(target\.id\), \(\) => restoreAccount\(target\)\)/.test(serverSrc), 'the purge and a restore take the same per-account lock');
+check(/if \(isOwnerAccount\(target\)\) \{ await restoreAccount\(target\); return null; \}/.test(serverSrc), 'the owner account is never purged by the sweep');
+check(/safeLockedInterval\('accounts', db\.LOCKS\.accountPurge, purgeDueAccounts,/.test(serverSrc) && /await db\.withLock\(db\.LOCKS\.accountPurge, purgeDueAccounts\)/.test(serverSrc), 'leader-locked, and run at boot as well as on the tick');
+check(/accountPurge: 771019,/.test(dbSrc), 'the lock key is registered');
+check(/addColumn\('users', 'deletion_scheduled_at', 'BIGINT'\)/.test(dbSrc) && /addColumn\('users', 'deletion_requested_by', 'TEXT'\)/.test(dbSrc) && /addColumn\('users', 'deletion_prev_disabled'/.test(dbSrc), 'the schema change is a guarded additive migration');
+check(/disabled = deletion_prev_disabled/.test(serverSrc), 'a restore puts back the disabled flag that was there before');
+check(/if \(!req\.body\.disabled && target\.deletion_scheduled_at\) \{/.test(serverSrc), 'enabling through PATCH cancels a pending deletion instead of leaving a purge armed');
+check(/error: 'pending_deletion'/.test(serverSrc), 'sign-in is refused with the deletion named');
+check(/refuseClosedAccount\(u, res\)/.test(serverSrc), 'every credential path shares that gate');
+check(/deleteGraceDays: DELETE_GRACE_DAYS/.test(serverSrc), 'the number the client shows comes from the server');
+check(/deletion_scheduled_at: u\.deletion_scheduled_at \? Number\(u\.deletion_scheduled_at\) : null,/.test(serverSrc), 'the admin view carries the deadline to the console');
+check(/if \(filter === 'pending'\) conds\.push\('deletion_scheduled_at IS NOT NULL'\)/.test(serverSrc), 'the user list can filter for them');
+check(/pendingDeletes: await count\(/.test(serverSrc), 'and the overview counts them');
+check(/data-act="u-restore"/.test(adminJs) && /\/api\/admin\/users\/\$\{urow\.dataset\.uid\}\/restore/.test(adminJs), 'the console row offers Restore');
+check(/deleted for good in \$\{days\} days/.test(adminJs), 'and the delete dialog says when it actually happens');
 
 async function req(method, p, { token, body } = {}) {
   const r = await fetch(BASE + p, {
@@ -134,7 +171,7 @@ function browserHalf() {
   const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
   const modalSrc = slice(uiJs, 'let modalOkFn = null;', '// Promise-based confirm dialog.');
   const showAuthSrc = slice(auth, 'function showAuth() {', 'function showMain()');
-  const dangerSrc = slice(security, 'async function renderDangerBox() {', 'async function render2faBox() {');
+  const dangerSrc = slice(security, 'function deleteGraceDays() {', 'async function render2faBox() {');
   const escSrc = slice(coreJs, 'function esc(', 'function popupBox(');
 
   const html = `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
@@ -190,6 +227,7 @@ ${dangerSrc}
   out.cancelLabel = document.querySelector('#modal-close').textContent;
   out.okDanger = document.querySelector('#modal-ok').classList.contains('danger');
   out.bullets = document.querySelectorAll('#modal-body .danger-list li').length;
+  out.bulletsText = [...document.querySelectorAll('#modal-body .danger-list li')].map((li) => li.textContent).join(' ');
   out.fields = { pw: !!document.querySelector('#acct-pw'), code: !!document.querySelector('#acct-code'), confirm: !!document.querySelector('#acct-confirm') };
   out.pwType = (document.querySelector('#acct-pw') || {}).type;
   const ok = document.querySelector('#modal-ok');
@@ -251,6 +289,7 @@ ${dangerSrc}
     check(out.title === 'Delete your account?' && out.okLabel === 'Delete account' && out.cancelLabel === 'Keep my account', 'delete opens a danger dialog with a way out', { title: out.title, ok: out.okLabel, cancel: out.cancelLabel });
     check(out.okDanger === true, 'whose confirm button is the danger one');
     check(out.bullets === 3, 'listing exactly what happens', out.bullets);
+    check(/7 days/.test(out.bulletsText) && /site admin can restore/i.test(out.bulletsText) && /cannot be undone/i.test(out.bulletsText), 'with the grace period, the restore and the real deadline spelled out', out.bulletsText);
     check(out.fields.pw && out.fields.code && out.fields.confirm && out.pwType === 'password', 'and asking for the password, a 2FA code and the username', out.fields);
     check(out.blockedEmpty && out.blockedNoName && out.blockedWrongName, 'the confirm button is off until the gate is filled', out);
     check(out.readyWhenFilled === true, 'and turns on when it is (the username case-insensitively)', out.readyWhenFilled);
@@ -298,6 +337,9 @@ async function main() {
         PORT: String(PORT),
         PGHOST: pg.host, PGPORT: String(pg.port), PGUSER: pg.user, PGPASSWORD: pg.password, PGDATABASE: TEST_DB,
         JWT_SECRET: 'test-account-close-secret', UPLOAD_DIR: path.join(tmp, 'uploads'), VIRUS_SCAN: '0', MEDIA_COMPRESS: '0', UNFURL: '0',
+        // The grace period is seven days, but the SWEEP that acts on it has to
+        // be watchable: backdate a deadline and the purge lands within a second.
+        ACCOUNT_PURGE_EVERY_MS: '1000',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -380,26 +422,95 @@ async function main() {
     check(r.status === 400, 'so is a missing one', r.data);
     check((await req('GET', '/api/2fa/status', { token: dana2.token })).status === 200, 'the account is still there');
 
-    console.log('\n[7] delete removes the account, keeps its messages');
+    console.log('\n[7] delete closes the account now and schedules the purge in 7 days');
+    const asked = Date.now();
     r = await req('POST', '/api/me/delete', { token: dana2.token, body: { password: PW, code: backup, confirm: 'dana' } });
-    check(r.status === 200 && r.data.ok === true, 'delete succeeds (a backup code stands in for the authenticator)', r.data);
-    check((await req('GET', '/api/2fa/status', { token: dana2.token })).status === 401, 'its sessions are dead', 'token');
+    check(r.status === 200 && r.data.ok === true && r.data.pending === true, 'delete succeeds (a backup code stands in for the authenticator)', r.data);
+    check(r.data.graceDays === 7, 'and answers with the grace period it will wait', r.data.graceDays);
+    const deadline = Number(r.data.scheduledAt);
+    check(Math.abs(deadline - (asked + 7 * 864e5)) < 60e3, 'the deadline is seven days out, not "now"', { scheduledAt: r.data.scheduledAt, asked });
+    r = await req('GET', '/api/2fa/status', { token: dana2.token });
+    check(r.status === 403 && r.data.error === 'pending_deletion', 'its sessions are shut out at once, and told why', r.data);
     r = await req('POST', '/api/login', { body: { username: 'dana', password: PW } });
-    check(r.status === 401 && r.data.error === 'invalid_login', 'the account is gone, not just disabled', r.data);
+    check(r.status === 403 && r.data.error === 'pending_deletion', 'signing in is refused with the deletion named', r.data);
+    check(Number(r.data.scheduledAt) === deadline, 'and the refusal carries the same deadline', r.data.scheduledAt);
     r = await req('GET', `/api/servers/${sid}`, { token: boss.token });
-    check(!(r.data.server?.members || []).some((m) => m.id === dana.user.id), 'its server membership cascaded', (r.data.server?.members || []).map((m) => m.username));
+    check((r.data.server?.members || []).some((m) => m.id === dana.user.id), 'its server membership is NOT cascaded yet', (r.data.server?.members || []).map((m) => m.username));
     r = await req('GET', '/api/search?q=' + encodeURIComponent('dana was here'), { token: boss.token });
-    check(r.data.results.length === 1 && r.data.results[0].message.content === 'dana was here', 'the message stays in the chat', r.data.results.length);
-    check(r.data.results[0] && r.data.results[0].message.user === null, 'with no author (the panel names it "Deleted user")', r.data.results[0] && r.data.results[0].message.user);
+    check(r.data.results.length === 1 && r.data.results[0].message.user && r.data.results[0].message.user.id === dana.user.id, 'and its messages still have their author', r.data.results[0] && r.data.results[0].message.user);
+    r = await req('POST', '/api/login', { body: { username: 'dana', password: 'nope' } });
+    check(r.status === 403 && r.data.error === 'pending_deletion', 'a wrong password does not change the answer either (the gate is before the compare, as for disabled)', r.data);
 
-    console.log('\n[8] the instance owner\'s own account is refused');
+    console.log('\n[8] a site admin can restore it inside the window');
+    r = await req('GET', '/api/admin/users?filter=pending', { token: boss.token });
+    const pending = (r.data.users || []).find((u) => u.id === dana.user.id);
+    check(!!pending, 'the console lists it under Pending deletion', (r.data.users || []).map((u) => u.username));
+    check(pending && pending.deletion_requested_by === 'self' && Number(pending.deletion_scheduled_at) === deadline, 'with who asked and the deadline', pending && { by: pending.deletion_requested_by });
+    check((await req('GET', '/api/admin/stats', { token: boss.token })).data.pendingDeletes === 1, 'and the overview counts one');
+    r = await req('POST', `/api/admin/users/${dana.user.id}/restore`, { token: boss.token });
+    check(r.status === 200 && r.data.user && r.data.user.deletion_scheduled_at === null, 'the admin restores the account', r.data);
+    check(r.data.user.disabled === false, 'and it is not left disabled', r.data.user);
+    const back2 = await login('dana', PW);
+    check(back2.status === 200 && !!back2.data.token, 'dana signs in again with the same password', back2.data.error);
+    const dana3 = { token: back2.data.token, user: dana.user };
+    check((await req('GET', '/api/2fa/status', { token: dana3.token })).data.enabled === true, '2FA survived the round trip');
+    r = await req('GET', `/api/servers/${sid}`, { token: boss.token });
+    check((r.data.server?.members || []).some((m) => m.id === dana.user.id), 'and she is still in her servers');
+    // Restoring something that is not pending is a no-op with a reason, not a
+    // silent success that looks like it did something.
+    r = await req('POST', `/api/admin/users/${dana.user.id}/restore`, { token: boss.token });
+    check(r.status === 409 && r.data.error === 'not_pending', 'restoring an account that is not pending is refused', r.data);
+    // The console's other way of undoing it: the plain Enable button.
+    await req('DELETE', `/api/admin/users/${dana.user.id}`, { token: boss.token });
+    r = await req('PATCH', `/api/admin/users/${dana.user.id}`, { token: boss.token, body: { disabled: false } });
+    check(r.status === 200 && r.data.user.deletion_scheduled_at === null && r.data.user.disabled === false, 'enabling through PATCH cancels the deletion too', r.data.user);
+    check((await req('GET', '/api/admin/stats', { token: boss.token })).data.pendingDeletes === 0, 'nothing is left pending');
+
+    console.log('\n[9] an admin delete follows the same 7 days — and then the sweep really purges');
+    const erin = await reg('erin', 'Erin');
+    await req('POST', '/api/servers/join', { token: erin.token, body: { inviteCode: made.invite.code } });
+    const ews = await openWs(erin.token); sockets.push(ews);
+    await sleep(200);
+    ews.send(JSON.stringify({ t: 'message', serverId: sid, channelId: cid, content: 'erin was here' }));
+    await sleep(450);
+    r = await req('DELETE', `/api/admin/users/${erin.user.id}`, { token: boss.token });
+    check(r.status === 200 && r.data.pending === true && r.data.user.deletion_scheduled_at, 'the admin route schedules it too', r.data.error || r.status);
+    check(r.data.user.deletion_requested_by === 'jreoka', 'recording which admin asked', r.data.user && r.data.user.deletion_requested_by);
+    check((await req('POST', '/api/login', { body: { username: 'erin', password: PW } })).data.error === 'pending_deletion', 'and erin cannot sign in meanwhile');
+    // Backdate the deadline rather than wait a week: the sweep is what this is
+    // about, so it has to be the sweep that collects it.
+    const dancer = new Client({ ...pg, database: TEST_DB, connectionTimeoutMillis: 4000 });
+    await dancer.connect();
+    await dancer.query('UPDATE users SET deletion_scheduled_at = $1 WHERE id = $2', [Date.now() - 1000, erin.user.id]);
+    let gone = false;
+    for (let i = 0; i < 40 && !gone; i++) {
+      await sleep(250);
+      gone = (await req('POST', '/api/login', { body: { username: 'erin', password: PW } })).data.error === 'invalid_login';
+    }
+    check(gone, 'once the deadline passes the sweep purges the row for real');
+    const left = (await dancer.query('SELECT username FROM users WHERE id = $1', [erin.user.id])).rowCount;
+    check(left === 0, 'the row is gone from the database', left);
+    const danaRow = (await dancer.query('SELECT deletion_scheduled_at, disabled, deletion_prev_disabled FROM users WHERE id = $1', [dana.user.id])).rows[0];
+    check(danaRow && danaRow.deletion_scheduled_at === null && Number(danaRow.disabled) === 0, 'and the restored account was never touched by it', danaRow);
+    r = await req('GET', `/api/servers/${sid}`, { token: boss.token });
+    check(!(r.data.server?.members || []).some((m) => m.id === erin.user.id), 'the purged account left its servers', (r.data.server?.members || []).map((m) => m.username));
+    r = await req('GET', '/api/search?q=' + encodeURIComponent('erin was here'), { token: boss.token });
+    check(r.data.results.length === 1 && r.data.results[0].message.content === 'erin was here', 'its message stays in the chat', r.data.results.length);
+    check(r.data.results[0] && r.data.results[0].message.user === null, 'with no author (the panel names it "Deleted user")', r.data.results[0] && r.data.results[0].message.user);
+    r = await req('POST', `/api/admin/users/${erin.user.id}/restore`, { token: boss.token });
+    check(r.status === 404 && r.data.error === 'no_user', 'and by then a restore is refused — the window is what made it reversible', r.data);
+    await dancer.end();
+
+    console.log('\n[10] the instance owner\'s own account is refused');
     r = await req('POST', '/api/me/disable', { token: boss.token, body: { password: PW } });
     check(r.status === 403 && r.data.error === 'owner_protected', 'disable is refused', r.data);
     r = await req('POST', '/api/me/delete', { token: boss.token, body: { password: PW, confirm: 'jreoka' } });
     check(r.status === 403 && r.data.error === 'owner_protected', 'and so is delete', r.data);
+    r = await req('DELETE', `/api/admin/users/${boss.user.id}`, { token: boss.token });
+    check(r.status === 400 && r.data.error === 'cannot_delete_self', 'an admin cannot delete their own account from the console', r.data);
     check((await req('GET', '/api/2fa/status', { token: boss.token })).status === 200, 'the owner account works normally otherwise');
 
-    console.log('\n[9] password guesses are braked');
+    console.log('\n[11] password guesses are braked');
     let last = null;
     for (let i = 0; i < 11; i++) last = await req('POST', '/api/me/disable', { token: brakeUser.token, body: { password: 'wrong-' + i } });
     check(last.status === 429 && last.data.error === 'slow_down', 'the eleventh wrong password is throttled', last.data);

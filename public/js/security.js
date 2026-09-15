@@ -88,9 +88,16 @@ async function renderSecurityTab() {
 // Both actions sign the account out everywhere, so both re-prove it: the
 // password, and a 2FA code (or a backup code) when 2FA is on. Deleting also
 // asks for the username to be typed — the server checks that too, so it is a
-// real gate rather than dialog theatre. The instance owner is refused by the
-// server: no other admin may manage that account, so closing it would leave
-// the instance with no way back in.
+// real gate rather than dialog theatre, and it does not delete anything yet:
+// the account is closed now and the row itself goes after the grace period
+// (see DELETE_GRACE_DAYS in server.js), which is the window a site admin can
+// restore it in. The instance owner is refused by the server: no other admin
+// may manage that account, so closing it would leave the instance with no way
+// back in.
+function deleteGraceDays() {
+  const n = Number(S.deleteGraceDays);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : 7;
+}
 async function renderDangerBox() {
   const box = $('#set-danger');
   if (!box) return;
@@ -102,7 +109,7 @@ async function renderDangerBox() {
   const dis = document.createElement('p'); dis.className = 'muted small';
   dis.textContent = 'Disabling signs you out on every device right away, and you cannot sign back in until a site admin re-enables the account.';
   const del = document.createElement('p'); del.className = 'muted small';
-  del.textContent = 'Deleting removes your account for good: profile, friends, DMs, stories and server memberships.';
+  del.textContent = `Deleting closes your account now and removes it for good after ${deleteGraceDays()} days: profile, friends, DMs, stories and server memberships. A site admin can restore it inside that window.`;
   const row = document.createElement('div'); row.className = 'row'; row.style.marginTop = '.5rem';
   const bk = document.createElement('button'); bk.className = 'btn danger small'; bk.textContent = 'Disable account';
   bk.onclick = () => openCloseAccount('disable', has2fa);
@@ -117,14 +124,14 @@ function openCloseAccount(mode, has2fa, retry) {
   const name = (S.me && S.me.username) || '';
   const prev = (retry && retry.body) || {};
   const lines = del
-    ? ['Your profile, avatar, friends, DMs and stories go with it.',
-       'You leave every server. Messages you wrote stay in their chats, shown as a deleted user.',
-       'This cannot be undone — there is no way to restore the account.']
+    ? [`Your account is closed right away — signed out everywhere, and nobody can sign in as @${name}.`,
+       `It is deleted for good after ${deleteGraceDays()} days, with your profile, avatar, friends, DMs, stories and server memberships.`,
+       `Until then a site admin can restore it. After that it cannot be undone.`]
     : ['You are signed out on every device right away.',
        'You cannot sign in again until a site admin re-enables the account.',
        'Nothing is deleted — your messages, servers and chats are kept.'];
   openModal(del ? 'Delete your account?' : 'Disable your account?', `
-    <p class="muted">${del ? 'This permanently deletes' : 'This closes'} <b>@${esc(name)}</b>.</p>
+    <p class="muted">${del ? `This closes <b>@${esc(name)}</b> now and deletes it in ${deleteGraceDays()} days.` : `This closes <b>@${esc(name)}</b>.`}</p>
     <ul class="danger-list">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>
     ${retry && retry.msg ? `<p class="error">${esc(retry.msg)}</p>` : ''}
     <label>Your password<input id="acct-pw" type="password" autocomplete="current-password" value="${esc(prev.password || '')}" /></label>
@@ -156,9 +163,11 @@ async function submitCloseAccount(mode, has2fa) {
   }
   accountClosed(mode);
 }
-// The account is off (or gone) and so is every session: tear the local session
-// down without asking the API for anything, forget this account's device
-// memories, and hand the person the sign-in screen with the reason.
+// The account is closed (or disabled) and so is every session: tear the local
+// session down without asking the API for anything, forget this account's
+// device memories, and hand the person the sign-in screen with the reason.
+// For a deletion that reason names the window, because the account is still
+// restorable for it — this is not a goodbye yet.
 function accountClosed(mode) {
   const uid = S.me && S.me.id;
   try { leaveVoice(true); } catch {}
@@ -172,7 +181,7 @@ function accountClosed(mode) {
     }
   }
   const msg = mode === 'delete'
-    ? 'Your account has been deleted. Messages you wrote stay in their chats as a deleted user.'
+    ? `Your account is closed and will be deleted in ${deleteGraceDays()} days. A site admin can restore it until then. Messages you wrote stay in their chats as a deleted user.`
     : 'Your account is disabled. A site admin can re-enable it for you.';
   showAuth();
   const el = $('#auth-error');

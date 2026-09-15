@@ -446,6 +446,9 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .mini:disabled:hover{background:var(--panel-3)}
 .mini.danger{background:var(--danger-bg);border:1px solid var(--danger-line);color:var(--danger-tx)}
 .mini.danger:hover{background:rgba(248,113,113,.17)}
+/* The one constructive action on a row (Admin → Users → Restore): same shape,
+   accent fill. */
+.mini.primary{background:var(--accent-container);color:var(--on-container)}
 #me-card{display:flex;align-items:center;gap:.55rem;padding:.6rem .7rem;margin:.4rem .6rem .6rem calc(.6rem - var(--rail-w));border:0;border-radius:12px;background-color:var(--panel-2);font-size:.88rem;font-weight:600;overflow:hidden;transition:background-color .15s;position:relative;z-index:2}
 /* The avatar + name is the only part of the bar that opens your card, so the
    space around mute/deafen/settings does nothing. It says so on hover with a
@@ -2509,6 +2512,10 @@ body{touch-action:manipulation}
 .adm-badge.admin{background:var(--accent-container);color:var(--on-container)}
 .adm-badge.off{background:var(--danger-bg);color:var(--danger-tx)}
 .adm-badge.owner{background:var(--panel-4);color:var(--text)}
+/* Inside the deletion grace period: closed, but still restorable — amber, not
+   the red of something already gone (there is no red state here: the sweep
+   purges the row and the row stops existing). */
+.adm-badge.del{background:rgba(251,191,36,.15);color:var(--amber)}
 /* The protected owner account: dimmed and read-only for every other admin */
 .adm-row.protected{opacity:.6}
 .adm-subrow.protected{opacity:.6}

@@ -778,7 +778,30 @@ greyed out with its buttons disabled **for everyone, the owner included** (the
 owner manages their account from Settings → Profile / Account), and the same
 flag hides Kick/Make-owner in the member lists and Disable/Ban on a report
 card for that author. Any new admin route that changes an account must call the
-same guard. Presence is
+same guard. **Closing an account is a 7-day grace period, never an instant
+purge**, wherever the request comes from (the account's own Settings → Account,
+the console's Delete, or anywhere else that will grow one):
+`requestAccountDeletion` disables the row and signs every session out at once, so
+the person is gone from the app immediately, and the ROW is deleted only once
+`deletion_scheduled_at` has passed — by the leader-locked `purgeDueAccounts`
+(`db.LOCKS.accountPurge`, run at boot and on a slow tick, each account under its
+own `db.withKeyLock` so a restore landing in the same instant either wins the row
+or is refused, never both). Until the deadline `POST
+/api/admin/users/:id/restore` puts the account back, and it is a REAL restore
+because nothing is torn down first: memberships, messages, DMs, stories, 2FA and
+profile media are all still there. `deletion_prev_disabled` is what makes it
+honest — scheduling forces `disabled = 1`, and a restore puts back whatever the
+flag was before, so an account an admin had disabled for abuse does not come back
+enabled by the act of undoing a deletion. Enabling through `PATCH` also cancels a
+pending deletion, or a purge would fire under an account somebody just revived.
+Both sign-in (`refuseClosedAccount`) and `authRequired` answer
+`pending_deletion` with the deadline rather than the generic `account_disabled`,
+and the console mirrors all of it: a `Pending deletion` filter, a `DELETES IN
+Nd` badge, the requester and the deadline on the row, Restore in place of Delete,
+and a `Pending deletion` card in the overview. The window length is ONE constant
+(`ACCOUNT_DELETE_GRACE_DAYS`, default 7) served to the client as
+`/api/config.deleteGraceDays`, because the copy that promises the number and the
+sweep that acts on it must not be able to disagree. Presence is
 server-scoped **and** friend-scoped: a friend with no shared server would
 otherwise look permanently offline (see `notifyFriends`/`presenceForUsers` in
 `server.js`) — any new presence surface must respect both. The avatar-corner

@@ -21,6 +21,20 @@ function fmtDate(ts) {
   try { return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }); }
   catch { return ''; }
 }
+// "how long until this account is purged", for the pending-deletion badge: the
+// grace period is days long, so days is the unit that matters, with hours/minutes
+// as it runs out (and "any moment now" rather than a negative number once the
+// deadline has passed and the sweep has yet to reach it).
+function fmtCountdown(ts) {
+  const ms = Number(ts) - Date.now();
+  if (!Number.isFinite(ms)) return '';
+  if (ms <= 0) return 'any moment now';
+  const mins = Math.floor(ms / 60000);
+  if (mins < 60) return mins <= 1 ? 'in under a minute' : `in ${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 48) return `in ${hours}h`;
+  return `in ${Math.ceil(hours / 24)}d`;
+}
 
 function isSiteAdmin() { return !!(S.me && S.me.is_admin); }
 function adminConsoleOpen() { return !!($('#admin-backdrop') && !$('#admin-backdrop').classList.contains('hidden')); }
@@ -83,6 +97,7 @@ function ensureAdminUsersPane() {
         <option value="all">Everyone</option>
         <option value="admins">Admins</option>
         <option value="disabled">Disabled</option>
+        <option value="pending">Pending deletion</option>
       </select>
       <button id="adm-usearch" class="btn small">Search</button>
     </div>
@@ -336,6 +351,9 @@ function renderAdminStats() {
     card(s.online, 'Online', sessions ? `${sessions} session${sessions === 1 ? '' : 's'}` : '') +
     card(s.newWeek, 'New this week') +
     card(s.openReports || 0, 'Open reports') +
+    // Accounts inside their 7-day grace period: closed but not gone, and the
+    // number that says whether anybody needs to reach for Restore.
+    card(s.pendingDeletes || 0, 'Pending deletion') +
     `<div class="adm-note muted small">Live · ${esc(when)}</div>`;
 }
 
@@ -680,18 +698,27 @@ function admUserRow(u) {
   // Settings → Profile / Account instead.
   const locked = !!u.ownerAccount;
   const dis = locked ? ' disabled' : '';
+  // Inside the deletion grace period the account is still a real account: the
+  // row says how long is left and who asked, and the destructive button is
+  // RESTORE — deleting is already what is scheduled.
+  const pending = !locked && !!u.deletion_scheduled_at;
+  const pendingLine = pending
+    ? `<div class="muted small">Deletion scheduled ${fmtDate(u.deletion_scheduled_at)} · ${u.deletion_requested_by === 'self' ? 'requested by the account holder' : 'requested by @' + esc(u.deletion_requested_by || 'an admin')}</div>`
+    : '';
   const badges =
     (u.ownerAccount ? '<span class="adm-badge owner" title="Instance owner account — protected from the admin panel">PROTECTED</span>' : '') +
     (u.is_admin ? '<span class="adm-badge admin">ADMIN</span>' : '') +
+    (pending ? `<span class="adm-badge del" title="Restorable until ${esc(new Date(Number(u.deletion_scheduled_at)).toLocaleString())}">DELETES ${esc(fmtCountdown(u.deletion_scheduled_at).toUpperCase())}</span>` : '') +
     (u.disabled ? '<span class="adm-badge off">DISABLED</span>' : '') +
     (u.has2fa ? '<span class="adm-badge me">2FA</span>' : '') +
     (u.id === S.me.id ? '<span class="adm-badge me">YOU</span>' : '');
-  return `<div class="adm-row${locked ? ' protected' : ''}" data-uid="${esc(u.id)}">
+  return `<div class="adm-row${locked ? ' protected' : ''}" data-uid="${esc(u.id)}"${pending ? ' data-pending="1"' : ''}>
     <span class="avatar adm-av"></span>
     <div class="adm-main">
       <div class="adm-name" style="${nameStyleFor(u)}">${esc(u.display_name)}</div>
       <div class="muted small">@${esc(u.username)} · ${u.serverCount} server${u.serverCount === 1 ? '' : 's'} · ${u.messageCount + u.dmCount} msgs · joined ${fmtDate(u.created_at)}</div>
       <div class="adm-badges">${badges}</div>
+      ${pendingLine}
       <div class="adm-actions">
         <button class="mini" data-act="u-edit"${dis}>Edit</button>
         <button class="mini" data-act="u-pw"${dis}>Password</button>
@@ -699,7 +726,9 @@ function admUserRow(u) {
         <button class="mini" data-act="u-admin"${dis}>${u.is_admin ? 'Remove admin' : 'Make admin'}</button>
         <button class="mini" data-act="u-logout"${dis}>Log out</button>
         <button class="mini" data-act="u-2fa"${dis}>Reset 2FA</button>
-        <button class="mini danger" data-act="u-del"${dis}>Delete</button>
+        ${pending
+          ? `<button class="mini primary" data-act="u-restore">Restore</button>`
+          : `<button class="mini danger" data-act="u-del"${dis}>Delete</button>`}
       </div>
     </div>
   </div>`;
@@ -887,13 +916,16 @@ async function adminClick(e) {
       if (urow.dataset.uid === S.me.id) return toast('You cannot disable yourself');
       const ok = await openConfirmModal({
         title: (dis ? 'Disable @' : 'Enable @') + 'user?',
-        message: dis ? 'They will be logged out immediately and cannot log back in until re-enabled.' : 'They will be able to log in again.',
+        message: dis ? 'They will be logged out immediately and cannot log back in until re-enabled.'
+          : (urow.dataset.pending === '1'
+            ? 'They will be able to log in again, and the scheduled deletion is cancelled — the same thing the Restore button does.'
+            : 'They will be able to log in again.'),
         okLabel: dis ? 'Disable' : 'Enable',
       });
       if (!ok) return;
       await api(`/api/admin/users/${urow.dataset.uid}`, { method: 'PATCH', body: JSON.stringify({ disabled: dis }) });
-      toast(dis ? 'User disabled' : 'User enabled');
-      loadAdminUsers();
+      toast(dis ? 'User disabled' : (urow.dataset.pending === '1' ? 'Account restored' : 'User enabled'));
+      loadAdminStats(); loadAdminUsers();
     }
     else if (act === 'u-admin' && urow) {
       const make = b.textContent.trim() === 'Make admin';
@@ -924,10 +956,27 @@ async function adminClick(e) {
     }
     else if (act === 'u-del' && urow) {
       if (urow.dataset.uid === S.me.id) return toast('You cannot delete yourself');
-      const ok = await openConfirmModal({ title: 'Delete this user?', message: 'Their account, messages authorship aside, is removed permanently. This cannot be undone.', okLabel: 'Delete' });
+      const graceDays = Number(S.deleteGraceDays);
+      const days = Number.isFinite(graceDays) && graceDays >= 0 ? Math.round(graceDays) : 7;
+      const ok = await openConfirmModal({
+        title: 'Delete this user?',
+        message: `They are signed out and disabled right away, and the account is deleted for good in ${days} days. Until then you can restore it from this row — profile, friends, DMs, stories and memberships are all kept.`,
+        okLabel: 'Delete',
+      });
       if (!ok) return;
-      await api(`/api/admin/users/${urow.dataset.uid}`, { method: 'DELETE' });
-      toast('User deleted');
+      const r = await api(`/api/admin/users/${urow.dataset.uid}`, { method: 'DELETE' });
+      toast(`User scheduled for deletion in ${(r && r.graceDays) || days} days`);
+      loadAdminStats(); loadAdminUsers();
+    }
+    else if (act === 'u-restore' && urow) {
+      const oku = await openConfirmModal({
+        title: 'Restore this account?',
+        message: 'The scheduled deletion is cancelled and the account works again — they can sign in with their password as before. Anything they owned was never touched.',
+        okLabel: 'Restore',
+      });
+      if (!oku) return;
+      await api(`/api/admin/users/${urow.dataset.uid}/restore`, { method: 'POST' });
+      toast('Account restored');
       loadAdminStats(); loadAdminUsers();
     }
     else if (act === 's-edit' && srow) {

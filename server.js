@@ -499,6 +499,10 @@ async function authRequired(req, res, next) {
     const p = jwt.verify(token, JWT_SECRET);
     const user = await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(p.sub);
     if (!user) return res.status(401).json({ error: 'user_gone' });
+    // A pending deletion reads as itself rather than as a plain disable, so an
+    // open tab on another device says what actually happened (see also the
+    // sign-in gate, refuseClosedAccount).
+    if (user.deletion_scheduled_at) return res.status(403).json({ error: 'pending_deletion', scheduledAt: Number(user.deletion_scheduled_at) });
     if (user.disabled) return res.status(403).json({ error: 'account_disabled' });
     // 2s grace: JWT iat is second-precision while token_valid_after is ms —
     // without it a token minted in the same second as a reset looks older.
@@ -660,7 +664,7 @@ function blockedByOwnerLock(req, res, target) {
 }
 // Avatar decorations (settings → profile). IDs must match AVATAR_DECOS in public/js/core.js.
 const AVATAR_DECOS = ['ember', 'fireflies', 'aurora', 'neon', 'tide', 'stardust'];
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, presence_auto, playing_game, streaming_game, bio, name_color, name_gradient, card_color, card_gradient, avatar_decoration, active_tag_server_id, active_tag, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, tz_offset, nsfw_ok, theme';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, presence_auto, playing_game, streaming_game, bio, name_color, name_gradient, card_color, card_gradient, avatar_decoration, active_tag_server_id, active_tag, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, deletion_scheduled_at, tz_offset, nsfw_ok, theme';
 
 // ---------- shared rate limiting ----------
 // Every limiter lives in the rate_limits table rather than in process memory,
@@ -744,7 +748,11 @@ app.get('/api/config', (req, res) => {
       credential: process.env.TURN_PASS || undefined,
     });
   }
-  res.json({ iceServers, origin: ORIGIN, turnstileSiteKey: process.env.TURNSTILE_SITEKEY || null, linkPreviews: String(process.env.UNFURL === undefined ? '1' : process.env.UNFURL) !== '0', maxUploadMb: Math.round(MAX_FILE_BYTES / 1048576), maxReactions: REACTION_KINDS_MAX });
+  res.json({ iceServers, origin: ORIGIN, turnstileSiteKey: process.env.TURNSTILE_SITEKEY || null, linkPreviews: String(process.env.UNFURL === undefined ? '1' : process.env.UNFURL) !== '0', maxUploadMb: Math.round(MAX_FILE_BYTES / 1048576), maxReactions: REACTION_KINDS_MAX,
+    // How long a closed account can still be restored (see DELETE_GRACE_DAYS).
+    // The copy that promises the window is written from this, so the number the
+    // person is shown is the number the server actually waits.
+    deleteGraceDays: DELETE_GRACE_DAYS });
 });
 
 // ---------- Cloudflare Turnstile (login/signup captcha) ----------
@@ -812,13 +820,26 @@ app.post('/api/register', async (req, res) => {
   res.json({ token, sid, user: publicUser({ id: user.id, username, display_name: user.display_name, avatar_color: user.avatar_color }) });
 });
 
+// One sign-in gate for every credential path (password, the 2FA step, a
+// passkey): a pending deletion refuses sign-in exactly like a disabled account,
+// but its reason has an end date, so it gets its own code and the sign-in
+// screen can say what actually happened (see prettyError in public/js/auth.js).
+function refuseClosedAccount(u, res) {
+  if (!u) return false;
+  if (u.deletion_scheduled_at) {
+    res.status(403).json({ error: 'pending_deletion', scheduledAt: Number(u.deletion_scheduled_at), graceDays: DELETE_GRACE_DAYS });
+    return true;
+  }
+  if (u.disabled) { res.status(403).json({ error: 'account_disabled' }); return true; }
+  return false;
+}
 app.post('/api/login', async (req, res) => {
   const tsToken = req.body?.turnstile;
   if (!(await verifyTurnstile(tsToken, req.ip))) return res.status(403).json({ error: tsToken ? 'captcha_failed' : 'captcha_required' });
   const { username, password } = req.body || {};
   const u = await db.prepare('SELECT * FROM users WHERE username = ?').get(String(username || '').trim().toLowerCase());
   if (!u) return res.status(401).json({ error: 'invalid_login' });
-  if (u.disabled) return res.status(403).json({ error: 'account_disabled' });
+  if (refuseClosedAccount(u, res)) return;
   const ok = await bcrypt.compare(String(password || ''), u.password_hash);
   if (!ok) return res.status(401).json({ error: 'invalid_login' });
   if (u.totp_enabled) {
@@ -936,7 +957,7 @@ app.post('/api/login/2fa', async (req, res) => {
   if (!p || p.purpose !== '2fa-pre') return res.status(401).json({ error: 'bad_token' });
   const u = await db.prepare('SELECT * FROM users WHERE id = ?').get(p.sub);
   if (!u) return res.status(401).json({ error: 'invalid_login' });
-  if (u.disabled) return res.status(403).json({ error: 'account_disabled' });
+  if (refuseClosedAccount(u, res)) return;
   if (!u.totp_enabled) return res.status(400).json({ error: 'not_enabled' });
   if (!(await check2faCode(u.id, u.totp_secret, req.body?.code))) {
     if (await is2faLocked(u.id)) return res.status(429).json({ error: 'slow_down' });
@@ -1058,7 +1079,7 @@ app.post('/api/passkeys/login/verify', async (req, res) => {
     await db.prepare('UPDATE passkeys SET counter = ?, last_used = ? WHERE id = ?').run(v.authenticationInfo.newCounter, now(), row.id);
     const u = await db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id);
     if (!u) return res.status(401).json({ error: 'invalid_login' });
-    if (u.disabled) return res.status(403).json({ error: 'account_disabled' });
+    if (refuseClosedAccount(u, res)) return;
     const sid = await newSession(u.id, req);
     const token = signSession(u, sid);
     res.cookie('cf_token', token, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 864e5 });
@@ -4133,14 +4154,103 @@ app.post('/api/me/disable', authRequired, async (req, res) => {
   res.json({ ok: true });
 });
 // Delete: the typed username is checked here too, so the confirmation gate is
-// the server's, not just the dialog's.
+// the server's, not just the dialog's. It does not remove anything yet — see
+// the grace period below.
 app.post('/api/me/delete', authRequired, async (req, res) => {
   const me = await confirmSelfAction(req, res);
   if (!me) return;
   if (String(req.body?.confirm || '').trim().toLowerCase() !== me.username) return res.status(400).json({ error: 'confirm_mismatch' });
-  await purgeAccount(me);
-  res.json({ ok: true });
+  const scheduledAt = await requestAccountDeletion(me, 'self');
+  res.json({ ok: true, pending: true, scheduledAt, graceDays: DELETE_GRACE_DAYS });
 });
+
+// ---------- closing an account is a 7-day grace period ----------
+// Wherever the request comes from — the account's own Settings → Account, or a
+// site admin's Delete in the console — the row is NOT deleted. The account is
+// signed out and disabled at once (so the person is gone from the app
+// immediately, which is what "delete my account" has to mean), and the actual
+// purge happens DELETE_GRACE_DAYS later in purgeDueAccounts. Until that
+// deadline ANY site admin can put the account back with one call, and a restore
+// is a real restore: memberships, messages, DMs, stories, friends and 2FA are
+// all still there, because nothing is torn down until the purge.
+//
+// `deletion_prev_disabled` is what makes a restore honest: scheduling forces
+// disabled = 1, and a restore puts back whatever the flag was before (an
+// account an admin had disabled for abuse does not come back enabled by the
+// act of undoing a deletion).
+const DELETE_GRACE_DAYS = Math.max(0, parseInt(process.env.ACCOUNT_DELETE_GRACE_DAYS || '', 10) || 7);
+const DELETE_GRACE_MS = DELETE_GRACE_DAYS * 864e5;
+
+// `by` is 'self' or the requesting admin's username — an audit note that rides
+// on the row for as long as the request is pending.
+async function requestAccountDeletion(target, by) {
+  // Already scheduled: keep the ORIGINAL deadline and the state a restore has
+  // to put back. Restarting the clock would let a repeated request hold an
+  // account in limbo forever, and re-reading `disabled` now would remember the
+  // flag this very function set rather than the one that was there before.
+  if (target.deletion_scheduled_at) return Number(target.deletion_scheduled_at);
+  const t = now();
+  const scheduledAt = t + DELETE_GRACE_MS;
+  await db.prepare(`UPDATE users SET disabled = 1, deletion_prev_disabled = ?, deletion_scheduled_at = ?,
+      deletion_requested_at = ?, deletion_requested_by = ? WHERE id = ?`)
+    .run(target.disabled ? 1 : 0, scheduledAt, t, String(by || 'system'), target.id);
+  await db.prepare('UPDATE sessions SET revoked = 1 WHERE user_id = ?').run(target.id);
+  closeSessionSockets(target.id, null);
+  try { await broadcastUserUpdate(await freshUser(target.id)); } catch {}
+  return scheduledAt;
+}
+
+// Undo a scheduled deletion. False when there was nothing to undo — the row is
+// gone, or it was never pending (the caller answers 409).
+async function restoreAccount(target) {
+  const r = await db.prepare(`UPDATE users SET deletion_scheduled_at = NULL, deletion_requested_at = NULL,
+      deletion_requested_by = NULL, disabled = deletion_prev_disabled, deletion_prev_disabled = 0
+    WHERE id = ? AND deletion_scheduled_at IS NOT NULL`).run(target.id);
+  if (!r.changes) return false;
+  try { await broadcastUserUpdate(await freshUser(target.id)); } catch {}
+  return true;
+}
+
+// Both paths take the account's OWN key lock, so a restore landing in the same
+// instant as the purge either wins the row or loses it — never both (a restore
+// that cleared the schedule while purgeAccount was already walking to its
+// DELETE would tell an admin "restored" and then delete the account anyway).
+const accountLockKey = (id) => 'account-delete:' + id;
+const ACCOUNT_LOCK_TRIES = 5;
+
+// The sweep: leader-locked, one replica, and the deadline is a wall-time stamp
+// read by a slow tick, so a restart or a dead leader can never leave an account
+// past its window (boot runs it too, before the interval takes over).
+async function purgeDueAccounts() {
+  let due = [];
+  try {
+    due = await db.prepare('SELECT id FROM users WHERE deletion_scheduled_at IS NOT NULL AND deletion_scheduled_at <= ?').all(now());
+  } catch { return []; }
+  const purged = [];
+  for (const row of due) {
+    let r = null;
+    for (let i = 0; i < ACCOUNT_LOCK_TRIES; i++) {
+      r = await db.withKeyLock(accountLockKey(row.id), async () => {
+        const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(row.id);
+        if (!target) return null;
+        // The owner account is refused a schedule by every route, but a purge is
+        // the one action with no way back, so it is refused here as well.
+        if (isOwnerAccount(target)) { await restoreAccount(target); return null; }
+        // Re-read under the lock: a restore may have cleared it a moment ago.
+        if (!target.deletion_scheduled_at || Number(target.deletion_scheduled_at) > now()) return null;
+        await purgeAccount(target);
+        return target;
+      });
+      if (r.ran) break;
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    if (r && r.ran && r.value) {
+      purged.push(r.value.username);
+      console.log(`[accounts] purged @${r.value.username} — the ${DELETE_GRACE_DAYS}-day deletion grace period expired`);
+    }
+  }
+  return purged;
+}
 
 // ---------- server layout (rail order + folders, per user) ----------
 // Folders: server_folders rows (id/name/color/position/open) plus each
@@ -4196,7 +4306,13 @@ async function adminUserView(u) {
     messageCount = (await db.prepare('SELECT COUNT(*) c FROM messages WHERE user_id = ?').get(u.id)).c;
     dmCount = (await db.prepare('SELECT COUNT(*) c FROM dm_messages WHERE user_id = ?').get(u.id)).c;
   } catch {}
-  return { ...base, is_admin: !!u.is_admin, disabled: !!u.disabled, has2fa: !!u.totp_enabled, serverCount, messageCount, dmCount, ownerAccount: isOwnerAccount(u), ...(u.role ? { role: u.role } : {}) };
+  return { ...base, is_admin: !!u.is_admin, disabled: !!u.disabled, has2fa: !!u.totp_enabled, serverCount, messageCount, dmCount, ownerAccount: isOwnerAccount(u), ...(u.role ? { role: u.role } : {}),
+    // A pending account is still here: the row is what a restore works on, and
+    // the deadline is what the console counts down (see DELETE_GRACE_DAYS).
+    deletion_scheduled_at: u.deletion_scheduled_at ? Number(u.deletion_scheduled_at) : null,
+    deletion_requested_at: u.deletion_requested_at ? Number(u.deletion_requested_at) : null,
+    deletion_requested_by: u.deletion_requested_by || null,
+  };
 }
 app.get('/api/admin/stats', authRequired, requireSiteAdmin, async (req, res) => {
   const count = async (sql, ...a) => { try { return (await db.prepare(sql).get(...a)).c; } catch { return 0; } };
@@ -4215,6 +4331,7 @@ app.get('/api/admin/stats', authRequired, requireSiteAdmin, async (req, res) => 
     online: await onlineUsers(),
     sessions: clients.size,
     openReports: await openReportCount(),
+    pendingDeletes: await count('SELECT COUNT(*) c FROM users WHERE deletion_scheduled_at IS NOT NULL'),
   });
 });
 // ---------- site admin: media compression ----------
@@ -4454,6 +4571,9 @@ app.get('/api/admin/users', authRequired, requireSiteAdmin, async (req, res) => 
   if (q) { conds.push('(username LIKE ? OR display_name LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
   if (filter === 'admins') conds.push('is_admin = 1');
   if (filter === 'disabled') conds.push('disabled = 1');
+  // Accounts inside their deletion grace period: still here, still restorable,
+  // and invisible under any other filter that reads like "gone".
+  if (filter === 'pending') conds.push('deletion_scheduled_at IS NOT NULL');
   const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
   const total = (await db.prepare(`SELECT COUNT(*) c FROM users ${where}`).get(...params)).c;
   const rows = await db.prepare(`SELECT * FROM users ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
@@ -4484,6 +4604,14 @@ app.patch('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, re
   if (req.body?.disabled !== undefined) {
     if (self && req.body.disabled) return res.status(400).json({ error: 'cannot_disable_self' });
     sets.push('disabled = ?'); params.push(req.body.disabled ? 1 : 0);
+    // Enabling an account that is inside its deletion grace period ALSO cancels
+    // the deletion: a purge left scheduled under an account an admin just
+    // revived would delete it out from under them, which is the one thing the
+    // grace period exists to prevent. (The console's own button on a pending
+    // row is Restore; this is the same decision made through PATCH.)
+    if (!req.body.disabled && target.deletion_scheduled_at) {
+      sets.push('deletion_scheduled_at = NULL', 'deletion_requested_at = NULL', 'deletion_requested_by = NULL', 'deletion_prev_disabled = 0');
+    }
   }
   if (req.body?.is_admin !== undefined) {
     if (self && !req.body.is_admin) return res.status(400).json({ error: 'cannot_demote_self' });
@@ -4509,14 +4637,16 @@ app.patch('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, re
   await broadcastUserUpdate(fresh);
   res.json({ user: await adminUserView(fresh) });
 });
-// Permanently remove an account and everything personal hanging off it.
+// Permanently remove an account and everything personal hanging off it. This is
+// the END of the deletion grace period, not the request (that is
+// requestAccountDeletion): it is reached only by the sweep once the deadline
+// has passed, and once it has run there is nothing left to restore.
 // Sessions and live sockets go first so nothing can write underneath the
 // delete; the row itself is last. Messages stay (their FK is ON DELETE SET
 // NULL) so the chats they were written in don't develop holes — they render as
 // a deleted author — while memberships, DMs, friends, blocks, passkeys, push
 // subscriptions, stories and presences all cascade with the row. Profile media
-// is removed from storage. Shared by the site-admin route and the account
-// owner's own Settings → Account.
+// is removed from storage.
 async function purgeAccount(target) {
   const serverIds = (await db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(target.id)).map((r) => r.server_id);
   await db.prepare('UPDATE sessions SET revoked = 1 WHERE user_id = ?').run(target.id);
@@ -4533,13 +4663,34 @@ async function purgeAccount(target) {
   }
   return serverIds;
 }
+// Site admin: start (or re-confirm) the grace period for an account. Nothing is
+// removed here — the admin console's copy says so, and the response carries the
+// deadline it can count down.
 app.delete('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, res) => {
   const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!target) return res.status(404).json({ error: 'no_user' });
   if (blockedByOwnerLock(req, res, target)) return;
   if (target.id === req.user.id) return res.status(400).json({ error: 'cannot_delete_self' });
-  await purgeAccount(target);
-  res.json({ ok: true });
+  const scheduledAt = await requestAccountDeletion(target, req.user.username);
+  res.json({ ok: true, pending: true, scheduledAt, graceDays: DELETE_GRACE_DAYS, user: await adminUserView(await db.prepare('SELECT * FROM users WHERE id = ?').get(target.id)) });
+});
+// Site admin: undo it. The one action the grace period exists for, so it is a
+// route of its own rather than a side effect of some other edit.
+app.post('/api/admin/users/:id/restore', authRequired, requireSiteAdmin, async (req, res) => {
+  const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'no_user' });
+  if (blockedByOwnerLock(req, res, target)) return;
+  if (!target.deletion_scheduled_at) return res.status(409).json({ error: 'not_pending' });
+  let r = null;
+  for (let i = 0; i < ACCOUNT_LOCK_TRIES; i++) {
+    r = await db.withKeyLock(accountLockKey(target.id), () => restoreAccount(target));
+    if (r.ran) break;
+    await new Promise((res2) => setTimeout(res2, 50));
+  }
+  if (!r || !r.ran) return res.status(409).json({ error: 'busy' });
+  if (!r.value) return res.status(404).json({ error: 'no_user' }); // the purge won the row
+  const fresh = await db.prepare('SELECT * FROM users WHERE id = ?').get(target.id);
+  res.json({ ok: true, user: await adminUserView(fresh) });
 });
 async function evictFromServerAll(userId) {
   for (const c of clients) {
@@ -7813,6 +7964,13 @@ async function boot() {
   // rings and the per-row claim makes even a handover single-shot.
   await db.withLock(db.LOCKS.reminders, fireDueReminders).catch(() => {});
   safeLockedInterval('reminders', db.LOCKS.reminders, fireDueReminders, 20 * 1000);
+  // Accounts whose deletion grace period has run out are purged here. The tick
+  // is slow on purpose — the deadline is days away, and a purge is the one
+  // thing that cannot be undone — while the boot run is what guarantees an
+  // account that expired while the host was down is collected on the way up.
+  await db.withLock(db.LOCKS.accountPurge, purgeDueAccounts).catch(() => {});
+  safeLockedInterval('accounts', db.LOCKS.accountPurge, purgeDueAccounts,
+    Math.max(1000, parseInt(process.env.ACCOUNT_PURGE_EVERY_MS || '', 10) || 5 * 60 * 1000));
   // NOTE: media-compress / virus-scan / storage-sweep / backup own their own
   // schedulers and are still per-replica. They are made leader-aware in the
   // next phase (each takes its LOCKS key per tick); their work is idempotent
