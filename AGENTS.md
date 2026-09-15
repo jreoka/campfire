@@ -339,15 +339,22 @@ The **container stage** is what makes that verdict worth anything — a detector
 that scores the wrapper is defeated by wrapping, so Harbin opens what it is
 handed and scores what is inside. As of the 2026-09-15 revision that means the
 ZIP/archive family, 7z, **RAR (every generation through RAR 7)**, CAB (stored,
-MSZIP and LZX, with each data block's checksum verified), OLE/CFB walked as its
+MSZIP, LZX and **Quantum**, with each data block's checksum verified), OLE/CFB
+walked as its
 storage *tree* (so a stream carries its storage path), **PDF** (embedded files
 recovered from the object graph even when the document's xref table is absent or
 wrong), and **disk images** — VHD/VHDX, MBR/GPT, and the FAT, ext2/3/4 and NTFS
-filesystems inside them. Three codec crates came in with that (`rars`, `lzxd`,
-and the `fatfs`/`ext4-view`/`ntfs` readers): they are *readers*, never detectors,
+filesystems inside them. Four codec crates came in with that (`rars`, `lzxd`,
+`compcol`, and the `fatfs`/`ext4-view`/`ntfs` readers): they are *readers*, never
+detectors,
 and they link at build time, so the shipped binary still has no runtime
 dependencies and there is still no scanner container — but the `harbin` build
-stage is a real Rust compile now, not a two-second one. Two rules hold across all
+stage is a real Rust compile now, not a two-second one. Quantum is the one that
+needed a decoder fed something the cabinet does not contain: its coder restarts
+every 32 KiB frame and the format's driver synthesises a `0xFF` after every
+block so the decoder's frame realignment can find it, so the plain concatenation
+of a folder's blocks decodes to nothing (`src/quantum.rs` puts that byte back).
+Two rules hold across all
 of it: a parse that cannot be completed is **named in the evidence** ("could not
 be read" must never pass for "nothing inside"), and every parser runs behind a
 `catch_unwind` guard (`container::guarded`, with `panic = "unwind"` in the release

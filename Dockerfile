@@ -14,7 +14,7 @@
 FROM rust:1-alpine AS harbin
 RUN apk add --no-cache build-base git
 ARG HARBIN_REPO=https://github.com/jreoka/harbin
-ARG HARBIN_REF=9499ac08e9c267ce0a3c51984dc6f571be61cdb2
+ARG HARBIN_REF=99be8fc5bf1a217c01eeecf01d95b3d1c4c42efc
 WORKDIR /src
 # A full clone rather than a shallow one: the repository is well under a
 # megabyte, and a pinned commit that is no longer the branch head still has to
