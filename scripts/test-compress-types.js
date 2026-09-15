@@ -130,12 +130,18 @@ async function main() {
       const dst = f('tiny-out.jpg');
       const r = await media.encodeCandidate(heifPlan, heic, dst, 'test');
       const out = fs.existsSync(dst) ? fs.readFileSync(dst) : null;
+      // JSON, not the csv flavour: ffprobe emits its fields in ITS order, not the
+      // order they were asked for, and "mjpeg,16,16" read as width,height,codec
+      // is a trap (it fooled this check the first time).
       const probe = spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
-        '-show_entries', 'stream=width,height,codec_name', '-of', 'csv=p=0', dst], { encoding: 'utf8' });
+        '-show_entries', 'stream=codec_name,width,height', '-of', 'json', dst], { encoding: 'utf8' });
+      let st = {};
+      try { st = (JSON.parse(String(probe.stdout || '{}')).streams || [])[0] || {}; } catch {}
       check('a real HEIC decodes through heif-convert and encodes to a JPEG',
-        r.ok && !!out && out.length > 0 && /^mjpeg|^jpeg/.test(String(probe.stdout || '').trim().replace(/^.*,/, '')), JSON.stringify({ ok: r.ok, err: r.error, probe: String(probe.stdout || '').trim() }));
+        r.ok && !!out && out.length > 0 && st.codec_name === 'mjpeg',
+        JSON.stringify({ ok: r.ok, err: r.error, codec: st.codec_name }));
       check('...at its own size, never upscaled to the 2048 box',
-        /^16,16,/.test(String(probe.stdout || '').trim()), String(probe.stdout || '').trim());
+        st.width === 16 && st.height === 16, JSON.stringify({ w: st.width, h: st.height }));
       check('a file that is not a HEIC fails the decode without crashing the worker',
         await (async () => {
           const junk = f('junk.heic');
@@ -200,6 +206,19 @@ async function main() {
       'opaque.png': png, 'alpha.png': png, 'pic.bmp': 'jpeg', 'pic.tiff': 'jpeg',
       'pic.avif': 'jpeg', 'pic.jxl': 'jpeg', 'anim.webp': null, 'anim.png': null,
     };
+    // Can this box READ BACK a fixture its own ffmpeg just wrote? Alpine's
+    // current build answers "image data not found" to the WebP files its own
+    // encoder produces, so `probeStill` gets no frame count and `resolvePlan`
+    // keeps the file as it is — which is the documented SAFE default ("the bytes
+    // said nothing"), not a regression. The animation rule can only be exercised
+    // where the fixture is readable (it is on a stock ffmpeg); elsewhere the
+    // case is reported out loud rather than silently dropped.
+    const readable = (name) => {
+      const r = spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-count_frames',
+        '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', f(name)], { encoding: 'utf8' });
+      return /^[0-9]+/.test(String(r.stdout || '').trim());
+    };
+    let animChecked = 0;
     for (const name of made) {
       const src = f(name);
       const ext = path.extname(name);
@@ -207,6 +226,11 @@ async function main() {
       // Route it the way a real upload of that type would be routed, then let
       // the bytes settle the question.
       const plan = media.planFor(MIME[ext] || 'application/octet-stream', 'files/x' + ext);
+      if (want === null && !readable(name)) {
+        console.log('  note  ' + name + ' is not readable back on this box (its own ffmpeg wrote it) — the animation rule is not exercised here');
+        continue;
+      }
+      if (want === null) animChecked++;
       let out = null;
       try { out = await media.resolvePlan(plan, src); } catch (e) { out = { error: String((e && e.message) || e) }; }
       const ok = out && out.error ? false : (want === null ? out === null : !!out && out.pipeline === want);
@@ -225,7 +249,7 @@ async function main() {
       }
     }
     check('the multi-frame fixtures really were animations',
-      made.includes('anim.webp') && made.includes('anim.png'), 'generated: ' + made.join(', '));
+      animChecked > 0, 'generated: ' + made.join(', ') + '; animation cases exercised: ' + animChecked);
 
     const direct = media.planFor('image/jpeg', 'files/a.jpg');
     check('a plan that is not deferred passes through untouched', (await media.resolvePlan(direct, f('opaque.png'))) === direct);
