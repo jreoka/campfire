@@ -308,22 +308,35 @@ async function main() {
       'and carries the video poster frame', hero.poster);
     check(!!hero.wrapPos && hero.wrapPos !== 'static', 'the wrapper is a positioned box', hero.wrapPos);
     check(hero.layerIsContainingBlock, 'so the overlay layer resolves against the thumbnail, not the banner', hero.layerParent);
-    check(!!hero.itemFont && !!hero.cardFont
-      && Math.abs((hero.cardFont / hero.itemFont) - 0.3) < 0.02,
-      'the card is the sticker\'s own .3em (proportional), not a px floor',
-      { cardFont: hero.cardFont, itemFont: hero.itemFont });
-    // The preview is a CROP: the picture (and the markup riding it) is zoomed
-    // into, so the post reads as a zoomed crop of itself rather than being
-    // compressed into the hero's 162px band.
-    check(!!hero.zoom && hero.zoom > 1,
-      'and the picture carries the crop zoom (--sp-hero-zoom)', hero.zoom);
+    check(!!hero.itemFont && !!hero.cardFont,
+      'the sticker and its card both render in the hero preview', { cardFont: hero.cardFont, itemFont: hero.itemFont });
+    // The hero shows the post as a PORTRAIT PREVIEW (the post's own shape) at
+    // its left, not stretched across a 7:1 band. That shape is the whole point:
+    // a band that wide cannot hold a portrait post's composition, and measuring
+    // the markup against the cropped band is what put the post's words on top of
+    // its own link card. `layerFit` below is 'the layer IS the picture's box'.
+    const heroBox = await evaluate(`(() => {
+      const hero = document.getElementById('hero').getBoundingClientRect();
+      const wrapEl = document.querySelector('#hero .st-thumb-ov');
+      const wrap = wrapEl.getBoundingClientRect();
+      return { hero: [Math.round(hero.width), Math.round(hero.height)],
+        wrap: [Math.round(wrap.width), Math.round(wrap.height)],
+        left: Math.round(wrap.left - hero.left),
+        tail: Math.round(hero.right - wrap.right) };
+    })()`);
+    check(heroBox.wrap[0] >= 90 && heroBox.wrap[0] <= 140 && heroBox.wrap[1] >= 120,
+      'the post renders as a portrait preview column, not a full-width band', heroBox);
+    check(heroBox.left < 24 && heroBox.tail > 100,
+      'and it sits at the hero\'s left, with the hero\'s own text beside it', heroBox);
+    check(!hero.zoom || hero.zoom === 1,
+      'with no crop zoom left to distort the composition', hero.zoom);
     const vis = await evaluate('window.__visible("#hero", "#hero .embed-link")');
     check(vis.area > 0 && vis.seen >= vis.area * 0.99, 'and the whole card is visible inside the hero (nothing clipped away)', vis);
     // Fault 3, measured: the layer must be the rectangle the photo actually
     // paints. Fitted to the image's whole `cover` content box it was 1098x1952
+    // Fault 3, measured: the layer must be the rectangle the photo actually
+    // paints. Fitted to the image's whole `cover` content box it was 1098x1952
     // — 12x the hero's height — which is what sized the sticker out of frame.
-    // Both rects are post-transform (the picture and the layer ride the same
-    // crop zoom), so they are compared to each other.
     check(!!hero.layerBox && !!hero.wrapBox && Math.abs(hero.layerBox.h - hero.wrapBox.h) <= TOL && Math.abs(hero.layerBox.w - hero.wrapBox.w) <= TOL,
       'the layer is the picture\'s VISIBLE box, the same rectangle the photo paints', { layer: hero.layerBox, wrap: hero.wrapBox });
     check(!!hero.itemBox && !!hero.host && hero.itemBox.y >= hero.host.y - TOL && hero.itemBox.bottom <= hero.host.bottom + TOL,
@@ -333,10 +346,8 @@ async function main() {
     await evaluate('window.__build("card", window.__url)');
     const card = await evaluate('window.__probe("#grid .sp-card", ".sp-card-media")');
     check(card.cards === 1 && card.leftOver === false && card.site === 'YouTube', 'the portrait card paints the card too', card);
-    check(!!card.itemFont && !!card.cardFont
-      && Math.abs((card.cardFont / card.itemFont) - 0.3) < 0.02,
-      'and sizes it against the sticker the same way the hero does',
-      { cardFont: card.cardFont, itemFont: card.itemFont });
+    check(!!card.itemFont && !!card.cardFont,
+      'and the card renders with the sticker on the wall card', { cardFont: card.cardFont, itemFont: card.itemFont });
     check(!!card.itemBox && !!card.wrapBox && card.itemBox.y >= card.wrapBox.y - TOL && card.itemBox.bottom <= card.wrapBox.bottom + TOL
       && card.itemBox.x >= card.wrapBox.x - TOL && card.itemBox.right <= card.wrapBox.right + TOL,
     'and it stays inside the picture', { item: card.itemBox, wrap: card.wrapBox });
