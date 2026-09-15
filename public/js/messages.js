@@ -991,6 +991,31 @@ async function votePoll(mid, optionId) {
   try { await api(`/api/polls/${pid}/vote`, { method: 'POST', body: JSON.stringify({ optionId }) }); }
   catch (err) { toast(prettyError(err.message)); }
 }
+// ---------- the hover bar's quick reactions ----------
+// One builder for the strip, so a repaint and a fresh render can never disagree
+// about what it holds: the account's own list (topReactions — most reacted-with,
+// then most recent), then More / Reply / menu.
+function quickReactHTML(e) {
+  const em = S.emojiAll[e.slice(1, -1)];
+  const label = (e.startsWith(':') && e.endsWith(':') && em)
+    ? `<img class="cemoi" src="${esc(em.url)}" alt="${esc(e)}">` : esc(e);
+  return `<button data-act="react" data-emoji="${esc(e)}" title="${esc(e)}">${label}</button>`;
+}
+function quickReactsHTML() {
+  return topReactions().map(quickReactHTML).join('')
+    + `<button data-act="more" title="More reactions">➕</button><button data-act="reply" title="Reply">↩</button><button data-act="menu" title="More actions">⋯</button>`;
+}
+// The strip is baked into each message's markup when it renders, so reacting with
+// something new moved the ranking with nothing on screen to show for it: the bar
+// under the pointer stayed the five it had. Repaint the ones already up — every
+// surface renders `.msg-actions` through the builder above.
+function paintQuickReacts() {
+  const html = topReactions().map(quickReactHTML).join('');
+  for (const bar of document.querySelectorAll('.msg-actions')) {
+    bar.querySelectorAll('button[data-emoji]').forEach((b) => b.remove());
+    bar.insertAdjacentHTML('afterbegin', html);
+  }
+}
 function messageEl(m, opts = {}) {
   const div = document.createElement('div');
   // The painted node carries its own timestamp: a day divider belongs to the day
@@ -1047,15 +1072,8 @@ function messageEl(m, opts = {}) {
     inner += `<button class="thread-link" data-act="thread">${m.threadCount} ${m.threadCount === 1 ? 'reply' : 'replies'} →</button>`;
   }
   inner += '</div>';
-  // hover bar: most-used emoji + more + reply + overflow menu
-  let bar = topReactions().map((e) => {
-    const em = S.emojiAll[e.slice(1, -1)];
-    const label = (e.startsWith(':') && e.endsWith(':') && em)
-      ? `<img class="cemoi" src="${em.url}" alt="${esc(e)}">` : esc(e);
-    return `<button data-act="react" data-emoji="${esc(e)}" title="${esc(e)}">${label}</button>`;
-  }).join('');
-  bar += `<button data-act="more" title="More reactions">➕</button><button data-act="reply" title="Reply">↩</button><button data-act="menu" title="More actions">⋯</button>`;
-  inner += '<div class="msg-actions">' + bar + '</div>';
+  // hover bar: my quick reactions + more + reply + overflow menu
+  inner += '<div class="msg-actions">' + quickReactsHTML() + '</div>';
   div.innerHTML = inner;
   if (!grouped) paintAvatar(div.querySelector('.avatar'), au);
   try {

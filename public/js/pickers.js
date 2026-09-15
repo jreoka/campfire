@@ -174,7 +174,9 @@ function pickEmoji(e) {
     return;
   }
   if (S.picker?.mode === 'react' && S.picker.mid) toggleReaction(S.picker.mid, e);
-  else { bumpFreq(e); insertAtCursor($('#in-message'), e); }
+  // Inserting an emoji into a message is TEXT, not a reaction: it must not feed
+  // the quick-reaction strips (topReactions reads reaction use only).
+  else insertAtCursor($('#in-message'), e);
   closePicker();
   $('#in-message').focus();
 }
@@ -448,7 +450,10 @@ async function toggleReaction(mid, emoji) {
   const base = dm ? '/api/dms/messages/' : '/api/messages/';
   try {
     const { reactions } = await api(base + mid + '/reactions', { method: 'POST', body: JSON.stringify({ emoji }) });
-    bumpFreq(emoji);
+    // The quick strips are baked into each message's markup, so a reaction that
+    // moves the ranking has to repaint the bars already on screen (see
+    // paintQuickReacts) or the hover menu keeps offering the five it had.
+    if (bumpFreq(emoji)) { try { paintQuickReacts(); } catch {} }
     updateMsgInCaches(mid, (m) => { m.reactions = reactions.map((r) => ({ emoji: r.emoji, count: r.count, me: r.me, users: r.users || [] })); });
     reactionDetailCache.delete(mid); // counts changed — refetch on next view
     // Patch the one reaction bar in place; a full rebuild would jump the

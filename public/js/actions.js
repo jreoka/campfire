@@ -1,24 +1,47 @@
 'use strict';
 /* ================= frequent reactions + context menus ================= */
+// The quick strips (the hover bar's and the long-press sheet's) offer the five
+// reactions this account actually uses. `cf_freq` holds one row per emoji:
+// { n: times reacted with, at: when it was last used }. A bare number is the
+// older shape — a count with no timestamp — and still reads, so an existing
+// browser keeps the history it already has.
+function freqN(v) { return typeof v === 'number' ? v : ((v && +v.n) || 0); }
+function freqAt(v) { return (v && typeof v === 'object' && +v.at) || 0; }
+const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢']; // a fresh account's strip
 function topReactions() {
-  let f = {};
-  try { f = JSON.parse(localStorage.getItem('cf_freq') || '{}'); } catch {}
-  const def = ['👍', '❤️', '😂', '😮', '😢'];
-  const ranked = Object.entries(f).sort((a, b) => b[1] - a[1]).map(([k]) => k);
-  return [...new Set([...ranked, ...def])].slice(0, 5);
+  let raw = {};
+  try { raw = JSON.parse(localStorage.getItem('cf_freq') || '{}'); } catch {}
+  // Most reacted-with first; EQUAL counts go to whichever was used most recently,
+  // so a reaction somebody just started using takes its place instead of queueing
+  // behind one they used the same number of times weeks ago. The defaults fill
+  // whatever is left, so the strip is never short.
+  const ranked = Object.entries(raw)
+    .filter(([, v]) => freqN(v) > 0)
+    .sort((a, b) => (freqN(b[1]) - freqN(a[1])) || (freqAt(b[1]) - freqAt(a[1])))
+    .map(([k]) => k);
+  return [...new Set([...ranked, ...QUICK_REACTIONS])].slice(0, 5);
 }
+// Count ONE reaction. An emoji typed into a message is text, never a reaction --
+// the composer's picker used to feed this same list, which filled the strips with
+// whatever somebody happens to chat with. Returns whether the strip changed, so
+// the caller can repaint the ones already on screen (see paintQuickReacts).
 function bumpFreq(e) {
-  if (!e || typeof e !== 'string') return;
+  if (!e || typeof e !== 'string') return false;
   try {
-    const f = JSON.parse(localStorage.getItem('cf_freq') || '{}');
-    f[e] = (f[e] || 0) + 1;
+    const before = topReactions().join('\u0000');
+    let f = {};
+    try { f = JSON.parse(localStorage.getItem('cf_freq') || '{}'); } catch {}
+    f[e] = { n: freqN(f[e]) + 1, at: Date.now() };
     const keys = Object.keys(f);
     if (keys.length > 40) {
-      keys.sort((a, b) => f[a] - f[b]);
+      // Drop the least used first, oldest among equals — the ranking read
+      // backwards, so what survives is what topReactions would have offered.
+      keys.sort((a, b) => (freqN(f[a]) - freqN(f[b])) || (freqAt(f[a]) - freqAt(f[b])));
       for (const k of keys.slice(0, keys.length - 40)) delete f[k];
     }
     localStorage.setItem('cf_freq', JSON.stringify(f));
-  } catch {}
+    return topReactions().join('\u0000') !== before;
+  } catch { return false; }
 }
 let ctxEl = null;
 function closeCtx() { if (ctxEl) { ctxEl.remove(); ctxEl = null; } }
