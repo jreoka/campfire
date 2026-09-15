@@ -2719,12 +2719,20 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
    the post is shown as a CROP of itself with the hero's own title, stats and
    buttons on top of it. The markup is measured against that visible crop, which
    keeps it in the place the post put it.
-   The embed has NO px floor here (the viewer and the composer keep theirs): this
-   layer is a fraction of the picture's height, and holding the card at 10px while
-   8.5%-of-height words scaled under it made the card 2.5x its proportional height
-   — its bottom crossed the words above it by ~3px. Proportional, it measures the
-   same share of the picture here as it does in the viewer (0.12 vs 0.11). */
-.sp-hero{position:relative;display:flex;align-items:center;min-height:164px;margin-top:.55rem;border-radius:var(--r-xl);overflow:hidden;background:var(--panel-2);border:1px solid var(--line-soft);padding:1.05rem 1.15rem}
+   min-height is load-bearing, not decoration: this band is far wider than a post
+   is tall, so the taller the band, the less extreme the crop — and the whole
+   composition (picture AND markup) scales with the band's height. At 164px a
+   post's words came out at 13.8px and its link card's text at 4px; at 230px they
+   are 19.4px and 5.8px, with the card keeping the same share of the picture it
+   has in the viewer. It is also the ONE thing a rasterized "screencap" of the
+   story could not do better: this is already the 1:1 crop of the post, so a
+   baked image would be pixel-for-pixel what is here, just blurrier.
+   The embed has NO px floor here (the viewer and the composer keep theirs): on a
+   layer this short, holding the card at 10px while 8.5%-of-height words scaled
+   under it made the card 2.5x its proportional height — its bottom crossed the
+   words above it by ~3px. Proportional, it measures the same share of the picture
+   here as it does in the viewer (0.17 vs 0.11). */
+.sp-hero{position:relative;display:flex;align-items:center;min-height:230px;margin-top:.55rem;border-radius:var(--r-xl);overflow:hidden;background:var(--panel-2);border:1px solid var(--line-soft);padding:1.05rem 1.15rem}
 .sp-hero-empty{background:var(--panel);border-style:dashed;min-height:132px}
 .sp-hero-media{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
 .sp-hero-media>.st-thumb-media{border-radius:0}
@@ -2798,10 +2806,13 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 .sp-tip::before{content:'';position:absolute;left:.1rem;top:.45em;width:6px;height:6px;border-radius:50%;background:var(--accent)}
 .sp-empty .btn{margin-top:.35rem}
 /* Phone: the hero stacks tighter, its buttons get their own full-width row, and
-   the wall keeps two columns of smaller cards. */
+   the wall keeps two columns of smaller cards. The hero keeps a floor of its own
+   (a phone band is narrower, so the picture is less cropped and the post's words
+   and card stay legible at this height) — min-height:0 let the stacked content
+   decide, which is shorter than the post needs. */
 @media (max-width:700px),(max-height:560px) and (pointer:coarse){
   #stories-page{padding:.9rem .8rem 1.6rem}
-  .sp-hero{padding:.85rem .9rem;min-height:0}
+  .sp-hero{padding:.85rem .9rem;min-height:200px}
   .sp-hero-in{align-items:flex-start;gap:.7rem}
   .sp-hero-badge,.sp-hero-badge .avatar{width:46px;height:46px}
   .sp-hero-txt{min-width:120px}
