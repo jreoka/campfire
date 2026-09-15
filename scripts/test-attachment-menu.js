@@ -1,14 +1,21 @@
-// The attachment rows live in the MESSAGE menu (see AGENTS.md verification
-// conventions).
+// The attachment rows live in the MESSAGE menu, scoped to the file the pointer
+// is on (see AGENTS.md verification conventions).
 //
-// The ask: media must not open a dedicated menu of its own any more. A message
-// that carries attachments grows those rows — copy / save / link, and Scan
-// info — inside the menu the message already has, so one right-click or
-// long-press on a message with media covers both. The two things that were easy
-// to get wrong and are checked here:
-//   - the rows must describe the RIGHT attachment (a message's own record, plus
-//     the identity of the element under the pointer), and a message with several
-//     files must say which file each row belongs to;
+// The ask: media must not open a dedicated menu of its own any more — a message
+// that carries attachments grows their rows (copy / save / link, and Scan info)
+// inside the menu the message already has, so one right-click or long-press on a
+// message with media covers both. Then the correction: with several files the
+// menu grew a section per attachment no matter where it was opened, so a post of
+// five photos buried the message actions under five identical "Save image"
+// blocks. The rows are now scoped by the POINTER — on a picture you get THAT
+// file's rows, on the message's own pixels you get none — and a heading appears
+// only when the message carries more than the one file being acted on, which is
+// the case it was written for.
+//
+// The two things that were easy to get wrong and are checked here:
+//   - the rows must describe the RIGHT attachment (the identity of the element
+//     under the pointer, which is what the rows are built from), and the scope
+//     must not leak a sibling's rows or drop the pointer's own;
 //   - nothing that cannot work may be offered: a file whose bytes were removed
 //     (infected) or are not published yet (pending) offers the explanation and
 //     nothing that would 404.
@@ -74,44 +81,60 @@ const messageMenuItems = msgBuild(
 const seq = (items) => items.map((i) => (i.sep ? '—' : i.head ? '[' + i.head + ']' : i.label));
 const img = (id, name) => ({ id, url: '/uploads/files/' + name, name, kind: 'image', scan: 'clean' });
 const post = (atts) => ({ id: 'm1', content: 'look', user: { id: 'someone' }, attachments: atts });
+// The identity the element under the pointer carries — what the menu's scope is
+// read from (attFromEl). `closest` answers for the selector attFromEl asks for
+// and nothing else, exactly as the DOM would when the pointer is on the media.
+const over = (id, name, kind) => ({
+  closest: (sel) => (sel === '[data-att-id]'
+    ? { dataset: { attId: id, fbUrl: '/uploads/files/' + name, fbName: name, fbKind: kind || 'image', fbScan: 'clean' } }
+    : null),
+});
+const offMedia = { closest: () => null }; // the message's own pixels (text, padding)
 
-console.log('\n[1] one attachment grows the message menu with its rows');
-const one = seq(messageMenuItems(post([img('a1', 'cat.png')]), 'm1', 0, 0));
+console.log('\n[1] the pointer\'s attachment grows the message menu with its rows');
+const one = seq(messageMenuItems(post([img('a1', 'cat.png')]), 'm1', 0, 0, over('a1', 'cat.png')));
 check(one.includes('Copy text') && one.includes('Mark unread') && one.includes('Bookmark message'),
   'the message actions are all still there', one);
 for (const want of ['Copy image', 'Save image', 'Copy image link', 'Open image link', 'Scan info']) {
-  check(one.includes(want), 'and the picture adds ' + want, one);
+  check(one.includes(want), 'and the picture under the pointer adds ' + want, one);
 }
 check(one.indexOf('Copy text') < one.indexOf('Copy image') && one.indexOf('Open image link') < one.indexOf('Mark unread'),
   'the file rows sit between the content actions and the reader-memory rows', one);
-check(!one.includes('[cat.png]'), 'a single attachment needs no heading — the labels are unambiguous', one);
+check(!one.includes('[cat.png]'), 'the only file in the message needs no heading — the labels are unambiguous', one);
 
-console.log('\n[2] a message with no media is unchanged');
+console.log('\n[2] a press on the message itself carries no file rows at all');
+const body = seq(messageMenuItems(post([img('a1', 'cat.png')]), 'm1', 0, 0, offMedia));
+check(!body.some((l) => /Scan info|Save |Copy image|Copy link|Open image/.test(l)),
+  'the message\'s own pixels grow no attachment rows', body);
+check(body.length === one.length - 7,
+  'exactly the attachment\'s five rows and their two separators are missing', { body: body.length, one: one.length });
+check(body.includes('Copy text') && body.includes('Mark unread'), 'the message actions are untouched', body);
 const none = seq(messageMenuItems(post([]), 'm1', 0, 0));
-check(!none.some((l) => /Scan info|Save |Copy image|Copy link/.test(l)), 'no attachment rows at all', none);
-check(none.length === one.length - 7, 'exactly the attachment\'s five rows and their two separators are missing', { none: none.length, one: one.length });
+check(JSON.stringify(none) === JSON.stringify(body), 'and a message with no media reads the same way', none);
 
-console.log('\n[3] several attachments name their own rows');
-const two = seq(messageMenuItems(post([img('a1', 'cat.png'), img('a2', 'dog.png')]), 'm1', 0, 0));
-check(two.includes('[cat.png]') && two.includes('[dog.png]'), 'each file gets its name as a heading', two);
-check(two.indexOf('[cat.png]') < two.indexOf('[dog.png]'), 'in the order the message renders them', two);
-const catAt = two.indexOf('[cat.png]'), dogAt = two.indexOf('[dog.png]');
-check(two.slice(catAt, dogAt).filter((l) => l === 'Save image').length === 1
-  && two.slice(dogAt).filter((l) => l === 'Save image').length === 1,
-  'and each heading owns exactly one Save image row', two);
+console.log('\n[3] with several files, only the one under the pointer is in the menu');
+const two = seq(messageMenuItems(post([img('a1', 'cat.png'), img('a2', 'dog.png')]), 'm1', 0, 0, over('a2', 'dog.png')));
+check(two.includes('[dog.png]'), 'the file under the pointer names its own rows', two);
+check(!two.includes('[cat.png]'), 'and its sibling is not in the menu at all', two);
+check(two.filter((l) => l === 'Save image').length === 1, 'exactly one Save image row, for the file pointed at', two);
+const twoBody = seq(messageMenuItems(post([img('a1', 'cat.png'), img('a2', 'dog.png')]), 'm1', 0, 0, offMedia));
+check(!twoBody.some((l) => /Save image|\[cat.png\]|\[dog.png\]/.test(l)),
+  'a press on the message body of a five-photo post grows no sections', twoBody);
+const first = seq(messageMenuItems(post([img('a1', 'cat.png'), img('a2', 'dog.png')]), 'm1', 0, 0, over('a1', 'cat.png')));
+check(first.includes('[cat.png]') && !first.includes('[dog.png]'), 'and the other file scopes the other way', first);
 
-console.log('\n[4] the pointer\'s own attachment is honoured');
-// The identity the element under the pointer carries (attFromEl), for a message
-// whose record does not list it — a rendering stays actionable.
-const el = { closest: (sel) => (sel === '[data-att-id]' ? {
-  dataset: { attId: 'a9', fbUrl: '/uploads/files/hover.png', fbName: 'hover.png', fbKind: 'image', fbScan: 'clean' },
-} : null) };
-const withEl = seq(messageMenuItems(post([img('a1', 'cat.png')]), 'm1', 0, 0, el));
-check(withEl.includes('[hover.png]'), 'an attachment only the element knows about still gets rows', withEl);
-check(withEl.indexOf('[cat.png]') < withEl.indexOf('[hover.png]'), 'appended after the message\'s own record', withEl);
-const sameEl = { closest: () => ({ dataset: { attId: 'a1', fbUrl: '/uploads/files/cat.png', fbName: 'cat.png', fbKind: 'image', fbScan: 'clean' } }) };
-check(seq(messageMenuItems(post([img('a1', 'cat.png')]), 'm1', 0, 0, sameEl)).filter((l) => l === 'Save image').length === 1,
-  'and never duplicates the attachment the message already lists');
+console.log('\n[4] the heading is what tells this file from its siblings');
+// A rendering the message's record does not list (an older payload, a rendering
+// built from the identity alone): it stays actionable, and it still gets a name
+// — the message is showing another file beside it.
+const hovered = seq(messageMenuItems(post([img('a1', 'cat.png')]), 'm1', 0, 0, over('a9', 'hover.png')));
+check(hovered.includes('[hover.png]'), 'an attachment only the element knows about still gets its rows', hovered);
+check(hovered.filter((l) => l === 'Save image').length === 1 && !hovered.includes('[cat.png]'),
+  'scoped to it alone — the record\'s own file is not dragged in', hovered);
+const sameEl = over('a1', 'cat.png');
+const same = seq(messageMenuItems(post([img('a1', 'cat.png')]), 'm1', 0, 0, sameEl));
+check(same.filter((l) => l === 'Save image').length === 1 && !same.includes('[cat.png]'),
+  'and the one file the message does list needs no heading', same);
 
 console.log('\n[5] nothing that cannot work is offered');
 const shapes = {
@@ -136,7 +159,7 @@ check(labels(att.attItemsFor({ id: '', url: '/uploads/files/x', name: 'x', kind:
   labels(att.attItemsFor({ id: '', url: '', name: 'x', kind: 'file', scan: 'clean' })));
 check(att.attItemsFor(null).length === 0, 'and no attachment is no rows');
 
-console.log('\n[6] the message owns the click now, the attachment is the fallback');
+console.log('\n[6] the message owns the click, the attachment is the fallback, the pointer decides the scope');
 const ctxSrc = slice(actions, 'function ctxFor(', 'document.addEventListener(\'contextmenu\'');
 check(/const msg = el\.closest\('\.msg\[data-mid\]'\)/.test(ctxSrc), 'ctxFor looks for the message first');
 check(ctxSrc.indexOf("el.closest('.msg[data-mid]')") < ctxSrc.indexOf('attMenuItems(el)'),
@@ -147,7 +170,15 @@ check(/openMsgSheet\(mt\.dataset\.mid, t\)/.test(holdSrc), 'a long-press on a me
 check(holdSrc.indexOf('openMsgSheet(mt.dataset.mid, t)') < holdSrc.indexOf('openCtxSheet(att, mediaSheetHead(aw))'),
   'and the attachment-only sheet is only the no-message fallback', holdSrc.slice(0, 900));
 check(/function openMsgSheet\(mid, el\)/.test(actions) && /messageMenuItems\(m, mid, 0, 0, el\)/.test(actions),
-  'the phone sheet builds the same merged menu, with the same element identity');
+  'the phone sheet builds the same menu, with the same element identity');
+// The rows are only behind the pointer now, so EVERY rendering of an attachment
+// has to be holdable — including the plain file card, which is an `<a>` and used
+// to be skipped by the link guard along with every ordinary link.
+const touchGuard = slice(actions, "document.addEventListener('touchstart'", 'const t = e.target.closest(');
+check(/a:not\(\[data-att-id\]\)/.test(touchGuard),
+  'a long-press is only refused for links that are NOT an attachment (the file card is an <a>)', touchGuard);
+check(/e\.target\.closest\('input, textarea, select, a:not\(\[data-att-id\]\)'\)/.test(touchGuard),
+  'and the guard still covers fields and ordinary links', touchGuard);
 
 console.log('\n[7] a heading is a caption, not a row');
 check(/\.ctx-head\{[^}]*color:var\(--muted\)/.test(css), 'the heading is styled as muted chrome', (css.match(/\.ctx-head\{[^}]*\}/) || [''])[0]);

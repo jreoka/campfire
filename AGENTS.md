@@ -545,20 +545,29 @@ messages.js on EVERY rendering — the `.att-wrap`, the audio player, the text
 preview, the plain file card, and the `scan-block` card standing in for a
 pending or removed file; `data-fb-size` rides with them so a rendering built
 from the identity alone can still show a size), and those rows ride in the MESSAGE's own menu rather
-than in a menu of their own: `msgAttItems` (actions.js) turns a message's
-attachments — its own record, plus the identity of the element under the pointer
-when the record does not cover it — into Copy image / Save image / Copy image
-link / Open image link for media (a browser cannot put video bytes on the
-clipboard, so that flavour is never offered), Save file / Copy link for the
-rest, and **Scan info** on all of them, pushed between the content actions and
-Mark unread. A message with no attachment grows nothing; one attachment needs no
-heading, several get their own file name above their rows (`.ctx-head`, a
-caption, not a row). So `ctxFor` resolves the `[data-mid]` message branch FIRST
+than in a menu of their own, SCOPED BY THE POINTER: `msgAttItems` (actions.js)
+reads the identity of the element under the pointer and turns THAT one file into
+Copy image / Save image / Copy image link / Open image link for media (a browser
+cannot put video bytes on the clipboard, so that flavour is never offered), Save
+file / Copy link for the rest, and **Scan info** on all of them, pushed between
+the content actions and Mark unread. A press on the message's own pixels — its
+text, its padding, the hover bar's `⋯` — carries NO file rows at all: the old
+behaviour attached every file's heading + rows wherever the menu was opened, so a
+post of five photos buried the message actions under five identical "Save image"
+blocks (reported), and the rendering the reader pointed at is the more precise
+target anyway. The heading (`.ctx-head`, a caption, not a row) survives for
+exactly what it was written for: a message carrying MORE than the one file being
+acted on, where "Save image" would otherwise be indistinguishable from a sibling
+the message is showing right above it. Because the rows live behind the pointer,
+EVERY rendering has to be a hold target — the plain file card is an
+`<a data-att-id>`, which is why the long-press guard skips
+`a:not([data-att-id])` rather than every link (an ordinary link is still the
+browser's). So `ctxFor` resolves the `[data-mid]` message branch FIRST
 and only falls back to `attMenuItems` for media with no message around it (a
 pinned message's media in the pins panel, which has no message menu to merge
 into) — the same order in the long-press handler, which opens `openMsgSheet(mid,
 el)` for anything inside a message. `attFromEl` reads the identity and the
-`a:not([data-att-id])` exemption in the contextmenu guard is what lets a file
+same `a:not([data-att-id])` exemption in the contextmenu guard is what lets a file
 card through without taking the browser's own link menu away from ordinary links.
 A file whose bytes were removed (`infected`) or are not published yet
 (`pending`) offers ONLY "Scan info", because there is nothing left to save.

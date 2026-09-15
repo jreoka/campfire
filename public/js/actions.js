@@ -256,25 +256,27 @@ function attMenuItems(el) {
   const items = attItemsFor(a);
   return items.length ? items : null;
 }
-// The attachment rows for a MESSAGE, ready to ride in its menu: its own record
-// (what was rendered), plus the identity of the element the pointer is actually
-// over when the record does not cover it — an attachment rendering that carries
-// data-att-id stays actionable whatever else changed. One attachment needs no
-// heading, the labels speak for themselves; several get their own file name
-// above their rows, or three "Save image" rows would be indistinguishable.
+// The attachment rows for a MESSAGE, scoped by what the pointer is ON.
+//
+// A right-click or long-press on a picture, a player, a file card or the card
+// standing in for a removed file gives THAT file's rows; a press on the
+// message's own pixels gives none of them. Every attachment used to add its own
+// heading + rows wherever the menu was opened, so a post with five photos buried
+// the message actions under five identical "Save image" sections (reported) —
+// and the rendering the reader actually pointed at is always the more precise
+// target, since its identity is what the rows are built from either way.
+//
+// The heading survives for exactly the case it was written for: a message
+// carrying MORE than the one file the pointer is on, where "Save image" would
+// otherwise be indistinguishable from the sibling it did not mean (the message
+// may well be showing four others right above the menu).
 function msgAttItems(m, el) {
-  const atts = Array.isArray(m.attachments) ? m.attachments.slice() : [];
   const over = el ? attFromEl(el) : null;
-  if (over && (over.id || over.url)
-    && !atts.some((x) => (over.id && x.id === over.id) || (!over.id && over.url && x.url === over.url))) atts.push(over);
-  const blocks = atts.map((a) => ({ a, items: attItemsFor(a) })).filter((b) => b.items.length);
-  const items = [];
-  const multi = blocks.length > 1;
-  for (const b of blocks) {
-    if (multi) items.push({ head: b.a.name || 'attachment' });
-    items.push(...b.items);
-  }
-  return items;
+  const items = over ? attItemsFor(over) : [];
+  if (!items.length) return [];
+  const atts = Array.isArray(m.attachments) ? m.attachments : [];
+  const listed = atts.some((x) => (over.id && x.id === over.id) || (!over.id && over.url && x.url === over.url));
+  return (atts.length + (listed ? 0 : 1)) > 1 ? [{ head: over.name || 'attachment' }, ...items] : items;
 }
 function mediaSheetHead(el) {
   const a = attFromEl(el);
@@ -408,10 +410,11 @@ function messageMenuItems(m, mid, x, y, el) {
   if (own) items.push({ label: 'Edit message', icon: '✎', fn: () => startEdit(mid) });
   if (canMod(m)) items.push({ label: 'Delete message', icon: '🗑', danger: true, fn: () => api((dm ? '/api/dms/messages/' : '/api/messages/') + mid, { method: 'DELETE' }).catch(() => toast('Delete failed')) });
   items.push({ label: 'Copy text', icon: '⧉', fn: () => { copyTextNow(m.content || ''); toast('Copied'); } });
-  // The message's own media, in this same menu: every attachment adds its rows
-  // (copy/save/link, and what the scanner made of it) between the content
-  // actions and the reader's memory of the conversation. A message with no
-  // attachment grows nothing.
+  // The file the pointer is on, in this same menu: its rows (copy/save/link, and
+  // what the scanner made of it) ride between the content actions and the
+  // reader's memory of the conversation. `el` is the element under the pointer,
+  // so a press on the message itself carries none — the media is the target for
+  // its own actions (see msgAttItems).
   const attItems = msgAttItems(m, el);
   if (attItems.length) items.push({ sep: true }, ...attItems, { sep: true });
   // The reader's own memory of a conversation: leave this message as the first
@@ -1316,9 +1319,10 @@ function channelCtxMenu(cid, ctype, x, y) { openCtx(x, y, channelMenuItems(cid, 
 function ctxFor(el, x, y) {
   if (!el || !el.closest) return false;
   // A message owns every pixel of itself, media included: an attachment's rows
-  // are part of the message's own menu now (see msgAttItems), so a right-click
-  // on a picture, a player or a file card opens THAT menu with the file's rows
-  // in it — never a menu of its own.
+  // ride in the message's own menu rather than in a menu of their own, scoped to
+  // the file the pointer is actually on (see msgAttItems) — so a right-click on
+  // a picture, a player or a file card opens THAT menu with that one file's rows
+  // in it, and a right-click on the message's own pixels opens it with none.
   const msg = el.closest('.msg[data-mid]');
   if (msg && msgById(msg.dataset.mid)) { messageCtxMenu(msg.dataset.mid, x, y, el); return true; }
   // An attachment with no message around it — a pinned message's media in the
@@ -1360,7 +1364,12 @@ document.addEventListener('touchend', (e) => {
 }, { passive: false });
 document.addEventListener('touchstart', (e) => {
   noteTouchStart();
-  if (!e.target.closest || e.target.closest('input, textarea, select, a')) return;
+  // A link is the browser's (its own long-press sheet) — except an attachment's
+  // own link: the plain file card IS an `<a data-att-id>`, and its rows now live
+  // behind the pointer alone, so it has to be holdable like every other
+  // rendering of an attachment. The download chip inside a wrap (a link with no
+  // identity of its own) is still the browser's.
+  if (!e.target.closest || e.target.closest('input, textarea, select, a:not([data-att-id])')) return;
   const t = e.target.closest('.msg,.chan,.member,.server-btn,.folder-btn,.vuser,[data-dmthread],.att-wrap,[data-att-id]');
   if (!t) return;
   const touch = e.touches[0];
@@ -1370,10 +1379,9 @@ document.addEventListener('touchstart', (e) => {
   holdT = setTimeout(() => {
     holdT = null;
     haptic(12); // the long-press that opens a menu is one of the few beats left
-    // A message takes the hold on any of its pixels now: the attachment's own
-    // rows (copy / save / link, and what the scanner made of it) ride in the
-    // message's menu, so holding a picture slides up the same sheet the message
-    // body opens, with the file's rows in it.
+    // A message takes the hold on any of its pixels: holding a picture slides up
+    // the same sheet the message body opens, with THAT file's rows in it (and
+    // holding the body itself opens it with none — see msgAttItems).
     const mt = t.closest('.msg[data-mid]');
     if (mt && isCoarse() && msgById(mt.dataset.mid)) { holdSheet = true; openMsgSheet(mt.dataset.mid, t); return; }
     // An attachment with no message around it (a pinned message's media) still

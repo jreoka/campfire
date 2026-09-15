@@ -10,7 +10,8 @@
 //     that carries an attachment identity — a picture, an audio player, a file
 //     card, and the card that stands in for a file the scanner removed — opens
 //     the MESSAGE's menu with that file's rows in it, "Scan info" among them,
-//     and a message with no media at all grows none of them;
+//     scoped to that one file; a press on the message's own pixels grows none of
+//     them, and neither does a message with no media at all;
 //   - picking it fetches the stored verdict and paints the panel: the verdict,
 //     the engine generation and signature revision behind it, when it ran, and
 //     what the scanner found;
@@ -256,7 +257,7 @@ async function main() {
     check((await fetch(`http://127.0.0.1:${PORT}${bad.up.url}`)).status === 410, 'and the gate refuses them (410)');
     check(fs.existsSync(path.join(uploads, clean.up.url.split('?')[0].replace('/uploads/', ''))), 'the clean bytes are still there');
 
-    console.log('\n[3] the attachment rows are part of the message menu — and only for media');
+    console.log('\n[3] the attachment rows ride in the message menu, scoped to the file the pointer is on');
     const menuFor = async (selector) => evaluate(`(() => {
       const el = document.querySelector(${JSON.stringify(selector)});
       if (!el) return { missing: true };
@@ -288,8 +289,10 @@ async function main() {
       'and offers nothing that could not work — the bytes are gone', blockedMenu.labels);
     await closeMenu();
 
-    // The message's own pixels (not the file card) open the same menu, with the
-    // attachment's rows in it — that is the whole point of the merge.
+    // The message's own pixels are the MESSAGE's menu, and nothing else: the
+    // file rows are scoped to the rendering the pointer is actually on (the
+    // cards above), so a press on the body carries none of them — that is what
+    // keeps a five-photo post's menu from being five sections long.
     const msgMenu = await evaluate(`(() => {
       const msg = document.querySelector('.scan-block.infected[data-att-id]').closest('.msg[data-mid]');
       const r = msg.getBoundingClientRect();
@@ -297,8 +300,10 @@ async function main() {
       const m = document.querySelector('#ctx-menu');
       return { open: !!m, labels: m ? [...m.querySelectorAll('.ctx-item span:last-child')].map((s) => s.textContent) : [] };
     })()`);
-    check(msgMenu.open && msgMenu.labels.includes('Scan info') && msgMenu.labels.includes('Copy text'),
-      'a click on the message body gets the message menu, its attachment\'s rows in it', msgMenu.labels);
+    check(msgMenu.open && msgMenu.labels.includes('Copy text') && !msgMenu.labels.includes('Scan info'),
+      'a click on the message body gets the message menu with no file rows in it', msgMenu.labels);
+    check(!msgMenu.labels.some((l) => /^(?:Save |Copy link$|Copy (?:image|video) link|Open (?:image|video) link)/.test(l)),
+      'and nothing that belongs to the file it is not pointing at', msgMenu.labels);
     await closeMenu();
 
     // ...and a message with NO attachment grows none of it: the rows are about

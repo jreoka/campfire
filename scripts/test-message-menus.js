@@ -3,10 +3,11 @@
 //
 // The features this pins down:
 //  - an attachment has no menu of its own: a right-click or long-press on a
-//    picture (or a player, or a file card) opens the MESSAGE's menu with the
+//    picture (or a player, or a file card) opens the MESSAGE's menu with THAT
 //    file's own rows in it (Copy image, Save image, Copy image link, Open image
-//    link) — so the picture's actions and the message's arrive together, and a
-//    message with no media grows nothing;
+//    link), scoped to the file under the pointer — a press on the message's own
+//    pixels grows no file rows, so a post with several photos cannot bury the
+//    message actions under a section per attachment;
 //  - the message menu carries Copy text, Mark unread, Bookmark message and
 //    Create reminder…, plus View reactions whenever the message has any;
 //  - a menu taller than the viewport gets a real scrollbar (max-height +
@@ -305,6 +306,22 @@ async function main() {
     check(imgMenu.filter((l) => l.includes('Save image')).length === 1, 'the picture\'s rows appear exactly once', imgMenu);
     check(imgMenu.some((l) => l.includes('Copy text')) && imgMenu.some((l) => l.includes('Mark unread')),
       'and it is the MESSAGE menu, with the picture\'s rows merged in — not a menu of its own', imgMenu);
+    await closeCtx();
+
+    // …and the message's own pixels are the message's menu: the file rows are
+    // scoped to the rendering the pointer is on, so a press that misses the
+    // media carries none of them (the picture above is still on the message).
+    await evaluate(`(() => {
+      const t = document.querySelector(${JSON.stringify(textSel)});
+      const r = t.getBoundingClientRect();
+      t.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: Math.round(r.left + 4), clientY: Math.round(r.top + 4), button: 2 }));
+      return 1;
+    })()`);
+    await sleep(150);
+    const bodyMenu = await labels();
+    check(bodyMenu.some((l) => l.includes('Copy text')), 'a press on the message body still opens the message menu', bodyMenu);
+    check(!bodyMenu.some((l) => /Save image|Copy image|Scan info/.test(l)),
+      'with no file rows in it — the media is the target for its own actions', bodyMenu);
     await closeCtx();
 
     await evaluate(`(() => {
