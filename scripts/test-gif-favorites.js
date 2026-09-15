@@ -131,9 +131,9 @@ function wiringChecks() {
   check((server.match(/,gif_slug,gif_thumb,gif_mp4,created_at\)/g) || []).length === 3,
     'every insert (a channel post, a DM post, a webhook post) stores all three columns',
     (server.match(/,gif_slug,gif_thumb,gif_mp4,created_at\)/g) || []).length);
-  check(/function attWire\(a, scan\)/.test(server) && (server.match(/attWire\(a, \(sk && scanMap\.get\(sk\)\) \|\| 'clean'\)/g) || []).length === 2,
+  check(/function attWire\(a, info\)/.test(server) && (server.match(/attWire\(a, sk && scanMap\.get\(sk\)\)/g) || []).length === 2,
     'both hydration paths (channel history and DMs) send them to the client',
-    (server.match(/attWire\(a, \(sk && scanMap\.get\(sk\)\) \|\| 'clean'\)/g) || []).length);
+    (server.match(/attWire\(a, sk && scanMap\.get\(sk\)\)/g) || []).length);
   check(!/scan: \(sk && scanMap\.get\(sk\)\) \|\| 'clean' \}\);/.test(server),
     'and no hydration site still builds the old attachment shape by hand');
   check(/gifSlug: g\.slug \|\| '', gifThumb: g\.thumb \|\| '', gifMp4: g\.mp4 \|\| ''/.test(pickers),

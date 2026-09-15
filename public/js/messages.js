@@ -568,81 +568,231 @@ function rollReactionCount(el, from, to) {
     setTimeout(settle, 500); // background tabs / interrupted animations never fire it
   } catch { try { el.textContent = String(to); } catch {} }
 }
-// ---------- text/code file previews (expandable + downloadable) ----------
-const TEXT_EXTS = new Set(['txt', 'md', 'markdown', 'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'json', 'py', 'pyw', 'rb', 'java', 'c', 'h', 'hpp', 'cpp', 'cc', 'cs', 'go', 'rs', 'php', 'swift', 'kt', 'kts', 'scala', 'sh', 'bash', 'zsh', 'sql', 'html', 'htm', 'css', 'scss', 'xml', 'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf', 'csv', 'tsv', 'log', 'diff', 'patch', 'vue', 'svelte', 'lua', 'dart']);
-const TEXT_MIMES = new Set(['application/json', 'application/javascript', 'application/xml', 'application/x-sh']);
+// ---------- text/code file previews (expandable, copyable, downloadable) ----------
+// Every text-ish file — source, script, config, markup, log — embeds as a code
+// BOX rather than a plain file card: the opening lines under a fade, an
+// Expand/Collapse toggle and Copy in the footer, the download chip in the
+// header. Detection is mime first, then extension, then bare file name, so a
+// `.env`, a `Dockerfile` and a `.ps1` all land in the box. `txtExpanded` records
+// the URLs the reader opened so a repaint (an edit, a new message, a reconnect)
+// puts the card back exactly as they left it.
+const TEXT_EXTS = new Set([
+  // plain text / docs
+  'txt', 'text', 'md', 'markdown', 'mdx', 'rst', 'org', 'adoc', 'asciidoc', 'tex', 'bib', 'log', 'csv', 'tsv', 'srt', 'vtt',
+  // js / ts and friends
+  'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts', 'json', 'json5', 'jsonc', 'map', 'vue', 'svelte', 'astro',
+  // web
+  'html', 'htm', 'xhtml', 'css', 'scss', 'sass', 'less', 'styl',
+  // data / config
+  'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf', 'config', 'properties', 'env', 'lock', 'plist', 'gradle', 'pro', 'cmake',
+  // shells / scripts
+  'sh', 'bash', 'zsh', 'fish', 'ksh', 'csh', 'bat', 'cmd', 'ps1', 'psm1', 'psd1', 'vbs', 'awk', 'reg',
+  // languages
+  'py', 'pyw', 'pyi', 'rb', 'erb', 'gemspec', 'java', 'kt', 'kts', 'scala', 'groovy',
+  'c', 'h', 'hpp', 'hh', 'cxx', 'cpp', 'cc', 'cs', 'go', 'rs', 'php', 'swift', 'm', 'mm', 'dart', 'lua',
+  'pl', 'pm', 'r', 'jl', 'ex', 'exs', 'erl', 'hrl', 'clj', 'cljs', 'edn', 'hs', 'lhs', 'ml', 'mli', 'fs', 'fsx',
+  'vb', 'asm', 's', 'sol', 'zig', 'nim', 'cr', 'tcl', 'pas', 'f90', 'd', 'elm', 'scm', 'lisp', 'el',
+  // data / query languages
+  'sql', 'graphql', 'gql', 'proto', 'thrift', 'tf', 'tfvars', 'hcl', 'nix',
+  // misc text formats
+  'diff', 'patch', 'pem', 'asc',
+]);
+// Whole names, for the extension-less ones (a `Dockerfile` has no `.ext` at all).
+const TEXT_NAMES = new Set([
+  'dockerfile', 'containerfile', 'makefile', 'gnumakefile', 'rakefile', 'gemfile',
+  'guardfile', 'procfile', 'brewfile', 'vagrantfile', 'jenkinsfile', 'justfile',
+  'taskfile', 'license', 'licence', 'readme', 'changelog', 'contributing',
+  'notice', 'authors', 'codeowners', 'hosts', 'fstab', 'sudoers',
+]);
+const TEXT_MIMES = new Set([
+  'application/json', 'application/ld+json', 'application/javascript',
+  'application/x-javascript', 'application/ecmascript', 'application/xml',
+  'application/xhtml+xml', 'application/x-sh', 'application/x-csh',
+  'application/x-httpd-php', 'application/x-httpd-php-source',
+  'application/x-python', 'application/x-ruby', 'application/x-perl',
+  'application/x-lua', 'application/x-yaml', 'application/yaml',
+  'application/toml', 'application/sql', 'application/graphql',
+  'application/x-tex', 'application/x-latex', 'application/x-desktop',
+]);
+const TXT_MAX_BYTES = 512 * 1024; // beyond this a file is a download, not a read
+const TXT_PREVIEW_LINES = 12;
+const TXT_PREVIEW_CHARS = 1200;
 function textPreviewable(a) {
-  if (!a || (a.size || 0) > 256 * 1024) return false;
+  if (!a || (a.size || 0) > TXT_MAX_BYTES) return false;
   if (/^text\//.test(a.mime || '') || TEXT_MIMES.has(a.mime)) return true;
-  const parts = String(a.name || '').split('.');
-  return parts.length > 1 && TEXT_EXTS.has(parts.pop().toLowerCase());
+  const name = String(a.name || '').toLowerCase();
+  if (TEXT_NAMES.has(name)) return true;
+  const parts = name.split('.');
+  return parts.length > 1 && TEXT_EXTS.has(parts.pop());
 }
-const txtCache = new Map(); // url -> {status, text, preview, truncated}
+const txtCache = new Map();     // url -> {status, text, preview}
+const txtExpanded = new Set();  // urls expanded inline, so a repaint keeps them open
+const TXT_COPY_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5.5 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v.5"/></svg>';
+const TXT_CHEV_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+function txtPreviewOf(t) {
+  return String(t || '').split('\n').slice(0, TXT_PREVIEW_LINES).join('\n').slice(0, TXT_PREVIEW_CHARS);
+}
+// An extension means different things in different places (`.key` is a private
+// key in a repo and a Keynote deck on a Mac), and a server can label anything
+// `text/*`. So the bytes get the last word: NUL or a wall of replacement
+// characters is not text, and the card says so instead of painting mojibake.
+function txtLooksBinary(t) {
+  const head = String(t || '').slice(0, 2048);
+  if (!head) return false;
+  if (head.indexOf('\u0000') >= 0) return true;
+  let bad = 0;
+  for (const ch of head) if (ch === '\uFFFD') bad++;
+  return bad / head.length > 0.05;
+}
+// One place that turns fetched bytes into a cache entry, so every path (the
+// render fetch, Expand and Copy) classifies them the same way.
+function txtCacheText(url, t) {
+  const prev = txtCache.get(url);
+  if (txtLooksBinary(t)) { txtCache.set(url, { status: 'bin' }); return null; }
+  const entry = { status: 'ready', text: t, preview: (prev && prev.preview) || txtPreviewOf(t) };
+  txtCache.set(url, entry);
+  return entry;
+}
+function txtBodyText(c, open) {
+  if (!c || c.status === 'loading') return 'Loading preview…';
+  if (c.status !== 'ready') return 'Preview unavailable — download to view.';
+  return (open ? c.text : c.preview) || '(empty file)';
+}
 function textFileHTML(a) {
   queueTextPreview(a.url);
-  const c = txtCache.get(a.url);
-  const prev = c && c.status === 'ready'
-    ? (c.preview || '(empty file)')
-    : (c && c.status === 'err' ? 'Preview unavailable — download to view.' : 'Loading preview…');
-  return `<div class="txtfile" data-turl="${esc(a.url)}" data-tname="${esc(a.name)}"${attMeta(a, 'file')}>`
-    + `<div class="txt-head"><span class="txt-ic">&lt;/&gt;</span><span class="txt-name">${esc(a.name)}</span><span class="txt-size">${fmtSize(a.size)}</span><span class="spacer"></span>${attDl(a)}</div>`
-    + `<pre class="txt-prev">${esc(prev)}</pre>`
-    + `<button type="button" class="mini" data-act="expand-file">Expand</button></div>`;
+  scheduleTxtClip();
+  const open = txtExpanded.has(a.url);
+  return `<div class="txtfile${open ? ' open' : ''}" data-turl="${esc(a.url)}" data-tname="${esc(a.name)}"${attMeta(a, 'file')}>`
+    + `<div class="txt-head"><span class="txt-ic" aria-hidden="true">&lt;/&gt;</span><span class="txt-name" title="${esc(a.name)}">${esc(a.name)}</span><span class="txt-size">${fmtSize(a.size)}</span><span class="spacer"></span>${attDl(a)}</div>`
+    + `<div class="txt-body"><pre class="txt-prev">${esc(txtBodyText(txtCache.get(a.url), open))}</pre></div>`
+    + `<div class="txt-foot">`
+    + `<button type="button" class="txt-btn" data-act="expand-file" aria-expanded="${open ? 'true' : 'false'}"><span class="txt-chev">${TXT_CHEV_ICON}</span><span class="txt-lbl">${open ? 'Collapse' : 'Expand'}</span></button>`
+    + `<button type="button" class="txt-btn" data-act="copy-file">${TXT_COPY_ICON}<span>Copy</span></button>`
+    + `</div></div>`;
 }
 function queueTextPreview(url) {
   if (!url || txtCache.has(url)) { paintTextPreviews(url); return; }
   txtCache.set(url, { status: 'loading' });
   fetch(url).then((r) => { if (!r.ok) throw 0; return r.text(); }).then((t) => {
-    const preview = t.split('\n').slice(0, 12).join('\n').slice(0, 1200);
-    txtCache.set(url, { status: 'ready', text: t, preview, truncated: t.length > preview.length });
+    txtCacheText(url, t);
     paintTextPreviews(url);
   }).catch(() => { txtCache.set(url, { status: 'err' }); paintTextPreviews(url); });
 }
+// Swapping one line ("Loading preview…") for the opening lines — or the preview
+// for the whole file — changes the card's height. When that happens at or above
+// the viewport it would shove the reader upward, so hold the view steady.
+function txtStableSwap(card, apply) {
+  let box = null, hBefore = 0, pin = false;
+  try {
+    box = card.closest ? card.closest('#messages,#thread-replies') : null;
+    if (box && !box.classList.contains('hidden')) {
+      const btop = box.getBoundingClientRect().top;
+      if (card.getBoundingClientRect().top < btop + 1) { hBefore = card.offsetHeight; pin = true; }
+    }
+  } catch { box = null; }
+  try { apply(); } catch {}
+  try {
+    if (pin && box) { const dh = card.offsetHeight - hBefore; if (dh) setScrollTop(box, box.scrollTop + dh); }
+  } catch {}
+}
+// Paint one card from the cache. The body and the toggle's own state are always
+// written together — a button reading "Collapse" over a 12-line preview is the
+// bug this shape prevents.
+function txtPaintCard(card, open) {
+  const el = card.querySelector('.txt-prev');
+  if (el) {
+    const next = txtBodyText(txtCache.get(card.dataset.turl), open);
+    if (el.textContent !== next) txtStableSwap(card, () => { el.textContent = next; });
+  }
+  txtPaintClip(card, open);
+  const btn = card.querySelector('[data-act="expand-file"]');
+  if (btn) {
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    const lbl = btn.querySelector('.txt-lbl');
+    if (lbl) lbl.textContent = open ? 'Collapse' : 'Expand';
+  }
+}
+// The bottom fade means "there is more of this file" — so it may only appear
+// when the box is really cut off. It is a MEASUREMENT, which is why it cannot be
+// decided while the markup is being built: the card's own height reads 0 until
+// the message element it belongs to is in the document. One rAF pass after a
+// render settles every card on the page (a card inside a hidden panel measures 0
+// and simply keeps no fade until the next paint).
+function txtPaintClip(card, open) {
+  const el = card && card.querySelector ? card.querySelector('.txt-prev') : null;
+  if (!el) return;
+  const c = txtCache.get(card.dataset.turl);
+  // A preview that was cut short means more lines follow, whatever the box
+  // happens to show; the measurement adds the case a wrapped long line makes
+  // (the whole file is in the box, and still taller than the cap).
+  let clipped = !open && !!(c && c.status === 'ready' && c.text && c.text.length > (c.preview || '').length);
+  try { if (!open && el.clientHeight > 0) clipped = clipped || el.scrollHeight > el.clientHeight + 2; } catch {}
+  card.classList.toggle('clipped', clipped);
+}
+let txtClipPending = false;
+function scheduleTxtClip() {
+  if (txtClipPending) return;
+  txtClipPending = true;
+  const run = () => {
+    txtClipPending = false;
+    document.querySelectorAll('.txtfile').forEach((card) => txtPaintClip(card, card.classList.contains('open')));
+  };
+  try { requestAnimationFrame(run); } catch { setTimeout(run, 16); }
+}
 function paintTextPreviews(url) {
   if (!url) return;
-  const c = txtCache.get(url);
   document.querySelectorAll('.txtfile').forEach((card) => {
     if (card.dataset.turl !== url) return;
-    // The fetch lands whenever it lands — possibly long after the render.
-    // Swapping one line ("Loading preview…") for up to 12 lines grows the
-    // card; when that happens at/above the viewport it would shove the
-    // reader upward, so hold the view steady across the swap.
-    let box = null, hBefore = 0, pin = false;
-    try {
-      box = card.closest ? card.closest('#messages,#thread-replies') : null;
-      if (box && !box.classList.contains('hidden')) {
-        const btop = box.getBoundingClientRect().top;
-        if (card.getBoundingClientRect().top < btop + 1) { hBefore = card.offsetHeight; pin = true; }
-      }
-    } catch { box = null; }
-    const el = card.querySelector('.txt-prev');
-    if (!el) return;
-    el.textContent = !c || c.status === 'loading' ? 'Loading preview…' : c.status === 'ready' ? (c.preview || '(empty file)') : 'Preview unavailable — download to view.';
-    try {
-      if (pin && box) {
-        const dh = card.offsetHeight - hBefore;
-        if (dh) setScrollTop(box, box.scrollTop + dh);
-      }
-    } catch {}
+    txtPaintCard(card, card.classList.contains('open'));
   });
 }
+// Expand/collapse is INLINE: the same box grows into the whole file (capped and
+// scrollable) and shrinks back to the preview. The text is cached per URL, so
+// collapsing and re-expanding never re-fetches.
 async function expandTextFile(el) {
-  const card = el.closest ? el.closest('.txtfile') : null;
-  const url = card && card.dataset.turl, name = (card && card.dataset.tname) || 'file';
+  const card = el && el.closest ? el.closest('.txtfile') : null;
+  const url = card && card.dataset.turl;
+  if (!card || !url) return;
+  const open = !card.classList.contains('open');
+  card.classList.toggle('open', open);
+  if (open) txtExpanded.add(url); else txtExpanded.delete(url);
+  txtPaintCard(card, open);
+  if (!open) return;
+  const c = txtCache.get(url);
+  if (c && c.status === 'ready') return;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw 0;
+    const text = await r.text();
+    if (!txtCacheText(url, text)) toast('Not a text file');
+  } catch {
+    txtCache.set(url, { status: 'err' });
+    toast('Could not load file');
+  }
+  // The fetch lands whenever it lands: only the card this started on, and only
+  // while it is still open and still in the document.
+  if (card.isConnected && card.classList.contains('open')) txtPaintCard(card, true);
+}
+// Copy is the box's other button: it reads the bytes if the preview never had
+// to (a card the reader never expanded), and copies the WHOLE file — not the
+// 12-line preview it happens to be showing.
+async function copyTextFile(el) {
+  const card = el && el.closest ? el.closest('.txtfile') : null;
+  const url = card && card.dataset.turl;
   if (!url) return;
   let c = txtCache.get(url);
-  if (!c || c.status !== 'ready') {
-    try {
+  try {
+    if (!c || c.status !== 'ready') {
+      if (c && c.status === 'bin') { toast('Not a text file'); return; }
       const r = await fetch(url);
       if (!r.ok) throw 0;
-      c = { status: 'ready', text: await r.text(), preview: '', truncated: false };
-      txtCache.set(url, c);
+      c = txtCacheText(url, await r.text());
       paintTextPreviews(url);
-    } catch { toast('Could not load file'); return; }
-  }
-  openModal(name, `<pre class="txt-full">${esc(c.text)}</pre><div class="row" style="margin-top:.6rem"><a class="btn small primary" href="${esc(url)}" download="${esc(name)}">Download</a><button type="button" class="btn small" id="m-copy-txt">Copy</button></div>`, 'Close', null, { wide: true });
-  const cp = $('#m-copy-txt');
-  if (cp) cp.onclick = () => { try { navigator.clipboard.writeText(c.text); toast('Copied'); } catch {} };
+      if (!c) { toast('Not a text file'); return; }
+    }
+    await navigator.clipboard.writeText(c.text || '');
+    toast('Copied');
+  } catch { toast('Could not copy file'); }
 }
 function fmtClock(s) {
   s = Math.max(0, Math.floor(s || 0));
@@ -2121,10 +2271,26 @@ function removeUpload(id) {
 }
 
 $('#btn-attach').onclick = () => $('#in-attach').click();
+// The picker takes SEVERAL files at once (owner request). Each one becomes its
+// own upload card exactly like a multi-file drop or paste, and the per-message
+// cap is applied HERE, off the same `room` calculation, so picking a dozen files
+// is one toast instead of a dozen. The selection is walked in order and files
+// past the cap are simply dropped — never parked somewhere invisible.
 $('#in-attach').addEventListener('change', (e) => {
-  const f = e.target.files[0];
+  const files = [...(e.target.files || [])];
   e.target.value = '';
-  uploadAndAttach(f);
+  if (files.length) {
+    if (!composerTargetReady()) toast('Pick a chat first, then attach');
+    else {
+      const room = Math.max(0, 5 - ((S.pendingAtts || []).length + activeUploadCount(attsCtxNow())));
+      if (files.length > room) {
+        toast(room > 0
+          ? 'Added ' + room + ' of ' + files.length + ' — max 5 attachments per message'
+          : 'Max 5 attachments per message');
+      }
+      files.slice(0, room).forEach((f) => uploadAndAttach(f));
+    }
+  }
   // File picker steals focus — hand it back so Enter sends right away.
   try { $('#in-message').focus({ preventScroll: true }); } catch { $('#in-message')?.focus(); }
 });

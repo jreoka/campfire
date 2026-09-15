@@ -352,8 +352,7 @@ detection. The app's startup probe asks the same EICAR question
 broken database is a loud fail-open with an admin line rather than a silent one.
 There is no "band" to reason about any more: ClamAV reports a signature or
 nothing, so a verdict is `clean` or `infected` and the old suspicious-band
-machinery (`scanVerdict`/`scanScore`, `attWarnHTML`, `HARBIN_BLOCK_SUSPICIOUS`)
-is gone. Nested content (archives, OLE/CFB, PDF, disk images) is ClamAV's own
+machinery (`scanVerdict`/`scanScore`, `attWarnHTML`) is gone. Nested content (archives, OLE/CFB, PDF, disk images) is ClamAV's own
 business now — it is what its signatures are written against — so the app has no
 container/parser code at all.
 **Verdicts are recorded against the ENGINE GENERATION that made them**
@@ -793,6 +792,16 @@ for a 650ms exit, so the chip and its toggle appeared under a card that was stil
 the thing being looked at). `attCardOnStage()` is the test, and anything that
 reads `S.pendingAtts` for the composer must go through `renderComposerMeta`'s
 combined view (it appends the `attHere` held ones) or a chip will be missing.
+**The composer's file picker takes several files at once** (`#in-attach` is
+`multiple`): the change handler applies the same 5-per-message cap a drop or
+paste does, off one `room` calculation, so an over-full pick is one toast.
+And a text-ish attachment — source, script, config, markup, log — embeds as a
+**code box** (`textFileHTML`), not a plain file card: detection is mime, then
+whole file name, then extension (so `Dockerfile`, `.env` and `.ps1` all land in
+it), the BYTES get the last word over a text misdetection, and Expand/Collapse
+grows the SAME box in place (per-URL state that survives a repaint) with Copy and
+the download chip on it. The bottom fade is a MEASUREMENT, so a file the box
+holds entirely is never faded. Tests: `test-attach-picker.js`, `test-code-card.js`.
 **The drop zone refuses drags that STARTED in this window** (`messages.js`):
 Chrome hands a dragged `<img>` over as a temporary FILE, so dragging a photo out
 of a message and letting go over the composer read as a file drop and attached

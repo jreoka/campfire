@@ -199,7 +199,7 @@
 /* OLED Black extras: chrome is true black, so hovers lift to --panel-3 and
    borderless rows/cards get a hairline edge to stay defined on black. */
 [data-theme="oled"] .chan:hover,[data-theme="oled"] .vuser:hover,[data-theme="oled"] .member:hover,[data-theme="oled"] .rx-user:hover,[data-theme="oled"] .set-tab:hover,[data-theme="oled"] .ftab:hover,[data-theme="oled"] .dmrow:hover,[data-theme="oled"] .find-row:hover,[data-theme="oled"] .inbox-item:hover,[data-theme="oled"] .fwd-dest:hover,[data-theme="oled"] .theme-card:hover{background:var(--panel-3)}
-[data-theme="oled"] .set-row,[data-theme="oled"] .sec-row,[data-theme="oled"] .set-check,[data-theme="oled"] .set-game-row,[data-theme="oled"] .set-games-sum,[data-theme="oled"] .adm-row,[data-theme="oled"] .adm-stat,[data-theme="oled"] .pin-row,[data-theme="oled"] .fwd-preview,[data-theme="oled"] .rx-group,[data-theme="oled"] .nsfw-row,[data-theme="oled"] #form-2fa,[data-theme="oled"] .txt-prev,[data-theme="oled"] .txt-full,[data-theme="oled"] #friends-page .dmrow,[data-theme="oled"] #set-blocked .dmrow{border:1px solid var(--line-soft)}
+[data-theme="oled"] .set-row,[data-theme="oled"] .sec-row,[data-theme="oled"] .set-check,[data-theme="oled"] .set-game-row,[data-theme="oled"] .set-games-sum,[data-theme="oled"] .adm-row,[data-theme="oled"] .adm-stat,[data-theme="oled"] .pin-row,[data-theme="oled"] .fwd-preview,[data-theme="oled"] .rx-group,[data-theme="oled"] .nsfw-row,[data-theme="oled"] #form-2fa,[data-theme="oled"] .txtfile,[data-theme="oled"] #friends-page .dmrow,[data-theme="oled"] #set-blocked .dmrow{border:1px solid var(--line-soft)}
 html.no-sys-insets{--safe-t:30px}
 *{box-sizing:border-box}
 html,body{height:100%;overflow:hidden;overscroll-behavior:none}
@@ -242,7 +242,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 #server-list,#dm-rail,#server-ui,#home-ui,#messages,#member-list,#thread-replies,#friends-page,
 #find-results,#story-view .pf-body,#set-tabs,#set-body,.rx-list,.pk-grid,.pk-rail,.share-targets,
 #m-inbox-list,#m-threads-list,.inbox-list,.sheet-rows,.pins-list,.sc-pick-list,#fwd-dests,.gmem-list,.story-sheet,
-.adm-scroll,.adm-rep-text,#stories-page,.sc-emoji-grid,.txt-full{scrollbar-width:none}
+.adm-scroll,.adm-rep-text,#stories-page,.sc-emoji-grid{scrollbar-width:none}
 #server-list::-webkit-scrollbar,#dm-rail::-webkit-scrollbar,#server-ui::-webkit-scrollbar,
 #home-ui::-webkit-scrollbar,#messages::-webkit-scrollbar,#member-list::-webkit-scrollbar,
 #thread-replies::-webkit-scrollbar,#friends-page::-webkit-scrollbar,#find-results::-webkit-scrollbar,
@@ -252,8 +252,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .inbox-list::-webkit-scrollbar,.sheet-rows::-webkit-scrollbar,
 .pins-list::-webkit-scrollbar,.sc-pick-list::-webkit-scrollbar,#fwd-dests::-webkit-scrollbar,
 .gmem-list::-webkit-scrollbar,.story-sheet::-webkit-scrollbar,.adm-scroll::-webkit-scrollbar,
-.adm-rep-text::-webkit-scrollbar,#stories-page::-webkit-scrollbar,.sc-emoji-grid::-webkit-scrollbar,
-.txt-full::-webkit-scrollbar{display:none}
+.adm-rep-text::-webkit-scrollbar,#stories-page::-webkit-scrollbar,.sc-emoji-grid::-webkit-scrollbar{display:none}
 
 #app{height:100vh;height:100dvh;height:var(--vvh,100dvh)}
 
@@ -2120,16 +2119,28 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .poll-label{position:relative;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
 .poll-meta{position:relative;color:var(--muted);font-size:.75rem;flex-shrink:0;font-variant-numeric:tabular-nums}
 .poll-foot{font-size:.72rem;color:var(--faint)}
-/* text/code file cards */
-.txtfile{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:.65rem;max-width:430px;display:flex;flex-direction:column;gap:.5rem}
-.txt-head{display:flex;align-items:center;gap:.55rem;font-size:.82rem;font-weight:650;min-width:0}
-.txt-ic{color:var(--faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;flex-shrink:0}
-.txt-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.txt-size{color:var(--faint);font-weight:400;font-size:.75rem;flex-shrink:0}
+/* text/code file cards — one box that expands in place */
+.txtfile{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;max-width:460px;overflow:hidden;display:flex;flex-direction:column}
+.txt-head{display:flex;align-items:center;gap:.5rem;padding:.45rem .45rem .45rem .8rem;font-size:.8rem;font-weight:650;min-width:0;border-bottom:1px solid var(--line-soft)}
+.txt-ic{color:var(--faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;letter-spacing:-.06em;flex-shrink:0}
+.txt-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.txt-size{color:var(--faint);font-weight:400;font-size:.72rem;flex-shrink:0;font-variant-numeric:tabular-nums}
 .txt-head .att-dl{flex-shrink:0}
-.txt-prev{margin:0;background:var(--panel);border-radius:10px;padding:.6rem .75rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;line-height:1.5;max-height:180px;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
-.txtfile .mini{align-self:flex-start}
-.txt-full{margin:0;background:var(--panel);border-radius:10px;padding:.85rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;line-height:1.55;max-height:60vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+/* The code area is the inset surface; the fade is what says "there is more"
+   while collapsed, and it lifts the moment the box opens. */
+.txt-body{position:relative;background:var(--panel)}
+.txt-body::after{content:'';position:absolute;left:0;right:0;bottom:0;height:44px;background:linear-gradient(to bottom,transparent,var(--panel));pointer-events:none;opacity:0;transition:opacity .18s var(--ease-out)}
+.txtfile.clipped .txt-body::after{opacity:1}
+.txt-prev{margin:0;padding:.7rem .85rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;line-height:1.55;max-height:190px;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text);tab-size:2}
+.txtfile.open .txt-prev{max-height:min(62vh,540px);overflow:auto}
+.txt-foot{display:flex;align-items:center;gap:.4rem;padding:.45rem .6rem;border-top:1px solid var(--line-soft)}
+.txt-btn{display:inline-flex;align-items:center;gap:.34rem;border:0;border-radius:999px;background:var(--panel-3);color:var(--muted);font:inherit;font-size:.73rem;font-weight:600;line-height:1;padding:.36rem .72rem;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
+.txt-btn:hover{background:var(--panel-4);color:var(--text)}
+.txt-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.txt-btn .txt-chev{display:inline-flex;transition:transform .18s var(--ease-out)}
+.txtfile.open .txt-btn .txt-chev{transform:rotate(180deg)}
+.txt-btn[aria-expanded="true"]{color:var(--accent);background:color-mix(in srgb,var(--accent) 15%,transparent)}
+.txt-btn[aria-expanded="true"]:hover{background:color-mix(in srgb,var(--accent) 24%,transparent)}
 body.view-home:not(.dm-open) #btn-members{display:none!important}
 /* The phone's chat header keeps only its essentials. In a DM the voice/video call
    buttons stay on top; everywhere the secondary rails — search, notifications,

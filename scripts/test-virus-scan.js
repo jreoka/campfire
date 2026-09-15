@@ -228,10 +228,10 @@ function reloadModules() {
   const bs = require(path.join(ROOT, 'bucket-scan'));
   const rows = [
     { key: 'files/clean-now.jpg', status: 'clean', engine: 'clamav/1.4.6' },
-    { key: 'files/clean-old-harbin.jpg', status: 'clean', engine: 'Harbin' },
+    { key: 'files/clean-legacy-engine.jpg', status: 'clean', engine: 'legacy/1.0' },
     { key: 'files/clean-no-engine.jpg', status: 'clean', engine: '' },
     { key: 'files/clean-older-clamav.jpg', status: 'clean', engine: 'clamav/1.3.0' },
-    { key: 'files/infected.exe', status: 'infected', engine: 'Harbin' },
+    { key: 'files/infected.exe', status: 'infected', engine: 'legacy/1.0' },
     { key: 'files/inflight.jpg', status: 'pending', engine: '' },
     { key: 'files/broken.bin', status: 'error', engine: '' },
     { key: 'files/gone.bin', status: null, engine: '' },
@@ -239,7 +239,7 @@ function reloadModules() {
   const c1 = bs._classify(rows, true, 'clamav/1.4.6');
   check('a key this engine already judged is never re-queued', c1.skip.has('files/clean-now.jpg'));
   check('a key a PREVIOUS engine judged is adopted (that is the point of a pass)',
-    !c1.skip.has('files/clean-old-harbin.jpg'));
+    !c1.skip.has('files/clean-legacy-engine.jpg'));
   check('a key from before any engine is adopted', !c1.skip.has('files/clean-no-engine.jpg'));
   check('a key an older ClamAV cleared is adopted (a new engine re-verifies the tree)',
     !c1.skip.has('files/clean-older-clamav.jpg'));

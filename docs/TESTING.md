@@ -1045,6 +1045,45 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   what stops the drag starting at all. Re-run it after touching the drop zone,
   the attachment/media renderers, or anything that makes an image draggable
   again.
+  `node scripts/test-attach-picker.js` covers the composer's OTHER way in — the
+  file picker (headless Chrome, skipping without Chrome; it slices the REAL
+  `#btn-attach` click + `#in-attach` change/cancel handlers out of `messages.js`
+  and drives them with a real multi-file `FileList`, with `uploadAndAttach` /
+  `toast` / `activeUploadCount` stubbed). The complaint was "right now you can
+  only select one", and the input is the easy half: the handler is where a
+  12-file selection would toast the 5-per-message cap twelve times, or start
+  uploads the send would then drop. Locked in: the input carries `multiple` and
+  the single-purpose pickers (avatar / banner / story camera) do NOT; a
+  three-file pick starts three uploads in order with no toast, clears the input
+  (so the same file can be picked again) and hands focus back to the composer;
+  an eight-file pick starts five and explains the cap ONCE; with four staged and
+  one in flight, one of three starts and the toast says "1 of 3"; an already-full
+  message starts none and says why; and with no conversation open it is one
+  "Pick a chat first" toast, not one per file. Re-run it after touching the
+  attach button, the `#in-attach` input in `index.html`, or the attachment cap.
+  `node scripts/test-code-card.js` covers the text/code attachment box — every
+  text-ish file embedding as a code card that expands and collapses IN PLACE,
+  with Copy and Download on it (headless Chrome, skipping without Chrome; it
+  slices the whole text/code preview section out of `messages.js` and runs it
+  against the REAL `styles.css`, so the collapsed and expanded heights and the
+  fade are measured, not assumed). Two halves are pinned. DETECTION: an
+  extension list alone misses `Dockerfile`, `.env` and a bare `README`, so
+  `textPreviewable` is mime first, then whole file name, then extension — and it
+  still refuses a `.zip`, an `.exe`, a `.key` (a Keynote deck, not a private key)
+  and anything over 512 KB (a download, not a read). The BYTES then get the last
+  word, because a server can label anything `text/*`: NUL or a wall of
+  replacement characters reads as "Preview unavailable — download to view."
+  rather than a card full of mojibake. BEHAVIOUR: the card renders collapsed with
+  the download chip in its header and Expand/Copy in its footer; Expand grows the
+  SAME box (no modal, no second node) to the whole file, past its collapsed cap,
+  and the toggle's body, `aria-expanded` and label always move together; Collapse
+  puts it back; Copy on a collapsed card copies the WHOLE file without expanding
+  it under the reader; a re-render of an expanded card comes back expanded (the
+  open state is per-URL and outlives a repaint). The bottom fade is the "there is
+  more" signal and is a MEASUREMENT, so a file the box holds entirely must NOT be
+  faded (it used to dim the last line and lie). Re-run it after touching
+  `textFileHTML` / `expandTextFile` / `copyTextFile` / `textPreviewable`, the
+  `.txtfile` block in `styles.css`, or the `data-act` router in `pickers.js`.
   `node scripts/test-attachment-gap.js` covers the distance between the composer
   and the attachment cards above it (headless Chrome, skipping without Chrome;
   it builds the real chat column from `index.html`'s markup + the real

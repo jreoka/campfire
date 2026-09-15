@@ -765,6 +765,7 @@ document.addEventListener('keydown', (e) => {
     else if (act === 'vote' && mid) votePoll(mid, actEl.dataset.opt);
     else if (act === 'gif-fav') toggleGifFav(chatGifFavFromBtn(actEl));
     else if (act === 'expand-file') expandTextFile(actEl);
+    else if (act === 'copy-file') copyTextFile(actEl);
     else if (act === 'edit' && mid) startEdit(mid);
     else if (act === 'edit-unattach' && mid) {
       const aid = actEl.dataset.aid;
