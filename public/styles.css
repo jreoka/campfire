@@ -592,6 +592,20 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 
 .msg .avatar{width:38px;height:38px}
 .msg.grouped{padding-top:.1rem;padding-bottom:.1rem}
+/* The gap above a group's FIRST follow-up used to be the odd one out: it was
+   the head row's own .45rem bottom padding plus the list gap (.7rem = 11.2px in
+   #messages) while every line after it sat .1+.15+.1 (.35rem = 5.6px), so a
+   two-line group looked looser than a three-line one (reported). The collapsed
+   stack is bought on the follow-up instead of by shrinking the head's box,
+   because the head's padding is also its hover pill — a padding change reshapes
+   every head row's highlight. So the head keeps its shape and the row it hands
+   off to rides up by exactly the excess, which is padding against padding
+   (.45 − .1) and no container gap — the same .35rem is right in
+   #thread-replies, whose reply rows group too and which has no flex gap of its
+   own. Scoped to a head as the immediate predecessor: a follow-up after a
+   follow-up already sits right, and a `.day` divider or the history caption
+   never groups. */
+.msg:not(.grouped) + .msg.grouped{margin-top:-.35rem}
 /* Grouped rows have no avatar, but the gutter still shows the hover timestamp.
    The ghost keeps its 38px width and rides the row's content height instead of
    a fixed 38px box — that box was inflating every one-line follow-up by ~16px

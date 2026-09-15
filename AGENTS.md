@@ -207,6 +207,16 @@ declared in the manifest); no tray/watcher on mobile — that Rust code is
 - **No emoji in UI chrome** (use SVG/text: `Invite`, `···`, `Mute`, `↩`, `⋯`).
   Exceptions, both user-driven content: message text/reactions, and the hover
   bar's most-used emoji. Toast copy is plain text, no emoji.
+- **The message list has one rhythm, and it is measured**: within a group every
+  line is `.35rem` from the one above it (`.msg.grouped`'s own padding plus the
+  list's flex gap), and a new group clears the previous group by the head row's
+  `.45rem` padding. The group's FIRST follow-up used to be the exception (11.2px
+  while the rest were 5.6px, reported) — it is pulled up by the head's padding
+  minus the follow-up's (`.msg:not(.grouped) + .msg.grouped{margin-top:-.35rem}`),
+  a padding-only number so `#thread-replies` (which groups replies too and has no
+  flex gap) lands right as well. The head's own box is deliberately NOT reshaped:
+  its padding is also its hover pill. `scripts/test-msg-group-gap.js` measures
+  both containers at both breakpoints.
 
 ## Data-safety contract (owner directive)
 
@@ -881,10 +891,15 @@ stages — the upload card and the chip with its Spoiler toggle — sitting ON t
 field (reported the other way), so the gap is now a real one, and the strip
 keeps its height so nothing below the cards moves. Two traps found doing it: **padding cannot go negative**
 (`calc(.9rem - var(--strip-h))` clamps to 0, so an overlap has to be a negative
-MARGIN, not padding), and **a sibling combinator inside `:has()` never matches**
-— `#composer:has(~ #attach-preview)` passes `CSS.supports` yet matched nothing in
-Chrome 152, so the rule silently did nothing; key `:has()` on descendants of a
-shared ancestor instead. `scripts/test-attachment-gap.js` measures the real gap
+MARGIN, not padding), and **`~` inside `:has()` looks FORWARD only** —
+`#composer:has(~ #attach-preview)` passes `CSS.supports` yet matched nothing in
+Chrome 152, because `#attach-preview` sits ABOVE `#composer` in the shell
+(`index.html` line 242 vs 255), so the rule silently did nothing. `:has(+ x)` /
+`:has(~ x)` do work in every engine here (measured: `.msg:has(+ .msg.grouped)`
+matched every head with a follow-up under it); the shell's ordering was the
+trap, not the combinator, so key such a rule on the direction the DOM actually
+has — or, when the ordering could change, on descendants of a shared ancestor.
+`scripts/test-attachment-gap.js` measures the real gap
 on BOTH bars at both breakpoints.
 **A scrolled-up reader's line is held by the app, never left to the browser**
 (`armLineGuard`, messages.js): the last message whose top is still inside the
