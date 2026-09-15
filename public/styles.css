@@ -331,9 +331,9 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 #view-main{display:flex;height:100vh;height:100dvh;overflow:hidden}
 #view-main{height:100%;padding:var(--safe-t) var(--safe-r) 0 var(--safe-l)}
 #left{display:contents}
-#rail{width:70px;background:var(--rail);border-right:1px solid var(--line-soft);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
+#rail{width:64px;background:var(--rail);border-right:1px solid var(--line-soft);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
 .rail-head{display:flex;flex-direction:column;align-items:center;gap:.45rem;padding:.8rem 0 .6rem;flex-shrink:0}
-.rail-divider{width:34px;height:1px;background:var(--line);margin:.2rem auto}
+.rail-divider{width:30px;height:1px;background:var(--line);margin:.2rem auto}
 #server-list{flex:1;display:flex;flex-direction:column;align-items:center;gap:.5rem;overflow-y:auto;padding:.45rem .5rem 64px;min-height:0}
 #dm-rail{display:flex;flex-direction:column;align-items:center;gap:.45rem;flex-shrink:1;min-height:0;overflow-y:auto;max-height:40vh;padding:.15rem .5rem .5rem}
 #dm-rail:empty{display:none}
@@ -343,7 +343,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .rail-dm-badge{position:absolute;bottom:-4px;right:-4px;background:var(--red);color:#fff;font-size:.62rem;font-weight:800;border-radius:999px;padding:.1rem .38rem;min-width:19px;text-align:center;line-height:1.3;pointer-events:none;z-index:2}
 .server-btn{width:48px;height:48px;border-radius:12px;border:0;background:var(--panel-2);color:var(--text);font-size:1.15rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;position:relative;flex-shrink:0;transition:background var(--t-fast),border-radius var(--t-fast)}
 .server-btn img{border-radius:inherit}
-.server-btn.active::before{content:'';position:absolute;left:-10px;top:50%;transform:translateY(-50%);width:6px;height:28px;border-radius:0 999px 999px 0;background:var(--text);z-index:2}
+.server-btn.active::before{content:'';position:absolute;left:-8px;top:50%;transform:translateY(-50%);width:6px;height:28px;border-radius:0 999px 999px 0;background:var(--text);z-index:2}
 /* Rail pill pop: replays only when the selection actually moves (see
    popRailPill — rail rebuilds also fire on badges/presence, which must
    not replay it). */
@@ -1777,7 +1777,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 
 .folder-btn.open{box-shadow:inset 0 0 0 2px var(--fcolor,#5865f2)}
 .folder-btn.open:hover{background:color-mix(in srgb,var(--fcolor,#5865f2) 40%,var(--panel-2))}
-.fwrap.active .folder-btn::before{content:'';position:absolute;left:-10px;top:50%;transform:translateY(-50%);width:6px;height:28px;border-radius:0 999px 999px 0;background:var(--text);z-index:2}
+.fwrap.active .folder-btn::before{content:'';position:absolute;left:-8px;top:50%;transform:translateY(-50%);width:6px;height:28px;border-radius:0 999px 999px 0;background:var(--text);z-index:2}
 .fgray-block{pointer-events:none}
 .fgrid{display:grid;gap:2px;pointer-events:none}
 .fg1{grid-template-columns:22px}
@@ -2121,7 +2121,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .home-btn.active{background:var(--accent)}
 .home-btn.active::before{display:none}
 #home-wrap{position:relative;width:48px;height:48px;flex-shrink:0}
-#home-wrap:has(> .active)::before{content:'';position:absolute;left:-10px;top:50%;transform:translateY(-50%);width:6px;height:28px;border-radius:0 999px 999px 0;background:var(--text);z-index:2}
+#home-wrap:has(> .active)::before{content:'';position:absolute;left:-8px;top:50%;transform:translateY(-50%);width:6px;height:28px;border-radius:0 999px 999px 0;background:var(--text);z-index:2}
 .home-btn img{width:42px;height:42px;object-fit:cover;display:block;transition:opacity var(--t-fast)}
 .home-btn .home-fire{position:absolute;inset:0;margin:auto;width:42px;height:42px;opacity:0;transition:opacity var(--t-fast);pointer-events:none}
 @media (hover:hover){
