@@ -466,6 +466,19 @@ capture whose encode produced no bytes), text-only stories on a picked gradient,
 and markup over the shot — draggable/rotatable/scalable text and emoji stickers plus freehand
 drawing with colours and undo, all rendered over the media by the viewer and by
 the view-once player (the markup travels with the post, not in the pixels).
+**The camera is asked for 1080p with a 720p `min` FLOOR** (`storyGetCamStream`,
+after "the camera looks really bad in the composer"): the stage is portrait on a
+phone and the frame is `object-fit:cover` into it, so a 720p landscape stream
+(what touch devices used to get) left a ~405x720 slice of real pixels to fill a
+1080x1920 screen — and a bare `ideal` with no floor lets an engine answer 640x480
+and say nothing, which is the silent version of the same complaint. A camera that
+cannot meet the floor is retried as a plain 720p `ideal`; a refused permission is
+NOT retried, because a second ask cannot answer differently. The recording is
+handed an explicit `videoBitsPerSecond` (~0.15 bits/pixel/frame, capped at 5 Mbps
+so the 60s maximum take stays under the 50 MB upload ceiling) — the engine's own
+~2.5 Mbps default was the last thing squeezing a take — and the MP4 fallback
+names H.264 **High** profile, because Safari's default for a bare `video/mp4` is
+Baseline.
 A URL typed into a story is handled in one of two ways, and the difference is
 whether the author put it on the picture or in the caption. On a **sticker** the
 URL is REPLACED BY the card itself (`storyTextHTML`, embeds.js): a sticker is

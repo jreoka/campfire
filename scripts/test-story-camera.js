@@ -195,17 +195,37 @@ async function main() {
 
     console.log('\n[2] open the camera');
     const opened = await evaluate(`(async () => {
-      await openStoryComposer();
-      const t0 = performance.now();
-      while (performance.now() - t0 < 12000) {
-        if (sc && sc.camFailed) return { camFailed: true };
-        if (sc && sc.camReady) return { camReady: true, w: document.querySelector('#sc-cam').videoWidth };
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      return { timeout: true, step: sc && sc.step, camReady: !!(sc && sc.camReady), camFailed: !!(sc && sc.camFailed) };
+      // Spy on the request itself. What the composer ASKS the camera for is the
+      // fix for "the camera looks terrible in here": the stage is portrait and
+      // the frame is cover-cropped into it, so a 720p landscape stream left the
+      // surviving slice upscaled ~3x. The constraints are the assertion.
+      const md = navigator.mediaDevices, real = md.getUserMedia.bind(md);
+      const seen = [];
+      md.getUserMedia = (c) => { seen.push(c); return real(c); };
+      try {
+        await openStoryComposer();
+        const t0 = performance.now();
+        while (performance.now() - t0 < 12000) {
+          if (sc && sc.camFailed) return { camFailed: true, seen };
+          if (sc && sc.camReady) return { camReady: true, w: document.querySelector('#sc-cam').videoWidth, seen };
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        return { timeout: true, seen, step: sc && sc.step, camReady: !!(sc && sc.camReady), camFailed: !!(sc && sc.camFailed) };
+      } finally { md.getUserMedia = real; }
     })()`);
     if (opened.camFailed || opened.timeout) return skip('no fake camera frames in this Chrome/OS (' + JSON.stringify(opened) + ')');
-    check(opened.camReady && opened.w > 0, 'the fake camera paints a frame', opened);
+    check(opened.camReady && opened.w > 0, 'the fake camera paints a frame', { w: opened.w });
+    const asked = (opened.seen || [])[0];
+    const want = asked && asked.video;
+    check(!!want && want.facingMode === 'user'
+      && want.width.ideal === 1920 && want.width.min === 1280
+      && want.height.ideal === 1080 && want.height.min === 720
+      && want.frameRate && want.frameRate.ideal === 30,
+      'the camera is asked for 1080p with a 720p floor (never a silent 640x480 default)', want);
+    const retries = (opened.seen || []).slice(1);
+    check(retries.length <= 1 && retries.every((c) => !(c.video.width || {}).min),
+      'a camera that cannot meet the floor falls back to a plain 720p ideal request, not to nothing',
+      (opened.seen || []).map((c) => c.video));
     // The Retake button is gone (owner request): the preview bar carries Next
     // alone, and nothing in the composer wires a retake any more. storyRetake()
     // itself stays — a capture that encodes to nothing falls back to it.
@@ -350,6 +370,46 @@ async function main() {
       check(!posted.raced.blobYet && posted.raced.nextLabel === 'Next', 'the shot was still encoding when Next was tapped', posted.raced);
       check(posted.during.label === 'Saving…', 'Post says what it is waiting for', posted.during);
       check(posted.closed && posted.mine > 0, 'the story posted once the bytes existed', posted);
+    }
+
+    console.log('\n[8] a take is handed a real bitrate, not the engine default');
+    // The other half of "the camera looks bad in here": even with good pixels
+    // coming in, a bare `new MediaRecorder(stream)` takes Chrome's ~2.5 Mbps
+    // default, which is what a 720x1280 portrait take comes out of looking
+    // mushy. The recorder is wrapped to catch what the app passes it.
+    await evaluate(`openStoryComposer()`);
+    const camBack = await waitFor(`sc && sc.camReady`, 12000);
+    check(!!camBack, 'the camera is back for a recording');
+    if (camBack) {
+      const take = await evaluate(`(async () => {
+        const Real = window.MediaRecorder;
+        let seen = null;
+        const Wrapped = function (s, o) {
+          const t = (s.getVideoTracks() || [])[0];
+          const st = (t && t.getSettings && t.getSettings()) || {};
+          seen = { opts: o || {}, audio: s.getAudioTracks().length, w: st.width || 0, h: st.height || 0 };
+          return new Real(s, o);
+        };
+        Wrapped.isTypeSupported = (t) => { try { return Real.isTypeSupported(t); } catch { return false; } };
+        Wrapped.prototype = Real.prototype;
+        window.MediaRecorder = Wrapped;
+        try {
+          storyShutterDown();                       // hold…
+          const t0 = performance.now();
+          while (performance.now() - t0 < 8000 && !sc.rec) await new Promise((r) => setTimeout(r, 50));
+          const started = { rec: !!sc.rec, step: sc.step };
+          storyShutterUp();                         // …release: stop
+          return { started, seen };
+        } finally { window.MediaRecorder = Real; }
+      })()`, 30000);
+      const s = take.seen || { opts: {} };
+      check(take.started && take.started.rec === true, 'holding the shutter starts a recording', take.started);
+      check(s.opts.videoBitsPerSecond >= 2500000 && s.opts.videoBitsPerSecond <= 5000000,
+        'the recorder is given an explicit bitrate for the frame it is handed',
+        { got: s.opts.videoBitsPerSecond, frame: s.w + 'x' + s.h });
+      check(s.opts.audioBitsPerSecond === 128000, 'and an audio bitrate', s.opts.audioBitsPerSecond);
+      check(!s.opts.mimeType || /^video\/(webm|mp4)/.test(s.opts.mimeType),
+        'the mime type is a container we can upload', s.opts.mimeType);
     }
 
     check(pageErrors.length === 0, 'no uncaught page errors', pageErrors.slice(0, 3));

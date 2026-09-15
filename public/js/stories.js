@@ -1696,13 +1696,42 @@ let sc = null;
 function storyCamSupported() {
   return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 }
-function storyRecMime() {
+// `stream` decides whether the MP4 candidate may name an audio codec: a
+// mimeType that lists a track the stream does not carry is a needless way to
+// have a recorder constructor throw on somebody else's engine.
+function storyRecMime(stream) {
   if (!window.MediaRecorder) return null;
-  const cands = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'];
+  const hasAudio = !!(stream && (stream.getAudioTracks() || []).length);
+  // VP9/VP8 first for Chrome/Android; Safari's recorder is MP4-only, and its
+  // DEFAULT profile for a plain "video/mp4" is H.264 Baseline, which is the
+  // codec a recorded story comes out of looking soft — name the High profile
+  // explicitly so the fallback is the good one (Baseline-first was the cause in
+  // a reported mobile-camera write-up).
+  const cands = [
+    'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm',
+    hasAudio ? 'video/mp4;codecs=avc1.640028,mp4a.40.2' : 'video/mp4;codecs=avc1.640028',
+    'video/mp4',
+  ];
   for (const t of cands) {
     try { if (MediaRecorder.isTypeSupported(t)) return t; } catch {}
   }
   return '';
+}
+// The recorder's own default bitrate (~2.5 Mbps in Chrome) was the last thing
+// capping a recorded story: the camera, the framing crop and the composite all
+// hand over real pixels, and then the encoder squeezed a 720x1280 portrait take
+// into a mushy one. ~0.15 bits per pixel per frame is a sane target for
+// VP8/VP9/H.264; capped at 5 Mbps so the longest take we allow
+// (STORY_VIDEO_MAX_MS, 60s) still lands inside the 50 MB upload ceiling.
+function storyRecBitrate(stream) {
+  let w = 0, h = 0;
+  try {
+    const track = (stream.getVideoTracks() || [])[0];
+    const st = (track && track.getSettings && track.getSettings()) || {};
+    w = st.width || 0; h = st.height || 0;
+  } catch {}
+  if (!w || !h) return 4000000;
+  return Math.max(2500000, Math.min(5000000, Math.round(w * h * 30 * 0.15)));
 }
 function storyExtFor(mime) {
   const m = String(mime || '');
@@ -1851,6 +1880,39 @@ function storySetStep(step) {
     }
   }
 }
+/* ---------- the camera request ------------------------------------------
+ * The composer's stage is PORTRAIT on a phone and the live frame is
+ * object-fit:cover inside it, so a landscape sensor frame is centre-cropped to
+ * the stage's aspect — the pixels that survive are a narrow slice of the
+ * frame's SHORT edge. Asking for 720p there (what touch devices used to get)
+ * left roughly 405x720 real pixels to fill a 1080x1920 screen: a ~2.7x upscale
+ * of a 2.7x-zoom crop, which is exactly what read as "the camera looks terrible
+ * in the story composer". Ask for 1080p everywhere instead — a phone picks the
+ * real preset nearest these numbers and rotates the picture to how it is held,
+ * which is why the request stays in landscape numbers.
+ *
+ * Two things the bare `ideal` values did not do: a `min` floor, because a
+ * browser is free to answer `ideal` with its 640x480 default and say nothing
+ * (the silent version of the same complaint), and an explicit frame rate, so a
+ * pixel-rich 10 fps mode can never be chosen for something we are about to
+ * record. A camera that cannot meet the floor still has to open — the retry
+ * only fires on a constraints mismatch, never on a denied permission or a
+ * missing device, which a second ask cannot answer differently. */
+async function storyGetCamStream(facing) {
+  const tries = [
+    { facingMode: facing, width: { ideal: 1920, min: 1280 }, height: { ideal: 1080, min: 720 }, frameRate: { ideal: 30 } },
+    { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } },
+  ];
+  let err = null;
+  for (const video of tries) {
+    try { return await navigator.mediaDevices.getUserMedia({ video, audio: false }); }
+    catch (e) {
+      err = e;
+      if (!e || (e.name !== 'OverconstrainedError' && e.name !== 'TypeError')) break;
+    }
+  }
+  throw err;
+}
 async function storyStartCam() {
   if (!sc) return;
   storyStopCamTracks();
@@ -1867,12 +1929,8 @@ async function storyStartCam() {
     return;
   }
   let stream = null;
-  const vq = isCoarse() ? { w: 1280, h: 720 } : { w: 1920, h: 1080 };
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: sc.facing, width: { ideal: vq.w }, height: { ideal: vq.h } },
-      audio: false,
-    });
+    stream = await storyGetCamStream(sc.facing);
   } catch (err) {
     if (!sc || gen !== sc.camSeq || sc.step !== 'capture') return;
     sc.camFailed = true;
@@ -2313,12 +2371,15 @@ function captureStoryPhoto() {
 }
 function storyStartRec() {
   if (!sc || sc.rec) return;
-  const mime = storyRecMime();
-  if (mime === null) { toast('Recording is not supported here — pick a video instead'); return; }
+  if (!window.MediaRecorder) { toast('Recording is not supported here — pick a video instead'); return; }
   const src = storyRecordStream();
   if (!src) { toast('Camera is not ready yet'); return; }
+  const mime = storyRecMime(src);
   let rec;
-  try { rec = new MediaRecorder(src, mime ? { mimeType: mime } : undefined); }
+  // The bitrate rides the delivery: a plain `new MediaRecorder(src)` takes the
+  // engine's low default and a portrait take comes out blocky.
+  const opts = { videoBitsPerSecond: storyRecBitrate(src), audioBitsPerSecond: 128000 };
+  try { rec = new MediaRecorder(src, mime ? { mimeType: mime, ...opts } : opts); }
   catch { storyStopComposite(); toast('Recording is not supported here — pick a video instead'); return; }
   sc.chunks = [];
   sc.recT0 = Date.now();
