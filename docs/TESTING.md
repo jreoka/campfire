@@ -1004,17 +1004,20 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   readout no longer prints a bare "…" while the bar is indeterminate (it read as
   a "more options" menu button next to the ✕, so the % cell goes empty), and the
   whole SECOND stage waits for the first: the chip — not just its **Spoiler**
-  toggle — is withheld until no card is left on stage. `xhr.onload` parks the
+  toggle — is withheld until THAT FILE's card is gone. `xhr.onload` parks the
   answered attachment on the upload entry (`u.att`/`u.attHere`) instead of filing
-  it, and `removeUpload` files it and repaints the composer exactly when the
-  departing card empties `#upload-list`. Gating on `activeUploadCount` was wrong
+  it, and `removeUpload` files it and repaints the composer the moment the
+  departing card leaves `#upload-list`. Gating on `activeUploadCount` was wrong
   twice (the card the server has already answered sits there in its green `done`
   state for a 650ms exit, so the chip and its toggle appeared under a card that
-  was still the thing being looked at — reported live, twice). `attCardOnStage()`
-  is the test, and the composer reads `S.pendingAtts` through
-  `renderComposerMeta`'s combined view (it appends the `attHere` held ones). The
+  was still the thing being looked at — reported live, twice), and gating on the
+  LIST was wrong a third time (`attCardOnStage()` — see the next entry).
+  `uploadHeldOnStage(att)` is the test, and the composer reads `S.pendingAtts`
+  through `renderComposerMeta`'s combined view (it appends the `attHere` held
+  ones). The
   browser half drives that order for real, reading the chip list and the card
-  list in ONE page: a finished chip is present with no toggle, the file answers
+  list in ONE page: a chip whose own card is long gone keeps its toggle while a
+  new file uploads, the file answers
   with the green card asserted `done` and still listed while NO second chip
   appears, and only after the ~650ms exit does its chip arrive with the toggle on
   both. Re-run it after
@@ -1024,6 +1027,25 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   `storage.js`'s S3 client (its timeout/retry config is what stops a silent
   object store from holding an upload request open forever) wants the upload
   routes re-checked with `scripts/test-upload-pipeline.js`.
+  `node scripts/test-multipick-handover.js` is the same handover against the REAL
+  server with REAL uploads (headless Chrome + Postgres, skipping without either;
+  it signs up, opens a channel and puts three photos into `#in-attach` in ONE
+  pick, so it covers the multi-file picker end to end too). The report it exists
+  for: "when uploading multiple images it waits for every upload to complete
+  before showing the spoiler mark stage … for multiple photos it waits for every
+  green bar upload before showing the spoiler menu for photos that already
+  finished uploading". The handover used to be gated on the LIST — "is any card
+  still on stage?" — so the first photo waited for the last one's green bar; it is
+  per-ATTACHMENT now (`uploadHeldOnStage`), and `removeUpload` repaints
+  unconditionally. The bug is only visible in the TIMELINE, so the test throttles
+  the uplink (CDP `Network.emulateNetworkConditions`, three sizes 40/160/320 KB)
+  to make the transfers genuinely overlap, samples the DOM every 20ms through both
+  stages, and prints the transition timeline. Asserted: a Spoiler toggle appears
+  while cards are STILL on the stage, the three handovers are spread over more
+  than 400ms rather than one instant, and all three end as chips with their
+  toggles and an empty stage. Verified to FAIL on the old code (chips stayed at
+  zero until every card had left). Re-run it after touching `removeUpload`,
+  `renderComposerMeta`, `uploadHeldOnStage`, or the picker's change handler.
   `node scripts/test-composer-drop.js` covers what the composer's drop zone
   accepts (headless Chrome, skipping without Chrome; it slices the REAL
   drag-and-drop block out of `messages.js` and drives it with real `DragEvent`s

@@ -1854,15 +1854,15 @@ function renderComposerMeta() {
     chip.appendChild(x); box.appendChild(chip);
   }
   pruneAttPreviews();
-  // The chip stage starts only once the card stage is OVER: no card left on
-  // stage (see attCardOnStage — an in-flight card, the green `done` card during
-  // its 650ms exit, or a failed one waiting to be dismissed) AND no upload still
-  // holding an attachment to file. Both halves matter: the first keeps the chip
-  // from appearing under a card that is still on screen, the second keeps a
-  // spoiler toggle from being offered before that chip exists. removeUpload
-  // releases the held attachment and repaints this.
+  // The chip stage for ONE file starts when THAT file's card has left the stage —
+  // not when the list above it is empty. This also paints the attachments an
+  // exiting card is still holding (their previews have to stay alive, and the
+  // chip is there the moment the card goes), and each of those is the one that
+  // waits for its OWN card: a second photo still uploading must never hold the
+  // first one's Spoiler toggle back (reported — with several photos the spoiler
+  // stage waited for every green bar). removeUpload releases the held attachment
+  // and repaints this, so a file's chip and its toggle arrive together.
   const pendingAtts = [...S.pendingAtts, ...(S.uploads || []).filter((u) => u.att && u.attHere).map((u) => u.att)];
-  const cardOnStage = attCardOnStage();
   pendingAtts.forEach((a, i) => {
     const chip = document.createElement('div');
     chip.className = 'att-chip' + (a.scan === 'pending' ? ' scanning' : '');
@@ -1879,7 +1879,7 @@ function renderComposerMeta() {
       if (held) { held.att = null; held.attHere = false; }
       renderComposerMeta();
     };
-    if ((a.kind === 'image' || a.kind === 'video') && !cardOnStage) {
+    if ((a.kind === 'image' || a.kind === 'video') && !uploadHeldOnStage(a)) {
       const sp = document.createElement('button');
       sp.type = 'button'; sp.className = 'mini' + (a.spoiler ? ' on' : ''); sp.textContent = 'Spoiler'; sp.title = 'Mark as spoiler';
       sp.onclick = () => { a.spoiler = !a.spoiler; renderComposerMeta(); };
@@ -1981,16 +1981,17 @@ function activeUploadCount(ctx) {
 // with a Retry button instead of vanishing into a toast.
 let uploadSeq = 0;
 function uploadCardEl(id) { const box = $('#upload-list'); return box ? box.querySelector('[data-up="' + id + '"]') : null; }
-// Is an upload card still on stage? NOT the same question as "is an upload
-// running": a card the server has answered stays in the list in its green `done`
-// state for a 650ms exit (and a failed one stays until it is dismissed), and the
-// chip below it must not grow its Spoiler toggle under the reader's eyes while
-// that card is still the thing they are looking at. Counted from the DOM —
-// exactly the element the reader sees — so the toggle appears the moment the
-// list is empty, whichever way the last card left it.
-function attCardOnStage() {
-  const box = $('#upload-list');
-  return !!(box && box.querySelector('.up-card'));
+// Is THIS attachment's own upload card still on stage? A card the server has
+// answered stays in the list in its green `done` state for a 650ms exit (and a
+// failed one stays until it is dismissed), and a chip must not grow its Spoiler
+// toggle under a card that is still the thing the reader is looking at. The
+// question is per-ATTACHMENT and never about the list as a whole: five photos
+// are five independent handovers, so asking "is any card up there?" made the
+// first finished photo wait for the last one's green bar (reported). Counted
+// from the DOM — exactly the element the reader sees — so the toggle arrives the
+// moment that card is gone, whichever way it left.
+function uploadHeldOnStage(att) {
+  return (S.uploads || []).some((u) => u.att === att && u.attHere && uploadCardEl(u.id));
 }
 function renderUploads() {
   const box = $('#upload-list');
@@ -2249,11 +2250,6 @@ function retryUpload(id) {
 function removeUpload(id) {
   const i = (S.uploads || []).findIndex((x) => x.id === id);
   if (i < 0) return;
-  // Whether the stage was OCCUPIED before this one left: only the card that
-  // empties the list has to repaint the composer (see the chip gate in
-  // renderComposerMeta — a done card sits in the list for 650ms after the
-  // server answers, and nothing of the next stage shows until it goes).
-  const hadCards = attCardOnStage();
   const [u] = S.uploads.splice(i, 1);
   if (u) { clearTimeout(u.watch); u.watch = null; }
   // The attachment this card was holding: NOW it becomes a composer chip (see
@@ -2267,7 +2263,10 @@ function removeUpload(id) {
   if (u && u.thumb && u.thumb.startsWith('blob:')) { try { URL.revokeObjectURL(u.thumb); } catch {} }
   if (u && u.vthumbSrc) { try { URL.revokeObjectURL(u.vthumbSrc); } catch {} }
   renderUploads();
-  if (hadCards && !attCardOnStage()) renderComposerMeta();
+  // Repaint every time, not only when this card emptied the list: the chip for
+  // THIS file (and its Spoiler toggle, see uploadHeldOnStage) is due now that its
+  // own card has left, whatever else is still uploading above it.
+  renderComposerMeta();
 }
 
 $('#btn-attach').onclick = () => $('#in-attach').click();

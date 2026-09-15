@@ -783,14 +783,18 @@ slept or a half-open connection leaves the XHR pending with no event at all
 only warns — so a silent object store cannot hold the route open either). The
 upload card's two stages hand over in order, and the FIRST one finishes leaving
 before the second appears: the chip — not just its **Spoiler** toggle — is
-withheld until no card is left on stage. `xhr.onload` parks the answered
+withheld until THAT FILE's card is gone. `xhr.onload` parks the answered
 attachment on the upload entry (`u.att`/`u.attHere`) instead of filing it, and
-`removeUpload` files it and repaints the composer exactly when the departing card
-empties `#upload-list`; gating on `activeUploadCount` instead was wrong twice
+`removeUpload` files it and repaints the composer the moment the departing card
+leaves `#upload-list`; gating on `activeUploadCount` instead was wrong twice
 (the card the server has already answered sits there in its green `done` state
 for a 650ms exit, so the chip and its toggle appeared under a card that was still
-the thing being looked at). `attCardOnStage()` is the test, and anything that
-reads `S.pendingAtts` for the composer must go through `renderComposerMeta`'s
+the thing being looked at). `uploadHeldOnStage(att)` is the test — per
+ATTACHMENT, never the list as a whole: gating on "is any card up there" made the
+first finished photo wait for every other green bar when several are picked at
+once (reported), so `removeUpload` now repaints unconditionally and only the
+attachment whose own card is still standing waits. Anything that reads
+`S.pendingAtts` for the composer must go through `renderComposerMeta`'s
 combined view (it appends the `attHere` held ones) or a chip will be missing.
 **The composer's file picker takes several files at once** (`#in-attach` is
 `multiple`): the change handler applies the same 5-per-message cap a drop or
