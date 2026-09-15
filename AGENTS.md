@@ -848,6 +848,28 @@ MARGIN, not padding), and **a sibling combinator inside `:has()` never matches**
 Chrome 152, so the rule silently did nothing; key `:has()` on descendants of a
 shared ancestor instead. `scripts/test-attachment-gap.js` measures the real gap
 at both breakpoints.
+**A scrolled-up reader's line is held by the app, never left to the browser**
+(`armLineGuard`, messages.js): the last message whose top is still inside the
+viewport is the reference, and a layout change that moves it on screen is undone
+with `setScrollTop` — measured, never predicted, which is what keeps it from
+doubling up with native scroll anchoring (where the engine already held the line
+there is nothing left to restore). The reader's own scrolling re-baselines the
+reference, and every `setScrollTop` does too, so a placement is never fought; the
+bottom pin keeps ownership of a reader who is ON the live bottom. This is the
+reader's "when I scroll up a couple of messages it glitches me upwards" — the
+messages themselves slide, older or newer content appearing without them
+scrolling. Chromium's anchoring does not cover it: it only promises that the
+topmost node it picks keeps its POSITION, so when that node is the one that GROWS
+— a clip's metadata landing, and a video is the one attachment whose size is
+never recorded (`uploadDims`), so its box is the element's default 300x150 until
+then — everything below it slides and nothing compensates (measured: 86px with
+the scroll offset untouched). WebKit has no scroll anchoring at all, so there
+every change above the viewport slides them. The same guard absorbs the paging
+status row's insert and removal (a real row, 29px above the reader, taken back
+out after the page's anchor correction), a reaction bar or link embed appearing
+under their eye, and an unshaped picture's bytes. `scripts/test-scroll-up-hold.js`
+boots the real app and drives it in Chrome to prove it: it fails without the
+guard, with the slide measured in pixels.
 Every sidebar banner (the me bar, member rows, DM rows) is painted through
 `paintSidebarBanner` in `servers.js` — never inline the gradient again. Those
 rows are fractional-width, and `background-size: cover` with the default

@@ -369,8 +369,108 @@ function setScrollTop(box, v, intent) {
     box._autoTop = box.scrollTop; // the clamped value our own scroll event will report
     box._lastTop = box.scrollTop; // ...and the baseline the reader's next move is read against
     if (intent) box.dataset.atBottom = intent;
+    // A placement is a decision about where the reader should be: the line guard
+    // takes it as the new truth instead of correcting back towards the old one.
+    // Every placement re-baselines — including the ones made while a pinned
+    // reader is being held at the bottom, or the baseline would still be the one
+    // from before they scrolled up.
+    if (box._lineReset) box._lineReset();
   } catch {}
 }
+// ---------- hold a scrolled-up reader's place across layout changes ----------
+// A chat list changes height under the reader all the time, and every one of
+// those changes is something they did not ask for: a clip's metadata landing
+// (the box is the element's default 300x150 until then — a video is the one
+// attachment whose size is never recorded, see uploadDims), a picture's bytes
+// arriving, a reaction bar appearing on the message under their eye, a link
+// embed resolving, the paging status row sliding in and out.
+//
+// Chromium's own scroll anchoring does NOT cover this: it only promises that the
+// topmost node it picks keeps its position, so when that node is the one that
+// GROWS everything below it slides under the reader and nothing compensates
+// (measured: a clip's metadata moved the messages 86px with the scroll offset
+// untouched). WebKit/Safari has no scroll anchoring at all, so there every
+// change above the viewport slides them. Either way the reader who notices is
+// the one who scrolled up — "when I scroll up a couple of messages it glitches
+// me upwards".
+//
+// So hold the place here, off a reference the reader can see: the last message
+// whose top is still inside the viewport. Scrolling cannot change that
+// reference's screen position (the view and the reference travel together), so
+// only a box above it changing size can — and restoring its offset is therefore
+// exactly "do not move the reader". It is a no-op wherever the browser already
+// compensated (the measurement is the truth, so the two can never double up),
+// and the bottom pin keeps ownership of a reader who is ON the live bottom.
+function pickLineRef(box) {
+  try {
+    const btop = box.getBoundingClientRect().top, cut = btop + box.clientHeight;
+    let last = null;
+    for (const el of box.querySelectorAll('.msg')) {
+      if (el.getBoundingClientRect().top >= cut) break;
+      last = el;
+    }
+    return last;
+  } catch { return null; }
+}
+function armLineGuard(box) {
+  try {
+    if (!box || box._lineGuard) return;
+    box._lineGuard = true;
+    // What is held is the reference's place ON SCREEN. The reader's own
+    // scrolling moves that by design, so their scroll re-baselines it (and a
+    // programmatic placement does too); what is left is a change they did not
+    // ask for, and the correction is measured against it rather than against a
+    // predicted size — which is why it can never double up with the browser's
+    // own anchoring: where Chromium already held the line, there is nothing
+    // left to restore.
+    const state = { mid: null, off: 0, raf: 0 };
+    const offOf = (el) => (el ? el.getBoundingClientRect().top - box.getBoundingClientRect().top : null);
+    const reset = () => {
+      // The reference usually survives a placement (a rebuild replaces the node
+      // with the same id), so only re-walk the list when it is really gone.
+      let el = state.mid ? box.querySelector('.msg[data-mid="' + CSS.escape(state.mid) + '"]') : null;
+      if (!el) { el = pickLineRef(box); state.mid = el ? (el.dataset.mid || null) : null; }
+      const off = offOf(el);
+      state.off = off == null ? 0 : off;
+    };
+    const check = () => {
+      state.raf = 0;
+      try {
+        if (!box.isConnected || box.classList.contains('hidden') || box._jumpHold) return;
+        if (nearLiveBottom(box)) { reset(); return; } // the pin owns the bottom
+        const el = state.mid ? box.querySelector('.msg[data-mid="' + CSS.escape(state.mid) + '"]') : null;
+        if (!el) { reset(); return; }
+        const off = offOf(el);
+        if (off == null) return;
+        const d = off - state.off; // how far the reader's line slid under them
+        if (Math.abs(d) > 0.5) setScrollTop(box, box.scrollTop + d, '0');
+      } catch {}
+    };
+    box._lineReset = reset;
+    box._lineCheck = () => {
+      // One check per frame, however many mutations and resizes land together.
+      try { if (!state.raf) state.raf = requestAnimationFrame(check); } catch {}
+    };
+    // The reader's own scrolling re-baselines the line (they moved the view on
+    // purpose). A scroll the BROWSER made to hold their place must not: it left
+    // the line exactly where it was, and re-baselining there would swallow a
+    // growth that landed in the same handful of milliseconds as a wheel notch.
+    box.addEventListener('scroll', () => {
+      if (box._jumpHold) return;
+      if (box._scrollPointer != null || Date.now() - (box._userScrollAt || 0) < 900) reset();
+    }, { passive: true });
+    // Not every late growth fires a DOM mutation (an image's bytes landing, a
+    // clip's metadata) — the media ResizeObserver calls in too (see observeStick).
+    // Attributes are watched because that is how a box changes class
+    // (`pending` -> `ready`) on its way to its final size.
+    try {
+      new MutationObserver(() => box._lineCheck())
+        .observe(box, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'style'] });
+    } catch {}
+    reset();
+  } catch {}
+}
+
 function watchBottomState(box) {
   if (!box || box.dataset.atBottomWatch) return;
   box.dataset.atBottomWatch = '1';
@@ -473,6 +573,7 @@ function watchBottomState(box) {
     setScrollTop(box, box.scrollHeight, '1');
     try { if (typeof updatePill === 'function') updatePill(); } catch {}
   });
+  armLineGuard(box); // hold a scrolled-up reader's place through layout changes
 }
 function observeStick(el) {
   if (!el || el.dataset.stickOn) return;
@@ -484,6 +585,10 @@ function observeStick(el) {
           if (!e.target.isConnected) { try { stickRO.unobserve(e.target); stickH.delete(e.target); } catch {} continue; }
           const box = e.target.closest ? e.target.closest('#messages,#thread-replies') : null;
           if (!box) continue;
+          // A scrolled-up reader's place is held off this resize too (see
+          // armLineGuard): an image's bytes or a clip's metadata landing is a
+          // layout change with no DOM mutation behind it.
+          try { if (box._lineCheck) box._lineCheck(); } catch {}
           // Follow the bottom through the growth itself: one tall image can
           // pop in 300px+ in a single step, jumping a pinned reader clean
           // past the 200px near-bottom band. Subtract this resize's own
