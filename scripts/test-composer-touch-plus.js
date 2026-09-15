@@ -56,6 +56,17 @@ function findChrome() {
   return candidates.find((p) => { try { return fs.existsSync(p); } catch { return false; } }) || null;
 }
 
+// The rule whose selector LIST contains `sel` — the two composer bars share most
+// of their CSS now, so `#btn-plus` lives in rules that also name `#tbtn-plus`.
+function ruleFor(sel) {
+  const re = /(?:^|\n)([^{}\n]+)\{([^{}]*)\}/g;
+  for (let m; (m = re.exec(css)); ) {
+    const members = m[1].split(',').map((s) => s.trim());
+    if (members.includes(sel)) return { sel: m[1].trim(), body: m[2] };
+  }
+  return null;
+}
+
 // The rule body of `#btn-plus` in the coarse-pointer block (the one that broke),
 // so the source check reads the same bytes the browser compiles.
 function coarseBlock() {
@@ -164,15 +175,18 @@ async function probeTouch(chrome, url, sizes) {
 
 async function main() {
   console.log('\n[1] the + is pinned by the base rule, and the coarse block leaves it alone');
-  const base = /\n#btn-plus\{([^}]*)\}/.exec(css);
-  check(!!base && /position:absolute/.test(base[1]), 'the base rule pins the + with position:absolute', base && base[1].slice(0, 80));
-  check(!!base && /left:\.4rem/.test(base[1]), 'and into the field\'s left gutter (left:.4rem)', base && base[1].slice(0, 80));
+  const base = ruleFor('#btn-plus') || { sel: '', body: '' };
+  check(/position:absolute/.test(base.body), 'the base rule pins the + with position:absolute', base.sel);
+  check(/left:\.4rem/.test(base.body), 'and into the field\'s left gutter (left:.4rem)', base.sel);
+  check(/#tbtn-plus/.test(base.sel), 'the thread bar\'s + is pinned by the same rule', base.sel);
   const block = coarseBlock();
-  check(/#btn-plus::after,#btn-more::after\{/.test(block), 'the coarse block still grows the + a thumb target', block.slice(0, 60));
+  const after = ruleFor('#btn-plus::after') || { sel: '', body: '' };
+  check(/width:var\(--tap\)/.test(after.body) && /#tbtn-plus::after/.test(after.sel),
+    'the coarse block still grows the + a thumb target, on both bars', after.sel);
   check(!/#btn-plus\b[^{]*\{[^}]*position:relative/.test(block),
     'and no longer repositions it — `position:relative` here is what put the + at the right end of the box',
     (/#btn-plus[^{]*\{[^}]*\}/.exec(block) || [''])[0]);
-  check(/#btn-more\{display:inline-flex/.test(css) && /#btn-more\{display:none\}/.test(css),
+  check(/#btn-more\{display:inline-flex/.test(css) && /display:none/.test((ruleFor('#btn-more') || {}).body || ''),
     'the phone still swaps the two (the desktop + menu and the phone + menu are one rule each)');
 
   const chrome = findChrome();

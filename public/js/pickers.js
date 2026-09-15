@@ -6,11 +6,14 @@ const EMOJI = [
  ['sec','Hearts & fun'],
  ['❤️','heart love red'],['💔','broken heart'],['💯','100 hundred'],['✨','sparkles new'],['🔥','fire lit'],['🎉','party tada celebrate'],['⭐','star'],['🌈','rainbow'],['🎮','game controller gaming'],['🚀','rocket ship'],['🎁','gift present'],['🏆','trophy win'],['🎵','music note'],['💡','idea lightbulb'],['✅','check yes'],['❌','cross no'],['❓','question'],['💩','poop'],['👻','ghost'],['🤖','robot'],['🍕','pizza'],['☕','coffee'],['🐱','cat kitten'],['🐶','dog puppy'],
 ];
-S.picker = null; // {mode:'insert'|'react', mid?}
+S.picker = null; // {mode:'insert'|'react', mid?, input?}
 
 // ---------- emoji / GIF picker ----------
-function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null) {
-  S.picker = { mode, mid };
+// `input` names the composer field a pick belongs to: 'main' (the chat bar, the
+// default) or 'thread' (the thread bar). Both bars are on screen at once, so the
+// picker cannot ask "which composer is open" — it has to be told.
+function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null, input = null) {
+  S.picker = { mode, mid, input };
   const pk = $('#picker');
   pk.classList.remove('hidden');
   if (anchor && !phoneLayout()) {
@@ -159,6 +162,10 @@ function renderEmojiGrid(filter) {
   }
   if (!box.children.length) box.innerHTML = '<div class="pk-empty">No emoji match.</div>';
 }
+// The field the open picker belongs to (see openPicker). The elements are never
+// re-created, so naming the bar is enough — and safer than holding a node.
+function pickerBar() { return S.picker && S.picker.input === 'thread' ? 'thread' : 'main'; }
+function pickerInputEl() { return pickerBar() === 'thread' ? $('#in-thread') : $('#in-message'); }
 function pickEmoji(e) {
   haptic(10); // picking an option ticks; merely opening the picker does not
   if (S.picker?.mode === 'tag') {
@@ -173,21 +180,45 @@ function pickEmoji(e) {
     closePicker();
     return;
   }
+  const inp = pickerInputEl();
   if (S.picker?.mode === 'react' && S.picker.mid) toggleReaction(S.picker.mid, e);
   // Inserting an emoji into a message is TEXT, not a reaction: it must not feed
   // the quick-reaction strips (topReactions reads reaction use only).
-  else insertAtCursor($('#in-message'), e);
+  else insertAtCursor(inp, e);
   closePicker();
-  $('#in-message').focus();
+  try { inp.focus(); } catch {}
 }
 function insertAtCursor(input, text) {
+  if (!input) return;
   const s = input.selectionStart ?? input.value.length, e = input.selectionEnd ?? input.value.length;
   input.value = input.value.slice(0, s) + text + input.value.slice(e);
   input.selectionStart = input.selectionEnd = s + text.length;
-  syncComposerRender();
+  syncRenderFor(input);
   // Programmatic insert (emoji / mention pickers) fires no 'input' event, so
   // the composer draft has to be told about it explicitly.
   try { draftSoon(input, draftCtxForEl(input)); } catch {}
+}
+// One backdrop painter per bar; the caller says which field it just changed.
+function syncRenderFor(input) {
+  if (input && input.id === 'in-thread') { try { syncThreadRender(); } catch {} return; }
+  try { syncComposerRender(); } catch {}
+}
+// The autocomplete popovers are anchored to the chat bar. A completion in the
+// thread bar has to sit over the thread panel instead, so the pop is placed
+// against the field it belongs to (measured, like the picker). The chat bar's own
+// placement stays exactly as the stylesheet has it.
+function anchorPopToInput(pop, input) {
+  if (!pop) return;
+  if (!(input && input.closest && input.closest('#thread-composer'))) {
+    pop.style.position = ''; pop.style.left = ''; pop.style.right = ''; pop.style.bottom = '';
+    return;
+  }
+  const box = input.closest('#thread-composer-box') || input;
+  const r = box.getBoundingClientRect();
+  pop.style.position = 'fixed';
+  pop.style.left = Math.round(Math.max(8, r.left)) + 'px';
+  pop.style.right = 'auto';
+  pop.style.bottom = Math.round(Math.max(8, window.innerHeight - r.top + 6)) + 'px';
 }
 let gifSearchT = null;
 function applyPickerSearch(q) {
@@ -382,40 +413,62 @@ function gifAttachment(g) {
 }
 // Is there a conversation for the composer to attach to? The same two shapes the
 // post-on-the-click path requires.
-function gifComposerReady() {
+// Which composer the picker was opened from. The chat bar and the thread bar are
+// both on screen, so a picked GIF has to know which one it belongs to.
+function gifComposerReady(bar = 'main') {
+  if (bar === 'thread') return !!(S.thread && S.thread.rootId);
   return S.view === 'home' ? !!S.dmThreadId : !!(S.serverId && S.channelId);
 }
-// Is a message already being written here — words in the box, or files already
-// staged (and a pending reply rides along either way)? Then a picked GIF belongs
-// to THAT message (see sendGif).
-function composerHasDraft() {
+// Is a message already being written in THIS bar — words in the box, or files
+// already staged (and a pending reply rides along either way)? Then a picked GIF
+// belongs to THAT message (see sendGif).
+function composerHasDraft(bar = 'main') {
+  if (bar === 'thread') {
+    const tinp = $('#in-thread');
+    return !!((tinp && tinp.value.trim()) || threadAtts().length);
+  }
   const inp = $('#in-message');
   return !!((inp && inp.value.trim()) || (S.pendingAtts || []).length);
 }
-// Stage the GIF as a chip on the composer. False when the message is already at
-// the 5-attachment cap a pick / drop / paste obeys.
-function stageGif(att) {
-  syncPendingAttsCtx(); // the list on screen is the open conversation's own
-  if ((S.pendingAtts || []).length + activeUploadCount(attsCtxNow()) >= 5) {
+// Stage the GIF as a chip on the composer it was picked for. False when the
+// message is already at the 5-attachment cap a pick / drop / paste obeys.
+function stageGif(att, bar = 'main') {
+  const isThread = bar === 'thread';
+  const ctx = isThread ? threadAttCtx() : (syncPendingAttsCtx(), attsCtxNow());
+  if (!ctx) return false;
+  const list = isThread ? threadAtts() : (S.pendingAtts = S.pendingAtts || []);
+  if (list.length + activeUploadCount(ctx) >= 5) {
     toast('Max 5 attachments per message');
     return false;
   }
   // The chip's tile is the Klipy THUMB: the gif behind it can be megabytes, and
   // a 40px chip has no use for the animation (the chat paints the thumb too).
   setAttPreview(att.url, att.gifThumb || att.url);
-  S.pendingAtts.push(att);
+  list.push(att);
   haptic(10); // the pick ticks, like an emoji does
   renderComposerMeta();
-  try { $('#in-message').focus(); } catch {}
+  try { (isThread ? $('#in-thread') : $('#in-message')).focus(); } catch {}
   return true;
 }
 function sendGif(g) {
   const pick = S.gifPick;
+  // Read the bar BEFORE closing: closePicker() drops S.picker with it.
+  const bar = pickerBar();
   closePicker();
   const att = gifAttachment(g);
   const url = att.url;
   if (pick === 'avatar' || pick === 'banner' || pick === 'sidebar') { if (url) applyProfileUrl(pick, url); return; }
   if (!url) return;
+  // The thread bar's own picker: a GIF picked there joins the reply being written
+  // (or posts as its own reply when the box is empty), and never the channel.
+  if (bar === 'thread') {
+    if (!gifComposerReady('thread')) return;
+    if (composerHasDraft('thread')) { stageGif(att, 'thread'); return; }
+    sendChat('', { attachments: [att], threadRoot: S.thread.rootId, replyTo: S.threadReplyTo?.id || null });
+    S.threadReplyTo = null;
+    renderComposerMeta();
+    return;
+  }
   // A GIF picked while a message is being written JOINS it, instead of going out
   // on its own: the words, the GIF, any staged files and a pending reply all
   // leave together on the reader's own Send. With an empty composer it still
@@ -1065,21 +1118,30 @@ $('#thread-composer').addEventListener('submit', (e) => {
   const inp = $('#in-thread');
   const content = inp.value.trim();
   const ctx = draftThreadCtx();
-  // Enter on a newline-only reply box: nothing to send, so clear the stray
-  // line breaks and re-fit — the same shape as the main composer's empty
-  // submit. Otherwise the tall box (and its phantom draft) just sits there.
-  if (!content) {
+  // The reply's own staged files go with it — a reply can be files with no words,
+  // exactly like a channel message (the chat bar's empty-submit rule, plus the
+  // files: an empty box with attachments is a message, not a stray newline).
+  const atts = threadAtts().slice();
+  if (!content && !atts.length) {
+    // Enter on a newline-only reply box: nothing to send, so clear the stray
+    // line breaks and re-fit — the same shape as the main composer's empty
+    // submit. Otherwise the tall box (and its phantom draft) just sits there.
     inp.value = '';
     draftClear(ctx);
     composerAutoGrow(inp);
+    try { syncThreadRender(); } catch {}
+    try { paintComposerSend(); } catch {}
     return;
   }
   inp.value = '';
   draftClear(ctx); // sent: the reply draft goes with it
-  sendChat(content, { threadRoot: S.thread.rootId, replyTo: S.threadReplyTo?.id || null });
+  const list = threadAtts();
+  list.length = 0; // the reply took them
+  sendChat(content, { threadRoot: S.thread.rootId, replyTo: S.threadReplyTo?.id || null, attachments: atts });
   S.threadReplyTo = null;
-  renderThreadComposerMeta();
+  renderComposerMeta();
   composerAutoGrow(inp); // programmatic clear doesn't fire 'input', so reset height here
+  try { syncThreadRender(); } catch {}
   // Mobile: keep the keyboard open for rapid follow-up replies.
   try { inp.focus({ preventScroll: true }); } catch { inp.focus(); }
 });
@@ -2017,10 +2079,15 @@ $('#profile-backdrop').addEventListener('click', (e) => { if (e.target.id === 'p
 // still being dispatched; the send handler (composerSendKey in final.js) would
 // then see a hidden popup and submit. Marking the event tells it to stand down.
 function popupTookKey(e) { e.cfAutocomplete = true; }
+// Both fields complete the same way: the thread bar is the chat bar's own
+// version, so @mention / #channel / :emoji all work in either one. Each handler
+// is handed the field it is running in.
+const COMPOSER_FIELDS = () => ['#in-message', '#in-thread'].map((s) => $(s)).filter(Boolean);
+function onComposerInput(fn) { COMPOSER_FIELDS().forEach((inp) => inp.addEventListener('input', () => fn(inp))); }
+function onComposerKeydown(fn) { COMPOSER_FIELDS().forEach((inp) => inp.addEventListener('keydown', (e) => fn(e, inp))); }
 let mentionIdx = 0;
 function hideMentionPop() { $('#mention-pop').classList.add('hidden'); }
-$('#in-message').addEventListener('input', () => {
-  const inp = $('#in-message');
+onComposerInput((inp) => {
   const upto = inp.value.slice(0, inp.selectionStart ?? inp.value.length);
   // Role names may contain spaces, so the query is "everything since the @".
   const m = upto.match(/@([^@\n]{1,32})$/);
@@ -2046,6 +2113,7 @@ $('#in-message').addEventListener('input', () => {
   if (!list.length) { hideMentionPop(); return; }
   mentionIdx = 0;
   const pop = $('#mention-pop');
+  anchorPopToInput(pop, inp);
   pop.innerHTML = '';
   list.forEach((c, i) => {
     const b = document.createElement('button');
@@ -2060,12 +2128,12 @@ $('#in-message').addEventListener('input', () => {
     } else {
       b.innerHTML = `<span class="chan-glyph">@</span><span>@${c.insert} <span class="mitem-sub">${c.insert === 'everyone' ? 'Notify everyone' : 'Notify online members'}</span></span>`;
     }
-    b.onmousedown = (e) => { e.preventDefault(); applyMention(c.insert); };
+    b.onmousedown = (e) => { e.preventDefault(); applyMention(c.insert, inp); };
     pop.appendChild(b);
   });
   pop.classList.remove('hidden');
 });
-$('#in-message').addEventListener('keydown', (e) => {
+onComposerKeydown((e, inp) => {
   const pop = $('#mention-pop');
   if (pop.classList.contains('hidden')) return;
   const items = [...pop.querySelectorAll('.mention-item')];
@@ -2076,17 +2144,16 @@ $('#in-message').addEventListener('keydown', (e) => {
   } else if ((e.key === 'Enter' || e.key === 'Tab') && items[mentionIdx]) {
     e.preventDefault();
     popupTookKey(e);
-    applyMention(items[mentionIdx].dataset.insert);
+    applyMention(items[mentionIdx].dataset.insert, inp);
   } else if (e.key === 'Escape') hideMentionPop();
 });
-function applyMention(name) {
-  const inp = $('#in-message');
+function applyMention(name, inp = $('#in-message')) {
   const pos = inp.selectionStart ?? inp.value.length;
   // A function replacement, so a role name containing `$&`/`$1` stays literal.
   inp.value = inp.value.slice(0, pos).replace(/@[^@\n]{0,32}$/, () => '@' + name + ' ');
   hideMentionPop();
   inp.focus();
-  syncComposerRender();
+  syncRenderFor(inp);
 }
 
 // ---------- #channel autocomplete (same UX as @mentions) ----------
@@ -2094,8 +2161,7 @@ function applyMention(name) {
 // which renders as a clickable link (see renderRich in core.js).
 let chanIdx = 0;
 function hideChanPop() { $('#chan-pop').classList.add('hidden'); }
-$('#in-message').addEventListener('input', () => {
-  const inp = $('#in-message');
+onComposerInput((inp) => {
   const upto = inp.value.slice(0, inp.selectionStart ?? inp.value.length);
   const m = upto.match(/#([A-Za-z0-9_-]{0,32})$/);
   const pool = S.view === 'server' ? (S.serverDetail?.channels || []) : [];
@@ -2105,6 +2171,7 @@ $('#in-message').addEventListener('input', () => {
   if (!cands.length) { hideChanPop(); return; }
   chanIdx = 0;
   const pop = $('#chan-pop');
+  anchorPopToInput(pop, inp);
   pop.innerHTML = '';
   cands.forEach((c, i) => {
     const b = document.createElement('button');
@@ -2112,12 +2179,12 @@ $('#in-message').addEventListener('input', () => {
     b.className = 'mention-item' + (i === 0 ? ' sel' : '');
     b.dataset.name = c.name;
     b.innerHTML = `<span class="chan-glyph">${c.type === 'voice' ? '♪' : '#'}</span><span>#${esc(c.name)}</span>`;
-    b.onmousedown = (e) => { e.preventDefault(); applyChannel(c.name); };
+    b.onmousedown = (e) => { e.preventDefault(); applyChannel(c.name, inp); };
     pop.appendChild(b);
   });
   pop.classList.remove('hidden');
 });
-$('#in-message').addEventListener('keydown', (e) => {
+onComposerKeydown((e, inp) => {
   const pop = $('#chan-pop');
   if (pop.classList.contains('hidden')) return;
   const items = [...pop.querySelectorAll('.mention-item')];
@@ -2128,16 +2195,15 @@ $('#in-message').addEventListener('keydown', (e) => {
   } else if ((e.key === 'Enter' || e.key === 'Tab') && items[chanIdx]) {
     e.preventDefault();
     popupTookKey(e);
-    applyChannel(items[chanIdx].dataset.name);
+    applyChannel(items[chanIdx].dataset.name, inp);
   } else if (e.key === 'Escape') hideChanPop();
 });
-function applyChannel(name) {
-  const inp = $('#in-message');
+function applyChannel(name, inp = $('#in-message')) {
   const pos = inp.selectionStart ?? inp.value.length;
   inp.value = inp.value.slice(0, pos).replace(/#[A-Za-z0-9_-]{0,32}$/, '#' + name + ' ');
   hideChanPop();
   inp.focus();
-  syncComposerRender();
+  syncRenderFor(inp);
 }
 
 // ---------- :emoji autocomplete (same UX as @mentions) ----------
@@ -2160,8 +2226,7 @@ function emojiCandidates(q) {
   }
   return out.slice(0, 8);
 }
-$('#in-message').addEventListener('input', () => {
-  const inp = $('#in-message');
+onComposerInput((inp) => {
   const upto = inp.value.slice(0, inp.selectionStart ?? inp.value.length);
   const m = upto.match(/:([a-z0-9_+-]{1,32})$/);
   if (!m) { hideEmojiPop(); return; }
@@ -2170,6 +2235,7 @@ $('#in-message').addEventListener('input', () => {
   if (!cands.length) { hideEmojiPop(); return; }
   emojiIdx = 0;
   const pop = $('#emoji-pop');
+  anchorPopToInput(pop, inp);
   pop.innerHTML = '';
   cands.forEach((c, i) => {
     const b = document.createElement('button');
@@ -2179,12 +2245,12 @@ $('#in-message').addEventListener('input', () => {
     b.innerHTML = c.kind === 'custom'
       ? `<img class="ep-img" src="${esc(c.url)}" alt="" data-fb-emoji=":${esc(c.name)}:" /><span class="ep-name">:${esc(c.name)}:</span>${c.srv ? `<span class="ep-srv">${esc(c.srv)}</span>` : ''}`
       : `<span class="ep-char">${esc(c.ch)}</span><span class="ep-name">:${esc(c.name)}:</span>`;
-    b.onmousedown = (e) => { e.preventDefault(); applyEmoji(c.name); };
+    b.onmousedown = (e) => { e.preventDefault(); applyEmoji(c.name, inp); };
     pop.appendChild(b);
   });
   pop.classList.remove('hidden');
 });
-$('#in-message').addEventListener('keydown', (e) => {
+onComposerKeydown((e, inp) => {
   const pop = $('#emoji-pop');
   if (pop.classList.contains('hidden')) return;
   const items = [...pop.querySelectorAll('.emoji-item')];
@@ -2195,15 +2261,14 @@ $('#in-message').addEventListener('keydown', (e) => {
   } else if ((e.key === 'Enter' || e.key === 'Tab') && items[emojiIdx]) {
     e.preventDefault();
     popupTookKey(e);
-    applyEmoji(items[emojiIdx].dataset.name);
+    applyEmoji(items[emojiIdx].dataset.name, inp);
   } else if (e.key === 'Escape') hideEmojiPop();
 });
-function applyEmoji(name) {
-  const inp = $('#in-message');
+function applyEmoji(name, inp = $('#in-message')) {
   const pos = inp.selectionStart ?? inp.value.length;
   inp.value = inp.value.slice(0, pos).replace(/:[a-z0-9_+-]{1,32}$/, ':' + name + ': ');
   hideEmojiPop();
   inp.focus();
-  syncComposerRender();
+  syncRenderFor(inp);
 }
 

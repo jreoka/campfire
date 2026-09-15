@@ -63,6 +63,9 @@ const finalJs = fs.readFileSync(path.join(ROOT, 'public/js/final.js'), 'utf8');
 
 // The composer form, verbatim, so the harness measures the real thing.
 const composerMarkup = index.slice(index.indexOf('<form id="composer">'), index.indexOf('<!-- members -->'));
+// The thread bar's own composer, verbatim: the same chrome on a second surface.
+// `hidden` comes off so it has layout to measure.
+const threadMarkup = index.slice(index.indexOf('<aside id="thread-panel"'), index.indexOf('<!-- search tab -->')).replace('class="hidden"', '');
 // The me bar, verbatim: the input pill is specified to be exactly its height.
 const meCardMarkup = index.slice(index.indexOf('<div id="me-card">'), index.indexOf('\n      </div>', index.indexOf('<div id="me-card">')) + '\n      </div>'.length);
 // The real send-key logic, verbatim (it is the last function in core.js).
@@ -74,20 +77,37 @@ function ruleBody(sel) {
   const j = css.indexOf('}', i);
   return css.slice(i + sel.length + 2, j);
 }
+// Since the thread bar became a second composer the two share most of their CSS,
+// so a rule may name several selectors. This finds the first rule whose selector
+// LIST contains the given one — exactly as a member, never as a substring (the
+// focus-within rule mentions #in-render too, and is not the field's own rule).
+function ruleFor(sel) {
+  const re = /(?:^|\n)([^{}\n]+)\{([^{}]*)\}/g;
+  for (let m; (m = re.exec(css)); ) {
+    const members = m[1].split(',').map((s) => s.trim());
+    if (members.includes(sel)) return { sel: m[1].trim(), body: m[2] };
+  }
+  return null;
+}
 
 function pageHtml() {
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="file:///${ROOT.replace(/\\/g, '/')}/public/styles.css">
 <style>#chat{display:flex;flex-direction:column;height:100vh}
- #sidebar{width:268px;flex:0 0 auto}</style></head><body>
+ #sidebar{width:268px;flex:0 0 auto}
+ /* The thread panel rises in with cf-rise, whose first frame is scale(.985) —
+    and a --dump-dom page never advances that animation, so an un-suppressed
+    panel measures 1.5% small and every one of its boxes with it. Measure the
+    settled layout the reader actually ends up looking at. */
+ #thread-panel{animation:none!important}</style></head><body>
 <div style="display:flex;height:100vh"><aside id="sidebar"><div style="flex:1"></div>${meCardMarkup}</aside>
-<main id="chat">${composerMarkup}</main></div>
+<main id="chat">${composerMarkup}</main>${threadMarkup}</div>
 <script>
 window.$ = (s) => document.querySelector(s);
 window.S = { view: 'server', serverId: 's', channelId: 'c', dmThreadId: null, pendingAtts: [] };
 ${paintSrc}
-window.__send = () => ({ off: document.querySelector('.send-btn').classList.contains('is-off'), disabled: document.querySelector('.send-btn').disabled, title: document.querySelector('.send-btn').title });
+window.__send = (sel) => { const b = document.querySelector(sel || '.send-btn'); return { off: b.classList.contains('is-off'), disabled: b.disabled, title: b.title }; };
 window.__report = function () {
   const R = (s) => { const el = document.querySelector(s); if (!el) return null; const b = el.getBoundingClientRect(); return { t: +b.top.toFixed(1), l: +b.left.toFixed(1), w: +b.width.toFixed(1), h: +b.height.toFixed(1), b: +b.bottom.toFixed(1), r: +b.right.toFixed(1) }; };
   const field = R('#in-render');
@@ -122,6 +142,26 @@ window.__report = function () {
     menuRows: menuRows.length,
     menuRowsWithIcon: menuRows.filter((r) => r.querySelector('.ctx-ic svg')).length,
     menuSeps: document.querySelectorAll('#composer-more .ctx-sep').length,
+    // The thread bar: the chat bar's own version, so every one of these has to
+    // match the chat bar's numbers, not just look similar.
+    threadField: R('#thread-render'),
+    threadSend: R('#thread-composer .send-btn'),
+    threadLead: R('#tbtn-plus') && R('#tbtn-plus').w ? R('#tbtn-plus') : R('#tbtn-more'),
+    threadTools: R('#thread-composer-tools'),
+    threadInputPad: cs('#in-thread', 'padding'),
+    threadRenderPad: cs('#thread-render', 'padding'),
+    threadFieldBg: cs('#thread-render', 'backgroundColor'),
+    threadRadius: cs('#thread-render', 'borderRadius'),
+    threadFont: cs('#thread-render', 'fontSize'),
+    fieldFont: cs('#in-render', 'fontSize'),
+    // Every metric that decides the box's height and the caret's place: if any of
+    // these differs between the two bars, the "own version" claim is a lie.
+    chatInputBox: ((s) => ({ font: cs(s, 'fontSize'), line: cs(s, 'lineHeight'), pad: cs(s, 'padding'), border: cs(s, 'borderTopWidth'), h: R(s).h }))('#in-message'),
+    threadInputBox: ((s) => ({ font: cs(s, 'fontSize'), line: cs(s, 'lineHeight'), pad: cs(s, 'padding'), border: cs(s, 'borderTopWidth'), h: R(s).h }))('#in-thread'),
+    threadAlign: cs('#thread-composer-row', 'align-items'),
+    tbtnPlus: cs('#tbtn-plus', 'display'),
+    tbtnMore: cs('#tbtn-more', 'display'),
+    tbtnAttach: cs('#tbtn-attach', 'display'),
     // The send key, driven through the real function.
     // The send key rides the field's own height: same top and bottom edges.
     send: R('#composer .send-btn'),
@@ -130,6 +170,10 @@ window.__report = function () {
     attOnly: (() => { const i = document.querySelector('#in-message'); i.value = ''; S.pendingAtts = [{ id: 'a' }]; paintComposerSend(); return window.__send(); })(),
     blank: (() => { const i = document.querySelector('#in-message'); i.value = '   '; S.pendingAtts = []; paintComposerSend(); return window.__send(); })(),
     noChat: (() => { S.channelId = null; document.querySelector('#in-message').value = 'hi'; paintComposerSend(); const r = window.__send(); S.channelId = 'c'; return r; })(),
+    // ...and the thread bar's key reads ITS box (the same function drives both).
+    threadEmpty: (() => { S.thread = null; document.querySelector('#in-thread').value = ''; paintComposerSend(); return window.__send('#thread-composer .send-btn'); })(),
+    threadTyped: (() => { S.thread = { rootId: 'r1' }; document.querySelector('#in-thread').value = 'a reply'; paintComposerSend(); return window.__send('#thread-composer .send-btn'); })(),
+    threadBlank: (() => { S.thread = { rootId: 'r1' }; document.querySelector('#in-thread').value = '   '; paintComposerSend(); return window.__send('#thread-composer .send-btn'); })(),
   };
 };
 setTimeout(() => { document.title = JSON.stringify(window.__report()); }, 300);
@@ -156,8 +200,9 @@ function probe(chrome, url, { width, height, dpr, touch }) {
 
 function main() {
   console.log('\n[1] the field has its own surface, in every theme');
-  check(/#in-render\{[^}]*background:var\(--field\)/.test(css), 'the field is painted with --field, not --inset');
-  check(!/#in-render\{[^}]*background:var\(--inset\)/.test(css), 'and no longer with the login-input well');
+  const fieldRuleAll = ruleFor('#in-render') || { sel: '', body: '' };
+  check(/background:var\(--field\)/.test(fieldRuleAll.body), 'the field is painted with --field, not --inset', fieldRuleAll.sel);
+  check(!/background:var\(--inset\)/.test(fieldRuleAll.body), 'and no longer with the login-input well');
   const themeNames = ['dark', 'light', 'dracula', 'oled'];
   const missing = themeNames.filter((t) => {
     // :root/[data-theme="dark"] carries the dark pair; the others carry their own.
@@ -168,7 +213,7 @@ function main() {
     return !/--field:/.test(body) || !/--field-line:/.test(body);
   });
   check(missing.length === 0, 'all four themes define --field and --field-line', missing);
-  const fieldRule = ruleBody('#in-render') || '';
+  const fieldRule = ruleFor('#in-render')?.body || '';
   check(/border-radius:16px/.test(fieldRule), 'the field and the send key share one radius family', fieldRule.slice(0, 60));
 
   console.log('\n[2] the field\'s own controls are wired and styled');
@@ -176,15 +221,18 @@ function main() {
   // The two offsets are the centred rest position for a 32px control inside the
   // one-line pill — (pill height - 32) / 2 — so they move with --field-pad-y and
   // must agree with each other. [5]/[7] measure the result.
-  const plusBottom = /bottom:([\d.]+)px/.exec(ruleBody('#btn-plus') || '');
-  const toolsBottom = /bottom:([\d.]+)px/.exec(ruleBody('#composer-tools') || '');
+  const plusBottom = /bottom:([\d.]+)px/.exec(ruleBody('#btn-plus,#tbtn-plus') || '');
+  const toolsBottom = /bottom:([\d.]+)px/.exec(ruleFor('#composer-tools')?.body || '');
   check(!!plusBottom && Number(plusBottom[1]) > 2, 'the leading + rides the bottom of the box', plusBottom && plusBottom[1]);
   check(!!toolsBottom && !!plusBottom && toolsBottom[1] === plusBottom[1], 'and the tool rail sits on the same optical line', toolsBottom && toolsBottom[1]);
-  check(/color-mix\(in srgb, var\(--text\) 8%, transparent\)/.test(ruleBody('#btn-plus,#btn-more') || ''), 'the + has a resting surface mixed off --text (so it lifts in light mode too)');
+  const leadDisc = ruleBody('#btn-plus,#btn-more,#tbtn-plus,#tbtn-more');
+  check(/color-mix\(in srgb, var\(--text\) 8%, transparent\)/.test(leadDisc || ''), 'the + has a resting surface mixed off --text (so it lifts in light mode too)');
   check(/#composer \.tool-btn:not\(#btn-plus\):not\(#btn-more\)/.test(css), 'the phone thumbs-size rule exempts the +, which must stay smaller than its field');
   const tap = /--tap:\s*(\d+)px/.exec(css);
   check(!!tap && Number(tap[1]) >= 44, '--tap is a real thumb target', tap && tap[1]);
-  check(/#btn-plus::after,#btn-more::after\{[^}]*width:var\(--tap\)/.test(css.replace(/\s+/g, '')), 'and the + gets its thumb target from a hit box instead of from its own size');
+  const tapBox = ruleFor('#btn-plus::after') || { sel: '', body: '' };
+  check(/width:var\(--tap\)/.test(tapBox.body) && /#tbtn-plus::after/.test(tapBox.sel),
+    'and both bars\' + keys get their thumb target from a hit box instead of from their own size', tapBox.sel);
 
   console.log('\n[3] the + menu reads as a menu');
   const menuRows = [...index.matchAll(/<button type="button" class="ctx-item" id="cm-[a-z]+">([\s\S]*?)<\/button>/g)];
@@ -196,7 +244,9 @@ function main() {
   console.log('\n[4] the send key follows the box');
   check(/function paintComposerSend\(\)/.test(core), 'paintComposerSend exists');
   check(/paintComposerSend\(\); \} catch \{\} \}\s*$/.test(core.trimEnd()) || /try \{ paintComposerSend\(\); \} catch \{\}/.test(core), 'applyComposerDraft repaints it on every channel / DM / thread switch');
-  check(/syncComposerRender\(\);\s*\n\s*try \{ paintComposerSend\(\); \} catch \{\}/.test(messages), 'renderComposerMeta repaints it (attachments and reply chips)');
+  const rc = messages.slice(messages.indexOf('function renderComposerMeta()'), messages.indexOf('function renderThreadComposerMeta()'));
+  check(/syncComposerRender\(\)/.test(rc) && /syncThreadRender\(\)/.test(rc) && /paintComposerSend\(\)/.test(rc),
+    'renderComposerMeta repaints both bars (attachments, reply chips, backdrops, send keys)');
   check(/\$\('#in-message'\)\.addEventListener\('input', \(\) => \{ try \{ paintComposerSend\(\); \} catch \{\} \}\)/.test(finalJs), 'and so does typing in the box');
   check(/\.send-btn\.is-off\{background:var\(--panel-3\)/.test(css), 'the off state is a muted surface, not the accent');
   // The key's height is the field's, derived from the same numbers (2 x padding +
@@ -210,7 +260,8 @@ function main() {
   // bottom of the sheet, or a tap would leave the artifact stuck on the key.
   const hoverBlock = css.indexOf('hover, only where hover exists');
   check(hoverBlock > 0 && css.indexOf('.send-btn:hover{') > hoverBlock, 'the send key is only hover-styled where hovering exists');
-  check(css.indexOf('#btn-plus:hover,#btn-more:hover{') > hoverBlock, 'and so is the leading +');
+  const leadHover = ruleFor('#btn-plus:hover') || { sel: '' };
+  check(css.indexOf(leadHover.sel + '{') > hoverBlock && /#tbtn-plus:hover/.test(leadHover.sel), 'and so is the leading +, on both bars', leadHover.sel);
 
   const chrome = findChrome();
   if (!chrome) return skip('no Chrome/Edge found (set CHROME_PATH)');
@@ -250,6 +301,29 @@ function main() {
       { h: phone.composerH, v: phone.composerVar });
     check(phone.menuRows === 7 && phone.menuRowsWithIcon === 7, 'the + menu rows render with their icons', { rows: phone.menuRows, icons: phone.menuRowsWithIcon });
     check(phone.menuSeps === 1, 'and the separator renders', phone.menuSeps);
+    // The thread bar is the chat bar's own version: same pill, same controls,
+    // same key — measured on the same page, so any drift shows up as a number.
+    check(!!phone.threadField && Math.abs(phone.threadField.h - phone.field.h) <= 0.5,
+      'the thread bar\'s pill is exactly the chat bar\'s height on the phone',
+      { thread: phone.threadField && phone.threadField.h, chat: phone.field.h, chatBox: phone.chatInputBox, threadBox: phone.threadInputBox });
+    check(phone.threadInputPad === phone.threadRenderPad, 'its textarea and backdrop share one padding too', { input: phone.threadInputPad, render: phone.threadRenderPad });
+    check(JSON.stringify(phone.threadInputBox) === JSON.stringify(phone.chatInputBox),
+      'and every metric that sizes the box (font, line, padding, border) is the chat box\'s',
+      { chat: phone.chatInputBox, thread: phone.threadInputBox });
+    check(phone.threadFieldBg === phone.fieldBg && phone.threadRadius === phone.fieldRadius && phone.threadFont === phone.fieldFont,
+      'and one surface, radius and type size', { bg: phone.threadFieldBg, r: phone.threadRadius, font: phone.threadFont, chatFont: phone.fieldFont });
+    check(!!phone.threadSend && Math.abs(phone.threadSend.h - phone.threadField.h) <= 0.5
+      && Math.abs(phone.threadSend.t - phone.threadField.t) <= 0.5 && Math.abs(phone.threadSend.b - phone.threadField.b) <= 0.5,
+      'its send key is the same key on the same edges',
+      { send: phone.threadSend && phone.threadSend.h, field: phone.threadField.h });
+    check(phone.threadAlign === 'flex-end', 'and the row bottom-aligns it, like the chat bar\'s', phone.threadAlign);
+    const tl = phone.threadLead || {};
+    const tf = phone.threadField || {};
+    check(!!tl.w && tl.t - tf.t > 2 && tf.b - tl.b > 2 && tl.l - tf.l > 2 && tf.r - tl.r > 2,
+      'the thread + sits fully inside its own field', { lead: tl, field: tf });
+    check(/flex/.test(phone.tbtnMore) && phone.tbtnPlus === 'none' && phone.tbtnAttach === 'none',
+      'the phone keeps only the + menu, exactly as the chat bar does',
+      { more: phone.tbtnMore, plus: phone.tbtnPlus, attach: phone.tbtnAttach });
 
     console.log('\n[6] the send key reads the box');
     check(phone.empty.off && phone.empty.disabled, 'empty box: muted and not clickable', phone.empty);
@@ -258,6 +332,9 @@ function main() {
     check(!phone.attOnly.off, 'an attachment with no text is still sendable', phone.attOnly);
     check(phone.blank.off, 'whitespace only is not', phone.blank);
     check(phone.noChat.off, 'and neither is a box with no conversation behind it', phone.noChat);
+    check(phone.threadEmpty.off && phone.threadEmpty.disabled, 'the thread key is muted while its box is empty and no thread is open', phone.threadEmpty);
+    check(!phone.threadTyped.off && !phone.threadTyped.disabled, 'lit with a reply in it', phone.threadTyped);
+    check(phone.threadBlank.off, 'and whitespace alone does not light it', phone.threadBlank);
 
     console.log('\n[7] the desktop field matches');
     desktop = probe(chrome, base, { width: 1200, height: 820, dpr: 2, touch: false });
@@ -272,6 +349,12 @@ function main() {
       'and the send key matches the box on the desktop rule too',
       { send: desktop.send && desktop.send.h, field: desktop.field.h });
     check(desktop.fieldBg === phone.fieldBg, 'same field surface on both layouts', { phone: phone.fieldBg, desktop: desktop.fieldBg });
+    check(!!desktop.threadField && Math.abs(desktop.threadField.h - desktop.field.h) <= 0.5,
+      'the thread bar matches the chat bar on the desktop rule too',
+      { thread: desktop.threadField && desktop.threadField.h, chat: desktop.field.h });
+    check(desktop.threadFieldBg === desktop.fieldBg && desktop.threadRadius === desktop.fieldRadius,
+      'with the same surface (the panel is its own column, not its own design)',
+      { bg: desktop.threadFieldBg, r: desktop.threadRadius });
   } finally {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }

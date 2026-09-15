@@ -398,13 +398,13 @@ function clickInPath(e, sels) {
  document.addEventListener('click', (e) => {
   // Clicks inside the bottom sheet are handled by the sheet's own rows (a row may
   // open the picker), so they must not close it again in the same click.
-  if (!e.target.closest('#picker') && !e.target.closest('#btn-emoji') && !e.target.closest('#btn-gif') && !e.target.closest('#srv-tag-emoji') && !e.target.closest('.msg-actions') && !e.target.closest('#sheet')) closePicker();
+  if (!e.target.closest('#picker') && !e.target.closest('#btn-emoji') && !e.target.closest('#btn-gif') && !e.target.closest('#tbtn-emoji') && !e.target.closest('#tbtn-gif') && !e.target.closest('#srv-tag-emoji') && !e.target.closest('.msg-actions') && !e.target.closest('#sheet')) closePicker();
   // ...and a click that just OPENED the card is not a click outside it either:
   // this listener runs after the opener in the same click, and an already-loaded
   // friend list paints the card before it gets here (ucOpenedByThisClick).
   if (!clickInPath(e, ['#usercard', '#me-card', '[data-uid]', '.member', '.usertag[data-tag-sid]']) && !ucOpenedByThisClick()) closeUserCard();
   if (ctxEl && !e.target.closest('#ctx-menu') && !e.target.closest('.msg-actions')) closeCtx();
-  if ($('#emoji-pop') && !e.target.closest('#emoji-pop') && !e.target.closest('#in-message')) hideEmojiPop();
+  if ($('#emoji-pop') && !e.target.closest('#emoji-pop') && !e.target.closest('#in-message') && !e.target.closest('#in-thread')) hideEmojiPop();
   if (folderFlyoutEl && !e.target.closest('#folder-menu')) closeFolderFlyout();
   // A folder only collapses when its own header (top part) is clicked; never
   // on outside/background clicks or when selecting one of its servers.
@@ -414,6 +414,7 @@ function clickInPath(e, sels) {
   // same click — which is exactly why the drawer never opened from there.
   if (document.body.classList.contains('members-open') && !e.target.closest('#members') && !e.target.closest('#btn-members') && !e.target.closest('#sheet')) document.body.classList.remove('members-open');
   if (!e.target.closest('#composer-more') && !e.target.closest('#btn-more') && !e.target.closest('#btn-plus')) $('#composer-more')?.classList.add('hidden');
+  if (!e.target.closest('#thread-composer-more') && !e.target.closest('#tbtn-more') && !e.target.closest('#tbtn-plus')) $('#thread-composer-more')?.classList.add('hidden');
   if (!e.target.closest('#tagcard') && !e.target.closest('.usertag[data-tag-sid]')) closeTagCard();
 });
 // Server tags open their server's mini-panel (banner + icon + name +
@@ -448,6 +449,7 @@ const ESCAPE_LAYERS = [
   () => closeAdminConsole(),
   () => closeProfileScreen(),
   () => $('#composer-more')?.classList.add('hidden'),
+  () => $('#thread-composer-more')?.classList.add('hidden'),
   () => closeStoryNewMenu(),
   () => cancelModal(),
   () => closeLightbox(),
@@ -462,6 +464,13 @@ function composerAnchor() {
   if (!t || !t.width) return null;
   return { x: t.right - 180, y: t.top };
 }
+// The thread bar's own anchor: its tools sit in a different box, so the picker
+// has to float from there (desktop; a phone keeps the bottom sheet).
+function threadComposerAnchor() {
+  const t = $('#thread-composer-tools')?.getBoundingClientRect();
+  if (!t || !t.width) return null;
+  return { x: t.right - 180, y: t.top };
+}
 $('#btn-emoji').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'emoji', composerAnchor()) : closePicker(); };
 $('#btn-gif').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'gifs', composerAnchor()) : closePicker(); };
 // Mobile: composer options live under a + menu (attach / emoji / GIF stay visible on desktop)
@@ -472,6 +481,18 @@ $('#cm-emoji').onclick = (e) => { e.stopPropagation(); $('#composer-more').class
 $('#cm-gif').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); $('#btn-gif').click(); };
 $('#cm-voice').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); startVoiceRec(); };
 $('#cm-poll').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); openPollModal(); };
+// The thread bar is the chat bar's own version, so it carries its own copy of the
+// tools — emoji, GIF and the + menu — and each one names the field a pick belongs
+// to (`S.picker.input`, see pickers.js): an emoji picked here lands in the reply
+// box, a GIF picked here joins the reply. Voice / view-once / poll / story are
+// deliberately absent: those flows are scoped to a channel, not to a thread.
+$('#tbtn-emoji').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'emoji', threadComposerAnchor(), 'thread') : closePicker(); };
+$('#tbtn-gif').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'gifs', threadComposerAnchor(), 'thread') : closePicker(); };
+$('#tbtn-more').onclick = (e) => { e.stopPropagation(); closePicker(); $('#thread-composer-more').classList.toggle('hidden'); };
+$('#tbtn-plus').onclick = (e) => { e.stopPropagation(); closePicker(); $('#thread-composer-more').classList.toggle('hidden'); };
+$('#tcm-attach').onclick = (e) => { e.stopPropagation(); $('#thread-composer-more').classList.add('hidden'); $('#tbtn-attach').click(); };
+$('#tcm-emoji').onclick = (e) => { e.stopPropagation(); $('#thread-composer-more').classList.add('hidden'); $('#tbtn-emoji').click(); };
+$('#tcm-gif').onclick = (e) => { e.stopPropagation(); $('#thread-composer-more').classList.add('hidden'); $('#tbtn-gif').click(); };
 $('#rec-cancel').onclick = cancelVoiceRec;
 $('#rec-done').onclick = stopVoiceRec;
 $('#rec-pause').onclick = toggleRecPause;
@@ -483,9 +504,21 @@ function syncComposerRender() {
   r.style.marginLeft = (-inp.scrollLeft) + 'px';
 }
 $('#in-message').addEventListener('input', syncComposerRender);
+// The thread bar's field paints the same backdrop (its textarea is transparent
+// too, and only carries the caret) — one painter each, same metrics.
+function syncThreadRender() {
+  const inp = $('#in-thread'), r = $('#thread-render-inner');
+  if (!inp || !r) return;
+  r.innerHTML = inp.value ? renderRich(inp.value, { plain: true }) : '';
+  r.style.marginLeft = (-inp.scrollLeft) + 'px';
+  const c = $('#thread-render');
+  if (c) c.scrollTop = inp.scrollTop;
+}
+$('#in-thread').addEventListener('input', syncThreadRender);
 // The send key follows the box (see paintComposerSend): lit as soon as there is
 // something to send, muted again when it is emptied.
 $('#in-message').addEventListener('input', () => { try { paintComposerSend(); } catch {} });
+$('#in-thread').addEventListener('input', () => { try { paintComposerSend(); } catch {} });
 $('#in-message').addEventListener('input', (e) => composerAutoGrow(e.target));
 $('#in-thread').addEventListener('input', (e) => composerAutoGrow(e.target));
 // Drafts: keep what you're typing for the conversation you're typing it in, so
@@ -534,6 +567,11 @@ for (const sel of ['#composer .send-btn', '#thread-composer [type="submit"]']) {
 }
 $('#in-message').addEventListener('scroll', () => {
   const inp = $('#in-message'), r = $('#in-render-inner'), c = $('#in-render');
+  if (c) c.scrollTop = inp.scrollTop;
+  if (r) r.style.marginLeft = (-inp.scrollLeft) + 'px';
+});
+$('#in-thread').addEventListener('scroll', () => {
+  const inp = $('#in-thread'), r = $('#thread-render-inner'), c = $('#thread-render');
   if (c) c.scrollTop = inp.scrollTop;
   if (r) r.style.marginLeft = (-inp.scrollLeft) + 'px';
 });

@@ -291,11 +291,28 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
       <header><strong>Thread</strong><span id="thread-sub" class="muted"></span><span class="spacer"></span><button id="thread-close" class="mini">✕</button></header>
       <div id="thread-root"></div>
       <div id="thread-replies"></div>
+      <div id="thread-attach-preview" class="hidden"></div>
+      <div id="thread-upload-list" class="hidden"></div>
       <form id="thread-composer">
-        <div id="thread-reply-meta" class="hidden"></div>
         <div id="thread-composer-row">
-          <textarea id="in-thread" autocomplete="off" maxlength="5000" placeholder="Reply in thread" rows="1"></textarea>
-          <button class="btn primary small" type="submit">Reply</button>
+          <div id="thread-composer-box">
+            <div id="thread-render" aria-hidden="true"><div id="thread-render-inner"></div></div>
+            <textarea id="in-thread" autocomplete="off" maxlength="5000" placeholder="Reply in thread" rows="1"></textarea>
+            <button type="button" id="tbtn-plus" class="tool-btn" title="More options"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            <div id="thread-composer-tools">
+              <button type="button" id="tbtn-attach" class="tool-btn" title="Attach a file"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+              <button type="button" id="tbtn-emoji" class="tool-btn" title="Emoji"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.2 1.8 3.5 1.8 3.5-1.8 3.5-1.8"/><line x1="9" y1="9.5" x2="9" y2="9.6"/><line x1="15" y1="9.5" x2="15" y2="9.6"/></svg></button>
+              <input id="in-thread-attach" type="file" multiple class="hidden" />
+              <button type="button" id="tbtn-gif" class="tool-btn gif-btn" title="Send a GIF">GIF</button>
+              <button type="button" id="tbtn-more" class="tool-btn" title="More options"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            </div>
+            <div id="thread-composer-more" class="hidden">
+              <button type="button" class="ctx-item" id="tcm-attach"><span class="ctx-ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></span>Attach a file</button>
+              <button type="button" class="ctx-item" id="tcm-emoji"><span class="ctx-ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.2 1.8 3.5 1.8 3.5-1.8 3.5-1.8"/><line x1="9" y1="9.5" x2="9" y2="9.6"/><line x1="15" y1="9.5" x2="15" y2="9.6"/></svg></span>Add emoji</button>
+              <button type="button" class="ctx-item" id="tcm-gif"><span class="ctx-ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M9.5 10.2H7.8a1.6 1.6 0 0 0-1.6 1.6v.9a1.6 1.6 0 0 0 1.6 1.6h1.4v-1.7"/><path d="M13 14.3v-4.1h2.1M13 12.4h1.7M17.6 14.3v-4.1h2.3"/></svg></span>Send a GIF</button>
+            </div>
+          </div>
+          <button class="send-btn" type="submit" title="Send" aria-label="Send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
         </div>
       </form>
     </aside>

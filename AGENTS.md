@@ -787,7 +787,17 @@ per-account draft store (`core.js`: `draftSoon`/`flushDrafts`/
 and clear the draft when the message goes out. Attachments and their uploads are
 per conversation too (`messages.js`: `pendingByCtx`/`syncPendingAttsCtx`,
 re-synced by `renderComposerMeta`) — an upload card only paints in the chat it
-was started in, and its finished file lands THERE. An upload that is never
+was started in, and its finished file lands THERE. **The thread bar is the chat
+bar's own version** (`#thread-composer`, mirroring `#composer` id for id:
+`tbtn-*`/`in-thread`, its own `#thread-attach-preview` + `#thread-upload-list`,
+its own `+` menu): the two are on screen at once, so a composer is never "the
+open conversation" — the chat bar stages on `draftCtx()`, the thread bar on
+`threadAttCtx()` ('t:<rootId>', the key its draft already used), and one
+`renderComposerMeta()`/`renderUploads()` repaints BOTH from their own contexts.
+Pickers carry the bar they were opened from (`openPicker(..., input)`,
+`pickerBar()`), the three completions (`@` / `#` / `:emoji:`) are registered
+per field, and `paintComposerSend()` paints both keys. A voice message, poll,
+view-once or story is deliberately absent there: those flows are channel-scoped. An upload that is never
 answered must FAIL visibly, never shimmer: the watchdog (`messages.js`) is armed
 from `xhr.send()` — not from a progress event, which a dead transfer may never
 send — and its ceiling drops to 90s once the body is out, because a phone that

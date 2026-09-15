@@ -64,10 +64,15 @@ function pageHtml() {
   <button type="button" id="btn-attach"></button>
   <input id="in-attach" type="file" multiple class="hidden" />
   <textarea id="in-message"></textarea>
+</form>
+<form id="thread-composer">
+  <button type="button" id="tbtn-attach"></button>
+  <input id="in-thread-attach" type="file" multiple class="hidden" />
+  <textarea id="in-thread"></textarea>
 </form></div>
 <script>
 // ---- the app's globals, stubbed (the sliced block only touches these) ----
-const calls = { attach: [], toasts: [], focus: 0, pickerOpened: 0 };
+const calls = { attach: [], toasts: [], focus: 0, focusThread: 0, pickerOpened: 0, lastCtx: null };
 window.__calls = calls;
 window.S = { pendingAtts: [] };
 window.__running = 0;
@@ -76,8 +81,13 @@ function toast(msg) { calls.toasts.push(msg); }
 function composerTargetReady() { return window.__ready !== false; }
 function activeUploadCount() { return window.__running; }
 function attsCtxNow() { return 'ctx'; }
-function uploadAndAttach(f) { calls.attach.push(f && f.name); }
+// The thread bar's own staging: its context, its list (the real ones key on the
+// open thread — see threadAttCtx/threadAtts in messages.js).
+function threadAttCtx() { return window.__threadClosed ? null : 't:root1'; }
+function threadAtts() { return (window.__threadList = window.__threadList || []); }
+function uploadAndAttach(f, ctx) { calls.attach.push(f && f.name); calls.lastCtx = ctx || null; }
 document.querySelector('#in-message').addEventListener('focus', () => { calls.focus++; });
+document.querySelector('#in-thread').addEventListener('focus', () => { calls.focusThread++; });
 document.querySelector('#in-attach').addEventListener('click', () => { calls.pickerOpened++; });
 ${pickerSource()}
 // ---- the harness the checks drive ----
@@ -89,16 +99,29 @@ window.__pick = (names) => {
   inp.dispatchEvent(new Event('change', { bubbles: true }));
   return { files: inp.files.length, value: inp.value };
 };
+window.__pickThread = (names) => {
+  const inp = document.querySelector('#in-thread-attach');
+  const dt = new DataTransfer();
+  names.forEach((n, i) => dt.items.add(new File(['x'.repeat(4 + i)], n, { type: 'text/plain' })));
+  inp.files = dt.files;
+  inp.dispatchEvent(new Event('change', { bubbles: true }));
+  return { files: inp.files.length, value: inp.value };
+};
 window.__reset = () => {
   window.__calls.attach.length = 0;
   window.__calls.toasts.length = 0;
   window.__calls.focus = 0;
+  window.__calls.focusThread = 0;
+  window.__calls.lastCtx = null;
   window.S.pendingAtts = [];
   window.__running = 0;
   window.__ready = true;
+  window.__threadList = [];
+  window.__threadClosed = false;
   // Focus only fires on a CHANGE of focus, so a case that starts with the box
   // already focused would see nothing.
   document.querySelector('#in-message').blur();
+  document.querySelector('#in-thread').blur();
 };
 </script>
 </body></html>`;
@@ -235,6 +258,34 @@ async function main() {
         return window.__calls.pickerOpened;
       })()`);
       check(r === 1, 'the button still opens the picker', r);
+    }
+
+    console.log('\n[6] the thread bar has its own picker, staging on its own thread');
+    {
+      const r = await evaluate(`(() => {
+        window.__reset();
+        const out = window.__pickThread(['t1.txt', 't2.txt']);
+        return { out, attach: window.__calls.attach.slice(), ctx: window.__calls.lastCtx,
+          toasts: window.__calls.toasts.slice(), focus: window.__calls.focusThread,
+          chatChips: window.S.pendingAtts.length, threadList: window.__threadList.length };
+      })()`);
+      check(r.attach.join(',') === 't1.txt,t2.txt', 'the reply bar takes its own multi-file pick', r);
+      check(r.ctx === 't:root1', 'and hands every file the THREAD\'s context, never the channel\'s', r);
+      check(r.chatChips === 0, 'so the chat composer beside it is left alone', r);
+      check(r.out.value === '' && r.out.files === 0, 'and the input clears for a second pick', r);
+      check(r.focus === 1, 'focus comes back to the reply box for Enter-to-send', r);
+    }
+    {
+      const r = await evaluate(`(() => {
+        window.__reset();
+        window.__threadClosed = true;   // the panel closed while the dialog was open
+        window.__pickThread(['late.txt']);
+        const out = { attach: window.__calls.attach.slice(), toasts: window.__calls.toasts.slice() };
+        window.__threadClosed = false;
+        return out;
+      })()`);
+      check(r.attach.length === 0 && r.toasts.length === 1 && /closed/i.test(r.toasts[0] || ''),
+        'a thread that closed mid-dialog is named, not silently swallowed', r);
     }
 
     check(pageErrors.length === 0, 'no uncaught page errors through the whole run', pageErrors.slice(0, 3));

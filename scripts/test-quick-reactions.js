@@ -115,8 +115,8 @@ function wiringChecks() {
   console.log('\n[A3] only REACTIONS feed it');
   check(/if \(bumpFreq\(emoji\)\)/.test(pickers) && (pickers.match(/bumpFreq\(/g) || []).length === 1,
     'the reaction toggle is the one caller', (pickers.match(/bumpFreq\(/g) || []).length);
-  check(!/else \{ bumpFreq\(e\); insertAtCursor/.test(pickers) && /else insertAtCursor\(\$\('#in-message'\), e\);/.test(pickers),
-    'inserting an emoji into a message no longer counts as reacting with it');
+  check(!/else \{ bumpFreq\(e\); insertAtCursor/.test(pickers) && /else insertAtCursor\(inp, e\);/.test(pickers),
+    'inserting an emoji into a message no longer counts as reacting with it (the picked emoji goes into the field the picker was opened from)');
   check(/for \(const e of topReactions\(\)\)/.test(actions),
     'the long-press sheet reads the same ranking (it always did — every open)');
 

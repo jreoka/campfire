@@ -742,7 +742,7 @@ function applyComposerDraft() {
   const tctx = draftThreadCtx();
   if (ti && tctx) {
     const t = draftGet(tctx);
-    if (ti.value !== t) ti.value = t;
+    if (ti.value !== t) { ti.value = t; try { syncThreadRender(); } catch {} }
     try { composerAutoGrow(ti); } catch {}
   }
   try { paintComposerSend(); } catch {}
@@ -752,15 +752,25 @@ function applyComposerDraft() {
 // that quietly does nothing, which is the loudest form-field tell in the row.
 // It keeps its size and position either way, so nothing reflows as you type —
 // and it is only ever cosmetic, the submit handler still decides what sends.
+// BOTH bars carry one (the thread bar is the chat bar's own version), and each
+// reads its own field and its own staged files.
 function paintComposerSend() {
-  const btn = document.querySelector('#composer .send-btn');
-  if (!btn) return;
-  let sendable = false;
-  try {
+  paintSendKey('#composer .send-btn', () => {
     const text = ($('#in-message')?.value || '').trim();
     const noChat = S.view === 'home' ? !S.dmThreadId : (!S.serverId || !S.channelId);
-    sendable = !noChat && (!!text || (S.pendingAtts || []).length > 0);
-  } catch {}
+    return !noChat && (!!text || (S.pendingAtts || []).length > 0);
+  });
+  paintSendKey('#thread-composer .send-btn', () => {
+    const text = ($('#in-thread')?.value || '').trim();
+    const atts = typeof threadAtts === 'function' ? threadAtts().length : 0;
+    return !!S.thread && (!!text || atts > 0);
+  });
+}
+function paintSendKey(sel, isSendable) {
+  const btn = document.querySelector(sel);
+  if (!btn) return;
+  let sendable = false;
+  try { sendable = !!isSendable(); } catch {}
   btn.classList.toggle('is-off', !sendable);
   btn.disabled = !sendable;
   btn.title = sendable ? 'Send' : 'Nothing to send yet';

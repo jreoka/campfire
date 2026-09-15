@@ -218,10 +218,11 @@ async function main() {
   console.log('\n[1] the card belongs to the conversation that is open');
   check(/u\.ctx == null \? pendingCtxKey == null : u\.ctx === pendingCtxKey/.test(upSource),
     'renderUploads paints only the open conversation\'s uploads');
-  check(/ctx: attsCtxNow\(\)/.test(upSource), 'each upload records the conversation it started in');
+  check(/const target = ctx \|\| attsCtxNow\(\);/.test(upSource) && /ctx: target,/.test(upSource),
+    'each upload records the conversation it started in (the caller names it — the chat bar its own, the thread bar its thread)');
   check(/const home = u\.attHere \? S\.pendingAtts : attsListFor\(u\.ctx\)/.test(upSource),
     'a finished upload is filed where it was started, not where the reader is now');
-  check(/activeUploadCount\(ctx\)/.test(upSource) && /activeUploadCount\(attsCtxNow\(\)\)/.test(upSource),
+  check(/activeUploadCount\(ctx\)/.test(upSource) && /activeUploadCount\(target\)/.test(upSource),
     'the 5-per-message cap counts that conversation\'s uploads');
   check(/if \(!composerTargetReady\(\)\) \{ toast\('Pick a chat first, then attach'\); return; \}/.test(upSource),
     'an attachment with no conversation to belong to is refused up front');
@@ -236,8 +237,8 @@ async function main() {
   console.log('\n[2b] the chip stage for a file starts when ITS card stage is over');
   check(/function uploadHeldOnStage\(att\) \{[\s\S]{0,220}u\.att === att && u\.attHere && uploadCardEl\(u\.id\)/.test(messages),
     'the stage test is THIS attachment\'s own card still standing in #upload-list (DOM, not just "still uploading")');
-  check(/const pendingAtts = \[\.\.\.S\.pendingAtts, \.\.\.\(S\.uploads \|\| \[\]\)\.filter\(\(u\) => u\.att && u\.attHere\)\.map\(\(u\) => u\.att\)\];/.test(messages),
-    'the composer paints the finished attachments its exiting cards are still holding');
+  check(/const staged = held \? \[\.\.\.list, \.\.\.\(S\.uploads \|\| \[\]\)\.filter\(\(u\) => u\.att && u\.attHere\)\.map\(\(u\) => u\.att\)\] : list;/.test(messages),
+    'the composer paints the finished attachments its exiting cards are still holding (the chat bar\'s row does; a thread reply\'s row is handed its files directly)');
   check(/u\.att = data;\s*$[\s\S]{0,80}u\.attHere = here;/m.test(messages),
     'xhr.onload parks the answered attachment on the upload entry instead of filing it');
   check(/if \(u && u\.att\) \{[\s\S]{0,200}home\.push\(u\.att\);/.test(messages),

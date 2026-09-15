@@ -61,10 +61,10 @@ const GIF = {
 
 // A composer page: the textarea, the two lists the chips live in, and the
 // recorders for everything the block calls out to.
-function makeWorld({ text = '', pending = [], view = 'server', ready = true } = {}) {
+function makeWorld({ text = '', pending = [], view = 'server', ready = true, bar = 'main', replyText = '' } = {}) {
   const world = {
     sent: [], staged: [], toasts: [], previews: [], focuses: 0, closed: 0, profile: [],
-    pending, text, view,
+    pending, text, view, threadBar: bar, threadList: [],
   };
   const S = {
     view,
@@ -78,11 +78,17 @@ function makeWorld({ text = '', pending = [], view = 'server', ready = true } = 
   };
   world.S = S;
   const inp = { value: text, focus: () => { world.focuses++; } };
-  const els = { '#in-message': inp, '#attach-preview': { innerHTML: '', classList: { toggle() {}, add() {}, remove() {}, contains: () => true } } };
+  // The thread bar's field and its own staged list (the real ones are per-thread;
+  // see threadAttCtx/threadAtts in messages.js).
+  const threadInp = { value: replyText, focus: () => { world.focuses++; } };
+  const els = {
+    '#in-message': inp, '#in-thread': threadInp,
+    '#attach-preview': { innerHTML: '', classList: { toggle() {}, add() {}, remove() {}, contains: () => true } },
+  };
   const run = new Function(
     'S', '$', 'closePicker', 'applyProfileUrl', 'sendChat', 'sendDm', 'renderComposerMeta',
     'renderThreadComposerMeta', 'toast', 'haptic', 'setAttPreview', 'syncPendingAttsCtx',
-    'attsCtxNow', 'activeUploadCount', 'draftCtx',
+    'attsCtxNow', 'activeUploadCount', 'draftCtx', 'pickerBar', 'threadAtts', 'threadAttCtx',
     gifSource + '\nreturn { gifAttachment, gifComposerReady, composerHasDraft, stageGif, sendGif };'
   );
   world.api = run(
@@ -100,7 +106,10 @@ function makeWorld({ text = '', pending = [], view = 'server', ready = true } = 
     () => false,                        // the composer already belongs to this ctx
     () => 's:s1:c1',
     () => 0,
-    () => 's:s1:c1'
+    () => 's:s1:c1',
+    () => world.threadBar,              // pickerBar: which bar opened the picker
+    () => world.threadList,             // threadAtts: the reply's own staged files
+    () => (S.thread && S.thread.rootId ? 't:' + S.thread.rootId : null)
   );
   return world;
 }
@@ -199,6 +208,26 @@ function main() {
     check(p.profile.length === 1 && p.profile[0].kind === 'avatar' && p.profile[0].url === GIF.gif,
       'a profile pick applies to the profile', p.profile);
     check(p.S.pendingAtts.length === 0 && p.sent.length === 0, 'and never stages or posts a message', p.S.pendingAtts);
+  }
+
+  console.log('\n[A8] the thread bar\'s own picker posts into the thread, never the channel');
+  {
+    const w = makeWorld({ bar: 'thread' });
+    w.S.thread = { rootId: 'root1' };
+    w.S.threadReplyTo = { id: 'r1' };
+    w.api.sendGif(GIF);
+    check(w.sent.length === 1 && w.sent[0].how === 'chat' && w.sent[0].threadRoot === 'root1' && w.sent[0].replyTo === 'r1',
+      'an empty reply box: the GIF goes out as its own reply, with the pending reply chip', w.sent);
+    const d = makeWorld({ bar: 'thread', replyText: 'look at this' });
+    d.S.thread = { rootId: 'root1' };
+    d.api.sendGif(GIF);
+    check(d.sent.length === 0 && d.threadList.length === 1 && d.threadList[0].url === GIF.gif,
+      'words in the reply box: the GIF is staged on the REPLY instead', d.threadList);
+    check(d.S.pendingAtts.length === 0, 'and the chat composer beside it is left alone', d.S.pendingAtts);
+    check(d.meta >= 1 && d.previews.length === 1, 'with the reply bar repainted so its chip tiles the thumb', { meta: d.meta, previews: d.previews });
+    const closed = makeWorld({ bar: 'thread' });
+    closed.api.sendGif(GIF);
+    check(closed.sent.length === 0 && closed.threadList.length === 0, 'no thread open: nothing is sent and nothing is staged', closed.sent);
   }
 
   console.log('\n[B1] a staged GIF is the very attachment the instant path sends');

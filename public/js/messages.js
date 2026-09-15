@@ -2050,22 +2050,25 @@ function attChipHTML(a) {
   return `${thumb}<span class="chip-info"><span class="chip-name">${esc(a.name)}</span>`
     + `<span class="chip-sub">${attChipSub(a)}</span></span>`;
 }
-function renderComposerMeta() {
-  syncPendingAttsCtx(); // the open conversation's own attachments (see pendingByCtx)
-  const box = $('#attach-preview');
+// One chip row for ONE composer: the pending reply first (both bars put it in the
+// same row as the files, which is how the chat bar has always drawn it), then
+// every staged file. `held` also paints the attachments an exiting upload card is
+// still holding — only the chat bar can have those: a thread upload files
+// straight into its own list the moment its card leaves (see removeUpload).
+function paintComposerChips(box, list, reply, clearReply, held) {
+  if (!box) return;
   box.innerHTML = '';
-  const hasReply = !!S.replyTo, hasAtts = S.pendingAtts.length > 0;
+  const hasReply = !!reply, hasAtts = list.length > 0;
   box.classList.toggle('hidden', !hasReply && !hasAtts);
   if (hasReply) {
     const chip = document.createElement('div');
     chip.className = 'att-chip';
-    const rau = msgAuthor(S.replyTo);
-    chip.innerHTML = `<span>Replying to <b>${esc(rau ? rau.display_name : '?')}</b>: ${esc(replyPreviewOf(S.replyTo))}</span>`;
-    const x = document.createElement('button'); x.className = 'mini'; x.textContent = '✕';
-    x.onclick = () => { S.replyTo = null; renderComposerMeta(); };
+    const rau = msgAuthor(reply);
+    chip.innerHTML = `<span>Replying to <b>${esc(rau ? rau.display_name : '?')}</b>: ${esc(replyPreviewOf(reply))}</span>`;
+    const x = document.createElement('button'); x.className = 'mini'; x.type = 'button'; x.textContent = '✕';
+    x.onclick = () => clearReply();
     chip.appendChild(x); box.appendChild(chip);
   }
-  pruneAttPreviews();
   // The chip stage for ONE file starts when THAT file's card has left the stage —
   // not when the list above it is empty. This also paints the attachments an
   // exiting card is still holding (their previews have to stay alive, and the
@@ -2074,21 +2077,21 @@ function renderComposerMeta() {
   // first one's Spoiler toggle back (reported — with several photos the spoiler
   // stage waited for every green bar). removeUpload releases the held attachment
   // and repaints this, so a file's chip and its toggle arrive together.
-  const pendingAtts = [...S.pendingAtts, ...(S.uploads || []).filter((u) => u.att && u.attHere).map((u) => u.att)];
-  pendingAtts.forEach((a, i) => {
+  const staged = held ? [...list, ...(S.uploads || []).filter((u) => u.att && u.attHere).map((u) => u.att)] : list;
+  staged.forEach((a) => {
     const chip = document.createElement('div');
     chip.className = 'att-chip' + (a.scan === 'pending' ? ' scanning' : '');
     chip.innerHTML = attChipHTML(a);
     const x = document.createElement('button'); x.className = 'mini'; x.type = 'button'; x.textContent = '✕';
     x.onclick = () => {
       // Find it rather than trust the index: the list also holds attachments
-      // whose upload card is still exiting (see pendingAtts above). Dropping one
+      // whose upload card is still exiting (see `staged` above). Dropping one
       // of those must take the queued attachment with it, or removeUpload would
       // file it straight back a moment later.
-      const at = S.pendingAtts.indexOf(a);
-      if (at >= 0) S.pendingAtts.splice(at, 1);
-      const held = (S.uploads || []).find((u) => u.att === a);
-      if (held) { held.att = null; held.attHere = false; }
+      const at = list.indexOf(a);
+      if (at >= 0) list.splice(at, 1);
+      const heldUp = (S.uploads || []).find((u) => u.att === a);
+      if (heldUp) { heldUp.att = null; heldUp.attHere = false; }
       renderComposerMeta();
     };
     if ((a.kind === 'image' || a.kind === 'video') && !uploadHeldOnStage(a)) {
@@ -2099,24 +2102,23 @@ function renderComposerMeta() {
     }
     chip.appendChild(x); box.appendChild(chip);
   });
-  syncComposerRender();
+}
+// Repaint BOTH composers. The chat bar and the thread bar are on screen at the
+// same time and each owns its own context, chip row and upload list, so one
+// repaint entry point keeps every caller (a send, an upload landing, a reply
+// chip) from having to know which bar it is talking about.
+function renderComposerMeta() {
+  syncPendingAttsCtx(); // the open conversation's own attachments (see pendingByCtx)
+  paintComposerChips($('#attach-preview'), S.pendingAtts, S.replyTo, () => { S.replyTo = null; renderComposerMeta(); }, true);
+  paintComposerChips($('#thread-attach-preview'), threadAtts(), S.threadReplyTo, () => { S.threadReplyTo = null; renderComposerMeta(); }, false);
+  pruneAttPreviews();
+  try { syncComposerRender(); } catch {}
+  try { syncThreadRender(); } catch {}
   try { paintComposerSend(); } catch {}
 }
-// Reply chip for the thread composer (mirrors the main-composer reply meta).
-function renderThreadComposerMeta() {
-  const box = $('#thread-reply-meta');
-  if (!box) return;
-  box.innerHTML = '';
-  box.classList.toggle('hidden', !S.threadReplyTo);
-  if (!S.threadReplyTo) return;
-  const chip = document.createElement('div');
-  chip.className = 'att-chip';
-  const trau = msgAuthor(S.threadReplyTo);
-  chip.innerHTML = `<span>Replying to <b>${esc(trau ? trau.display_name : '?')}</b>: ${esc(replyPreviewOf(S.threadReplyTo))}</span>`;
-  const x = document.createElement('button'); x.className = 'mini'; x.textContent = '✕'; x.type = 'button';
-  x.onclick = () => { S.threadReplyTo = null; renderThreadComposerMeta(); };
-  chip.appendChild(x); box.appendChild(chip);
-}
+// The thread bar's own repaint entry point (thread switches, the in-thread reply
+// chip). One painter for both bars, so they can never drift apart.
+function renderThreadComposerMeta() { renderComposerMeta(); }
 // Dispatch a Reply from a message. Inside an open thread it replies in-thread;
 // otherwise it replies in the main channel. Fixes replying to an in-thread
 // message landing outside the thread.
@@ -2150,6 +2152,17 @@ function attsListFor(ctx) {
   let list = pendingByCtx.get(ctx);
   if (!list) { list = []; pendingByCtx.set(ctx, list); }
   return list;
+}
+// The thread bar is a composer of its own, so its staged files live under the
+// thread's own context — the same 't:<rootId>' key its draft uses. That is what
+// keeps a file picked for a reply out of the channel's list (and off the channel
+// composer, which is on screen at the same time), and what lets a reply's files
+// survive closing the panel and come back with the thread, exactly like a draft.
+function threadAttCtx() { return S.thread && S.thread.rootId ? 't:' + S.thread.rootId : null; }
+function threadAtts() {
+  const ctx = threadAttCtx();
+  if (!ctx) return [];
+  return attsListFor(ctx);
 }
 // Oldest parked conversations fall off the front; the open one is never dropped
 // (a Map keeps insertion order, and re-setting an existing key does not move it).
@@ -2192,7 +2205,12 @@ function activeUploadCount(ctx) {
 // events. Finished files move into S.pendingAtts; failures stay on the card
 // with a Retry button instead of vanishing into a toast.
 let uploadSeq = 0;
-function uploadCardEl(id) { const box = $('#upload-list'); return box ? box.querySelector('[data-up="' + id + '"]') : null; }
+// A card can be in either composer's list (the chat bar's or the thread bar's),
+// so the lookup is by id across both — an upload belongs to one of them and
+// every painter (progress, icon, the held-attachment test) has to find it.
+function uploadCardEl(id) {
+  return document.querySelector('#upload-list [data-up="' + id + '"], #thread-upload-list [data-up="' + id + '"]');
+}
 // Is THIS attachment's own upload card still on stage? A card the server has
 // answered stays in the list in its green `done` state for a 650ms exit (and a
 // failed one stays until it is dismissed), and a chip must not grow its Spoiler
@@ -2205,18 +2223,25 @@ function uploadCardEl(id) { const box = $('#upload-list'); return box ? box.quer
 function uploadHeldOnStage(att) {
   return (S.uploads || []).some((u) => u.att === att && u.attHere && uploadCardEl(u.id));
 }
+// Repaint both composer lists: the chat bar shows the open conversation's cards,
+// the thread bar the open thread's. One entry point (every caller — a progress
+// tick, a landing answer, a cancel — repaints whatever it touched without having
+// to know which bar that was).
 function renderUploads() {
-  const box = $('#upload-list');
-  if (!box) return;
+  const tctx = threadAttCtx();
   // Only this conversation's cards. A file uploading in another chat has no
   // business painting a progress bar over this one — and its ✕ cancels a file
   // the reader can no longer see.
-  const mine = (S.uploads || []).filter((u) => (u.ctx == null ? pendingCtxKey == null : u.ctx === pendingCtxKey));
+  paintUploadList($('#upload-list'), (S.uploads || []).filter((u) => (u.ctx == null ? pendingCtxKey == null : u.ctx === pendingCtxKey)));
+  paintUploadList($('#thread-upload-list'), (S.uploads || []).filter((u) => !!tctx && u.ctx === tctx));
+}
+function paintUploadList(box, mine) {
+  if (!box) return;
   box.classList.toggle('hidden', !mine.length);
   const seen = new Set();
   mine.forEach((u) => {
     seen.add(String(u.id));
-    let el = uploadCardEl(u.id);
+    let el = box.querySelector('[data-up="' + u.id + '"]');
     if (!el) {
       el = document.createElement('div');
       el.className = 'up-card';
@@ -2287,16 +2312,26 @@ function maxUploadBytes() {
   const mb = Number(S.maxUploadMb);
   return (Number.isFinite(mb) && mb > 0 ? mb : 200) * 1024 * 1024;
 }
-function uploadAndAttach(file) {
+// Stage one file on a composer. `ctx` names the composer it belongs to: the chat
+// bar passes nothing (it stages into the open conversation, see
+// syncPendingAttsCtx) and the thread bar passes its thread's own context — both
+// bars are on screen at once, so "the current conversation" is not enough to say
+// which one a picked file was for.
+function uploadAndAttach(file, ctx) {
   if (!file) return;
   // An attachment needs a conversation to belong to (and every finished file is
   // filed under one). The picker/drop paths check this too; the + menu and a
   // paste can reach here with the composer hidden.
-  if (!composerTargetReady()) { toast('Pick a chat first, then attach'); return; }
-  syncPendingAttsCtx(); // the open conversation owns the composer (and its list)
+  if (!ctx) {
+    if (!composerTargetReady()) { toast('Pick a chat first, then attach'); return; }
+    syncPendingAttsCtx(); // the open conversation owns the composer (and its list)
+  }
+  const target = ctx || attsCtxNow();
+  if (!target) { toast('Pick a chat first, then attach'); return; }
+  const list = target === pendingCtxKey ? (S.pendingAtts || []) : attsListFor(target);
   const maxBytes = maxUploadBytes();
   if (file.size > maxBytes) { toast('File too big (max ' + Math.round(maxBytes / 1048576) + 'MB)'); return; }
-  if ((S.pendingAtts || []).length + activeUploadCount(attsCtxNow()) >= 5) { toast('Max 5 attachments per message'); return; }
+  if (list.length + activeUploadCount(target) >= 5) { toast('Max 5 attachments per message'); return; }
   S.uploads = S.uploads || [];
   const entry = {
     id: ++uploadSeq, file, name: file.name || 'file',
@@ -2304,7 +2339,7 @@ function uploadAndAttach(file) {
     indet: false, state: 'uploading', err: '', xhr: null, thumb: '', att: null,
     // The conversation this upload belongs to (see pendingByCtx): its card only
     // paints there, and the finished attachment is filed there.
-    ctx: attsCtxNow(),
+    ctx: target,
   };
   const mime = String(file.type || '');
   if (mime.startsWith('image/')) {
@@ -2509,6 +2544,30 @@ $('#in-attach').addEventListener('change', (e) => {
 // so restore it for the same Enter-to-send flow.
 $('#in-attach').addEventListener('cancel', () => {
   try { $('#in-message').focus({ preventScroll: true }); } catch { $('#in-message')?.focus(); }
+});
+// The thread bar has its own file input and stages onto its own thread: the chat
+// composer is on screen beside it, and a file picked here must never become a
+// chip on that one (or a message in the channel).
+$('#tbtn-attach').onclick = () => $('#in-thread-attach').click();
+$('#in-thread-attach').addEventListener('change', (e) => {
+  const files = [...(e.target.files || [])];
+  e.target.value = '';
+  const ctx = threadAttCtx();
+  if (files.length && !ctx) toast('That thread is closed');
+  else if (files.length) {
+    // Same 5-per-message cap and the same one-toast accounting as the chat bar.
+    const room = Math.max(0, 5 - (threadAtts().length + activeUploadCount(ctx)));
+    if (files.length > room) {
+      toast(room > 0
+        ? 'Added ' + room + ' of ' + files.length + ' — max 5 attachments per message'
+        : 'Max 5 attachments per message');
+    }
+    files.slice(0, room).forEach((f) => uploadAndAttach(f, ctx));
+  }
+  try { $('#in-thread').focus({ preventScroll: true }); } catch { $('#in-thread')?.focus(); }
+});
+$('#in-thread-attach').addEventListener('cancel', () => {
+  try { $('#in-thread').focus({ preventScroll: true }); } catch { $('#in-thread')?.focus(); }
 });
 function composerTargetReady() {
   return S.view === 'home' ? !!S.dmThreadId : !!(S.serverId && S.channelId);
