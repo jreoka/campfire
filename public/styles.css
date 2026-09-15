@@ -683,6 +683,10 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #in-render code{background:var(--panel-3);border-radius:6px;font-family:inherit}
 #in-render .md-tok{color:var(--faint)}
 #in-render .md-quote{color:var(--muted)}
+/* The heading ladder is a real font-size change, which the composer backdrop
+   cannot have (the caret would leave the glyphs). Same tone as a quote, no
+   metrics: this is why the composer shows a dimmed `#` run instead. */
+#in-render .md-h{font-size:inherit;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:var(--muted)}
 #in-render a{color:var(--accent-hover)}
 #in-message::placeholder{color:var(--muted)}
 
@@ -709,6 +713,19 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .msg .text pre.codeblock{background:var(--inset);border:1px solid var(--line-soft);border-radius:var(--radius);padding:.6rem .75rem;margin:.4rem 0;overflow-x:auto;font-size:.85em}
 .msg .text pre.codeblock code{background:transparent;border:0;border-radius:0;padding:0;font-size:1em}
 .msg .text .cb-lang{display:block;color:var(--faint);font-size:.78em;margin-bottom:.35rem;user-select:none}
+/* Markdown headings (# … ######). Inline on purpose — the body is
+   `white-space: pre-wrap`, so a block-level heading would pay for a second
+   break after the newline that already ended the line. Sizes are `em` off
+   whatever surface renders them (a message, a bio), so the ladder holds
+   everywhere. `.md-h6` is the one that never grows: it is a heading, not a
+   shout, and the muted tone is what separates it from body text. */
+.md-h{font-weight:700;line-height:1.3;letter-spacing:-.01em}
+.md-h1{font-size:1.6em}
+.md-h2{font-size:1.4em}
+.md-h3{font-size:1.24em}
+.md-h4{font-size:1.12em}
+.md-h5{font-size:1.04em}
+.md-h6{font-size:1em;color:var(--muted)}
 .msg .text blockquote{border-left:3px solid var(--accent);margin:.35rem 0;padding:.15rem 0 .15rem .75rem;color:var(--muted)}
 .member.off{opacity:.45}
 .srv-subtabs{display:flex;gap:.3rem;flex-wrap:wrap;position:sticky;top:0;background:var(--panel-2);padding:.25rem 0 .6rem;z-index:2}

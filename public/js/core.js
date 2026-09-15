@@ -417,8 +417,8 @@ function mentionMatcher(authorId) {
   mentionCache = { key, members: d.members, roles: d.roles, re, byName, myRoles };
   return mentionCache;
 }
-// Escape + fenced code / quotes / inline code / bold / italic / strike +
-// spoilers + custom + standard emoji + @mentions + links.
+// Escape + fenced code / quotes / headings / inline code / bold / italic /
+// strike + spoilers + custom + standard emoji + @mentions + links.
 //
 // `opts.plain` is the composer's live-preview backdrop: the caret lives in the
 // transparent textarea above it, so the backdrop must lay out exactly the same
@@ -448,6 +448,21 @@ function renderRich(text, opts = {}) {
     if (!inner.join('').trim()) return m;
     if (plain) return '<span class="md-quote">' + m + '</span>';
     return '<blockquote>' + inner.join('<br>') + '</blockquote>';
+  });
+  // ATX headings: one to six '#' plus a space at the start of a line. Inside a
+  // fence they are already a placeholder, so nothing in a code block is touched.
+  //
+  // Inline (a span), never a block element, and the delimiters are dropped:
+  // the body is `white-space: pre-wrap`, so a block heading would add its own
+  // break on top of the newline that already ends the line — a blank line above
+  // the heading's text and another below it — and consuming that newline to fix
+  // it would then eat the line that the NEXT heading needs to be recognised on.
+  // A '#' not followed by a space is left alone, which is what keeps `#channel`
+  // links, hex colours and "C#" plain text.
+  h = h.replace(/(^|\n)(#{1,6})([ \t]+)([^\n]*)/g, (m, pre, hashes, ws, body) => {
+    if (!body.trim()) return m;
+    return pre + (plain ? tok(hashes + ws) : '')
+      + '<span class="md-h md-h' + hashes.length + '">' + body + '</span>';
   });
   const codes = [];
   h = h.replace(/`([^`\n]+)`/g, (m, c) => { codes.push(c); return '\u0000' + (codes.length - 1) + '\u0000'; });
