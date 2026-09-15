@@ -12,7 +12,15 @@ FROM node:22-alpine
 # pg_dump for the automatic S3 database backups, ffmpeg for the background
 # media compressor. Nothing is installed for scanning: the engine lives in the
 # clamav service, and this container only opens a socket to it.
-RUN apk add --no-cache postgresql-client ffmpeg
+#
+# libheif-tools is what makes a HEIC/HEIF upload viewable: Alpine's ffmpeg is
+# built WITHOUT libheif, so this image has no HEIF demuxer at all — and no
+# browser (or Windows viewer) can decode those bytes either, which left an
+# iPhone photo as a download nobody could open. `heif-convert` decodes one to a
+# JPEG that the still pipeline then downsizes and re-encodes like any other
+# photo (see media-compress.js: planFor/encodeCandidate, and checkHeifConvert,
+# which the worker probes at boot and reports in its startup line).
+RUN apk add --no-cache postgresql-client ffmpeg libheif-tools
 
 WORKDIR /app
 COPY package.json ./

@@ -65,6 +65,7 @@ function findChrome() {
 
 const messages = fs.readFileSync(path.join(ROOT, 'public/js/messages.js'), 'utf8');
 const finalJs = fs.readFileSync(path.join(ROOT, 'public/js/final.js'), 'utf8');
+const actions = fs.readFileSync(path.join(ROOT, 'public/js/actions.js'), 'utf8');
 const pickers = fs.readFileSync(path.join(ROOT, 'public/js/pickers.js'), 'utf8');
 const server = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
 const mediaCompress = fs.readFileSync(path.join(ROOT, 'media-compress.js'), 'utf8');
@@ -89,6 +90,17 @@ if (ERR_START < 0 || ERR_END < 0) {
   process.exit(1);
 }
 const errSource = finalJs.slice(ERR_START, ERR_END + '}, true);'.length);
+
+// The real attFromEl (actions.js): the handler reads the attachment's identity
+// off the element it is replacing, and that is where the name/size the card
+// shows comes from.
+const ACT_START = actions.indexOf('function attFromEl(el) {');
+const ACT_END = actions.indexOf('function absUrl(', ACT_START);
+if (ACT_START < 0 || ACT_END < 0) {
+  console.error('[test] could not locate attFromEl in public/js/actions.js');
+  process.exit(1);
+}
+const attSource = actions.slice(ACT_START, ACT_END);
 
 // The real key derivation out of media-compress.js, with extOf supplied.
 function loadThumbHelpers() {
@@ -115,6 +127,7 @@ function audioPlayerHTML() { return ''; }
 function textPreviewable() { return false; }
 function textFileHTML() { return ''; }
 ${markSource}
+${attSource}
 ${errSource}
 window.__mk = function (att) {
   const host = document.getElementById('host');
@@ -123,6 +136,27 @@ window.__mk = function (att) {
   const wrap = d.firstElementChild;
   host.appendChild(wrap);
   return wrap;
+};
+// The degraded card a picture this browser cannot decode ends as: every field a
+// plain file card has, plus the attachment identity the menus read.
+window.__card = function (wrap) {
+  const c = wrap && wrap.querySelector('.file-card');
+  if (!c) return null;
+  const nameEl = c.querySelector('.fname'), sizeEl = c.querySelector('.fsize');
+  const ph = wrap.querySelector('.att-ph');
+  return {
+    tag: c.tagName,
+    href: c.getAttribute('href'),
+    icon: !!c.querySelector('svg'),
+    name: nameEl ? nameEl.textContent : null,
+    size: sizeEl ? sizeEl.textContent : null,
+    attId: c.dataset.attId || '',
+    kind: c.dataset.fbKind || '',
+    url: c.dataset.fbUrl || '',
+    sizeAttr: c.dataset.fbSize || '',
+    stillImg: !!wrap.querySelector('img.att-img'),
+    phDisplay: ph ? getComputedStyle(ph).display : '',
+  };
 };
 window.__state = function (wrap) {
   const img = wrap.querySelector('img.att-img');
@@ -197,6 +231,12 @@ async function main() {
   check(/if \(t\.dataset\.fbThumb && t\.dataset\.fbUrl\) \{\s*t\.removeAttribute\('data-fb-thumb'\);\s*t\.src = t\.dataset\.fbUrl;\s*return;/.test(errSource),
     'the error handler swaps in the original exactly once (the marker is cleared first, so a second failure degrades to the file card)');
   check(/if \(t\.dataset\.fbName\) \{/.test(errSource), 'and the broken-image file card is still the last resort');
+  check(/function attFileCardHTML\(a\)/.test(markSource), 'the plain-file card is built in ONE place (attFileCardHTML), which the fallback reuses');
+  check(/return attFileCardHTML\(a\);/.test(markSource), 'a file attachment renders through it');
+  check(/box\.innerHTML = attFileCardHTML\(Object\.assign\(\{\}, att, \{ kind: 'file' \}\)\)/.test(errSource),
+    'and so does the degraded picture — icon, name, size and identity, not a bare box around the name');
+  check(/attFromEl\(t\)/.test(errSource), 'the fallback reads the real attachment identity (id/url/name/size/kind) off the element it replaces');
+  check(/data-fb-size="\$\{esc\(\(a && a\.size\) \|\| 0\)\}"/.test(markSource), 'every rendering carries its size for that fallback to read');
   check(/openLightbox\(imgEl\.dataset\.fbUrl \|\| imgEl\.src/.test(pickers), 'the lightbox opens the ORIGINAL, never the preview');
   check(/attDl\(a\)\}/.test(markSource) || /function attDl\(a\)/.test(markSource), 'the download link is unchanged (it was always the original)');
 
@@ -217,6 +257,13 @@ async function main() {
       return res.end(pageHtml());
     }
     hits.push(url);
+    // A phone photo this browser has no decoder for: the preview cannot be
+    // minted from it and the original cannot be painted either (a HEIC on
+    // Windows). Both answer 404, which is what the fallback card is for.
+    if (url.startsWith('/uploads/thumbs/files/broken.heic') || url.startsWith('/uploads/files/broken.heic')) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      return res.end('{"error":"not_found"}');
+    }
     if (url.startsWith('/uploads/thumbs/files/warm.jpg')) {
       res.writeHead(200, { 'Content-Type': 'image/webp', 'Content-Length': webp.length });
       return res.end(webp);
@@ -304,7 +351,33 @@ async function main() {
     check(await evaluate('!!document.querySelectorAll(".att-wrap")[1].querySelector(".spoiler-veil")'), 'a spoilered image keeps its veil');
     check(await evaluate('!!document.querySelectorAll(".att-wrap")[1].classList.contains("spoiler")'), 'and its blur class');
 
-    console.log('\n[6] the stylesheet still sizes the inline picture');
+    console.log('\n[6] a picture the browser cannot decode degrades to a REAL file card');
+    // The reported shape: an iPhone HEIC on Windows rendered as an outlined box
+    // with nothing but the file name in it — no icon, no size, and no
+    // attachment identity, so the menus could not act on the file either. The
+    // fallback now goes through the same attFileCardHTML a plain file uses.
+    await evaluate(`window.__mk({ kind: 'image', id: 'att-heic', url: '/uploads/files/broken.heic?v=1', name: 'D5D3E71D-987A-4389-998E-3E95C60CF5C9_1_201_a.heic', size: 471520, w: 512, h: 512 })`);
+    let card = null;
+    for (let i = 0; i < 40; i++) {
+      await sleep(100);
+      card = await evaluate('window.__card(document.querySelectorAll(".att-wrap")[2])');
+      if (card) break;
+    }
+    check(!!card, 'the picture ends as a file card rather than a broken-image box', card);
+    check(card && card.tag === 'A', 'it is a link to the file', card);
+    check(card && card.href === '/uploads/files/broken.heic?v=1', 'pointing at the ORIGINAL upload', card);
+    check(card && card.icon, 'with the file icon the plain card has', card);
+    check(card && card.name === 'D5D3E71D-987A-4389-998E-3E95C60CF5C9_1_201_a.heic', 'the full name, not an ellipsised or empty label', card);
+    check(card && card.size === '1 KB', 'and the size line under it (fmtSize is stubbed to 1 KB in this page)', card);
+    check(card && card.attId === 'att-heic' && card.kind === 'file' && card.sizeAttr === '471520',
+      'the card carries the attachment identity, so Copy/Save/Scan info still resolve', card);
+    check(card && !card.stillImg, 'the failed <img> is gone (no broken-image box behind it)', card);
+    check(card && card.phDisplay === 'none', 'and the loading placeholder is hidden by the card', card);
+    check(hits.some((h) => h.startsWith('/uploads/thumbs/files/broken.heic')) && hits.some((h) => h.startsWith('/uploads/files/broken.heic')),
+      'both the preview and the original were tried exactly once before degrading', hits.filter((h) => h.includes('broken.heic')));
+    check(hits.filter((h) => h.startsWith('/uploads/files/broken.heic')).length === 1, 'the original is not requested again after the card lands', hits.filter((h) => h.includes('broken.heic')));
+
+    console.log('\n[7] the stylesheet still sizes the inline picture');
     check(/\.msg-attsimg\.att-img\{max-width:100%;max-height:320px/.test(css.replace(/\s+/g, '')), 'the chat image box is unchanged');
   } catch (e) {
     console.error('[test] ' + (e && e.stack || e));

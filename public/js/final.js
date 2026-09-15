@@ -644,8 +644,9 @@ $('#in-thread').addEventListener('scroll', () => {
   if (r) r.style.marginLeft = (-inp.scrollLeft) + 'px';
 });
 
-// Broken images (deleted/missing uploads) degrade gracefully instead of
-// rendering as crushed broken-image boxes.
+// Broken images (deleted/missing uploads, or a format this browser cannot
+// decode — an iPhone HEIC on Windows) degrade gracefully instead of rendering
+// as crushed broken-image boxes.
 document.addEventListener('error', (e) => {
   const t = e.target;
   if (!(t instanceof HTMLImageElement)) return;
@@ -659,12 +660,27 @@ document.addEventListener('error', (e) => {
     return;
   }
   if (t.dataset.fbName) {
-    const a = document.createElement('a');
-    a.className = 'file-card'; a.href = t.dataset.fbUrl; a.target = '_blank'; a.rel = 'noopener';
-    const s = document.createElement('span');
-    const n = document.createElement('span'); n.className = 'fname'; n.textContent = t.dataset.fbName;
-    s.appendChild(n); a.appendChild(s);
-    t.replaceWith(a);
+    // A picture this browser cannot decode (a HEIC on Windows — the bytes are
+    // fine, nothing here can paint them) or a deleted/missing upload, with no
+    // preview left to try: degrade to the SAME file card the plain-file
+    // rendering produces (icon, name, size, and the attachment's own identity,
+    // which is what makes the copy/save/Scan info rows resolve). See
+    // attFileCardHTML in messages.js.
+    const att = attFromEl(t) || {
+      url: t.dataset.fbUrl || '', name: t.dataset.fbName,
+      kind: t.dataset.fbKind || 'file',
+      size: t.dataset.fbSize ? Number(t.dataset.fbSize) : null,
+      scan: t.dataset.fbScan || 'clean',
+    };
+    const box = document.createElement('span');
+    // kind 'file' on purpose: this browser has just proved it cannot treat these
+    // bytes as a picture, so the attachment menu should offer the file rows
+    // (Copy link / Save file / Scan info) and not a "Copy image" that would
+    // fail on the same bytes. The identity (data-att-id, the original URL) is
+    // the attachment's own either way.
+    box.innerHTML = attFileCardHTML(Object.assign({}, att, { kind: 'file' }));
+    const card = box.firstElementChild;
+    if (card) t.replaceWith(card);
   } else if (t.dataset.fbEmoji) {
     t.replaceWith(document.createTextNode(t.dataset.fbEmoji));
   } else if (t.dataset.fbLetter) {

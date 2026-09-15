@@ -169,7 +169,8 @@ function imageSrcFor(a) {
 function attMeta(a, kind) {
   const k = kind || (a && a.kind) || 'file';
   return ` data-att-id="${esc((a && a.id) || '')}" data-fb-url="${esc((a && a.url) || '')}"`
-    + ` data-fb-name="${esc((a && a.name) || '')}" data-fb-kind="${esc(k)}" data-fb-scan="${esc((a && a.scan) || 'clean')}"`;
+    + ` data-fb-name="${esc((a && a.name) || '')}" data-fb-kind="${esc(k)}" data-fb-size="${esc((a && a.size) || 0)}"`
+    + ` data-fb-scan="${esc((a && a.scan) || 'clean')}"`;
 }
 function attachmentHTML(a) {
   // Virus-scan states (see virus-scan.js): pending files render an
@@ -208,7 +209,26 @@ function attachmentBodyHTML(a) {
   if (a.kind === 'video') return `<span class="att-wrap loading${a.spoiler ? ' spoiler' : ''}"${attMeta(a, 'video')}><video class="att-vid" draggable="false" src="${esc(a.url)}" controls preload="metadata" playsinline></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   if (a.kind === 'audio') return audioPlayerHTML(a);
   if (textPreviewable(a)) return textFileHTML(a);
-  return `<a class="file-card" href="${esc(a.url)}" target="_blank" rel="noopener"${attMeta(a, 'file')}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span><span class="fname">${esc(a.name)}</span><br/><span class="fsize">${fmtSize(a.size)}</span></span></a>`;
+  return attFileCardHTML(a);
+}
+// The plain-file card, in ONE place. Two callers need it and they have to agree:
+// the markup above for a file that never claimed to be a picture, and the
+// document error handler (final.js) for a picture THIS browser cannot decode —
+// an iPhone HEIC on Windows being the everyday case, since the bytes are fine
+// and simply have no decoder here. That fallback used to build its own card with
+// the name alone, which left a bare outlined box around a filename (reported:
+// "the file name leaves the outline around it") with no icon, no size and no
+// attachment identity — so the menus could not act on the file it was showing.
+// Reusing the real card, `attMeta` included, makes the degraded rendering an
+// ordinary file card.
+function attFileCardHTML(a) {
+  const att = a || {};
+  const kind = att.kind || 'file';
+  // A caller that does not know the size (the error handler on a rendering
+  // that predates data-fb-size) says null and gets no size line, rather than a
+  // "0 B" that would be a claim about the file.
+  const sizeLine = att.size == null ? '' : `<br/><span class="fsize">${fmtSize(att.size)}</span>`;
+  return `<a class="file-card" href="${esc(att.url)}" target="_blank" rel="noopener"${attMeta(att, kind)}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span><span class="fname">${esc(att.name)}</span>${sizeLine}</span></a>`;
 }
 // ---------- video posters: desktop shows the first frame natively, but the
 // Android WebView shows a black box + giant play button until playback

@@ -2654,6 +2654,17 @@ app.post('/api/upload', authRequired, (req, res, next) => {
   let mt = req.file.mimetype;
   // Extension-accepted code/text with an empty or generic MIME reads as text.
   if ((!mt || mt === 'application/octet-stream') && CODE_TEXT_EXTS.has(path.extname(String(req.file.originalname || '')).toLowerCase().slice(1))) mt = 'text/plain';
+  // …and the same for the ONE family whose bytes a browser cannot be asked
+  // about: Windows reports no MIME at all for a .heic (and often hands over
+  // application/octet-stream), which used to file an iPhone photo as a plain
+  // 'file' — a download card, and a row the compressor's image/video/audio
+  // candidate query can never see, so it stayed an unopenable HEIC forever.
+  // Knowing the name is enough here: the compressor then converts it to a JPEG
+  // through libheif before it is published (see media-compress.planFor).
+  if (!mt || mt === 'application/octet-stream') {
+    const ext = path.extname(String(req.file.originalname || '')).toLowerCase();
+    if (ext === '.heic' || ext === '.heif') mt = ext === '.heif' ? 'image/heif' : 'image/heic';
+  }
   const kind = mt.startsWith('image/') ? 'image' : mt.startsWith('video/') ? 'video' : mt.startsWith('audio/') ? 'audio' : 'file';
   // Every upload is virus-scanned by content (extensions lie — see
   // virus-scan.js); with no scanner the same slot compresses the file before

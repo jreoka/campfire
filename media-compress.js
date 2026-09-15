@@ -26,6 +26,13 @@
 //   any video container to MP4, and any audio codec to MP3/AAC/Opus. Only
 //   non-media (PDF, zip, source code) and SVG — vector, which a raster
 //   re-encode would degrade rather than shrink — are left alone.
+// - HEIC/HEIF is the exception to "smaller or leave it": the container's ffmpeg
+//   has no HEIF demuxer at all (Alpine builds it without libheif), and no
+//   browser on Windows can decode those bytes either, so leaving the original
+//   means a download nobody can look at. libheif's own `heif-convert` decodes
+//   it to a JPEG first (encodeCandidate), and the plan is marked `normalize`:
+//   the conversion is published even when it is bigger, because being viewable
+//   is the point. See checkHeifConvert + the 'heic-viewable' policy.
 // - Idempotent + resumable: attachments/dm_attachments carry a `compressed`
 //   flag (0 = pending, 1 = done). Every upload is queued automatically via
 //   the column default; the backlog of pre-existing media drains gradually.
@@ -101,6 +108,22 @@ const SLOT_MB = Math.max(32, parseInt(process.env.MEDIA_COMPRESS_SLOT_MB || '192
 const JOB_TIMEOUT_MS = 15 * 60 * 1000; // pathological inputs can't wedge the queue
 const MIN_SAVING = 0.08; // replace only when the output is >=8% smaller
 
+// HEIC/HEIF: the one family the box physically cannot decode on its own. Alpine
+// packages ffmpeg without libheif, so there is no HEIF demuxer in the image —
+// `ffmpeg -i photo.heic` is "Invalid data found when processing input". The
+// bytes are still perfectly readable by libheif itself, which ships as
+// `heif-convert` (the Dockerfile installs libheif-tools), so the pipeline
+// decodes through that tool and then runs the normal still encode on the
+// result. Without the tool a HEIC upload is left exactly as it is (nobody can
+// preview it, but nothing is lost) and the startup log says so.
+const HEIF_CONVERT = process.env.HEIF_CONVERT || 'heif-convert';
+const HEIF_EXTS = new Set(['.heic', '.heif']);
+// What a HEIC is decoded to before the still pipeline gets it. 90 is libheif's
+// own near-transparent band; the ffmpeg pass that follows re-encodes at the
+// chat quality (q:v 3, capped at 2048px), so this generation is only ever a
+// carrier — and it costs one small JPEG in /tmp on the way.
+const HEIF_QUALITY = '90';
+
 // Size floor. There is none by default: the compressor attempts media of ANY
 // size and lets the 8% rule (MIN_SAVING) decide whether a rewrite is worth
 // keeping, which is the real guard against a pointless re-encode. The old
@@ -132,6 +155,7 @@ let ready = false; // migrations + ffmpeg probe done, loop may run
 let busy = false;
 let timer = null; // pending loop timeout (null when running/unscheduled)
 let ffmpegOK = null; // null = unprobed
+let heifOK = null; // null = unprobed (heif-convert, the HEIC decoder)
 let encCache = null; // {x264, mp3, opus, webp}
 let niceOK = null;
 let loggedIdle = false;
@@ -224,6 +248,34 @@ async function ensureColumns() {
   try {
     await db.exec("DELETE FROM media_compress_keys WHERE mode = 'below_floor'");
   } catch (e) { warn('ledger floor cleanup skipped:', String((e && e.message) || e).slice(0, 120)); }
+  // HEIC/HEIF now has a pipeline where it had none (libheif's heif-convert —
+  // see planFor). Everything stored before that is sitting at compressed = 1
+  // with a "kept/encode_failed" verdict in the ledger, which is exactly the
+  // "policy that widens what the compressor will do" the memory above exists
+  // for: hand those files back so the queue re-examines them once and the
+  // reader finally gets a picture instead of an unopenable .heic. Guarded on
+  // the decoder being present so a box without it does not spend its one shot
+  // handing files to a pipeline that still cannot run (the memory is only
+  // written when the work was actually possible).
+  if (checkHeifConvert()) {
+    await oncePolicy('heic-viewable', async () => {
+      let handed = 0;
+      try { handed += Number((await db.prepare("DELETE FROM media_compress_keys WHERE lower(key) LIKE '%.heic' OR lower(key) LIKE '%.heif'").run()).changes) || 0; } catch {}
+      for (const table of ['attachments', 'dm_attachments', 'stories']) {
+        try {
+          // `kind` rides along: a HEIC that arrived as application/octet-stream
+          // was filed as a 'file', and the queue only feeds image/video/audio
+          // rows — without this the repaired file would still be a download card.
+          handed += Number((await db.prepare(`UPDATE ${table} SET compressed = 0,
+            kind = CASE WHEN kind = 'file' THEN 'image' ELSE kind END
+            WHERE lower(split_part(url, '?', 1)) LIKE '%.heic' OR lower(split_part(url, '?', 1)) LIKE '%.heif'`).run()).changes) || 0;
+        } catch (e) { warn('heic hand-back skipped for ' + table + ':', String((e && e.message) || e).slice(0, 120)); }
+      }
+      return handed;
+    });
+  } else {
+    warn(`HEIC decoding unavailable (${HEIF_CONVERT} not on PATH) — .heic/.heif uploads stay as they are and cannot be previewed (install libheif-tools)`);
+  }
 }
 
 // Run a one-time migration exactly once per database (media_compress_meta is
@@ -235,7 +287,7 @@ async function oncePolicy(name, fn) {
     const n = Number((await fn()) || 0);
     await db.prepare('INSERT INTO media_compress_meta (key,value,at) VALUES (?,?,?) ON CONFLICT (key) DO NOTHING')
       .run(name, String(n), now());
-    if (n > 0) log(`policy ${name}: ${n} earlier verdict(s) handed back to the bucket scan`);
+    if (n > 0) log(`policy ${name}: ${n} earlier verdict(s) handed back for another look`);
   } catch (e) { warn('policy ' + name + ' skipped:', String((e && e.message) || e).slice(0, 120)); }
 }
 
@@ -303,6 +355,19 @@ function checkFfmpeg() {
   return ffmpegOK;
 }
 
+// Is libheif's decoder on PATH? The binary existing is the whole question —
+// `--help` prints the usage and exits 0, and a missing tool surfaces as
+// spawnSync's own `error` (ENOENT), so neither needs the exit code. Cached for
+// the process, like checkFfmpeg: the answer cannot change without a rebuild.
+function checkHeifConvert() {
+  if (heifOK !== null) return heifOK;
+  try {
+    const r = spawnSync(HEIF_CONVERT, ['--help'], { stdio: 'ignore', timeout: 10000 });
+    heifOK = !!(r && !r.error);
+  } catch { heifOK = false; }
+  return heifOK;
+}
+
 function probeEncoders() {
   if (encCache) return encCache;
   let out = '';
@@ -344,6 +409,32 @@ function extOf(name) {
   return path.extname(String(name || '')).toLowerCase();
 }
 
+// The row's family follows the BYTES it ends up pointing at, for the same reason
+// the URL does. A HEIC that arrived as application/octet-stream was filed as a
+// 'file' (a plain download card, no preview); the JPEG it becomes is a picture
+// and has to render as one, or the reader is still handed a card. Anything the
+// new MIME says nothing about keeps what it had.
+function kindForMime(mime, fallback) {
+  const mt = String(mime || '');
+  if (mt.startsWith('image/')) return 'image';
+  if (mt.startsWith('video/')) return 'video';
+  if (mt.startsWith('audio/')) return 'audio';
+  return fallback || 'file';
+}
+
+// The DISPLAY name follows the bytes too, extension only (the stem the sender
+// chose is theirs). "X.heic" that downloads as JPEG bytes is a file Windows
+// still cannot open, because the extension is what picks the handler — and a
+// saved "song.wav" that is really MP3 is the same small lie. A name with no
+// extension is left exactly as it is.
+function nameWithExt(name, outExt) {
+  const s = String(name || '');
+  if (!s || !outExt) return s;
+  const cur = path.extname(s);
+  if (!cur || cur.toLowerCase() === String(outExt).toLowerCase()) return s;
+  return s.slice(0, -cur.length) + outExt;
+}
+
 // Media extensions, for the two cases a MIME cannot cover: the bucket scan only
 // has the object's name (storage.mimeForFilename falls back to
 // application/octet-stream), and a chat upload keeps whatever the client called
@@ -363,10 +454,11 @@ function opaqueMime(mt) { return !mt || mt === 'application/octet-stream' || mt 
 // the caller marks those done and they are never looked at again.
 //
 // Coverage is deliberately broad: ANY image the box can decode (BMP, TIFF,
-// AVIF, JXL, HEIC, ICO, PSD, …), ANY video container (-> MP4), ANY audio codec
-// (-> MP3/AAC/Opus). What stays out is anything that is not media (PDF, zip,
-// source code, executables) and SVG on purpose — vector art has no fixed
-// resolution, so rasterizing it would be a downgrade, not a compression.
+// AVIF, JXL, ICO, PSD, …), ANY video container (-> MP4), ANY audio codec
+// (-> MP3/AAC/Opus), plus HEIC/HEIF through libheif (-> JPEG). What stays out
+// is anything that is not media (PDF, zip, source code, executables) and SVG on
+// purpose — vector art has no fixed resolution, so rasterizing it would be a
+// downgrade, not a compression.
 //
 // `pipeline: 'still'` is a DEFERRED decision: the encoder (JPEG vs PNG) depends
 // on the alpha channel, which only the bytes know. See resolvePlan().
@@ -374,6 +466,18 @@ function planFor(mime, filename) {
   const mt = String(mime || '');
   const ext = extOf(filename);
   const enc = probeEncoders();
+  // HEIC/HEIF first, by name or by MIME (image/heic, image/heif, and the
+  // -sequence variants). These bytes have no pipeline of their own on this box:
+  // ffmpeg cannot open them, so they are decoded by heif-convert and the result
+  // is encoded as a JPEG. `normalize` is what says "publish this even if it is
+  // not smaller" — the original cannot be displayed by any Windows browser or
+  // viewer, so a slightly larger JPEG is the only usable copy. With no decoder
+  // installed there is nothing to do at all and the file is left alone
+  // (null plan = terminal 'no_pipeline', logged once at startup).
+  if (HEIF_EXTS.has(ext) || /^image\/hei[cf]/.test(mt)) {
+    if (!checkHeifConvert()) return null;
+    return { pipeline: 'heif', outExt: '.jpg', group: 'image', normalize: true };
+  }
   // GIFs (animated or still — the palette pipeline handles both).
   if (mt === 'image/gif' || ext === '.gif') return { pipeline: 'gif', outExt: '.gif', group: 'gif' };
   if (mt === 'image/svg+xml' || ext === '.svg') return null;
@@ -392,7 +496,7 @@ function planFor(mime, filename) {
       : { pipeline: 'still', prefer: 'png', outExt: '.png', group: 'image' };
   }
   if ((mt === 'image/webp' || ext === '.webp') && enc.webp) return { pipeline: 'still', prefer: 'webp', outExt: '.webp', group: 'image' };
-  // Any other image (BMP, TIFF, AVIF, JXL, HEIC, ICO, PSD, …): the bytes decide
+  // Any other image (BMP, TIFF, AVIF, JXL, ICO, PSD, …): the bytes decide
   // between JPEG and PNG, and whether they are safe to touch at all.
   if (mt.startsWith('image/') || (opaqueMime(mt) && IMAGE_EXTS.has(ext))) return { pipeline: 'still', outExt: '.jpg', group: 'image' };
   // Video -> H264 MP4 (transparent at CRF 24 for chat-sized embeds).
@@ -501,7 +605,14 @@ function isCandidate(mime, key, size) {
   return (Number(size) || 0) >= (MIN_BYTES[plan.group] || MIN_BYTES.image);
 }
 
-const SCALE_IMG = 'scale=2048:2048:force_original_aspect_ratio=decrease';
+// The still box is a CAP, never a target: min(2048,iw) leaves a smaller picture
+// at its own size. `scale=2048:2048:...:decrease` alone would blow a 512px
+// photo or a 16px emoji up to 2048px — which is not "compression" in any
+// direction, it is the same picture four hundred times bigger, and it is
+// exactly what the HEIC path (a 512px iPhone HEIC, say) must never do. The 8%
+// rule used to hide this for ordinary images by rejecting the upscaled result;
+// it costs the encode either way, so the cap is honest now.
+const SCALE_IMG = "scale='min(2048,iw)':'min(2048,ih)':force_original_aspect_ratio=decrease";
 const SCALE_GIF = 'fps=20,scale=1280:1280:force_original_aspect_ratio=decrease:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=256[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5';
 const SCALE_VID = 'scale=1920:1080:force_original_aspect_ratio=decrease';
 
@@ -550,10 +661,80 @@ function buildArgs(pipelineName, inPath, outPath) {
   }
 }
 
+// A tool that stands in for ffmpeg's own input handling (heif-convert). Same
+// contract as runFfmpeg: { ok, error }, niced, killed at the job timeout — plus
+// `killed`, because a process we killed is not a verdict on the bytes and the
+// caller that records terminal verdicts has to be able to tell the difference
+// (a memory kill or the job timeout must stay retryable).
+function runTool(cmd, args) {
+  return new Promise((resolve) => {
+    const useNice = checkNice();
+    const bin = useNice ? 'nice' : cmd;
+    const argv = useNice ? ['-n', '19', cmd, ...args] : args;
+    let child;
+    try {
+      child = spawn(bin, argv, { stdio: ['ignore', 'ignore', 'pipe'], timeout: JOB_TIMEOUT_MS });
+    } catch (e) {
+      resolve({ ok: false, error: String((e && e.message) || e) });
+      return;
+    }
+    let stderr = '';
+    try {
+      child.stderr.on('data', (d) => { stderr += String(d); if (stderr.length > 4096) stderr = stderr.slice(-4096); });
+    } catch {}
+    const done = (ok, error, killed) => resolve({ ok, error: error || stderr.trim().slice(-500), killed: !!killed });
+    child.on('error', (e) => done(false, String((e && e.message) || e)));
+    child.on('close', (code, signal) => {
+      const killed = code === null || !!signal;
+      done(code === 0, code === 0 ? '' : `${cmd}_exit_${code}${signal ? '/' + signal : ''}: ${stderr.trim().slice(-300)}`, killed);
+    });
+  });
+}
+
+// Produce the candidate bytes for a plan. Everything but HEIC is a single
+// ffmpeg call; a HEIC has to be decoded by libheif first, because the ffmpeg in
+// this image cannot open the container at all (no HEIF demuxer). The decode
+// lands in a throwaway JPEG that the ordinary still pipeline then downsizes and
+// re-encodes at chat quality — so the reader gets the same 2048px/q3 picture an
+// equivalent JPEG upload would have produced, and the intermediate is one small
+// file in /tmp that never touches the bucket.
+async function encodeCandidate(plan, inPath, outPath, tag) {
+  if (!plan) return { ok: false, error: 'no_plan' };
+  if (plan.pipeline !== 'heif') return runFfmpeg(buildArgs(plan.pipeline, inPath, outPath));
+  const mid = path.join(os.tmpdir(), `cfc-heif-${tag || crypto.randomBytes(6).toString('hex')}.jpg`);
+  try {
+    const d = await runTool(HEIF_CONVERT, ['-q', HEIF_QUALITY, inPath, mid]);
+    if (!d.ok) return { ok: false, error: 'heif_decode: ' + String(d.error || 'failed').slice(0, 300), killed: !!d.killed };
+    const st = await fs.promises.stat(mid).catch(() => null);
+    if (!st || !st.size) return { ok: false, error: 'heif_decode: empty output' };
+    return await runFfmpeg(buildArgs('jpeg', mid, outPath));
+  } finally {
+    try { await fs.promises.unlink(mid); } catch {}
+  }
+}
+
+// Is the candidate worth publishing? Normally the answer is "only if it is at
+// least 8% smaller" — the original bytes are just as good, so a re-encode that
+// does not pay for itself is dropped. A normalized conversion (see planFor: the
+// HEIC path) is the exception, and the reason is the whole point of it: the
+// ORIGINAL cannot be displayed by any Windows browser or viewer, so "smaller"
+// is not the bar — a usable JPEG that happens to be larger is what the reader
+// needs, and leaving the HEIC in place would keep the file unopenable.
+function shouldPublish(plan, inSize, outSize) {
+  const a = Math.max(0, Number(inSize) || 0);
+  const b = Math.max(0, Number(outSize) || 0);
+  if (!b) return false;
+  if (plan && plan.normalize) return true;
+  return b < a * (1 - MIN_SAVING);
+}
+
 // ffmpeg errors that mean "these bytes will never decode": a wrong type, a
 // truncated file, a codec this build does not carry. Distinct from a killed
-// process or a full disk, which a later attempt may get past.
-const UNDECODABLE = /invalid data|not found|unsupported|unknown decoder|no decoder|could not find codec|moov atom|end of file|decoder .* not/i;
+// process or a full disk, which a later attempt may get past. libheif's own
+// refusals ('heif_decode: …') belong here for the same reason — a decoder that
+// will not read the file is the same verdict whichever decoder it was — while
+// a KILLED one never reaches this test (see encodeCandidate's `killed`).
+const UNDECODABLE = /invalid data|not found|unsupported|unknown decoder|no decoder|could not find codec|moov atom|end of file|decoder .* not|heif_decode/i;
 
 function runFfmpeg(args) {
   return new Promise((resolve) => {
@@ -999,7 +1180,7 @@ async function compressLocked(key, inspect, opts) {
     if (!plan) return done('animated', inStat.size);
     tmpOut = path.join(os.tmpdir(), `cfc-out-${rand}${plan.outExt}`);
 
-    const r = await runFfmpeg(buildArgs(plan.pipeline, tmpIn, tmpOut));
+    const r = await encodeCandidate(plan, tmpIn, tmpOut, rand);
     if (!r.ok) {
       const err = String(r.error || 'encode_failed').slice(0, 160);
       stats.errors++;
@@ -1010,7 +1191,7 @@ async function compressLocked(key, inspect, opts) {
     }
     const outStat = await fs.promises.stat(tmpOut).catch(() => null);
     if (!outStat || !outStat.size) return done('no_output', inStat.size);
-    if (outStat.size >= inStat.size * (1 - MIN_SAVING)) return done('no_saving', inStat.size);
+    if (!shouldPublish(plan, inStat.size, outStat.size)) return done('no_saving', inStat.size);
 
     // Nothing is published until the caller's scanner approves the candidate.
     // A rejected one leaves the original (already verified) file alone and
@@ -1044,9 +1225,24 @@ async function compressLocked(key, inspect, opts) {
     const newUrl = cacheBust('/uploads/' + newKey);
     for (const rr of rows) {
       const table = tableFor(rr.tbl);
+      // A format change carries the rest of the row with it: the MIME, the
+      // family (a HEIC filed as a 'file' becomes an 'image' — otherwise the
+      // reader still gets a download card for a picture the browser can now
+      // show), and the display extension, so a download is not named after a
+      // format its bytes are not in. Stories have neither column (filename is
+      // read as '' for them), and a same-format rewrite touches none of this.
+      const sets = ['size = ?', 'url = ?'];
+      const args = [outStat.size, newUrl];
+      if (!sameFormat) {
+        sets.push('mime = ?'); args.push(newMime);
+        const newKind = kindForMime(newMime, rr.kind);
+        if (newKind !== rr.kind) { sets.push('kind = ?'); args.push(newKind); }
+        const newName = nameWithExt(rr.filename, plan.outExt);
+        if (rr.filename && newName !== rr.filename) { sets.push('filename = ?'); args.push(newName); }
+      }
+      sets.push('compressed = 1');
       try {
-        if (sameFormat) await db.prepare('UPDATE ' + table + ' SET size = ?, url = ?, compressed = 1 WHERE id = ?').run(outStat.size, newUrl, rr.id);
-        else await db.prepare('UPDATE ' + table + ' SET size = ?, url = ?, mime = ?, compressed = 1 WHERE id = ?').run(outStat.size, newUrl, newMime, rr.id);
+        await db.prepare(`UPDATE ${table} SET ${sets.join(', ')} WHERE id = ?`).run(...args, rr.id);
       } catch (e) { warn('row update failed:', String((e && e.message) || e).slice(0, 120)); }
     }
     if (newKey !== key && !visible) {
@@ -1221,7 +1417,7 @@ async function commitStandaloneLocked(key, refs, opts) {
     plan = await resolvePlan(plan, tmpIn);
     if (!plan) return done('animated', inStat.size);
     tmpOut = path.join(os.tmpdir(), `cfs-out-${rand}${plan.outExt}`);
-    const r = await runFfmpeg(buildArgs(plan.pipeline, tmpIn, tmpOut));
+    const r = await encodeCandidate(plan, tmpIn, tmpOut, rand);
     if (!r.ok) {
       const err = String(r.error || 'encode_failed').slice(0, 160);
       stats.errors++;
@@ -1233,11 +1429,11 @@ async function commitStandaloneLocked(key, refs, opts) {
       // type and every size, so an undecodable object is no longer rare).
       // Everything else — killed for memory, a full disk, a timeout — stays
       // unrecorded on purpose, because a later pass may well succeed.
-      return UNDECODABLE.test(err) ? done('undecodable', inStat.size) : null;
+      return (!r.killed && UNDECODABLE.test(err)) ? done('undecodable', inStat.size) : null;
     }
     const outStat = await fs.promises.stat(tmpOut).catch(() => null);
     if (!outStat || !outStat.size) return done('no_output', inStat.size);
-    if (outStat.size >= inStat.size * (1 - MIN_SAVING)) return done('no_saving', inStat.size);
+    if (!shouldPublish(plan, inStat.size, outStat.size)) return done('no_saving', inStat.size);
 
     const dir = key.slice(0, key.lastIndexOf('/') + 1);
     const newKey = dir + crypto.randomBytes(16).toString('hex') + plan.outExt;
@@ -1531,6 +1727,7 @@ function getMediaStats() {
     enabled: ENABLED, everyMs: EVERY_MS, activeMs: ACTIVE_MS, batch: BATCH,
     concurrency: CONCURRENCY, active, peak, slotMb: SLOT_MB, mem: cgroupMem(),
     ffmpeg: checkFfmpeg(), encoders: { ...probeEncoders() }, minKb: MIN_KB,
+    heifConvert: checkHeifConvert(), heifTool: HEIF_CONVERT,
     busy, s3: storage.s3Enabled(), cpus, load,
     startedAt: stats.startedAt, ticks: stats.ticks,
     processed: stats.processed, skipped: stats.skipped, errors: stats.errors,
@@ -1605,6 +1802,9 @@ function startMediaCompress() {
     ready = true;
     log(`worker on: continuous while queued (every ~${Math.round(ACTIVE_MS / 100) / 10}s), idle poll every ${Math.round(EVERY_MS / 1000)}s, ${BATCH}/tick, ${CONCURRENCY} at once (1 thread each)${checkNice() ? ', nice 19' : ''}` +
       (missing.length ? ` (encoders missing, related types skipped: ${missing.join(', ')})` : ' (all encoders present)'));
+    log(checkHeifConvert()
+      ? `HEIC decoder on: ${HEIF_CONVERT} (libheif) — .heic/.heif uploads are converted to viewable JPEGs`
+      : `HEIC decoder OFF: ${HEIF_CONVERT} not on PATH — .heic/.heif uploads cannot be previewed (install libheif-tools)`);
     if (SWEEP_ENABLED) {
       const every = SWEEP_EVERY_MS < 3600000 ? `${Math.round(SWEEP_EVERY_MS / 60000)}min` : `${Math.round(SWEEP_EVERY_MS / 3600000)}h`;
       log(`bucket scan on: every ${every} (first in ${Math.round(SWEEP_FIRST_MS / 60000)}min), up to ${SWEEP_MAX_JOBS} files/pass, skips anything under ${Math.round(SWEEP_MIN_AGE_MS / 60000)}min old`);
@@ -1620,6 +1820,9 @@ module.exports = {
   startMediaCompress, tickMediaCompress: tick, kickMediaCompress, ensureColumns, planFor, resolvePlan, probeEncoders, buildArgs, cleanKey,
   MIN_BYTES, MIN_KB, getMediaStats, mediaQueueCounts, mediaTotals, mediaRecentJobs, processUpload, isCompressing,
   isCandidate, compressionEnabled,
+  // the one pipeline whose input ffmpeg cannot read (HEIC/HEIF -> JPEG): the
+  // decoder probe, the two-step encode, and the "publish even when bigger" rule
+  checkHeifConvert, encodeCandidate, shouldPublish, HEIF_EXTS,
   // profile media + the scheduled bucket reconciliation
   kickProfileMedia, kickBucketScan, reconcileBucket, getBucketScanStats, refsForKey, compressStandalone, keySize,
   // derived chat-image previews (thumbs/)

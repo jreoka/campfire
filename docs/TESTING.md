@@ -626,7 +626,7 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   (`MIN_BYTES` all zero, so a 174-byte png / 300-byte mp4 / 2 KB wav are all
   candidates while a zip, a pdf, source code, an svg and an unidentifiable
   binary are not), that `planFor` routes every family — jpeg/png/gif/webp, the
-  deferred `still` plan for BMP/TIFF/AVIF/JXL/HEIC/ICO by MIME *and* by name
+  deferred `still` plan for BMP/TIFF/AVIF/JXL/ICO by MIME *and* by name
   alone (the bucket scan's only evidence), any video container to mp4, any audio
   codec to mp3/m4a/ogg/webaudio, and neither `.ts` (TypeScript, not MPEG-TS) as
   video — and that every routed pipeline exists in `buildArgs`. Then the
@@ -634,11 +634,22 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   WebP (lossy by owner decision, and it checks the alpha channel survives that
   conversion), sends an opaque BMP/TIFF/AVIF/JXL to JPEG, and leaves a
   multi-frame APNG and animated WebP alone (a still re-encode would flatten
-  them), with each resolved pipeline actually run on those bytes. It also checks the **knobs**
+  them), with each resolved pipeline actually run on those bytes. The HEIC half
+  is the exception to "smaller or leave it": `.heic`/`.heif` by name or MIME (and
+  the `-sequence` variants) routes to the `heif` pipeline, `shouldPublish` says a
+  `normalize` plan is published even when the JPEG came out bigger while every
+  other pipeline keeps the 8% rule, and — with libheif present, which is what the
+  app image installs — a committed 455-byte HEIC fixture decodes through the real
+  `encodeCandidate` (heif-convert → JPEG → the ordinary still pipeline) at its own
+  16x16, never upscaled by the 2048 box, while a file that is not a HEIF fails the
+  decode cleanly. Without `heif-convert` on PATH it asserts the safe other half (a
+  HEIC gets a null plan and is left alone) and skips the decode.
+  It also checks the **knobs**
   in a child process (they are read at require time): concurrency defaults to 1
   and batch to 1, a configured pair is reported back, and both are clamped
   (4 encodes / 16 rows) and floored at one. Skips without ffmpeg/ffprobe.
-  Re-run it after touching `planFor`/`resolvePlan`/`MIN_BYTES`/the env knobs in
+  Re-run it after touching `planFor`/`resolvePlan`/`shouldPublish`/
+  `encodeCandidate`/`MIN_BYTES`/the env knobs in
   `media-compress.js`.
   `node scripts/test-viewonce-pick.js` covers "Send a view-once" arriving with
   the DM you clicked it in already picked (offline for the two real helpers —
@@ -928,7 +939,14 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   `attachmentHTML` plus the REAL document error handler against a server that
   404s one preview and serves another: the cold image lands on the original
   after exactly one fallback request (never the broken-file card), and the warm
-  one never fetches the original at all. The lightbox keeping the original is
+  one never fetches the original at all. A third case answers 404 for BOTH the
+  preview and the original — a picture this browser has no decoder for, which is
+  an iPhone HEIC on Windows — and asserts the degraded rendering is a real file
+  card (the same `attFileCardHTML` a plain file uses): file icon, full name, size
+  line, the attachment identity (`data-att-id` + the original URL) so Copy/Save/
+  Scan info still resolve, the failed `<img>` gone and the loading placeholder
+  hidden. That box used to be built by hand with the name alone, which left a
+  bare outline around a filename. The lightbox keeping the original is
   asserted too — a preview in a full-screen viewer would be a visible downgrade.
   Re-run it after touching `messages.js`'s attachment markup, `final.js`'s error
   handler, `pickers.js`'s lightbox call, or the preview helpers.

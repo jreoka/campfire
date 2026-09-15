@@ -3,13 +3,18 @@
 //   - the type routing (every image / video / audio family, plus what must
 //     never be handed to ffmpeg),
 //   - how a deferred 'still' plan resolves against real bytes (alpha -> PNG,
-//     opaque -> JPEG, an animation left exactly as it is).
+//     opaque -> JPEG, an animation left exactly as it is),
+//   - the HEIC/HEIF path end to end when libheif is installed (heif-convert ->
+//     JPEG -> the ordinary still pipeline), including the rule that a
+//     normalized conversion publishes even when it is bigger.
 //
 // The plumbing around it (slot, serving gate, ledger, bucket scan) is covered
 // end-to-end by scripts/test-upload-pipeline.js; this file is the coverage
-// contract itself, so it runs anywhere and only needs ffmpeg + ffprobe.
+// contract itself, so it runs anywhere and only needs ffmpeg + ffprobe (plus
+// heif-convert for the HEIC half, which the app image installs).
 //
-// Re-run after touching media-compress.js: planFor, resolvePlan, MIN_BYTES.
+// Re-run after touching media-compress.js: planFor, resolvePlan, MIN_BYTES,
+// shouldPublish/encodeCandidate.
 // Usage: node scripts/test-compress-types.js
 'use strict';
 
@@ -19,6 +24,12 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const media = require('../media-compress');
+
+// A real 16x16 HEIC, 455 bytes, encoded with libheif's own heif-enc (red frame,
+// quality 1) and committed here as base64: the container has no HEIF *encoder*
+// either, so a HEIC fixture cannot be generated on the box at test time — and
+// this is the only way to prove the decode half without a network fetch.
+const TINY_HEIC_B64 = 'AAAAHGZ0eXBoZWljAAAAAG1pZjFoZWljbWlhZgAAAX1tZXRhAAAAAAAAACFoZGxyAAAAAAAAAABwaWN0AAAAAAAAAAAAAAAAAAAAAA5waXRtAAAAAAABAAAAImlsb2MAAAAAREAAAQABAAAAAAGhAAEAAAAAAAAAJgAAACNpaW5mAAAAAAABAAAAFWluZmUCAAAAAAEAAGh2YzEAAAAA/WlwcnAAAADdaXBjbwAAAHZodmNDAQNwAAAAAAAAAAAAHvAA/P34+AAADwMgAAEAGEABDAH//wNwAAADAJAAAAMAAAMAHroCQCEAAQAqQgEBA3AAAAMAkAAAAwAAAwAeoCCBBZbqrprm4CGgwIAAAAMAgAAAAwCEIgABAAZEAcFzwYkAAAATY29scm5jbHgAAQANAAaAAAAAFGlzcGUAAAAAAAAAQAAAAEAAAAAoY2xhcAAAABAAAAABAAAAEAAAAAH////QAAAAAv///9AAAAACAAAAEHBpeGkAAAAAAwgICAAAABhpcG1hAAAAAAAAAAEAAQWBAgMFhAAAAC5tZGF0AAAAIigBrwUSE0zg+rpSO5/jWHx8Bt5ez5Ws7xb8oJVaEJHxW0A=';
 
 let passed = 0;
 const failures = [];
@@ -70,11 +81,68 @@ async function main() {
     // client's MIME and the name alone (what the bucket scan has) must route.
     for (const [mime, key] of [
       ['image/bmp', 'files/a.bmp'], ['image/tiff', 'files/a.tif'], ['image/avif', 'files/a.avif'],
-      ['image/jxl', 'files/a.jxl'], ['image/heic', 'files/a.heic'], ['image/vnd.microsoft.icon', 'files/a.ico'],
-      ['application/octet-stream', 'files/a.bmp'], ['application/octet-stream', 'files/a.heic'],
+      ['image/jxl', 'files/a.jxl'], ['image/vnd.microsoft.icon', 'files/a.ico'],
+      ['application/octet-stream', 'files/a.bmp'],
     ]) {
       const plan = media.planFor(mime, key);
       check(mime + ' ' + path.extname(key) + ' -> deferred still', !!plan && plan.pipeline === 'still', JSON.stringify(plan));
+    }
+
+    console.log('\n-- HEIC/HEIF: the one family ffmpeg cannot open at all --');
+    // The container's ffmpeg has no HEIF demuxer (Alpine builds it without
+    // libheif), so a HEIC is decoded by heif-convert and encoded as a JPEG. Its
+    // plan is marked `normalize`: the conversion is published even when it is
+    // NOT smaller, because the original cannot be displayed by any Windows
+    // browser or viewer — which is the whole point of the pipeline.
+    const heif = media.checkHeifConvert();
+    const heifPlan = media.planFor('image/heic', 'files/a.heic');
+    if (!heif) {
+      check('with no heif-convert installed a HEIC is left alone (null plan, nothing lost)',
+        heifPlan === null && media.planFor('application/octet-stream', 'files/a.heic') === null, JSON.stringify(heifPlan));
+      console.log('  note  heif-convert is not on PATH — the decode half is skipped (the app image installs libheif-tools)');
+    } else {
+      for (const [mime, key] of [
+        ['image/heic', 'files/a.heic'], ['image/heif', 'files/a.heif'],
+        ['application/octet-stream', 'files/a.heic'], ['application/octet-stream', 'files/a.HEIC'],
+        ['image/heic-sequence', 'files/x.bin'],
+      ]) {
+        const p = media.planFor(mime, key);
+        check(mime + ' ' + path.extname(key) + ' -> heif normalize', !!p && p.pipeline === 'heif' && p.outExt === '.jpg' && p.normalize === true, JSON.stringify(p));
+      }
+      check('the heif plan is never sent to buildArgs (ffmpeg cannot read the input)',
+        (() => { try { media.buildArgs('heif', 'in', 'out'); return false; } catch { return true; } })());
+      check('a HEIC is a candidate for the pre-publication slot',
+        media.isCandidate('image/heic', 'files/a.heic', 471520) === true && media.isCandidate('application/octet-stream', 'files/a.heic', 471520) === true);
+      // A normalized conversion publishes whatever came out, at any size; every
+      // other pipeline keeps the 8% rule (and a zero-byte output is never
+      // published, normalize or not — that is a failed encode, not a file).
+      check('normalize publishes even when the JPEG is bigger',
+        media.shouldPublish({ pipeline: 'heif', normalize: true }, 1000, 5000) === true);
+      check('an ordinary still keeps the 8% rule',
+        media.shouldPublish({ pipeline: 'jpeg' }, 1000, 950) === false && media.shouldPublish({ pipeline: 'jpeg' }, 1000, 900) === true);
+      check('an empty candidate is never published', media.shouldPublish({ normalize: true }, 1000, 0) === false);
+
+      // The decode itself, against a real HEIC (a 16x16 red frame, 455 bytes —
+      // libheif encodes and decodes it, so no network and no ffmpeg HEIF support
+      // are needed). heif-convert -> JPEG -> the ordinary still pipeline.
+      const heic = f('tiny.heic');
+      fs.writeFileSync(heic, Buffer.from(TINY_HEIC_B64, 'base64'));
+      const dst = f('tiny-out.jpg');
+      const r = await media.encodeCandidate(heifPlan, heic, dst, 'test');
+      const out = fs.existsSync(dst) ? fs.readFileSync(dst) : null;
+      const probe = spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height,codec_name', '-of', 'csv=p=0', dst], { encoding: 'utf8' });
+      check('a real HEIC decodes through heif-convert and encodes to a JPEG',
+        r.ok && !!out && out.length > 0 && /^mjpeg|^jpeg/.test(String(probe.stdout || '').trim().replace(/^.*,/, '')), JSON.stringify({ ok: r.ok, err: r.error, probe: String(probe.stdout || '').trim() }));
+      check('...at its own size, never upscaled to the 2048 box',
+        /^16,16,/.test(String(probe.stdout || '').trim()), String(probe.stdout || '').trim());
+      check('a file that is not a HEIC fails the decode without crashing the worker',
+        await (async () => {
+          const junk = f('junk.heic');
+          fs.writeFileSync(junk, Buffer.from('not a heif at all'));
+          const bad = await media.encodeCandidate(heifPlan, junk, f('junk-out.jpg'), 'test');
+          return bad.ok === false && /heif_decode/.test(String(bad.error || ''));
+        })());
     }
 
     for (const [mime, key] of [

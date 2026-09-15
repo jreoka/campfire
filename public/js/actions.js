@@ -133,6 +133,9 @@ function attFromEl(el) {
     url,
     name: w.dataset.fbName || (kind === 'video' ? 'video' : 'file'),
     kind,
+    // null when the rendering predates data-fb-size: an unknown size is not 0,
+    // and the file card the error handler builds says nothing rather than "0 B".
+    size: w.dataset.fbSize ? Number(w.dataset.fbSize) : null,
     scan: w.dataset.fbScan || 'clean',
   };
 }

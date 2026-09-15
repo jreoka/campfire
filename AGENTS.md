@@ -520,7 +520,8 @@ on that message). Menus are content-aware: an attachment carries its own identit
 (`data-att-id` + the `data-fb-*` media pair, painted by `attMeta` in
 messages.js on EVERY rendering — the `.att-wrap`, the audio player, the text
 preview, the plain file card, and the `scan-block` card standing in for a
-pending or removed file), and those rows ride in the MESSAGE's own menu rather
+pending or removed file; `data-fb-size` rides with them so a rendering built
+from the identity alone can still show a size), and those rows ride in the MESSAGE's own menu rather
 than in a menu of their own: `msgAttItems` (actions.js) turns a message's
 attachments — its own record, plus the identity of the element under the pointer
 when the record does not cover it — into Copy image / Save image / Copy image
@@ -1340,6 +1341,30 @@ are load-bearing:
   alone rather than flattened), any video container to
   MP4, any audio codec to MP3/AAC/Opus; SVG stays out on purpose (vector, so a
   raster re-encode degrades instead of shrinks).
+  **HEIC/HEIF is the one family the box cannot decode itself.** Alpine's ffmpeg
+  is built without libheif, so there is no HEIF demuxer in the image — and no
+  Windows browser or viewer can read those bytes either, which left an iPhone
+  photo as a download nobody could open (reported). The Dockerfile installs
+  `libheif-tools`; `planFor` routes `.heic`/`.heif` (by name, by MIME, or the
+  `-sequence` variants) to the `heif` pipeline, and `encodeCandidate` decodes
+  through `heif-convert` into a throwaway JPEG before running the ordinary still
+  encode on it (2048px cap, q3). The still box is a CAP now
+  (`min(2048,iw)`), so a 512px HEIC is never blown up to 2048 — that was the
+  old `scale=2048:2048` behaviour, hidden for ordinary images by the 8% rule.
+  That plan carries `normalize: true`, and it is the ONE case where
+  `shouldPublish` ignores the 8% rule: viewability, not size, is the point, so a
+  larger JPEG is published over an original nothing can open. A format change
+  also carries the row with it — `kind` follows the new MIME (a HEIC that
+  arrived as `application/octet-stream` was filed as a `file`, which the
+  candidate query then never looked at) and the display name's extension is
+  rewritten (`nameWithExt`), because a `.heic` name over JPEG bytes still picks
+  the wrong Windows handler on download. `/api/upload` reads a `.heic`/`.heif`
+  name as its MIME when the browser sent none, which is what makes that upload
+  an image candidate at all. Missing `heif-convert` is a loud boot line, a null
+  plan and a `getMediaStats().heifConvert` of false — never a silent failure.
+  A browser that cannot paint a picture still degrades it to a real file card
+  (see `attFileCardHTML`), so an unconverted HEIC is a downloadable card rather
+  than an outlined box around a filename.
 - **A verdict belongs to the policy that produced it.** When a policy widens
   (the size floor went away; PNG stopped being lossless-only), the ledger rows
   it produced have to be handed back to the bucket scan — but exactly once, or
