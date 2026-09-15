@@ -498,8 +498,20 @@ function sendGif(g) {
 
 // ---------- reactions / reply / edit / thread actions ----------
 async function toggleReaction(mid, emoji) {
+  const cur = msgById(mid);
+  const max = Number(S.maxReactions) || 20;
+  // One message carries at most `max` DIFFERENT emoji (REACTION_KINDS_MAX on the
+  // server). Adding to a kind already on the message — or taking my own reaction
+  // back — is always allowed, so only a NEW kind can hit the ceiling; refusing it
+  // here says why, instead of letting the tap round-trip into a bare error. The
+  // server re-checks, so a bar another device filled a moment ago still holds.
+  const known = (cur?.reactions || []).some((r) => r.emoji === emoji);
+  if (!known && (cur?.reactions?.length || 0) >= max) {
+    toast(`That message already has ${max} different reactions — remove one to add another`);
+    return;
+  }
   haptic(10); // reacting is one of the few taps that still ticks
-  const dm = msgById(mid)?._dm;
+  const dm = cur?._dm;
   const base = dm ? '/api/dms/messages/' : '/api/messages/';
   try {
     const { reactions } = await api(base + mid + '/reactions', { method: 'POST', body: JSON.stringify({ emoji }) });
@@ -516,7 +528,13 @@ async function toggleReaction(mid, emoji) {
     if (S.thread && (S.thread.rootId === mid || S.thread.replies.some((r) => r.id === mid))) {
       if (!patchMessageReactions(mid, $('#thread-replies'))) renderThread();
     }
-  } catch (err) { toast('Reaction failed: ' + prettyError(err.message)); }
+  } catch (err) {
+    // The bar filled up between the pre-check above and this request (another
+    // device, or somebody else in a busy channel) — the server's answer is the
+    // one that counts, and it says the same thing the pre-check would have.
+    if (/too_many_reactions/.test(String(err && err.message))) toast(`That message already has ${max} different reactions — remove one to add another`);
+    else toast('Reaction failed: ' + prettyError(err.message));
+  }
 }
 /* ---------- reaction details: hover tooltip + View-reactions modal ---------- */
 // Per-message cache of the detailed endpoint (emoji -> full user objects).

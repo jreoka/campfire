@@ -670,6 +670,17 @@ function reactionsHTML(m) {
     return `<button class="reaction${r.me ? ' me' : ''}" data-act="react" data-emoji="${esc(r.emoji)}" title="${esc(reactionTitle(r))}" aria-label="${esc(reactionTitle(r))}">${label} <span class="rcount">${r.count}</span></button>`;
   }).join('') + '</div>';
 }
+// The number a pill is showing. While a roll is running the digit lives inside
+// TWO stacked copies, so the count element's textContent reads "12" for 1 -> 2 —
+// the pending copy is the only honest answer, and asking the wrong question here
+// makes a later increase look like no change at all.
+function pillCount(b) {
+  const el = b && b.querySelector('.rcount');
+  if (!el) return null;
+  const pending = el.querySelector('.rc-new');
+  const n = parseInt(((pending || el).textContent || ''), 10);
+  return Number.isFinite(n) ? n : null;
+}
 // Count went up on an existing pill: roll the number like an odometer tick
 // instead of swapping the digit under the reader's eye. Two stacked copies
 // animate past each other, then collapse back to plain text.
@@ -1547,34 +1558,57 @@ function patchMessageReactions(mid, box) {
   const nearBottom = nearLiveBottom(box);
   const html = reactionsHTML(m);
   const cur = body.querySelector(':scope > .reactions');
-  // Snapshot the counts first: the pill is rebuilt below, so "did this one go
-  // up?" can only be answered against the DOM we're about to replace.
-  const before = new Map();
-  if (cur) {
-    for (const b of cur.querySelectorAll('.reaction')) {
-      const n = parseInt((b.querySelector('.rcount') || {}).textContent || '', 10);
-      before.set(b.dataset.emoji, Number.isFinite(n) ? n : 0);
-    }
-  }
   if (!html) {
     if (cur) cur.remove();
   } else {
     const tmp = document.createElement('div');
     tmp.innerHTML = html;
     const next = tmp.firstElementChild;
-    if (cur) cur.replaceWith(next);
-    else {
+    if (!cur) {
       // Reactions sit after attachments/poll and before the thread link.
       const after = body.querySelector(':scope > .thread-link');
       body.insertBefore(next, after || null);
-    }
-    // Existing pill that gained a count → roll its number.
-    for (const b of next.querySelectorAll('.reaction')) {
-      const was = before.get(b.dataset.emoji);
-      const el = b.querySelector('.rcount');
-      const now = parseInt((el || {}).textContent || '', 10);
-      if (was == null || !el || !Number.isFinite(now) || now <= was) continue;
-      rollReactionCount(el, was, now);
+    } else {
+      // PILL BY PILL — never `cur.replaceWith(next)`. Reacting is TWO updates:
+      // this patch (which starts the count roll) and the server's own echo back
+      // over the socket a few milliseconds later. Rebuilding the bar on that
+      // echo tore down the roll that had just started, so the number snapped and
+      // the odometer never got to run — the difference between "it ticks" and
+      // "it just changes" was one `replaceWith`.
+      const want = new Map();
+      for (const b of next.querySelectorAll('.reaction')) want.set(b.dataset.emoji, b);
+      for (const b of [...cur.querySelectorAll('.reaction')]) {
+        const nb = want.get(b.dataset.emoji);
+        if (!nb) { b.remove(); continue; } // that reaction was taken back
+        want.delete(b.dataset.emoji);
+        const el = b.querySelector('.rcount');
+        const was = pillCount(b);
+        const now = parseInt((nb.querySelector('.rcount') || {}).textContent || '', 10);
+        // Who reacted (and what the tooltip calls them) can change on its own.
+        b.classList.toggle('me', nb.classList.contains('me'));
+        b.title = nb.title;
+        b.setAttribute('aria-label', nb.getAttribute('aria-label'));
+        if (!el || !Number.isFinite(now)) continue;
+        // Unchanged: leave the node — and any roll still running inside it — as
+        // it is. This is the line that lets the odometer survive the echo.
+        if (was != null && now === was) continue;
+        // A decrease (or a number we could not read) is written straight in: an
+        // odometer is for a count going UP, and rolling a taken-back reaction
+        // backwards would say "more" while it moves.
+        if (was == null || now < was) { if (el.textContent !== String(now)) el.textContent = String(now); continue; }
+        rollReactionCount(el, was, now);
+      }
+      // A kind the bar did not have yet (somebody's first reaction with it).
+      for (const nb of want.values()) cur.appendChild(nb);
+      // …then the server's order, moving only what is actually out of place: a
+      // move is a re-insert, and re-inserting a pill restarts its animation.
+      let ref = cur.firstElementChild;
+      for (const nb of next.querySelectorAll('.reaction')) {
+        const have = [...cur.querySelectorAll('.reaction')].find((x) => x.dataset.emoji === nb.dataset.emoji);
+        if (!have) continue;
+        if (have !== ref) cur.insertBefore(have, ref);
+        ref = have.nextElementSibling;
+      }
     }
   }
   // A bar added/removed changes the column height: keep bottom-pinned readers

@@ -728,7 +728,7 @@ app.get('/api/config', (req, res) => {
       credential: process.env.TURN_PASS || undefined,
     });
   }
-  res.json({ iceServers, origin: ORIGIN, turnstileSiteKey: process.env.TURNSTILE_SITEKEY || null, linkPreviews: String(process.env.UNFURL === undefined ? '1' : process.env.UNFURL) !== '0', maxUploadMb: Math.round(MAX_FILE_BYTES / 1048576) });
+  res.json({ iceServers, origin: ORIGIN, turnstileSiteKey: process.env.TURNSTILE_SITEKEY || null, linkPreviews: String(process.env.UNFURL === undefined ? '1' : process.env.UNFURL) !== '0', maxUploadMb: Math.round(MAX_FILE_BYTES / 1048576), maxReactions: REACTION_KINDS_MAX });
 });
 
 // ---------- Cloudflare Turnstile (login/signup captcha) ----------
@@ -4772,6 +4772,25 @@ app.delete('/api/servers/:id/emoji/:name', authRequired, async (req, res) => {
 });
 
 // ---------- reactions ----------
+// How many DIFFERENT emoji one message may carry. A count has no ceiling — any
+// number of people may pile onto the same emoji — but the bar is a row of pills,
+// so it is the number of KINDS that needs one. 20 is Discord's limit and far
+// more than a conversation ever uses.
+const REACTION_KINDS_MAX = 20;
+// Adding a NEW kind has to fit under that ceiling; piling onto a kind the
+// message already carries, and taking your own reaction back, are always
+// allowed. The count and the insert share one transaction and lock the message
+// row, so two replicas racing for the last free slot cannot both take it: the
+// cap holds cluster-wide, not per process.
+async function reactionSlotFree(table, msgTable, mid, emoji) {
+  return await db.transaction(async () => {
+    await db.prepare(`SELECT id FROM ${msgTable} WHERE id = ? FOR UPDATE`).get(mid);
+    const have = await db.prepare(`SELECT 1 FROM ${table} WHERE message_id = ? AND emoji = ?`).get(mid, emoji);
+    if (have) return true;
+    const kinds = (await db.prepare(`SELECT COUNT(DISTINCT emoji) AS c FROM ${table} WHERE message_id = ?`).get(mid)).c;
+    return Number(kinds) < REACTION_KINDS_MAX;
+  });
+}
 function validReaction(e, names) {
   if (typeof e !== 'string' || !e) return false;
   if (e.startsWith(':') && e.endsWith(':') && e.length > 2) {
@@ -4794,6 +4813,9 @@ app.post('/api/messages/:mid/reactions', authRequired, async (req, res) => {
   const ex = await db.prepare('SELECT 1 FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').get(m.id, req.user.id, emoji);
   if (ex) await db.prepare('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').run(m.id, req.user.id, emoji);
   else {
+    if (!(await reactionSlotFree('message_reactions', 'messages', m.id, emoji))) {
+      return res.status(409).json({ error: 'too_many_reactions', max: REACTION_KINDS_MAX });
+    }
     await db.prepare('INSERT INTO message_reactions (message_id, user_id, emoji, created_at) VALUES (?,?,?,?)').run(m.id, req.user.id, emoji, now());
     await notifyReaction(m.user_id, req.user, emoji, { serverId: m.server_id, channelId: m.channel_id, messageId: m.id });
   }
@@ -6010,6 +6032,9 @@ app.post('/api/dms/messages/:mid/reactions', authRequired, async (req, res) => {
   const ex = await db.prepare('SELECT 1 FROM dm_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').get(m.id, req.user.id, emoji);
   if (ex) await db.prepare('DELETE FROM dm_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').run(m.id, req.user.id, emoji);
   else {
+    if (!(await reactionSlotFree('dm_reactions', 'dm_messages', m.id, emoji))) {
+      return res.status(409).json({ error: 'too_many_reactions', max: REACTION_KINDS_MAX });
+    }
     await db.prepare('INSERT INTO dm_reactions (message_id, user_id, emoji, created_at) VALUES (?,?,?,?)').run(m.id, req.user.id, emoji, now());
     await notifyReaction(m.user_id, req.user, emoji, { threadId: m.thread_id, messageId: m.id });
   }

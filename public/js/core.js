@@ -182,6 +182,7 @@ const S = {
   friendsVoice: new Map(), // userId -> {kind,serverId,channelId,threadId,joinable,…} (Active Now IN VOICE)
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
   maxUploadMb: 200, // attachment cap, refreshed from /api/config at boot (server-owned)
+  maxReactions: 20, // DIFFERENT emoji one message may carry, ditto (server-owned, see REACTION_KINDS_MAX)
   voice: null, // {serverId, channelId, stream, pcs:Map, muted, analysers}
   ws: null,
   typingTimers: new Map(),
