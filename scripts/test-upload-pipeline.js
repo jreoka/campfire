@@ -12,6 +12,10 @@
 //   - exactly ONE message-updated follows, already pointing at compressed
 //     bytes that the engine approved,
 //   - the old bytes are gone (format change) and file_scans followed the file,
+//   - a WebM/Opus voice message (what Chrome's MediaRecorder produces, and what
+//     no Apple product could play in an <audio> element before iOS 17.4) comes
+//     out as AAC/MP4 with moov before mdat, published even though it is the
+//     BIGGER file, and served in a 206 to a range request,
 //   - a file the engine refuses is deleted, its row goes `infected`, the gate
 //     answers 410, and the message is re-broadcast as blocked.
 //
@@ -184,6 +188,7 @@ async function main() {
 
   const media = {
     wav: path.join(tmp, 'tone.wav'),
+    voice: path.join(tmp, 'voice-note.webm'), // exactly what Chrome's MediaRecorder gives a voice message
     jpg: path.join(tmp, 'noise.jpg'),
     small: path.join(tmp, 'thumb.png'), // tiny, but still a candidate: there is no size floor
     txt: path.join(tmp, 'notes.txt'), // not media at all — the compressor must never gate it
@@ -194,10 +199,17 @@ async function main() {
   // proves the pipeline blocks on what the bytes ARE, not what they are called.
   fs.writeFileSync(media.bad, 'holiday photo attachment\n' + fake.MARKER + '\nmore harmless-looking text\n');
   if (!ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=20,volume=0.4', '-ac', '1', '-c:a', 'pcm_s16le', media.wav])
+    || !ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=20', '-ac', '1', '-c:a', 'libopus', '-b:a', '24k', media.voice])
     || !ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'nullsrc=s=2048x2048,geq=random(1)*255:128:128', '-frames:v', '1', '-q:v', '1', media.jpg])
     || !ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x334155:s=64x64', '-frames:v', '1', media.small])) {
     return skip('ffmpeg could not generate test media');
   }
+  // Opus-in-WebM is the fixture that matters most here (a voice message recorded
+  // on Android/desktop Chrome). Without libopus on this box the case cannot be
+  // built, and the assertion set below is skipped with a note rather than passed
+  // vacuously.
+  const voiceOk = fs.existsSync(media.voice) && fs.statSync(media.voice).size > 0;
+  if (!voiceOk) console.log('[test] note  this ffmpeg has no libopus encoder — the voice-note case is skipped');
 
   let child = null, db = null, daemon = null;
   let serverLog = '';
@@ -312,6 +324,57 @@ async function main() {
     const aScans = readEngineLog();
     check('candidate output was scanned too (the daemon saw the mp3)',
       aScans.some((s) => Number(s.size) === aAtt.size), 'daemon saw sizes ' + aScans.map((s) => s.size).join(','));
+
+    // The Apple case, end to end: what a voice message IS when Chrome records
+    // it is Opus in WebM, and no iPhone or iPad before iOS 17.4 (and no Apple
+    // product ever, in Ogg) can put that in an <audio> element. The pi
+    // publishes AAC/MP4 instead — even though it is the BIGGER file, which is
+    // the whole point: the 8% rule must not be allowed to keep the WebM.
+    if (voiceOk) {
+      console.log('\n-- voice message: WebM/Opus upload -> AAC/MP4 (the only format every Apple product plays) --');
+      const vsz = fs.statSync(media.voice).size;
+      const v = await roundTrip(media.voice, 'voice-message.webm', 'audio/webm');
+      check('upload answered as scanned/pending', v.up.scan === 'pending', 'scan=' + v.up.scan);
+      check('upload was filed as audio', v.up.kind === 'audio', 'kind=' + v.up.kind);
+      check('message first rendered as pending', v.created.message.attachments[0].scan === 'pending');
+      check('exactly ONE message update (no swap under a player)', v.updates.length === 1, 'updates=' + v.updates.length);
+      const vAtt = v.final && v.final.message.attachments[0];
+      check('final attachment is clean + audio/mp4', !!vAtt && vAtt.scan === 'clean' && vAtt.mime === 'audio/mp4', vAtt && (vAtt.mime + ' ' + vAtt.scan));
+      check('final url is a fresh m4a key', !!vAtt && vAtt.url.split('?')[0].endsWith('.m4a') && vAtt.url.split('?')[0] !== v.up.url.split('?')[0], vAtt && vAtt.url);
+      check('the download name follows the bytes (voice-message.m4a)',
+        !!vAtt && vAtt.name === 'voice-message.m4a', vAtt && vAtt.name);
+      check('published even though AAC is BIGGER than the Opus original', !!vAtt && vAtt.size > vsz, vAtt && (vAtt.size + ' > ' + vsz));
+      const vKey = vAtt && vAtt.url.split('?')[0].replace('/uploads/', '');
+      const vOldKey = v.up.url.split('?')[0].replace('/uploads/', '');
+      check('the WebM original is deleted', !fs.existsSync(path.join(uploads, vOldKey)));
+      check('scan verdict follows the new key', !!vKey && (await scanRow(vKey) || {}).status === 'clean');
+      const vRows = await rowFor(vKey);
+      check('attachment row points at the new key + compressed=1', vRows.length === 1 && Number(vRows[0].compressed) === 1);
+      const vServed = await fetch(`http://127.0.0.1:${PORT}${vAtt ? vAtt.url : ''}`);
+      const vServedBytes = Buffer.from(await vServed.arrayBuffer());
+      check('the m4a is served through the scan gate', vServed.status === 200 && vServedBytes.length === vAtt.size, 'status=' + vServed.status + ' bytes=' + vServedBytes.length);
+      // What the reader actually receives, judged by ffprobe rather than by the
+      // row: AAC in an MP4, with the index (moov) before the audio data.
+      const vFile = path.join(tmp, 'served.m4a');
+      fs.writeFileSync(vFile, vServedBytes);
+      const vProbe = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_name', '-show_entries', 'format=format_name', '-of', 'json', vFile], { encoding: 'utf8' });
+      let vInfo = {};
+      try { vInfo = JSON.parse(String(vProbe.stdout || '{}')); } catch {}
+      const vStream = (vInfo.streams || [])[0] || {};
+      check('the served bytes really are AAC in MP4', vStream.codec_name === 'aac' && /mp4|mov/.test(String((vInfo.format || {}).format_name || '')),
+        JSON.stringify({ codec: vStream.codec_name, format: (vInfo.format || {}).format_name }));
+      const vHead = vServedBytes.subarray(0, 8192).toString('latin1');
+      check('...with moov before mdat (+faststart — iOS will not start a progressive read without it)',
+        vHead.includes('moov') && (!vHead.includes('mdat') || vHead.indexOf('moov') < vHead.indexOf('mdat')),
+        JSON.stringify({ moov: vHead.indexOf('moov'), mdat: vHead.indexOf('mdat') }));
+      check('candidate output was scanned too (the daemon saw the m4a)',
+        readEngineLog().some((s) => Number(s.size) === vAtt.size));
+      // Range requests: the one transport detail separate from the codec. Safari
+      // plays audio by reading ranges out of it, so a 206 has to come back.
+      const ranged = await fetch(`http://127.0.0.1:${PORT}${vAtt.url}`, { headers: { Range: 'bytes=0-1' } });
+      check('a bytes=0-1 range is answered 206 with the right length (how Safari reads audio)',
+        ranged.status === 206 && (await ranged.arrayBuffer()).byteLength === 2, 'status=' + ranged.status);
+    }
 
     console.log('\n-- image: jpeg upload -> inline compression (same key) --');
     const b = await roundTrip(media.jpg, 'noise.jpg', 'image/jpeg');

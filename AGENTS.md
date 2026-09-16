@@ -423,6 +423,27 @@ history) through the same compressor, which lists the bucket hourly
 it landing. A per-key ledger (`media_compress_keys`) is what keeps any of that
 from being re-encoded twice. It attempts **any size, any type the image's
 ffmpeg can decode** (no floor; `MEDIA_COMPRESS_MIN_KB` restores one).
+**Playability outranks size for the formats Apple cannot open** (owner request:
+"audio messages must be heard on Mac/iPhone/iPad"). A voice message is Opus in
+WebM — that is what `MediaRecorder` gives Chrome, Android and desktop Firefox —
+and no Apple product can put WebM/Opus in an `<audio>` element before Safari
+17.4 (2024-03), has ever played Ogg, or can demux WebM/Matroska/AVI video;
+Web Audio's `decodeAudioData` still refuses both, so the player's waveform fell
+back to a flat track there too. So `planFor` routes every Opus/Vorbis input
+(and every non-`mp4`/`m4v`/`mov` video container) to **AAC in MP4** / **MP4**
+with `normalize: true`, and `shouldPublish` publishes a normalized conversion at
+**any size** — a re-encode of efficient Opus to AAC 128k is usually BIGGER, and
+that is the accepted price (the HEIC rule is the other `normalize` case).
+MP3/AAC/WAV/FLAC audio and MP4/MOV video keep the ordinary 8% rule. Everything
+ends in the two audio formats every Apple product has always played, which is
+why **no pipeline produces Opus any more** (`buildArgs('ogg'|'webaudio')` throws
+on purpose — `scripts/test-compress-types.js` asserts that, and asserts a
+generated Opus note comes out AAC-in-MP4 with `moov` before `mdat`, because iOS
+will not start a progressive read without `+faststart`). The switch is also a
+one-time `oncePolicy('apple-playable')` migration: it re-queues the stored rows
+whose extension is in that set (`compressed = 0`) and drops their ledger
+verdicts, so media uploaded before the rule is converted too — the objects
+themselves are only replaced when the queue republishes them under a new key.
 `MAX_FILE_MB=50`, because S3 mode buffers every
 upload in RAM, and `VIRUS_SCAN_CONCURRENCY=4` + `MEDIA_COMPRESS_CONCURRENCY=2`
 let a burst of uploads compress in parallel (one niced single-threaded ffmpeg

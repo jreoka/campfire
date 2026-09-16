@@ -23,10 +23,19 @@
 // - Every size, every type the box can decode: there is NO size floor (a 40 KB
 //   screenshot is still worth a look — set MEDIA_COMPRESS_MIN_KB for one), and
 //   planFor() routes any image (BMP/TIFF/AVIF/JXL/HEIC/ICO/…, alpha-aware),
-//   any video container to MP4, and any audio codec to MP3/AAC/Opus. Only
+//   any video container to MP4, and any audio codec to MP3 or AAC/MP4. Only
 //   non-media (PDF, zip, source code) and SVG — vector, which a raster
 //   re-encode would degrade rather than shrink — are left alone.
-// - HEIC/HEIF is the exception to "smaller or leave it": the container's ffmpeg
+// - Playability outranks size for the formats Apple cannot open. Safari has no
+//   Ogg support at all, learned WebM/Opus (in <audio>) only in 17.4 — March
+//   2024 — and cannot demux WebM/Matroska/AVI video either, and Web Audio's
+//   decodeAudioData still refuses both. A voice message recorded on Android or
+//   desktop Chrome is exactly WebM/Opus, so it reached an iPhone as a player
+//   that did nothing. Those inputs are converted to AAC in MP4 and the plan is
+//   marked `normalize`: published even when the result is LARGER, because a
+//   re-encode of an efficient Opus stream to AAC 128k usually is bigger. The
+//   same rule covers non-Apple video containers (WebM/Matroska/AVI/WMV/…).
+// - HEIC/HEIF is the other `normalize` case: the container's ffmpeg
 //   has no HEIF demuxer at all (Alpine builds it without libheif), and no
 //   browser on Windows can decode those bytes either, so leaving the original
 //   means a download nobody can look at. libheif's own `heif-convert` decodes
@@ -51,10 +60,10 @@
 //   behind a live URL are never rewritten under a reader.
 // - Same URL shape always (/uploads/<sub>/<file>?v=<cachekey>). Before
 //   publication a same-format result overwrites in place with a fresh ?v
-//   cache-buster; format changes (wav/flac -> mp3, mov/webm video -> mp4) mint a
-//   new random filename and the DB row (url/mime/size) is updated to match.
-//   The sweeper's path always mints a new filename (see above). Display
-//   filenames are never touched.
+//   cache-buster; format changes (wav/flac -> mp3, ogg/webm audio -> m4a,
+//   mov/webm/mkv video -> mp4) mint a new random filename and the DB row
+//   (url/mime/size/filename) is updated to match. The sweeper's path always
+//   mints a new filename (see above). Display filenames are never touched.
 // - Needs ffmpeg on PATH (Docker image installs it via apk). Without ffmpeg
 //   the worker logs once and stays idle — the app runs fine uncompressed.
 //
@@ -276,6 +285,43 @@ async function ensureColumns() {
   } else {
     warn(`HEIC decoding unavailable (${HEIF_CONVERT} not on PATH) — .heic/.heif uploads stay as they are and cannot be previewed (install libheif-tools)`);
   }
+  // Apple-playability, once. Opus/Vorbis audio (WebM/Ogg) and the video
+  // containers Safari cannot demux used to be re-encoded into the SAME format,
+  // and the 8% rule then kept whatever did not shrink — which is how a voice
+  // message recorded on Android stayed silent on every iPhone and iPad. The
+  // plans for those inputs now carry `normalize` (see planFor), so the files
+  // that predate that rule are handed back once: their rows re-queued
+  // (compressed = 0, which the flag queue picks up within seconds) and their
+  // ledger verdicts dropped, so the bucket scan rejudges the objects the flag
+  // queue can never see. `media_compress_meta` is the memory, so this runs once
+  // per database; the objects themselves are only replaced when the queue
+  // republishes them under a new key. Guarded on ffmpeg like the HEIC policy:
+  // with no encoder the one shot must not be spent on work that cannot run.
+  if (checkFfmpeg()) {
+    await oncePolicy('apple-playable', async () => {
+      // The exact set planFor now converts for compatibility: every audio
+      // format Safari cannot play, plus every video container that is not
+      // MP4/M4V/QuickTime. Matched on the stored extension alone — that is what
+      // planFor falls back to as well, and it is all a row (or a ledger key)
+      // is guaranteed to carry.
+      const CONVERTS = String.raw`\.(webm|weba|ogg|oga|opus|wma|amr|ac3|mp2|mka|au|wv|ape|dts|ra|3ga|mkv|avi|wmv|flv|3gp|3g2|mpe?g|m2ts|mts|ogv|vob|rm|rmvb|asf|f4v)$`;
+      let handed = 0;
+      for (const table of ['attachments', 'dm_attachments']) {
+        try {
+          handed += Number((await db.prepare(`UPDATE ${table} SET compressed = 0
+            WHERE lower(split_part(url,'?',1)) ~ ?`).run(CONVERTS)).changes) || 0;
+        } catch (e) { warn('apple hand-back skipped for ' + table + ':', String((e && e.message) || e).slice(0, 120)); }
+      }
+      try {
+        // The ledger is keyed on the storage key, so the same test finds the
+        // verdicts this policy replaces. A key already converted (its row now
+        // points at the .mp4/.m4a successor) is referenced by nothing, so the
+        // bucket scan leaves it to the orphan sweep.
+        handed += Number((await db.prepare('DELETE FROM media_compress_keys WHERE lower(key) ~ ?').run(CONVERTS)).changes) || 0;
+      } catch (e) { warn('apple ledger hand-back skipped:', String((e && e.message) || e).slice(0, 120)); }
+      return handed;
+    });
+  }
 }
 
 // Run a one-time migration exactly once per database (media_compress_meta is
@@ -378,7 +424,6 @@ function probeEncoders() {
   encCache = {
     x264: out.includes('libx264'),
     mp3: out.includes('libmp3lame'),
-    opus: out.includes('libopus'),
     webp: out.includes('libwebp'),
   };
   return encCache;
@@ -445,6 +490,14 @@ const IMAGE_EXTS = new Set(['.bmp', '.tif', '.tiff', '.avif', '.jxl', '.ico', '.
 const VIDEO_EXTS = new Set(['.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi', '.wmv', '.flv', '.3gp', '.3g2', '.mpg', '.mpeg', '.m2ts', '.mts', '.ogv', '.vob', '.rm', '.rmvb', '.asf', '.f4v']);
 const AUDIO_EXTS = new Set(['.mp3', '.m4a', '.m4b', '.aac', '.ogg', '.oga', '.opus', '.wav', '.flac', '.aif', '.aiff', '.aifc', '.wma', '.amr', '.ac3', '.mp2', '.caf', '.au', '.wv', '.ape', '.mka', '.weba', '.ra', '.dts', '.3ga']);
 
+// The audio formats EVERY reader plays — Safari/iOS/macOS (the strict ones),
+// Chrome, Edge, Firefox, Android. An input in one of these keeps the ordinary
+// 8% rule; anything else is being converted for compatibility, so its plan is
+// marked `normalize` and the result publishes whatever it weighs. (AAC/MP4 and
+// MP3 are the two the Apple stack has always played; WAV and FLAC are older
+// than that stack and universal today.)
+const EVERYWHERE_AUDIO = new Set(['.mp3', '.m4a', '.m4b', '.aac', '.wav', '.flac']);
+
 // A MIME that names no family at all — only then is the extension the best
 // available evidence. A file that calls itself text/plain or application/zip is
 // taken at its word: source code and archives must never reach ffmpeg.
@@ -455,7 +508,8 @@ function opaqueMime(mt) { return !mt || mt === 'application/octet-stream' || mt 
 //
 // Coverage is deliberately broad: ANY image the box can decode (BMP, TIFF,
 // AVIF, JXL, ICO, PSD, …), ANY video container (-> MP4), ANY audio codec
-// (-> MP3/AAC/Opus), plus HEIC/HEIF through libheif (-> JPEG). What stays out
+// (-> MP3 or AAC/MP4 — the two formats every Apple product plays, see the
+// header note), plus HEIC/HEIF through libheif (-> JPEG). What stays out
 // is anything that is not media (PDF, zip, source code, executables) and SVG on
 // purpose — vector art has no fixed resolution, so rasterizing it would be a
 // downgrade, not a compression.
@@ -499,10 +553,17 @@ function planFor(mime, filename) {
   // Any other image (BMP, TIFF, AVIF, JXL, ICO, PSD, …): the bytes decide
   // between JPEG and PNG, and whether they are safe to touch at all.
   if (mt.startsWith('image/') || (opaqueMime(mt) && IMAGE_EXTS.has(ext))) return { pipeline: 'still', outExt: '.jpg', group: 'image' };
-  // Video -> H264 MP4 (transparent at CRF 24 for chat-sized embeds).
+  // Video -> H264 MP4 (transparent at CRF 24 for chat-sized embeds). The
+  // containers Safari can open are exactly MP4/M4V/QuickTime; for everything
+  // else (WebM, Matroska, AVI, WMV, MPEG-TS, …) the plan is `normalize`, for
+  // the same reason as the Opus rule below: an iPhone cannot play the original
+  // at all, so "smaller" is the wrong bar — a playable MP4 that happens to be
+  // larger is what the reader needs.
   if (mt.startsWith('video/') || (opaqueMime(mt) && VIDEO_EXTS.has(ext))) {
     if (!enc.x264) return null;
-    return { pipeline: 'mp4', outExt: '.mp4', group: 'video' };
+    const apple = mt === 'video/mp4' || mt === 'video/quicktime' || ext === '.mp4' || ext === '.m4v' || ext === '.mov';
+    return apple ? { pipeline: 'mp4', outExt: '.mp4', group: 'video' }
+      : { pipeline: 'mp4', outExt: '.mp4', group: 'video', normalize: true };
   }
   // Audio.
   if (mt === 'audio/mpeg' || ext === '.mp3') {
@@ -512,25 +573,34 @@ function planFor(mime, filename) {
   if (mt === 'audio/mp4' || mt === 'audio/aac' || mt === 'audio/x-m4a' || ext === '.m4a') {
     return { pipeline: 'm4a', outExt: '.m4a', group: 'audio' };
   }
-  if (mt === 'audio/ogg' || mt === 'audio/opus' || ext === '.ogg' || ext === '.oga' || ext === '.opus') {
-    if (!enc.opus) return null;
-    return { pipeline: 'ogg', outExt: extOf(filename) === '.oga' ? '.oga' : '.ogg', group: 'audio' };
-  }
-  if (mt === 'audio/webm' || (ext === '.webm' && mt.startsWith('audio/'))) {
-    if (!enc.opus) return null;
-    return { pipeline: 'webaudio', outExt: '.webm', group: 'audio' };
+  // Opus and Vorbis — WebM and Ogg — are the ONE audio family this is not a
+  // size question about. Safari could not put either container in an <audio>
+  // element until 17.4 (2024-03) and has never played Ogg at all, and Web
+  // Audio's decodeAudioData still cannot decode them, so a voice message
+  // recorded on Android or desktop Chrome arrived at an iPhone as a player that
+  // did nothing (see the Apple note in the header). -> AAC in MP4, and marked
+  // `normalize` so the conversion is published even when it is BIGGER: being
+  // audible is the point, exactly as with the HEIC rule below. It usually is
+  // bigger, because re-encoding an efficient Opus stream to AAC at 128k costs
+  // bytes — that is the accepted price of one format every reader can play.
+  if (mt === 'audio/ogg' || mt === 'audio/opus' || mt === 'audio/webm' || mt === 'audio/x-opus+ogg'
+      || ext === '.ogg' || ext === '.oga' || ext === '.opus'
+      || (ext === '.webm' && mt.startsWith('audio/')) || (opaqueMime(mt) && ext === '.weba')) {
+    return { pipeline: 'm4a', outExt: '.m4a', group: 'audio', normalize: true };
   }
   // Lossless monsters -> universal MP3 (renames the stored file, DB follows).
   if (mt === 'audio/wav' || mt === 'audio/x-wav' || mt === 'audio/flac' || mt === 'audio/x-flac' || ext === '.wav' || ext === '.flac') {
     if (!enc.mp3) return null;
     return { pipeline: 'wav2mp3', outExt: '.mp3', group: 'audio' };
   }
-  // Anything else that is audio (AIFF, WMA, AMR, AC3, MP2, MKA, …) -> MP3 too:
-  // a codec this box reads but no browser plays inside a chat is exactly the
-  // case worth normalising, and the 8% rule drops a re-encode that would grow.
+  // Anything else that is audio (AIFF, WMA, AMR, AC3, MP2, MKA, CAF, …) -> MP3
+  // too: a codec this box reads but not every browser plays inside a chat is
+  // exactly the case worth normalising. For those the conversion has to publish
+  // whatever it produces (see EVERYWHERE_AUDIO) — keeping a .wma because the MP3
+  // came out larger would leave the file silent on an iPhone.
   if (mt.startsWith('audio/') || (opaqueMime(mt) && AUDIO_EXTS.has(ext))) {
     if (!enc.mp3) return null;
-    return { pipeline: 'wav2mp3', outExt: '.mp3', group: 'audio' };
+    return { pipeline: 'wav2mp3', outExt: '.mp3', group: 'audio', normalize: !EVERYWHERE_AUDIO.has(ext) };
   }
   return null;
 }
@@ -627,8 +697,10 @@ const SCALE_VID = 'scale=1920:1080:force_original_aspect_ratio=decrease';
 //   full 256-color palette with bayer dither.
 // - video: x264 veryfast CRF 24 — the standard "looks like the source"
 //   setting; 1080p cap; AAC 128k stereo.
-// - audio: MP3 160k / AAC 128k / Opus 128k — transparent on phone/laptop
-//   speakers; lossless WAV/FLAC become 192k MP3 (still ~10x smaller).
+// - audio: MP3 160k / AAC 128k — the two formats every Apple product plays,
+//   which is why nothing here produces Opus any more (a WebM/Ogg voice note
+//   becomes AAC/MP4, see planFor); lossless WAV/FLAC become 192k MP3 (still
+//   ~10x smaller).
 function buildArgs(pipelineName, inPath, outPath) {
   const head = ['-hide_banner', '-loglevel', 'error', '-y', '-i', inPath, '-threads', '1', '-map_metadata', '-1'];
   switch (pipelineName) {
@@ -648,12 +720,11 @@ function buildArgs(pipelineName, inPath, outPath) {
         '-movflags', '+faststart', '-c:a', 'aac', '-b:a', '128k', '-ac', '2', outPath];
     case 'mp3':
       return [...head, '-map', '0:a', '-c:a', 'libmp3lame', '-b:a', '160k', outPath];
+    // AAC-LC in MP4, moov atom first: what Safari/iOS/macOS play natively, and
+    // the target for every Opus/Vorbis input (+faststart matters most on iOS,
+    // where a progressive read has to find the index before it will start).
     case 'm4a':
       return [...head, '-map', '0:a', '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-movflags', '+faststart', outPath];
-    case 'ogg':
-      return [...head, '-map', '0:a', '-c:a', 'libopus', '-b:a', '128k', outPath];
-    case 'webaudio':
-      return [...head, '-map', '0:a', '-c:a', 'libopus', '-b:a', '128k', outPath];
     case 'wav2mp3':
       return [...head, '-map', '0:a', '-c:a', 'libmp3lame', '-b:a', '192k', outPath];
     default:
@@ -989,7 +1060,7 @@ async function encodeThumb(srcKey, tkey) {
 }
 
 const cacheBust = (cleanUrl) => `${cleanUrl}?v=${Date.now().toString(36)}`;
-const MIME_BY_OUT = { '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.webm': 'audio/webm' };
+const MIME_BY_OUT = { '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4' };
 
 // ---------- job ----------
 
