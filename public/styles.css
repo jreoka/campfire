@@ -1335,6 +1335,15 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .pk-tab{flex:1;border:0;background:transparent;color:var(--muted);font-weight:750;font-size:.86rem;padding:.55rem;border-radius:8px;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
 .pk-tab:hover{color:var(--text)}
 .pk-tab.active{background:var(--accent-container);color:var(--on-container)}
+/* The sheet's own dismiss key. It rides the tab row (which the resize grip also
+   owns, so it is never a tile) and is chrome SVG, not an emoji, per the design
+   rules. Small on a desktop, where outside-click and Escape already close the
+   popup, thumb-sized on a phone where the sheet covers those routes. */
+#pk-close{flex:0 0 auto;width:32px;border:0;background:transparent;color:var(--muted);border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background var(--t-fast),color var(--t-fast)}
+#pk-close:hover{color:var(--text);background:var(--panel-3)}
+@media (max-width:700px),(max-height:560px) and (pointer:coarse){
+  #pk-close{width:44px}
+}
 #pk-search{margin:.55rem;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:.55rem .95rem;font-size:.88rem;outline:none;transition:border-color var(--t-fast),box-shadow var(--t-fast)}
 #pk-search:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
 #pk-search::placeholder{color:var(--faint)}
@@ -2472,7 +2481,42 @@ body{touch-action:manipulation}
   #tbtn-attach,#tbtn-emoji,#tbtn-gif{display:none}
   #tbtn-plus{display:none}
   #tbtn-more{display:inline-flex;align-items:center;justify-content:center}
-  #picker{left:0;right:0;bottom:0;width:auto;max-height:62dvh;border-radius:16px 16px 0 0}
+  /* The picker is the on-screen keyboard's stand-in, so it must never share the
+     screen with the real one (the two stacked left about half a screen of menu
+     and a message list squeezed to nothing — reported). openPicker() dismisses
+     the keyboard first; this is where the room that frees is taken back:
+
+     - `bottom` follows the app's own keyboard offset (--kb), so with the
+       keyboard down the sheet is pinned to the screen's bottom edge exactly like
+       #sheet, and the `18vh` floor leaves real chat visible above it. The user
+       resizes it from there by dragging, the same gesture #sheet uses.
+     - once the SEARCH FIELD IS FOCUSED the keyboard is genuinely up (there is no
+       other text field in the picker), and the sheet becomes fixed at bottom:0
+       (the .pk-kb class, painted by the search field's own focus/blur listeners)
+       — which on a resizes-content viewport is the keyboard's own top edge. So it
+       rides directly above the keyboard instead of being shoved up off the
+       screen, and typing in search never costs the tiles their room.
+     - the height is measured, never a fixed vh: the space that actually exists
+       above the composer is what is left after the keys are paid for, so a
+       future composer change cannot silently make this overflow again.
+
+     --kb appears in `bottom` and NOWHERE ELSE. It is a VISUAL-viewport quantity:
+     when the layout box is taller than the visible one, `bottom:--kb` is what
+     puts the sheet's bottom edge on the keyboard's top edge. The layout box
+     already accounts for the keys in the resizes-content model (--vvh is short
+     there, and --kb is 0), so subtracting --kb from the height as well would take
+     the composer's 74px out of the sheet a second time. --vvh is the one number
+     that is right in both models, because it is the height actually visible. */
+  #picker{left:0;right:0;bottom:var(--kb,0px);width:auto;box-sizing:border-box;border-radius:16px 16px 0 0;
+    max-height:clamp(220px,calc(var(--vvh,100dvh) - var(--composer-h) - var(--strip-h) - var(--safe-t) - 18vh),620px);
+    max-height:clamp(220px,calc(100dvh - var(--composer-h) - var(--strip-h) - var(--safe-t) - 18vh),620px)}
+  /* The keyboard is up, so the room above the composer is the point — there is no
+     chat context left to protect by holding 18vh back for it. */
+  #picker.pk-kb{position:fixed;bottom:0;
+    max-height:clamp(200px,calc(var(--vvh,100dvh) - var(--composer-h) - var(--strip-h) - var(--safe-t) - 8px),620px)}
+  /* A drag owns the height while the finger is down (see pickerDragResize) —
+     the cap has to stand aside or the sheet would snap back mid-gesture. */
+  #picker.pk-resizing{max-height:none}
   #mention-pop,#chan-pop{left:.5rem;right:.5rem}
   #thread-panel{width:min(360px,100vw)!important}
   #thread-resizer{display:none}

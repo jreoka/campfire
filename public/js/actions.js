@@ -622,7 +622,7 @@ function openMsgSheet(mid, el) {
   if (!m) return;
   suppressHoverFromTouch();
   closeCtx();
-  closePicker();
+  closePicker(false);
   closeMsgSheet(true);
   const bd = document.createElement('div');
   bd.id = 'sheet-backdrop';
@@ -728,7 +728,7 @@ function openCtxSheet(items, head) {
   if (!items || !items.length) return;
   suppressHoverFromTouch();
   closeCtx();
-  closePicker();
+  closePicker(false);
   closeMsgSheet(true);
   closeCtxSheet();
   const bd = document.createElement('div');

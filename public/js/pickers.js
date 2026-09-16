@@ -7,16 +7,30 @@ const EMOJI = [
  ['❤️','heart love red'],['💔','broken heart'],['💯','100 hundred'],['✨','sparkles new'],['🔥','fire lit'],['🎉','party tada celebrate'],['⭐','star'],['🌈','rainbow'],['🎮','game controller gaming'],['🚀','rocket ship'],['🎁','gift present'],['🏆','trophy win'],['🎵','music note'],['💡','idea lightbulb'],['✅','check yes'],['❌','cross no'],['❓','question'],['💩','poop'],['👻','ghost'],['🤖','robot'],['🍕','pizza'],['☕','coffee'],['🐱','cat kitten'],['🐶','dog puppy'],
 ];
 S.picker = null; // {mode:'insert'|'react', mid?, input?}
+S.pickerReturnFocus = null; // the field a phone picker took the caret from
 
 // ---------- emoji / GIF picker ----------
 // `input` names the composer field a pick belongs to: 'main' (the chat bar, the
 // default) or 'thread' (the thread bar). Both bars are on screen at once, so the
 // picker cannot ask "which composer is open" — it has to be told.
+//
+// ON A PHONE THE PICKER TAKES THE KEYBOARD'S PLACE, it does not sit on top of it.
+// Opening it dismisses the keyboard (the caret is remembered and handed back
+// when the picker closes) and the sheet then fills the room the keys gave up,
+// measured rather than guessed — see sizePicker and the phone block in
+// styles.css. Keyboard-down is the normal state, which is the whole point: a
+// picker and a keyboard competing for a 400px screen leaves neither usable.
 function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null, input = null) {
   S.picker = { mode, mid, input };
   const pk = $('#picker');
   pk.classList.remove('hidden');
-  if (anchor && !phoneLayout()) {
+  const phone = phoneLayout();
+  // The caret the phone picker is about to take (the field that opened it), so
+  // closing the picker can hand it straight back — see closePicker. Only an
+  // editable counts: a phone has no caret to return when nothing was focused,
+  // and the picker's own search field is never the answer.
+  S.pickerReturnFocus = phone ? (cfEditable(document.activeElement) ? document.activeElement : null) : null;
+  if (anchor && !phone) {
     // reaction picker: float near the button that opened it (desktop only;
     // mobile keeps the bottom-sheet). Prefer above, fall back below, clamped.
     pk.classList.add('anchored');
@@ -31,6 +45,11 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null, i
     pk.classList.remove('anchored');
     pk.style.left = ''; pk.style.top = '';
   }
+  // Blur the composer AFTER the anchor has been measured (blurring collapses the
+  // keyboard, which moves the composer, which would move the anchor). Never
+  // focus the search field here: a phone must not answer an emoji key with a
+  // keyboard, and the field is one tap away for anyone who wants to search.
+  if (phone) { try { document.activeElement && document.activeElement.blur(); } catch {} }
   setPickerTab(tab);
   document.querySelector('#picker .pk-tabs').style.display = mode === 'react' ? 'none' : '';
   $('#pk-search').value = '';
@@ -39,12 +58,174 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null, i
   ensureEmojiData().then(() => { if (S.picker) renderEmojiGrid($('#pk-search').value); });
   if (mode !== 'react' && mode !== 'tag') loadGifTrending();
   loadGifFavs();
-  setTimeout(() => $('#pk-search').focus(), 0);
+  sizePicker();
+  if (!phone) setTimeout(() => { const s = $('#pk-search'); if (S.picker) s.focus(); }, 0);
 }
-function closePicker() { $('#picker').classList.add('hidden'); S.picker = null; S.gifPick = null; }
+
+// How much room the picker is actually allowed, measured from live geometry
+// instead of assumed from a vh (see the phone block in styles.css). Applies the
+// cap inline so it wins over the stylesheet, and clears it if anything cannot be
+// measured — a missing number must fall back to the stylesheet, never collapse
+// the sheet to nothing.
+//
+// The base is the VISUAL viewport, never the layout box: on a resizes-content
+// viewport (Android) the layout box has already shrunk for the keys, and on a
+// visual-only one (iOS / a WebView that ignores the hint) it has not — the
+// visual viewport is the only surface height that is right in both. --kb is
+// deliberately NOT subtracted here: it is what puts the sheet's bottom edge on
+// the keyboard's top edge (the `bottom` in styles.css), and taking it off the
+// height too would charge the composer's height twice.
+function sizePicker() {
+  const pk = $('#picker');
+  if (!pk || pk.classList.contains('hidden')) return;
+  const vvh = (window.visualViewport && window.visualViewport.height) || innerHeight;
+  const comp = $('#composer');
+  const strip = $('#typing-bar');
+  let max;
+  if (phoneLayout() && comp && comp.offsetHeight) {
+    // With the keyboard up (the sheet is in its .pk-kb mode) the room above the
+    // composer is the whole point, so the 18vh of chat kept visible while the
+    // keyboard is DOWN no longer applies — it would push the sheet off the top.
+    const forChat = pk.classList.contains('pk-kb') ? 8 : Math.round(vvh * 0.18);
+    max = vvh - comp.offsetHeight - (strip ? strip.offsetHeight : 0) - forChat;
+  } else {
+    max = Math.min(390, vvh - 16);
+  }
+  if (!(max > 0)) { pk.style.maxHeight = ''; return; }
+  pk.style.maxHeight = Math.max(180, Math.round(max)) + 'px';
+}
+
+// A phone's picker is the keyboard's stand-in, and the user sizes it the way
+// they size a sheet: dragging it by its top edge/header. Reuses the same
+// "settle on the side the finger was on" feel as #sheet, but the decision is a
+// measured max-height rather than a class, because the sheet is already as tall
+// as it can sensibly be. Deliberately only from the chrome (the tabs row and the
+// empty space beside it) — a drag that starts on a tile is a scroll of that tile
+// list, and must never turn into a resize.
+function pickerDragResize(pk) {
+  let startY = 0, startH = 0, active = false, dir = 0;
+  const onGrab = (t) => !!t.closest('.pk-tabs, .pk-resize-grip');
+  pk.addEventListener('touchstart', (e) => {
+    active = false; dir = 0;
+    if (e.touches.length !== 1 || !phoneLayout() || !onGrab(e.target)) return;
+    active = true;
+    startY = e.touches[0].clientY;
+    startH = pk.offsetHeight;
+  }, { passive: true });
+  pk.addEventListener('touchmove', (e) => {
+    if (!active || e.touches.length !== 1) return;
+    const d = startY - e.touches[0].clientY; // up is positive (taller)
+    if (!dir) {
+      if (Math.abs(d) < 6) return;
+      dir = d > 0 ? 1 : -1;
+    }
+    e.preventDefault();
+    pk.classList.add('pk-resizing');
+    const vvh = (window.visualViewport && window.visualViewport.height) || innerHeight;
+    pk.style.height = Math.max(160, Math.min(vvh - 60, startH + d)) + 'px';
+  }, { passive: false });
+  const end = () => {
+    if (!active) return;
+    active = false; dir = 0;
+    pk.classList.remove('pk-resizing');
+    const h = parseFloat(pk.style.height) || 0;
+    pk.style.height = '';
+    pk.style.maxHeight = '';
+    sizePicker();
+    // Never shorter than the search row plus one row of tiles: a sheet dragged
+    // to nothing is a sheet the reader cannot get back without closing it.
+    if (h && h < 200) pk.style.maxHeight = '200px';
+  };
+  pk.addEventListener('touchend', end);
+  pk.addEventListener('touchcancel', end);
+}
+
+// `focusBack` names the field to hand the caret to, and defaults to the one the
+// picker took it from. A pick passes BOTH: `restoreFocus` picks the behaviour
+// (a pick hands the caret back, a dismissal never does) and the element decides
+// WHICH bar — an emoji can be tapped before its composer ever had the caret, so
+// the stashed node is not always there to return to.
+function closePicker(restoreFocus = true, focusBack = undefined) {
+  const pk = $('#picker');
+  if (!pk || pk.classList.contains('hidden')) return;
+  pk.classList.add('hidden');
+  pk.style.maxHeight = '';
+  pk.style.height = '';
+  pk.classList.remove('pk-resizing');
+  pk.classList.remove('pk-kb');
+  S.picker = null;
+  S.gifPick = null;
+  // A phone picker took the caret to give the keyboard back, so a pick hands the
+  // caret back — without this, every emoji change costs a tap on the field you
+  // were already typing in. preventScroll: focusing the composer at the bottom
+  // of the document would otherwise scroll the pane and knock the sheet off
+  // screen mid-close.
+  //
+  // Only a PICK does that. Dismissing the sheet (its ✕, a tap outside, Escape,
+  // the back gesture) is the reader asking for the sheet to GO, and handing the
+  // caret back would answer that by raising the keyboard straight away.
+  const back = focusBack === undefined ? S.pickerReturnFocus : focusBack;
+  S.pickerReturnFocus = null;
+  if (restoreFocus && back && back.isConnected) {
+    try { back.focus({ preventScroll: true }); } catch { try { back.focus(); } catch {} }
+  }
+}
 S.gifPick = null; // 'avatar'|'banner' when the GIF picker is choosing profile media
 S.tagEmojiInput = null; // target button when the picker is choosing a server-tag emoji
 S.tagEmojiDone = null; // repaint callback after a tag-emoji pick
+
+// ---------- keyboard-aware sizing ----------
+// The picker has to be sized against the space that really exists on screen. The
+// viewport meta asks for interactive-widget=resizes-content, so on Android the
+// LAYOUT viewport normally shrinks with the keyboard and dvh/vh already reflect
+// it — but iOS always resizes only the visual viewport, and a WebView may ignore
+// the hint entirely. Measuring both viewports is what tells them apart: if the
+// layout box is materially taller than the visible one, the difference IS the
+// keyboard, and everything anchored to the layout box is about to sit behind it.
+// (voice.js keeps --vvh in sync off the same measurements; this is the other
+// half of that contract.)
+function keyboardOffset() {
+  const vv = window.visualViewport;
+  if (!vv) return 0;
+  const doc = document.documentElement;
+  const layoutH = Math.max(doc ? doc.clientHeight : 0, window.innerHeight || 0);
+  return Math.max(0, Math.round(layoutH - vv.height - vv.offsetTop));
+}
+function wirePickerViewport() {
+  if (!window.visualViewport) return;
+  const vv = window.visualViewport;
+  let raf = 0;
+  const sync = () => {
+    document.documentElement.style.setProperty('--kb', keyboardOffset() + 'px');
+    if (raf) return;
+    raf = requestAnimationFrame(() => { raf = 0; try { sizePicker(); } catch {} });
+  };
+  vv.addEventListener('resize', sync);
+  vv.addEventListener('scroll', sync);
+  window.addEventListener('orientationchange', sync);
+  sync();
+}
+wirePickerViewport();
+// The finger owns the height while it is down; the measured cap comes back after
+// (see pickerDragResize, which clears both inline values before re-measuring).
+pickerDragResize($('#picker'));
+// Focusing the picker's own search field is the one moment the keyboard is
+// welcome back — while it is up the sheet becomes a fixed box whose bottom edge
+// is the keyboard's top (see #picker.pk-kb). A CLASS, not :has(#pk-search:focus):
+// :focus only applies while the DOCUMENT itself is focused, which is not always
+// true of an embedded WebView, and this decision must not depend on that.
+function paintPickerKeyboard() {
+  const pk = $('#picker');
+  if (!pk) return;
+  const on = document.activeElement === $('#pk-search');
+  pk.classList.toggle('pk-kb', on);
+  try { sizePicker(); } catch {}
+}
+$('#pk-search').addEventListener('focus', paintPickerKeyboard);
+$('#pk-search').addEventListener('blur', paintPickerKeyboard);
+// The close key the sheet's own chrome carries (phones have no Escape and the
+// chat behind the sheet is mostly covered, so outside-click is a thin target).
+$('#pk-close').onclick = (e) => { e.stopPropagation(); S.pickerReturnFocus = null; closePicker(false); };
 function setPickerTab(t) {
   document.querySelectorAll('.pk-tab').forEach((b) => b.classList.toggle('active', b.dataset.ptab === t));
   $('#pk-emoji').classList.toggle('hidden', t !== 'emoji');
@@ -177,7 +358,7 @@ function pickEmoji(e) {
       try { S.tagEmojiDone && S.tagEmojiDone(); } catch {}
     }
     S.tagEmojiInput = null; S.tagEmojiDone = null;
-    closePicker();
+    closePicker(false); // a tag editor is not this picker's composer
     return;
   }
   const inp = pickerInputEl();
@@ -185,8 +366,11 @@ function pickEmoji(e) {
   // Inserting an emoji into a message is TEXT, not a reaction: it must not feed
   // the quick-reaction strips (topReactions reads reaction use only).
   else insertAtCursor(inp, e);
-  closePicker();
-  try { inp.focus(); } catch {}
+  // Hand the caret to the bar the emoji belonged to (closePicker owns the focus,
+  // with the preventScroll a phone needs so the sheet does not jump on the way
+  // out) — except on a phone, where the next tap is the next emoji and popping
+  // the keyboard back up under the sheet is exactly what this layout avoids.
+  closePicker(!phoneLayout(), inp);
 }
 function insertAtCursor(input, text) {
   if (!input) return;
@@ -452,9 +636,12 @@ function stageGif(att, bar = 'main') {
 }
 function sendGif(g) {
   const pick = S.gifPick;
-  // Read the bar BEFORE closing: closePicker() drops S.picker with it.
+  // Read the bar BEFORE closing: closePicker() drops S.picker with it. No focus
+  // back: a GIF either posts on the spot (nothing to type) or is staged by
+  // stageGif(), which puts the caret in the bar itself — and on a phone the
+  // first of those must not answer the tap with a keyboard.
   const bar = pickerBar();
-  closePicker();
+  closePicker(false);
   const att = gifAttachment(g);
   const url = att.url;
   if (pick === 'avatar' || pick === 'banner' || pick === 'sidebar') { if (url) applyProfileUrl(pick, url); return; }

@@ -81,7 +81,7 @@ function openSettings(tab) {
   setSettingsView(settingsIsPhone() && !explicit ? 'menu' : 'section');
   $('#settings-backdrop').classList.remove('hidden');
 }
-function closeSettings() { closePicker(); try { stopMediaPreview(); } catch {} $('#settings-backdrop').classList.add('hidden'); }
+function closeSettings() { closePicker(false); try { stopMediaPreview(); } catch {} $('#settings-backdrop').classList.add('hidden'); }
 // ---------- notifications (Web Push + per-scope prefs) ----------
 const NOTIF_OPTS = [['all', 'All messages'], ['mentions', 'Mentions only'], ['muted', 'Muted']];
 const NOTIF_LABEL = { all: 'All messages', mentions: 'Mentions only', muted: 'Muted' };

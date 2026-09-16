@@ -466,7 +466,7 @@ function clickInPath(e, sels) {
  document.addEventListener('click', (e) => {
   // Clicks inside the bottom sheet are handled by the sheet's own rows (a row may
   // open the picker), so they must not close it again in the same click.
-  if (!e.target.closest('#picker') && !e.target.closest('#btn-emoji') && !e.target.closest('#btn-gif') && !e.target.closest('#tbtn-emoji') && !e.target.closest('#tbtn-gif') && !e.target.closest('#srv-tag-emoji') && !e.target.closest('.msg-actions') && !e.target.closest('#sheet')) closePicker();
+  if (!e.target.closest('#picker') && !e.target.closest('#btn-emoji') && !e.target.closest('#btn-gif') && !e.target.closest('#tbtn-emoji') && !e.target.closest('#tbtn-gif') && !e.target.closest('#srv-tag-emoji') && !e.target.closest('.msg-actions') && !e.target.closest('#sheet')) closePicker(false);
   // ...and a click that just OPENED the card is not a click outside it either:
   // this listener runs after the opener in the same click, and an already-loaded
   // friend list paints the card before it gets here (ucOpenedByThisClick).
@@ -505,7 +505,7 @@ document.addEventListener('keydown', (e) => {
 // and does not exist — the status menu lives inside the user card now — so the
 // whole list after it was dead code.)
 const ESCAPE_LAYERS = [
-  () => closePicker(),
+  () => closePicker(false),
   () => closeUserCard(),
   () => closeTagCard(),
   () => closeCtx(),
@@ -542,8 +542,8 @@ function threadComposerAnchor() {
 $('#btn-emoji').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'emoji', composerAnchor()) : closePicker(); };
 $('#btn-gif').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'gifs', composerAnchor()) : closePicker(); };
 // Mobile: composer options live under a + menu (attach / emoji / GIF stay visible on desktop)
-$('#btn-more').onclick = (e) => { e.stopPropagation(); closePicker(); $('#composer-more').classList.toggle('hidden'); };
-$('#btn-plus').onclick = (e) => { e.stopPropagation(); closePicker(); $('#composer-more').classList.toggle('hidden'); };
+$('#btn-more').onclick = (e) => { e.stopPropagation(); closePicker(false); $('#composer-more').classList.toggle('hidden'); };
+$('#btn-plus').onclick = (e) => { e.stopPropagation(); closePicker(false); $('#composer-more').classList.toggle('hidden'); };
 $('#cm-attach').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); $('#btn-attach').click(); };
 $('#cm-emoji').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); $('#btn-emoji').click(); };
 $('#cm-gif').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); $('#btn-gif').click(); };
@@ -556,8 +556,8 @@ $('#cm-poll').onclick = (e) => { e.stopPropagation(); $('#composer-more').classL
 // deliberately absent: those flows are scoped to a channel, not to a thread.
 $('#tbtn-emoji').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'emoji', threadComposerAnchor(), 'thread') : closePicker(); };
 $('#tbtn-gif').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'gifs', threadComposerAnchor(), 'thread') : closePicker(); };
-$('#tbtn-more').onclick = (e) => { e.stopPropagation(); closePicker(); $('#thread-composer-more').classList.toggle('hidden'); };
-$('#tbtn-plus').onclick = (e) => { e.stopPropagation(); closePicker(); $('#thread-composer-more').classList.toggle('hidden'); };
+$('#tbtn-more').onclick = (e) => { e.stopPropagation(); closePicker(false); $('#thread-composer-more').classList.toggle('hidden'); };
+$('#tbtn-plus').onclick = (e) => { e.stopPropagation(); closePicker(false); $('#thread-composer-more').classList.toggle('hidden'); };
 $('#tcm-attach').onclick = (e) => { e.stopPropagation(); $('#thread-composer-more').classList.add('hidden'); $('#tbtn-attach').click(); };
 $('#tcm-emoji').onclick = (e) => { e.stopPropagation(); $('#thread-composer-more').classList.add('hidden'); $('#tbtn-emoji').click(); };
 $('#tcm-gif').onclick = (e) => { e.stopPropagation(); $('#thread-composer-more').classList.add('hidden'); $('#tbtn-gif').click(); };
@@ -623,6 +623,15 @@ function composerSendKey(inp, formId) {
 }
 composerSendKey($('#in-message'), 'composer');
 composerSendKey($('#in-thread'), 'thread-composer');
+// A phone picker stands where the keyboard would be, so the two are mutually
+// exclusive by design (see openPicker): putting the caret back in a composer is
+// the reader asking to type, which means the sheet gets out of the way. Without
+// this the picker would stay up while the keyboard opened under it, which is
+// exactly the stack the phone layout exists to prevent.
+for (const sel of ['#in-message', '#in-thread']) {
+  const inp = $(sel);
+  if (inp) inp.addEventListener('focus', () => { if (cfVisible('#picker')) closePicker(); });
+}
 // Mobile: tapping a Send/Reply button focuses the button first, which blurs
 // the textarea and collapses the keyboard (sometimes with a flicker even
 // though submit refocuses). Suppress the focus steal — click still fires.

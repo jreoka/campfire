@@ -54,7 +54,7 @@ const CF_BACK_LAYERS = [
   { name: 'folder-popout', open: () => cfFolderOpen(), close: () => closeFolderPopout() },
   { name: 'ctx-sheet', open: () => !!document.querySelector('#sheet'), close: () => closeMsgSheet() },
   { name: 'ctx-menu', open: () => !!document.querySelector('#ctx-menu'), close: () => closeCtx() },
-  { name: 'picker', open: () => cfVisible('#picker'), close: () => closePicker() },
+  { name: 'picker', open: () => cfVisible('#picker'), close: () => closePicker(false) },
   { name: 'composer-more', open: () => cfVisible('#composer-more'), close: () => $('#composer-more').classList.add('hidden') },
   { name: 'emoji-pop', open: () => cfVisible('#emoji-pop'), close: () => hideEmojiPop() },
   { name: 'mention-pop', open: () => cfVisible('#mention-pop'), close: () => hideMentionPop() },
