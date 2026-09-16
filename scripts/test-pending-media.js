@@ -281,8 +281,12 @@ async function main() {
   check(/data-att-slot="\$\{esc\(a\.id \|\| ''\)\}"/.test(markSource), 'each rendering is keyed by the attachment id, which survives a republish');
   check(/if \(oldRole !== newRole\) return false;/.test(markSource), 'an attachment whose KIND changed is refused');
   check(/if \(!attSameShape\(oldAr, newAr\)\) return false;/.test(markSource), 'so is one whose reserved shape changed');
-  check(/box\.innerHTML = attachmentBodyHTML\(a, \{ live: false \}\);/.test(markSource),
-    'the still swap builds the FINAL rendering through the real markup (never the preview it is replacing)');
+  check(/function patchImageNode\(oldEl, a\)/.test(markSource) && /function srcPathOf\(u\)/.test(markSource),
+    'the still swap compares the FILE the element is showing, not the url string');
+  check(/if \(oldImg && oldImg\.dataset\.phWired && shownPath && shownPath === wantPath\) \{/.test(markSource),
+    'and the same file leaves the painted element exactly as it is (a republish in place must not re-decode it)');
+  check(/if \(oldImg\.dataset\.fbUrl\) oldImg\.dataset\.fbUrl = String\(a\.url \|\| ''\);/.test(markSource),
+    'while the identity the menus and the lightbox read follows the published url');
   check(/oldImg\.classList\.add\('att-held'\)/.test(markSource) && /img\.att-img\.att-held/.test(css),
     'and holds the frame that is on screen until the new bytes land');
   check(/function patchAudioNode\(oldEl, a\)/.test(markSource) && /audio\.dataset\.fbSrc = String\(a\.url \|\| ''\)/.test(markSource),
@@ -429,7 +433,22 @@ async function main() {
     check(!s1.held, 'the held frame is dropped once the new bytes are up', s1);
     check(s1.ready, 'the placeholder is lifted', s1);
 
-    console.log('\n[6] the frame on screen survives a slow preview');
+    console.log('\n[6] a republish in place never re-points the painted picture');
+    // The everyday case: the compressor settled the file by rewriting the SAME
+    // key, so the verdict carries the same thumbnail behind a fresh ?v=. That is
+    // the same picture on disk — re-pointing the <img> at it would throw the
+    // painted frame away and decode it again, which is the blink itself.
+    const beforeRepublish = (await evaluate('window.__state()')).imgSrc;
+    const samePath = await evaluate(`window.__verdict([{ id: 'att-1', kind: 'image', scan: 'clean', url: '/uploads/files/pic.jpg?v=3', name: 'pic.jpg', size: 15200, w: 2500, h: 2500 }])`);
+    check(samePath === true, 'the patch reports the change applied', samePath);
+    const afterRepublish = await evaluate('window.__state()');
+    check(afterRepublish.imgSrc === beforeRepublish,
+      'the painted source is untouched (no re-point, no re-decode, no blink)', { before: beforeRepublish, after: afterRepublish.imgSrc });
+    check(afterRepublish.imgFbUrl === '/uploads/files/pic.jpg?v=3',
+      'while the identity the menus and the lightbox read moved to the published url', afterRepublish);
+    check(afterRepublish.dl && afterRepublish.dlHref === '/uploads/files/pic.jpg?v=3', 'and so did the download link', afterRepublish);
+
+    console.log('\n[7] the frame on screen survives a slow preview');
     // The verdict arrives while the final preview is NOT ready: the reader keeps
     // looking at the picture they were looking at, never at an empty box. The
     // request is held open by the server until this test lets it go, so the
@@ -458,7 +477,7 @@ async function main() {
     const endBox = await evaluate('window.__box()');
     check(endBox && endBox.h === slowSnap.rect.h, 'with the box still the same one', { endBox, before: slowSnap.rect });
 
-    console.log('\n[7] a change the patch cannot make is refused, not half-applied');
+    console.log('\n[8] a change the patch cannot make is refused, not half-applied');
     await evaluate(`window.__localPreview('att-3', '/uploads/files/other.jpg?v=1', 'data:image/png;base64,')`);
     await evaluate(`window.__render({ id: 'att-3', kind: 'image', scan: 'pending', url: '/uploads/files/other.jpg?v=1', name: 'other.jpg', size: 20480, w: 2500, h: 2500 })`);
     const beforeWrong = await evaluate('window.__imgNode() && true');
@@ -474,7 +493,7 @@ async function main() {
     })()`);
     check(refusedKind === false, 'a card that became a picture (a HEIC converted to JPEG) is refused too', refusedKind);
 
-    console.log('\n[8] a voice note keeps its player');
+    console.log('\n[9] a voice note keeps its player');
     await evaluate(`window.__render({ id: 'att-5', kind: 'audio', scan: 'clean', url: '/uploads/files/note.m4a?v=1', name: 'note.m4a', size: 4096 })`);
     const audioBefore = await evaluate('window.__state()');
     await evaluate('(function () { const a = document.querySelector("audio"); try { a.currentTime = 1.5; } catch (e) {} })()');
@@ -487,7 +506,28 @@ async function main() {
       'the <audio> is re-sourced to the published file', audioDone.state);
     check((audioDone.state.audioTime || 0) > 0.5, 'and the playhead was NOT reset (the player was not rebuilt)', audioDone.state);
 
-    console.log('\n[9] the stylesheet carries the new pieces');
+    console.log('\n[10] a clip settled in place keeps its player');
+    // The everyday republish: same file, fresh ?v=. A replaced <video> would drop
+    // whatever the reader had loaded (poster, position) for a file it already has.
+    const vidBefore = await evaluate(`(function () {
+      window.__render({ id: 'att-6', kind: 'video', scan: 'clean', url: '/uploads/files/clip.mp4?v=1', name: 'clip.mp4', size: 20480, w: 1920, h: 1080 });
+      const v = document.querySelector('video.att-vid');
+      window.__vidNode = v;
+      try { v.currentTime = 0.4; } catch (e) {}
+      return { src: v.getAttribute('src'), node: !!v };
+    })()`);
+    check(vidBefore.node === true, 'the clip renders as a player', vidBefore);
+    const vidDone = await evaluate(`(function () {
+      const ok = window.__verdict([{ id: 'att-6', kind: 'video', scan: 'clean', url: '/uploads/files/clip.mp4?v=2', name: 'clip.mp4', size: 20000, w: 1920, h: 1080 }]);
+      const v = document.querySelector('video.att-vid');
+      return { ok, sameNode: v === window.__vidNode, src: v && v.getAttribute('src'), time: v ? v.currentTime : null };
+    })()`);
+    check(vidDone.ok === true, 'the patch reports the change applied', vidDone);
+    check(vidDone.sameNode === true, 'the SAME <video> element is still there (a replaced one restarts, and loses its poster)', vidDone);
+    check(vidDone.src === vidBefore.src, 'and its source was never re-pointed at the same file', { before: vidBefore.src, after: vidDone.src });
+    check((vidDone.time || 0) > 0.2, 'so its position survived too', vidDone);
+
+    console.log('\n[11] the stylesheet carries the new pieces');
     check(/\.att-slot\{display:block;width:100%/.test(css.replace(/\s+/g, '')) || /\.att-slot\s*\{[^}]*display:\s*block[^}]*width:\s*100%/.test(css),
       '.att-slot takes the row width, so the media inside resolves its reserved box against it (a shrink-to-fit slot collapses it)');
     check(/img\.att-img\.att-held\{position:absolute/.test(css.replace(/\s+/g, '')), 'the held frame is taken out of flow (no layout jump)');

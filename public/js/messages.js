@@ -450,6 +450,21 @@ function attElementRole(el) {
   for (const [role, sel] of Object.entries(ATT_ROLE_SEL)) { try { if (el.matches(sel) || (el.querySelector && el.querySelector(sel))) return role; } catch {} }
   return '';
 }
+// One file, whatever url form it is written in: `currentSrc` is absolute and an
+// attribute is usually relative, so both are cut down to the path that picks the
+// object — and ?v=, which only busts caches, is dropped with it. Two renderings
+// with the same path are the SAME picture (a blob and the upload it was made
+// from, or an upload and its republish in place), which is what lets the patch
+// leave the painted element alone.
+function srcPathOf(u) {
+  const s = String(u || '');
+  const i = s.indexOf('/uploads/');
+  return (i >= 0 ? s.slice(i) : s).split('?')[0];
+}
+// The frame a player already captured for a url, if any (see videoPosterCache).
+function videoPosterShot(url) {
+  try { return (url && typeof videoPosterCache !== 'undefined') ? (videoPosterCache.get(url) || null) : null; } catch { return null; }
+}
 // The shape the box was RESERVED at, read off the node itself (the img's own
 // width/height attributes) rather than from the cached message — the reserved box
 // is what must keep matching, because that is what is on screen.
@@ -492,6 +507,14 @@ function patchAttachmentNode(oldEl, a) {
 // — while the frame the reader is ALREADY LOOKING AT stays on screen (absolutely
 // positioned over the new box) until the new bytes paint. Same picture, so
 // nothing moves and nothing blinks.
+//
+// The element is only replaced when the thing it is SHOWING changes. A photo the
+// compressor settled by rewriting the same key comes back as the same thumbnail
+// with a fresh `?v=` (the bytes on disk are the same file), and re-pointing the
+// <img> at it would throw away the painted frame and decode it again — the flash
+// this whole path exists to remove. Only the identity moves then (data-fb-url /
+// data-fb-orig, which the lightbox and the menus read); the painted picture is
+// left exactly as it is.
 function patchImageNode(oldEl, a) {
   const wrap = oldEl.closest && oldEl.closest('.att-wrap');
   if (!wrap) return false;
@@ -509,6 +532,33 @@ function patchImageNode(oldEl, a) {
   const oldUrl = String(oldEl.getAttribute('data-fb-orig') || oldEl.getAttribute('data-fb-url') || '');
   img.dataset.phWired = '1';                   // it is painted before it is shown
   nextWrap.classList.add('ready');             // the placeholder has nothing to lift
+  // One file, whatever url form it is written in: currentSrc is absolute and an
+  // attribute is usually relative, and ?v= only busts caches.
+  const shownPath = srcPathOf(oldImg && (oldImg.currentSrc || oldImg.getAttribute('src')));
+  const wantPath = srcPathOf(img.currentSrc || img.getAttribute('src'));
+  // Is the new rendering the SAME FILE the element is already showing? A blob and
+  // the published upload of it — or an upload and its republish-in-place under a
+  // fresh ?v= — are one picture. Showing the freshly parsed element then would
+  // throw the painted frame away and decode the same bytes again, which is the
+  // blink this path exists to remove. So nothing is re-pointed: the element the
+  // reader is looking at is MOVED into the new box (which brings the reserved
+  // shape and the download link that arrived with the verdict), and only the
+  // identity the menus and the lightbox read (data-fb-url) is updated.
+  if (oldImg && oldImg.dataset.phWired && shownPath && shownPath === wantPath) {
+    oldEl.setAttribute('data-fb-url', String(a.url || ''));
+    oldEl.setAttribute('data-fb-scan', String(a.scan || 'clean'));
+    // The element carries the identity too (the menus and the broken-image
+    // fallback read it off the img): moving it without these would leave the row
+    // pointing at the url it was published FROM.
+    if (oldImg.dataset.fbOrig) oldImg.dataset.fbOrig = String(a.url || '');
+    if (oldImg.dataset.fbUrl) oldImg.dataset.fbUrl = String(a.url || '');
+    const at = nextWrap.querySelector('.att-ph');
+    if (at) at.after(oldImg); else nextWrap.insertBefore(oldImg, nextWrap.firstChild);
+    if (wrap.isConnected) wrap.replaceWith(nextWrap); else oldEl.replaceWith(nextWrap);
+    try { observeStick(oldImg); } catch {}
+    if (a.scan === 'clean') retireAttPreview(a, oldUrl);
+    return true;
+  }
   // The frame that is on screen right now, moved into the new box before it is
   // inserted — an absolutely positioned copy of the picture, so replacing the box
   // under it is invisible.
@@ -553,6 +603,20 @@ function patchImageNode(oldEl, a) {
 function patchVideoNode(oldEl, a) {
   const oldVid = oldEl.querySelector ? oldEl.querySelector('video.att-vid') : null;
   if (!oldVid) return false;
+  const oldUrl = String(oldEl.getAttribute('data-fb-url') || '');
+  // The same file behind a fresh ?v= — the everyday "the compressor settled it in
+  // place": the player is left completely alone (a replaced <video> restarts, and
+  // its poster would have to be captured again), and only the identity moves.
+  const sameFile = !!srcPathOf(oldVid.getAttribute('src')) && srcPathOf(oldVid.getAttribute('src')) === srcPathOf(a.url);
+  if (sameFile) {
+    const shot = videoPosterShot(oldVid.getAttribute('src'));
+    oldEl.setAttribute('data-fb-url', String(a.url || ''));
+    oldEl.setAttribute('data-fb-scan', String(a.scan || 'clean'));
+    oldVid.dataset.fbSrc = String(a.url || '');
+    if (shot) { try { rememberVideoPoster(a.url, shot); } catch {} }
+    if (a.scan === 'clean') retireAttPreview(a, oldUrl);
+    return true;
+  }
   const box = document.createElement('span');
   box.innerHTML = attVideoHTML(Object.assign({}, a, { scan: 'clean' }), { live: false });
   const wrap = box.firstElementChild;
