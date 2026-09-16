@@ -127,9 +127,13 @@ engine; the engine itself has to move too, and this is what moves it.
 
 Every 30 minutes it resolves the image the compose file actually names (so a
 `CLAMAV_TAG` pin is respected, never second-guessed), pulls it, and **recreates
-only when the image ID moved** — a run that finds nothing new costs one registry
-check and does not touch the running daemon. When it did move, the update is kept
-only if all three of these hold:
+only when the image the container is running differs from the one the tag now
+points at** — a run that finds nothing new costs one registry check and does not
+touch the running daemon. (Comparing the local tag before and after the pull
+instead would be wrong in exactly the case that matters: a pull that landed
+without a recreate, or one done by hand, would read as "up to date" and the
+container would never converge.) When the image did move, the update is kept only
+if all three of these hold:
 
 1. **The new container reports healthy.** That is clamd's own `PING`
    healthcheck, and a clamd that loaded no database never gets that far: the
@@ -176,10 +180,13 @@ never briefly take a working file from a reader. A signature update alone is
 deliberately *not* a generation change, so freshclam's hourly runs do not rescan
 anything.
 
-To freeze the engine instead, set `CLAMAV_TAG=1.5` in `.env` and recreate the
-service (`up -d --force-recreate clamav`): the updater reads the tag out of the
-compose file, so the pin holds. The same lever is the rollback — `CLAMAV_TAG=1.4`
-puts the previous engine back, and it stays there.
+To freeze the engine instead, set `CLAMAV_TAG` in `.env` and recreate the service
+(`up -d --force-recreate clamav`): the updater reads the tag out of the compose
+file, so the pin holds. `CLAMAV_TAG=1.5` stays on the 1.5 series while still
+taking its patch releases, `CLAMAV_TAG=1.5.4` freezes that exact version, and
+`CLAMAV_TAG=1.4` is the rollback — it puts the previous engine back, and it stays
+there. Freezing also stops the re-sweep that a new generation would have
+triggered, because the generation stops changing.
 
 ## Deploying a change
 

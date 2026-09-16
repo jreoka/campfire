@@ -71,6 +71,16 @@ container_image() {
   [ -n "$cid" ] || return 0
   docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true
 }
+# A container that EXISTS but is not running was stopped on purpose — an operator
+# freeing the scanner's ~1 GB, or a host deliberately running without it. A timer
+# that resurrected it every 30 minutes would be fighting them, so it is left
+# exactly as found. `compose ps -q` lists only RUNNING containers (that is the
+# difference that matters here), so the "does one exist at all" question needs
+# -a.
+stopped_container() {
+  [ -n "$(compose ps -aq "$1" 2>/dev/null || true)" ] \
+    && [ -z "$(container_of "$1")" ]
+}
 health_of() {
   docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
     "$1" 2>/dev/null || echo gone
@@ -153,6 +163,10 @@ for svc in "${SERVICES[@]}"; do
   image="$(image_of "$svc")"
   if [ -z "$image" ]; then
     log "$svc: no image in the compose file (a build-only service?) — skipped"
+    continue
+  fi
+  if stopped_container "$svc"; then
+    log "$svc: a container exists but is not running — left stopped (start it and this resumes)"
     continue
   fi
   # What the container is running now, versus what the tag points at after the
