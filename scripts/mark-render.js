@@ -330,26 +330,30 @@ function renderMark(size, opts) {
   return downsample(buf, size, SS);
 }
 
-// The badge: THE PLAIN MARK, exactly as campfire-logo.png renders it, with a
-// theme-colored circle added BEHIND it. The mark is never rescaled or
-// reshaped — every shape keeps its size, position and colours, so the badge
-// reads as the same logo on a round backdrop rather than a smaller logo in a
-// ring. (An earlier cut shrank the mark until it fitted inside the circle;
-// that is what "the stones and logs and fire got screwed up" was.)
+// The badge: the campfire mark with a theme-colored circle added behind it, the
+// circle sized to ENCOMPASS the whole mark — stones, logs, flames and all —
+// with an even margin, so the badge reads as one complete campfire on a round
+// backdrop.
 //
-// Sizing the circle is the one judgement call: at radius 0.30 it sits behind
-// the flames and the crossed logs while the stones emerge along its bottom
-// edge and the flame tip rises past the top — a fire pit, not a frame. A
-// bigger circle (0.49, the old value) swallows the stones and turns the badge
-// back into a containing ring.
-const BADGE_RADIUS = 0.30;
+// The mark cannot stay at its full-bleed 512 size for that: it fills 392x390px
+// of the canvas, so its corners sit 0.4745 of the canvas from the centre and
+// even a circle at 0.49 would shave the outer stones (a circle can't hold a
+// square). So the mark is scaled to BADGE_MARK (still the same artwork, same
+// proportions, same centre) and the circle is sized from that: reach x BADGE_MARK
+// = 0.4745 x 0.85 = 0.4034, leaving a 5.7% margin at the cardinals and the
+// bbox corners exactly on the circle's inner edge.
+//
+// campfire-logo.png stays at 1.0 — it is the in-app Home art and must keep
+// matching its animated SVG twin.
+const BADGE_MARK = 0.85;
+const BADGE_RADIUS = 0.46;
 
 function renderBadge(size, opts) {
   const o = opts || {};
   const ss = o.ss || 4;
   const radius = o.radius == null ? BADGE_RADIUS : o.radius;
   const ring = o.ring === undefined ? RING : o.ring;
-  const base = o.markFrac == null ? 1 : o.markFrac;
+  const base = o.markFrac == null ? BADGE_MARK : o.markFrac;
   const W = size * ss;
   const buf = Buffer.alloc(W * W * 4); // transparent
   const c = W / 2;
