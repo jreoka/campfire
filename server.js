@@ -92,8 +92,9 @@ try {
 } catch {}
 }
 // One-shot: attachment names stored before multipart filenames were decoded as
-// UTF-8 (see filename-repair.js) are the cp1252 reading of their own UTF-8 bytes
-// — "中文.mp4" sitting in the database as "ä¸æ–‡.mp4". Repair them once per
+// UTF-8 (see filename-repair.js) are the ISO-8859-1 reading of their own UTF-8
+// bytes — "日本語.mp4" sitting in the database as "æ\u0097¥æ\u009C¬èª\u009E.mp4",
+// four visible characters and four invisible C1 controls. Repair them once per
 // database: leader-locked with the other boot repairs and marked in meta, so a
 // restart or a rolling update does not re-scan the tables. Only non-ASCII names
 // can be mojibake at all, which is what octet_length <> char_length expresses in
@@ -104,10 +105,16 @@ try {
 // creates its own tables, so on a fresh database that one may not exist yet).
 // Failure to repair must never keep the app from booting, and must not set the
 // marker — the next boot tries again.
+//
+// The marker records WHICH repair has run, not merely that one has: a pass that
+// looked for the wrong spelling (the first cut of this reversed through
+// windows-1252 and matched nothing) must not be able to stop the corrected one
+// from re-running. Bump MOJIBAKE_NAMES_REV for any future correction.
 const MOJIBAKE_NAMES_MARKER = 'attachment_names_repaired';
+const MOJIBAKE_NAMES_REV = 'latin1-2';
 const NAMED_TABLES = ['attachments', 'dm_attachments', 'media_compress_log'];
 async function repairMojibakeNames() {
-  if (await metaGet(MOJIBAKE_NAMES_MARKER)) return;
+  if ((await metaGet(MOJIBAKE_NAMES_MARKER)) === MOJIBAKE_NAMES_REV) return;
   try {
     let fixed = 0, looked = 0;
     for (const table of NAMED_TABLES) {
@@ -123,8 +130,8 @@ async function repairMojibakeNames() {
         fixed++;
       }
     }
-    await metaSet(MOJIBAKE_NAMES_MARKER, String(Date.now()));
-    if (fixed) console.log(`[campfire] repaired ${fixed} mojibake attachment name(s) (of ${looked} non-ASCII)`);
+    await metaSet(MOJIBAKE_NAMES_MARKER, MOJIBAKE_NAMES_REV);
+    console.log(`[campfire] attachment name repair (${MOJIBAKE_NAMES_REV}): ${fixed} repaired of ${looked} non-ASCII name(s)`);
   } catch (e) {
     console.error('[campfire] attachment name repair failed (will retry next boot):', (e && e.message) || e);
   }
@@ -189,13 +196,13 @@ function uploader(sub, mimes, maxBytes, allowCodeExt = false) {
     limits: { fileSize: maxBytes, files: 1 },
     // The multipart header carries a filename as the name's UTF-8 bytes (the
     // HTML spec requires user agents to serialise it that way), but busboy's
-    // default decoding of that parameter is Latin-1 — and the WHATWG label it
-    // reads as that means WINDOWS-1252. Left at the default, "中文" was stored as
-    // "ä¸æ–‡" and every non-ASCII title reached the reader as a ladder of
-    // accents: a video named "Jax - 某某 [id].mp4" posted as "Jax -
-    // à®…à®°à®¾à®ªà¯à¯ [id].mp4". Names written before this line exist in the
-    // database in that spelling — repairMojibakeNames() fixes those at boot, and
-    // filename-repair.js explains the reversal.
+    // default decoding of that parameter is Latin-1 — true ISO-8859-1, one byte
+    // per code point (see filename-repair.js). Left at the default, "日本語" was
+    // stored as "æ\u0097¥æ\u009C¬èª\u009E" and every non-ASCII title reached the
+    // reader as a ladder of accents: a video named "Jax - 今回… [id].mp4" posted
+    // as "Jax - ä»\u008Aå\u009B\u009E… [id].mp4". Rows written before this line
+    // exist in the database in that spelling — repairMojibakeNames() fixes those
+    // at boot.
     defParamCharset: 'utf8',
     fileFilter: (req, file, cb) => {
       if (!mimes) return cb(null, true); // general uploader: any file type

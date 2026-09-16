@@ -3,11 +3,13 @@
 // written before the parser was told which charset it was looking at.
 //
 // THE BUG THIS PINS DOWN: multer/busboy decoded a multipart filename with its
-// own default charset, and the WHATWG label it uses for that ("latin1") means
-// WINDOWS-1252, not ISO-8859-1 — while every browser serialises the name as the
-// name's UTF-8 bytes, because the HTML spec requires it. So "中文" was stored as
-// "ä¸æ–‡" and rendered as a ladder of accents: the reported symptom was a video
-// titled "Jax - à®…à®°à®¾à®ªà¯à¯à®ªà¯ [2099826296784293888].mp4".
+// own default charset, and the decoder it uses for "Latin-1" is
+// `Buffer#latin1Slice` — TRUE ISO-8859-1, one byte per code point — while every
+// browser serialises the name as the name's UTF-8 bytes, because the HTML spec
+// requires it. So "日本語" was stored as "æ\u0097¥æ\u009C¬èª\u009E" (four visible
+// characters and four invisible C1 controls) and rendered as a ladder of
+// accents: the reported symptom was a video titled
+// "Jax - ä»\u008Aå\u009B\u009E… [2099826296784293888].mp4".
 //
 // Phase 1 (live path): upload and post names in Chinese, Japanese, Korean,
 // Arabic, Devanagari, Cyrillic and emoji, and assert the EXACT round trip
@@ -34,6 +36,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { Client } = require('pg');
 const WebSocket = require('ws');
+const { repairLatin1Name } = require(path.join(__dirname, '..', 'filename-repair.js'));
 
 const ROOT = path.join(__dirname, '..');
 const TEST_DB = 'campfire_names_test';
@@ -53,9 +56,13 @@ function skip(why) {
 }
 
 // Exactly what the old parser did to the bytes: read the name's UTF-8 bytes as
-// windows-1252. Written out here rather than imported from filename-repair.js so
-// the assertion cannot agree with the code under test by construction.
-const mangle = (s) => new TextDecoder('latin1').decode(Buffer.from(s, 'utf8'));
+// ISO-8859-1 — which is what busboy's `latin1Slice` decoder does, one byte per
+// code point. Written out here rather than imported from filename-repair.js so
+// the assertion cannot agree with the code under test by construction. (The
+// pinned spelling below is the other half of that guard: `TextDecoder('latin1')`
+// would be WINDOWS-1252 and produce a different string, which is how an earlier
+// cut of the repair managed to match nothing at all.)
+const mangle = (s) => Buffer.from(s, 'utf8').toString('latin1');
 
 const NAMES = [
   '中文-日本語-한국어-العربية-हिन्दी-🎬 [2099826296784293888].mp4',
@@ -144,6 +151,17 @@ function sameName(label, got, want) {
 }
 
 async function main() {
+  // The fixture first, before anything is booted: this is the spelling the old
+  // parser produced for a non-ASCII name, and the reversal has to undo exactly
+  // that (not merely "something that looks mangled").
+  check('the fixture spells mojibake the way the old parser did', mangle('日本語') === 'æ\u0097¥æ\u009C¬èª\u009E', JSON.stringify(mangle('日本語')));
+  for (const n of NAMES) {
+    const back = repairLatin1Name(mangle(n));
+    check('the reversal recovers ' + n.slice(0, 26), back === n, JSON.stringify(back));
+  }
+  check('an honest Latin-1 name is left alone', repairLatin1Name('Café-résumé.txt') === 'Café-résumé.txt');
+  check('a correct non-ASCII name is left alone', repairLatin1Name('日本語のタイトル.mp4') === '日本語のタイトル.mp4');
+
   const envFile = readEnvFile();
   const pg = {
     host: process.env.PGHOST || envFile.PGHOST || 'localhost',
@@ -289,7 +307,7 @@ async function main() {
     );
     // The compressor's job log — the row Admin → Media prints, which is where the
     // reported screenshot came from ("video · 36.4 MB → 2.4 MB (-93%)") — and a
-    // report snapshot, taken while the rows still read as cp1252 (the report card
+    // report snapshot, taken while the rows still read as Latin-1 (the report card
     // prints those names, but the record itself must not be rewritten).
     let logTable = false;
     for (let i = 0; i < 40 && !logTable; i++) {
@@ -304,10 +322,10 @@ async function main() {
     );
     await clients.query('UPDATE users SET is_admin = 1 WHERE username = $1', ['namecheck']);
     // The DM row too — its own table, and the report below snapshots it while it
-    // still reads as cp1252.
+    // still reads as Latin-1.
     await clients.query('UPDATE dm_attachments SET filename = $1 WHERE message_id = $2', [mangle(DM_NAME), dmNew.message.id]);
     const filed = await api('POST', '/api/reports', { messageId: dmNew.message.id, kind: 'dm', reason: 'spam' }, b.token);
-    check('a report captured the DM attachment while it read as cp1252', !!filed.id);
+    check('a report captured the DM attachment while it read as Latin-1', !!filed.id);
     await clients.query('DELETE FROM meta WHERE key = $1', [REPAIR_MARKER]);
     await clients.end();
     check('phase 2 mangled the non-ASCII rows', mangled === NAMES.filter((n) => mangle(n) !== n).length, 'mangled=' + mangled);
@@ -315,7 +333,11 @@ async function main() {
     await stopServer();
     startServer();
     if (!(await waitForHttp('/api/config', 30000))) return fail('server did not come back up after the rewrite');
-    check('boot log reports the repair', /repaired \d+ mojibake attachment name/.test(serverLog), serverLog.match(/.*mojibake.*/)?.[0] || 'no repair line');
+    const repairLine = serverLog.match(/attachment name repair \(([^)]+)\): (\d+) repaired of (\d+) non-ASCII/) || [];
+    check('boot log reports the repair', !!repairLine[2], serverLog.match(/.*attachment name repair.*/)?.[0] || 'no repair line');
+    // It has to have counted the rows this test mangled (the channel ones, the DM
+    // row, and the planted job-log row), not merely run.
+    check('the repair counted every mangled row', Number(repairLine[2]) >= mangled + 2, repairLine[0] || '');
 
     const after = (await api('GET', `/api/servers/${srv.server.id}/channels/${channelId}/messages`, undefined, token)).messages;
     const afterById = new Map(after.map((m) => [m.id, m]));
