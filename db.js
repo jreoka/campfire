@@ -1118,6 +1118,7 @@ module.exports = db;
 module.exports.initDb = initDb;
 module.exports.closePool = closePool;
 module.exports.pgEnv = pgEnv;
+module.exports.tableExists = tableExists;
 module.exports.OWNER_USERNAME = OWNER_USERNAME;
 module.exports.rawPool = rawPool;
 module.exports.LOCKS = LOCKS;

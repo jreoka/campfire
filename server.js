@@ -16,6 +16,7 @@ const { generateRegistrationOptions, verifyRegistrationResponse, generateAuthent
 const db = require('./db');
 const storage = require('./storage');
 const imageSize = require('./image-size');
+const { repairLatin1Name } = require('./filename-repair');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
@@ -90,6 +91,44 @@ try {
   if (moved) console.log(`[campfire] flattened ${moved} nested thread ${moved === 1 ? 'reply' : 'replies'} to 1 level`);
 } catch {}
 }
+// One-shot: attachment names stored before multipart filenames were decoded as
+// UTF-8 (see filename-repair.js) are the cp1252 reading of their own UTF-8 bytes
+// — "中文.mp4" sitting in the database as "ä¸æ–‡.mp4". Repair them once per
+// database: leader-locked with the other boot repairs and marked in meta, so a
+// restart or a rolling update does not re-scan the tables. Only non-ASCII names
+// can be mojibake at all, which is what octet_length <> char_length expresses in
+// one pass, so the common case reads almost nothing. A name is only rewritten
+// when the reversal is exact, so an honest Latin-1 name ("Café.txt") is left
+// alone. Three tables hold a copy of an uploaded name: the two attachment tables
+// and the compressor's job log, which is what Admin → Media prints (media-compress
+// creates its own tables, so on a fresh database that one may not exist yet).
+// Failure to repair must never keep the app from booting, and must not set the
+// marker — the next boot tries again.
+const MOJIBAKE_NAMES_MARKER = 'attachment_names_repaired';
+const NAMED_TABLES = ['attachments', 'dm_attachments', 'media_compress_log'];
+async function repairMojibakeNames() {
+  if (await metaGet(MOJIBAKE_NAMES_MARKER)) return;
+  try {
+    let fixed = 0, looked = 0;
+    for (const table of NAMED_TABLES) {
+      if (!(await db.tableExists(table))) continue;
+      const rows = await db.prepare(
+        `SELECT id, filename FROM ${table} WHERE octet_length(filename) <> char_length(filename)`
+      ).all();
+      looked += rows.length;
+      for (const r of rows) {
+        const name = repairLatin1Name(r.filename);
+        if (name === r.filename) continue;
+        await db.prepare(`UPDATE ${table} SET filename = ? WHERE id = ?`).run(name, r.id);
+        fixed++;
+      }
+    }
+    await metaSet(MOJIBAKE_NAMES_MARKER, String(Date.now()));
+    if (fixed) console.log(`[campfire] repaired ${fixed} mojibake attachment name(s) (of ${looked} non-ASCII)`);
+  } catch (e) {
+    console.error('[campfire] attachment name repair failed (will retry next boot):', (e && e.message) || e);
+  }
+}
 // Background timers with async bodies: a rejection must log, never escape
 // into an unhandled rejection (which would crash the process).
 function safeInterval(fn, ms) {
@@ -148,6 +187,16 @@ function uploader(sub, mimes, maxBytes, allowCodeExt = false) {
   const mw = multer({
     storage: store,
     limits: { fileSize: maxBytes, files: 1 },
+    // The multipart header carries a filename as the name's UTF-8 bytes (the
+    // HTML spec requires user agents to serialise it that way), but busboy's
+    // default decoding of that parameter is Latin-1 — and the WHATWG label it
+    // reads as that means WINDOWS-1252. Left at the default, "中文" was stored as
+    // "ä¸æ–‡" and every non-ASCII title reached the reader as a ladder of
+    // accents: a video named "Jax - 某某 [id].mp4" posted as "Jax -
+    // à®…à®°à®¾à®ªà¯à¯ [id].mp4". Names written before this line exist in the
+    // database in that spelling — repairMojibakeNames() fixes those at boot, and
+    // filename-repair.js explains the reversal.
+    defParamCharset: 'utf8',
     fileFilter: (req, file, cb) => {
       if (!mimes) return cb(null, true); // general uploader: any file type
       if (mimes.includes(file.mimetype)) return cb(null, true);
@@ -158,6 +207,12 @@ function uploader(sub, mimes, maxBytes, allowCodeExt = false) {
   mw._sub = sub;
   return mw;
 }
+// The user-facing name of one uploaded or attached file — the single funnel every
+// stored name goes through. The boundary decoder is UTF-8 now, and this repairs
+// the names an older client (or a row written before that fix) still spells as
+// cp1252; see filename-repair.js. Repair BEFORE the cap: a 120-character cut
+// through a mangled sequence would leave the reversal nothing exact to undo.
+function attName(v) { return repairLatin1Name(String(v || 'file')).slice(0, 120); }
 // After multer: in S3 mode push the buffer to the bucket and assign the
 // filename multer would have used on disk. Local mode is already on disk.
 async function persistUpload(sub, file) {
@@ -1529,7 +1584,7 @@ app.post('/api/webhooks/:wid/:token', async (req, res) => {
     const isRemoteImg = a?.kind === 'image' && /^https:\/\//.test(url);
     if (!isLocal && !isRemoteImg) continue;
     const mime = String(a?.mime || 'application/octet-stream').slice(0, 80);
-    cleanAtts.push({ url, name: String(a?.name || 'file').slice(0, 120), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, MAX_FILE_BYTES)), kind: isLocal ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file') : 'image', spoiler: a?.spoiler ? 1 : 0, ...cleanAttDims(a), ...cleanGifMeta(a) });
+    cleanAtts.push({ url, name: attName(a?.name), mime, size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, MAX_FILE_BYTES)), kind: isLocal ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file') : 'image', spoiler: a?.spoiler ? 1 : 0, ...cleanAttDims(a), ...cleanGifMeta(a) });
   }
   if (!content && !cleanAtts.length) return res.status(400).json({ error: 'empty_message' });
   const mid = uid();
@@ -2698,7 +2753,7 @@ app.post('/api/upload', authRequired, (req, res, next) => {
   let candidate = false;
   try { candidate = require('./media-compress').isCandidate(mt, fileKey, req.file.size); } catch {}
   try { scan = await require('./virus-scan').queueFileScan(fileKey, { compress: candidate }); } catch {}
-  res.json({ url: uploadUrl('files', req.file), name: String(req.file.originalname || 'file').slice(0, 120), mime: mt, size: req.file.size, kind, scan, ...(await uploadDims(req.file, kind)) });
+  res.json({ url: uploadUrl('files', req.file), name: attName(req.file.originalname), mime: mt, size: req.file.size, kind, scan, ...(await uploadDims(req.file, kind)) });
 });
 
 // The shape of just-uploaded media, measured here (from the file's own header —
@@ -3331,7 +3386,7 @@ app.post('/api/upload/viewonce', authRequired, (req, res, next) => {
   if ((!mt || mt === 'application/octet-stream') && CODE_TEXT_EXTS.has(path.extname(String(req.file.originalname || '')).toLowerCase().slice(1))) mt = 'text/plain';
   const kind = mt.startsWith('image/') ? 'image' : mt.startsWith('video/') ? 'video' : 'file';
   if (kind === 'file') { deleteUploaded('/uploads/' + fileKey); return res.status(400).json({ error: 'bad_media (photos and videos only)' }); }
-  res.json({ url: '/uploads/' + fileKey + '?v=' + Date.now().toString(36), name: String(req.file.originalname || 'file').slice(0, 120), mime: mt, size: req.file.size, kind, scan });
+  res.json({ url: '/uploads/' + fileKey + '?v=' + Date.now().toString(36), name: attName(req.file.originalname), mime: mt, size: req.file.size, kind, scan });
 });
 
 app.post('/api/dm/viewonce', authRequired, async (req, res) => {
@@ -4428,6 +4483,14 @@ async function adminReportView(r) {
   }
   let snapshot = {};
   try { snapshot = JSON.parse(r.snapshot || '{}'); } catch {}
+  // A report filed before multipart filenames were decoded as UTF-8 snapshotted
+  // the cp1252 spelling of its media names. Repair them for the card, and ONLY
+  // for the card: the snapshot is the record of what was reported, so the stored
+  // JSON is left as it was written (see filename-repair.js).
+  for (const list of [snapshot.media, snapshot.message && snapshot.message.media]) {
+    if (!Array.isArray(list)) continue;
+    for (const m of list) if (m && m.name) m.name = repairLatin1Name(String(m.name));
+  }
   const authorName = r.author_display || r.author_name || '';
   // The protected owner account can't be disabled/banned from the report card,
   // so the UI needs to know who it is (live username, or the snapshot's when
@@ -5736,7 +5799,7 @@ function cleanAttachments(atts) {
     if (!isLocal && !isRemoteImg) continue;
     const mime = String(a?.mime || 'application/octet-stream').slice(0, 80);
     out.push({
-      url, name: String(a?.name || 'file').slice(0, 120), mime,
+      url, name: attName(a?.name), mime,
       size: Math.max(0, Math.min(parseInt(a?.size || 0, 10) || 0, MAX_FILE_BYTES)),
       kind: isLocal ? (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file') : 'image',
       spoiler: a?.spoiler ? 1 : 0,
@@ -7907,6 +7970,7 @@ async function boot() {
   // update would re-run them.
   await db.withLock(db.LOCKS.bootRepair, async () => {
     await repairThreads();
+    await repairMojibakeNames();
     await initPushKeys();
   });
   // Stale playing_game / streaming_game clears. These are cluster-wide writes,
