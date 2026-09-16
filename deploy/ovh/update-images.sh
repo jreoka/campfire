@@ -51,11 +51,27 @@ SERVICES=("$@")
 [ "${#SERVICES[@]}" -gt 0 ] || SERVICES=(clamav)
 
 cd "$APP_DIR" || { printf '[images] %s is not there\n' "$APP_DIR" >&2; exit 1; }
+# Fail loudly rather than degrading into "no image for that service, skipped":
+# without these two files every run would be a silent no-op that still exits 0.
+for f in docker-compose.yml deploy/ovh/docker-compose.ovh.yml; do
+  [ -f "$f" ] || { printf '[images] %s/%s is missing — is this the checkout? (CAMPFIRE_DIR overrides)\n' "$APP_DIR" "$f" >&2; exit 1; }
+done
 
 compose() { docker compose "${COMPOSE_FILES[@]}" "$@"; }
 log() { printf '[images] %s\n' "$*"; }
 
-image_of()      { compose config --images "$1" 2>/dev/null | head -n1; }
+# The image the compose file resolves for a service — read from compose itself so
+# a CLAMAV_TAG pin is honoured rather than second-guessed here. A failure is
+# reported instead of swallowed (an unresolvable service used to look exactly
+# like a build-only one).
+image_of() {
+  local out
+  if ! out="$(compose config --images "$1" 2>&1)"; then
+    printf '[images] cannot resolve the image for %s: %s\n' "$1" "$out" >&2
+    return 1
+  fi
+  printf '%s\n' "$out" | head -n1
+}
 image_id()      { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null || true; }
 container_of()  { compose ps -q "$1" 2>/dev/null || true; }
 # The image the CONTAINER was created from — the only honest answer to "what is
@@ -160,7 +176,10 @@ restart_app_and_confirm() {
 failed=0
 
 for svc in "${SERVICES[@]}"; do
-  image="$(image_of "$svc")"
+  if ! image="$(image_of "$svc")"; then
+    failed=1
+    continue
+  fi
   if [ -z "$image" ]; then
     log "$svc: no image in the compose file (a build-only service?) — skipped"
     continue
