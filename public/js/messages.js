@@ -468,23 +468,6 @@ function srcPathOf(u) {
 function videoPosterShot(url) {
   try { return (url && typeof videoPosterCache !== 'undefined') ? (videoPosterCache.get(url) || null) : null; } catch { return null; }
 }
-// Fetch AND decode an image before anything is shown with it. An <img> that is
-// merely present in the document starts loading, but it is blank until its bytes
-// are decoded — and that blank is a real frame on screen when the element is put
-// where a picture already is. Off to the side like this, the finished picture is
-// the only thing that ever enters the page: by the time its `src` is set the bytes
-// are in the cache, so it paints in the same tick.
-function loadImageSource(url, cb) {
-  try {
-    const pre = new Image();
-    let done = false;
-    const fire = () => { if (done) return; done = true; try { cb(); } catch {} };
-    pre.onload = () => { if (typeof pre.decode === 'function') { try { pre.decode().then(fire, fire); return; } catch (e) {} } fire(); };
-    pre.onerror = fire;
-    pre.src = url;
-    if (pre.complete) { if (pre.naturalWidth > 0) pre.onload(); else fire(); }
-  } catch (e) { try { cb(); } catch {} }
-}
 // The shape the box was RESERVED at, read off the node itself (the img's own
 // width/height attributes) rather than from the cached message — the reserved box
 // is what must keep matching, because that is what is on screen.
@@ -578,17 +561,19 @@ function patchImageNode(oldEl, a) {
     if (a.scan === 'clean') retireAttPreview(a, oldUrl);
     return true;
   }
-  // A DIFFERENT file. The freshly built picture has no bytes yet, and inserting it
-  // visible would put an empty box exactly where the picture is — the blank frame
-  // this whole path exists to remove. So it goes in dark:
-  //   . its `src` is held back until the bytes are decoded (loadImageSource), and
-  //     what is fetched is fetched off the document;
-  //   . the wrap goes in without `ready`, so the placeholder keeps covering it;
+  // A DIFFERENT file. The freshly built picture has no bytes yet, and an inserted
+  // <img> is either blank or a broken-image box until it has them — the flash this
+  // path exists to remove. The hook for that is already in the markup and the
+  // stylesheet: the wrap is NOT `ready`, so `.att-ph` covers it and
+  // `.att-wrap.pending:not(.ready) img.att-img` holds the picture at opacity 0. So
+  // the new picture is put in DARK, behind its own placeholder, and the placeholder
+  // only stands down once those bytes have actually decoded:
   //   . the frame that is on screen is carried into the new box as an absolutely
   //     positioned overlay, so the reader's picture never leaves the page;
-  // and when the bytes land the overlay goes and `ready` goes on in the same tick.
+  //   . the new <img> loads normally behind the placeholder (its `src` is the real
+  //     one from the start — an <img> with no source at all is a broken-image box);
+  //   . when it loads, `ready` goes on and the overlay goes, in the same tick.
   const rawSrc = String(img.getAttribute('src') || '');
-  img.removeAttribute('src');
   let held = null;
   try {
     // The store still has the picked bytes under the id — an entry holding a
@@ -599,18 +584,11 @@ function patchImageNode(oldEl, a) {
       held = oldImg;
       oldImg.classList.add('att-held');
       oldImg.style.setProperty('z-index', '3', 'important');
-      // The incoming bytes are fetched NOW: the held frame is out of flow, which
-      // can leave the new element beyond the lazy-loading viewport margin, and a
-      // lazy image that far out never loads — the swap would wait for a scroll.
-      img.loading = 'eager';
     }
   } catch {}
   const live = wrap.isConnected;
   // ONE swap: the new box goes in exactly where the old one was, and the frame
-  // that was in the old one is moved into it in the same tick. The new element is
-  // in the page without a `src` (so nothing is requested and nothing can be blank)
-  // and without `ready` (so the placeholder keeps covering it with the picture the
-  // reader is looking at).
+  // that was in the old one is moved into it in the same tick.
   if (live) wrap.replaceWith(nextWrap);
   else oldEl.replaceWith(nextWrap);
   if (held) {
@@ -623,29 +601,21 @@ function patchImageNode(oldEl, a) {
   const settle = () => {
     if (settled) return;
     settled = true;
-    // The bytes are in the browser's cache now (loadImageSource fetched and
-    // decoded them), so setting `src` paints immediately and the placeholder can
-    // stand down in the same tick — the box is never empty and the reader never
-    // sees a blank frame.
+    // The picture is painted (the load event fired on a connected element), so the
+    // placeholder can stand down and the carried frame go — one tick, no gap.
     img.dataset.phWired = '1';
-    img.setAttribute('src', rawSrc);
     nextWrap.classList.add('ready');
     if (held) { try { held.remove(); } catch {} held = null; }
     try { observeStick(img); } catch {}
     if (a.scan === 'clean') retireAttPreview(a, oldUrl);
   };
-  // The bytes are fetched and decoded off to the side first, so the finished
-  // picture is the only thing that ever gets painted in the row. Both endings are
-  // covered — the load event and an image that was already complete — so `settle`
-  // cannot be missed.
-  loadImageSource(rawSrc, () => {
-    if (img.complete && img.naturalWidth > 0) { settle(); return; }
-    const go = () => settle();
-    img.addEventListener('load', go, { once: true });
-    img.addEventListener('error', go, { once: true });
-    img.setAttribute('src', rawSrc);
-    if (img.complete) go();
-  });
+  img.addEventListener('load', settle, { once: true });
+  img.addEventListener('error', settle, { once: true });
+  // A warm cache can have the picture decoded before the next line: setting the
+  // source here paints it, and the placeholder stands down with the picture
+  // already in it. (Both events are listened for, so this can never be missed.)
+  img.setAttribute('src', rawSrc);
+  if (img.complete) settle();
   return true;
 }
 // A clip: the player is REPLACED (its own controls and poster state belong to the

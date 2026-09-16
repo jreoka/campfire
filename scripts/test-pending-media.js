@@ -330,10 +330,10 @@ async function main() {
   check(/if \(!attSameShape\(oldAr, newAr\)\) return false;/.test(markSource), 'so is one whose reserved shape changed');
   check(/function patchImageNode\(oldEl, a\)/.test(markSource) && /function srcPathOf\(u\)/.test(markSource),
     'the still swap compares the FILE the element is showing, not the url string');
-  check(/function loadImageSource\(url, cb\)/.test(markSource) && /loadImageSource\(rawSrc, \(\) => \{/.test(markSource),
-    'and the replacement bytes are fetched and DECODED off the document before they are put in the row');
-  check(/if \(img\.complete && img\.naturalWidth > 0\) \{ settle\(\); return; \}/.test(markSource),
-    'with both endings covered (the load event and an image that was already complete) so the picture can never be left pending');
+  check(/const rawSrc = String\(img\.getAttribute\('src'\) \|\| ''\);/.test(markSource) && /img\.setAttribute\('src', rawSrc\);/.test(markSource),
+    'the replacement keeps its real source (an <img> with no source at all is a broken-image box) and loads behind its own placeholder');
+  check(/if \(img\.complete\) settle\(\);/.test(markSource) && /img\.addEventListener\('load', settle, \{ once: true \}\)/.test(markSource),
+    'with both endings covered (the load event and an image that was already complete) so the placeholder is never left over a painted picture');
   check(/if \(oldImg && oldImg\.dataset\.phWired && shownPath && shownPath === wantPath\) \{/.test(markSource),
     'and the same file leaves the painted element exactly as it is (a republish in place must not re-decode it)');
   check(/if \(oldImg\.dataset\.fbUrl\) oldImg\.dataset\.fbUrl = String\(a\.url \|\| ''\);/.test(markSource),
