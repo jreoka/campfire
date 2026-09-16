@@ -1166,7 +1166,10 @@ img,video{-webkit-user-drag:none}
 .msg-actions{position:absolute;right:.6rem;top:-18px;display:flex;gap:2px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:4px 6px;z-index:5;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .13s ease-out,visibility .13s}
 .msg{position:relative}
 .msg:hover .msg-actions,.msg:focus-within .msg-actions{opacity:1;visibility:visible;pointer-events:auto}
-.msg-actions button{border:0;background:transparent;color:var(--text);border-radius:8px;padding:.2rem .35rem;font-size:1rem;line-height:1.2;cursor:pointer;min-width:30px;transition:background var(--t-fast)}
+.msg-actions button{border:0;background:transparent;color:var(--text);border-radius:8px;padding:.2rem .35rem;font-size:1rem;line-height:1.2;cursor:pointer;min-width:30px;transition:background var(--t-fast);display:inline-flex;align-items:center;justify-content:center}
+/* The More-reactions button is a stroked SVG (currentColor), not an emoji, so it
+   needs the same box the neighbouring glyphs get from their line-height. */
+.msg-actions button svg{display:block}
 .msg-actions button:hover{background:var(--panel-3)}
 .msg.flip-actions .msg-actions{top:2px}
 /* The thread card under a root message: a labelled summary plus the thread's

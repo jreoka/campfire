@@ -101,6 +101,16 @@ function wiringChecks() {
   check(/function topReactions\(\)/.test(actions), 'and the ranking is actions.js topReactions');
   check((messages.match(/quickReactsHTML\(\)/g) || []).length === 2,
     'the inline copy of the strip is gone (built once, used twice)', (messages.match(/quickReactsHTML\(\)/g) || []).length);
+  // The one non-emoji button in the strip: the ➕ that opened the picker was a
+  // COLOURED emoji sitting among the account's reaction glyphs (reported). It is
+  // chrome, so it draws the stroked SVG in currentColor — same rule as every
+  // other icon — and the menu's "Add reaction…" row rides the same builder.
+  check(/data-act="more" title="More reactions"[^>]*>\$\{plusSVG\(\d+\)\}/.test(messages) && !/data-act="more"[^>]*>➕/.test(messages),
+    'the More-reactions button draws the SVG plus, never the ➕ emoji');
+  check(/function plusSVG\(s = \d+\)[\s\S]{0,220}?stroke="currentColor"/.test(messages),
+    'and that plus is stroked in currentColor (the chrome ink, so it reads white on the dark bar)');
+  check(/label: 'Add reaction…', icon: plusSVG\(/.test(actions),
+    'the menu\'s Add reaction row uses the same plus instead of the emoji');
 
   console.log('\n[A2] a strip already on screen is repainted when the ranking moves');
   const paint = slice(messages, 'function paintQuickReacts() {', 'function messageEl(');

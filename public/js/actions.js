@@ -389,7 +389,7 @@ function messageMenuItems(m, mid, x, y, el) {
   const dm = !!m._dm;
   const own = m.user && m.user.id === S.me.id;
   const items = [
-    { label: 'Add reaction…', icon: '➕', fn: () => openPicker('react', mid, 'emoji', { x, y }) },
+    { label: 'Add reaction…', icon: plusSVG(14), fn: () => openPicker('react', mid, 'emoji', { x, y }) },
     { label: 'Reply', icon: '↩', fn: () => replyToMsg(m) },
     { label: 'Forward', icon: '↗', fn: () => openForward(mid) },
   ];

@@ -1170,9 +1170,17 @@ function emojiGlyphHTML(e) {
   return (e.startsWith(':') && e.endsWith(':') && em)
     ? `<img class="cemoi" src="${esc(em.url)}" alt="${esc(e)}">` : esc(e);
 }
+// The plus that means "add a reaction" — the hover bar's More button and the
+// message menu's Add reaction row. It is a STROKED SVG in the chrome's own ink
+// (`currentColor`), never the COLOURED plus emoji it used to be: this is UI
+// chrome, and the design rule is no emoji there (the emoji in the bar beside it
+// are the account's own most-used reactions, which is user content).
+function plusSVG(s = 14) {
+  return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`;
+}
 function quickReactsHTML() {
   return topReactions().map(quickReactHTML).join('')
-    + `<button data-act="more" title="More reactions">➕</button><button data-act="reply" title="Reply">↩</button><button data-act="menu" title="More actions">⋯</button>`;
+    + `<button data-act="more" title="More reactions" aria-label="More reactions">${plusSVG(15)}</button><button data-act="reply" title="Reply">↩</button><button data-act="menu" title="More actions">⋯</button>`;
 }
 // The strip is baked into each message's markup when it renders, so reacting with
 // something new moved the ranking with nothing on screen to show for it: the bar
