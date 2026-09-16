@@ -460,6 +460,10 @@ function onWS(m) {
       updateMsgInCaches(m.message.id, (old) => Object.assign(old, m.message));
       const inHistDu = S.histMode && S.histMode.kind === 'dm' && S.histMode.id === m.message.threadId;
       if (S.view === 'home' && S.dmThreadId === m.message.threadId && !inHistDu) renderDmMessages();
+      // Same snapshot problem as dm-deleted: an edit to the newest message (its
+      // text, or its last attachment going away) is what the row's preview is
+      // showing, so the row has to be re-read.
+      refreshDms();
       break;
     }
     case 'dm-deleted': {
@@ -473,6 +477,13 @@ function onWS(m) {
         try { dpatched = removeMessageNode($('#messages'), darr, m.messageId); } catch { dpatched = false; }
         if (!dpatched) renderDmMessages();
       }
+      // The DM/group row's preview is the thread's newest message, and it is a
+      // SERVER snapshot (dmThreadView's `last`) — nothing local can name the
+      // message that takes the deleted one's place, so the row has to be
+      // re-read. Without this the sidebar keeps showing the words of a message
+      // that no longer exists (and keeps sorting the thread by its timestamp)
+      // until a manual refresh (see dm-new, which refreshes for the same reason).
+      refreshDms();
       break;
     }
     case 'dm-reaction': {

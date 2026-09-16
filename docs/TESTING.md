@@ -1418,6 +1418,25 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   server, and asserts the ALTER + backfill ran as one unit (every pre-existing
   membership stamped, an old unread DM not resurrected) and that the backfill
   stays one-shot — a plain restart must not mark a live unread message read.
+  `node scripts/test-dm-row-preview.js` covers the DM/group row's message
+  preview, end-to-end in a real browser (a throwaway database + Chrome over the
+  DevTools protocol, skipping without Postgres or Chrome; the offline half runs
+  everywhere). The complaint: deleting the newest message left the sidebar
+  quoting it until a manual refresh. The preview is a SERVER snapshot —
+  `/api/dms` returns each thread's newest message as `last`, which is what
+  `dmRowEl` paints — so a delete that removes exactly that message has nothing
+  local to fall back on (the live tail only holds what this tab has seen, and
+  the thread need not be open), and `dm-deleted` simply never re-read the rows.
+  It checks statically that both `dm-deleted` and `dm-updated` (an edit to the
+  newest message is the preview too) call `refreshDms()`, bounded to the case
+  body so a neighbouring case's call cannot satisfy it, and then drives the real
+  path with no reload anywhere: two messages tracked by the row, the message's
+  own context menu's Delete row, the real push and repaint (the preview falls
+  back to the message before it, agreeing with what the server then reports),
+  deleting the last message reading as "No messages yet", and an edit showing in
+  the row. Re-run it after touching the `dm-deleted`/`dm-updated` cases in
+  `socket.js`, `refreshDms`/`dmRowEl` in `home.js`, or `dmThreadView` in
+  `server.js`.
   `node scripts/test-update-banner.js` covers the deploy notice that replaced
   the forced reloads (owner request: users were being surprised by them). It runs
   the REAL banner block sliced out of `public/js/final.js` against a DOM stub and
