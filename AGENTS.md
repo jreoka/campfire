@@ -501,7 +501,11 @@ and secrets live in `/opt/campfire/app/.env` on the host, mode 600 and
 gitignored; `deploy/ovh/README.md` has the cluster-Secret → env mapping.
 
 Shipped: auth, servers/invites, text channels, voice rooms (mesh WebRTC, sidebar
-occupants + VAD rings), uploads, emoji (Emojibase set + custom + Klipy GIFs whose
+occupants + VAD rings), per-person voice volume — TWO local sliders on the user
+card (`cf_volumes` for the mic, `cf_stream_volumes` for the audio a Go Live
+carries), because a stream is a game/system mix and turning it down must not
+turn the person down; the stream row only exists while that share really has a
+live audio track (`peerStreamAudio`), uploads, emoji (Emojibase set + custom + Klipy GIFs whose
 per-account favorites are written from a picker tile OR from the star on a GIF
 somebody posted in chat — a picker post carries the Klipy identity on the
 attachment (`cleanGifMeta`/`attFavHTML`), and a GIF posted before that existed is

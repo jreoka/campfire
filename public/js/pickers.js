@@ -1478,9 +1478,19 @@ async function openUserCard(uid, x, y, fallback, opts = {}) {
     }
   }
   const volVal = getUserVolume(uid);
+  // A stream carries its own audio (usually a game/system mix), so it gets its
+  // own slider — turning the game down must not turn the person down. The
+  // stream row only exists when that share really has an audio track; it is
+  // painted hidden otherwise and refreshUserCardVolumes() reveals it live if
+  // the track lands while the card is open.
+  const streamVolVal = getUserStreamVolume(uid);
+  const hasStreamAudio = !!(myPeer && myPeer.sharing && peerStreamAudio(uid));
+  const streamHidden = hasStreamAudio ? '' : ' hidden';
   const voiceVolHTML = inMyCall ? `
-      <div class="uc-sec-label">Voice volume</div>
-      <div class="uc-vol"><input type="range" id="uc-vol" min="0" max="100" step="1" value="${volVal}" aria-label="Voice volume" /><span id="uc-vol-pct">${volVal}%</span></div>` : '';
+      <div class="uc-sec-label">Mic volume</div>
+      <div class="uc-vol"><input type="range" id="uc-vol" min="0" max="100" step="1" value="${volVal}" aria-label="Mic volume" /><span id="uc-vol-pct">${volVal}%</span></div>
+      <div class="uc-sec-label uc-vol-stream-label${streamHidden}">Stream volume</div>
+      <div class="uc-vol uc-vol-stream${streamHidden}"><input type="range" id="uc-vol-stream" min="0" max="100" step="1" value="${streamVolVal}" aria-label="Stream volume" /><span id="uc-vol-stream-pct">${streamVolVal}%</span></div>` : '';
   const peerMuted = !!(myPeer && (myPeer.muted || myPeer.serverMuted));
   const voiceModHTML = (inMyCall && (canVoiceMod || (myPeer && myPeer.sharing))) ? `
       <div class="uc-sec-label">Voice call</div>
@@ -1549,6 +1559,12 @@ async function openUserCard(uid, x, y, fallback, opts = {}) {
     const pct = $('#uc-vol-pct');
     if (pct) pct.textContent = getUserVolume(uid) + '%';
   };
+  const svol = $('#uc-vol-stream');
+  if (svol) svol.oninput = () => {
+    setUserStreamVolume(uid, svol.value);
+    const pct = $('#uc-vol-stream-pct');
+    if (pct) pct.textContent = getUserStreamVolume(uid) + '%';
+  };
   const wch = $('#uc-watch');
   if (wch) wch.onclick = () => { closeUserCard(); watchStream(uid); };
   const vmu = $('#uc-vmute');
@@ -1595,6 +1611,18 @@ function closeUserCard() {
   c.style.transform = '';
   c.style.transition = '';
   c.style.animation = '';
+}
+// The peer's stream-audio track can land (or end) while their card is open —
+// the share's audio is negotiable, so the Stream volume row has to appear and
+// retire with it rather than being decided once at paint time. Called from
+// voice.js (streamAudioChanged) for the media's own transitions.
+function refreshUserCardVolumes(uid) {
+  try {
+    const c = $('#usercard');
+    if (!c || c.classList.contains('hidden') || c.dataset.uid !== uid) return;
+    const show = peerStreamAudio(uid);
+    for (const el of c.querySelectorAll('.uc-vol-stream, .uc-vol-stream-label')) el.classList.toggle('hidden', !show);
+  } catch {}
 }
 // ---------- server tag mini-panel ----------
 function closeTagCard() { $('#tagcard').classList.add('hidden'); }

@@ -339,28 +339,56 @@ function sendVoiceState() {
     speaking: (!S.voice.muted && !S.voice.deafened) && !!S.voice.speaking }));
 }
 // ---------- per-user local volume (your ears only, all platforms) ----------
-// Stored in localStorage keyed by user id, 0–100 (default 100). Applied to
-// every remote audio element for that peer (mic + stream audio).
-function getUserVolume(id) {
+// TWO sliders per person, both local and both keyed by user id, 0–100
+// (default 100): the mic (cf_volumes) and the audio their Go Live stream
+// carries (cf_stream_volumes). They are deliberately separate numbers — a
+// stream is usually a game or a system mix, and wanting the game quiet is not
+// wanting the person quiet — and each drives only its own element: audioEls
+// holds the mic mix, screenAudioEls the stream audio.
+function volStore(key) {
   try {
-    const v = JSON.parse(localStorage.getItem('cf_volumes') || '{}');
-    const n = Number(v[id]);
-    return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 100;
-  } catch { return 100; }
+    const v = JSON.parse(localStorage.getItem(key) || '{}');
+    return v && typeof v === 'object' ? v : {};
+  } catch { return {}; }
 }
-function setUserVolume(id, val) {
-  let v = {};
-  try { v = JSON.parse(localStorage.getItem('cf_volumes') || '{}'); } catch {}
+function volValue(key, id) {
+  const n = Number(volStore(key)[id]);
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 100;
+}
+function volSave(key, id, val) {
+  const v = volStore(key);
   v[id] = Math.max(0, Math.min(100, Math.round(Number(val) || 0)));
-  try { localStorage.setItem('cf_volumes', JSON.stringify(v)); } catch {}
-  applyUserVolume(id);
+  try { localStorage.setItem(key, JSON.stringify(v)); } catch {}
 }
+function getUserVolume(id) { return volValue('cf_volumes', id); }
+function setUserVolume(id, val) { volSave('cf_volumes', id, val); applyUserVolume(id); }
+function getUserStreamVolume(id) { return volValue('cf_stream_volumes', id); }
+function setUserStreamVolume(id, val) { volSave('cf_stream_volumes', id, val); applyStreamVolume(id); }
 function applyUserVolume(peerId) {
   if (!S.voice) return;
-  const v = getUserVolume(peerId) / 100;
-  for (const el of [S.voice.audioEls.get(peerId), S.voice.screenAudioEls.get(peerId)]) {
-    if (el) { try { el.volume = v; } catch {} }
-  }
+  const el = S.voice.audioEls.get(peerId);
+  if (el) { try { el.volume = getUserVolume(peerId) / 100; } catch {} }
+}
+function applyStreamVolume(peerId) {
+  if (!S.voice) return;
+  const el = S.voice.screenAudioEls.get(peerId);
+  if (el) { try { el.volume = getUserStreamVolume(peerId) / 100; } catch {} }
+}
+// Does this peer's stream actually CARRY audio right now? A display share
+// hands over an audio track only when the sharer's platform gave one (a tab or
+// the system, not most window shares), so the stream slider is shown only when
+// it would move something — a control that does nothing reads as broken.
+function peerStreamAudio(peerId) {
+  if (!S.voice) return false;
+  const live = (ms) => !!(ms && ms.getAudioTracks().some((t) => t.readyState === 'live'));
+  if (live(S.voice.remoteScreenAudio.get(peerId))) return true;
+  const el = S.voice.screenAudioEls.get(peerId);
+  return live(el && el.srcObject);
+}
+// The stream-audio track can arrive or end while the peer's user card is open,
+// so tell the card whether its stream slider belongs there right now.
+function streamAudioChanged(peerId) {
+  try { if (typeof refreshUserCardVolumes === 'function') refreshUserCardVolumes(peerId); } catch {}
 }
 // Occupants of the room I'm currently in (server or DM call).
 function myRoomOccupants() {
@@ -903,13 +931,14 @@ function attachScreenAudioTrack(peerId, track) {
   }
   el.muted = !!S.voice.deafened;
   if (el.srcObject !== ms) el.srcObject = ms;
-  applyUserVolume(peerId);
+  applyStreamVolume(peerId);
   try {
     const sp = mediaPrefs().speakerId;
     if (sp && typeof el.setSinkId === 'function') el.setSinkId(sp).catch(() => {});
   } catch {}
-  track.onended = () => { try { ms.removeTrack(track); } catch {} renderStage(); };
+  track.onended = () => { try { ms.removeTrack(track); } catch {} streamAudioChanged(peerId); renderStage(); };
   renderStage();
+  streamAudioChanged(peerId);
 }
 function attachRemoteAudio(peerId, stream) {
   if (!S.voice || !stream) return;
