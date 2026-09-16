@@ -175,13 +175,24 @@ function wireAttImage(img) {
 // Entries older than LOCAL_PREVIEW_CAP_BYTES are dropped oldest-first (blob urls
 // revoked) — the map outlives the composer now that it feeds the message list, so
 // it cannot be pruned by "is it still staged" alone.
-const attPreviews = new Map(); // key (att id, else att url) -> { id, url, src, blob, bytes }
+const attPreviews = new Map(); // key (att id, else att url) -> { id, url, src, blob, bytes, unstagedAt }
 let attPreviewBytes = 0;
 // Keys whose file is still sitting in a composer. The size cap below evicts
 // oldest-first, and a file the reader has picked but not sent yet must never be
 // the one pushed out — its chip would lose the thumbnail it is built from.
 let attPreviewStaged = new Set();
 const LOCAL_PREVIEW_CAP_BYTES = 192 * 1024 * 1024;
+// The two lifetimes of an entry that is in no composer (see pruneAttPreviews):
+// one that a message has painted is kept until its slot has settled and then for
+// KEEP_MS more, and one that NOTHING has painted — dropped with the ✕, or sent a
+// moment ago — gets UNPAINTED_MS of grace before it is released. That grace is
+// what carries the picked bytes across the SEND: the composer clears its list
+// synchronously while the message that paints them arrives a WebSocket round trip
+// later, and releasing in that gap revoked the blob — the row then rendered the
+// ORIGINAL file's preview instead, and the compressor's republish under a fresh
+// key had no picked frame left to carry over. That second swap is the blink.
+const LOCAL_PREVIEW_KEEP_MS = 60000;
+const LOCAL_PREVIEW_UNPAINTED_MS = 15000;
 function attPreviewEntry(id, url) {
   if (id) { const hit = attPreviews.get(id); if (hit) return hit; }
   return url ? (attPreviews.get(url) || null) : null;
@@ -220,7 +231,7 @@ function setAttPreview(url, src, blob, bytes) {
   const old = attPreviews.get(url);
   if (old && old.blob && old.src !== src) { try { URL.revokeObjectURL(old.src); } catch {} }
   if (old) attPreviewBytes -= old.bytes || 0;
-  const entry = { id: '', url, src, blob: !!blob, bytes: blob ? (Number(bytes) || 0) : 0 };
+  const entry = { id: '', url, src, blob: !!blob, bytes: blob ? (Number(bytes) || 0) : 0, unstagedAt: 0 };
   attPreviews.set(url, entry);
   attPreviewBytes += entry.bytes;
   evictAttPreviews();
@@ -236,7 +247,7 @@ function setAttPreviewFor(a, src, blob, bytes) {
   const old = attPreviewEntry(id, url);
   if (old && old.blob && old.src !== src) { try { URL.revokeObjectURL(old.src); } catch {} }
   if (id && old && old.url && old.url !== url) attPreviews.delete(old.url);
-  const entry = { id, url, src, blob: !!blob, bytes: blob ? (Number(bytes) || 0) : 0 };
+  const entry = { id, url, src, blob: !!blob, bytes: blob ? (Number(bytes) || 0) : 0, unstagedAt: 0 };
   attPreviews.set(id || url, entry);
   if (id && url && url !== (id || url)) attPreviews.set(url, entry);
   if (old) attPreviewBytes -= old.bytes || 0;
@@ -490,6 +501,11 @@ function attReservedAr(el) {
 // the renderer instead.
 function patchAttachmentNode(oldEl, a) {
   if (!oldEl || !a) return false;
+  // An infected verdict is not a patch at all: the server has DELETED the bytes, so
+  // the rendering has to become the warning card, which only the renderer builds.
+  // Left to the `!clean` line below an unchanged url returned "nothing to move" and
+  // the reader went on looking at a picture of a file that was removed.
+  if (a.scan === 'infected') return false;
   const clean = a.scan !== 'pending' && a.scan !== 'infected';
   const newRole = a.kind === 'image' ? 'image' : a.kind === 'video' ? 'video' : a.kind === 'audio' ? 'audio' : (textPreviewable(a) ? 'text' : 'file');
   const oldRole = attElementRole(oldEl);
@@ -534,7 +550,6 @@ function patchImageNode(oldEl, a) {
   const nextWrap = box.firstElementChild;
   const img = nextWrap && nextWrap.querySelector('img.att-img');
   if (!img) return false;
-  const idKey = String(a.id || '');
   // The url the element is showing NOW (its own bytes, not the preview stand-in):
   // the store still holds an entry under it, and it dies with the swap below.
   const oldUrl = String(oldEl.getAttribute('data-fb-orig') || oldEl.getAttribute('data-fb-url') || '');
@@ -581,11 +596,14 @@ function patchImageNode(oldEl, a) {
   const rawSrc = String(img.getAttribute('src') || '');
   let held = null;
   try {
-    // The store still has the picked bytes under the id — an entry holding a
-    // BLOB is the local picked copy (a captured video frame is a data URL), and
-    // that is the exact frame the reader is looking at.
-    const prev = attPreviewEntry(idKey, oldUrl);
-    if (prev && prev.blob && oldImg && oldImg.getAttribute('src') !== rawSrc) {
+    // What has to be carried is "the frame that is ON SCREEN", whatever put it
+    // there — this browser's own picked bytes, or the original file's derived
+    // preview, which is every reader who did not upload the file (and the
+    // uploading browser too, once its picked copy has been retired). So the test
+    // is the ELEMENT's own state, not the store's: it must have painted real
+    // bytes (carrying a node that never loaded would park a blank box behind
+    // `.att-swap`), and it must not already be showing the incoming file.
+    if (oldImg && oldImg.complete && oldImg.naturalWidth > 0 && oldImg.getAttribute('src') !== rawSrc) {
       held = oldImg;
       oldImg.classList.add('att-held');
       // The carried frame is the one thing that must stay VISIBLE while the new
@@ -667,14 +685,31 @@ function patchVideoNode(oldEl, a) {
   const wrap = box.firstElementChild;
   const nextVid = wrap && wrap.querySelector('video.att-vid');
   if (!nextVid) return false;
-  const wasPoster = oldVid.dataset.posterOk === '1';
-  if (wasPoster) {
+  // The frame the reader is already looking at has to come with the replacement,
+  // or the new player is a black panel with a spinner in it until the clip's own
+  // first frame can be captured — the same disappear-and-return the still path
+  // refuses. Two sources, best first: the poster this page captured for the source
+  // on screen, then the picked FRAME the upload registered (a data URL — never the
+  // clip's own bytes; see startVideoPreviewCapture), which stands for the
+  // re-encoded file just as well because it is the same picture.
+  let shot = null;
+  if (oldVid.dataset.posterOk === '1') {
     const oldSrc = oldVid.currentSrc || oldVid.getAttribute('src') || '';
-    const shot = typeof videoPosterCache !== 'undefined' ? videoPosterCache.get(oldSrc) : null;
-    if (shot) { rememberVideoPoster(a.url, shot); nextVid.poster = shot; nextVid.dataset.posterOk = '1'; }
+    shot = videoPosterShot(oldSrc) || videoPosterShot(oldVid.getAttribute('src'));
   }
+  if (!shot) {
+    const prev = attPreviewEntry(String(a.id || ''), oldUrl);
+    if (prev && /^data:/.test(String(prev.src || ''))) shot = String(prev.src);
+  }
+  if (shot) { try { rememberVideoPoster(a.url, shot); } catch {} nextVid.poster = shot; nextVid.dataset.posterOk = '1'; }
   try { oldVid.pause(); } catch {}
   oldEl.replaceWith(wrap);
+  // With the frame already in hand there is nothing left to wait for, so the
+  // loading shell has to come off in the same tick: `attVideoHTML` parks every
+  // fresh player behind it (hidden element + spinner panel), and leaving it there
+  // while `posterOk` short-circuits requestVideoPoster below is a clip that never
+  // reveals itself until the reader clicks the panel.
+  if (nextVid.dataset.posterOk === '1') { try { revealVideoShell(nextVid); } catch {} }
   try { requestVideoPoster(nextVid); observeStick(nextVid); } catch {}
   // The published bytes are the source now, so the picked copy can be released
   // once the new element has read its metadata (a beat later, not before).
@@ -718,6 +753,12 @@ function patchAttachmentsIn(node, m) {
     if (!mb) return false;
     const kind = mb.getAttribute('data-fb-kind') || '';
     if (kind !== (a.kind || 'file')) return false;
+    // An infected verdict cannot be patched in place at all: the server DELETED the
+    // bytes, so the rendering has to become the warning card, which only the
+    // renderer builds. (The `!clean` skip below is for a file still waiting on the
+    // slot: its picked bytes are on screen, and the verdict that settles it is
+    // applied by the patch itself.)
+    if (a.scan === 'infected') return false;
     const clean = a.scan !== 'pending' && a.scan !== 'infected';
     if (clean) {
       // Not an in-place change: the attachment is already what it will be, and
@@ -2633,20 +2674,31 @@ function replyPreviewOf(m) {
 // revoked). Anything already sent stays registered: the message that carries it
 // paints from those bytes until the slot publishes the final ones, and the size
 // cap in setAttPreview* is what bounds the rest.
-// The id of every attachment the LIST has painted, with when and whether the scan
-// slot has finished with it. A preview whose attachment is in no message at all
-// was dropped from a composer (its ✕) after the upload answered — nothing will
-// ever show it again — and one that IS in a message is released once the verdict
-// has landed and swapped it. A file STILL pending is never released: its picked
-// bytes are the only thing on screen, and taking them away would put a spinner
-// back where the picture is.
-const attPreviewRendered = new Map(); // att id -> { at, done }
+// The id (and upload url) of every attachment the LIST has painted, with when and
+// whether the scan slot has finished with it. A preview whose attachment is in no
+// message at all was dropped from a composer (its ✕) after the upload answered, or
+// was sent a moment ago — nothing has painted it YET. Those are not the same thing,
+// so an unpainted entry gets a grace window rather than an instant release (see
+// LOCAL_PREVIEW_UNPAINTED_MS); one that IS in a message is released once the
+// verdict has landed and swapped it. A file STILL pending is never released: its
+// picked bytes are the only thing on screen, and taking them away would put a
+// spinner back where the picture is.
+const attPreviewRendered = new Map(); // att id AND the url the bytes were picked under -> { at, done }
 function noteAttPreviewRendered(a) {
   try {
-    if (!a || !a.id) return;
-    const id = String(a.id);
-    const prev = attPreviewRendered.get(id);
-    attPreviewRendered.set(id, { at: Date.now(), done: a.scan === 'clean' || a.scan === 'infected' || (prev && prev.done) });
+    if (!a) return;
+    const at = Date.now();
+    const done = a.scan === 'clean' || a.scan === 'infected';
+    // The id AND the url the picked bytes were registered under. The upload
+    // response carries no attachment id (the row's id is minted when the message
+    // is inserted), so for the whole upload -> post window the url is the only key
+    // that can connect a painted row back to the bytes it was picked from — and
+    // without it the entry reads as "nothing ever painted this" and is released.
+    for (const k of [String(a.id || ''), String(a.url || '')]) {
+      if (!k) continue;
+      const prev = attPreviewRendered.get(k);
+      attPreviewRendered.set(k, { at, done: done || !!(prev && prev.done) });
+    }
   } catch {}
 }
 function pruneAttPreviews() {
@@ -2661,12 +2713,25 @@ function pruneAttPreviews() {
   if (!attPreviews.size) return;
   const now = Date.now();
   for (const [key, entry] of [...attPreviews]) {
-    if (staged.has(key)) continue;
-    if (!entry.id) { releaseAttPreview(key); continue; }   // dropped before it had an id
-    const seen = attPreviewRendered.get(entry.id);
-    if (!seen) { releaseAttPreview(key); continue; }        // dropped before it was ever posted
-    if (!seen.done) continue;                               // still waiting on the slot
-    if (now - seen.at < 60000) continue;                    // the swap is this recent
+    // Still in a composer: never a candidate, and the grace clock restarts.
+    if (staged.has(key)) { entry.unstagedAt = 0; continue; }
+    // What the message list has painted, by attachment id and by upload url (see
+    // noteAttPreviewRendered).
+    const seen = attPreviewRendered.get(entry.id) || attPreviewRendered.get(entry.url) || attPreviewRendered.get(key);
+    if (!seen) {
+      // Nothing has painted it. Two things look exactly like this from here: a
+      // file dropped from a composer before it was ever posted, and a file SENT a
+      // moment ago whose echo has not arrived yet. Only the first should be
+      // released — and releasing the second revokes the blob the row is about to
+      // paint from (see LOCAL_PREVIEW_UNPAINTED_MS). So it gets a grace window.
+      if (!entry.unstagedAt) entry.unstagedAt = now;
+      if (now - entry.unstagedAt < LOCAL_PREVIEW_UNPAINTED_MS) continue;
+      releaseAttPreview(key);
+      continue;
+    }
+    entry.unstagedAt = 0;
+    if (!seen.done) continue;                                // still waiting on the slot
+    if (now - seen.at < LOCAL_PREVIEW_KEEP_MS) continue;     // the swap is this recent
     releaseAttPreview(key);
   }
   if (attPreviewRendered.size > 400) {

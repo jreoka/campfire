@@ -79,6 +79,22 @@ if (!/function attachmentHTML/.test(markSource) || !/function patchAttachmentNod
   console.error('[test] the extracted block is missing attachmentHTML / the patch helpers');
   process.exit(1);
 }
+// The store's own lifetime rules (what keeps the picked bytes alive across the
+// send) and the video poster machinery the replaced player borrows a frame from.
+const PRUNE_START = messages.indexOf('const attPreviewRendered = new Map();');
+const PRUNE_END = messages.indexOf('const CHIP_IMG_ICON =');
+const pruneSource = messages.slice(PRUNE_START, PRUNE_END);
+if (PRUNE_START < 0 || PRUNE_END < 0 || !/function pruneAttPreviews/.test(pruneSource)) {
+  console.error('[test] could not locate the preview-store pruning block in public/js/messages.js');
+  process.exit(1);
+}
+const VID_START = MARK_END;
+const VID_END = messages.indexOf('// ---------- stick-to-bottom on media resize ----------');
+const videoSource = messages.slice(VID_START, VID_END);
+if (VID_END < 0 || !/function rememberVideoPoster/.test(videoSource) || !/function requestVideoPoster/.test(videoSource)) {
+  console.error('[test] could not locate the video poster block in public/js/messages.js');
+  process.exit(1);
+}
 
 // A real PNG of a known shape, so the reserved box can be measured against the
 // box the bytes take (same generator the other attachment tests use).
@@ -135,6 +151,13 @@ function audioPlayerHTML(a) {
     + attDl(a, pending) + '</div>';
 }
 ${markSource}
+// The preview store's lifetime rules and the video poster machinery, exactly as
+// the app loads them (same order: the markup block, then the pruning block, then
+// the poster block), over the two globals pruneAttPreviews() reads.
+const S = { pendingAtts: [], uploads: [] };
+const pendingByCtx = new Map();
+${pruneSource}
+${videoSource}
 // ---- the harness ----
 const host = document.getElementById('atts');
 function slotOf(el) { return el.closest ? el.closest('.att-slot') : null; }
@@ -244,6 +267,35 @@ window.__localPreview = function (id, url, src) {
   setAttPreviewFor({ id, url, kind: 'image' }, src, true, 12345);
   return true;
 };
+// The REAL upload registration: the upload response carries no attachment id (the
+// row's id is minted when the message is inserted), so the entry is keyed by the
+// url the upload answered with — and the picked bytes are a blob: URL.
+window.__uploadPreview = function (url, src, bytes) {
+  setAttPreviewFor({ url, kind: 'image' }, src, true, bytes || 12345);
+  return true;
+};
+window.__uploadVideoPreview = function (url, shot) {
+  setAttPreviewFor({ url, kind: 'video' }, shot, false);
+  return true;
+};
+window.__pickedBlob = function (w, h, shade) {
+  const c = document.createElement('canvas');
+  c.width = w || 64; c.height = h || 48;
+  const g = c.getContext('2d');
+  g.fillStyle = '#101418'; g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = '#' + String(shade || 0x303030).padStart(6, '0').slice(-6);
+  g.fillRect(4, 4, c.width - 8, c.height - 8);
+  return new Promise((res) => c.toBlob((b) => res(URL.createObjectURL(b)), 'image/png'));
+};
+window.__previewHas = function (url) { return !!attPreviews.get(url); };
+// The composer's own repaint, which runs synchronously the moment a message is
+// SENT: the list is cleared first, so nothing is staged any more.
+window.__send = function () { S.pendingAtts = []; S.uploads = []; pruneAttPreviews(); return attPreviews.size; };
+// A message row as the LIST paints it (the store learns from this call).
+window.__noteRendered = function (att) { noteAttPreviewRendered(att); return true; };
+window.__renderedKeys = function () { return [...attPreviewRendered.keys()]; };
+// A clip whose poster this page already captured off the picked file.
+window.__videoPoster = function (url, shot) { rememberVideoPoster(url, shot); return true; };
 // Hold the verdict INSIDE the patch, and read the DOM there: whether the frame
 // that was on screen is still in the new box is a fact about the synchronous
 // swap, and by the time a frame later came back the bytes may already have
@@ -328,6 +380,8 @@ async function main() {
   check(/if \(slots\.length !== atts\.length\) return false;/.test(markSource), 'a slot list that no longer lines up is refused (the renderer rebuilds it)');
   check(/data-att-slot="\$\{esc\(a\.id \|\| ''\)\}"/.test(markSource), 'each rendering is keyed by the attachment id, which survives a republish');
   check(/if \(oldRole !== newRole\) return false;/.test(markSource), 'an attachment whose KIND changed is refused');
+  check(/if \(a\.scan === 'infected'\) return false;/.test(markSource),
+    'and a file the scanner REMOVED is refused — its bytes are gone, so only the renderer can show the warning card');
   check(/if \(!attSameShape\(oldAr, newAr\)\) return false;/.test(markSource), 'so is one whose reserved shape changed');
   check(/function patchImageNode\(oldEl, a\)/.test(markSource) && /function srcPathOf\(u\)/.test(markSource),
     'the still swap compares the FILE the element is showing, not the url string');
@@ -345,6 +399,20 @@ async function main() {
     'a voice note moves its <audio> source, so the player keeps its position and chrome');
   check(/function retireAttPreview\(a, oldUrl\)/.test(markSource) && /retireAttPreview\(a, oldUrl\)/.test(markSource),
     'the picked bytes are released once the published file is what is loaded — under the id AND the url the element was showing');
+  // What is carried across a republish, and for how long the picked bytes live:
+  // both were narrower than the flow they have to survive (see [13]/[14]).
+  check(/if \(oldImg && oldImg\.complete && oldImg\.naturalWidth > 0 && oldImg\.getAttribute\('src'\) !== rawSrc\)/.test(markSource),
+    'the frame carried over is the one that is really painted — whoever fetched it, not only this browser\'s picked copy');
+  check(/const seen = attPreviewRendered\.get\(entry\.id\) \|\| attPreviewRendered\.get\(entry\.url\)/.test(pruneSource),
+    'a painted row is found by the attachment id OR by the url the picked bytes were registered under');
+  check(/for \(const k of \[String\(a\.id \|\| ''\), String\(a\.url \|\| ''\)\]\)/.test(pruneSource),
+    'because the upload response has no id: the url is the only key in the upload -> post window');
+  check(/LOCAL_PREVIEW_UNPAINTED_MS/.test(messages) && /entry\.unstagedAt/.test(pruneSource),
+    'an entry nothing has painted yet gets a grace window instead of being released as a dropped file');
+  check(/revealVideoShell\(nextVid\)/.test(markSource),
+    'a replaced clip lifts the loading shell when it already has its frame');
+  check(/\^data:\/\.test\(String\(prev\.src \|\| ''\)\)/.test(markSource),
+    'and borrows the picked frame when no poster was captured for the source on screen');
 
   console.log('\n[3] the wiring asks for the patch before it rebuilds');
   check(/patchMessageAttachmentsInList\(m\.message\.id, m\.message,/.test(socket), 'message-updated patches the attachments first');
@@ -373,8 +441,12 @@ async function main() {
   const png = pngBytes(64, 48, 0x30);
   const pngOther = pngBytes(48, 64, 0x60);   // a different shape: the patch must refuse it
   // The slow preview: the handler parks the response until the test releases it,
-  // so "the verdict landed while the bytes were still coming" is a fact.
+  // so "the verdict landed while the bytes were still coming" is a fact. The two
+  // `newkey*` previews are the same trick for the republish-under-a-new-key case:
+  // on the live box that preview has to be MINTED first, so the gap is real.
   let slowWait = null;
+  let newHold = null;
+  let newHold2 = null;
   const hits = [];
   const srv = http.createServer((req, res) => {
     const url = (req.url || '/').split('?')[0];
@@ -389,6 +461,14 @@ async function main() {
     };
     if (url === '/uploads/thumbs/files/slow.jpg.webp') {
       slowWait = { resolve: () => serve(png, 'image/png') };
+      return;
+    }
+    if (url === '/uploads/thumbs/files/newkey.webp.webp') {
+      newHold = { resolve: () => serve(png, 'image/png') };
+      return;
+    }
+    if (url === '/uploads/thumbs/files/newkey2.webp.webp') {
+      newHold2 = { resolve: () => serve(png, 'image/png') };
       return;
     }
     if (url === '/uploads/thumbs/files/pic.jpg.webp') return serve(png, 'image/png');
@@ -555,6 +635,19 @@ async function main() {
       return window.__verdict([{ id: 'att-4', kind: 'file', scan: 'clean', url: '/uploads/files/other.jpg?v=2', name: 'other.jpg', size: 15200 }]);
     })()`);
     check(refusedKind === false, 'a card that became a picture (a HEIC converted to JPEG) is refused too', refusedKind);
+    // A verdict that REMOVED the file cannot be patched in place either: the bytes
+    // are gone and the rendering has to become the warning card the renderer builds.
+    const removed = await evaluate(`(function () {
+      window.__render({ id: 'att-x', kind: 'image', scan: 'clean', url: '/uploads/files/pic.jpg?v=1', name: 'pic.jpg', size: 20480, w: 2500, h: 2500 });
+      const ok = window.__verdict([{ id: 'att-x', kind: 'image', scan: 'infected', url: '/uploads/files/pic.jpg?v=1', name: 'pic.jpg', size: 20480, w: 2500, h: 2500 }]);
+      return { ok, img: !!host.querySelector('img.att-img') };
+    })()`);
+    check(removed.ok === false, 'and an infected verdict is refused (the renderer replaces the picture with the warning card)', removed);
+    const removedCard = await evaluate(`(function () {
+      window.__fullRender({ id: 'att-x', kind: 'image', scan: 'infected', url: '/uploads/files/pic.jpg?v=1', name: 'pic.jpg', size: 20480, w: 2500, h: 2500 });
+      return { card: !!host.querySelector('.scan-block.infected'), img: !!host.querySelector('img.att-img') };
+    })()`);
+    check(removedCard.card === true && removedCard.img === false, 'which is what the rebuilt row shows', removedCard);
 
     console.log('\n[9] a voice note keeps its player');
     await evaluate(`window.__render({ id: 'att-5', kind: 'audio', scan: 'clean', url: '/uploads/files/note.m4a?v=1', name: 'note.m4a', size: 4096 })`);
@@ -640,7 +733,97 @@ async function main() {
       'the rebuilt row still paints the picked bytes with its chip (the renderer keeps the store too)', afterFull);
     check(afterFull.boxW > 0 && afterFull.boxH > 0, 'and the box it reserved is on screen, not a collapsed line', afterFull);
 
-    console.log('\n[13] the stylesheet carries the new pieces');
+    console.log('\n[13] the picked bytes survive the SEND (the upload path carries no id)');
+    // The reported second half: "when an image is compressed it disappears and
+    // comes back". The message is sent from the composer, which clears its list
+    // synchronously while the echo that paints the row arrives a socket round trip
+    // later — and the entry was keyed by the UPLOAD URL only (the row's id is
+    // minted at insert), so the prune in that gap read it as "dropped before it had
+    // an id" and revoked the blob. The row then fetched the original file, and the
+    // compressor's republish under a fresh key had no frame left to carry.
+    const blobUrl = await evaluate('window.__pickedBlob(120, 120, 0x717171)');
+    await evaluate(`window.__uploadPreview('/uploads/files/sent.png?v=1', ${JSON.stringify(blobUrl)}, 20480)`);
+    await evaluate(`window.__render({ id: 'att-s', kind: 'image', scan: 'pending', url: '/uploads/files/sent.png?v=1', name: 'sent.png', size: 20480, w: 2500, h: 2500 })`);
+    check(await evaluate('window.__whenPainted()') === true, 'the picked bytes paint while the slot holds the file back');
+    const afterSend = await evaluate(`(function () { window.__send(); return window.__previewHas('/uploads/files/sent.png?v=1'); })()`);
+    check(afterSend === true, 'sending the message does NOT release the picked bytes (the echo is still in flight)', { afterSend });
+    await evaluate(`window.__noteRendered({ id: 'att-s', kind: 'image', scan: 'clean', url: '/uploads/files/sent.png?v=1', name: 'sent.png', size: 20480 })`);
+    await evaluate(`window.__render({ id: 'att-s', kind: 'image', scan: 'clean', url: '/uploads/files/sent.png?v=1', name: 'sent.png', size: 20480, w: 2500, h: 2500 })`);
+    const echoed = await evaluate('window.__state()');
+    check(String(echoed.imgSrc || '').startsWith('blob:'), 'and the row that arrives paints those very bytes — no fetch of the original at all', echoed);
+    check((await evaluate('window.__renderedKeys()')).includes('/uploads/files/sent.png?v=1'),
+      'the painted row is recorded under the url the picked bytes were registered with');
+    // The republish: a NEW key, whose preview the server has to mint — held open
+    // here, so the gap is as real as it is on the box.
+    await evaluate('window.__pin()');
+    await evaluate('window.__tlStart()');
+    await sleep(120);
+    const newKeyStep = await evaluate(`window.__verdictAndSnapshot([{ id: 'att-s', kind: 'image', scan: 'clean', url: '/uploads/files/newkey.webp?v=2', name: 'sent.webp', size: 15200, w: 2500, h: 2500 }])`);
+    check(newKeyStep.out === true, 'the republish under a new key is applied to the element', newKeyStep);
+    check(newKeyStep.snap && newKeyStep.snap.heldInBox === true,
+      'with the frame the reader was looking at carried into the new box', newKeyStep.snap);
+    for (let i = 0; i < 50 && !newHold; i++) await sleep(100);
+    check(!!newHold, 'the new file\'s preview really is in flight (the server is holding it)', { hits });
+    await sleep(250);
+    const heldFrames = await evaluate('window.__tlStop()');
+    check(Array.isArray(heldFrames) && heldFrames.length > 5, 'the timeline has frames to judge', { n: heldFrames && heldFrames.length });
+    const blankHeld = heldFrames.filter((f) => !f.imgVisible || f.card || f.w === 0);
+    check(blankHeld.length === 0, 'no frame shows an empty box while the new bytes are minted', blankHeld.slice(0, 3));
+    if (newHold) newHold.resolve();
+    for (let i = 0; i < 100 && !/newkey\.webp\.webp\?v=2/.test((await evaluate('window.__state()')).imgSrc || ''); i++) await sleep(100);
+    const settled = await evaluate('window.__state()');
+    check(/newkey\.webp\.webp\?v=2/.test(settled.imgSrc || ''), 'the row settles on the published preview once those bytes land', settled);
+    check(!settled.held, 'and the carried frame goes with it', settled);
+
+    console.log('\n[14] a reader with NO picked copy keeps the frame on screen too');
+    // The same republish, on a device that never held the file: the element is
+    // showing the original's own derived preview, and that is what has to be
+    // carried — the store has no entry for it at all.
+    await evaluate(`window.__render({ id: 'att-r', kind: 'image', scan: 'clean', url: '/uploads/files/pic.jpg?v=1', name: 'pic.jpg', size: 20480, w: 2500, h: 2500 })`);
+    check(await evaluate('window.__whenPainted()') === true, 'the original\'s preview paints');
+    await evaluate('window.__pin()');
+    await evaluate('window.__tlStart()');
+    await sleep(120);
+    const readerStep = await evaluate(`window.__verdictAndSnapshot([{ id: 'att-r', kind: 'image', scan: 'clean', url: '/uploads/files/newkey2.webp?v=2', name: 'pic.webp', size: 15200, w: 2500, h: 2500 }])`);
+    check(readerStep.out === true && readerStep.snap && readerStep.snap.heldInBox === true,
+      'the file that is on screen is carried into the republished box', readerStep.snap);
+    for (let i = 0; i < 50 && !newHold2; i++) await sleep(100);
+    check(!!newHold2, 'the republished preview is in flight (the server is holding it)');
+    await sleep(250);
+    const readerFrames = await evaluate('window.__tlStop()');
+    const readerBlank = readerFrames.filter((f) => !f.imgVisible || f.card || f.w === 0);
+    check(readerBlank.length === 0, 'and no frame of that swap is an empty box either', readerBlank.slice(0, 3));
+    if (newHold2) newHold2.resolve();
+
+    console.log('\n[15] a replaced clip keeps the frame it was showing');
+    // A video whose container changes (WebM -> MP4) is a NEW key, so the player has
+    // to be replaced — but a fresh player is parked behind `.loading` (hidden
+    // element + spinner panel) until a poster is captured from the new file. The
+    // frame this page already has stands for it, and the shell has to come off in
+    // the same tick or the clip is a black panel with a spinner in it.
+    const shotData = await evaluate('window.__pickedBytes(64, 36, 0x919191)');
+    await evaluate(`window.__uploadVideoPreview('/uploads/files/clip.webm?v=1', ${JSON.stringify(shotData)})`);
+    await evaluate(`window.__render({ id: 'att-v', kind: 'video', scan: 'pending', url: '/uploads/files/clip.webm?v=1', name: 'clip.webm', size: 40960, w: 1280, h: 720 })`);
+    // …and the poster capture for the frame on screen has already completed.
+    await evaluate(`(function () { const v = document.querySelector('video.att-vid'); window.__videoPoster(v.getAttribute('src'), ${JSON.stringify(shotData)}); v.dataset.posterOk = '1'; v.closest('.att-wrap').classList.remove('loading'); return true; })()`);
+    const vidStep = await evaluate(`(function () {
+      const before = document.querySelector('video.att-vid');
+      const ok = window.__verdict([{ id: 'att-v', kind: 'video', scan: 'clean', url: '/uploads/files/clip2.mp4?v=2', name: 'clip.mp4', size: 30000, w: 1280, h: 720 }]);
+      const v = document.querySelector('video.att-vid');
+      const wrap = document.querySelector('.att-wrap');
+      return {
+        ok, replaced: v !== before,
+        poster: v ? String(v.poster || '').slice(0, 22) : '',
+        loading: wrap ? wrap.classList.contains('loading') : null,
+        visibility: v ? getComputedStyle(v).visibility : null,
+      };
+    })()`);
+    check(vidStep.ok === true && vidStep.replaced === true, 'a new key replaces the player (its own controls and poster belong to the element)', vidStep);
+    check(/^data:/.test(vidStep.poster || ''), 'and it is handed the frame this page already captured', vidStep);
+    check(vidStep.loading === false && vidStep.visibility === 'visible',
+      'with the loading shell lifted, so the frame is what the reader sees', vidStep);
+
+    console.log('\n[16] the stylesheet carries the new pieces');
     check(/\.att-slot\{display:block;width:100%/.test(css.replace(/\s+/g, '')) || /\.att-slot\s*\{[^}]*display:\s*block[^}]*width:\s*100%/.test(css),
       '.att-slot takes the row width, so the media inside resolves its reserved box against it (a shrink-to-fit slot collapses it)');
     check(/\.att-wrap\.att-swap img\.att-img:not\(\.att-held\)\{opacity:0\}/.test(css.replace(/\s+/g, ' ')),
