@@ -1163,7 +1163,6 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
    video is rendered WITHOUT a measured shape the wrap would otherwise collapse to
    zero width and the spinner would never be seen. */
 .att-wrap.loading:not(.ar) .att-ph{position:static;display:flex;width:min(200px,55vw);aspect-ratio:4/3;transition:none}
-.att-wrap.loading img.att-img.att-held{position:static}
 /* Until the poster frame is captured the video is hidden behind a dark panel
    with a spinner: the native "no frame yet" placeholder (grey box + big play
    button on mobile) must never be what a just-loaded attachment looks like. */

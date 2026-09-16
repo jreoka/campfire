@@ -332,8 +332,8 @@ async function main() {
     'the still swap compares the FILE the element is showing, not the url string');
   check(/const rawSrc = String\(img\.getAttribute\('src'\) \|\| ''\);/.test(markSource) && /img\.setAttribute\('src', rawSrc\);/.test(markSource),
     'the replacement keeps its real source (an <img> with no source at all is a broken-image box) and loads behind its own placeholder');
-  check(/if \(img\.complete\) settle\(\);/.test(markSource) && /img\.addEventListener\('load', settle, \{ once: true \}\)/.test(markSource),
-    'with both endings covered (the load event and an image that was already complete) so the placeholder is never left over a painted picture');
+  check(/const reveal = \(\) => \{[\s\S]{0,140}if \(!\(img\.complete && img\.naturalWidth > 0\)\) return;/.test(markSource),
+    'and the reveal demands bytes that are really there (`complete` is true for a failed load too — revealing on it is the blank/broken frame)');
   check(/if \(oldImg && oldImg\.dataset\.phWired && shownPath && shownPath === wantPath\) \{/.test(markSource),
     'and the same file leaves the painted element exactly as it is (a republish in place must not re-decode it)');
   check(/if \(oldImg\.dataset\.fbUrl\) oldImg\.dataset\.fbUrl = String\(a\.url \|\| ''\);/.test(markSource),
@@ -392,6 +392,8 @@ async function main() {
     }
     if (url === '/uploads/thumbs/files/pic.jpg.webp') return serve(png, 'image/png');
     if (url === '/uploads/thumbs/files/other.jpg.webp') return serve(pngOther, 'image/png');
+    if (url === '/uploads/thumbs/files/tl.jpg.webp') return serve(png, 'image/png');
+    if (url === '/uploads/thumbs/files/tl2.jpg.webp') return serve(pngOther, 'image/png');
     if (url.startsWith('/uploads/files/')) return serve(png, 'image/png');
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end('{"error":"not_found"}');
@@ -467,16 +469,18 @@ async function main() {
     check(snap.heldInBox === true, 'the frame that was on screen is carried into the new box in the same tick', snap);
     check(snap.heldVisible === 'visible', 'and it is the visible thing there', snap);
     check(snap.rect && snap.rect.w > 0 && snap.rect.h > 0, 'the box keeps its size across the swap', snap);
-    // The published bytes are fetched and DECODED off the document and are only put
-    // in the row once they can paint — so the row is never an empty box.
+    // The carried frame stays until the published bytes are REALLY there (a load
+    // that failed leaves it in place rather than showing an empty box), and the
+    // published picture takes the box over the moment they are.
     let placed = null;
     for (let i = 0; i < 100; i++) {
-      placed = await evaluate(`(function () { const w = host.querySelector('.att-wrap'); const im = w && w.querySelector('img.att-img'); return im ? { src: String(im.getAttribute('src') || ''), w: Math.round(im.getBoundingClientRect().width), held: !!w.querySelector('.att-held') } : null; })()`);
-      if (placed && /pic\.jpg\.webp\?v=2/.test(placed.src) && !placed.held) break;
+      placed = await evaluate(`(function () { const w = host.querySelector('.att-wrap'); const im = w && w.querySelector('img.att-img'); return im ? { src: String(im.getAttribute('src') || ''), w: Math.round(im.getBoundingClientRect().width), natural: im.naturalWidth, held: !!w.querySelector('.att-held') } : null; })()`);
+      if (placed && /pic\.jpg\.webp\?v=2/.test(placed.src) && !placed.held && placed.natural > 0) break;
       await sleep(100);
     }
-    check(!!placed && /pic\.jpg\.webp\?v=2/.test(placed.src) && placed.w > 0,
-      'the published picture takes the box over once it is ready to paint', placed);
+    check(!!placed && /pic\.jpg\.webp\?v=2/.test(placed.src) && placed.natural > 0,
+      'the published picture takes the box over once its bytes are really there', placed);
+    check(placed && placed.w > 0, 'in a box that never collapsed', placed);
     check(placed && placed.held === false, 'and the carried frame goes with it', placed);
     check(snap.dl === true, 'the download link arrived with the verdict', snap);
     const landing = await evaluate('window.__state()');

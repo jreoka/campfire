@@ -598,24 +598,35 @@ function patchImageNode(oldEl, a) {
     } catch {}
   }
   let settled = false;
-  const settle = () => {
+  // Reveal ONLY a picture that is actually there. `img.complete` is true for a
+  // FAILED load as well, so it can never be the condition on its own: revealing on
+  // that is how a blank box (or a broken-image icon) gets shown, which is the flash
+  // this path exists to remove. `naturalWidth > 0` is the one honest signal.
+  const reveal = () => {
     if (settled) return;
+    if (!(img.complete && img.naturalWidth > 0)) return;
     settled = true;
-    // The picture is painted (the load event fired on a connected element), so the
-    // placeholder can stand down and the carried frame go — one tick, no gap.
     img.dataset.phWired = '1';
     nextWrap.classList.add('ready');
     if (held) { try { held.remove(); } catch {} held = null; }
     try { observeStick(img); } catch {}
     if (a.scan === 'clean') retireAttPreview(a, oldUrl);
   };
-  img.addEventListener('load', settle, { once: true });
-  img.addEventListener('error', settle, { once: true });
-  // A warm cache can have the picture decoded before the next line: setting the
-  // source here paints it, and the placeholder stands down with the picture
-  // already in it. (Both events are listened for, so this can never be missed.)
+  img.addEventListener('load', reveal, { once: true });
+  img.addEventListener('error', () => {
+    // The bytes are not coming. Leaving the carried frame in place is the honest
+    // state (the document error handler owns the degraded card); revealing an
+    // empty box is not.
+    if (settled) return;
+    settled = true;
+    try { observeStick(img); } catch {}
+    if (a.scan === 'clean') retireAttPreview(a, oldUrl);
+  }, { once: true });
+  img.loading = 'eager';
+  // The source goes in before the swap so the fetch is already running; the element
+  // is behind the placeholder from the moment it lands.
   img.setAttribute('src', rawSrc);
-  if (img.complete) settle();
+  if (img.complete) reveal();
   return true;
 }
 // A clip: the player is REPLACED (its own controls and poster state belong to the
