@@ -1,0 +1,22 @@
+[Unit]
+Description=Campfire: pull floating image tags (the ClamAV scanner) and recreate only what moved
+Documentation=file:///opt/campfire/app/deploy/ovh/README.md
+# A fresh host runs provision.sh BEFORE the repo is cloned, so this skips
+# cleanly there instead of failing every 30 minutes until the checkout lands.
+ConditionPathExists=/opt/campfire/app/deploy/ovh/update-images.sh
+Wants=network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/campfire/app
+# bash, not the exec bit: this repo tracks its scripts 0644 and runs them the
+# same way the runbook does (`bash deploy/ovh/...`).
+ExecStart=/bin/bash /opt/campfire/app/deploy/ovh/update-images.sh clamav
+# A new engine may spend minutes reloading the signature database, and the
+# acceptance check scans a 50 MB body. The timer does not fire again until this
+# finishes, so two runs can never overlap (and can never race a pull).
+TimeoutStartSec=1800
+# The scanner is what an unattended job may restart, so a failure here has to be
+# visible rather than swallowed: `systemctl --failed`, and `journalctl -u
+# campfire-images` holds the whole report, including what verify-clamav.js said.

@@ -332,7 +332,21 @@ height).
 `docker-compose.yml`, named volume `clamdb` for the signature database) — a
 signature engine is a database on disk plus a downloader on a schedule
 (freshclam, which the image runs) plus a daemon holding the parsed database in
-RAM, so none of it belongs in the app's image or its process. The app is a client:
+RAM, so none of it belongs in the app's image or its process. **Its tag floats
+(`clamav/clamav:latest`) and the host keeps it current itself**:
+`deploy/ovh/update-images.sh` + `campfire-images.timer` pull it every 30 minutes,
+recreate only when the image actually moved, and keep the update only if the new
+container is healthy AND `scripts/verify-clamav.js` passes inside the app
+container (a daemon whose database failed to load answers OK to everything —
+worse than no scanner because it is believed) — then RESTART the app, because
+`virus-scan.js` caches the engine generation it stamps on every verdict and
+`bucket-scan.js` compares stored rows against that same cached value, so a swap
+underneath a running app would keep stamping the OLD generation and suppress the
+re-sweep a new engine is supposed to trigger. A failed update retags the previous
+image back into place and holds the refused digest in
+`/var/lib/campfire/hold/clamav` so the timer does not retry it every 30 minutes.
+An engine version bump is therefore an unattended full re-verification of the
+stored tree; a daily signature bump deliberately is not. The app is a client:
 `clamav.js` speaks the daemon's TCP protocol directly (VERSION / PING / INSTREAM)
 so there is no ClamAV client dependency, and every upload is **streamed** to the
 daemon in length-prefixed chunks. That is why the two containers share no volume:
@@ -712,6 +726,18 @@ every task, in this file.
   --build` on the host is the only build that matters.
 - Env-only changes need **no rebuild**: edit `/opt/campfire/app/.env` (mode 600)
   and `up -d --force-recreate campfire`.
+- **The scanner updates itself** — the one image on this host that is not the
+  app's own build. `campfire-images.timer` (units in `deploy/ovh/systemd/`,
+  installed by `provision.sh`; script `deploy/ovh/update-images.sh`) pulls
+  `clamav/clamav:latest` every 30 minutes and recreates that ONE service, only
+  when the image ID actually moved. An update is kept only if the new container
+  is healthy AND `scripts/verify-clamav.js` passes inside the app container, and
+  the app is then RESTARTED so it re-probes the engine generation it stamps on
+  every verdict (see §Current state — without that restart the swap is silent and
+  the bucket re-sweep never fires). A failed update retags the previous image
+  back, holds the refused digest in `/var/lib/campfire/hold/clamav`, and shows up
+  in `systemctl --failed` / `journalctl -u campfire-images`. `CLAMAV_TAG=1.4` in
+  `.env` (then `up -d --force-recreate clamav`) freezes or rolls the engine back.
 - Confirm the deploy: `curl https://campfire.dill.moe/api/version` (the
   fingerprint changes) and `docker compose ps` → everything Up, `db` healthy —
   and on the FIRST deploy that brings the scanner up, `clamav` sits **unhealthy

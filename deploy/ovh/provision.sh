@@ -98,11 +98,28 @@ log "campfire directory"
 mkdir -p /opt/campfire/data
 chmod 700 /opt/campfire
 
+log "image updates (the scanner tracks upstream ClamAV releases)"
+# The units live in the repo (deploy/ovh/systemd/) rather than inline here: what
+# runs unattended should be reviewable next to the script it runs. On a fresh
+# host the clone happens AFTER this script, so this arms what it can and says so
+# — re-run it once /opt/campfire/app exists (the README's deploy step says how).
+UNIT_SRC=/opt/campfire/app/deploy/ovh/systemd
+if [ -f "$UNIT_SRC/campfire-images.service" ] && [ -f "$UNIT_SRC/campfire-images.timer" ]; then
+  install -m 644 "$UNIT_SRC/campfire-images.service" "$UNIT_SRC/campfire-images.timer" /etc/systemd/system/
+  systemctl daemon-reload
+  systemctl enable --now campfire-images.timer
+  systemctl list-timers campfire-images.timer --no-pager | head -3
+else
+  echo "note: $UNIT_SRC is not there yet — re-run this script, or copy"
+  echo "      deploy/ovh/systemd/* to /etc/systemd/system/, after the git clone"
+fi
+
 log "summary"
 echo "docker : $(docker --version)"
 echo "compose: $(docker compose version --short 2>/dev/null || echo '?')"
 echo "swap   : $(swapon --show=size --noheadings | tr -d ' ' || echo none)"
 echo "ufw    : $(ufw status | head -1)"
 echo "kernel : $(uname -r)"
+echo "timer  : campfire-images $(systemctl is-active campfire-images.timer 2>/dev/null || echo 'not armed (see the note above)')"
 echo
 echo "If apt upgraded the kernel, reboot at a convenient moment."

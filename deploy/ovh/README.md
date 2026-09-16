@@ -58,7 +58,7 @@ needs beside the app and database:
 | service | why | memory limit |
 |---|---|---|
 | `campfire` | the app | 1.5g |
-| `clamav` | the malware scanner (`clamav/clamav`, named volume `clamdb`) | 1.5g |
+| `clamav` | the malware scanner (`clamav/clamav:latest`, named volume `clamdb`) | 1.5g |
 | `db` | Postgres 18, named volume `pgdata` | 1g |
 | `cloudflared` | the only ingress; outbound-only | - |
 | `coturn` | TURN relay, `network_mode: host` so it binds the public IP | - |
@@ -67,7 +67,9 @@ The scanner is part of the app's function, so it lives in the BASE compose file
 (not this overlay) and every self-hosting shape gets it. It is never published to
 the host: the app dials it by service name on the compose network
 (`CLAMAV_HOST=clamav`) and streams each upload to it with `INSTREAM`, so the two
-containers share no volume.
+containers share no volume. Its image is a floating `latest`, which the
+`campfire-images.timer` systemd job pulls forward on this host — see
+§Keeping the scanner current.
 
 The limits are deliberate: with no orchestrator to arbitrate, one runaway encode
 or a burst of uploads must not be able to starve Postgres. Limits are ceilings,
@@ -85,8 +87,10 @@ ssh root@<ip> bash /root/provision.sh
 
 Idempotent. It installs Docker from Ubuntu's own archive (Docker's apt repo may
 not have published for the release's codename yet), creates a 2 GiB swap file as
-OOM insurance at `swappiness=10`, enables fail2ban and unattended-upgrades,
-bounds Docker's json-file logs, and opens **only ssh and coturn** in ufw:
+OOM insurance at `swappiness=10`, enables fail2ban and unattended-upgrades, arms
+the image-update timer (from the repo, so it exists only after the clone — see
+§Keeping the scanner current), bounds Docker's json-file logs, and opens **only
+ssh and coturn** in ufw:
 
 ```
 22/tcp, 3478/udp, 3478/tcp, 3479/tcp, 49160:49200/udp
@@ -99,7 +103,83 @@ mkdir -p /opt/campfire && git clone https://github.com/jreoka/campfire /opt/camp
 # write /opt/campfire/app/.env  (see "Secrets" below)
 cd /opt/campfire/app
 docker compose -f docker-compose.yml -f deploy/ovh/docker-compose.ovh.yml up -d --build
+# arm the scanner's image updater — provision.sh installs it too, but the clone
+# is what puts the unit files on disk, so on a fresh host it runs here:
+install -m 644 deploy/ovh/systemd/campfire-images.service \
+                deploy/ovh/systemd/campfire-images.timer /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now campfire-images.timer
+systemctl list-timers campfire-images.timer
 ```
+
+## Keeping the scanner current
+
+The scanner runs `clamav/clamav:latest` — the current stable ClamAV release — and
+a systemd timer keeps it there. Fresh signatures are only half of a signature
+engine; the engine itself has to move too, and this is what moves it.
+
+| | |
+|---|---|
+| units | `campfire-images.service` (oneshot) + `campfire-images.timer` (every 30 min, 5 min jitter) |
+| files | `deploy/ovh/systemd/`, installed to `/etc/systemd/system/` |
+| script | `deploy/ovh/update-images.sh` (defaults to the `clamav` service) |
+| log | `journalctl -u campfire-images` |
+| state | `/var/lib/campfire/hold/clamav` — an image that failed here and is held back |
+
+Every 30 minutes it resolves the image the compose file actually names (so a
+`CLAMAV_TAG` pin is respected, never second-guessed), pulls it, and **recreates
+only when the image ID moved** — a run that finds nothing new costs one registry
+check and does not touch the running daemon. When it did move, the update is kept
+only if all three of these hold:
+
+1. **The new container reports healthy.** That is clamd's own `PING`
+   healthcheck, and a clamd that loaded no database never gets that far: the
+   image's entrypoint refuses to start without one.
+2. **`scripts/verify-clamav.js` passes**, run inside the app container. This is
+   the check that matters — a daemon whose database failed to load answers OK to
+   everything, and no healthcheck can tell that from a working engine. Its whole
+   report goes to the journal, so what was verified is recorded with the update
+   that was kept.
+3. **The app is restarted.** The app caches the engine generation it stamps on
+   every verdict (`virus-scan.js`'s `engineIdentity`) and `bucket-scan.js`
+   compares stored rows against that same cached value, so a scanner swapped in
+   underneath a *running* app would keep stamping the **old** generation and
+   would suppress the re-sweep a new engine is supposed to trigger. The restart
+   re-probes it, and the updater logs the new
+   `ClamAV engine ready (… 1.5.4 …)` line to prove it landed. Expect a few
+   seconds of 502, exactly like a deploy.
+
+If any step fails, the previous image is retagged back into place and the
+container is recreated from it — a pull moves the *tag* and deletes nothing, so
+the image that was serving is still on the host — and the refused digest is
+written to `/var/lib/campfire/hold/clamav` so the timer does not retry a broken
+release every 30 minutes. Remove that file to try it again; `systemctl --failed`
+and `journalctl -u campfire-images` are where a failed run shows up.
+
+Run it by hand — the same path the timer takes:
+
+```bash
+systemctl start campfire-images.service                  # then: journalctl -u campfire-images -f
+bash deploy/ovh/update-images.sh                         # the scanner, directly
+bash deploy/ovh/update-images.sh clamav coturn            # any compose service
+```
+
+**What auto-updating a scanner costs, stated plainly.** An upstream ClamAV
+release now lands here without anyone reviewing it. The gate above is what makes
+that acceptable — a release that does not detect EICAR, or whose database does not
+load, is rolled back automatically instead of quietly failing open — but an engine
+can still change behaviour (a new signature that flags a file this instance
+already holds), and **a new ClamAV version is a full re-verification of the stored
+tree**: the engine *generation* changes, so the next `bucket-scan.js` pass adopts
+every key the generation now running has not judged. Nothing is gated while that
+happens — adopted keys are queued ungated, so a pass can only ever remove malware,
+never briefly take a working file from a reader. A signature update alone is
+deliberately *not* a generation change, so freshclam's hourly runs do not rescan
+anything.
+
+To freeze the engine instead, set `CLAMAV_TAG=1.5` in `.env` and recreate the
+service (`up -d --force-recreate clamav`): the updater reads the tag out of the
+compose file, so the pin holds. The same lever is the rollback — `CLAMAV_TAG=1.4`
+puts the previous engine back, and it stays there.
 
 ## Deploying a change
 
@@ -240,7 +320,9 @@ defaulting to path-style.
 `VIRUS_SCAN=1`. The engine is **ClamAV**, in the `clamav` container — a signature
 engine needs a signature database on disk, a downloader on a schedule (freshclam,
 which the image runs) and a daemon holding that database in RAM, so none of it
-belongs in the app's image or process. The app streams every upload to `clamd`
+belongs in the app's image or process. The image is `clamav/clamav:latest` (the
+current stable release, kept current by §Keeping the scanner current). The app
+streams every upload to `clamd`
 over TCP (`INSTREAM`), one connection per file, so **no volume is shared** between
 the two containers and the daemon never needs to see a path in the app's. The
 pipeline is **scan -> compress -> scan**, and only the last clean verdict is

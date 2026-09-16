@@ -20,7 +20,15 @@ services:
   # only streams uploads to it over TCP (see clamav.js) and shares no volume with
   # it, because INSTREAM means the daemon never needs the app's files.
   clamav:
-    image: clamav/clamav:${CLAMAV_TAG:-1.4}
+    # `latest` is the current stable ClamAV release (the versioned tags — 1.4,
+    # 1.5 — are this same build, frozen). It floats on purpose: fresh signatures
+    # are only half of a signature engine, so the ENGINE floats too, and
+    # deploy/ovh/update-images.sh + campfire-images.timer pull this container
+    # forward unattended, gated on the app's own acceptance check
+    # (scripts/verify-clamav.js) with an automatic rollback when it fails.
+    # Pin it with CLAMAV_TAG=1.5 to freeze the engine, or to hold a release you
+    # do not want — which is also the rollback lever for a bad update.
+    image: clamav/clamav:${CLAMAV_TAG:-latest}
     container_name: campfire-clamav
     restart: unless-stopped
     # The signatures live in a named volume, not the image layer: the first boot

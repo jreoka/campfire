@@ -1,0 +1,18 @@
+[Unit]
+Description=Campfire: check for a newer ClamAV image every 30 minutes
+Documentation=file:///opt/campfire/app/deploy/ovh/README.md
+
+[Timer]
+# 10 minutes after boot: long enough that a deploy restarting the stack is not
+# fighting a pull for the disk and the network.
+OnBootSec=10min
+# 30 minutes between runs. ClamAV releases land weeks apart, so this is a
+# freshness check, not a poll — and the unit is a oneshot whose next run waits
+# for the previous one to finish.
+OnUnitActiveSec=30min
+# Not all hosts behind one NAT should hit the registry in the same second.
+RandomizedDelaySec=5min
+Unit=campfire-images.service
+
+[Install]
+WantedBy=timers.target
