@@ -1215,13 +1215,20 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   for the plain page, `html.standalone` and `html.wrapper-app` (the Tauri
   Android shell, which is NOT `display-mode: standalone` — the reason the rules
   never applied there), while leaving the Edit-message textarea selectable; the
-  wrapper is also asserted to inherit the standalone body rules. In the browser
+  wrapper is also asserted to inherit the standalone body rules — and to get
+  message text BACK through the same escape hatch, because the shell's
+  `user-select:none` covers the Windows/macOS/Linux app too and the wrapper half
+  of that re-enable rule was missing, so nothing in a chat could be highlighted
+  in the app while the identical page in a browser selected fine. In the browser
   it holds a real finger down on the row's LEFT PADDING (no text under it), on
   the timestamp, on the avatar and on the message body: each hold slides the
   message sheet up, never the desktop context menu, selects nothing
   (`window.getSelection()` stays empty), and the sheet carries Copy text so
   turning selection off costs nothing; a plain tap still does not leave a sheet
-  behind.
+  behind. It then drops touch emulation for a FINE pointer at a desktop viewport
+  with `html.wrapper-app` on: the body stays `user-select:none`, the message text
+  computes `text`, and a real mouse drag over it leaves that text in
+  `window.getSelection()`.
   `node scripts/test-touch-hold-hover.js` covers the "one row looks already
   selected" bug when a long-press slides its sheet up under a finger that is
   still down (offline; runs the real `suppressHoverFromTouch`/

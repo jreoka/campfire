@@ -82,6 +82,8 @@ check(/\.msg input,\.msg textarea,/.test(coarse || '') && /user-select:text/.tes
   'while the one real field a message holds (Edit message) stays selectable');
 check(/html\.standalone body,html\.wrapper-app body\{/.test(css),
   'the wrapper gets the standalone shell rules too (it is not display-mode: standalone)');
+check(/html\.wrapper-app \.msg \.text,html\.wrapper-app \.msg \.text \*,/.test(css),
+  'and the wrapper gets message text back — the desktop app has to be able to highlight it');
 
 async function main() {
   const chromePath = findChrome();
@@ -322,6 +324,40 @@ async function main() {
     await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await sleep(200);
     check(!(await evaluate(`!!document.querySelector('#sheet')`)), 'a plain tap does not leave a sheet open');
+
+    // The other half of the same rule: turning selection off is a TOUCH
+    // decision. On a fine pointer (a desktop, and so the Windows app) the shell
+    // must let the reader highlight message text — the wrapper used to inherit
+    // `user-select:none` with no way out, so nothing in a chat could be
+    // selected in the app while the same page in a browser was fine.
+    console.log('\n[6] on a desktop pointer the same text IS selectable, app shell included');
+    await send('Emulation.setTouchEmulationEnabled', { enabled: false });
+    await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+    await sleep(250);
+    const desk = await evaluate(`(() => {
+      document.documentElement.classList.add('wrapper-app');
+      const el = document.querySelector('.msg[data-mid] .text');
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      return {
+        coarse: matchMedia('(pointer:coarse)').matches,
+        hover: matchMedia('(hover:none)').matches,
+        userSelect: cs.webkitUserSelect || cs.userSelect,
+        body: getComputedStyle(document.body).webkitUserSelect || getComputedStyle(document.body).userSelect,
+        y: r.top + r.height / 2, x1: r.left + 2, x2: r.right - 2, kind: el.textContent.trim(),
+      };
+    })()`);
+    check(!desk.coarse, 'the desktop viewport reports a fine pointer (the test is meaningful)', desk);
+    check(desk.body === 'none' && desk.userSelect === 'text',
+      'the app shell keeps its no-select chrome, but message text opts back in', desk);
+    await evaluate(`window.getSelection().removeAllRanges()`);
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: Math.round(desk.x1), y: Math.round(desk.y), button: 'left', clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: Math.round(desk.x2), y: Math.round(desk.y), button: 'left', buttons: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: Math.round(desk.x2), y: Math.round(desk.y), button: 'left', clickCount: 1 });
+    await sleep(120);
+    const dragged = await evaluate(`window.getSelection().toString()`);
+    check(!!dragged && desk.kind.includes(dragged), 'a mouse drag over the text really highlights it', { dragged, kind: desk.kind });
+    await evaluate(`(() => { document.documentElement.classList.remove('wrapper-app'); window.getSelection().removeAllRanges(); })()`);
 
     const realErrors = pageErrors.filter((e) => e && !/favicon|Failed to load resource/i.test(e));
     check(realErrors.length === 0, 'no page exceptions', realErrors.slice(0, 3));

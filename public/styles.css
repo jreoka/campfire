@@ -3277,14 +3277,23 @@ body.story-open{overflow:hidden}
    the `html.standalone` half never applied there and the whole app stayed
    text-selectable. A long-press on the left of a message then started the
    browser's own selection (the reported "it highlights the timestamp"), whose
-   gesture cancelled the 550ms hold and the message sheet never opened. */
+   gesture cancelled the 550ms hold and the message sheet never opened.
+
+   The way back out of that shell-wide `user-select:none` is the second rule,
+   and it has to name BOTH shells: message text is the one thing a reader must
+   be able to highlight, and the wrapper half was missing it — so no chat text
+   could be selected in the Windows/macOS/Linux/Android app while the very same
+   page in a browser (and the installed PWA, via `html.standalone`) selected
+   fine. It is listed for both, and the coarse-pointer block further down turns
+   it back OFF on touch, where a long-press is the message menu and the sheet's
+   Copy text row is the affordance instead. */
 html.standalone body,html.wrapper-app body{
   -webkit-touch-callout:none;
   user-select:none;
   overscroll-behavior:none;
 }
 html.standalone .msg .text,html.standalone .msg .text *,html.standalone input,html.standalone textarea,html.standalone .codebox,html.standalone .backup-codes,html.standalone .codebox-inline,html.standalone .uc-bio,
-html.wrapper-app input,html.wrapper-app textarea,html.wrapper-app .codebox,html.wrapper-app .backup-codes,html.wrapper-app .codebox-inline,html.wrapper-app .uc-bio{
+html.wrapper-app .msg .text,html.wrapper-app .msg .text *,html.wrapper-app input,html.wrapper-app textarea,html.wrapper-app .codebox,html.wrapper-app .backup-codes,html.wrapper-app .codebox-inline,html.wrapper-app .uc-bio{
   user-select:text;
   -webkit-user-select:text;
 }
