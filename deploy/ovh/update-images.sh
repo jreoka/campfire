@@ -60,17 +60,24 @@ done
 compose() { docker compose "${COMPOSE_FILES[@]}" "$@"; }
 log() { printf '[images] %s\n' "$*"; }
 
-# The image the compose file resolves for a service — read from compose itself so
-# a CLAMAV_TAG pin is honoured rather than second-guessed here. A failure is
-# reported instead of swallowed (an unresolvable service used to look exactly
-# like a build-only one).
+# The services this compose project defines, so a typo'd name is a loud failure
+# rather than a silent skip.
+service_exists() { compose config --services 2>/dev/null | grep -qx "$1"; }
+
+# The image a service names, read out of the MERGED config so a `CLAMAV_TAG` pin
+# is honoured here rather than second-guessed. Deliberately NOT
+# `compose config --images <service>`: for a service that only has a `build:`
+# key that flag ignores the filter and prints the first image in the whole file
+# (measured on this stack: `--images campfire` answers `postgres:18-alpine`),
+# which is how this script once pulled and compared against the wrong image.
+# Empty output means there is nothing to pull, which is what a service built
+# from this checkout should say.
 image_of() {
-  local out
-  if ! out="$(compose config --images "$1" 2>&1)"; then
-    printf '[images] cannot resolve the image for %s: %s\n' "$1" "$out" >&2
-    return 1
-  fi
-  printf '%s\n' "$out" | head -n1
+  compose config 2>/dev/null | awk -v svc="$1" '
+    $0 == "  " svc ":"  { inblk = 1; next }
+    inblk && /^  [^ ]/   { exit }
+    inblk && /^    image:/ { sub(/^    image:[ ]*/, ""); print; exit }
+  '
 }
 image_id()      { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null || true; }
 container_of()  { compose ps -q "$1" 2>/dev/null || true; }
@@ -176,12 +183,14 @@ restart_app_and_confirm() {
 failed=0
 
 for svc in "${SERVICES[@]}"; do
-  if ! image="$(image_of "$svc")"; then
+  if ! service_exists "$svc"; then
+    log "$svc: no such service in this compose file"
     failed=1
     continue
   fi
+  image="$(image_of "$svc")"
   if [ -z "$image" ]; then
-    log "$svc: no image in the compose file (a build-only service?) — skipped"
+    log "$svc: built from a Dockerfile, not an image — nothing to pull"
     continue
   fi
   if stopped_container "$svc"; then
