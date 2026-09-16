@@ -1,0 +1,509 @@
+// No load -> unload -> load: a pending upload paints its own picked bytes, and a
+// verdict lands on the element instead of rebuilding the list.
+//
+// The reported bug: "when i upload a photo it loads and then the compressor gets
+// it and it disappears into a loading spinner then reappears again." An upload
+// posts to chat immediately, but its bytes stay behind the scan gate until the
+// scan -> compress -> scan slot has published them, so the message first arrived
+// with scan:'pending' and the client drew a spinner CARD where the picture had
+// been — then the verdict re-broadcast the message, renderMessages() rebuilt the
+// whole list, and the picture came back (an <img> re-created, a <video> loaded
+// from scratch, a voice note restarted).
+//
+// Three halves:
+//   [1] the markup: a pending attachment WITH a local preview renders the real
+//       media plus a processing chip (never the spinner card), the download link
+//       and the star wait for the final bytes, and the reserved box is the same
+//       one the final rendering takes;
+//   [2] the patch, driven in headless Chrome against the REAL markup and the REAL
+//       patchAttachmentNode: a pending -> clean image keeps the frame the reader
+//       is looking at until the new bytes land (the old node is still in the DOM
+//       while the preview is in flight), the verdict removes the chip, an
+//       attachment whose kind or aspect changed is REFUSED so the caller can fall
+//       back to a render, and an audio player swaps its source without being
+//       rebuilt (its playhead survives);
+//   [3] the wiring: the socket handlers ask for the patch before rebuilding, and
+//       the upload path registers the picked bytes against the attachment id.
+//
+// Skips the browser half (exit 0) without Chrome.
+//
+// Usage: node scripts/test-pending-media.js
+'use strict';
+
+const fs = require('fs');
+const http = require('http');
+const os = require('os');
+const path = require('path');
+const zlib = require('zlib');
+const { spawn } = require('child_process');
+const WebSocket = require('ws');
+
+const ROOT = path.join(__dirname, '..');
+const CDP_PORT = parseInt(process.env.TEST_CDP_PORT || '9356', 10);
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let passed = 0;
+const failures = [];
+function check(cond, name, detail) {
+  const d = detail && typeof detail === 'object' ? JSON.stringify(detail) : detail;
+  if (cond) { passed++; console.log('  ok   ' + name); }
+  else { failures.push(name + (d ? ' — ' + d : '')); console.log('  FAIL ' + name + (d ? ' — ' + d : '')); }
+}
+function skip(msg) { console.log('[test] SKIP: ' + msg); process.exit(0); }
+function findChrome() {
+  const candidates = [
+    process.env.CHROME_PATH,
+    'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+    '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  ].filter(Boolean);
+  return candidates.find((p) => { try { return fs.existsSync(p); } catch { return false; } }) || null;
+}
+
+const messages = fs.readFileSync(path.join(ROOT, 'public/js/messages.js'), 'utf8');
+const socket = fs.readFileSync(path.join(ROOT, 'public/js/socket.js'), 'utf8');
+const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
+
+// The real markup generator AND the real preview store / handover helpers: they
+// live in one block on purpose (see the header of the store in messages.js).
+const MARK_START = messages.indexOf('const DL_ICON =');
+const MARK_END = messages.indexOf('// ---------- video posters:');
+if (MARK_START < 0 || MARK_END < 0) {
+  console.error('[test] could not locate the attachment markup block in public/js/messages.js');
+  process.exit(1);
+}
+const markSource = messages.slice(MARK_START, MARK_END);
+if (!/function attachmentHTML/.test(markSource) || !/function patchAttachmentNode/.test(markSource) || !/function patchAttachmentsIn/.test(markSource)) {
+  console.error('[test] the extracted block is missing attachmentHTML / the patch helpers');
+  process.exit(1);
+}
+
+// A real PNG of a known shape, so the reserved box can be measured against the
+// box the bytes take (same generator the other attachment tests use).
+function pngBytes(w, h, shade) {
+  const raw = Buffer.alloc((w * 3 + 1) * h);
+  for (let y = 0; y < h; y++) {
+    const row = y * (w * 3 + 1);
+    raw[row] = 0;
+    for (let x = 0; x < w; x++) {
+      const i = row + 1 + x * 3;
+      raw[i] = shade; raw[i + 1] = shade; raw[i + 2] = shade;
+    }
+  }
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(zlib.crc32(body) >>> 0);
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; ihdr[9] = 2;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+function pageHtml() {
+  return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
+<style>${css}</style>
+<style>html,body{margin:0;background:#0e1420}
+#host{width:420px;padding:10px}
+/* The real message chain, with a DEFINITE column width (exactly what .body is in
+   the app): the reserved box resolves its width against its containing block, and
+   an indefinite one would collapse the percentage inside the width expression to
+   zero and prove nothing. */
+#host .body{min-width:0;width:400px}
+#host *{transition:none!important}</style>
+</head><body><div id="host"><div class="msg"><div class="body"><div class="text" id="text"></div><div class="msg-atts" id="atts"></div></div></div></div>
+<script>
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function fmtSize(n) { return Math.max(0, Math.round(Number(n) / 1024)) + ' KB'; }
+function fmtClock() { return '0:00'; }
+function toast() {}
+function attMetaStub() { return ''; }
+function textPreviewable() { return false; }
+function textFileHTML() { return ''; }
+function audioPlayerHTML(a) {
+  const pending = a.scan === 'pending';
+  const src = attPreviewSrc(a);
+  return '<div class="vplayer" data-url="' + esc(a.url) + '"' + attMeta(a, 'audio') + '>'
+    + '<audio src="' + esc(src || a.url) + '" data-fb-src="' + esc(a.url) + '" preload="metadata"></audio>'
+    + attDl(a, pending) + '</div>';
+}
+${markSource}
+// ---- the harness ----
+const host = document.getElementById('atts');
+function slotOf(el) { return el.closest ? el.closest('.att-slot') : null; }
+window.__render = function (att) {
+  host.innerHTML = '';
+  host.insertAdjacentHTML('beforeend', attachmentHTML(att));
+  const slot = host.firstElementChild;
+  if (att.kind === 'image') { try { wireAttImage(slot.querySelector('img.att-img')); } catch (e) {} }
+  return true;
+};
+// The REAL patch path, exactly as a verdict broadcast drives it: the slot list is
+// matched to the server's attachments and each one is handed to the patch.
+window.__verdict = function (atts) {
+  try { return patchAttachmentsIn(host.closest('.msg'), { attachments: atts }); } catch (e) { return 'ERR ' + e.message; }
+};
+window.__box = function () {
+  const box = host.querySelector('.att-wrap');
+  if (!box) return null;
+  const r = box.getBoundingClientRect();
+  return { w: Math.round(r.width), h: Math.round(r.height) };
+};
+window.__state = function () {
+  const slot = host.querySelector('.att-slot');
+  const img = host.querySelector('img.att-img');
+  const proc = host.querySelector('.att-proc');
+  const card = host.querySelector('.scan-block');
+  const audio = host.querySelector('audio');
+  const box = host.querySelector('.att-wrap');
+  return {
+    slot: !!slot,
+    attId: slot ? slot.dataset.attSlot : null,
+    imgTag: img ? img.tagName : null,
+    imgSrc: img ? img.getAttribute('src') : null,
+    imgCurrent: img ? (img.currentSrc || '') : null,
+    imgFbOrig: img ? (img.dataset.fbOrig || '') : null,
+    imgFbUrl: img ? (img.dataset.fbUrl || '') : null,
+    imgThumb: img ? !!img.dataset.fbThumb : false,
+    held: !!host.querySelector('img.att-held'),
+    proc: proc ? proc.textContent.trim() : null,
+    procDisplay: proc ? getComputedStyle(proc).display : null,
+    card: card ? (card.querySelector('b') ? card.querySelector('b').textContent : '') : null,
+    dl: !!host.querySelector('.att-dl'),
+    dlHref: host.querySelector('.att-dl') ? host.querySelector('.att-dl').getAttribute('href') : null,
+    audioSrc: audio ? audio.getAttribute('src') : null,
+    audioFbSrc: audio ? (audio.dataset.fbSrc || '') : null,
+    audioTime: audio ? audio.currentTime : null,
+    boxW: box ? Math.round(box.getBoundingClientRect().width) : 0,
+    boxH: box ? Math.round(box.getBoundingClientRect().height) : 0,
+    boxClass: box ? box.className : '',
+    ready: box ? box.classList.contains('ready') : false,
+  };
+};
+// The node identity the whole test turns on: a rebuild replaces the element, the
+// patch keeps the frame the reader was already looking at.
+window.__imgNode = function () { return host.querySelector('img.att-img'); };
+window.__pin = function () { window.__pinned = host.querySelector('img.att-img'); return !!window.__pinned; };
+window.__sameNode = function () { const n = host.querySelector('img.att-img'); return !!n && n === window.__pinned; };
+window.__localPreview = function (id, url, src) {
+  setAttPreviewFor({ id, url, kind: 'image' }, src, true, 12345);
+  return true;
+};
+// Hold the verdict INSIDE the patch, and read the DOM there: whether the frame
+// that was on screen is still in the new box is a fact about the synchronous
+// swap, and by the time a frame later came back the bytes may already have
+// landed (on a local test server they usually have).
+window.__verdictAndSnapshot = function (atts) {
+  window.__snap = null;
+  const orig = patchImageNode;
+  patchImageNode = function (oldEl, a) {
+    const r = orig(oldEl, a);
+    const slot = host.querySelector('.att-slot');
+    const held = slot ? slot.querySelector('img.att-held') : null;
+    const imgs = slot ? [...slot.querySelectorAll('img.att-img')] : [];
+    const box = slot ? slot.querySelector('.att-wrap') : null;
+    const rect = box ? (() => { const q = box.getBoundingClientRect(); return { w: Math.round(q.width), h: Math.round(q.height) }; })() : null;
+    window.__snap = {
+      ok: r, rect,
+      heldInBox: !!held, heldVisible: held ? getComputedStyle(held).visibility : null,
+      imgs: imgs.map((i) => ({ src: String(i.getAttribute('src')), legacySized: i.getBoundingClientRect().width < 8 })),
+      dl: !!slot.querySelector('.att-dl'),
+    };
+    return r;
+  };
+  const out = patchAttachmentsIn(host.closest('.msg'), { attachments: atts });
+  patchImageNode = orig;
+  const finalBox = host.querySelector('.att-wrap');
+  const bodyEl = document.querySelector('#atts');
+  return {
+    out, snap: window.__snap,
+    boxStyle: finalBox ? finalBox.getAttribute('style') : null,
+    bodyW: bodyEl ? Math.round(bodyEl.getBoundingClientRect().width) : null,
+    slotW: host.querySelector('.att-slot') ? Math.round(host.querySelector('.att-slot').getBoundingClientRect().width) : null,
+  };
+};
+// The picked bytes, for real: a small canvas PNG as a data URL. The preview
+// source has to be bytes this browser can actually paint, or nothing below can
+// observe the hand-over (a broken src never fires load, so the old frame stays).
+window.__pickedBytes = function (w, h, shade) {
+  const c = document.createElement('canvas');
+  c.width = w || 64; c.height = h || 48;
+  const g = c.getContext('2d');
+  g.fillStyle = '#101418'; g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = '#' + String(shade || 0x303030).padStart(6, '0').slice(-6);
+  g.fillRect(4, 4, c.width - 8, c.height - 8);
+  return c.toDataURL('image/png');
+};
+window.__whenPainted = function () {
+  const img = host.querySelector('img.att-img');
+  if (!img) return Promise.resolve(false);
+  if (img.complete && img.naturalWidth > 0) return Promise.resolve(true);
+  return new Promise((res) => {
+    img.addEventListener('load', () => res(true), { once: true });
+    img.addEventListener('error', () => res(false), { once: true });
+    setTimeout(() => res(!!(img.complete && img.naturalWidth > 0)), 3000);
+  });
+};
+window.__previewStore = function () { return { size: attPreviews.size, bytes: attPreviewBytes }; };
+</script></body></html>`;
+}
+
+async function main() {
+  console.log('\n[1] the pending rendering is the real media, not a spinner card');
+  check(/function attPendingPreview\(a\)/.test(markSource), 'a pending attachment asks for its picked bytes');
+  check(/const local = pending && attPendingPreview\(a\);\s*\n\s*if \(pending && !local\) return `<div class="scan-block scanning"/.test(markSource),
+    'the scanning card is now the FALLBACK (no local preview: another device, a reload, a non-media upload)');
+  check(/attProcHTML\(\)/.test(markSource) && /class="att-proc"/.test(markSource), 'a pending media attachment carries the processing chip instead');
+  check(/function attProcHTML\(\)[\s\S]{0,220}pointer-events/ .test(css) || /\.att-proc\{[^}]*pointer-events:none/.test(css),
+    'and the chip cannot eat the lightbox tap or the player controls');
+  check(/const preview = shot \? shot\.src : \(pending \? attPreviewSrc\(a\) : ''\);/.test(markSource) && /src="\$\{esc\(preview \|\| thumb \|\| a\.url\)\}"/.test(markSource),
+    'a pending picture paints the picked bytes, falling back to its derived preview and then its own url');
+  check(/function attShot\(a\)/.test(markSource) && /const stand_in = hit\.blob \|\| a\.scan === 'pending';/.test(markSource),
+    'only a LOCAL copy or a pending upload counts as a stand-in — a clean file renders its own bytes and preview as before');
+  check(/data-fb-orig="\$\{esc\(a\.url\)\}"/.test(markSource), 'the element still records the url it will fall back to');
+  check(/function attVideoHTML\(a, opts\)/.test(markSource) && /data-fb-src="\$\{esc\(a\.url\)\}"/.test(markSource),
+    'a clip is a player from the start, carrying the CLEAN source it will swap to');
+  check(/attDl\(a, pending\)/.test(markSource) && /attFavHTML\(a, pending\)/.test(markSource),
+    'the download link and the star wait for the final bytes (nothing to save or star yet)');
+  check(/function attDl\(a, pending\) \{ return pending \? '' :/.test(markSource), 'and that is what attDl does with the flag');
+
+  console.log('\n[2] the verdict is applied to the element, never to the list');
+  check(/function patchAttachmentNode\(oldEl, a\)/.test(markSource), 'the per-attachment patch exists');
+  check(/function patchAttachmentsIn\(node, m\)/.test(markSource), 'and the per-message one that walks the slots');
+  check(/if \(slots\.length !== atts\.length\) return false;/.test(markSource), 'a slot list that no longer lines up is refused (the renderer rebuilds it)');
+  check(/data-att-slot="\$\{esc\(a\.id \|\| ''\)\}"/.test(markSource), 'each rendering is keyed by the attachment id, which survives a republish');
+  check(/if \(oldRole !== newRole\) return false;/.test(markSource), 'an attachment whose KIND changed is refused');
+  check(/if \(!attSameShape\(oldAr, newAr\)\) return false;/.test(markSource), 'so is one whose reserved shape changed');
+  check(/box\.innerHTML = attachmentBodyHTML\(a, \{ live: false \}\);/.test(markSource),
+    'the still swap builds the FINAL rendering through the real markup (never the preview it is replacing)');
+  check(/oldImg\.classList\.add\('att-held'\)/.test(markSource) && /img\.att-img\.att-held/.test(css),
+    'and holds the frame that is on screen until the new bytes land');
+  check(/function patchAudioNode\(oldEl, a\)/.test(markSource) && /audio\.dataset\.fbSrc = String\(a\.url \|\| ''\)/.test(markSource),
+    'a voice note moves its <audio> source, so the player keeps its position and chrome');
+  check(/function retireAttPreview\(a, oldUrl\)/.test(markSource) && /retireAttPreview\(a, oldUrl\)/.test(markSource),
+    'the picked bytes are released once the published file is what is loaded — under the id AND the url the element was showing');
+
+  console.log('\n[3] the wiring asks for the patch before it rebuilds');
+  check(/patchMessageAttachmentsInList\(m\.message\.id, m\.message,/.test(socket), 'message-updated patches the attachments first');
+  check(/case 'dm-updated':[\s\S]{0,600}patchMessageAttachmentsInList\(m\.message\.id, m\.message,/.test(socket),
+    'so does dm-updated (a DM photo or voice note must not blink either)');
+  const upBlock = socket.slice(socket.indexOf("case 'message-updated'"), socket.indexOf("case 'reaction-update'"));
+  check(/!upOnScreen\)\) renderMessages\(\)/.test(upBlock) || /!upOnScreen && !inHistUp\)/.test(upBlock) || /&& !upOnScreen\) renderMessages/.test(upBlock),
+    'and the full rebuild is skipped for a message that is on screen');
+  check(/function messageAttachmentsOnScreen\(/.test(messages), 'the "is this row painted" question is a helper of its own');
+  check(/setAttPreviewFor\(data, URL\.createObjectURL\(u\.file\), true, u\.file\.size\)/.test(messages),
+    'the upload path registers the picked bytes against the attachment id, with its byte size for the cap');
+  check(/LOCAL_PREVIEW_CAP_BYTES/.test(messages) && /if \(attPreviewStaged\.has\(k\)\) continue;/.test(messages),
+    'the preview store is bounded, and never evicts a file still sitting in a composer');
+
+  const chromePath = findChrome();
+  if (!chromePath) {
+    console.log('\n[4] SKIP the browser half: no Chrome/Edge found (set CHROME_PATH)');
+    return finish();
+  }
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-pending-'));
+  const png = pngBytes(64, 48, 0x30);
+  const pngOther = pngBytes(48, 64, 0x60);   // a different shape: the patch must refuse it
+  // The slow preview: the handler parks the response until the test releases it,
+  // so "the verdict landed while the bytes were still coming" is a fact.
+  let slowWait = null;
+  const hits = [];
+  if (process.env.DBG_HITS) setInterval(() => console.log('DBG hits', JSON.stringify(hits)), 1500).unref();
+  const srv = http.createServer((req, res) => {
+    const url = (req.url || '/').split('?')[0];
+    if (url === '/' || url === '/index.html') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(pageHtml());
+    }
+    hits.push(url);
+    const serve = (buf, type) => {
+      res.writeHead(200, { 'Content-Type': type, 'Content-Length': buf.length });
+      res.end(buf);
+    };
+    if (url === '/uploads/thumbs/files/slow.jpg.webp') {
+      slowWait = { resolve: () => serve(png, 'image/png') };
+      return;
+    }
+    if (url === '/uploads/thumbs/files/pic.jpg.webp') return serve(png, 'image/png');
+    if (url === '/uploads/thumbs/files/other.jpg.webp') return serve(pngOther, 'image/png');
+    if (url.startsWith('/uploads/files/')) return serve(png, 'image/png');
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end('{"error":"not_found"}');
+  });
+  await new Promise((res) => srv.listen(0, '127.0.0.1', res));
+  const port = srv.address().port;
+
+  const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=' + CDP_PORT,
+    '--user-data-dir=' + path.join(dir, 'profile'), '--no-first-run', '--no-default-browser-check',
+    '--hide-scrollbars', '--window-size=520,640', 'about:blank'], { stdio: 'ignore' });
+
+  let ws = null;
+  try {
+    let info = null;
+    for (let i = 0; i < 60 && !info; i++) {
+      try { info = await (await fetch('http://127.0.0.1:' + CDP_PORT + '/json/version')).json(); } catch { await sleep(250); }
+    }
+    if (!info) return skip('Chrome never opened its DevTools port');
+
+    ws = new WebSocket(info.webSocketDebuggerUrl, { perMessageDeflate: false, maxPayload: 64 * 1024 * 1024 });
+    await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
+    let id = 0; const pending = new Map();
+    ws.on('message', (raw) => {
+      const m = JSON.parse(raw);
+      if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+    });
+    const call = (method, params, sessionId) => new Promise((res, rej) => {
+      const i = ++id;
+      pending.set(i, (m) => (m.error ? rej(new Error(method + ': ' + JSON.stringify(m.error))) : res(m.result)));
+      ws.send(JSON.stringify({ id: i, sessionId, method, params }));
+    });
+    const targetId = (await call('Target.createTarget', { url: 'about:blank' })).targetId;
+    const sessionId = (await call('Target.attachToTarget', { targetId, flatten: true })).sessionId;
+    const sess = (m, p) => call(m, p, sessionId);
+    const evaluate = async (expression) => {
+      const r = await sess('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+      if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || 'page error');
+      return r.result.value;
+    };
+
+    await sess('Page.enable');
+    await sess('Runtime.enable');
+    await sess('Emulation.setDeviceMetricsOverride', { width: 420, height: 620, deviceScaleFactor: 2, mobile: true });
+    await sess('Page.navigate', { url: 'http://127.0.0.1:' + port + '/' });
+    await sleep(400);
+    if (!(await evaluate('typeof window.__render === "function"'))) {
+      console.error('[test] the extracted messages.js block did not evaluate in the page');
+      process.exit(1);
+    }
+
+    console.log('\n[4] pending: the picked bytes are on screen, with the chip');
+    // The attachment as the server first sends it, WITH the local registration the
+    // upload path made (id + url + the picked bytes as a real data URL).
+    const picked = await evaluate('window.__pickedBytes(120, 120, 0x303030)');
+    await evaluate(`window.__localPreview('att-1', '/uploads/files/pic.jpg?v=1', ${JSON.stringify(picked)})`);
+    await evaluate(`window.__render({ id: 'att-1', kind: 'image', scan: 'pending', url: '/uploads/files/pic.jpg?v=1', name: 'pic.jpg', size: 20480, w: 2500, h: 2500 })`);
+    check(await evaluate('window.__whenPainted()') === true, 'the picked bytes paint');
+    const p0 = await evaluate('window.__state()');
+    check(p0.slot && p0.attId === 'att-1', 'the attachment renders inside its id-keyed slot', p0);
+    check(!p0.card, 'no spinner card — the media itself is what the reader sees', p0);
+    check(p0.imgSrc && p0.imgSrc.startsWith('data:'), 'the picture paints the picked bytes while the slot holds the bytes back', p0);
+    check(p0.proc === 'Processing', 'and the processing chip says so', p0);
+    check(!p0.dl, 'with nothing to download yet', p0);
+    check(p0.boxW > 0 && p0.boxH > 0, 'the box is on screen at a real size (the stored 2500px shape, capped by CSS)', p0);
+
+    console.log('\n[5] the verdict swaps the bytes under the same node');
+    await evaluate('window.__pin()');
+    const step = await evaluate(`window.__verdictAndSnapshot([{ id: 'att-1', kind: 'image', scan: 'clean', url: '/uploads/files/pic.jpg?v=2', name: 'pic.jpg', size: 15200, w: 2500, h: 2500 }])`);
+    check(step.out === true, 'the patch reports the change applied', step);
+    // The box is rebuilt from the real markup on the spot — and the picture that
+    // was on screen is moved into it in the same tick, so what the reader is
+    // looking at never changes and nothing is ever an empty box.
+    const snap = step.snap || {};
+    check(snap.heldInBox === true, 'the frame that was on screen is carried into the new box in the same tick', snap);
+    check(snap.heldVisible === 'visible', 'and it is the visible thing there', snap);
+    check(snap.rect && step.snap.rect.w > 0 && step.snap.rect.h > 0, 'the box keeps its size across the swap', snap);
+    const newImg = (snap.imgs || []).find((x) => /pic\.jpg\.webp\?v=2/.test(x.src)) || null;
+    check(!!newImg, 'the box points at the derived preview of the PUBLISHED bytes', snap);
+    check(snap.dl === true, 'and the download link arrives with it', snap);
+    const landing = await evaluate('window.__state()');
+    check(!landing.proc, 'the processing chip is gone with the verdict', landing);
+    for (let i = 0; i < 100 && !/pic\.jpg\.webp\?v=2/.test((await evaluate('window.__state()')).imgSrc || ''); i++) await sleep(100);
+    const s1 = await evaluate('window.__state()');
+    check(await evaluate('window.__whenPainted()') === true, 'the published preview lands and paints', s1);
+    check(/pic\.jpg\.webp\?v=2/.test(s1.imgSrc || ''), 'the element now belongs to the final bytes', s1);
+    check(s1.imgThumb && s1.imgFbOrig === '/uploads/files/pic.jpg?v=2' && s1.imgFbUrl === '/uploads/files/pic.jpg?v=2',
+      'pointing at the derived preview with the published url as the fallback', s1);
+    check(s1.dl && s1.dlHref === '/uploads/files/pic.jpg?v=2', 'the link opens the published file', s1);
+    check(!s1.held, 'the held frame is dropped once the new bytes are up', s1);
+    check(s1.ready, 'the placeholder is lifted', s1);
+
+    console.log('\n[6] the frame on screen survives a slow preview');
+    // The verdict arrives while the final preview is NOT ready: the reader keeps
+    // looking at the picture they were looking at, never at an empty box. The
+    // request is held open by the server until this test lets it go, so the
+    // ordering is a fact rather than a race.
+    const picked2 = await evaluate('window.__pickedBytes(120, 120, 0x404040)');
+    await evaluate(`window.__localPreview('att-2', '/uploads/files/slow.jpg?v=1', ${JSON.stringify(picked2)})`);
+    await evaluate(`window.__render({ id: 'att-2', kind: 'image', scan: 'pending', url: '/uploads/files/slow.jpg?v=1', name: 'slow.jpg', size: 20480, w: 2500, h: 2500 })`);
+    check(await evaluate('window.__whenPainted()') === true, 'the picked bytes paint');
+    await evaluate('window.__pin()');
+    const slowStep = await evaluate(`window.__verdictAndSnapshot([{ id: 'att-2', kind: 'image', scan: 'clean', url: '/uploads/files/slow.jpg?v=2', name: 'slow.jpg', size: 15200, w: 2500, h: 2500 }])`);
+    check(slowStep.out === true, 'the patch is applied even though the preview is in flight', slowStep);
+    // Read inside the patch's own tick: the frame that was on screen is in the
+    // new box, and the box is the reserved one — while the new bytes are still
+    // on the wire.
+    const slowSnap = slowStep.snap || {};
+    check(slowSnap.heldInBox === true, 'the picture the reader was looking at is carried over, not replaced by an empty box', slowSnap);
+    check(slowSnap.rect && slowSnap.rect.h > 0, 'and the box keeps the reserved size while the request is open', slowSnap);
+    for (let i = 0; i < 50 && !slowWait; i++) await sleep(100);
+    check(!!slowWait, 'the published preview really is in flight (the server is holding it)', { hits });
+    check(!(await evaluate('window.__state()')).proc, 'while the chip is already gone (the verdict is known)', {});
+    if (slowWait) slowWait.resolve();
+    for (let i = 0; i < 100 && !/slow\.jpg\.webp\?v=2/.test((await evaluate('window.__state()')).imgSrc || ''); i++) await sleep(100);
+    const done = await evaluate('window.__state()');
+    check(/slow\.jpg\.webp\?v=2/.test(done.imgSrc || ''), 'the swap lands when the bytes do', done);
+    check(!done.held, 'and the held frame goes with it', done);
+    const endBox = await evaluate('window.__box()');
+    check(endBox && endBox.h === slowSnap.rect.h, 'with the box still the same one', { endBox, before: slowSnap.rect });
+
+    console.log('\n[7] a change the patch cannot make is refused, not half-applied');
+    await evaluate(`window.__localPreview('att-3', '/uploads/files/other.jpg?v=1', 'data:image/png;base64,')`);
+    await evaluate(`window.__render({ id: 'att-3', kind: 'image', scan: 'pending', url: '/uploads/files/other.jpg?v=1', name: 'other.jpg', size: 20480, w: 2500, h: 2500 })`);
+    const beforeWrong = await evaluate('window.__imgNode() && true');
+    check(beforeWrong === true, 'the pending row is rendered', { beforeWrong });
+    const refused = await evaluate(`window.__verdict([{ id: 'att-3', kind: 'image', scan: 'clean', url: '/uploads/files/other.jpg?v=2', name: 'other.jpg', size: 15200, w: 2500, h: 800 }])`);
+    check(refused === false, 'a published shape that no longer matches the reserved one is refused (the list rebuilds instead)', refused);
+    const afterWrong = await evaluate('window.__state()');
+    check(afterWrong.imgFbOrig === '/uploads/files/other.jpg?v=1' && afterWrong.proc === 'Processing',
+      'and the row is left exactly as it was — never half-patched', afterWrong);
+    const refusedKind = await evaluate(`(function () {
+      window.__render({ id: 'att-4', kind: 'image', scan: 'pending', url: '/uploads/files/other.jpg?v=1', name: 'other.jpg', size: 20480, w: 2500, h: 2500 });
+      return window.__verdict([{ id: 'att-4', kind: 'file', scan: 'clean', url: '/uploads/files/other.jpg?v=2', name: 'other.jpg', size: 15200 }]);
+    })()`);
+    check(refusedKind === false, 'a card that became a picture (a HEIC converted to JPEG) is refused too', refusedKind);
+
+    console.log('\n[8] a voice note keeps its player');
+    await evaluate(`window.__render({ id: 'att-5', kind: 'audio', scan: 'clean', url: '/uploads/files/note.m4a?v=1', name: 'note.m4a', size: 4096 })`);
+    const audioBefore = await evaluate('window.__state()');
+    await evaluate('(function () { const a = document.querySelector("audio"); try { a.currentTime = 1.5; } catch (e) {} })()');
+    const audioDone = await evaluate(`(function () {
+      const ok = window.__verdict([{ id: 'att-5', kind: 'audio', scan: 'clean', url: '/uploads/files/note.m4a?v=2', name: 'note.m4a', size: 4096 }]);
+      return { ok, state: window.__state() };
+    })()`);
+    check(audioDone.ok === true, 'an audio url change patches in place', audioDone);
+    check(audioDone.state.audioFbSrc === '/uploads/files/note.m4a?v=2' && /note\.m4a\?v=2$/.test(audioDone.state.audioSrc || ''),
+      'the <audio> is re-sourced to the published file', audioDone.state);
+    check((audioDone.state.audioTime || 0) > 0.5, 'and the playhead was NOT reset (the player was not rebuilt)', audioDone.state);
+
+    console.log('\n[9] the stylesheet carries the new pieces');
+    check(/\.att-slot\{display:block;width:100%/.test(css.replace(/\s+/g, '')) || /\.att-slot\s*\{[^}]*display:\s*block[^}]*width:\s*100%/.test(css),
+      '.att-slot takes the row width, so the media inside resolves its reserved box against it (a shrink-to-fit slot collapses it)');
+    check(/img\.att-img\.att-held\{position:absolute/.test(css.replace(/\s+/g, '')), 'the held frame is taken out of flow (no layout jump)');
+    check(/\.att-wrap\.loading:not\(\.ar\)\s*\.att-ph\{[^}]*position:static/.test(css),
+      'and a clip with no measured shape still shows its placeholder box (the wrap cannot collapse)');
+  } catch (e) {
+    console.error('[test] ' + (e && e.stack || e));
+    process.exit(1);
+  } finally {
+    try { ws && ws.close(); } catch {}
+    try { chrome.kill(); } catch {}
+    try { srv.close(); } catch {}
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+  return finish();
+}
+
+function finish() {
+  console.log('\n' + (failures.length ? 'FAILED (' + failures.length + ')' : 'all ' + passed + ' checks passed'));
+  if (failures.length) { for (const f of failures) console.log('  - ' + f); process.exit(1); }
+}
+
+main().catch((e) => { console.error('[test] ' + (e && e.stack || e)); process.exit(1); });

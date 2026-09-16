@@ -1138,6 +1138,32 @@ img,video{-webkit-user-drag:none}
 .spoiler-veil{position:absolute;inset:0;margin:auto;align-self:center;justify-self:center;width:max-content;max-width:80%;height:max-content;z-index:3;border:0;border-radius:999px;background:rgba(0,0,0,.7);color:#fff;font-size:.8rem;font-weight:700;padding:.45rem 1rem;cursor:pointer}
 .att-wrap.spoiler.shown .spoiler-veil{display:none}
 .att-wrap img.att-img,.att-wrap video.att-vid{display:block}
+/* ---------- the pending -> final handover ----------
+   An upload posts to chat immediately and its bytes stay behind the scan gate
+   until the slot has published them. The uploading browser paints its OWN picked
+   bytes during that window (see attachmentHTML), so what is on screen is the
+   picture — not a spinner standing where it will be — and the only thing the
+   verdict changes is that small chip in the corner.
+   The slot carries the attachment id: it is the handle a verdict broadcast is
+   applied through, so the media element underneath is patched in place instead of
+   the list being rebuilt (which would flash the picture back through its
+   placeholder and restart a clip).
+   It takes the row's WIDTH rather than shrink-to-fitting it: the media inside
+   resolves its own `min(…, 100%, …)` width against this box, and a shrink-to-fit
+   containing block collapses that percentage to zero (the message column would
+   then be as wide as the picture's loaded size, not the reserved one). */
+.att-slot{display:block;width:100%;max-width:100%}
+.att-proc{position:absolute;left:.45rem;bottom:.45rem;display:inline-flex;align-items:center;gap:.32rem;padding:.18rem .5rem .18rem .42rem;border-radius:999px;background:rgba(9,12,24,.72);color:#fff;font-size:.68rem;font-weight:600;letter-spacing:.01em;z-index:2;pointer-events:none}
+.att-proc-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:scan-pulse 1.6s ease-in-out infinite}
+/* The frame the reader was already looking at, held over the incoming bytes: the
+   swap is invisible when the fetch is warm, and a still picture (never an empty
+   box) when it is not. See patchImageNode. */
+img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
+/* A placeholder is the SKIN over a reserved box, never the box itself: when a
+   video is rendered WITHOUT a measured shape the wrap would otherwise collapse to
+   zero width and the spinner would never be seen. */
+.att-wrap.loading:not(.ar) .att-ph{position:static;display:flex;width:min(200px,55vw);aspect-ratio:4/3;transition:none}
+.att-wrap.loading img.att-img.att-held{position:static}
 /* Until the poster frame is captured the video is hidden behind a dark panel
    with a spinner: the native "no frame yet" placeholder (grey box + big play
    button on mobile) must never be what a just-loaded attachment looks like. */

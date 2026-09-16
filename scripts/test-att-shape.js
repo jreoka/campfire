@@ -125,13 +125,16 @@ const text = document.getElementById('text');
 // Tenths, not whole pixels: a thin panorama box is 47.6px tall, and rounding it
 // to 48 would read as an 8% ratio error that isn't there.
 const rect = (el) => { const r = el.getBoundingClientRect(); return { w: Math.round(r.width * 10) / 10, h: Math.round(r.height * 10) / 10 }; };
-// The real renderer + the real wiring, exactly as messageEl does it.
+// The real renderer + the real wiring, exactly as messageEl does it. The slot is
+// the patch handle a verdict broadcast is applied through (see messages.js), so
+// the markup it produces is read from the media wrapper INSIDE it.
 function mk(att) {
   const box = document.createElement('div');
   box.className = 'msg-atts';
   box.innerHTML = attachmentHTML(att);
   text.appendChild(box);
-  const wrap = box.firstElementChild;
+  const slot = box.firstElementChild;
+  const wrap = slot.querySelector('.att-wrap') || slot;
   if (typeof wireAttImage === 'function') wireAttImage(wrap.querySelector('img.att-img'));
   return wrap;
 }

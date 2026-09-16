@@ -323,8 +323,16 @@ function onWS(m) {
         if (r.threadLast && r.threadLast.id === m.message.id) r.threadLast = threadLastFromMsg(m.message);
       });
       const inHistUp = S.histMode && S.histMode.kind === 'server' && S.histMode.id === m.channelId;
-      if (m.channelId === S.channelId && !inHistUp) renderMessages();
-      if (S.thread && (S.thread.rootId === m.message.id || S.thread.replies.some((r) => r.id === m.message.id))) renderThread();
+      // A verdict landing re-broadcasts the message with its final bytes. Patching
+      // the attachments where they stand keeps the picture the reader just sent on
+      // screen (and a clip playing) — a rebuild would flash them back through the
+      // placeholder and restart playback. Anything that cannot be patched falls
+      // back to the list's own render below, per container.
+      patchMessageAttachmentsInList(m.message.id, m.message, (which) => {
+        if (which === '#thread-replies') renderThread(); else renderMessages();
+      });
+      const upOnScreen = messageAttachmentsOnScreen(m.message.id);
+      if (m.channelId === S.channelId && !inHistUp && !upOnScreen) renderMessages();
       break;
     }
     case 'reaction-update': {
@@ -475,7 +483,11 @@ function onWS(m) {
     case 'dm-updated': {
       updateMsgInCaches(m.message.id, (old) => Object.assign(old, m.message));
       const inHistDu = S.histMode && S.histMode.kind === 'dm' && S.histMode.id === m.message.threadId;
-      if (S.view === 'home' && S.dmThreadId === m.message.threadId && !inHistDu) renderDmMessages();
+      // Same in-place attachment patch as message-updated: a DM photo or voice
+      // note must not blink back through its placeholder when the verdict lands.
+      patchMessageAttachmentsInList(m.message.id, m.message, () => renderDmMessages());
+      const duOnScreen = messageAttachmentsOnScreen(m.message.id);
+      if (S.view === 'home' && S.dmThreadId === m.message.threadId && !inHistDu && !duOnScreen) renderDmMessages();
       // Same snapshot problem as dm-deleted: an edit to the newest message (its
       // text, or its last attachment going away) is what the row's preview is
       // showing, so the row has to be re-read.

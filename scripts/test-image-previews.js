@@ -133,9 +133,11 @@ window.__mk = function (att) {
   const host = document.getElementById('host');
   const d = document.createElement('div');
   d.innerHTML = attachmentHTML(att);
-  const wrap = d.firstElementChild;
-  host.appendChild(wrap);
-  return wrap;
+  // The slot is the verdict patch's handle (see messages.js); the media wrapper
+  // inside it is what carries the preview and the original.
+  const slot = d.firstElementChild;
+  host.appendChild(slot);
+  return slot.querySelector('.att-wrap') || slot;
 };
 // The degraded card a picture this browser cannot decode ends as: every field a
 // plain file card has, plus the attachment identity the menus read.
@@ -223,7 +225,8 @@ async function main() {
     'the backups/ rule is untouched');
 
   console.log('\n[3] the client asks for the preview, with the original one error away');
-  check(/class="att-img"[^>]*\ssrc="\$\{esc\(thumb \|\| a\.url\)\}"/.test(markSource), 'the markup prefers the derived preview');
+  check(/class="att-img"[^>]*\ssrc="\$\{esc\(preview \|\| thumb \|\| a\.url\)\}"/.test(markSource),
+    'the markup prefers the derived preview (and the picked bytes first, while the upload is pending)');
   check(/data-fb-thumb="1"/.test(markSource) && /data-fb-url="\$\{esc\(a\.url\)\}"/.test(markSource),
     'and carries the original it falls back to');
   check(/loading="lazy"/.test(markSource), 'integration with native lazy loading is kept');
@@ -238,7 +241,8 @@ async function main() {
   check(/attFromEl\(t\)/.test(errSource), 'the fallback reads the real attachment identity (id/url/name/size/kind) off the element it replaces');
   check(/data-fb-size="\$\{esc\(\(a && a\.size\) \|\| 0\)\}"/.test(markSource), 'every rendering carries its size for that fallback to read');
   check(/openLightbox\(imgEl\.dataset\.fbUrl \|\| imgEl\.src/.test(pickers), 'the lightbox opens the ORIGINAL, never the preview');
-  check(/attDl\(a\)\}/.test(markSource) || /function attDl\(a\)/.test(markSource), 'the download link is unchanged (it was always the original)');
+  check(/attDl\(a, pending\)\}/.test(markSource) || /function attDl\(a, pending\)/.test(markSource),
+    'the download link is unchanged (it was always the original), and withheld only while the file is still behind the gate');
 
   const chromePath = findChrome();
   if (!chromePath) {
@@ -326,7 +330,7 @@ async function main() {
     let cold = null;
     for (let i = 0; i < 40; i++) {
       await sleep(100);
-      cold = await evaluate('window.__state(document.querySelector(".att-wrap"))');
+      cold = await evaluate('window.__state(document.querySelector(".att-slot"))');
       if (cold.natural > 0) break;
     }
     check(cold && cold.natural > 0, 'the picture still renders when the preview cannot be minted', cold);
@@ -342,14 +346,14 @@ async function main() {
     let warm = null;
     for (let i = 0; i < 40; i++) {
       await sleep(100);
-      warm = await evaluate('window.__state(document.querySelectorAll(".att-wrap")[1])');
+      warm = await evaluate('window.__state(document.querySelectorAll(".att-slot")[1])');
       if (warm.natural > 0) break;
     }
     check(warm && warm.natural > 0, 'the preview renders', warm);
     check(warm && /\/uploads\/thumbs\/files\/warm\.jpg\.webp\?v=zz$/.test(warm.current), 'straight off the derived URL, cache key and all', warm);
     check(!hits.some((h) => h.startsWith('/uploads/files/warm.jpg')), 'the full-size photo was never downloaded', hits);
-    check(await evaluate('!!document.querySelectorAll(".att-wrap")[1].querySelector(".spoiler-veil")'), 'a spoilered image keeps its veil');
-    check(await evaluate('!!document.querySelectorAll(".att-wrap")[1].classList.contains("spoiler")'), 'and its blur class');
+    check(await evaluate('!!document.querySelectorAll(".att-slot")[1].querySelector(".spoiler-veil")'), 'a spoilered image keeps its veil');
+    check(await evaluate('!!document.querySelectorAll(".att-slot")[1].querySelector(".att-wrap").classList.contains("spoiler")'), 'and its blur class');
 
     console.log('\n[6] a picture the browser cannot decode degrades to a REAL file card');
     // The reported shape: an iPhone HEIC on Windows rendered as an outlined box
@@ -360,7 +364,7 @@ async function main() {
     let card = null;
     for (let i = 0; i < 40; i++) {
       await sleep(100);
-      card = await evaluate('window.__card(document.querySelectorAll(".att-wrap")[2])');
+      card = await evaluate('window.__card(document.querySelectorAll(".att-slot")[2])');
       if (card) break;
     }
     check(!!card, 'the picture ends as a file card rather than a broken-image box', card);
