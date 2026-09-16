@@ -272,6 +272,35 @@ async function main() {
       check(!!r && Math.abs(Math.abs(r.gap) - r.wrapH) <= 0.6, 'the two lines stay one cell apart (a rigid strip)', r);
       check(!!r && r.anims.every((a) => a.endsWith(':running')), 'with both halves animating', r && r.anims);
     }
+
+    // ---------- the dot beside my avatar: the same derived fact as the rows ----
+    // The me bar is painted from S.presenceMobile, and a device switch arrives as
+    // a `user-mobile` frame. Only a reload used to move it, because every frame
+    // repainted the member list and never the bar — so this drives the REAL
+    // server: one more socket of the SAME account claiming to be a phone (the
+    // account has no server here, so nothing but the notifyUser fan-out can
+    // carry the flip to the page).
+    console.log('\n[3] my own phone flag moves the bar, with no reload');
+    const dot0 = await evaluate(`(() => { paintMe(); const d = document.querySelector('#me-dot'); return { cls: d.className, title: d.title } })()`);
+    check(!/phone/.test(dot0.cls), 'the desktop bar starts as a plain dot', dot0);
+
+    const phoneToken = await evaluate(`store.token`);
+    const phone = new WebSocket(`ws://127.0.0.1:${PORT}/ws?token=${encodeURIComponent(phoneToken)}&device=mobile`);
+    try {
+      await new Promise((res, rej) => { phone.once('open', res); phone.once('error', rej); });
+      phone.send(JSON.stringify({ t: 'subscribe' }));
+      phone.send(JSON.stringify({ t: 'visibility', visible: true })); // the phone is in hand
+      const toPhone = await waitFor(`/phone/.test(document.querySelector('#me-dot').className)`);
+      check(!!toPhone, 'a phone arriving flips the me bar to the phone glyph at once',
+        await evaluate(`document.querySelector('#me-dot').className`));
+      // Putting the phone down (its page hidden) hands the indicator back to the
+      // desktop that is still renewing its own claim.
+      phone.send(JSON.stringify({ t: 'visibility', visible: false }));
+      const offPhone = await waitFor(`!/phone/.test(document.querySelector('#me-dot').className)`);
+      check(!!offPhone, 'and putting it down flips the bar back — no refresh involved',
+        await evaluate(`document.querySelector('#me-dot').className`));
+    } finally { try { phone.close(); } catch {} }
+
     check(pageErrors.length === 0, 'no uncaught page errors', pageErrors.slice(0, 3));
   } finally {
     try { if (ws) ws.close(); } catch {}

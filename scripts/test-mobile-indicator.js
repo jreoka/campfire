@@ -424,6 +424,28 @@ async function protocolPhase() {
     const lmOff = await waitFor(() => { const e = lastMobile(edesk); return e && e.mobile === 0 ? e : null; });
     check(!!lmOff, 'and the desktop being used takes the indicator back on its own renewal', lastMobile(edesk) || null);
 
+    // The me bar is painted from the account's OWN flag, so the account's own
+    // sockets have to be an audience. For everyone above that happened to be
+    // true twice over (each is a member of the server the broadcast goes to),
+    // so the case that proves the fan-out is the account with NO server and no
+    // friend: nothing but notifyUser can carry its own flip back to it.
+    console.log('\n[7b2] the account itself is an audience for its own flip');
+    const fay = await reg('fay', 'Fay');
+    const fdesk = await open(fay.token);
+    sockets.push(fdesk);
+    fdesk.send(JSON.stringify({ t: 'subscribe' }));
+    fdesk.send(JSON.stringify({ t: 'visibility', visible: true })); // the desktop is in front
+    await sleep(400);
+    const fphone = await open(fay.token, 'mobile');
+    sockets.push(fphone);
+    fphone.send(JSON.stringify({ t: 'subscribe' }));
+    fphone.send(JSON.stringify({ t: 'visibility', visible: true }));
+    const fOn = await waitFor(() => { const e = pushFor(fdesk, 'user-mobile', fay.user.id); return e && e.mobile === 1 ? e : null; });
+    check(!!fOn, 'an account with no server and no friend still hears its OWN phone arrive', fOn || null);
+    fphone.send(JSON.stringify({ t: 'visibility', visible: false }));
+    const fOff = await waitFor(() => { const e = pushFor(fdesk, 'user-mobile', fay.user.id); return e && e.mobile === 0 ? e : null; });
+    check(!!fOff, 'and hears it leave again — the me bar has no roster of its own to fall back on', fOff || null);
+
     // ---- the other half of presence: online → Away → Online ----
     // Two things the account has to get right, and both are visible here:
     //   * WHERE an untimed Away came from. Only the idle clock's may be silently
@@ -615,7 +637,7 @@ async function main() {
   check(/t: 'user-status', serverId: sid, userId: u\.id, status: u\.status, mobile: onPhone/.test(server)
     && /notifyFriends\(u\.id, \{ t: 'user-status', userId: u\.id, status: u\.status, mobile: onPhone \}\)/.test(server),
     'every status frame carries the phone flag (going invisible dropped the glyph, and nothing ever restored it)');
-  check(/if \(typeof m\.mobile === 'number'\) \{ if \(m\.mobile\) S\.presenceMobile\[m\.userId\] = 1; else delete S\.presenceMobile\[m\.userId\]; \}/.test(socket),
+  check(/if \(typeof m\.mobile === 'number'\) setPresenceMobile\(m\.userId, !!m\.mobile\);/.test(socket),
     'and the client applies it on a status frame');
   check(/notifyFriends\(id, \{ t: 'user-status', userId: id, status: 'online', mobile: onPhone \}\)/.test(server),
     'a timed Away/invisible LAPSING tells friends too — the no-shared-server audience was skipped entirely, so an invisible friend stayed a grey dot');
@@ -628,6 +650,12 @@ async function main() {
   check(/async function announceMobile\(userId, servers\)/.test(server)
     && /mobile: onPhone \}\);/.test(slice(server, 'async function announceMobile(', '// Send a payload to every live socket')),
     'and every path that can move it — that close, a visibility frame, a reaped replica — goes through ONE announcer');
+  // The me bar is painted from the account's OWN flag, so the announcer has to
+  // reach that account's own sockets. A server broadcast happens to include them
+  // (the account is a member of its own server), but a user with no server has
+  // no roster at all — notifyUser is the replica-safe fan-out to just them.
+  check(/notifyUser\(userId, \{ t: 'user-mobile', userId, mobile: onPhone \}\)/.test(slice(server, 'async function announceMobile(', '// Send a payload to every live socket')),
+    'and it reaches the account\'s OWN sockets (the me bar answers to the same flag)');
   check(/if \(ws\.readyState !== 1\) earlyCleanup\(\);/.test(server) && /const earlyCleanup = \(\) => \{ clients\.delete\(ws\); presenceForget\(ws\)/.test(server),
     'and a socket that dies inside the handshake is deregistered too (its readyState is re-read after the insert)');
   check(/new Set\(gone\.map\(\(r\) => r\.user_id\)\)/.test(server) && /await announceMobile\(uid, sids\);/.test(server),
@@ -664,15 +692,23 @@ async function main() {
   check(/&device=mobile/.test(socket) && /const dev = deviceIsMobile\(\) \? '&device=mobile' : '';/.test(socket),
     'connectWS claims the device once, at connect');
   check(/presenceMobile: \{\}/.test(core), 'S.presenceMobile is part of the client state');
-  check(/for \(const id of Object\.keys\(on\)\) \{ if \(mob\[id\]\) S\.presenceMobile\[id\] = 1; else delete S\.presenceMobile\[id\]; \}/.test(socket),
+  check(/for \(const id of Object\.keys\(on\)\) setPresenceMobile\(id, !!mob\[id\]\);/.test(socket),
     'a roster REPLACES the flag for every id in it (a phone glyph cannot outlive its session)');
-  check(/if \(m\.mobile\) S\.presenceMobile\[m\.userId\] = 1; else delete S\.presenceMobile\[m\.userId\];/.test(socket),
+  check(/setPresenceMobile\(m\.userId, !!m\.mobile\);/.test(socket),
     'user-online carries it too');
   check(/case 'user-mobile':/.test(socket), 'and user-mobile is handled on its own');
-  check(/case 'user-offline':\s*\n\s*delete S\.presenceAll\[m\.userId\];\s*\n\s*delete S\.presenceMobile\[m\.userId\];/.test(socket),
+  check(/case 'user-offline':\s*\n\s*delete S\.presenceAll\[m\.userId\];\s*\n\s*setPresenceMobile\(m\.userId, false\);/.test(socket),
     'going offline drops the phone flag with the status');
   check(/repaintFriendsIfVisible\(\)/.test(slice(socket, "case 'user-mobile':", "case 'user-offline':")),
     'the live path repaints the rows it changes (friends list + member list)');
+  // The me bar is painted from the SAME map (onMobileNow/dotHTML) but is not a
+  // row any renderer rebuilds — so the one writer has to repaint it too, or the
+  // bottom-left dot is the single surface a device switch leaves behind.
+  const SETMOB = slice(socket, 'function setPresenceMobile(', 'function onWS(m)');
+  check(/S\.presenceMobile\[id\] = 1; else delete S\.presenceMobile\[id\];/.test(SETMOB),
+    'setPresenceMobile is the one writer of the map');
+  check(/String\(S\.me\.id\)/.test(SETMOB) && /paintMe\(\)/.test(SETMOB),
+    'and repaints MY OWN bar when the id it moved is mine (the me bar is what a device switch strands)');
   check(/setInterval\(\(\) => \{\s*try \{ if \(document\.visibilityState === 'visible'\) sendVisibility\(\); \} catch \{\}\s*\}, 25000\)/.test(socket),
     'and the page renews its own "in front" lease on a timer (a latch would strand the indicator on a lost frame)');
   check(/document\.addEventListener\('visibilitychange', sendVisibility\)/.test(socket),

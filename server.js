@@ -6651,6 +6651,13 @@ async function announceMobile(userId, servers) {
   if (!(await writeMobileFlag(userId, onPhone))) return;
   const sids = servers || (await db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(userId)).map((r) => r.server_id);
   for (const sid of sids) broadcastToServer(sid, { t: 'user-mobile', serverId: sid, userId, mobile: onPhone });
+  // The account's OWN sockets are listeners too: the me bar's dot is the same
+  // derived fact as the member rows, and a user who shares no server (or simply
+  // has no friend) has no roster that would ever carry it home — the bar sat on
+  // the old glyph until a reload re-derived it. Where a shared server exists the
+  // broadcast above already reached these sockets; the frame is idempotent
+  // (set/delete one id), so the overlap is deliberate and harmless.
+  notifyUser(userId, { t: 'user-mobile', userId, mobile: onPhone });
   notifyFriends(userId, { t: 'user-mobile', userId, mobile: onPhone });
 }
 // Send a payload to every live socket of the given user's friends.

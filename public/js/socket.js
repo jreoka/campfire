@@ -220,6 +220,22 @@ function scrubReplyPreview(deletedId) {
     (S.thread.replies || []).forEach(scrub);
   }
 }
+// One writer for S.presenceMobile, because MY OWN row is painted in TWO places
+// from that one map: the member list — which every caller below repaints — and
+// the me bar, which is paintMe and which no presence frame ever repainted. The
+// me bar is exactly where a device switch lands (the phone goes quiet, or the
+// desktop comes to the front and the server announces the flip to this
+// account's own sockets — notifyUser in announceMobile), so the bottom-left dot
+// sat on the old glyph until a reload re-derived it. A change to my own flag
+// now repaints my own bar along with the rows.
+function setPresenceMobile(userId, on) {
+  const id = userId == null ? '' : String(userId);
+  if (!id) return;
+  const had = !!S.presenceMobile[id];
+  const want = !!on;
+  if (want) S.presenceMobile[id] = 1; else delete S.presenceMobile[id];
+  if (want !== had && S.me && id === String(S.me.id)) { try { paintMe(); } catch {} }
+}
 function onWS(m) {
   switch (m.t) {
     case 'hello': {
@@ -572,7 +588,7 @@ function onWS(m) {
       // a phone glyph cannot outlive the session that set it (an id that drops
       // out of the roster is offline, and an offline dot never draws one).
       const mob = m.mobile || {};
-      for (const id of Object.keys(on)) { if (mob[id]) S.presenceMobile[id] = 1; else delete S.presenceMobile[id]; }
+      for (const id of Object.keys(on)) setPresenceMobile(id, !!mob[id]);
       if (m.serverId === S.serverId) { S.online = on; S.online[S.me.id] = S.me.status || 'online'; }
       if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
       repaintFriendsIfVisible();
@@ -586,7 +602,7 @@ function onWS(m) {
       break;
     case 'user-online':
       S.presenceAll[m.userId] = m.status || 'online';
-      if (m.mobile) S.presenceMobile[m.userId] = 1; else delete S.presenceMobile[m.userId];
+      setPresenceMobile(m.userId, !!m.mobile);
       if (m.serverId === S.serverId) S.online[m.userId] = m.status || 'online';
       if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
       repaintFriendsIfVisible();
@@ -595,13 +611,13 @@ function onWS(m) {
     // person is still online on a desktop) or a phone arrived. Sent only when
     // that flag can have moved — see the WS close handler in server.js.
     case 'user-mobile':
-      if (m.mobile) S.presenceMobile[m.userId] = 1; else delete S.presenceMobile[m.userId];
+      setPresenceMobile(m.userId, !!m.mobile);
       if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
       repaintFriendsIfVisible();
       break;
     case 'user-offline':
       delete S.presenceAll[m.userId];
-      delete S.presenceMobile[m.userId];
+      setPresenceMobile(m.userId, false);
       if (m.serverId === S.serverId) delete S.online[m.userId];
       if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
       repaintFriendsIfVisible();
@@ -613,7 +629,7 @@ function onWS(m) {
       // to state: going invisible tells friends 'user-offline', which drops the
       // glyph with the status, and the flip back has to be able to restore it —
       // a plain status frame used to leave them with no glyph at all.
-      if (typeof m.mobile === 'number') { if (m.mobile) S.presenceMobile[m.userId] = 1; else delete S.presenceMobile[m.userId]; }
+      if (typeof m.mobile === 'number') setPresenceMobile(m.userId, !!m.mobile);
       if (m.serverId === S.serverId) {
         if (m.status === 'invisible') delete S.online[m.userId];
         else S.online[m.userId] = m.status;
