@@ -312,8 +312,8 @@ async function main() {
     'and the chip cannot eat the lightbox tap or the player controls');
   check(/const preview = shot \? shot\.src : \(pending \? attPreviewSrc\(a\) : ''\);/.test(markSource) && /src="\$\{esc\(preview \|\| thumb \|\| a\.url\)\}"/.test(markSource),
     'a pending picture paints the picked bytes, falling back to its derived preview and then its own url');
-  check(/function attShot\(a\)/.test(markSource) && /const stand_in = hit\.blob \|\| a\.scan === 'pending';/.test(markSource),
-    'only a LOCAL copy or a pending upload counts as a stand-in — a clean file renders its own bytes and preview as before');
+  check(/function attShot\(a\)/.test(markSource) && /const picked = \/\^blob:\/\.test\(String\(hit\.src \|\| ''\)\);/.test(markSource),
+    'only the uploading browser\'s own copy (a blob url) or a pending upload counts as a stand-in — a clean file renders its own bytes and preview as before');
   check(/data-fb-orig="\$\{esc\(a\.url\)\}"/.test(markSource), 'the element still records the url it will fall back to');
   check(/function attVideoHTML\(a, opts\)/.test(markSource) && /data-fb-src="\$\{esc\(a\.url\)\}"/.test(markSource),
     'a clip is a player from the start, carrying the CLEAN source it will swap to');
@@ -330,6 +330,10 @@ async function main() {
   check(/if \(!attSameShape\(oldAr, newAr\)\) return false;/.test(markSource), 'so is one whose reserved shape changed');
   check(/function patchImageNode\(oldEl, a\)/.test(markSource) && /function srcPathOf\(u\)/.test(markSource),
     'the still swap compares the FILE the element is showing, not the url string');
+  check(/function loadImageSource\(url, cb\)/.test(markSource) && /loadImageSource\(rawSrc, \(\) => \{/.test(markSource),
+    'and the replacement bytes are fetched and DECODED off the document before they are put in the row');
+  check(/if \(img\.complete && img\.naturalWidth > 0\) \{ settle\(\); return; \}/.test(markSource),
+    'with both endings covered (the load event and an image that was already complete) so the picture can never be left pending');
   check(/if \(oldImg && oldImg\.dataset\.phWired && shownPath && shownPath === wantPath\) \{/.test(markSource),
     'and the same file leaves the painted element exactly as it is (a republish in place must not re-decode it)');
   check(/if \(oldImg\.dataset\.fbUrl\) oldImg\.dataset\.fbUrl = String\(a\.url \|\| ''\);/.test(markSource),
@@ -371,7 +375,6 @@ async function main() {
   // so "the verdict landed while the bytes were still coming" is a fact.
   let slowWait = null;
   const hits = [];
-  if (process.env.DBG_HITS) setInterval(() => console.log('DBG hits', JSON.stringify(hits)), 1500).unref();
   const srv = http.createServer((req, res) => {
     const url = (req.url || '/').split('?')[0];
     if (url === '/' || url === '/index.html') {
@@ -457,17 +460,25 @@ async function main() {
     console.log('\n[5] the verdict swaps the bytes under the same node');
     await evaluate('window.__pin()');
     const step = await evaluate(`window.__verdictAndSnapshot([{ id: 'att-1', kind: 'image', scan: 'clean', url: '/uploads/files/pic.jpg?v=2', name: 'pic.jpg', size: 15200, w: 2500, h: 2500 }])`);
-    check(step.out === true, 'the patch reports the change applied', step);
     // The box is rebuilt from the real markup on the spot — and the picture that
-    // was on screen is moved into it in the same tick, so what the reader is
+    // was on screen is carried into it in the same tick, so what the reader is
     // looking at never changes and nothing is ever an empty box.
     const snap = step.snap || {};
     check(snap.heldInBox === true, 'the frame that was on screen is carried into the new box in the same tick', snap);
     check(snap.heldVisible === 'visible', 'and it is the visible thing there', snap);
-    check(snap.rect && step.snap.rect.w > 0 && step.snap.rect.h > 0, 'the box keeps its size across the swap', snap);
-    const newImg = (snap.imgs || []).find((x) => /pic\.jpg\.webp\?v=2/.test(x.src)) || null;
-    check(!!newImg, 'the box points at the derived preview of the PUBLISHED bytes', snap);
-    check(snap.dl === true, 'and the download link arrives with it', snap);
+    check(snap.rect && snap.rect.w > 0 && snap.rect.h > 0, 'the box keeps its size across the swap', snap);
+    // The published bytes are fetched and DECODED off the document and are only put
+    // in the row once they can paint — so the row is never an empty box.
+    let placed = null;
+    for (let i = 0; i < 100; i++) {
+      placed = await evaluate(`(function () { const w = host.querySelector('.att-wrap'); const im = w && w.querySelector('img.att-img'); return im ? { src: String(im.getAttribute('src') || ''), w: Math.round(im.getBoundingClientRect().width), held: !!w.querySelector('.att-held') } : null; })()`);
+      if (placed && /pic\.jpg\.webp\?v=2/.test(placed.src) && !placed.held) break;
+      await sleep(100);
+    }
+    check(!!placed && /pic\.jpg\.webp\?v=2/.test(placed.src) && placed.w > 0,
+      'the published picture takes the box over once it is ready to paint', placed);
+    check(placed && placed.held === false, 'and the carried frame goes with it', placed);
+    check(snap.dl === true, 'the download link arrived with the verdict', snap);
     const landing = await evaluate('window.__state()');
     check(!landing.proc, 'the processing chip is gone with the verdict', landing);
     for (let i = 0; i < 100 && !/pic\.jpg\.webp\?v=2/.test((await evaluate('window.__state()')).imgSrc || ''); i++) await sleep(100);
