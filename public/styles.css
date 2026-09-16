@@ -472,12 +472,62 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 /* In-call: the voice widget fuses to the top of the me bar (same width, no seam). */
 #voice-bar:not(.hidden)+#me-card{margin-top:0;border-top-left-radius:0;border-top-right-radius:0}
 .vb-btns{display:flex;align-items:center;justify-content:center;gap:.4rem}
-.vb-btn{border:0;background:var(--panel-3);color:var(--text);border-radius:10px;width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:background var(--t-fast),transform .1s ease}
-
-.vb-btn:active{transform:scale(.94)}
+/* ---------------------------------------------------------------- in-call keys
+   Three things share this row and each has to read differently, because they
+   used to collapse into one grey:
+     · REST  — a tonal step off the bar (--panel-3), red when the key is engaged
+               (mic/deafen/camera off, streaming).
+     · HOVER — the key LIFTS and takes a hairline ring. It deliberately does not
+               swap its tone: that swap was --panel-4, the app's "selected"
+               step, and sitting later in the cascade it also beat the red of an
+               engaged key — so hovering a muted mic made it look unmuted, and
+               the hover a touch tap leaves stuck behind read as a toggled state.
+               The me bar's own buttons got an .off:hover fix once; this row
+               never did.
+     · PRESS — the opposite gesture: sinks a tonal step and drops the ring, so
+               "the pointer is here" can never be confused with "I pushed it".
+   The transparent resting outline is what lets the hover ring fade in — and it
+   is why the focus ring is restated below (a class-level outline would
+   otherwise outrank the global :focus-visible rule). */
+.vb-btn{position:relative;border:0;background:var(--panel-3);color:var(--text);border-radius:10px;width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;outline:1.5px solid transparent;outline-offset:1px;transition:background var(--t-fast),color var(--t-fast),transform var(--t-fast),outline-color var(--t-fast)}
+.vb-btn svg{display:block;transition:transform .16s var(--ease-out)}
 .vb-btn.off{background:#a83226;color:#fff}
 .vb-btn.danger{background:#a83226;color:#fff}
-.vb-btn svg{display:block}
+.vb-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* The PRESS state is deliberately NOT declared here — it lives after the hover
+   block at the end of this file, because a mouse holds :hover and :active at
+   the same time and equal specificity means the later rule is the one that
+   shows. Declared up here it lost to the hover rule, so a click changed
+   nothing on screen: the key sat in the hover grey for as long as the button
+   was down, which is exactly "hovering looks the same as being clicked". */
+/* The row arrives with the call: each key drops into place on a short stagger,
+   so joining a room has an entrance instead of a pop. `backwards` holds a key
+   invisible until its own delay elapses (without it every key paints at rest
+   for the first frame). */
+@keyframes vb-key-in{from{opacity:0;transform:translateY(5px) scale(.9)}60%{opacity:1}to{opacity:1;transform:none}}
+#voice-bar:not(.hidden) .vb-btn{animation:vb-key-in .3s var(--ease-out) backwards}
+#voice-bar:not(.hidden) .vb-btn:nth-child(1){animation-delay:.02s}
+#voice-bar:not(.hidden) .vb-btn:nth-child(2){animation-delay:.05s}
+#voice-bar:not(.hidden) .vb-btn:nth-child(3){animation-delay:.08s}
+#voice-bar:not(.hidden) .vb-btn:nth-child(4){animation-delay:.11s}
+#voice-bar:not(.hidden) .vb-btn:nth-child(5){animation-delay:.14s}
+/* A toggle answers with a short pop of the key's own box — every copy of that
+   key pops at once (voice.js pops the mirrors), so the sidebar answers a
+   keypress made in the full call view. Declared AFTER the entrance rules on
+   purpose: same specificity, so only the order lets a click during the
+   entrance still pop. */
+@keyframes vb-key-pop{0%{transform:scale(1)}38%{transform:scale(.82)}100%{transform:scale(1)}}
+#voice-bar .vb-btn.pop,#voice-fab .vb-btn.pop,#stage-controls .vb-btn.pop{animation:vb-key-pop .3s var(--ease-out)}
+/* On air: while your screen or game is really streaming the key wears a ring
+   that breathes, so the sidebar has one element that is visibly ALIVE and a
+   live stream reads without opening the call view. It is a ::before, never the
+   button's own `animation` — the entrance and the pop own that. */
+@keyframes vb-air{0%,100%{opacity:.3;transform:scale(.97)}50%{opacity:.85;transform:scale(1.05)}}
+.vb-btn.on-air::before{content:'';position:absolute;inset:-3px;border-radius:inherit;border:1.5px solid rgba(248,113,113,.8);pointer-events:none;animation:vb-air 2.2s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){
+  #voice-bar:not(.hidden) .vb-btn,#voice-bar .vb-btn.pop,#voice-fab .vb-btn.pop,#stage-controls .vb-btn.pop,.vb-btn.on-air::before{animation:none}
+  .vb-btn svg{transition:none}
+}
 /* Camera starting: the icon gives way to a spinner until the first frame lands
    — getUserMedia + hardware warm-up is otherwise dead air on the button. */
 .vb-btn.busy{cursor:default}
@@ -3415,7 +3465,11 @@ html.wrapper-app .msg .text,html.wrapper-app .msg .text *,html.wrapper-app input
   .btn.danger:hover{background:rgba(248,113,113,.17)}
   .me-icobtn:hover{background:rgba(255,255,255,.12)}
   [data-theme="light"] .me-icobtn:hover{background:rgba(0,0,0,.08)}
-  .vb-btn:hover{background:var(--panel-4)}
+  .vb-btn:hover{background:var(--panel-4);outline-color:var(--line);transform:translateY(-1px)}
+  .vb-btn:hover svg{transform:scale(1.08)}
+  /* An engaged key stays red under the pointer (it was the one state a hover
+     could hide): it brightens instead, exactly like the me bar's own buttons. */
+  .vb-btn.off:hover,.vb-btn.danger:hover{background:#c03a2c;outline-color:rgba(255,255,255,.42)}
   .tab:hover{color:var(--text)}
   .set-tab:hover{background:var(--panel-2);color:var(--text)}
   .ftab:hover{background:var(--panel-2);color:var(--text)}
@@ -3441,4 +3495,24 @@ html.wrapper-app .msg .text,html.wrapper-app .msg .text *,html.wrapper-app input
   .send-btn.is-off:hover svg{transform:none}
   #btn-plus:hover,#btn-more:hover,#tbtn-plus:hover,#tbtn-more:hover{background:color-mix(in srgb, var(--text) 15%, transparent);color:var(--text)}
   .att-warn:hover{background:rgba(251,191,36,.18);border-color:rgba(251,191,36,.55)}
+}
+
+/* The in-call keys' PRESS state, and the reason it is at the very end of the
+   sheet: a mouse holds :hover AND :active while the button is down, and with
+   equal specificity the rule declared later is the one that paints. With the
+   press declared up beside the key's other states it lost to the hover rule
+   every time — the key stayed in the hover grey for the whole click, so a tap
+   and a hover were literally the same picture (and on a touch screen, where
+   the hover is left stuck behind by the tap, the two were indistinguishable
+   afterwards too). Pressed: a tonal step BELOW rest (deeper red when engaged)
+   and the ring drops, the exact opposite of hover's lift — so "the pointer is
+   here" and "I pushed it" can never render as the same thing. */
+.vb-btn:active{background:var(--panel-2);outline-color:transparent;transform:scale(.92)}
+.vb-btn.off:active,.vb-btn.danger:active{background:#8d271e;outline-color:transparent}
+/* The keys' hover lift and press shrink are motion like any other, so
+   reduced-motion cancels them — and this block closes the file because it has
+   to outrank BOTH the hover rules and the press rules above (same specificity,
+   so only the order can win). */
+@media (prefers-reduced-motion:reduce){
+  .vb-btn:hover,.vb-btn:hover svg,.vb-btn:active{transform:none}
 }

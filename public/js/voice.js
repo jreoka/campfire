@@ -53,27 +53,61 @@ const ME_SVG = {
   deaf: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>',
   deafOff: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/><line x1="3" y1="3" x2="21" y2="21"/></svg>',
 };
-function popMeBtn(sel) { try { const b = $(sel); if (!b) return; b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); } catch {} }
+// One control lives in up to four places at once — the me bar, the sidebar's
+// call bar, the floating bar over the chat and the full call view — and a
+// single toggle moves all of them, so the acknowledgement is played on every
+// copy rather than only on the one the pointer happened to hit (the sidebar
+// answers a keypress made in the full call view, and vice versa).
+const VOICE_KEY_MIRRORS = {
+  mute: ['#me-mute', '#btn-mute', '#vf-mute', '#cv-mute'],
+  deafen: ['#me-deafen', '#btn-deafen', '#vf-deafen', '#cv-deafen'],
+  camera: ['#btn-camera', '#vf-camera', '#cv-camera'],
+  share: ['#btn-share', '#vf-share', '#cv-share'],
+};
+function popVoiceKey(ctrl) {
+  for (const sel of VOICE_KEY_MIRRORS[ctrl] || []) {
+    const b = $(sel);
+    if (!b) continue;
+    // A key whose surface is not on screen right now (the floating bar on
+    // desktop, the call view while it is closed) never plays the pop, so it
+    // must not keep the class either — it would pop out of nowhere the next
+    // time that surface appears.
+    if (!b.offsetParent) continue;
+    try {
+      b.classList.remove('pop');
+      void b.offsetWidth; // restart the animation on a second click
+      b.classList.add('pop');
+      // Drop the class when the pop ends: a stale .pop would still be on the
+      // key next time the call bar is shown, where it outranks the entrance
+      // animation and would skip the whole stagger.
+      b.addEventListener('animationend', function done(ev) {
+        if (ev.animationName !== 'vb-key-pop' && ev.animationName !== 'me-pop') return;
+        b.classList.remove('pop');
+        b.removeEventListener('animationend', done);
+      });
+    } catch {}
+  }
+}
 $('#btn-voice-leave').onclick = () => leaveVoice();
-$('#me-mute').onclick = (e) => { if (e) e.stopPropagation(); toggleMute(); popMeBtn('#me-mute'); };
-$('#me-deafen').onclick = (e) => { if (e) e.stopPropagation(); toggleDeafen(); popMeBtn('#me-deafen'); };
+$('#me-mute').onclick = (e) => { if (e) e.stopPropagation(); toggleMute(); popVoiceKey('mute'); };
+$('#me-deafen').onclick = (e) => { if (e) e.stopPropagation(); toggleDeafen(); popVoiceKey('deafen'); };
 $('#vf-leave').onclick = () => leaveVoice();
-$('#vf-mute').onclick = () => toggleMute();
-$('#btn-mute').onclick = () => toggleMute();
-$('#vf-deafen').onclick = () => toggleDeafen();
-$('#btn-deafen').onclick = () => toggleDeafen();
-$('#vf-camera').onclick = () => toggleCamera();
-$('#btn-camera').onclick = () => toggleCamera();
-$('#vf-share').onclick = () => toggleScreen();
-$('#btn-share').onclick = () => toggleScreen();
+$('#vf-mute').onclick = () => { toggleMute(); popVoiceKey('mute'); };
+$('#btn-mute').onclick = () => { toggleMute(); popVoiceKey('mute'); };
+$('#vf-deafen').onclick = () => { toggleDeafen(); popVoiceKey('deafen'); };
+$('#btn-deafen').onclick = () => { toggleDeafen(); popVoiceKey('deafen'); };
+$('#vf-camera').onclick = () => { toggleCamera(); popVoiceKey('camera'); };
+$('#btn-camera').onclick = () => { toggleCamera(); popVoiceKey('camera'); };
+$('#vf-share').onclick = () => { toggleScreen(); popVoiceKey('share'); };
+$('#btn-share').onclick = () => { toggleScreen(); popVoiceKey('share'); };
 if ($('#sc-min')) $('#sc-min').onclick = () => closeCallView();
 $('#voice-status').style.cursor = 'pointer';
 $('#voice-status').onclick = () => openCallView();
 $('#cv-leave').onclick = () => leaveVoice();
-$('#cv-mute').onclick = () => toggleMute();
-$('#cv-deafen').onclick = () => toggleDeafen();
-$('#cv-camera').onclick = () => toggleCamera();
-$('#cv-share').onclick = () => toggleScreen();
+$('#cv-mute').onclick = () => { toggleMute(); popVoiceKey('mute'); };
+$('#cv-deafen').onclick = () => { toggleDeafen(); popVoiceKey('deafen'); };
+$('#cv-camera').onclick = () => { toggleCamera(); popVoiceKey('camera'); };
+$('#cv-share').onclick = () => { toggleScreen(); popVoiceKey('share'); };
 paintVoiceControls();
 
 function openNsfwVoiceModal(ch) {
@@ -454,6 +488,12 @@ function paintVoiceControls() {
   set('#btn-share', v?.sharing, v?.sharing ? 'Stop streaming' : 'Go Live — stream a game or screen');
   set('#vf-share', v?.sharing, v?.sharing ? 'Stop streaming' : 'Go Live — stream a game or screen');
   set('#cv-share', v?.sharing, v?.sharing ? 'Stop streaming' : 'Go Live — stream a game or screen');
+  // On air: the streaming key wears a breathing ring (.vb-btn.on-air) so a live
+  // stream is visible from the sidebar alone, without opening the call view.
+  for (const id of ['#btn-share', '#vf-share', '#cv-share']) {
+    const b = $(id);
+    if (b) b.classList.toggle('on-air', !!v?.sharing);
+  }
   // Me-bar icons swap to slashed variants while off.
   const mm = $('#me-mute'); if (mm) mm.innerHTML = micOff ? ME_SVG.micOff : ME_SVG.mic;
   const md = $('#me-deafen'); if (md) md.innerHTML = dOff ? ME_SVG.deafOff : ME_SVG.deaf;
