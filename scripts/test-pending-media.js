@@ -150,6 +150,53 @@ window.__render = function (att) {
 window.__verdict = function (atts) {
   try { return patchAttachmentsIn(host.closest('.msg'), { attachments: atts }); } catch (e) { return 'ERR ' + e.message; }
 };
+// What the app does when the patch REFUSES (renderMessages): the whole list is
+// thrown away and rebuilt from the model. Reproduced here so the fallback path can
+// be watched the same way the patch is.
+window.__fullRender = function (att) {
+  host.innerHTML = '';
+  host.insertAdjacentHTML('beforeend', attachmentHTML(att));
+  const img = host.querySelector('img.att-img');
+  if (img) { try { wireAttImage(img); } catch (e) {} }
+  return true;
+};
+// ---- the visual timeline ----
+// One sample per animation frame of what is actually on screen: the box, the
+// picture's paint state, and whether the frame the reader was looking at is still
+// the one in the document. A "blink" is a sample where the box stops showing a
+// painted picture while the element that had been there is gone.
+const timeline = [];
+let tlOn = false;
+let tlNode = null;
+function tlSample() {
+  if (!tlOn) return;
+  const box = host.querySelector('.att-wrap') || host.querySelector('.scan-block');
+  if (!box) { timeline.push({ t: Math.round(performance.now()), state: 'empty' }); return requestAnimationFrame(tlSample); }
+  const card = box.classList.contains('scan-block');
+  const img = host.querySelector('img.att-img');
+  const r = box.getBoundingClientRect();
+  const cs = img ? getComputedStyle(img) : null;
+  timeline.push({
+    t: Math.round(performance.now()),
+    card,
+    w: Math.round(r.width), h: Math.round(r.height),
+    imgOpacity: cs ? cs.opacity : null,
+    imgVisible: cs ? (cs.visibility !== 'hidden' && cs.opacity !== '0') : false,
+    natural: img ? img.naturalWidth : 0,
+    kept: img ? img === tlNode : false,
+    proc: !!host.querySelector('.att-proc'),
+    src: img ? String(img.getAttribute('src') || '').slice(0, 46) : null,
+  });
+  requestAnimationFrame(tlSample);
+}
+window.__tlStart = function (att) {
+  timeline.length = 0;
+  const img = host.querySelector('img.att-img');
+  tlNode = img || null;
+  if (!tlOn) { tlOn = true; requestAnimationFrame(tlSample); }
+  return true;
+};
+window.__tlStop = function () { tlOn = false; return timeline; };
 window.__box = function () {
   const box = host.querySelector('.att-wrap');
   if (!box) return null;
@@ -527,7 +574,53 @@ async function main() {
     check(vidDone.src === vidBefore.src, 'and its source was never re-pointed at the same file', { before: vidBefore.src, after: vidDone.src });
     check((vidDone.time || 0) > 0.2, 'so its position survived too', vidDone);
 
-    console.log('\n[11] the stylesheet carries the new pieces');
+    console.log('\n[11] the verdict never takes a painted picture off the screen');
+    // The whole reported symptom, watched frame by frame: from the message that is
+    // on screen with the picked bytes, through the compressor's verdict, to the
+    // settled row. A frame that shows the box WITHOUT a painted picture — or with
+    // a scan card where the picture was — is the blink.
+    const pickedT = await evaluate('window.__pickedBytes(120, 120, 0x515151)');
+    await evaluate(`window.__localPreview('att-t', '/uploads/files/tl.jpg?v=1', ${JSON.stringify(pickedT)})`);
+    await evaluate(`window.__render({ id: 'att-t', kind: 'image', scan: 'pending', url: '/uploads/files/tl.jpg?v=1', name: 'tl.jpg', size: 20480, w: 2500, h: 2500 })`);
+    check(await evaluate('window.__whenPainted()') === true, 'the message on screen paints the picked bytes');
+    await evaluate('window.__tlStart()');
+    await sleep(150);
+    const started = await evaluate('window.__tlStart()');   // re-arm with the current node
+    const live = await evaluate(`window.__verdict([{ id: 'att-t', kind: 'image', scan: 'clean', url: '/uploads/files/tl.jpg?v=2', name: 'tl.jpg', size: 15200, w: 2500, h: 2500 }])`);
+    check(live === true, 'the compressor verdict is applied to the element', live);
+    await sleep(600);
+    const frames = await evaluate('window.__tlStop()');
+    check(Array.isArray(frames) && frames.length > 10, 'the timeline has frames to judge', { n: frames && frames.length });
+    // Before the verdict: painted, on the picked bytes.
+    const first = frames[0] || {};
+    check(first.imgVisible === true && first.w > 0, 'frame one: a painted picture in a sized box', first);
+    // Every frame of the hand-over must show a painted picture: either the frame
+    // that was there (kept) or the newly painted published one.
+    const blank = frames.filter((f) => !f.imgVisible || f.card || f.w === 0);
+    check(blank.length === 0, 'no frame ever shows an unpainted box (or a scan card) where the picture is', blank.slice(0, 3));
+    const keptFrames = frames.filter((f) => f.kept).length;
+    check(keptFrames > 0, 'the frame the reader was looking at is still the one on screen through the hand-over', { kept: keptFrames, total: frames.length });
+    const last = frames[frames.length - 1] || {};
+    check(/tl\.jpg\.webp\?v=2/.test(last.src || ''), 'and the row settles on the published bytes', last);
+    check(!last.proc, 'with the processing chip gone', last);
+
+    console.log('\n[12] the same, for the renderer fallback (when the patch refuses)');
+    // A republish that changes the aspect refuses in the patch, and the app falls
+    // back to a full rebuild. That rebuild must not be a blank flash either: the
+    // pending row keeps the picked bytes and the box it reserved.
+    const pickedF = await evaluate('window.__pickedBytes(120, 120, 0x616161)');
+    await evaluate(`window.__localPreview('att-f', '/uploads/files/tl2.jpg?v=1', ${JSON.stringify(pickedF)})`);
+    await evaluate(`window.__render({ id: 'att-f', kind: 'image', scan: 'pending', url: '/uploads/files/tl2.jpg?v=1', name: 'tl2.jpg', size: 20480, w: 2500, h: 2500 })`);
+    check(await evaluate('window.__whenPainted()') === true, 'the picked bytes paint');
+    const refusedT = await evaluate(`window.__verdict([{ id: 'att-f', kind: 'image', scan: 'clean', url: '/uploads/files/tl2.jpg?v=2', name: 'tl2.jpg', size: 15200, w: 2500, h: 800 }])`);
+    check(refusedT === false, 'the patch refuses the reshaped republish', refusedT);
+    await evaluate(`window.__fullRender({ id: 'att-f', kind: 'image', scan: 'pending', url: '/uploads/files/tl2.jpg?v=1', name: 'tl2.jpg', size: 20480, w: 2500, h: 2500 })`);
+    const afterFull = await evaluate('window.__state()');
+    check(afterFull.proc === 'Processing' && !!afterFull.imgSrc && afterFull.imgSrc.startsWith('data:'),
+      'the rebuilt row still paints the picked bytes with its chip (the renderer keeps the store too)', afterFull);
+    check(afterFull.boxW > 0 && afterFull.boxH > 0, 'and the box it reserved is on screen, not a collapsed line', afterFull);
+
+    console.log('\n[13] the stylesheet carries the new pieces');
     check(/\.att-slot\{display:block;width:100%/.test(css.replace(/\s+/g, '')) || /\.att-slot\s*\{[^}]*display:\s*block[^}]*width:\s*100%/.test(css),
       '.att-slot takes the row width, so the media inside resolves its reserved box against it (a shrink-to-fit slot collapses it)');
     check(/img\.att-img\.att-held\{position:absolute/.test(css.replace(/\s+/g, '')), 'the held frame is taken out of flow (no layout jump)');
