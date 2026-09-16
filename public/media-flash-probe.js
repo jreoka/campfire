@@ -16,30 +16,54 @@
 (function () {
   const W = window;
   if (W.__cfMediaWatch) { console.log('[cf] already watching — call __cfMediaReport()'); return; }
-  W.__cfMediaWatch = { frames: [], events: [], nodes: new Map(), started: Date.now() };
+  W.__cfMediaWatch = { frames: [], events: [], started: Date.now() };
+  // Which BUILD this page is really running. The pending-preview code is what has
+  // to be in it for the message to show the picked bytes; a stale service-worker
+  // copy would still behave the old way.
+  const build = (() => {
+    try {
+      const src = String(attachmentHTML || '');
+      return {
+        pendingPreview: src.includes('attPendingPreview'),
+        slot: src.includes('att-slot'),
+        patch: typeof patchAttachmentInList === 'undefined' ? 'n/a' : 'ok',
+        version: (W.S && (W.S.bootVersion || W.S.appVersion)) || null,
+        gen: (W.S && W.S.bootGen) || null,
+      };
+    } catch (e) { return { err: String(e && e.message) }; }
+  })();
+  W.__cfMediaWatch.build = build;
+
+  // Everything the reader can be looking at: the two message lists, the composer
+  // chip rows, the upload cards and the thread composer. A flash in any of them
+  // counts.
+  const BOXES = '#messages, #thread-replies, #attach-preview, #thread-attach-preview, #upload-list, #thread-upload-list';
+  const IMGS = 'img.att-img, .att-chip img, .up-ic img';
 
   const key = (el) => {
-    const s = el.closest ? el.closest('.att-slot') : null;
-    return String((s && s.getAttribute('data-att-slot')) || '?');
+    const s = el.closest ? el.closest('.att-slot, .att-chip, .up-card') : null;
+    if (!s) return '?';
+    return String(s.getAttribute('data-att-slot') || s.className.split(' ')[0] || '?');
   };
   const describe = (img) => {
-    const wrap = img.closest ? img.closest('.att-wrap') : null;
-    const slot = img.closest ? img.closest('.att-slot') : null;
+    const slot = img.closest ? img.closest('.att-slot, .att-chip, .up-card') : null;
     if (!slot) return null;
-    const r = (wrap || img).getBoundingClientRect();
+    const inMessage = !!(img.closest && img.closest('.msg'));
+    const chip = !!(slot.querySelector && slot.querySelector('.att-proc'));
+    const r = (img.closest('.att-wrap') || img).getBoundingClientRect();
     const cs = getComputedStyle(img);
+    const src = String(img.getAttribute('src') || '');
     return {
       id: key(img),
-      src: String(img.getAttribute('src') || '').slice(0, 70),
-      current: String(img.currentSrc || '').slice(0, 70),
+      where: inMessage ? 'msg' : (slot.classList.contains('up-card') ? 'card' : 'chip'),
+      kind: src.startsWith('data:') ? 'data' : (src.startsWith('blob:') ? 'blob' : (img.dataset.fbThumb ? 'thumb' : 'file')),
+      src: src.slice(0, 70),
       opacity: cs.opacity,
       visible: cs.visibility !== 'hidden' && cs.opacity !== '0',
       natural: img.naturalWidth,
       w: Math.round(r.width), h: Math.round(r.height),
-      chip: !!(slot.querySelector('.att-proc')),
-      card: !!(slot.querySelector('.scan-block')),
-      thumb: !!img.dataset.fbThumb,
-      held: !!slot.querySelector('.att-held'),
+      chip, card: !!(slot.querySelector && slot.querySelector('.scan-block')),
+      held: !!(slot.querySelector && slot.querySelector('.att-held')),
     };
   };
 
@@ -91,15 +115,13 @@
   let on = true;
   const sample = () => {
     if (!on) return;
-    const box = document.querySelector('#messages, #thread-replies');
-    const imgs = box ? [...box.querySelectorAll('img.att-img')] : [];
-    const rows = imgs.map(describe).filter(Boolean);
+    const boxes = [...document.querySelectorAll(BOXES)];
+    const rows = boxes.flatMap((b) => [...b.querySelectorAll(IMGS)]).map(describe).filter(Boolean);
     W.__cfMediaWatch.frames.push({
       t: Date.now(),
       n: rows.length,
-      shown: rows.filter((r) => r.w > 0).length,
       painted: rows.filter((r) => r.visible && r.natural > 0).length,
-      rows: rows.map((r) => r.id + ':' + (r.thumb ? 'thumb' : (r.src.startsWith('data:') ? 'data' : (r.src.startsWith('blob:') ? 'blob' : 'file'))) + ':' + (r.visible ? 'vis' : 'HIDDEN') + ':' + r.w + 'x' + r.h + (r.chip ? ':chip' : '')),
+      rows: rows.map((r) => [r.where, r.id, r.kind, r.visible ? 'vis' : 'HIDDEN', r.natural ? 'ok' : 'NOLOAD', r.w + 'x' + r.h, r.chip ? 'chip' : '', r.held ? 'held' : ''].filter(Boolean).join(':')),
     });
     requestAnimationFrame(sample);
   };
