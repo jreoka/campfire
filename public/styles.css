@@ -484,12 +484,13 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
                the hover a touch tap leaves stuck behind read as a toggled state.
                The me bar's own buttons got an .off:hover fix once; this row
                never did.
-     · PRESS — the opposite gesture: sinks a tonal step and drops the ring, so
-               "the pointer is here" can never be confused with "I pushed it".
+     · PRESS — the opposite gesture: the key gives under the pointer, dims a
+               whisper and drops the ring (see the note at the end of the file
+               for why it deliberately does NOT change tone).
    The transparent resting outline is what lets the hover ring fade in — and it
    is why the focus ring is restated below (a class-level outline would
    otherwise outrank the global :focus-visible rule). */
-.vb-btn{position:relative;border:0;background:var(--panel-3);color:var(--text);border-radius:10px;width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;outline:1.5px solid transparent;outline-offset:1px;transition:background var(--t-fast),color var(--t-fast),transform var(--t-fast),outline-color var(--t-fast)}
+.vb-btn{position:relative;border:0;background:var(--panel-3);color:var(--text);border-radius:10px;width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;outline:1.5px solid transparent;outline-offset:1px;transition:background var(--t-fast),color var(--t-fast),transform var(--t-fast),outline-color var(--t-fast),filter var(--t-fast)}
 .vb-btn svg{display:block;transition:transform .16s var(--ease-out)}
 .vb-btn.off{background:#a83226;color:#fff}
 .vb-btn.danger{background:#a83226;color:#fff}
@@ -513,11 +514,13 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #voice-bar:not(.hidden) .vb-btn:nth-child(5){animation-delay:.14s}
 /* A toggle answers with a short pop of the key's own box — every copy of that
    key pops at once (voice.js pops the mirrors), so the sidebar answers a
-   keypress made in the full call view. Declared AFTER the entrance rules on
-   purpose: same specificity, so only the order lets a click during the
-   entrance still pop. */
-@keyframes vb-key-pop{0%{transform:scale(1)}38%{transform:scale(.82)}100%{transform:scale(1)}}
-#voice-bar .vb-btn.pop,#voice-fab .vb-btn.pop,#stage-controls .vb-btn.pop{animation:vb-key-pop .3s var(--ease-out)}
+   keypress made in the full call view. The pop is a house-vocabulary tick
+   (.94, one frame of give), NOT a bounce: at .82 it snapped the 38px key down
+   and back inside ~110ms, which next to the press read as a flash. Declared
+   AFTER the entrance rules on purpose: same specificity, so only the order
+   lets a click during the entrance still pop. */
+@keyframes vb-key-pop{0%{transform:scale(1)}40%{transform:scale(.94)}100%{transform:scale(1)}}
+#voice-bar .vb-btn.pop,#voice-fab .vb-btn.pop,#stage-controls .vb-btn.pop{animation:vb-key-pop .2s var(--ease-out)}
 /* On air: while your screen or game is really streaming the key wears a ring
    that breathes, so the sidebar has one element that is visibly ALIVE and a
    live stream reads without opening the call view. It is a ::before, never the
@@ -3504,15 +3507,23 @@ html.wrapper-app .msg .text,html.wrapper-app .msg .text *,html.wrapper-app input
    every time — the key stayed in the hover grey for the whole click, so a tap
    and a hover were literally the same picture (and on a touch screen, where
    the hover is left stuck behind by the tap, the two were indistinguishable
-   afterwards too). Pressed: a tonal step BELOW rest (deeper red when engaged)
-   and the ring drops, the exact opposite of hover's lift — so "the pointer is
-   here" and "I pushed it" can never render as the same thing. */
-.vb-btn:active{background:var(--panel-2);outline-color:transparent;transform:scale(.92)}
-.vb-btn.off:active,.vb-btn.danger:active{background:#8d271e;outline-color:transparent}
+   afterwards too).
+   Pressed, the key does NOT change tone. It first did — down a whole step to
+   the bar's own surface — and a fast click then read as the key blinking:
+   light, dark, light inside ~150ms, because the background never finished the
+   dive before it was on its way back. So the press is carried by the two
+   things a click can show and a hover cannot: the key gives under the pointer
+   (a hair of scale — this app's own press vocabulary) and dims itself a
+   whisper, whatever colour it happens to be wearing, so an engaged red key
+   presses to a deeper red without a second hard-coded red to keep in step.
+   The ring drops and the whole thing lands in 60ms, so it reads as the finger
+   going down rather than as a fade. */
+.vb-btn:active{outline-color:transparent;transform:scale(.93);filter:brightness(.9);transition-duration:.06s}
 /* The keys' hover lift and press shrink are motion like any other, so
    reduced-motion cancels them — and this block closes the file because it has
    to outrank BOTH the hover rules and the press rules above (same specificity,
-   so only the order can win). */
+   so only the order can win). The press's dimming stays: it is not motion, and
+   on a reduced-motion device it is the only press cue left. */
 @media (prefers-reduced-motion:reduce){
   .vb-btn:hover,.vb-btn:hover svg,.vb-btn:active{transform:none}
 }

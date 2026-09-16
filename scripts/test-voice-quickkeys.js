@@ -84,12 +84,12 @@ check(/\.vb-btn\{[^}]*outline:1\.5px solid transparent/.test(css),
 check(/\.vb-btn:focus-visible\{outline:2px solid var\(--accent\)/.test(css),
   'and the focus ring is restated on top of it (a class-level outline would otherwise outrank the global rule)');
 // press
-check(/\.vb-btn:active\{background:var\(--panel-2\);outline-color:transparent;transform:scale\(\.92\)\}/.test(css),
-  'a press SINKS the key a tonal step, drops the ring, and scales down');
-check(/\.vb-btn\.off:active,\.vb-btn\.danger:active\{background:#8d271e;outline-color:transparent\}/.test(css),
-  'an engaged key presses to a deeper red (not to grey)');
-check(css.indexOf('.vb-btn:active{background:var(--panel-2)') > css.indexOf('.vb-btn:hover{background:var(--panel-4)'),
-  'and the press block is declared AFTER the hover block — a mouse holds :hover and :active at once, so equal specificity makes the LATER rule the one that paints');
+check(/\.vb-btn:active\{outline-color:transparent;transform:scale\(\.93\);filter:brightness\(\.9\);transition-duration:\.06s\}/.test(css),
+  'a press gives under the pointer (a hair of scale), dims a whisper, drops the ring, and lands in 60ms');
+check(!/\.vb-btn:active\{[^}]*background/.test(css) && !/\.vb-btn\.(off|danger):active/.test(css),
+  'and it deliberately does NOT change tone — a whole-step dip that returns in ~150ms was the blink the owner reported');
+check(css.indexOf('.vb-btn:active{outline-color:transparent') > css.indexOf('.vb-btn:hover{background:var(--panel-4)'),
+  'the press block is declared AFTER the hover block — a mouse holds :hover and :active at once, so equal specificity makes the LATER rule the one that paints');
 check(!/\.vb-btn:active\{transform:scale\(\.92\);background/.test(css),
   'the press state is not also declared up beside the resting key (where it lost to hover)');
 // hover
@@ -112,8 +112,8 @@ check(/#voice-bar:not\(\.hidden\) \.vb-btn\{animation:vb-key-in/.test(css),
   'it runs the moment the call bar is revealed');
 const delays = ['\.02s', '\.05s', '\.08s', '\.11s', '\.14s'].map((d) => new RegExp('#voice-bar:not\\(\\.hidden\\) \\.vb-btn:nth-child\\(\\d\\)\\{animation-delay:' + d + '\\}'));
 check(delays.every((re) => re.test(css)), 'and each of the five keys is staggered');
-check(/@keyframes vb-key-pop\{/.test(css) && /\.vb-btn\.pop\{animation:vb-key-pop/.test(css),
-  'a toggle pops the key');
+check(/@keyframes vb-key-pop\{0%\{transform:scale\(1\)\}40%\{transform:scale\(\.94\)\}100%\{transform:scale\(1\)\}\}/.test(css),
+  'and the pop is a house-vocabulary .94 tick, not a bounce that reads as a flash');
 check(css.indexOf('.vb-btn.pop{animation:vb-key-pop') > css.indexOf('#voice-bar:not(.hidden) .vb-btn{animation:vb-key-in'),
   'the pop rule is declared AFTER the entrance (same specificity — only the order lets a click during the entrance still pop)');
 check(/@keyframes vb-air\{/.test(css) && /\.vb-btn\.on-air::before\{[^}]*animation:vb-air/.test(css),
@@ -124,23 +124,28 @@ check(/@media \(prefers-reduced-motion:reduce\)\{\s*#voice-bar:not\(\.hidden\) \
   && /\.vb-btn\.on-air::before\{animation:none\}/.test(css),
   'reduced motion cancels all three animations');
 check(/@media \(prefers-reduced-motion:reduce\)\{\s*\.vb-btn:hover,\.vb-btn:hover svg,\.vb-btn:active\{transform:none\}\s*\}/.test(css)
-  && css.indexOf('.vb-btn:hover,.vb-btn:hover svg,.vb-btn:active{transform:none}') > css.indexOf('.vb-btn:active{background:var(--panel-2)'),
+  && css.indexOf('.vb-btn:hover,.vb-btn:hover svg,.vb-btn:active{transform:none}') > css.indexOf('.vb-btn:active{outline-color:transparent'),
   'including the hover lift and the press shrink — declared after both, since order is what the transforms turn on');
+check(/\.vb-btn:active\{[^}]*filter:brightness\(\.9\)/.test(css) && !/@media \(prefers-reduced-motion:reduce\)\{\s*\.vb-btn:active\{filter/.test(css),
+  'while the press DIMMING survives reduced motion — it is not motion, and it is the only press cue left there');
 
 console.log('\n[4] voice.js plays the acknowledgement on every copy of a key');
 const mirrors = /const VOICE_KEY_MIRRORS = \{([\s\S]*?)\};/.exec(voice);
 check(!!mirrors, 'the mirror map exists');
 const mirrorSrc = mirrors ? mirrors[1] : '';
-for (const sel of ['#me-mute', '#btn-mute', '#vf-mute', '#cv-mute']) check(mirrorSrc.includes(sel), 'mic mirrors include ' + sel);
-for (const sel of ['#me-deafen', '#btn-deafen', '#vf-deafen', '#cv-deafen']) check(mirrorSrc.includes(sel), 'deafen mirrors include ' + sel);
+for (const sel of ['#btn-mute', '#vf-mute', '#cv-mute']) check(mirrorSrc.includes(sel), 'mic mirrors include ' + sel);
+for (const sel of ['#btn-deafen', '#vf-deafen', '#cv-deafen']) check(mirrorSrc.includes(sel), 'deafen mirrors include ' + sel);
 for (const sel of ['#btn-camera', '#vf-camera', '#cv-camera']) check(mirrorSrc.includes(sel), 'camera mirrors include ' + sel);
 for (const sel of ['#btn-share', '#vf-share', '#cv-share']) check(mirrorSrc.includes(sel), 'share mirrors include ' + sel);
-check(!voice.includes('popMeBtn'), 'the old single-button pop helper is gone');
+check(!mirrorSrc.includes('#me-mute') && !mirrorSrc.includes('#me-deafen'),
+  'but the me bar\'s keys are NOT mirrors of the call keys — popping them from a call key made two buttons bounce for one press');
+check(/\$\('#me-mute'\)\.onclick = \(e\) => \{ if \(e\) e\.stopPropagation\(\); toggleMute\(\); popKeyEl\(\$\('#me-mute'\)\); \}/.test(voice),
+  'the me bar still pops its own mic exactly as it always did');
 const popCalls = (voice.match(/popVoiceKey\('(mute|deafen|camera|share)'\)/g) || []).length;
-check(popCalls === 14, 'every handler for those keys pops its mirrors (4 mic + 4 deafen + 3 camera + 3 share)', { popCalls });
+check(popCalls === 12, 'every handler for the CALL keys pops its mirrors (3 mic + 3 deafen + 3 camera + 3 share)', { popCalls });
 check(/b\.addEventListener\('animationend', function done\(ev\)[\s\S]*?b\.classList\.remove\('pop'\)/.test(voice),
   'and the .pop class is dropped when the pop ends, so it can never outrank the next call\'s entrance');
-check(/if \(!b\.offsetParent\) continue;/.test(voice),
+check(/function popKeyEl\(b\) \{\s*if \(!b \|\| !b\.offsetParent\) return;/.test(voice),
   'a key on a surface that is not on screen (the fab on desktop, the closed call view) is skipped rather than left holding a stale .pop');
 check(/b\.classList\.toggle\('on-air', !!v\?\.sharing\)/.test(voice),
   'paintVoiceControls drives the on-air ring off the real sharing state');
@@ -331,7 +336,7 @@ setTimeout(function () {
     rest: { bg: C.resolved(mute, 'backgroundColor', S()), outline: C.resolved(mute, 'outlineColor', S()), transform: C.resolved(mute, 'transform', S()) },
     hover: { bg: C.resolved(mute, 'backgroundColor', S(1)), outline: C.resolved(mute, 'outlineColor', S(1)), transform: C.resolved(mute, 'transform', S(1)) },
     active: { bg: C.resolved(mute, 'backgroundColor', S(0, 1)), outline: C.resolved(mute, 'outlineColor', S(0, 1)), transform: C.resolved(mute, 'transform', S(0, 1)) },
-    press: { bg: C.resolved(mute, 'backgroundColor', PRESS), outline: C.resolved(mute, 'outlineColor', PRESS), transform: C.resolved(mute, 'transform', PRESS) },
+    press: { bg: C.resolved(mute, 'backgroundColor', PRESS), outline: C.resolved(mute, 'outlineColor', PRESS), transform: C.resolved(mute, 'transform', PRESS), filter: C.resolved(mute, 'filter', PRESS) },
     restAnim: C.resolved(mute, 'animationName', S()),
     hoverAnim: C.resolved(mute, 'animationName', S(1)),
   };
@@ -342,10 +347,9 @@ setTimeout(function () {
     rest: { bg: C.resolved(mute, 'backgroundColor', S()), outline: C.resolved(mute, 'outlineColor', S()) },
     hover: { bg: C.resolved(mute, 'backgroundColor', S(1)), outline: C.resolved(mute, 'outlineColor', S(1)) },
     active: { bg: C.resolved(mute, 'backgroundColor', S(0, 1)) },
-    press: { bg: C.resolved(mute, 'backgroundColor', PRESS), outline: C.resolved(mute, 'outlineColor', PRESS) },
+    press: { bg: C.resolved(mute, 'backgroundColor', PRESS), outline: C.resolved(mute, 'outlineColor', PRESS), filter: C.resolved(mute, 'filter', PRESS) },
     dangerHover: { bg: C.resolved(leave, 'backgroundColor', S(1)) },
     dangerRest: { bg: C.resolved(leave, 'backgroundColor', S()) },
-    dangerPress: { bg: C.resolved(leave, 'backgroundColor', PRESS) },
   };
   var offReal = getComputedStyle(mute).backgroundColor;
   mute.classList.remove('off');
@@ -415,7 +419,7 @@ function probe(chrome, html, { width, height, dpr }) {
 }
 
 const PANEL_3 = 'rgb(29, 37, 54)', PANEL_4 = 'rgb(39, 48, 72)', PANEL_2 = 'rgb(20, 26, 40)';
-const RED = 'rgb(168, 50, 38)', RED_HOVER = 'rgb(192, 58, 44)', RED_DOWN = 'rgb(141, 39, 30)';
+const RED = 'rgb(168, 50, 38)', RED_HOVER = 'rgb(192, 58, 44)';
 
 function chromeHalf() {
   const chrome = findChrome();
@@ -440,14 +444,15 @@ function chromeHalf() {
   const c = r.cascade;
   check(c.rest.bg.value === PANEL_3, 'a neutral key rests on --panel-3', c.rest.bg);
   check(c.hover.bg.value === PANEL_4, 'hover lifts it one tonal step', c.hover.bg);
-  check(c.press.bg.value === PANEL_2, 'a press sinks it below rest — and it WINS while the pointer is also hovering', c.press.bg);
-  check(c.active.bg.value === PANEL_2, 'the same value as a bare :active', c.active.bg);
-  check(c.hover.bg.value !== c.press.bg.value && c.hover.bg.value !== c.rest.bg.value,
-    'so hovering can never be mistaken for clicking (or for resting)', { rest: c.rest.bg.value, hover: c.hover.bg.value, press: c.press.bg.value });
+  check(c.press.bg.value === c.hover.bg.value && c.press.bg.value !== c.rest.bg.value,
+    'a press keeps the tone the pointer is showing — it does not swap colour, because a tone that dives and returns in ~150ms IS the blink that was reported',
+    { rest: c.rest.bg.value, hover: c.hover.bg.value, press: c.press.bg.value });
+  check(c.active.bg.value === PANEL_3, 'and a bare :active (no pointer) keeps the resting tone too', c.active.bg);
   check(String(c.hover.transform && c.hover.transform.value).includes('matrix') && c.hover.transform.raw.includes('translateY'),
     'hover is a LIFT, not just a tone', c.hover.transform);
-  check(c.press.transform.raw.includes('scale'),
-    'while a press is the opposite gesture: it shrinks, and the hover lift is gone', c.press.transform);
+  check(c.press.transform.raw.includes('scale'), 'while a press is the opposite gesture: the key gives under the pointer', c.press.transform);
+  check(String(c.press.filter && c.press.filter.value).includes('brightness(0.9)'),
+    'and it dims a whisper rather than recolouring (which is also what deepens an engaged red)', c.press.filter);
   check(c.hover.outline.value !== 'rgba(0, 0, 0, 0)' && c.hover.outline.value !== 'transparent',
     'hover rings the key', c.hover.outline);
   check(c.press.outline.value === 'rgba(0, 0, 0, 0)', 'and a press drops the ring', c.press.outline);
@@ -460,9 +465,10 @@ function chromeHalf() {
     'and stays red — brighter — under the pointer, instead of turning grey', c.off.hover.bg);
   check(c.off.hover.bg.value !== c.hover.bg.value,
     'the engaged hover is nothing like a neutral key\'s hover', { engaged: c.off.hover.bg.value, neutral: c.hover.bg.value });
-  check(c.off.press.bg.value === RED_DOWN, 'pressing it deepens the red (it does not go grey either)', c.off.press.bg);
-  check(c.off.dangerRest.bg.value === RED && c.off.dangerHover.bg.value === RED_HOVER && c.off.dangerPress.bg.value === RED_DOWN,
-    'the disconnect key behaves the same way (red / brighter / deeper)', c.off.dangerPress);
+  check(c.off.press.bg.value === RED_HOVER && String(c.off.press.filter.value).includes('brightness(0.9)'),
+    'pressing it deepens the same red through the dimming, with no second hard-coded red to keep in step', c.off.press);
+  check(c.off.dangerRest.bg.value === RED && c.off.dangerHover.bg.value === RED_HOVER,
+    'the disconnect key behaves the same way (red, brighter under the pointer)', c.off.dangerHover);
 
   console.log('\n[8] the life the row gained');
   const ids = ['#btn-mute', '#btn-deafen', '#btn-camera', '#btn-share', '#btn-voice-leave'];

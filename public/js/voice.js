@@ -53,44 +53,44 @@ const ME_SVG = {
   deaf: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>',
   deafOff: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/><line x1="3" y1="3" x2="21" y2="21"/></svg>',
 };
-// One control lives in up to four places at once — the me bar, the sidebar's
-// call bar, the floating bar over the chat and the full call view — and a
-// single toggle moves all of them, so the acknowledgement is played on every
-// copy rather than only on the one the pointer happened to hit (the sidebar
-// answers a keypress made in the full call view, and vice versa).
+// A call key lives in three places at once — the sidebar's call bar, the
+// floating bar over the chat and the full call view — and a single toggle moves
+// all of them, so the acknowledgement is played on every copy rather than only
+// on the one the pointer happened to hit (the sidebar answers a keypress made
+// in the full call view, and vice versa). The me bar's own mic/deafen buttons
+// are deliberately NOT in these lists: they carry the same state but they are
+// their own control on their own bar, and popping them from a call key made two
+// buttons bounce for one press.
 const VOICE_KEY_MIRRORS = {
-  mute: ['#me-mute', '#btn-mute', '#vf-mute', '#cv-mute'],
-  deafen: ['#me-deafen', '#btn-deafen', '#vf-deafen', '#cv-deafen'],
+  mute: ['#btn-mute', '#vf-mute', '#cv-mute'],
+  deafen: ['#btn-deafen', '#vf-deafen', '#cv-deafen'],
   camera: ['#btn-camera', '#vf-camera', '#cv-camera'],
   share: ['#btn-share', '#vf-share', '#cv-share'],
 };
-function popVoiceKey(ctrl) {
-  for (const sel of VOICE_KEY_MIRRORS[ctrl] || []) {
-    const b = $(sel);
-    if (!b) continue;
-    // A key whose surface is not on screen right now (the floating bar on
-    // desktop, the call view while it is closed) never plays the pop, so it
-    // must not keep the class either — it would pop out of nowhere the next
-    // time that surface appears.
-    if (!b.offsetParent) continue;
-    try {
+// Pop one key. A key whose surface is not on screen right now (the floating bar
+// on desktop, the call view while it is closed) never plays the pop, so it is
+// skipped rather than left holding the class. The class is dropped when the pop
+// ends: a stale .pop would still be on the key next time the call bar is shown,
+// where it outranks the entrance animation and would skip the whole stagger.
+function popKeyEl(b) {
+  if (!b || !b.offsetParent) return;
+  try {
+    b.classList.remove('pop');
+    void b.offsetWidth; // restart the animation on a second press
+    b.classList.add('pop');
+    b.addEventListener('animationend', function done(ev) {
+      if (ev.animationName !== 'vb-key-pop' && ev.animationName !== 'me-pop') return;
       b.classList.remove('pop');
-      void b.offsetWidth; // restart the animation on a second click
-      b.classList.add('pop');
-      // Drop the class when the pop ends: a stale .pop would still be on the
-      // key next time the call bar is shown, where it outranks the entrance
-      // animation and would skip the whole stagger.
-      b.addEventListener('animationend', function done(ev) {
-        if (ev.animationName !== 'vb-key-pop' && ev.animationName !== 'me-pop') return;
-        b.classList.remove('pop');
-        b.removeEventListener('animationend', done);
-      });
-    } catch {}
-  }
+      b.removeEventListener('animationend', done);
+    });
+  } catch {}
+}
+function popVoiceKey(ctrl) {
+  for (const sel of VOICE_KEY_MIRRORS[ctrl] || []) popKeyEl($(sel));
 }
 $('#btn-voice-leave').onclick = () => leaveVoice();
-$('#me-mute').onclick = (e) => { if (e) e.stopPropagation(); toggleMute(); popVoiceKey('mute'); };
-$('#me-deafen').onclick = (e) => { if (e) e.stopPropagation(); toggleDeafen(); popVoiceKey('deafen'); };
+$('#me-mute').onclick = (e) => { if (e) e.stopPropagation(); toggleMute(); popKeyEl($('#me-mute')); };
+$('#me-deafen').onclick = (e) => { if (e) e.stopPropagation(); toggleDeafen(); popKeyEl($('#me-deafen')); };
 $('#vf-leave').onclick = () => leaveVoice();
 $('#vf-mute').onclick = () => { toggleMute(); popVoiceKey('mute'); };
 $('#btn-mute').onclick = () => { toggleMute(); popVoiceKey('mute'); };
