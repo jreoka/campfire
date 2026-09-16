@@ -1060,6 +1060,14 @@ async function encodeThumb(srcKey, tkey) {
 }
 
 const cacheBust = (cleanUrl) => `${cleanUrl}?v=${Date.now().toString(36)}`;
+// How the job line reports the size move. A normalized conversion (see planFor:
+// the HEIC rule and the Apple-playability rule) is EXPECTED to grow — Opus in,
+// AAC out — so the log has to say `+24%` rather than the `--24%` a bare
+// `-${pct}` produced when the percentage itself was negative.
+function pctMove(inSize, outSize) {
+  const p = Math.round((1 - (Number(outSize) || 0) / (Number(inSize) || 1)) * 100);
+  return (p >= 0 ? '-' + p : '+' + -p) + '%';
+}
 const MIME_BY_OUT = { '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4' };
 
 // ---------- job ----------
@@ -1331,8 +1339,7 @@ async function compressLocked(key, inspect, opts) {
     stats.savedBytes += inStat.size - outStat.size;
     stats.lastJob = { key, group: plan.group, pipeline: plan.pipeline, origSize: inStat.size, newSize: outStat.size, at: now() };
     await logJob({ tbl: row.tbl, url: newUrl, filename: row.filename, kind: plan.group, pipeline: plan.pipeline, result: 'compressed', origSize: inStat.size, newSize: outStat.size });
-    const pct = Math.round((1 - outStat.size / inStat.size) * 100);
-    log(`${plan.group} ${key}: ${Math.round(inStat.size / 1024)}KB -> ${Math.round(outStat.size / 1024)}KB (-${pct}%)`);
+    log(`${plan.group} ${key}: ${Math.round(inStat.size / 1024)}KB -> ${Math.round(outStat.size / 1024)}KB (${pctMove(inStat.size, outStat.size)})`);
     return { key: newKey, url: newUrl, size: outStat.size, origSize: inStat.size, mime: newMime, group: plan.group, pipeline: plan.pipeline, renamed: newKey !== key };
   } catch (e) {
     // A scanner failure on the candidate is NOT a reason to give up on the
@@ -1523,8 +1530,7 @@ async function commitStandaloneLocked(key, refs, opts) {
     stats.savedBytes += inStat.size - outStat.size;
     stats.lastJob = { key, group: plan.group, pipeline: plan.pipeline, origSize: inStat.size, newSize: outStat.size, at: now() };
     await logJob({ tbl: '', url: newUrl, filename: key.split('/').pop(), kind: plan.group, pipeline: plan.pipeline, result: 'compressed', origSize: inStat.size, newSize: outStat.size });
-    const pct = Math.round((1 - outStat.size / inStat.size) * 100);
-    log(`${plan.group} ${key}: ${Math.round(inStat.size / 1024)}KB -> ${Math.round(outStat.size / 1024)}KB (-${pct}%)${refs.length ? ' [' + refs.length + ' ref' + (refs.length === 1 ? '' : 's') + ']' : ''}`);
+    log(`${plan.group} ${key}: ${Math.round(inStat.size / 1024)}KB -> ${Math.round(outStat.size / 1024)}KB (${pctMove(inStat.size, outStat.size)})${refs.length ? ' [' + refs.length + ' ref' + (refs.length === 1 ? '' : 's') + ']' : ''}`);
     return { key: newKey, url: newUrl, size: outStat.size, origSize: inStat.size, group: plan.group, pipeline: plan.pipeline };
   } catch (e) {
     stats.errors++;
