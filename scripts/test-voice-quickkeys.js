@@ -112,10 +112,12 @@ check(/#voice-bar:not\(\.hidden\) \.vb-btn\{animation:vb-key-in/.test(css),
   'it runs the moment the call bar is revealed');
 const delays = ['\.02s', '\.05s', '\.08s', '\.11s', '\.14s'].map((d) => new RegExp('#voice-bar:not\\(\\.hidden\\) \\.vb-btn:nth-child\\(\\d\\)\\{animation-delay:' + d + '\\}'));
 check(delays.every((re) => re.test(css)), 'and each of the five keys is staggered');
-check(/@keyframes vb-key-pop\{0%\{transform:scale\(1\)\}40%\{transform:scale\(\.94\)\}100%\{transform:scale\(1\)\}\}/.test(css),
-  'and the pop is a house-vocabulary .94 tick, not a bounce that reads as a flash');
-check(css.indexOf('.vb-btn.pop{animation:vb-key-pop') > css.indexOf('#voice-bar:not(.hidden) .vb-btn{animation:vb-key-in'),
-  'the pop rule is declared AFTER the entrance (same specificity — only the order lets a click during the entrance still pop)');
+check(/@keyframes vb-key-pop\{0%\{transform:scale\(1\)\}38%\{transform:scale\(\.86\)\}100%\{transform:scale\(1\)\}\}/.test(css),
+  'a toggle pops the key: a short give of the glyph');
+check(/\.vb-btn\.pop svg\{animation:vb-key-pop/.test(css),
+  'and the pop is on the GLYPH, never on the key\'s own box');
+check(!/\.vb-btn\.pop\{animation/.test(css) && !/#voice-bar \.vb-btn\.pop,/.test(css),
+  'because a class that changes an element\'s animation-name starts the new name from scratch — a box pop handed the box back to the ENTRANCE animation (measured: opacity 0 for two frames, then a 300ms fade-in) every time it ended');
 check(/@keyframes vb-air\{/.test(css) && /\.vb-btn\.on-air::before\{[^}]*animation:vb-air/.test(css),
   'and the streaming key breathes a ring while you are on air');
 check(/\.vb-btn\.on-air::before\{[^}]*pointer-events:none/.test(css),
@@ -355,11 +357,20 @@ setTimeout(function () {
   mute.classList.remove('off');
   leave.classList.remove('danger');
   report.ground.offBgReal = offReal;
-  // the pop outranks the entrance on a key that is already in the call
+  // The flash guard. With the pop class ON, the KEY's own animation must be
+  // exactly what it is with the class OFF: if it differs, the browser starts
+  // the new name from scratch the moment the class comes off, which is how the
+  // key came to replay its entrance — invisible, 5px down, fading in — on every
+  // single press. The glyph is where the pop may live instead.
+  var keyOff = getComputedStyle(mute).animationName;
   mute.classList.add('pop');
-  report.popAnim = getComputedStyle(mute).animationName;
-  report.popWins = C.resolved(mute, 'animationName', S());
+  report.pop = {
+    keyOn: getComputedStyle(mute).animationName,
+    keyOff: keyOff,
+    svgOn: getComputedStyle(mute.querySelector('svg')).animationName,
+  };
   mute.classList.remove('pop');
+  report.pop.svgOff = getComputedStyle(mute.querySelector('svg')).animationName;
   // on air
   report.airBefore = getComputedStyle(share, '::before').animationName;
   report.airBeforeBorder = getComputedStyle(share, '::before').borderTopColor;
@@ -476,8 +487,10 @@ function chromeHalf() {
     'every key plays the entrance animation when the bar appears', ids.map((s) => s + ':' + r.keys[s].animation));
   const delays = ids.map((sel) => r.keys[sel].delay);
   check(new Set(delays).size === 5, 'and each key is staggered off the others', delays);
-  check(r.popWins && r.popWins.value === 'vb-key-pop' && r.popAnim === 'vb-key-pop',
-    'a toggled key plays the pop (and it outranks the entrance on a key already in the call)', { resolved: r.popWins, computed: r.popAnim });
+  check(r.pop.keyOn === r.pop.keyOff && r.pop.keyOff === 'vb-key-in',
+    'the pop class leaves the KEY\'s own animation untouched — identical with it on and off', r.pop);
+  check(r.pop.svgOn === 'vb-key-pop' && r.pop.svgOff === 'none',
+    'and it animates the glyph instead, where there is no second animation to be handed to', r.pop);
   check(r.airBefore === 'none' && r.airOn === 'vb-air',
     'the streaming key only breathes once it is actually on air', { off: r.airBefore, on: r.airOn });
   check(r.airOnBorder === 'rgba(248, 113, 113, 0.8)', 'and the ring wears the app\'s live red, not a second colour', r.airOnBorder);

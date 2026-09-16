@@ -512,15 +512,18 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #voice-bar:not(.hidden) .vb-btn:nth-child(3){animation-delay:.08s}
 #voice-bar:not(.hidden) .vb-btn:nth-child(4){animation-delay:.11s}
 #voice-bar:not(.hidden) .vb-btn:nth-child(5){animation-delay:.14s}
-/* A toggle answers with a short pop of the key's own box — every copy of that
-   key pops at once (voice.js pops the mirrors), so the sidebar answers a
-   keypress made in the full call view. The pop is a house-vocabulary tick
-   (.94, one frame of give), NOT a bounce: at .82 it snapped the 38px key down
-   and back inside ~110ms, which next to the press read as a flash. Declared
-   AFTER the entrance rules on purpose: same specificity, so only the order
-   lets a click during the entrance still pop. */
-@keyframes vb-key-pop{0%{transform:scale(1)}40%{transform:scale(.94)}100%{transform:scale(1)}}
-#voice-bar .vb-btn.pop,#voice-fab .vb-btn.pop,#stage-controls .vb-btn.pop{animation:vb-key-pop .2s var(--ease-out)}
+/* A toggle answers with a short pop of the key's GLYPH — every copy of that key
+   pops at once (voice.js pops the mirrors), so the sidebar answers a keypress
+   made in the full call view.
+   It is on the glyph, not on the key's own box, and that is the fix for a real
+   flash rather than a style preference: changing an element's animation-name
+   starts the NEW name from scratch, so a pop on the box handed the box back to
+   the entrance animation the instant the class came off — measured, the key sat
+   at opacity 0 for two frames and faded back in over 300ms on every press. The
+   glyph has no second animation to be handed to, and the key's own animation is
+   now identical with the class on and off (which the test asserts). */
+@keyframes vb-key-pop{0%{transform:scale(1)}38%{transform:scale(.86)}100%{transform:scale(1)}}
+.vb-btn.pop svg{animation:vb-key-pop .22s var(--ease-out)}
 /* On air: while your screen or game is really streaming the key wears a ring
    that breathes, so the sidebar has one element that is visibly ALIVE and a
    live stream reads without opening the call view. It is a ::before, never the
@@ -528,7 +531,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 @keyframes vb-air{0%,100%{opacity:.3;transform:scale(.97)}50%{opacity:.85;transform:scale(1.05)}}
 .vb-btn.on-air::before{content:'';position:absolute;inset:-3px;border-radius:inherit;border:1.5px solid rgba(248,113,113,.8);pointer-events:none;animation:vb-air 2.2s ease-in-out infinite}
 @media (prefers-reduced-motion:reduce){
-  #voice-bar:not(.hidden) .vb-btn,#voice-bar .vb-btn.pop,#voice-fab .vb-btn.pop,#stage-controls .vb-btn.pop,.vb-btn.on-air::before{animation:none}
+  #voice-bar:not(.hidden) .vb-btn,#voice-bar .vb-btn.pop svg,#voice-fab .vb-btn.pop svg,#stage-controls .vb-btn.pop svg,.vb-btn.on-air::before{animation:none}
   .vb-btn svg{transition:none}
 }
 /* Camera starting: the icon gives way to a spinner until the first frame lands
