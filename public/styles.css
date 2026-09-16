@@ -1595,12 +1595,24 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
    Outer effects animate box-shadow (never clipped by the avatar's own
    overflow); inner effects use ::before (::after stays free for the
    status ring). Keyframe animations win over paintAvatar's inline
-   box-shadow:none, so they always render. */
+   box-shadow:none, so they always render — except where the story ring
+   needs that property (see the .st-ringed rule below). */
 .avatar[class*="deco-"]{position:relative}
 .avatar.deco-ember{animation:deco-ember 1.6s ease-in-out infinite}
 @keyframes deco-ember{0%,100%{box-shadow:0 0 0 2px #ff9a3c,0 0 10px 2px rgba(255,122,26,.55)}50%{box-shadow:0 0 0 2px #ffd23c,0 0 18px 5px rgba(255,122,26,.85)}}
 .avatar.deco-neon{animation:deco-neon 2.2s ease-in-out infinite}
 @keyframes deco-neon{0%,100%{box-shadow:0 0 0 2px #5b6cff,0 0 8px 1px rgba(91,108,255,.5)}50%{box-shadow:0 0 0 2px #22d3ee,0 0 16px 4px rgba(34,211,238,.8)}}
+/* The one thing that outranks an outer effect: the story ring. The two want
+   the same property, and an animation beats the inline box-shadow that
+   paintStoryAvatar()/paintRowStoryRing() write — so an avatar wearing Ember
+   Glow or Neon Pulse AND showing a story lost its ring outright: no accent
+   for an unwatched story, no hairline for a watched one, just the
+   decoration's ring and its coloured halo hugging the pfp (reported from a
+   card as artifacting around the circle). The ring that carries information
+   wins, so those two stand down while a story ring is up — `.st-ringed` is
+   set by both painters and cleared with the ring — and the inner ::before
+   effects keep playing, because a decoration is still a decoration. */
+.avatar.st-ringed.deco-ember,.avatar.st-ringed.deco-neon{animation:none}
 .avatar.deco-fireflies::before,.avatar.deco-aurora::before,.avatar.deco-tide::before,.avatar.deco-stardust::before{content:"";position:absolute;inset:0;border-radius:50%;pointer-events:none;z-index:2}
 .avatar.deco-fireflies::before{background:radial-gradient(circle 3px at 50% 10%,#ffe27a 60%,transparent 72%),radial-gradient(circle 2px at 50% 90%,#b6ff9e 60%,transparent 72%);animation:deco-spin 3.2s linear infinite}
 .avatar.deco-aurora::before{background:conic-gradient(from 0deg,transparent 0%,rgba(95,242,200,.55) 12%,transparent 26%,transparent 52%,rgba(122,162,255,.55) 64%,transparent 78%);animation:deco-spin 6s linear infinite}

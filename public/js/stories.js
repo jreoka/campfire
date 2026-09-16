@@ -728,7 +728,10 @@ function paintRowStoryRing(row, user, avatarSel) {
   if (!items.length) return false;
   const unseen = items.some((i) => !i.seen);
   const av = row.querySelector(avatarSel || '.avatar');
-  if (av) av.style.boxShadow = '0 0 0 2px ' + (unseen ? 'var(--accent)' : 'var(--line)');
+  // `st-ringed` is the marker the stylesheet keys the story ring's precedence on
+  // (see the avatar decorations in styles.css): a decoration whose outer ring is
+  // an animated box-shadow would otherwise win the property outright.
+  if (av) { av.style.boxShadow = '0 0 0 2px ' + (unseen ? 'var(--accent)' : 'var(--line)'); av.classList.add('st-ringed'); }
   const wrap = row.querySelector('.avwrap') || av;
   if (wrap) {
     // The thumbnail goes INSIDE the avatar element: .avatar{overflow:hidden}
@@ -764,6 +767,7 @@ function clearStoryAvatar(av) {
   if (thumb) thumb.remove();
   av.style.boxShadow = '';
   av.classList.remove('st-click');
+  av.classList.remove('st-ringed');
   av.removeAttribute('role');
   av.removeAttribute('tabindex');
   av.removeAttribute('aria-label');
@@ -782,6 +786,7 @@ function paintStoryAvatar(av, u, opts = {}) {
   if (!items.length) return false;
   const unseen = items.some((i) => !i.seen);
   av.style.boxShadow = '0 0 0 ' + (opts.ring || '2.5px') + ' ' + (unseen ? 'var(--accent)' : 'var(--line)');
+  av.classList.add('st-ringed');
   try {
     // The thumbnail goes INSIDE the avatar element: .avatar{overflow:hidden}
     // clips it to the same circle, so its antialiased edge never blends with
