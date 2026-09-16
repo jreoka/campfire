@@ -26,7 +26,7 @@ const { encodePNG, resample } = require('./png-util');
 // optical centering wants a touch more air underneath the stones.
 const VBX = -1.5, VBY = 0, VBS = 51;
 // Center of that window in its own units — the point a square canvas puts at
-// its center. Both the bare logo and the badge center the mark on it.
+// its center.
 const VBCX = VBX + VBS / 2, VBCY = VBY + VBS / 2;
 
 // The mark, in SVG document (paint) order. Flame paths are copied verbatim
@@ -191,34 +191,40 @@ function makeMarkMapper(W, base, box) {
     }
     return pts;
   }
+  // A rounded rectangle, then ONE rotation about (rcx, rcy) — both in SVG
+  // units, mapped to device space at the end. (The corner arcs are built in
+  // unrotated SVG space on purpose: building them already rotated and then
+  // rotating the whole outline again double-rotates the corners, which is what
+  // pushed the crossed logs out to 1.5x their half-diagonal and buried the
+  // fire under them.)
   function roundedRectPoly(x, y, w, h, r, rotDeg, rcx, rcy) {
     const pts = [];
     const corner = (ccx, ccy, a0, a1) => {
       const n = 24;
       for (let k = 0; k <= n; k++) {
         const a = a0 + ((a1 - a0) * k) / n;
-        pts.push([X(ccx + r * Math.cos(a)), Y(ccy + r * Math.sin(a))]);
+        pts.push([ccx + r * Math.cos(a), ccy + r * Math.sin(a)]);
       }
     };
-    pts.push([X(x + r), Y(y)]);
-    pts.push([X(x + w - r), Y(y)]);
+    pts.push([x + r, y]);
+    pts.push([x + w - r, y]);
     corner(x + w - r, y + r, -Math.PI / 2, 0);
-    pts.push([X(x + w), Y(y + h - r)]);
+    pts.push([x + w, y + h - r]);
     corner(x + w - r, y + h - r, 0, Math.PI / 2);
-    pts.push([X(x + r), Y(y + h)]);
+    pts.push([x + r, y + h]);
     corner(x + r, y + h - r, Math.PI / 2, Math.PI);
-    pts.push([X(x), Y(y + r)]);
+    pts.push([x, y + r]);
     corner(x + r, y + r, Math.PI, Math.PI * 1.5);
     if (rotDeg) {
-      // SVG rotate() in y-down space == same matrix in device space.
+      // SVG rotate() in y-down space == the same matrix in device space.
       const a = (rotDeg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
-      const px = X(rcx), py = Y(rcy);
-      return pts.map(([qx, qy]) => {
-        const dx = qx - px, dy = qy - py;
-        return [px + dx * c - dy * s, px + dx * s + dy * c];
-      });
+      for (const p of pts) {
+        const dx = p[0] - rcx, dy = p[1] - rcy;
+        p[0] = rcx + dx * c - dy * s;
+        p[1] = rcy + dx * s + dy * c;
+      }
     }
-    return pts;
+    return pts.map(([px, py]) => [X(px), Y(py)]);
   }
   return { K, CX, CY, X, Y, ellipsePoly, roundedRectPoly, flattenPath };
 }
@@ -324,34 +330,33 @@ function renderMark(size, opts) {
   return downsample(buf, size, SS);
 }
 
-// The badge: the theme-colored circle, its hairline tonal ring, and the mark
-// centered inside. `size` is the output edge; `radius` is the circle's radius
-// as a fraction of it (0.49 leaves the four corners transparent, so a square
-// rendering of this image still reads as a circle).
+// The badge: THE PLAIN MARK, exactly as campfire-logo.png renders it, with a
+// theme-colored circle added BEHIND it. The mark is never rescaled or
+// reshaped — every shape keeps its size, position and colours, so the badge
+// reads as the same logo on a round backdrop rather than a smaller logo in a
+// ring. (An earlier cut shrank the mark until it fitted inside the circle;
+// that is what "the stones and logs and fire got screwed up" was.)
 //
-// markFrac is the mark's scale relative to a full-bleed square: at 0.78 the
-// artwork's bounding box (39/51 of its window) is ~0.6 of the circle's
-// diameter, which fills the badge the way a launcher icon should. It is the
-// largest size that still fits ENTIRELY inside the circle: the stones reach
-// ±19.5 SVG units from the mark's center, i.e. 0.6 x 39/2 = 11.7 units, and a
-// circle of radius 0.98 x 51/2 = 25 units leaves 12.5 units at the sides, so
-// the widest row clears the arc with a hair to spare. Raising it clips the
-// outer stones.
-const BADGE_MARK_FRAC = 0.78;
+// Sizing the circle is the one judgement call: at radius 0.30 it sits behind
+// the flames and the crossed logs while the stones emerge along its bottom
+// edge and the flame tip rises past the top — a fire pit, not a frame. A
+// bigger circle (0.49, the old value) swallows the stones and turns the badge
+// back into a containing ring.
+const BADGE_RADIUS = 0.30;
 
 function renderBadge(size, opts) {
   const o = opts || {};
   const ss = o.ss || 4;
-  const radius = o.radius == null ? 0.49 : o.radius;
+  const radius = o.radius == null ? BADGE_RADIUS : o.radius;
   const ring = o.ring === undefined ? RING : o.ring;
-  const markFrac = o.markFrac == null ? BADGE_MARK_FRAC : o.markFrac;
+  const base = o.markFrac == null ? 1 : o.markFrac;
   const W = size * ss;
   const buf = Buffer.alloc(W * W * 4); // transparent
   const c = W / 2;
   const r = radius * W;
   fillCircle(buf, W, c, c, r, THEME);
   if (ring) fillCircle(buf, W, c, c, r - 0.011 * W, ring);
-  compositeOverLayer(buf, renderMark(W, { ss: 1, base: markFrac }), W, W);
+  compositeOverLayer(buf, renderMark(W, { ss: 1, base }), W, W);
   return downsample(buf, size, ss);
 }
 

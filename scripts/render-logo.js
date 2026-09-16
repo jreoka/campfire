@@ -31,14 +31,17 @@ const SIZE = 512;
 const iconsDir = path.join(__dirname, '..', 'public', 'icons');
 const pubDir = path.join(__dirname, '..', 'public');
 
-// The mark itself, full-bleed on transparency. The in-app Home rail button
-// renders this next to its animated SVG twin, so it stays background-free.
+// The mark itself, full-bleed on transparency — unchanged artwork (this
+// reproduces the pre-badge campfire-logo.png byte for byte). The in-app Home
+// rail button renders it next to its animated SVG twin, so it stays
+// background-free.
 const logo = renderMark(SIZE);
 fs.writeFileSync(path.join(iconsDir, 'campfire-logo.png'), encodePNG(SIZE, SIZE, logo));
 
-// The badge: the same mark, smaller, on the theme-colored circle. Everything
-// the OS cuts to a circle — the browser tab, the taskbar button, the tray
-// icon, a launcher — uses this.
+// The badge: that same mark, at that same size, with a theme-colored circle
+// added BEHIND it. Everything the OS cuts to a circle — the browser tab, the
+// taskbar button, the tray icon, a launcher — uses this, and the mark inside
+// is pixel-identical to the line above.
 const badge = renderBadge(SIZE);
 fs.writeFileSync(path.join(iconsDir, 'campfire-badge.png'), encodePNG(SIZE, SIZE, badge));
 

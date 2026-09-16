@@ -68,4 +68,14 @@ for (const [dpi, size] of Object.entries(LEGACY)) {
   fs.writeFileSync(path.join(res, `mipmap-${dpi}`, 'ic_launcher_round.png'), encodePNG(size, size, layer));
   console.log('legacy', dpi, `${size}/${size} round ${size}/${size}`);
 }
+
+// `npx tauri icon` rewrites the adaptive background to white every run; put the
+// theme navy back, or the launcher's shape mask shows a white field.
+const bgXml = path.join(res, 'values', 'ic_launcher_background.xml');
+fs.writeFileSync(
+  bgXml,
+  '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n' +
+  `  <color name="ic_launcher_background">#${THEME.map((c) => c.toString(16).padStart(2, '0')).join('')}</color>\n` +
+  '</resources>\n'
+);
 console.log('android launcher icons regenerated ->', res);
