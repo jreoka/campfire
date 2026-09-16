@@ -302,6 +302,10 @@ async function main() {
     'the upload path registers the picked bytes against the attachment id, with its byte size for the cap');
   check(/LOCAL_PREVIEW_CAP_BYTES/.test(messages) && /if \(attPreviewStaged\.has\(k\)\) continue;/.test(messages),
     'the preview store is bounded, and never evicts a file still sitting in a composer');
+  check(/function noteAttPreviewRendered\(a\)/.test(messages) && /for \(const a of m\.attachments\) noteAttPreviewRendered\(a\);/.test(messages),
+    'the list reports which attachments it painted, so a preview dropped before posting is not kept forever');
+  check(/if \(!seen\.done\) continue;/.test(messages) && /a\.scan === 'clean' \|\| a\.scan === 'infected'/.test(messages),
+    'and a file still waiting on the slot keeps its picked bytes (never a spinner back where the picture is)');
 
   const chromePath = findChrome();
   if (!chromePath) {

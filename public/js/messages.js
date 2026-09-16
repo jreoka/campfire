@@ -1745,6 +1745,10 @@ function messageEl(m, opts = {}) {
     if (!big && typeof linkEmbedsHTML === 'function') inner += linkEmbedsHTML(m.content);
   }
   if (m.attachments?.length) {
+    // The list is painting these: the picked-bytes store (see attPreviewEntry)
+    // uses this to tell a message's attachment from one that was dropped before
+    // it was ever posted.
+    for (const a of m.attachments) noteAttPreviewRendered(a);
     inner += '<div class="msg-atts">' + m.attachments.map(attachmentHTML).join('') + '</div>';
   }
   if (m.viewOnce && typeof voCardHTML === 'function') inner += voCardHTML(m);
@@ -2520,6 +2524,22 @@ function replyPreviewOf(m) {
 // revoked). Anything already sent stays registered: the message that carries it
 // paints from those bytes until the slot publishes the final ones, and the size
 // cap in setAttPreview* is what bounds the rest.
+// The id of every attachment the LIST has painted, with when and whether the scan
+// slot has finished with it. A preview whose attachment is in no message at all
+// was dropped from a composer (its ✕) after the upload answered — nothing will
+// ever show it again — and one that IS in a message is released once the verdict
+// has landed and swapped it. A file STILL pending is never released: its picked
+// bytes are the only thing on screen, and taking them away would put a spinner
+// back where the picture is.
+const attPreviewRendered = new Map(); // att id -> { at, done }
+function noteAttPreviewRendered(a) {
+  try {
+    if (!a || !a.id) return;
+    const id = String(a.id);
+    const prev = attPreviewRendered.get(id);
+    attPreviewRendered.set(id, { at: Date.now(), done: a.scan === 'clean' || a.scan === 'infected' || (prev && prev.done) });
+  } catch {}
+}
 function pruneAttPreviews() {
   // Which keys a composer is holding right now: rebuilt every time, so the set
   // can never hold a file that was sent, posted or dropped.
@@ -2530,17 +2550,18 @@ function pruneAttPreviews() {
   for (const u of (S.uploads || [])) if (u.att && u.att.url) staged.add(u.att.url);
   attPreviewStaged = staged;
   if (!attPreviews.size) return;
-  // What this sweeps up: a file DROPPED from a composer (its ✕) — a url-keyed
-  // entry no composer holds any more. A file that was SENT keeps its picked bytes
-  // for a grace period, because the message carrying it is painted a moment later
-  // (the send clears the composer before the echo arrives) and THAT is the whole
-  // point of the store — the picture is already on screen when the verdict lands.
-  // After the grace the entry is gone; the message still has the published file,
-  // and the size cap in evictAttPreviews bounds everything in the meantime.
+  const now = Date.now();
   for (const [key, entry] of [...attPreviews]) {
     if (staged.has(key)) continue;
-    if (entry.id && Date.now() - (entry.at || 0) < 60000) continue;
+    if (!entry.id) { releaseAttPreview(key); continue; }   // dropped before it had an id
+    const seen = attPreviewRendered.get(entry.id);
+    if (!seen) { releaseAttPreview(key); continue; }        // dropped before it was ever posted
+    if (!seen.done) continue;                               // still waiting on the slot
+    if (now - seen.at < 60000) continue;                    // the swap is this recent
     releaseAttPreview(key);
+  }
+  if (attPreviewRendered.size > 400) {
+    for (const k of attPreviewRendered.keys()) { if (attPreviewRendered.size <= 400) break; attPreviewRendered.delete(k); }
   }
 }
 const CHIP_IMG_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
