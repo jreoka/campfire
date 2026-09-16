@@ -160,15 +160,25 @@ declared in the manifest); no tray/watcher on mobile — that Rust code is
   notification parks its url on the activity and `window.__cfDeepLink` routes it
   through `handleDeepLinkQuery` (auth.js).
 
-- **Icons:** `public/icons/campfire-logo.png` is the single source of truth,
-  rendered from the in-app animated fire's vectors via `node
-  scripts/render-logo.js` (also writes `favicon-32.png` + `favicon.ico`).
-  `src-tauri/icons/` generated via `npx tauri icon
-  public/icons/campfire-logo.png`, then `node scripts/gen-ico.js` so
+- **Icons:** two 512s are rendered from the in-app animated fire's vectors via
+  `node scripts/render-logo.js` = `scripts/mark-render.js` (the shared vector
+  renderer; also writes `favicon-32.png` + `favicon.ico`):
+  `public/icons/campfire-logo.png` is the BARE mark, transparent — the in-app
+  Home rail button's `<img>`; `public/icons/campfire-badge.png` is the mark on
+  the round theme-colored badge and is the single source of truth for every
+  ICON (tab, taskbar, tray, launcher), because the OS cuts those to a circle
+  and the mark has to sit inside one (`BADGE_MARK_FRAC` in mark-render.js is
+  the largest scale that still clears the arc). `scripts/gen-icons.js` derives
+  the PWA icons from the badge (no background compositing any more — the badge
+  IS the icon), and `src-tauri/icons/` is generated via `npx tauri icon
+  public/icons/campfire-badge.png`, then `node scripts/gen-ico.js` so
   `icon.ico` stays identical to the web favicon (`public/favicon.ico`) —
   one source of truth. Then `node scripts/gen-android-icons.js` to re-derive
-  the APK launcher foregrounds zoomed out to the adaptive-icon safe zone
-  (`tauri icon` emits them full-bleed, so the launcher circle clips the mark).
+  the APK launcher foregrounds from the BARE mark, zoomed out to the
+  adaptive-icon safe zone (`tauri icon` emits them from the full-bleed badge,
+  so the launcher circle clips the mark) — and to restore
+  `gen/android/.../values/ic_launcher_background.xml`, which `tauri icon`
+  resets to white.
 - **Android signing:** upload keystore lives OUTSIDE the repo
   (`~/.campfire-android/`, back it up — losing it bricks updates for existing
   installs); base64 + passwords are the `ANDROID_KEY_*` GitHub secrets,

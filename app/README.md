@@ -108,15 +108,24 @@ versionCode derives from it); `main` keeps a placeholder version.
 
 ## Icons
 
-`src-tauri/icons/` is generated from `public/icons/campfire-logo.png` via
-`npx tauri icon <png>` (gives `icon.icns`, PNGs, `icon.ico`). Afterwards re-run
-`node scripts/gen-ico.js` so `icon.ico` stays byte-identical to the web favicon
-(`public/favicon.ico`) — one source of truth — and re-run
-`node scripts/gen-android-icons.js` from the repo root so the APK launcher
-icons are re-derived zoomed out to the adaptive-icon safe zone (`tauri icon`
-emits the foregrounds full-bleed, which the launcher circle clips). `tauri icon`
-also resets `gen/android/.../values/ic_launcher_background.xml` to white —
-restore `#1a1d29` there so the adaptive background stays theme-colored.
+`src-tauri/icons/` is generated from **`public/icons/campfire-badge.png`** — the
+campfire mark on the round theme-colored badge, rendered by
+`node scripts/render-logo.js` (which also writes the transparent
+`campfire-logo.png` the in-app Home button uses, and the favicons) — via
+`npx tauri icon public/icons/campfire-badge.png` (gives `icon.icns`, PNGs,
+`icon.ico`, the Windows Store logos and the iOS AppIcon set). The badge is what
+the Windows tray, the taskbar button and every launcher show, so the artwork is
+the same circle everywhere; never hand it the bare mark.
+
+Afterwards re-run, from the repo root:
+
+- `node scripts/gen-ico.js` so `icon.ico` stays byte-identical to the web
+  favicon (`public/favicon.ico`) — one source of truth.
+- `node scripts/gen-android-icons.js` so the APK launcher icons come from the
+  BARE mark: `tauri icon` emits the adaptive foregrounds from the full-bleed
+  badge, which the launcher's circle mask clips.
+- restore `gen/android/.../values/ic_launcher_background.xml` to `#1a1d29` —
+  `tauri icon` resets it to white (the JS script above rewrites it too).
 
 ## Notes
 

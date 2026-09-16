@@ -564,6 +564,23 @@ function fmtFull(ts) {
 function fmtDay(ts) {
   return new Date(ts).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 }
+// "Sep 9th, 2026" — the full month NAME for a value shown on its own line where
+// the date is the whole point (a profile's "Member since"), not a timestamp
+// beside a message: an ordinal day reads as a date, where 9/9/2026 reads as a
+// locale's guess (D/M or M/D?). Month + ordinal + year is unambiguous everywhere.
+function ordinalDay(n) {
+  const d = Number(n) || 0;
+  if (d % 100 >= 11 && d % 100 <= 13) return d + 'th';
+  return d + ({ 1: 'st', 2: 'nd', 3: 'rd' }[d % 10] || 'th');
+}
+function fmtJoined(ts) {
+  const t = Number(ts) || 0;
+  if (!t) return '';
+  const d = new Date(t);
+  if (Number.isNaN(d.getTime())) return '';
+  const month = d.toLocaleDateString([], { month: 'short' }).replace(/\.$/, '');
+  return `${month} ${ordinalDay(d.getDate())}, ${d.getFullYear()}`;
+}
 // How long ago something happened, for lists of things that are not in front of
 // you (search hits): "just now" / "10m ago" / "3h ago" / "5d ago", and once
 // "how long ago" stops meaning anything, the date itself.

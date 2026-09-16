@@ -1508,7 +1508,7 @@ async function openUserCard(uid, x, y, fallback, opts = {}) {
       ${streaming ? `<div class="uc-statustext ustream"><span class="vlive">LIVE</span><span>Streaming ${esc(streaming)}</span></div>` : ''}
       ${u.playing_game ? `<div class="uc-statustext ugame">${gameBadgeHTML(u.playing_game)}<span>Playing ${esc(u.playing_game)}</span></div>` : ''}
       ${u.bio ? `<div class="uc-bio">${renderRich(u.bio)}</div>` : ''}
-      ${u.created_at ? `<div class="uc-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
+      ${u.created_at ? `<div class="uc-since">Member since ${fmtJoined(u.created_at)}</div>` : ''}
       <div id="uc-gaming" class="uc-gaming hidden"></div>
       ${voiceVolHTML}
       ${voiceModHTML}
@@ -2070,7 +2070,7 @@ function openProfileScreen(uid, fallback) {
     ${pstreaming ? `<div class="pf-playing ustream">Streaming ${esc(pstreaming)}</div>` : ''}
     ${u.playing_game ? `<div class="pf-playing">Playing ${esc(u.playing_game)}</div>` : ''}
     ${u.bio ? `<div class="pf-bio">${renderRich(u.bio)}</div>` : ''}
-    ${u.created_at ? `<div class="pf-since">Member since ${new Date(u.created_at).toLocaleDateString()}</div>` : ''}
+    ${u.created_at ? `<div class="pf-since">Member since ${fmtJoined(u.created_at)}</div>` : ''}
     <div id="pf-gaming" class="pf-gaming hidden"></div>
     <div class="pf-actions">${actions}<button class="btn small" id="pf-close">Close</button></div>`;
   // The profile picture carries the story affordance (see paintProfileStory).

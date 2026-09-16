@@ -1,45 +1,41 @@
-// Derives all PWA/app icons from public/icons/campfire-logo.png (the single
-// source of truth for the campfire mark) — zero dependencies.
+// Derives all PWA/app icons from public/icons/campfire-badge.png (the mark on
+// the round theme-colored badge — the single source of truth for ICONS; the
+// transparent mark lives beside it as campfire-logo.png for in-app art) —
+// zero dependencies.
 //
-// campfire-logo.png is the canonical artwork (transparent background). This
-// script regenerates:
-//   icon-192.png        transparent, area-resampled to 192x192  (manifest "any")
-//   icon-512.png        transparent, 512x512                    (manifest "any")
-//   icon-maskable-512.png  campfire mark centered at ~72% on the #1a1d29
-//                       theme background (Android adaptive-icon safe zone)
-//   apple-touch-icon.png   180x180 on the #1a1d29 theme background (iOS)
-// Keeping the Dockerfile's `RUN node scripts/gen-icons.js` step is safe:
-// it reproduces the committed icons instead of clobbering them with
-// stale procedurally-drawn art.
+// The badge already IS the icon: a circle on the app's own background with the
+// mark inside its safe area, so every size here is the same artwork resampled
+// and nothing needs a background glued on at this stage. That is the point of
+// rendering it once in scripts/render-logo.js: a browser tab, a taskbar button
+// and a launcher all get the identical mark-in-a-circle.
+//
+//   icon-192.png            the badge at 192   (manifest "any")
+//   icon-512.png            the badge at 512   (manifest "any")
+//   icon-maskable-512.png   the badge at 512   (manifest "maskable" — the
+//                           mark sits well inside Android's 80% safe circle)
+//   apple-touch-icon.png    the badge at 180   (iOS)
+//
+// Keeping the Dockerfile's `RUN node scripts/gen-icons.js` step is safe: it
+// reproduces the committed icons instead of clobbering them with stale
+// procedurally-drawn art.
 const fs = require('fs');
 const path = require('path');
-const { decodePNG, encodePNG, resample, compositeOver } = require('./png-util');
+const { decodePNG, encodePNG, resample } = require('./png-util');
 
 const dir = path.join(__dirname, '..', 'public', 'icons');
-const logoFile = path.join(dir, 'campfire-logo.png');
-const { w: lw, h: lh, px: logo } = decodePNG(logoFile);
-if (lw !== lh) throw new Error(`campfire-logo.png must be square, got ${lw}x${lh}`);
+const badgeFile = path.join(dir, 'campfire-badge.png');
+const { w: bw, h: bh, px: badge } = decodePNG(badgeFile);
+if (bw !== bh) throw new Error(`campfire-badge.png must be square, got ${bw}x${bh}`);
 
-const THEME = [0x1a, 0x1d, 0x29]; // --bg / manifest theme_color
+const at = (size) => encodePNG(size, size, resample(badge, bw, bh, size, size));
 
-// Transparent "any" icons — the raw mark, matching favicon/home art.
-fs.writeFileSync(path.join(dir, 'icon-512.png'), encodePNG(lw, lh, logo));
-fs.writeFileSync(path.join(dir, 'icon-192.png'), encodePNG(192, 192, resample(logo, lw, lh, 192, 192)));
+fs.writeFileSync(path.join(dir, 'icon-512.png'), at(512));
+fs.writeFileSync(path.join(dir, 'icon-192.png'), at(192));
+// Maskable: same artwork — the badge's own margin is the adaptive-icon safe
+// zone, so the launcher's circle mask never clips the mark.
+fs.writeFileSync(path.join(dir, 'icon-maskable-512.png'), at(512));
+// Apple touch: iOS applies its own rounded-rect mask and wants no transparency,
+// which the badge already satisfies.
+fs.writeFileSync(path.join(dir, 'apple-touch-icon.png'), at(180));
 
-// Maskable: mark at 72% on the theme background (adaptive-icon safe zone).
-const maskBox = Math.round(512 * 0.72);
-const maskLayer = resample(logo, lw, lh, maskBox, maskBox);
-fs.writeFileSync(
-  path.join(dir, 'icon-maskable-512.png'),
-  encodePNG(512, 512, compositeOver(THEME, maskLayer, maskBox, maskBox, 512, maskBox))
-);
-
-// Apple touch icon: 180x180 on the theme background.
-const appleBox = Math.round(180 * 0.8);
-const appleLayer = resample(logo, lw, lh, appleBox, appleBox);
-fs.writeFileSync(
-  path.join(dir, 'apple-touch-icon.png'),
-  encodePNG(180, 180, compositeOver(THEME, appleLayer, appleBox, appleBox, 180, appleBox))
-);
-
-console.log('icons derived from campfire-logo.png ->', dir);
+console.log('icons derived from campfire-badge.png ->', dir);
