@@ -750,11 +750,11 @@ const SCALE_VID = 'scale=1920:1080:force_original_aspect_ratio=decrease';
 //   full 256-color palette with bayer dither.
 // - video: x264 veryfast CRF 24 — the standard "looks like the source"
 //   setting; 1080p cap; AAC 128k stereo.
-// - audio: MP3 160k / AAC 128k stereo (96k mono for a mono source, which is
-//   what a voice message is — see resolvePlan) — the two formats every Apple
-//   product plays, which is why nothing here produces Opus any more (a WebM/Ogg
-//   voice note becomes AAC/MP4, see planFor); lossless WAV/FLAC become 192k MP3
-//   (still ~10x smaller).
+// - audio: MP3 160k / AAC 128k stereo, or AAC 96k mono for a voice message (one
+//   channel, or a clip inside the 5-minute recording cap — see resolvePlan) —
+//   the two formats every Apple product plays, which is why nothing here
+//   produces Opus any more (a WebM/Ogg voice note becomes AAC/MP4, see planFor);
+//   lossless WAV/FLAC become 192k MP3 (still ~10x smaller).
 function buildArgs(pipelineName, inPath, outPath) {
   const head = ['-hide_banner', '-loglevel', 'error', '-y', '-i', inPath, '-threads', '1', '-map_metadata', '-1'];
   switch (pipelineName) {
