@@ -439,7 +439,20 @@ ends in the two audio formats every Apple product has always played, which is
 why **no pipeline produces Opus any more** (`buildArgs('ogg'|'webaudio')` throws
 on purpose — `scripts/test-compress-types.js` asserts that, and asserts a
 generated Opus note comes out AAC-in-MP4 with `moov` before `mdat`, because iOS
-will not start a progressive read without `+faststart`). The switch is also a
+will not start a progressive read without `+faststart`). The audio **layout comes
+from the source's own facts** (`probeAudio` + `resolvePlan`): one channel, or a
+clip no longer than the composer's own 5-minute cap (`VOICE_MAX_S`, mirroring
+`REC_MAX_MS` in `public/js/compose.js`) → **mono 96k** (`m4a-mono`); longer or
+unknown → stereo 128k. That is the difference between a voice note landing
+UNDER the WebM/Opus it arrived as and, as first shipped, ~25% over it — measured
+on the four real notes in the DMs: -9% / -9% / -2% / -29%, where 128k stereo gave
++24% / +32% / +26% / +2%. Do not "improve" this with the two tempting signals,
+both measured and rejected: a MediaRecorder voice note is **not** reliably mono
+(Chrome wrote the owner's as dual-mono, so a channel-count-only rule misses the
+very case this exists for), and "are the two channels the same signal" does not
+separate — Opus leaves the difference channel only ~25 dB below the source peak
+on a dual-mono source, which a genuinely stereo mix 30 dB quieter also reaches.
+Duration and channel count are facts. The switch is also a
 one-time `oncePolicy('apple-playable')` migration: it re-queues the stored rows
 whose extension is in that set (`compressed = 0`) and drops their ledger
 verdicts, so media uploaded before the rule is converted too — the objects

@@ -14,8 +14,8 @@
 //   - the old bytes are gone (format change) and file_scans followed the file,
 //   - a WebM/Opus voice message (what Chrome's MediaRecorder produces, and what
 //     no Apple product could play in an <audio> element before iOS 17.4) comes
-//     out as AAC/MP4 with moov before mdat, published even though it is the
-//     BIGGER file, and served in a 206 to a range request,
+//     out as AAC/MP4 in ONE channel with moov before mdat, published even though
+//     it is the BIGGER file, and served in a 206 to a range request,
 //   - a file the engine refuses is deleted, its row goes `infected`, the gate
 //     answers 410, and the message is re-broadcast as blocked.
 //
@@ -357,12 +357,17 @@ async function main() {
       // row: AAC in an MP4, with the index (moov) before the audio data.
       const vFile = path.join(tmp, 'served.m4a');
       fs.writeFileSync(vFile, vServedBytes);
-      const vProbe = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_name', '-show_entries', 'format=format_name', '-of', 'json', vFile], { encoding: 'utf8' });
+      const vProbe = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_name,channels', '-show_entries', 'format=format_name', '-of', 'json', vFile], { encoding: 'utf8' });
       let vInfo = {};
       try { vInfo = JSON.parse(String(vProbe.stdout || '{}')); } catch {}
       const vStream = (vInfo.streams || [])[0] || {};
       check('the served bytes really are AAC in MP4', vStream.codec_name === 'aac' && /mp4|mov/.test(String((vInfo.format || {}).format_name || '')),
         JSON.stringify({ codec: vStream.codec_name, format: (vInfo.format || {}).format_name }));
+      // The fixture is mono (as every MediaRecorder voice message is), so the
+      // conversion must be mono too: the m4a plan used to force `-ac 2` on it,
+      // which duplicated the channel and made the file ~25% bigger than the Opus.
+      check('...in ONE channel (the mono voice note is not written out as stereo)',
+        Number(vStream.channels) === 1, JSON.stringify({ channels: vStream.channels }));
       const vHead = vServedBytes.subarray(0, 8192).toString('latin1');
       check('...with moov before mdat (+faststart — iOS will not start a progressive read without it)',
         vHead.includes('moov') && (!vHead.includes('mdat') || vHead.indexOf('moov') < vHead.indexOf('mdat')),

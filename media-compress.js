@@ -33,8 +33,17 @@
 //   desktop Chrome is exactly WebM/Opus, so it reached an iPhone as a player
 //   that did nothing. Those inputs are converted to AAC in MP4 and the plan is
 //   marked `normalize`: published even when the result is LARGER, because a
-//   re-encode of an efficient Opus stream to AAC 128k usually is bigger. The
-//   same rule covers non-Apple video containers (WebM/Matroska/AVI/WMV/…).
+//   re-encode of an efficient Opus stream to AAC is usually bigger. The channel
+//   layout comes from the source (probeAudio/resolvePlan): a voice message — one
+//   channel, or no longer than the composer's own 5-minute cap — is encoded mono
+//   at 96k, which lands UNDER the Opus original instead of ~25% over it, while
+//   longer/stereo audio (music) keeps stereo 128k. Note a MediaRecorder voice
+//   note is NOT reliably one channel (measured: Chrome wrote the owner's as
+//   dual-mono), and "are the channels the same signal" is not a usable test
+//   either — Opus leaves the difference channel only ~25 dB down on a dual-mono
+//   source, which a quiet genuine stereo mix also reaches. Duration and channel
+//   count are facts; those are what the rule uses. The same normalize rule covers
+//   non-Apple video containers (WebM/Matroska/AVI/WMV/…).
 // - HEIC/HEIF is the other `normalize` case: the container's ffmpeg
 //   has no HEIF demuxer at all (Alpine builds it without libheif), and no
 //   browser on Windows can decode those bytes either, so leaving the original
@@ -583,10 +592,13 @@ function planFor(mime, filename) {
   // audible is the point, exactly as with the HEIC rule below. It usually is
   // bigger, because re-encoding an efficient Opus stream to AAC at 128k costs
   // bytes — that is the accepted price of one format every reader can play.
+  // `probeAudio` lets the bytes pick the layout: a voice message (one channel,
+  // or a clip no longer than the composer's own 5-minute cap) is encoded mono at
+  // 96k instead of being written out as duplicated stereo 128k.
   if (mt === 'audio/ogg' || mt === 'audio/opus' || mt === 'audio/webm' || mt === 'audio/x-opus+ogg'
       || ext === '.ogg' || ext === '.oga' || ext === '.opus'
       || (ext === '.webm' && mt.startsWith('audio/')) || (opaqueMime(mt) && ext === '.weba')) {
-    return { pipeline: 'm4a', outExt: '.m4a', group: 'audio', normalize: true };
+    return { pipeline: 'm4a', outExt: '.m4a', group: 'audio', normalize: true, probeAudio: true };
   }
   // Lossless monsters -> universal MP3 (renames the stored file, DB follows).
   if (mt === 'audio/wav' || mt === 'audio/x-wav' || mt === 'audio/flac' || mt === 'audio/x-flac' || ext === '.wav' || ext === '.flac') {
@@ -644,12 +656,53 @@ async function probeStill(inPath) {
   return { pix: String(pix || '').toLowerCase(), frames: Number(frames) || 0 };
 }
 
+// The longest a voice message can be: the composer's own recording cap
+// (REC_MAX_MS in public/js/compose.js, 5 minutes). A clip no longer than this is
+// treated as a voice message when the channel layout is chosen (see
+// resolvePlan) — which is what makes "a voice note ends up smaller than the
+// WebM/Opus it arrived as" true instead of ~25% bigger.
+const VOICE_MAX_S = 5 * 60;
+
+// What the audio bytes are: how many channels, and how long. One header read,
+// asked only for the plans that re-encode Opus/Vorbis into AAC (see
+// resolvePlan). Null when the probe cannot answer (no audio stream, an
+// unreadable header), which keeps the stereo plan.
+async function probeAudio(inPath) {
+  const out = await runFfprobe(['-v', 'error', '-select_streams', 'a:0',
+    '-show_entries', 'stream=channels', '-show_entries', 'format=duration', '-of', 'json', inPath], 15000);
+  try {
+    const j = JSON.parse(String(out || '{}'));
+    const st = (j.streams || [])[0] || {};
+    return {
+      channels: Number(st.channels) || 0,
+      duration: Number((j.format || {}).duration) || 0,
+    };
+  } catch { return null; }
+}
+
 // Settle a deferred 'still' plan against the actual bytes, once they are local.
 // Returns a concrete plan, or null to leave the file exactly as it is. A probe
 // that cannot answer keeps the safe choice — the encoder is the next judge, and
 // a file it rejects is simply kept with its original bytes.
 async function resolvePlan(plan, inPath) {
-  if (!plan || plan.pipeline !== 'still') return plan;
+  if (!plan) return plan;
+  if (plan.probeAudio) {
+    // Voice message, or not? Both answers are facts, not thresholds: a single
+    // channel is a single channel whatever it is, and a clip inside the
+    // recorder's own 5-minute cap is a voice message rather than music. (The
+    // tempting third test — "are the two channels the same signal" — does NOT
+    // separate cleanly: Opus leaves the difference channel only ~25 dB down on a
+    // dual-mono source, while a genuinely stereo mix 30 dB quieter sits at the
+    // same relative level. See the note in the header.)
+    const info = await probeAudio(inPath);
+    const voice = !!info && (info.channels === 1 || (info.duration > 0 && info.duration <= VOICE_MAX_S));
+    // One channel at 96k. The m4a plan used to force `-ac 2` on a voice message,
+    // duplicating its channel and making the AAC 20-30% BIGGER than the Opus note
+    // it replaced; 96k mono is transparent for speech and lands under it. Longer
+    // (or unknown) audio keeps the full stereo 128k treatment.
+    return voice ? { ...plan, pipeline: 'm4a-mono', mono: true } : { ...plan, pipeline: 'm4a' };
+  }
+  if (plan.pipeline !== 'still') return plan;
   const info = await probeStill(inPath);
   if (info && info.frames > 1) return null; // an animation: not ours to flatten
   const alpha = !!(info && ALPHA_PIX.test(info.pix));
@@ -697,10 +750,11 @@ const SCALE_VID = 'scale=1920:1080:force_original_aspect_ratio=decrease';
 //   full 256-color palette with bayer dither.
 // - video: x264 veryfast CRF 24 — the standard "looks like the source"
 //   setting; 1080p cap; AAC 128k stereo.
-// - audio: MP3 160k / AAC 128k — the two formats every Apple product plays,
-//   which is why nothing here produces Opus any more (a WebM/Ogg voice note
-//   becomes AAC/MP4, see planFor); lossless WAV/FLAC become 192k MP3 (still
-//   ~10x smaller).
+// - audio: MP3 160k / AAC 128k stereo (96k mono for a mono source, which is
+//   what a voice message is — see resolvePlan) — the two formats every Apple
+//   product plays, which is why nothing here produces Opus any more (a WebM/Ogg
+//   voice note becomes AAC/MP4, see planFor); lossless WAV/FLAC become 192k MP3
+//   (still ~10x smaller).
 function buildArgs(pipelineName, inPath, outPath) {
   const head = ['-hide_banner', '-loglevel', 'error', '-y', '-i', inPath, '-threads', '1', '-map_metadata', '-1'];
   switch (pipelineName) {
@@ -721,10 +775,16 @@ function buildArgs(pipelineName, inPath, outPath) {
     case 'mp3':
       return [...head, '-map', '0:a', '-c:a', 'libmp3lame', '-b:a', '160k', outPath];
     // AAC-LC in MP4, moov atom first: what Safari/iOS/macOS play natively, and
-    // the target for every Opus/Vorbis input (+faststart matters most on iOS,
-    // where a progressive read has to find the index before it will start).
+    // the target for every stereo input (+faststart matters most on iOS, where
+    // a progressive read has to find the index before it will start).
     case 'm4a':
       return [...head, '-map', '0:a', '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-movflags', '+faststart', outPath];
+    // ...and the same for a MONO source (see resolvePlan: a voice message), one
+    // channel back at 96k. Encoding a single channel twice bought nothing and
+    // was the reason the AAC came out bigger than the WebM/Opus it replaced;
+    // 96k mono is transparent for speech and lands under the Opus original.
+    case 'm4a-mono':
+      return [...head, '-map', '0:a', '-c:a', 'aac', '-b:a', '96k', '-ac', '1', '-movflags', '+faststart', outPath];
     case 'wav2mp3':
       return [...head, '-map', '0:a', '-c:a', 'libmp3lame', '-b:a', '192k', outPath];
     default:
