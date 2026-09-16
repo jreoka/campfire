@@ -1159,6 +1159,16 @@ img,video{-webkit-user-drag:none}
    swap is invisible when the fetch is warm, and a still picture (never an empty
    box) when it is not. See patchImageNode. */
 img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
+/* A verdict is replacing one file with another and the new bytes have to be
+   fetched. For that moment the placeholder is switched OFF and the INCOMING
+   picture is held dark: the box already holds the frame the reader is looking at
+   (carried over, `.att-held`), so a spinner, a dark panel or an empty box over it
+   is not "still loading" — it is the picture disappearing and coming back. The
+   carried frame is deliberately NOT matched here (it is the one thing that must
+   stay visible), and the class comes off the moment the new bytes are really
+   there. */
+.att-wrap.att-swap .att-ph{display:none}
+.att-wrap.att-swap img.att-img:not(.att-held){opacity:0}
 /* A placeholder is the SKIN over a reserved box, never the box itself: when a
    video is rendered WITHOUT a measured shape the wrap would otherwise collapse to
    zero width and the spinner would never be seen. */

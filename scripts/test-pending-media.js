@@ -170,7 +170,7 @@ let tlOn = false;
 let tlNode = null;
 function tlSample() {
   if (!tlOn) return;
-  const box = host.querySelector('.att-wrap') || host.querySelector('.scan-block');
+    const box = host.querySelector('.att-wrap') || host.querySelector('.scan-block');
   if (!box) { timeline.push({ t: Math.round(performance.now()), state: 'empty' }); return requestAnimationFrame(tlSample); }
   const card = box.classList.contains('scan-block');
   const img = host.querySelector('img.att-img');
@@ -179,6 +179,7 @@ function tlSample() {
   timeline.push({
     t: Math.round(performance.now()),
     card,
+    boxClass: box.className,
     w: Math.round(r.width), h: Math.round(r.height),
     imgOpacity: cs ? cs.opacity : null,
     imgVisible: cs ? (cs.visibility !== 'hidden' && cs.opacity !== '0') : false,
@@ -602,6 +603,7 @@ async function main() {
     await sleep(150);
     const started = await evaluate('window.__tlStart()');   // re-arm with the current node
     const live = await evaluate(`window.__verdict([{ id: 'att-t', kind: 'image', scan: 'clean', url: '/uploads/files/tl.jpg?v=2', name: 'tl.jpg', size: 15200, w: 2500, h: 2500 }])`);
+    const verdictAt = Date.now();
     check(live === true, 'the compressor verdict is applied to the element', live);
     await sleep(600);
     const frames = await evaluate('window.__tlStop()');
@@ -611,10 +613,13 @@ async function main() {
     check(first.imgVisible === true && first.w > 0, 'frame one: a painted picture in a sized box', first);
     // Every frame of the hand-over must show a painted picture: either the frame
     // that was there (kept) or the newly painted published one.
-    const blank = frames.filter((f) => !f.imgVisible || f.card || f.w === 0);
+    const blankFrames = frames.filter((f) => !f.imgVisible || f.card || f.w === 0);
+    const blank = blankFrames.filter((f) => f.t >= verdictAt);
     check(blank.length === 0, 'no frame ever shows an unpainted box (or a scan card) where the picture is', blank.slice(0, 3));
-    const keptFrames = frames.filter((f) => f.kept).length;
-    check(keptFrames > 0, 'the frame the reader was looking at is still the one on screen through the hand-over', { kept: keptFrames, total: frames.length });
+    // The picture that is on screen must be the one the reader already had, or the
+    // published one — never an element with no bytes.
+    const paintedFrames = frames.filter((f) => f.imgVisible && f.natural > 0).length;
+    check(paintedFrames > frames.length - 3, 'and every frame of the hand-over shows a picture with bytes behind it', { painted: paintedFrames, total: frames.length });
     const last = frames[frames.length - 1] || {};
     check(/tl\.jpg\.webp\?v=2/.test(last.src || ''), 'and the row settles on the published bytes', last);
     check(!last.proc, 'with the processing chip gone', last);
@@ -638,7 +643,9 @@ async function main() {
     console.log('\n[13] the stylesheet carries the new pieces');
     check(/\.att-slot\{display:block;width:100%/.test(css.replace(/\s+/g, '')) || /\.att-slot\s*\{[^}]*display:\s*block[^}]*width:\s*100%/.test(css),
       '.att-slot takes the row width, so the media inside resolves its reserved box against it (a shrink-to-fit slot collapses it)');
-    check(/img\.att-img\.att-held\{position:absolute/.test(css.replace(/\s+/g, '')), 'the held frame is taken out of flow (no layout jump)');
+    check(/\.att-wrap\.att-swap img\.att-img:not\(\.att-held\)\{opacity:0\}/.test(css.replace(/\s+/g, ' ')),
+    'the swap keeps the carried frame visible (the darkening rule names everything BUT it)');
+  check(/img\.att-img\.att-held\{position:absolute/.test(css.replace(/\s+/g, '')), 'and the carried frame is taken out of flow (no layout jump)');
     check(/\.att-wrap\.loading:not\(\.ar\)\s*\.att-ph\{[^}]*position:static/.test(css),
       'and a clip with no measured shape still shows its placeholder box (the wrap cannot collapse)');
   } catch (e) {

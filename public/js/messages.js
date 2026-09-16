@@ -145,10 +145,15 @@ function wireAttImage(img) {
   if (wrap) wrap.classList.add('pending');
   const done = () => {
     attDimsLearn(img);
+    // `.pending` deliberately STAYS: `.ready` is the switch, and the stylesheet
+    // fades the placeholder out on it. Clearing the class instead would make the
+    // placeholder vanish without its transition, which is its own little flicker —
+    // and a picture that was already painted (a warm cache: `complete` is true
+    // before a listener can be attached) still goes through this same path.
     if (wrap) wrap.classList.add('ready');
   };
-  if (img.complete && img.naturalWidth > 0) { done(); return; }
-  img.addEventListener('load', done, { once: true });
+  if (img.complete && img.naturalWidth > 0) done();
+  else img.addEventListener('load', done, { once: true });
 }
 // ---------- the picked bytes as a stand-in for a pending one ----------
 // A chat upload is not servable until the scan slot has judged it AND the
@@ -583,12 +588,21 @@ function patchImageNode(oldEl, a) {
     if (prev && prev.blob && oldImg && oldImg.getAttribute('src') !== rawSrc) {
       held = oldImg;
       oldImg.classList.add('att-held');
-      oldImg.style.setProperty('z-index', '3', 'important');
+      // The carried frame is the one thing that must stay VISIBLE while the new
+      // bytes load (and the placeholder over it is switched off for the same
+      // reason, see `.att-swap`).
+      oldImg.style.setProperty('z-index', '3');
+      oldImg.style.setProperty('opacity', '1', 'important');
     }
   } catch {}
   const live = wrap.isConnected;
-  // ONE swap: the new box goes in exactly where the old one was, and the frame
-  // that was in the old one is moved into it in the same tick.
+  // While the published bytes load, NOTHING may paint in this box but the frame
+  // the reader already has: the placeholder is switched off for the duration
+  // (`.att-swap`), the new picture is held dark behind it, and the carried frame
+  // sits on top at z-index 3. Without this the placeholder itself is what the
+  // reader sees — a dark panel (or, before this, a blank box) where their photo
+  // was, for as long as the fetch takes.
+  nextWrap.classList.add('att-swap');
   if (live) wrap.replaceWith(nextWrap);
   else oldEl.replaceWith(nextWrap);
   if (held) {
@@ -598,15 +612,12 @@ function patchImageNode(oldEl, a) {
     } catch {}
   }
   let settled = false;
-  // Reveal ONLY a picture that is actually there. `img.complete` is true for a
-  // FAILED load as well, so it can never be the condition on its own: revealing on
-  // that is how a blank box (or a broken-image icon) gets shown, which is the flash
-  // this path exists to remove. `naturalWidth > 0` is the one honest signal.
   const reveal = () => {
     if (settled) return;
     if (!(img.complete && img.naturalWidth > 0)) return;
     settled = true;
     img.dataset.phWired = '1';
+    nextWrap.classList.remove('att-swap');
     nextWrap.classList.add('ready');
     if (held) { try { held.remove(); } catch {} held = null; }
     try { observeStick(img); } catch {}
@@ -614,17 +625,19 @@ function patchImageNode(oldEl, a) {
   };
   img.addEventListener('load', reveal, { once: true });
   img.addEventListener('error', () => {
-    // The bytes are not coming. Leaving the carried frame in place is the honest
-    // state (the document error handler owns the degraded card); revealing an
-    // empty box is not.
+    // The bytes are not coming. The document error handler owns the fallback (the
+    // original upload, then the degraded card); what must NOT happen here is an
+    // empty box, so the placeholder is put back — or, when there is a frame the
+    // reader already has, that frame is left exactly where it is.
     if (settled) return;
     settled = true;
+    if (!held) { nextWrap.classList.remove('att-swap'); nextWrap.classList.add('ready'); }
     try { observeStick(img); } catch {}
     if (a.scan === 'clean') retireAttPreview(a, oldUrl);
   }, { once: true });
   img.loading = 'eager';
-  // The source goes in before the swap so the fetch is already running; the element
-  // is behind the placeholder from the moment it lands.
+  // The source goes in before the swap so the fetch is already running, and the
+  // element is dark from the moment it lands.
   img.setAttribute('src', rawSrc);
   if (img.complete) reveal();
   return true;
