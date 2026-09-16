@@ -231,6 +231,13 @@ TUNNEL_TOKEN                                  the Cloudflare tunnel
 `JWT_SECRET` **must** keep its value or every session is invalidated - that is
 why users stayed logged in across the move.
 
+One trap worth knowing, because the values above are all in one file:
+**`docker compose config` renders the merged configuration, and that includes
+every value from `.env` verbatim** — `JWT_SECRET`, `KLIPY_KEY`, the S3 and R2
+keys. It is the right tool for asking compose what it resolved (the image
+updater uses it), but pipe it into something (`| awk`, `| grep`) rather than
+printing it, and never paste its output into a chat, an issue or a log.
+
 ## Media storage: OVHcloud object storage (was Cloudflare R2)
 
 Media lives in the OVH bucket **`campfire`**, served through the app at the
