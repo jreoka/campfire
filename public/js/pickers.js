@@ -184,6 +184,14 @@ S.tagEmojiDone = null; // repaint callback after a tag-emoji pick
 // keyboard, and everything anchored to the layout box is about to sit behind it.
 // (voice.js keeps --vvh in sync off the same measurements; this is the other
 // half of that contract.)
+//
+// --kb and --vv-top are those two viewports reduced to the numbers the CSS
+// needs: --kb is how much of the layout box the keys cover at the BOTTOM, and
+// --vv-top is how far the visible area sits below the layout box's top (a
+// visual-only engine PANS the page instead of resizing it, and then the visible
+// strip is not at y=0). --vvh is the visible height. A fixed layer that wants to
+// BE the visible strip is `top:var(--vv-top);bottom:var(--kb)` — nothing else
+// gets that right in both models (see #modal-backdrop and #usercard.sheet).
 function keyboardOffset() {
   const vv = window.visualViewport;
   if (!vv) return 0;
@@ -196,7 +204,9 @@ function wirePickerViewport() {
   const vv = window.visualViewport;
   let raf = 0;
   const sync = () => {
-    document.documentElement.style.setProperty('--kb', keyboardOffset() + 'px');
+    const root = document.documentElement.style;
+    root.setProperty('--kb', keyboardOffset() + 'px');
+    root.setProperty('--vv-top', Math.max(0, Math.round(vv.offsetTop)) + 'px');
     if (raf) return;
     raf = requestAnimationFrame(() => { raf = 0; try { sizePicker(); } catch {} });
   };

@@ -209,7 +209,14 @@
 [data-theme="oled"] .set-row,[data-theme="oled"] .sec-row,[data-theme="oled"] .set-check,[data-theme="oled"] .set-game-row,[data-theme="oled"] .set-games-sum,[data-theme="oled"] .adm-row,[data-theme="oled"] .adm-stat,[data-theme="oled"] .pin-row,[data-theme="oled"] .fwd-preview,[data-theme="oled"] .rx-group,[data-theme="oled"] .nsfw-row,[data-theme="oled"] #form-2fa,[data-theme="oled"] .txtfile,[data-theme="oled"] #friends-page .dmrow,[data-theme="oled"] #set-blocked .dmrow{border:1px solid var(--line-soft)}
 html.no-sys-insets{--safe-t:30px}
 *{box-sizing:border-box}
-html,body{height:100%;overflow:hidden;overscroll-behavior:none}
+/* The root box compresses with the on-screen keyboard exactly like the shell
+   below it (#app, same three declarations): with the keys up, the visible area
+   is --vvh, and a root still sized to the layout box leaves a band of document
+   under the shell that the page can be scrolled or panned into — the reported
+   "with the keyboard open on the status popup you can scroll the page pretty
+   far down". --vvh is the only height that is right in both keyboard models
+   (see the note above #modal-backdrop). */
+html,body{height:100vh;height:100dvh;height:var(--vvh,100dvh);overflow:hidden;overscroll-behavior:none}
 body{
   margin:0;background:var(--bg);color:var(--text);
   font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
@@ -893,7 +900,18 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
    one (see msgAttItems in actions.js): a caption, never a target. */
 .ctx-head{padding:.45rem .65rem .15rem;font-size:.72rem;font-weight:700;letter-spacing:.02em;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-#modal-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.68);display:flex;align-items:center;justify-content:center;z-index:160;padding:1rem;overflow-y:auto}
+/* Dialogs ride the on-screen keyboard the way the phone picker does: the layer
+   IS the visible strip instead of the layout box it sits in. `inset:0` is that
+   layout box — on a resizes-content viewport (Android) it has already shrunk for
+   the keys, but on a visual-only one (iOS) it has not, so the same dialog was
+   centred in the full-height box with its lower half behind the keyboard.
+   --vv-top / --kb are the top and bottom of the visible area measured inside the
+   layout box (pickers.js keeps both in sync off visualViewport), so this pair
+   puts the backdrop exactly on it in BOTH models, and both are 0 whenever
+   nothing is covering the page. align-items:safe center is the other half: a
+   dialog taller than the strip it is left with starts at the top and scrolls
+   (this backdrop is a scroller) rather than being clipped at both ends. */
+#modal-backdrop{position:fixed;inset:0;top:var(--vv-top,0px);bottom:var(--kb,0px);background:rgba(4,6,11,.68);display:flex;align-items:center;align-items:safe center;justify-content:center;z-index:160;padding:1rem;overflow-y:auto}
 /* The dialog that was opened FROM an open person popover (openModal marks it —
    see the layer contract beside #usercard, which is the other direction of the
    same two elements). 175: over #usercard (170) and #tagcard (171), still under
@@ -1552,7 +1570,18 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 /* Mobile me bar: your own card is a full-height sheet sliding up from the
    bottom (see openOwnCard) — nothing to dim behind it, so no scrim. */
 @media (max-width:700px),(max-height:560px) and (pointer:coarse){
-  #usercard.sheet{left:0;right:0;top:auto;bottom:0;width:100%;height:100vh;height:100dvh;max-height:100vh;max-height:100dvh;border-radius:18px 18px 0 0;border-left:0;border-right:0;border-bottom:0;overflow-y:auto;overscroll-behavior:contain;padding-bottom:calc(.75rem + var(--safe-b));animation:cf-sheet-up .26s cubic-bezier(.2,.85,.25,1)}
+  /* The card sheet is the whole visible area, keyboard included — see the note
+     above #modal-backdrop for why both of these read --vvh/--kb. A phone that
+     resizes its layout box for the keys (Android, and a WebView with
+     adjustResize) already lands on bottom:0; the visual-only model (iOS) keeps
+     the layout box at full height and pans it, and --kb is the one quantity
+     that describes the part of it the keys cover, so the sheet ends on the
+     keyboard's top edge either way. `height` is the same visible height, never
+     100dvh: with the keys up, dvh is the LAYOUT box, which left the sheet a
+     whole keyboard taller than the screen — a band the page could be
+     scrolled/panned into (reported on the me bar + the status popup, which is
+     what `bottom:--kb` plus this height closes). */
+  #usercard.sheet{left:0;right:0;top:auto;bottom:var(--kb,0px);width:100%;height:100vh;height:100dvh;height:var(--vvh,100dvh);max-height:100vh;max-height:100dvh;max-height:var(--vvh,100dvh);border-radius:18px 18px 0 0;border-left:0;border-right:0;border-bottom:0;overflow-y:auto;overscroll-behavior:contain;padding-bottom:calc(.75rem + var(--safe-b));animation:cf-sheet-up .26s cubic-bezier(.2,.85,.25,1)}
   #usercard.sheet .uc-banner{border-radius:18px 18px 0 0}
 }
 @keyframes cf-sheet-up{from{transform:translateY(100%)}to{transform:translateY(0)}}

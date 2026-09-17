@@ -190,6 +190,57 @@ window.__auth = () => {
   return { vh: innerHeight, clientH, scrollH, canScroll: scrollH > clientH + 1, cardTop: +top.toFixed(1), atTop, scrolled, reachable };
 };
 const style = (sel, prop) => { const el = $$(sel); return el ? getComputedStyle(el)[prop] : null; };
+// Model the on-screen keyboard the way the app models it, in place of a browser
+// that has none: --vvh is the visible height, --kb how much of the layout box the
+// keys cover at the bottom, and --vv-top how far the visible strip sits below the
+// layout box's top (pickers.js keeps all three in sync off visualViewport; a
+// visual-only engine PANS the page rather than resizing it, which is the pan
+// argument).
+// Opens the me-bar card as its phone sheet with a plausible own-card body, and
+// the status editor the way openStatusEditor builds it — the exact pair the
+// keyboard report was about.
+window.__kb = (kb, pan) => {
+  pan = pan || 0;
+  const root = document.documentElement;
+  const vvh = innerHeight - kb;
+  root.style.setProperty('--vvh', vvh + 'px');
+  root.style.setProperty('--kb', Math.max(0, kb - pan) + 'px');
+  root.style.setProperty('--vv-top', pan + 'px');
+  const uc = $$('#usercard');
+  uc.className = 'sheet';
+  uc.innerHTML = '<div class="uc-banner"></div><div class="uc-body"><div class="uc-head"><span class="avatar big"></span>'
+    + '<div class="uc-bubble-wrap"><div class="uc-bubble-fit"><button class="uc-bubble edit">Set a status</button></div></div></div>'
+    + '<div class="uc-name">Cross</div><div class="uc-sub">@cross</div>'
+    + '<div class="uc-presence"><button class="prow toggle"><span class="status-dot online"></span><span class="plabel">Online</span></button></div>'
+    + '<div class="uc-tabs"><button class="uc-tab">Profile</button><button class="uc-tab">Close</button></div></div>';
+  const bd = $$('#modal-backdrop');
+  bd.classList.remove('hidden');
+  bd.classList.add('over-pop');
+  $$('#modal-title').textContent = 'Custom status';
+  $$('#modal-body').innerHTML = '<label>Status<input id="m-status-text" value="hi" /></label>'
+    + '<div class="uc-sec-label">Clear after</div><select id="m-status-exp"><option>Never</option><option>30 min</option></select>'
+    + '<div class="row" style="margin-top:.7rem"><button class="btn small danger">Clear status</button></div>';
+  $$('#modal-ok').textContent = 'Save';
+  $$('#modal-close').textContent = 'Cancel';
+  const de = document.scrollingElement;
+  de.scrollTop = 99999;
+  const range = (el) => (el ? Math.max(0, el.scrollHeight - el.clientHeight) : -1);
+  return {
+    layoutH: innerHeight, kb, pan, vvh,
+    rootH: Math.round(root.getBoundingClientRect().height),
+    docRange: range(de), docScrolledTo: de.scrollTop,
+    bodyRange: range(document.body),
+    app: box('#app'),
+    card: box('#usercard'), cardRange: range(uc),
+    backdrop: box('#modal-backdrop'), backdropRange: range(bd),
+    modal: box('#modal-backdrop .modal'),
+    input: box('#m-status-text'),
+  };
+};
+window.__kbOff = () => {
+  const root = document.documentElement.style;
+  root.removeProperty('--vvh'); root.removeProperty('--kb'); root.removeProperty('--vv-top');
+};
 const own = (sel, x, y) => { const el = $$(sel); if (!el) return false; const t = document.elementFromPoint(x, y); return !!(t && (t === el || el.contains(t))); };
 window.__dump = () => {
   const btns = [...document.querySelectorAll('#chat-header .icon-btn')].filter((b) => b.offsetParent !== null);
@@ -342,6 +393,18 @@ function staticChecks() {
   check(/sel === '#btn-notifs' \? badgeOf\('#notifs-count'\) : \(sel === '#btn-pins' \? badgeOf\('#pins-count'\) : ''\)/.test(ui)
     && /items\.push\(\{ label: n \? `\$\{label\} · \$\{n\}/.test(ui),
     'and the ⋯ sheet\'s row labels carry the counts its buttons had (ui.js)');
+  // The on-screen keyboard is a viewport (see [8]): the root box, the phone card
+  // sheet and the dialog layer all read the VISIBLE strip, never the layout box.
+  check(/html,body\{height:100vh;height:100dvh;height:var\(--vvh,100dvh\);overflow:hidden/.test(css),
+    'the root box compresses with the keyboard exactly like the shell (.css)');
+  check(/#modal-backdrop\{position:fixed;inset:0;top:var\(--vv-top,0px\);bottom:var\(--kb,0px\)/.test(css),
+    'the dialog layer IS the visible strip — top and bottom both measured (.css)');
+  check(/#usercard\.sheet\{[^}]*bottom:var\(--kb,0px\)[^}]*height:var\(--vvh,100dvh\)/.test(css),
+    'and so is the phone card sheet (.css)');
+  const pickers = fs.readFileSync(path.join(ROOT, 'public/js/pickers.js'), 'utf8');
+  check(/root\.setProperty\('--vv-top', Math\.max\(0, Math\.round\(vv\.offsetTop\)\) \+ 'px'\)/.test(pickers)
+    && /--vv-top is how far the visible area sits/.test(pickers),
+    'pickers.js publishes the visual viewport\'s top offset as --vv-top (the pan half of the contract)');
 }
 
 function shellChecks(tag, d, expect) {
@@ -529,6 +592,49 @@ async function main() {
       check(chan.hiddenRails.length === 5 && chan.moreBtnVisible === true, `${tag} channel: same spare header`, chan.hiddenRails);
       check(chan.btns.every((b) => ['btn-menu', 'btn-chat-more'].includes(b.id)),
         `${tag} channel: only ☰ + ⋯ are left`, chan.btns.map((b) => b.id));
+    }
+
+    console.log('\n[8] the keyboard is a viewport, never room to scroll into');
+    // Reported: with the status editor open over the me-bar card, the on-screen
+    // keyboard let the page be scrolled "pretty far down". The keys are not a
+    // resize of the LAYOUT box on every engine (iOS pans instead), so anything
+    // sized to dvh stayed full height — 305px of card and dialog sitting below
+    // the keys, and that band is exactly what the page scrolled/panned into.
+    // These two surfaces are keyed to the VISIBLE area instead (--vvh) and end
+    // on the keyboard's top edge (--kb), which also makes them track a pan.
+    for (const [w, h, kb] of [[390, 844, 380], [360, 740, 320]]) {
+      const tag = `${w}x${h} kb${kb}`;
+      await device(w, h);
+      const k = await evaluate(`__kb(${kb})`);
+      check(k.layoutH === h && k.vvh === h - kb, `${tag}: the modelled keyboard shortens the visible area`, k);
+      check(k.rootH === k.vvh && k.app && k.app.b === k.vvh, `${tag}: the root box and the shell are the visible height`, { rootH: k.rootH, app: k.app, vvh: k.vvh });
+      check(k.card && k.card.t === 0 && k.card.b === k.vvh, `${tag}: the card sheet is exactly the strip above the keys`, k.card);
+      check(k.backdrop && k.backdrop.t === 0 && k.backdrop.b === k.vvh, `${tag}: the dialog layer ends at the keys`, k.backdrop);
+      check(k.modal && k.modal.t >= -1 && k.modal.b <= k.vvh + 1, `${tag}: the status editor fits above them`, { modal: k.modal, vvh: k.vvh });
+      check(k.input && k.input.b < k.vvh, `${tag}: with the field you are typing in on screen`, k.input);
+      // Nothing below the strip is scrollable: not the document, not the body,
+      // not the card, and the dialog only as far as its own content runs.
+      check(k.docRange === 0 && k.docScrolledTo === 0 && k.bodyRange === 0,
+        `${tag}: no page under the keys to scroll into`, { docRange: k.docRange, docScrolledTo: k.docScrolledTo, bodyRange: k.bodyRange });
+      check(k.cardRange === 0, `${tag}: and the card has nothing to scroll either`, k.cardRange);
+      await evaluate('__kbOff()');
+    }
+    // The visual-only model, which PANS the page instead of resizing it (iOS):
+    // the visible strip is not at y=0, and the same three numbers have to hold
+    // there too — otherwise the dialog is centred in the layout box, the card
+    // stretches below the keys, and the page scrolls into the difference.
+    for (const [w, h, kb, pan] of [[390, 844, 380, 200], [390, 844, 380, 320]]) {
+      const tag = `${w}x${h} kb${kb} pan${pan}`;
+      await device(w, h);
+      const k = await evaluate(`__kb(${kb}, ${pan})`);
+      check(k.card && k.card.t === pan && k.card.b === pan + k.vvh,
+        `${tag}: the card sheet holds the visible strip, wherever the pan put it`, k.card);
+      check(k.backdrop && k.backdrop.t === pan && k.backdrop.b === pan + k.vvh,
+        `${tag}: so does the dialog layer (the scrim covers the strip, not the layout box)`, k.backdrop);
+      check(k.modal && k.modal.t >= pan - 1 && k.modal.b <= pan + k.vvh + 1,
+        `${tag}: and the dialog is centred in the strip rather than above it`, { modal: k.modal, strip: [pan, pan + k.vvh] });
+      check(k.docRange === 0 && k.bodyRange === 0, `${tag}: with no band under the keys to scroll into`, k);
+      await evaluate('__kbOff()');
     }
   });
 
