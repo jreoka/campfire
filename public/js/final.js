@@ -463,6 +463,19 @@ function clickInPath(e, sels) {
   if (path && path.length) return path.some((n) => n && n.nodeType === 1 && sels.some((s) => n.matches && n.matches(s)));
   return !!(e.target && e.target.closest && sels.some((s) => e.target.closest(s)));
 }
+// A dialog painted OVER a person popover (#modal-backdrop.over-pop, set by
+// openModal — see the layer contract in styles.css) belongs to that card, so
+// every click that lands in it is the card's own business: the card must not
+// read it as a click outside and shut itself while you type a status or answer
+// a confirm. The dialog's own backdrop counts too, so dismissing it drops you
+// back on the card that opened it. The class is re-decided on every openModal,
+// so this asks about the dialog that is actually up, and a hidden backdrop is
+// never in a click's path.
+function clickInOverPopDialog(e) {
+  const bd = $('#modal-backdrop');
+  if (!bd || !bd.classList.contains('over-pop')) return false;
+  return clickInPath(e, ['#modal-backdrop']);
+}
  document.addEventListener('click', (e) => {
   // Clicks inside the bottom sheet are handled by the sheet's own rows (a row may
   // open the picker), so they must not close it again in the same click.
@@ -470,7 +483,7 @@ function clickInPath(e, sels) {
   // ...and a click that just OPENED the card is not a click outside it either:
   // this listener runs after the opener in the same click, and an already-loaded
   // friend list paints the card before it gets here (ucOpenedByThisClick).
-  if (!clickInPath(e, ['#usercard', '#me-card', '[data-uid]', '.member', '.usertag[data-tag-sid]']) && !ucOpenedByThisClick()) closeUserCard();
+  if (!clickInPath(e, ['#usercard', '#me-card', '[data-uid]', '.member', '.usertag[data-tag-sid]']) && !ucOpenedByThisClick() && !clickInOverPopDialog(e)) closeUserCard();
   if (ctxEl && !e.target.closest('#ctx-menu') && !e.target.closest('.msg-actions')) closeCtx();
   if ($('#emoji-pop') && !e.target.closest('#emoji-pop') && !e.target.closest('#in-message') && !e.target.closest('#in-thread')) hideEmojiPop();
   if (folderFlyoutEl && !e.target.closest('#folder-menu')) closeFolderFlyout();

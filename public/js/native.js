@@ -60,6 +60,12 @@ const CF_BACK_LAYERS = [
   { name: 'mention-pop', open: () => cfVisible('#mention-pop'), close: () => hideMentionPop() },
   { name: 'chan-pop', open: () => cfVisible('#chan-pop'), close: () => hideChanPop() },
   // Cards and panels.
+  // A dialog painted OVER a person popover (#modal-backdrop.over-pop, ui.js) is
+  // the top of that stack, so back has to close IT first — the static order
+  // below (card, then modal) is the other direction, a card opened from inside
+  // a dialog. Without this entry, back on the status editor closed the card and
+  // left the editor floating over the chat.
+  { name: 'modal-over-card', open: () => cfShown('#modal-backdrop') && $('#modal-backdrop').classList.contains('over-pop'), close: () => cancelModal() },
   { name: 'usercard', open: () => cfVisible('#usercard'), close: () => closeUserCard() },
   { name: 'tagcard', open: () => cfVisible('#tagcard'), close: () => closeTagCard() },
   { name: 'profile', open: () => cfShown('#profile-backdrop'), close: () => closeProfileScreen() },

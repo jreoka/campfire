@@ -894,6 +894,11 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .ctx-head{padding:.45rem .65rem .15rem;font-size:.72rem;font-weight:700;letter-spacing:.02em;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 #modal-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.68);display:flex;align-items:center;justify-content:center;z-index:160;padding:1rem;overflow-y:auto}
+/* The dialog that was opened FROM an open person popover (openModal marks it —
+   see the layer contract beside #usercard, which is the other direction of the
+   same two elements). 175: over #usercard (170) and #tagcard (171), still under
+   #lightbox (200), the menus (400) and the toast (500). */
+#modal-backdrop.over-pop{z-index:175}
 .modal{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;padding:1.5rem;width:100%;max-width:410px}
 .modal.wide{max-width:580px}
 .gif-grid{display:flex;flex-wrap:wrap;gap:6px;overflow-y:auto;max-height:52dvh;min-height:140px;margin-top:.6rem;align-content:flex-start}
@@ -1502,7 +1507,15 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
    from INSIDE dialogs too — the story "who watched" list is a modal and its
    rows are people, and a card behind that backdrop is a card you cannot read.
    They stay under #lightbox (200), the ctx/folder menus (400) and the toast
-   (500). #tagcard is one step above #usercard: it opens FROM a card. */
+   (500). #tagcard is one step above #usercard: it opens FROM a card.
+   The reverse direction — a dialog opened FROM a card, which is your own
+   "Set a status", the voice "Disconnect" confirm and the "Unfriend?" confirm —
+   is the same two elements, so it is decided per open instead of by this static
+   order: openModal marks the backdrop .over-pop when a popover is up as it runs
+   (the rule sits with #modal-backdrop itself), which lifts that one dialog over
+   the card. A phone is where it showed: the card is a full-height sheet there,
+   so a dialog at 160 was painted entirely behind it and "Set a status" looked
+   like a dead button. */
 #usercard{position:fixed;z-index:170;width:300px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;overflow:hidden;--uc-text:var(--text);--uc-muted:var(--muted);--uc-faint:var(--faint);--uc-link:var(--accent-hover);--uc-chip:var(--panel-3);--uc-chip-line:var(--line)}
 /* The card's own text tones. Everything that sits DIRECTLY on the card's
    backdrop reads the --uc-* tones above; the card's opaque panels — the tab

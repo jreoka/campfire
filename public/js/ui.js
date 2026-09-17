@@ -2,6 +2,12 @@
 // ---------- modals (in-app dialogs — no native alert/confirm/prompt) ----------
 let modalOkFn = null;
 let modalCancelFn = null;
+// Is a floating person popover on screen? These are the two layers that sit
+// ABOVE the dialog layer by the contract in styles.css (#usercard 170 /
+// #tagcard 171 vs #modal-backdrop 160).
+function popoverOpen() {
+  return ['#usercard', '#tagcard'].some((sel) => { const el = $(sel); return el && !el.classList.contains('hidden'); });
+}
 function openModal(title, bodyHTML, okLabel, onOk, opts = {}) {
   $('#modal-title').textContent = title;
   $('#modal-body').innerHTML = bodyHTML;
@@ -16,6 +22,17 @@ function openModal(title, bodyHTML, okLabel, onOk, opts = {}) {
   modalOkFn = onOk || null;
   modalCancelFn = opts.onCancel || null;
   document.querySelector('#modal-backdrop .modal').classList.toggle('wide', !!opts.wide);
+  // A dialog opened FROM an open person popover has to be painted ABOVE it, so
+  // that one gets .over-pop (the rule is beside the layer contract in
+  // styles.css). The static order keeps cards over the dialog layer because
+  // dialogs contain people rows, so the other direction is decided here, per
+  // open, from what is on screen right now. Without it "Set a status" on your
+  // own card opened its editor behind the card — which on a phone is a
+  // full-height sheet, so the editor was simply not there. Decided on every
+  // open (not just when set) so no dialog can inherit the class from a previous
+  // one; left in place on close, because the click that closes the dialog is
+  // still the card's own (see final.js).
+  $('#modal-backdrop').classList.toggle('over-pop', popoverOpen());
   $('#modal-backdrop').classList.remove('hidden');
   const input = $('#modal-body input');
   if (input) setTimeout(() => { try { input.focus(); input.select?.(); } catch {} }, 0);
@@ -33,9 +50,12 @@ $('#modal-backdrop').addEventListener('click', (e) => {
   // A person card floats ABOVE the dialog layer (see the layer contract in
   // styles.css), so a click on the backdrop is usually aimed at the card: the
   // card's own closer (final.js) takes that click, and the panel underneath
-  // stays put. Dismiss the panel only when nothing is floating over it.
-  const floating = ['#usercard', '#tagcard'].some((sel) => { const el = $(sel); return el && !el.classList.contains('hidden'); });
-  if (floating) return;
+  // stays put. Dismiss the panel only when nothing is floating over it — and
+  // the exception is the dialog that floats over a card itself (.over-pop): its
+  // backdrop is genuinely its own, so the click closes it and leaves the card
+  // (the card's closer reads the same class and stands down), which is what
+  // makes tapping past the status editor land you back on your card.
+  if (!$('#modal-backdrop').classList.contains('over-pop') && popoverOpen()) return;
   cancelModal();
 });
 $('#modal-ok').onclick = async () => {

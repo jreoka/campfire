@@ -61,6 +61,7 @@ const ui = fs.readFileSync(path.join(ROOT, 'public/js/ui.js'), 'utf8');
 const pickers = fs.readFileSync(path.join(ROOT, 'public/js/pickers.js'), 'utf8');
 const stories = fs.readFileSync(path.join(ROOT, 'public/js/stories.js'), 'utf8');
 const final = fs.readFileSync(path.join(ROOT, 'public/js/final.js'), 'utf8');
+const native = fs.readFileSync(path.join(ROOT, 'public/js/native.js'), 'utf8');
 const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
 
 console.log('\n[1] the layer contract');
@@ -85,9 +86,33 @@ check(/if \(memberEl\?\.dataset\.uid && !memberEl\.dataset\.ownclick\) \{ openMe
   'a member row that owns its click is left alone by the delegate');
 check(/row\.dataset\.ownclick = '1';\n    row\.onclick = \(e\) => \{ openUserCard\(u\.id, e\.clientX, e\.clientY, u\); \};/.test(stories.replace(/\r\n/g, '\n')),
   'the story viewers rows open the card at the tap with the viewer object', /row\.onclick = [^\n]*/.exec(stories));
-check(/if \(floating\) return;\n  cancelModal\(\);/.test(ui.replace(/\r\n/g, '\n')),
+check(/if \(floating\) return;\n  cancelModal\(\);/.test(ui.replace(/\r\n/g, '\n')) || /&& popoverOpen\(\)\) return;\n  cancelModal\(\);/.test(ui.replace(/\r\n/g, '\n')),
   'a backdrop click dismisses a floating card before the panel');
-check(/const floating = \['#usercard', '#tagcard'\]\.some/.test(ui), 'and it looks at both popovers');
+check(/function popoverOpen\(\) \{\n  return \['#usercard', '#tagcard'\]\.some/.test(ui.replace(/\r\n/g, '\n')), 'and it looks at both popovers');
+
+console.log('\n[1b] a dialog opened FROM a popover is painted over it');
+// The other direction of the same contract: a dialog whose parent is the card
+// (your own "Set a status", the voice "Disconnect" confirm, the "Unfriend?"
+// confirm) must beat the card. openModal decides it per open, from what is on
+// screen, so the viewers-list case above — a card opened from INSIDE a dialog —
+// keeps the static order. On a phone the card is a full-height sheet and the
+// dialog at 160 was painted entirely behind it: "Set a status" looked dead.
+const overZ = zOf(css, '#modal-backdrop.over-pop');
+check(overZ !== null && overZ > cardZ && overZ > tagZ, 'the dialog that came from a card beats both popovers', { overZ, cardZ, tagZ });
+check(overZ !== null && overZ < zOf(css, '#lightbox'), 'and still stays under the lightbox', { overZ, lightbox: zOf(css, '#lightbox') });
+check(/#modal-backdrop\.over-pop\{z-index:175\}/.test(css), 'the rule is the one the contract names', /#modal-backdrop\.over-pop\{[^}]*\}/.exec(css)?.[0]);
+check(/\$\('#modal-backdrop'\)\.classList\.toggle\('over-pop', popoverOpen\(\)\);/.test(ui),
+  'openModal asks whether a popover is up as it opens');
+check(/#modal-backdrop'\)\.classList\.contains\('over-pop'\) && popoverOpen\(\)\) return;/.test(ui),
+  'and a backdrop click closes THAT dialog instead of being swallowed by the guard');
+check(/function clickInOverPopDialog\(e\) \{[\s\S]{0,240}classList\.contains\('over-pop'\)[\s\S]{0,80}clickInPath\(e, \['#modal-backdrop'\]\)/.test(final),
+  'the card\'s closer treats a click in that dialog as its own');
+check(/!ucOpenedByThisClick\(\) && !clickInOverPopDialog\(e\)\) closeUserCard\(\);/.test(final),
+  'so the card survives typing in the editor it opened');
+check(/\{ name: 'modal-over-card', open: \(\) => cfShown\('#modal-backdrop'\) && \$\('#modal-backdrop'\)\.classList\.contains\('over-pop'\), close: \(\) => cancelModal\(\) \},/.test(native),
+  'phone back closes that dialog first');
+check(native.indexOf("name: 'modal-over-card'") < native.indexOf("name: 'usercard'"),
+  'because it is the top of the stack, unlike the card-over-dialog order below');
 
 console.log('\n[2b] the click that opens a card is not a click outside it');
 // The card's closer is a document-level listener, so it runs after the opener
@@ -102,7 +127,7 @@ check(/let ucClickSeq = 0;\ndocument\.addEventListener\('click', \(\) => \{ ucCl
   'the counter is bumped in the capture phase, so an opener already sees this click');
 check(/function ucOpenedByThisClick\(\) \{[\s\S]{0,220}dataset\.openClick === String\(ucClickSeq\)/.test(pickers),
   'and the predicate compares it with the card\'s own stamp');
-check(/if \(!clickInPath\(e, \[[\s\S]*?\]\) && !ucOpenedByThisClick\(\)\) closeUserCard\(\);/.test(final),
+check(/if \(!clickInPath\(e, \[[\s\S]*?\]\) && !ucOpenedByThisClick\(\) && !clickInOverPopDialog\(e\)\) closeUserCard\(\);/.test(final),
   'the card\'s closer consults it before closing', final.match(/if \(!clickInPath[^\n]*/)?.[0]);
 check(/openUserCard\(uid, \(p && p\.width/.test(pickers) && /function openMemberCard\(uid, rowEl, y, opts = \{\}\)/.test(pickers),
   'the member-rail opener passes its options through (the phone shape travels with it)');
@@ -119,6 +144,9 @@ if (!chromePath) {
 // the viewers panel leaves them.
 const modalMarkup = index.slice(index.indexOf('<div id="modal-backdrop"'), index.indexOf('<!-- create-story chooser'));
 const modalSrc = slice(ui, 'let modalOkFn = null;', '// Promise-based confirm dialog.');
+// The card's real outside-click predicate + the over-pop stand-down, run
+// verbatim against the card this page opens.
+const closerSrc = slice(final, 'function clickInPath(e, sels) {', ' document.addEventListener');
 function pageHtml() {
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
 <style>${css}</style></head><body>
@@ -133,6 +161,14 @@ window.$ = (s) => document.querySelector(s);
 window.toast = () => {};
 window.prettyError = (e) => String(e);
 ${modalSrc}
+${closerSrc}
+window.closeUserCard = () => document.querySelector('#usercard').classList.add('hidden');
+window.ucOpenedByThisClick = () => false; // no card here is opened by a click
+// final.js's closer, with the layers this page has (the rest of that listener
+// is other popovers).
+document.addEventListener('click', (e) => {
+  if (!clickInPath(e, ['#usercard', '#me-card', '[data-uid]', '.member', '.usertag[data-tag-sid]']) && !ucOpenedByThisClick() && !clickInOverPopDialog(e)) closeUserCard();
+});
 const box = (sel) => { const el = document.querySelector(sel); el.classList.remove('hidden'); return el; };
 const at = (sel, dx, dy) => {
   const r = document.querySelector(sel).getBoundingClientRect();
@@ -144,6 +180,7 @@ const at = (sel, dx, dy) => {
   };
 };
 const out = {};
+out.vh = innerHeight;
 // The viewers panel is open (the app opens it through openModal) with a row in it.
 openModal('3 views', '<div class="gmem-list"><div class="member sv-viewer" data-uid="u1"><span class="avwrap"><span class="avatar"></span></span><span class="dmmain"><span class="dmname">Ada</span></span></div></div>', 'Close', null, { wide: true });
 out.panelOpen = !document.querySelector('#modal-backdrop').classList.contains('hidden');
@@ -164,29 +201,85 @@ out.panelAfterSecondClick = document.querySelector('#modal-backdrop').classList.
 card.classList.remove('hidden');
 document.querySelector('#modal-close').click();
 out.closeButtonWorks = document.querySelector('#modal-backdrop').classList.contains('hidden');
+// The card is opened FIRST and the dialog FROM it (the real "Set a status"
+// case). On a phone the card is the full-height sheet, so the dialog shares its
+// pixels — which is exactly where the old 160 painted it behind the card.
+card.classList.remove('hidden');
+if (matchMedia('(max-width:700px)').matches) {
+  // The real phone shape, geometry and all (openUserCard -> userCardAsSheet):
+  // the sheet drops the popup's inline box and lets the CSS own it.
+  card.classList.add('sheet');
+  card.style.left = ''; card.style.top = ''; card.style.width = ''; card.style.height = '';
+  out.cardRect = (() => { const r = card.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; })();
+} else {
+  card.style.left = '0px'; card.style.top = '0px'; card.style.width = '100%'; card.style.height = '100%';
+}
+openModal('Custom status', '<label>Status<input id="m-status-text" value="hi" /></label>', 'Save', null);
+out.phone = matchMedia('(max-width:700px)').matches;
+out.overPop = document.querySelector('#modal-backdrop').classList.contains('over-pop');
+const modalEl = document.querySelector('#modal-backdrop .modal');
+const mr = modalEl.getBoundingClientRect();
+const mHit = document.elementFromPoint(mr.left + mr.width / 2, mr.top + mr.height / 2);
+out.dialogOverCard = !!(mHit && (mHit === modalEl || modalEl.contains(mHit)));
+out.dialogZ = getComputedStyle(document.querySelector('#modal-backdrop')).zIndex;
+// Typing in the editor must not shut the card underneath it.
+document.querySelector('#m-status-text').click();
+out.cardAfterDialogClick = !document.querySelector('#usercard').classList.contains('hidden');
+// Tapping the backdrop closes the dialog and lands back on the card.
+document.querySelector('#modal-backdrop').click();
+out.dialogAfterBackdrop = document.querySelector('#modal-backdrop').classList.contains('hidden');
+out.cardAfterBackdrop = !document.querySelector('#usercard').classList.contains('hidden');
+// ...and the guard does not lock the card open: a click anywhere else still
+// closes it.
+document.body.click();
+out.cardAfterOutsideClick = !document.querySelector('#usercard').classList.contains('hidden');
 document.title = JSON.stringify(out);
 </script></body></html>`;
 }
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-card-layer-'));
-try {
-  const p = path.join(dir, 'page.html');
+// One Chrome pass. The same page is run twice: desktop-shaped and phone-shaped,
+// because the report was a phone one — the card is a full-height sheet there,
+// and the layering has to hold when the two surfaces are exactly the same box.
+function runChrome(chromePath, dir, w, h) {
+  const p = path.join(dir, `page-${w}x${h}.html`);
   fs.writeFileSync(p, pageHtml());
   const r = spawnSync(chromePath, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
-    '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof'), '--window-size=900,700',
+    '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof-' + w), `--window-size=${w},${h}`,
     '--virtual-time-budget=2000', '--dump-dom', 'file:///' + p.replace(/\\/g, '/')],
     { encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 });
   const m = /<title>([\s\S]*?)<\/title>/.exec(r.stdout || '');
-  if (!m) { check(false, 'the layer harness ran', (r.stderr || '').slice(-300)); finish(); }
-  const out = JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
-  console.log('\n[3] the layers in a browser');
-  check(out.panelOpen === true, 'the viewers panel is open', out);
-  check(out.card.inside === true, 'with the dialog open, the centre of the card IS the card', out.card);
-  check(Number(out.card.z) > Number(zOf(css, '#modal-backdrop')), 'because it is above the dialog layer', out.card.z);
-  check(out.tag.inside === true, 'and the tag panel beats the card it opened from', out.tag);
-  check(out.panelAfterFirstClick === true, 'a backdrop click dismisses the card, not the panel', out);
-  check(out.panelAfterSecondClick === true, 'and the next one closes the panel', out);
-  check(out.closeButtonWorks === true, 'the panel\'s own ✕ still works with a card up', out);
+  if (!m) return null;
+  return JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
+}
+
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-card-layer-'));
+try {
+  const desktop = runChrome(chromePath, dir, 900, 700);
+  const phone = runChrome(chromePath, dir, 390, 760);
+  if (!desktop || !phone) { check(false, 'the layer harness ran', 'no title from Chrome'); finish(); }
+  for (const [label, out] of [['desktop', desktop], ['phone', phone]]) {
+    console.log(`\n[3] the layers in a browser — ${label}`);
+    check(out.panelOpen === true, 'the viewers panel is open', out);
+    check(out.card.inside === true, 'with the dialog open, the centre of the card IS the card', out.card);
+    check(Number(out.card.z) > Number(zOf(css, '#modal-backdrop')), 'because it is above the dialog layer', out.card.z);
+    check(out.tag.inside === true, 'and the tag panel beats the card it opened from', out.tag);
+    check(out.panelAfterFirstClick === true, 'a backdrop click dismisses the card, not the panel', out);
+    check(out.panelAfterSecondClick === true, 'and the next one closes the panel', out);
+    check(out.closeButtonWorks === true, 'the panel\'s own ✕ still works with a card up', out);
+  }
+  for (const [label, out] of [['desktop', desktop], ['phone', phone]]) {
+    console.log(`\n[3b] a dialog opened from a card — ${label}`);
+    check(out.overPop === true, 'openModal marks the dialog as one that came from a popover', out);
+    check(out.dialogOverCard === true, 'so a card under it does not own the dialog\'s centre', out);
+    check(Number(out.dialogZ) > Number(cardZ), 'because it is over the card', { dialogZ: out.dialogZ, cardZ });
+    check(out.cardAfterDialogClick === true, 'and typing in the dialog does not shut the card it came from', out);
+    check(out.dialogAfterBackdrop === true && out.cardAfterBackdrop === true, 'a backdrop click dismisses the dialog and leaves the card', out);
+    check(out.cardAfterOutsideClick === false, 'while any other click still closes the card', out);
+  }
+  // The phone pass is the reported one: the card really was the full-height
+  // sheet the dialog used to hide behind.
+  check(phone.phone === true, 'the phone pass is the phone layout', phone.phone);
+  check(!!phone.cardRect && phone.cardRect.h >= phone.vh - 1, 'with the card as a full-height sheet under the dialog', { card: phone.cardRect, vh: phone.vh });
 } finally {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
