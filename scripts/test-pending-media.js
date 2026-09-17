@@ -359,8 +359,10 @@ window.__previewStore = function () { return { size: attPreviews.size, bytes: at
 async function main() {
   console.log('\n[1] the pending rendering is the real media, not a spinner card');
   check(/function attPendingPreview\(a\)/.test(markSource), 'a pending attachment asks for its picked bytes');
-  check(/const local = pending && attPendingPreview\(a\);\s*\n\s*if \(pending && !local\) return `<div class="scan-block scanning"/.test(markSource),
-    'the scanning card is now the FALLBACK (no local preview: another device, a reload, a non-media upload)');
+  check(/const local = attPendingStandIn\(a\);\s*\n\s*if \(pending && !local\) return `<div class="scan-block scanning"/.test(markSource),
+    'the scanning card is now the FALLBACK (no local preview: another device, a reload, a non-media upload, a clip)');
+  check(/function attPendingStandIn\(a\) \{/.test(markSource) && /a\.kind !== 'video'/.test(markSource),
+    'and it is kind-aware: a clip\'s entry in the store is a still frame, so a pending clip is never painted from it');
   check(!/attProcHTML/.test(markSource) && !/att-proc/.test(markSource),
     'a pending media attachment carries NO processing chip over it (owner request: the corner chip is gone)');
   check(!/\.att-proc/.test(css), 'and the stylesheet carries no chip either');
@@ -371,6 +373,10 @@ async function main() {
   check(/data-fb-orig="\$\{esc\(a\.url\)\}"/.test(markSource), 'the element still records the url it will fall back to');
   check(/function attVideoHTML\(a, opts\)/.test(markSource) && /data-fb-src="\$\{esc\(a\.url\)\}"/.test(markSource),
     'a clip is a player from the start, carrying the CLEAN source it will swap to');
+  check(/src="\$\{esc\(a\.url\)\}"/.test(markSource) && !/src="\$\{esc\(shot/.test(markSource),
+    'and it is pointed at its OWN bytes — a still frame is the poster, never the source (a <video> fed an image is a broken element)');
+  check(/function attPickedFrame\(a\)/.test(markSource) && /poster="\$\{esc\(poster\)\}"/.test(markSource),
+    'the frame this page holds is carried as the poster instead');
   check(/attDl\(a, pending\)/.test(markSource) && /attFavHTML\(a, pending\)/.test(markSource),
     'the download link and the star wait for the final bytes (nothing to save or star yet)');
   check(/function attDl\(a, pending\) \{ return pending \? '' :/.test(markSource), 'and that is what attDl does with the flag');
@@ -796,35 +802,100 @@ async function main() {
     check(readerBlank.length === 0, 'and no frame of that swap is an empty box either', readerBlank.slice(0, 3));
     if (newHold2) newHold2.resolve();
 
-    console.log('\n[15] a replaced clip keeps the frame it was showing');
-    // A video whose container changes (WebM -> MP4) is a NEW key, so the player has
-    // to be replaced — but a fresh player is parked behind `.loading` (hidden
-    // element + spinner panel) until a poster is captured from the new file. The
-    // frame this page already has stands for it, and the shell has to come off in
-    // the same tick or the clip is a black panel with a spinner in it.
+    console.log('\n[15] a pending clip is the processing card, and its frame becomes the poster');
+    // Reported: "a video uploaded just fails to render — it doesn't say processing
+    // with the loading until you refresh the page." The store's entry for a clip is
+    // a still FRAME, not the clip's bytes, so the pending render used to hand that
+    // frame to <video src>: the browser refuses an image as a media source, and the
+    // failed load ALSO lifted the loading shell — a dead player where a reload
+    // showed the honest "Processing file" card. Now the clip waits on that card and
+    // the frame is the poster of the player the verdict lands.
     const shotData = await evaluate('window.__pickedBytes(64, 36, 0x919191)');
+    // Exactly what the upload path registers for a clip: the captured frame under
+    // the attachment's url (the upload response carries no id), and the same frame
+    // in the poster cache so the player never refetches one it already has.
     await evaluate(`window.__uploadVideoPreview('/uploads/files/clip.webm?v=1', ${JSON.stringify(shotData)})`);
-    await evaluate(`window.__render({ id: 'att-v', kind: 'video', scan: 'pending', url: '/uploads/files/clip.webm?v=1', name: 'clip.webm', size: 40960, w: 1280, h: 720 })`);
-    // …and the poster capture for the frame on screen has already completed.
-    await evaluate(`(function () { const v = document.querySelector('video.att-vid'); window.__videoPoster(v.getAttribute('src'), ${JSON.stringify(shotData)}); v.dataset.posterOk = '1'; v.closest('.att-wrap').classList.remove('loading'); return true; })()`);
-    const vidStep = await evaluate(`(function () {
-      const before = document.querySelector('video.att-vid');
-      const ok = window.__verdict([{ id: 'att-v', kind: 'video', scan: 'clean', url: '/uploads/files/clip2.mp4?v=2', name: 'clip.mp4', size: 30000, w: 1280, h: 720 }]);
+    await evaluate(`window.__videoPoster('/uploads/files/clip.webm?v=1', ${JSON.stringify(shotData)})`);
+    const clipPending = await evaluate(`(function () {
+      window.__render({ id: 'att-v', kind: 'video', scan: 'pending', url: '/uploads/files/clip.webm?v=1', name: 'clip.webm', size: 40960, w: 1280, h: 720 });
+      const card = document.querySelector('#atts .scan-block');
+      return {
+        card: !!card,
+        scanning: card ? card.classList.contains('scanning') : false,
+        text: card ? card.textContent.trim() : '',
+        player: !!document.querySelector('video.att-vid'),
+        slot: !!document.querySelector('#atts .att-slot'),
+      };
+    })()`);
+    check(clipPending.card && clipPending.scanning, 'a pending clip waits on the scanning card', clipPending);
+    check(/Processing file/.test(clipPending.text) && /clip\.webm/.test(clipPending.text),
+      'which names the file and says what is happening (the state a refresh already showed)', clipPending);
+    check(clipPending.player === false, 'and no <video> is ever built from a frame that is not its bytes', clipPending);
+    check(clipPending.slot === false, 'the card is the whole rendering (the verdict re-renders the row, as for every other reader)');
+    // The verdict lands: the card is not a patch target, so the list renders the
+    // final attachment — and the frame the sender still holds is its poster, in the
+    // same tick, with the loading shell already off.
+    const clipNow = await evaluate(`(function () {
+      window.__fullRender({ id: 'att-v', kind: 'video', scan: 'clean', url: '/uploads/files/clip.webm?v=2', name: 'clip.webm', size: 40960, w: 1280, h: 720 });
+      const v = document.querySelector('video.att-vid');
+      const wrap = document.querySelector('.att-wrap');
+      return {
+        src: v ? String(v.getAttribute('src')) : '',
+        fbSrc: v ? String(v.dataset.fbSrc || '') : '',
+        poster: v ? String(v.poster || '').slice(0, 22) : '',
+        loading: wrap ? wrap.classList.contains('loading') : null,
+        vis: v ? getComputedStyle(v).visibility : '',
+      };
+    })()`);
+    check(/^\/uploads\/files\/clip\.webm/.test(clipNow.src) && clipNow.fbSrc === clipNow.src,
+      'the published clip points the player at its own bytes', clipNow);
+    check(!/^data:/.test(clipNow.src), 'never at the frame', clipNow);
+    check(/^data:/.test(clipNow.poster), 'and that frame is the poster it paints', clipNow);
+    check(clipNow.loading === false && clipNow.vis === 'visible',
+      'so the clip is on screen at once, with no capture fetch parked behind a spinner', clipNow);
+    // A clip nothing has a frame for keeps the old path: the shell, then the
+    // capture (that half is test-video-placeholder.js).
+    const clipCold = await evaluate(`(function () {
+      window.__fullRender({ id: 'att-c', kind: 'video', scan: 'clean', url: '/uploads/files/other.webm?v=3', name: 'other.webm', size: 40960, w: 1280, h: 720 });
+      const v = document.querySelector('video.att-vid');
+      const wrap = document.querySelector('.att-wrap');
+      return { poster: String(v.poster || ''), loading: wrap.classList.contains('loading') };
+    })()`);
+    check(clipCold.poster === '' && clipCold.loading === true,
+      'a clip with no frame in hand still waits behind the spinner for its capture', clipCold);
+
+    console.log('\n[16] a clip republished under a new key keeps the frame it was showing');
+    // A clip that is ALREADY on screen and comes back under a new key (the
+    // compressor settling a clean upload it rewrote) is replaced — the player's own
+    // controls and poster state belong to the element — and the frame the page
+    // already captured for the source on screen goes with it, or the swap is a
+    // black panel with a spinner in it.
+    const clipStep = await evaluate(`(function () {
+      window.__render({ id: 'att-r', kind: 'video', scan: 'clean', url: '/uploads/files/re.mp4?v=1', name: 're.mp4', size: 40960, w: 1280, h: 720 });
+      const v0 = document.querySelector('video.att-vid');
+      // …and the poster capture for the frame on screen has already completed.
+      window.__videoPoster(v0.getAttribute('src'), ${JSON.stringify(shotData)});
+      v0.dataset.posterOk = '1';
+      v0.closest('.att-wrap').classList.remove('loading');
+      const before = v0;
+      const ok = window.__verdict([{ id: 'att-r', kind: 'video', scan: 'clean', url: '/uploads/files/re2.mp4?v=2', name: 're2.mp4', size: 30000, w: 1280, h: 720 }]);
       const v = document.querySelector('video.att-vid');
       const wrap = document.querySelector('.att-wrap');
       return {
         ok, replaced: v !== before,
+        src: v ? String(v.getAttribute('src')) : '',
         poster: v ? String(v.poster || '').slice(0, 22) : '',
         loading: wrap ? wrap.classList.contains('loading') : null,
         visibility: v ? getComputedStyle(v).visibility : null,
       };
     })()`);
-    check(vidStep.ok === true && vidStep.replaced === true, 'a new key replaces the player (its own controls and poster belong to the element)', vidStep);
-    check(/^data:/.test(vidStep.poster || ''), 'and it is handed the frame this page already captured', vidStep);
-    check(vidStep.loading === false && vidStep.visibility === 'visible',
-      'with the loading shell lifted, so the frame is what the reader sees', vidStep);
+    check(clipStep.ok === true && clipStep.replaced === true, 'a new key replaces the player (its own controls and poster belong to the element)', clipStep);
+    check(/^\/uploads\/files\/re2\.mp4/.test(clipStep.src), 'which is pointed at the newly published bytes', clipStep);
+    check(/^data:/.test(clipStep.poster || ''), 'and it is handed the frame this page already captured', clipStep);
+    check(clipStep.loading === false && clipStep.visibility === 'visible',
+      'with the loading shell lifted, so the frame is what the reader sees', clipStep);
 
-    console.log('\n[16] the stylesheet carries the new pieces');
+    console.log('\n[17] the stylesheet carries the new pieces');
     check(/\.att-slot\{display:block;width:100%/.test(css.replace(/\s+/g, '')) || /\.att-slot\s*\{[^}]*display:\s*block[^}]*width:\s*100%/.test(css),
       '.att-slot takes the row width, so the media inside resolves its reserved box against it (a shrink-to-fit slot collapses it)');
     check(/\.att-wrap\.att-swap img\.att-img:not\(\.att-held\)\{opacity:0\}/.test(css.replace(/\s+/g, ' ')),

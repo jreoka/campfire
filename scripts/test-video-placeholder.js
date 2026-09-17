@@ -288,7 +288,10 @@ async function main() {
     check(/\.att-wrap\.loading video\.att-vid\{visibility:hidden\}/.test(css), 'the loading rule hides the video');
     check(/\.att-wrap\.loading \.att-vid-load\{display:flex\}/.test(css), 'the overlay is flex only while loading');
     check(/prefers-reduced-motion:reduce\)\{[^}]*\.att-spin/.test(css), 'reduced motion disables the spinner animation');
-    check(/class="att-wrap loading/.test(markSource) && /att-vid-load/.test(markSource) && /att-spin/.test(markSource), 'the video markup carries the wrap state, overlay and spinner');
+    check(markSource.includes(`class="att-wrap\${poster ? '' : ' loading'}`) && /att-vid-load/.test(markSource) && /att-spin/.test(markSource),
+      'the video markup carries the wrap state (until a frame is in hand), the overlay and the spinner');
+    check(/src="\$\{esc\(a\.url\)\}"/.test(markSource) && /poster="\$\{esc\(poster\)\}"/.test(markSource) && /function attPickedFrame\(a\)/.test(markSource),
+      'a held frame is the player\'s POSTER and never its src (a <video> fed a still image is a broken element)');
     check(/revealVideoShell\(v\);\s*\}\s*\/\/ One frame per URL/.test(postSource), 'the poster capture reveals the shell');
     // The capture costs a real fetch of the clip, so it waits for the video to
     // come near the viewport instead of starting one download per clip in a

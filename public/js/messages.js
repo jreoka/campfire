@@ -213,12 +213,26 @@ function attPreviewSrc(a) {
 function attPendingPreview(a) {
   return !!(a && a.scan === 'pending' && a.url && attPreviewEntry(a.id, a.url));
 }
+// …and is that entry the MEDIA, or only a picture OF it? A picture and a voice
+// note keep their own picked bytes, so a pending one paints the real thing. A
+// CLIP does not: the store's entry for a video is a still FRAME captured off the
+// picked file (see videoPreviewShot) — a poster, not a playable source. A pending
+// clip therefore falls through to the scanning card, which is the honest
+// "Processing file" state a reload already shows. Handing that frame to a <video>
+// (which is what used to happen) is a broken element: the browser refuses an image
+// as a media source, and its failed load ALSO lifted the loading shell — so the
+// sender was left looking at a dead player until a refresh (reported: "a video
+// uploaded just fails to render").
+function attPendingStandIn(a) {
+  return !!(a && a.scan === 'pending' && a.kind !== 'video' && attPendingPreview(a));
+}
 // The picked bytes, when they are a STAND-IN rather than the attachment's own
 // file. Only the uploading browser's own copy qualifies: it is the one entry made
-// from a File this page is holding (a blob url — a captured video frame is a data
-// URL), plus any preview at all while the upload is still waiting on the slot. A
-// clean attachment has no stand-in: its own bytes, and the derived preview of
-// them, are what it renders, exactly as before this existed.
+// from a File this page is holding (a blob url), plus any preview at all while the
+// upload is still waiting on the slot. A clean attachment has no stand-in: its own
+// bytes, and the derived preview of them, are what it renders, exactly as before
+// this existed. PICTURES and VOICE NOTES only — a clip's entry is a still frame,
+// which is its poster (see attVideoHTML / attPickedFrame), never a source.
 function attShot(a) {
   if (!a || !a.url) return null;
   const hit = attPreviewEntry(a.id, a.url);
@@ -324,11 +338,13 @@ function attachmentHTML(a) {
   // is on screen. (A "Processing" chip used to sit in the picture's corner; the
   // owner asked for it gone, and the pending state is already legible from the
   // composer's own chip and the missing download link.) Only a file with no local
-  // preview to show — another device, a reload, a non-media upload — falls back to
-  // the scanning card, which is a whole card rather than an overlay and stays.
+  // preview to show — another device, a reload, a non-media upload, and a CLIP
+  // (whose entry in the store is a still frame, not its bytes — see
+  // attPendingStandIn) — falls back to the scanning card, which is a whole card
+  // rather than an overlay and stays.
   if (a.scan === 'infected') return `<div class="scan-block infected"${attMeta(a)}><span class="scan-ic">${SCAN_SHIELD_SVG}</span><span class="scan-tx"><b>${esc(a.name)}</b><span>Virus detected — this file was removed and can't be downloaded.</span></span></div>`;
   const pending = a.scan === 'pending';
-  const local = pending && attPendingPreview(a);
+  const local = attPendingStandIn(a);
   if (pending && !local) return `<div class="scan-block scanning"${attMeta(a)}><span class="scan-tx"><b>${esc(a.name)} (${fmtSize(a.size)})</b><span>Processing file<span class="scan-dots"></span></span><span class="scan-track"><span class="scan-fill"></span></span></span></div>`;
   return `<span class="att-slot" data-att-slot="${esc(a.id || '')}">${attachmentBodyHTML(a)}</span>`;
 }
@@ -374,20 +390,41 @@ function attachmentBodyHTML(a, opts) {
   if (textPreviewable(a)) return textFileHTML(a);
   return attFileCardHTML(a);
 }
-// A clip is a PLAYER, and the local preview is the only source that can be
-// played while the upload waits: the player, its poster and the picked bytes are
-// all there at once (as with a still, the box is the final one's shape). data-fb-src
-// is the CLEAN source the element will swap to once the slot publishes it — the
-// handover happens without touching the node, so playback never restarts under
-// the person who just sent it.
+// A clip is a PLAYER, and what the preview store holds for it is a FRAME — never
+// the clip's own bytes (see videoPreviewShot / the upload path) — so the frame is
+// the POSTER and is never a source: a <video> pointed at an image is a broken
+// element whose failed load also lifts the loading shell, which is exactly the
+// "uploaded and it just doesn't render" that got reported. A clip with no frame
+// yet (another device, a reload, the capture still in flight) is parked behind
+// the spinner shell until `requestVideoPoster` has one. data-fb-src is the
+// published source the element receives the moment the verdict lands.
 function attVideoHTML(a, opts) {
   const pending = a.scan === 'pending';
   const d = attDimsFor(a);
   const ar = d ? (d.w / d.h) : 0;
   const style = ar ? ` style="--att-ar:${ar.toFixed(4)}"` : '';
-  const shot = (!opts || opts.live !== false) ? attShot(a) : null;
-  const src = shot ? shot.src : (pending ? attPreviewSrc(a) : '');
-  return `<span class="att-wrap loading${a.spoiler ? ' spoiler' : ''}${ar ? ' ar' : ' no-ar'}"${style}${attMeta(a, 'video')}><video class="att-vid" draggable="false" src="${esc(src || a.url)}" data-fb-src="${esc(a.url)}" controls preload="metadata" playsinline></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a, pending)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+  const poster = (!opts || opts.live !== false) ? attPickedFrame(a) : '';
+  return `<span class="att-wrap${poster ? '' : ' loading'}${a.spoiler ? ' spoiler' : ''}${ar ? ' ar' : ' no-ar'}"${style}${attMeta(a, 'video')}><video class="att-vid" draggable="false" src="${esc(a.url)}" data-fb-src="${esc(a.url)}" controls preload="metadata" playsinline${poster ? ` poster="${esc(poster)}"` : ''}></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a, pending)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+}
+// The still FRAME this page already holds for a clip, as the poster to paint it
+// with — the upload path files the frame the upload card captured under the
+// attachment's own url (see videoPreviewShot), so the sender's own clip shows its
+// picture in the same tick the verdict lands instead of fetching one. The second
+// source is the picked frame itself, which is what survives a republish under a
+// new key (the compressor turning WebM into MP4) — the same fallback the patch
+// borrows from. Only a captured frame qualifies: the clip's own bytes are not a
+// poster, and a still picture is never a source.
+function attPickedFrame(a) {
+  if (!a || !a.url) return '';
+  // The frame the upload path captured, filed under the url the upload answered
+  // with — looked up the way the patch looks up the source on screen, because a
+  // republish in place hands the attachment a fresh ?v= (see videoPosterFor).
+  const shot = (typeof videoPosterFor === 'function') ? videoPosterFor(a.url) : '';
+  if (/^data:/.test(String(shot || ''))) return String(shot);
+  // Then the picked frame itself, which outlives the poster cache's 30 entries.
+  const hit = attPreviewEntry(a.id, a.url);
+  const picked = hit ? String(hit.src || '') : '';
+  return /^data:/.test(picked) ? picked : '';
 }
 // The plain-file card, in ONE place. Two callers need it and they have to agree:
 // the markup above for a file that never claimed to be a picture, and the
@@ -482,6 +519,19 @@ function srcPathOf(u) {
 // The frame a player already captured for a url, if any (see videoPosterCache).
 function videoPosterShot(url) {
   try { return (url && typeof videoPosterCache !== 'undefined') ? (videoPosterCache.get(url) || null) : null; } catch { return null; }
+}
+// …and the same question for a url written differently. The upload path files the
+// frame under the url the UPLOAD answered with, and the attachment comes back with
+// a fresh ?v= the moment the compressor settles it in place (see srcPathOf: the
+// cache-buster is not a different file, and the republished bytes are the same
+// picture). So the exact key first, then any key naming the same file.
+function videoPosterFor(url) {
+  const exact = videoPosterShot(url);
+  if (exact) return exact;
+  const want = srcPathOf(url);
+  if (!want || typeof videoPosterCache === 'undefined') return '';
+  for (const [k, v] of videoPosterCache) { if (srcPathOf(k) === want) return v; }
+  return '';
 }
 // The shape the box was RESERVED at, read off the node itself (the img's own
 // width/height attributes) rather than from the cached message — the reserved box
