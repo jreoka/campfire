@@ -137,7 +137,10 @@ check(/function showFriendsPanel\(\) \{[\s\S]{0,400}?rememberHomeTab\(\);/.test(
 check(/S\.homePanel = 'stories';[\s\S]{0,120}?rememberView\(\);\r?\n  rememberHomeTab\(\);/.test(stories), 'and so does the Stories row');
 for (const [name, re] of [
   ['closing a DM', /async function closeDm\(tid\) \{[\s\S]{0,300}?rememberHomeTab\(\);/],
-  ['leaving a group', /label: 'Leave chat'[\s\S]{0,400}?rememberHomeTab\(\);/],
+  // Leaving a group now asks first (the confirmation dialog sits between the
+  // menu row and the API call), so the windows have to clear it — and the ask
+  // itself is asserted here, because a decline must leave the memory alone.
+  ['leaving a group', /label: 'Leave chat'[\s\S]{0,700}?openConfirmModal\(\{[\s\S]{0,400}?if \(!ok\) return;[\s\S]{0,300}?rememberHomeTab\(\);/],
 ]) check(re.test(home), name + ' stops it from coming back');
 check(/if \(S\.dmThreadId && !S\.dms\.some\(\(t\) => t\.id === S\.dmThreadId\)\) \{ S\.dmThreadId = null; renderDmBlank\(\); rememberView\(\); rememberHomeTab\(\); \}/.test(socket),
   'a thread that vanished on another device is forgotten too');

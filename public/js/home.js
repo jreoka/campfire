@@ -781,6 +781,17 @@ function dmMenuItems(tid) {
     items.push({ label: 'Add members…', icon: '+', fn: () => openGroupAdd(tid) });
     items.push({ sep: true });
     items.push({ label: 'Leave chat', icon: '🗑', danger: true, fn: async () => {
+      // Leaving is a group-only, server-durable act: it drops your membership
+      // and posts a "left the group" line for the people who stay, and the only
+      // way back in is somebody else adding you again. So it asks first — the
+      // same promise-based in-app dialog every other destructive action uses,
+      // which is all a single tap on a phone row would otherwise be.
+      const ok = await openConfirmModal({
+        title: `Leave ${dmTitle(t)}?`,
+        message: 'You stop getting messages from this group and it leaves your chat list. Messages you already sent stay for everyone else, and a member can add you back later.',
+        okLabel: 'Leave',
+      });
+      if (!ok) return;
       try { await api(`/api/dms/${tid}/leave`, { method: 'POST' }); } catch {}
       if (S.dmThreadId === tid) { saveScrollPos(); S.dmThreadId = null; renderDmBlank(); rememberView(); rememberHomeTab(); }
       refreshDms();

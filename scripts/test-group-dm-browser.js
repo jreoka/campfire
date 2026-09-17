@@ -10,7 +10,10 @@
 // (clicking it opens the conversation, never the server mini-panel), and
 // removing a member is reachable from BOTH surfaces the group creator has —
 // the row's right-click / long-press menu and the user card's Remove tab —
-// with the card's click really dropping them from the group.
+// with the card's click really dropping them from the group. Staying in the
+// same shape, leaving a group asks for confirmation first: the sheet's Leave
+// chat opens the dialog, Cancel changes nothing at all (the group is still in
+// the list and still open), and only the dialog's Leave really leaves.
 //
 // Boots a real server against a throwaway database and drives headless Chrome
 // over CDP at a phone viewport with real touch events. Skips (exit 0) when
@@ -406,6 +409,55 @@ async function main() {
     check(await waitFor(pallyGone), 'and the member sidebar repaints without them');
     const sysline = await waitFor(`[...document.querySelectorAll('#messages .msg')].some((m) => /was removed/.test(m.textContent))`);
     check(!!sysline, 'a system line lands in the chat', await evaluate(`[...document.querySelectorAll('#messages .msg')].slice(-2).map((m) => m.textContent.trim())`));
+
+    console.log('\n[7] leaving the group asks first, and only a confirm leaves');
+    const still = `(S.dms || []).some((t) => t.id === ${JSON.stringify(setup.gid)})`;
+    await evaluate(`(async () => { await openHome(); await selectDmThread(${JSON.stringify(setup.gid)}); document.body.classList.add('nav-open'); return 1; })()`);
+    check(await waitFor(still), 'the group is still in the list to leave');
+    await touchHold('#group-list .dmrow');
+    check(await waitFor(`(() => {
+      const sh = document.querySelector('#sheet');
+      return !!sh && [...sh.querySelectorAll('.sheet-row')].some((r) => r.textContent.includes('Leave chat'));
+    })()`), 'the sheet still offers Leave chat');
+    await evaluate(`[...document.querySelectorAll('#sheet .sheet-row')].find((r) => r.textContent.includes('Leave chat')).click()`);
+    await sleep(300);
+    const asked = await evaluate(`({
+      open: !document.querySelector('#modal-backdrop').classList.contains('hidden'),
+      title: document.querySelector('#modal-title').textContent,
+      ok: document.querySelector('#modal-ok').textContent.trim(),
+      danger: document.querySelector('#modal-ok').classList.contains('danger'),
+      body: document.querySelector('#modal-body').textContent,
+      sheetGone: !document.querySelector('#sheet'),
+      still: ${still},
+      openThread: S.dmThreadId === ${JSON.stringify(setup.gid)},
+    })`);
+    check(asked.open, 'Leave chat opens the confirmation first', asked);
+    check(asked.title === 'Leave Saturday squad?' && asked.ok === 'Leave' && asked.danger,
+      'named for the group, with a danger Leave button', asked);
+    check(/stay for everyone else/.test(asked.body), 'and saying what leaving actually does', asked.body);
+    check(asked.sheetGone && asked.still && asked.openThread, 'nothing has happened yet — no request, no repaint', asked);
+    console.log('  (wrote ' + (await screenshot('campfire-group-dm-leave.png')) + ')');
+
+    // Cancel first: a decline has to leave everything exactly where it was.
+    await evaluate(`document.querySelector('#modal-close').click()`);
+    await sleep(300);
+    const declined = await evaluate(`({
+      open: !document.querySelector('#modal-backdrop').classList.contains('hidden'),
+      still: ${still},
+      openThread: S.dmThreadId === ${JSON.stringify(setup.gid)},
+      row: !!document.querySelector('#group-list .dmrow'),
+    })`);
+    check(!declined.open && declined.still && declined.openThread && declined.row, 'Cancel changes nothing at all', declined);
+
+    // Now go through with it.
+    await touchHold('#group-list .dmrow');
+    await evaluate(`[...document.querySelectorAll('#sheet .sheet-row')].find((r) => r.textContent.includes('Leave chat')).click()`);
+    await sleep(300);
+    await evaluate(`document.querySelector('#modal-ok').click()`);
+    const left = await waitFor(`!(${still})`);
+    check(!!left, 'confirming really leaves', await evaluate(`(S.dms || []).map((t) => t.name)`));
+    check(await waitFor(`!document.querySelector('#group-list .dmrow')`), 'the row is gone from the sidebar');
+    check(await evaluate(`S.dmThreadId === null`), 'and the conversation is closed behind it');
   } catch (e) {
     console.error('[test] ' + (e && e.stack || e));
     process.exit(1);

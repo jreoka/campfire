@@ -10,7 +10,10 @@
 //     own server mini-panel (all platforms);
 //   - removing someone from a group must be reachable from the member row's
 //     right-click / long-press menu AND from the user card, both gated to the
-//     group creator (groups are remove-only: no ban).
+//     group creator (groups are remove-only: no ban);
+//   - leaving a group must ask first: the row's Leave chat opens the in-app
+//     confirmation, a decline changes nothing, and only a confirm reaches
+//     POST /api/dms/:tid/leave (leaving is durable and one tap away on a phone).
 //
 // Boots a real server against a throwaway database for the group settings API
 // (name/description, membership + auth, 1:1 refusal, cap/trim, the
@@ -90,7 +93,7 @@ function slice(src, from, to) {
   if (a < 0 || b < 0 || b <= a) return null;
   return src.slice(a, b);
 }
-function clientChecks() {
+async function clientChecks() {
   const home = fs.readFileSync(path.join(ROOT, 'public/js/home.js'), 'utf8');
   const core = fs.readFileSync(path.join(ROOT, 'public/js/core.js'), 'utf8');
   const actions = fs.readFileSync(path.join(ROOT, 'public/js/actions.js'), 'utf8');
@@ -111,6 +114,35 @@ function clientChecks() {
   check(gl.includes('Add members…') && gl.includes('Leave chat'), 'and keeps add members / leave', gl);
   check(!dl.includes('Edit group chat') && dl.includes('Close DM'), 'a 1:1 row has no group settings, keeps Close DM', dl);
   check(gl[0] === 'Open' && dl[0] === 'Open', 'Open stays first in both', { gl: gl[0], dl: dl[0] });
+
+  console.log('\n[8b] leaving a group asks first');
+  // The confirmation sits between the row and the API call, so the same slice
+  // is DRIVEN with the dialog + api + repaint helpers stubbed: a decline must
+  // touch nothing, and only a confirm may reach /leave and drop the tab.
+  {
+    const st = { dms: [{ id: 'g1', isGroup: true, name: 'Weekend squad' }], me: { id: 'me' }, dmThreadId: 'g1' };
+    const drive = (answer) => {
+      const calls = [];
+      const mk = new Function('S', 'api', 'dmTitle', 'openConfirmModal', 'saveScrollPos', 'renderDmBlank', 'rememberView', 'rememberHomeTab', 'refreshDms',
+        menuSrc + '\nreturn dmMenuItems;');
+      const items = mk(st,
+        (u) => { calls.push(u); return Promise.resolve({}); },
+        (t) => t.name || 'Group chat',
+        (o) => { calls.push('ask:' + o.okLabel); return Promise.resolve(answer); },
+        () => calls.push('saveScrollPos'), () => calls.push('renderDmBlank'),
+        () => calls.push('rememberView'), () => calls.push('rememberHomeTab'), () => calls.push('refreshDms'));
+      return items('g1').find((i) => i.label === 'Leave chat').fn().then(() => calls);
+    };
+    const declined = await drive(false);
+    check(!declined.some((c) => c.startsWith('/api/')) && st.dmThreadId === 'g1',
+      'declining the dialog leaves the group open and calls nothing', declined);
+    st.dmThreadId = 'g1';
+    const confirmed = await drive(true);
+    check(confirmed.indexOf('ask:Leave') >= 0 && confirmed.indexOf('ask:Leave') < confirmed.indexOf('/api/dms/g1/leave'),
+      'the ask comes before the request, and confirming is what reaches it', confirmed);
+    check(confirmed.includes('rememberHomeTab') && st.dmThreadId === null,
+      'only after it succeeds is the tab memory cleared', { calls: confirmed, dmThreadId: st.dmThreadId });
+  }
 
   console.log('\n[9] the mobile long-press opens the sheet for DM rows');
   const holdSrc = slice(actions, 'const touch = e.touches[0];', 'if (ctxFor(t, x, y)) holdMenu = true;');
@@ -176,7 +208,7 @@ function clientChecks() {
 
 async function main() {
   // Offline wiring checks run first — they need no database.
-  clientChecks();
+  await clientChecks();
 
   const envFile = readEnvFile();
   const pg = {
