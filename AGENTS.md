@@ -214,6 +214,16 @@ declared in the manifest); no tray/watcher on mobile — that Rust code is
 - Semantic colors only where they carry meaning: green (online/speaking/live),
   amber (away), red (danger/DND/muted). User-chosen colors (avatars, folders,
   banners) and user content stay as-is.
+- **A user-chosen surface carries its own ink.** The user card's `card_color` /
+  `card_gradient` IS the card's backdrop, so the theme's text can no longer be
+  trusted on it (near-black vanishes into a saturated gradient in the light
+  theme, near-white into a pale one in the dark theme). `cardInkFor()`
+  (servers.js) reads that colour's luminance and the card wears
+  `uc-ink-light`/`uc-ink-dark`; everything sitting DIRECTLY on the backdrop reads
+  the `--uc-*` tones in styles.css, which default to the theme's own. A new text
+  row on the card must read those tones, not `var(--text)`, and a new *opaque*
+  panel inside it must keep the theme's — it is its own backdrop.
+  `scripts/test-card-ink.js`.
 - **No emoji in UI chrome** (use SVG/text: `Invite`, `···`, `Mute`, `↩`, `⋯`).
   Exceptions, both user-driven content: message text/reactions, and the hover
   bar's most-used emoji. Toast copy is plain text, no emoji.

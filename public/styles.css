@@ -1467,7 +1467,39 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
    rows are people, and a card behind that backdrop is a card you cannot read.
    They stay under #lightbox (200), the ctx/folder menus (400) and the toast
    (500). #tagcard is one step above #usercard: it opens FROM a card. */
-#usercard{position:fixed;z-index:170;width:300px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;overflow:hidden}
+#usercard{position:fixed;z-index:170;width:300px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;overflow:hidden;--uc-text:var(--text);--uc-muted:var(--muted);--uc-faint:var(--faint);--uc-link:var(--accent-hover);--uc-chip:var(--panel-3);--uc-chip-line:var(--line)}
+/* The card's own text tones. Everything that sits DIRECTLY on the card's
+   backdrop reads the --uc-* tones above; the card's opaque panels — the tab
+   list, the status bubble, the presence switcher, the system/game status boxes
+   — keep the theme's tones, because they are their own backdrop and the theme
+   already gets the contrast right inside them.
+   A custom card colour is a user-chosen backdrop, so neither theme's ink can be
+   trusted on it: the light theme's near-black text disappears into a saturated
+   gradient, the dark theme's near-white into a pale one. cardInkFor()
+   (servers.js) reads that colour's luminance and openUserCard wears the answer
+   as one of these two classes. Chips (inline code, role pills, badges, the game
+   and stream rows) go tonal against the backdrop instead of keeping a
+   translucent theme tint, which over a bright colour was neither one thing nor
+   the other. */
+#usercard.uc-ink-light{--uc-text:#fff;--uc-muted:rgba(255,255,255,.84);--uc-faint:rgba(255,255,255,.66);--uc-link:#cfd5ff;--uc-chip:rgba(0,0,0,.24);--uc-chip-line:rgba(255,255,255,.4)}
+#usercard.uc-ink-dark{--uc-text:#11151f;--uc-muted:rgba(17,21,31,.74);--uc-faint:rgba(17,21,31,.56);--uc-link:#2b3590;--uc-chip:rgba(17,21,31,.1);--uc-chip-line:rgba(17,21,31,.26)}
+#usercard .uc-name,#usercard .uc-status,#usercard .uc-bio,#usercard .uc-gaming-row{color:var(--uc-text)}
+#usercard .uc-sub,#usercard .uc-vol span,#usercard .uc-gaming-meta,#usercard .role-pill{color:var(--uc-muted)}
+#usercard .uc-since,#usercard .uc-sec-label,#usercard .uc-gaming-head,#usercard .uc-bubble-exp{color:var(--uc-faint)}
+#usercard .uc-bio a,#usercard .uc-gaming-now{color:var(--uc-link)}
+#usercard .uc-bio code,#usercard .uc-bio .spoiler.shown{background:var(--uc-chip)}
+#usercard .role-pill{border-color:var(--uc-chip-line)}
+#usercard button.role-pill:hover{background:var(--uc-chip);color:var(--uc-text)}
+#usercard.uc-ink-light .early-badge{background:rgba(0,0,0,.24);color:#fff}
+#usercard.uc-ink-dark .early-badge{background:rgba(43,53,144,.14);color:#2b3590}
+#usercard.uc-ink-light .sysadmin-badge{background:rgba(0,0,0,.24);color:#ffdada}
+#usercard.uc-ink-dark .sysadmin-badge{background:rgba(185,28,28,.12);color:#8f1414}
+#usercard.uc-ink-light .uc-statustext.ugame,#usercard.uc-ink-light .uc-statustext.ustream{background:rgba(0,0,0,.24);color:#fff}
+#usercard.uc-ink-dark .uc-statustext.ugame,#usercard.uc-ink-dark .uc-statustext.ustream{background:rgba(17,21,31,.1);color:#11151f}
+/* The game badge is the one icon on the card: it rides inside that chip, so it
+   goes tonal with it instead of staying a theme-coloured square on it. */
+#usercard.uc-ink-light .gbadge{background:rgba(255,255,255,.18);color:#fff}
+#usercard.uc-ink-dark .gbadge{background:rgba(17,21,31,.1);color:#11151f}
 /* Mobile me bar: your own card is a full-height sheet sliding up from the
    bottom (see openOwnCard) — nothing to dim behind it, so no scrim. */
 @media (max-width:700px),(max-height:560px) and (pointer:coarse){

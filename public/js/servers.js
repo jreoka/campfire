@@ -1033,6 +1033,39 @@ function cardBgFor(u) {
   if (c1 && c2) return `linear-gradient(180deg,${c1},${c2})`;
   return c1 || '';
 }
+// WCAG relative luminance of a #rrggbb colour (the sRGB → linear ramp, then the
+// Rec.709 weights), so a card's backdrop can be judged rather than guessed at.
+function hexRelLum(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const lin = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+}
+// Which ink the card's own text wears. A custom card colour IS the card's
+// backdrop, so neither theme's ink can be trusted on it: the light theme's
+// near-black text vanishes into a saturated gradient (the picked colour is
+// usually a vivid blue/red/purple) and the dark theme's near-white vanishes into
+// a pale one. The direction therefore comes from the backdrop itself.
+//
+// The two inks cross over at L≈0.195 (white on the dark ink, at the contrast
+// formula's crossover), and 0.22 sits just above it, so the saturated colours
+// people actually pick keep the light text a filled button wears while every
+// pale colour — pastels, yellows, light greens — takes dark ink instead. A
+// gradient is judged on the mean of its two stops, which is what the midpoint of
+// a 180deg gradient shows.
+//
+// '' = no custom colour, so the theme keeps owning the card's tones.
+const UC_INK_LUM = 0.22;
+function cardInkFor(u) {
+  if (!u) return '';
+  const c1 = HEXC.test(u.card_color || '') ? u.card_color : '';
+  if (!c1) return '';
+  const c2 = HEXC.test(u.card_gradient || '') ? u.card_gradient : '';
+  const lum = c2 ? (hexRelLum(c1) + hexRelLum(c2)) / 2 : hexRelLum(c1);
+  return lum > UC_INK_LUM ? 'dark' : 'light';
+}
 // Live profile for a message author: chat embeds a snapshot at send time, so
 // resolve display name / avatar / name color from fresh state first so color
 // and gradient names show in chat, not just the member sidebar.

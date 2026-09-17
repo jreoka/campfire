@@ -1692,6 +1692,13 @@ async function openUserCard(uid, x, y, fallback, opts = {}) {
   // The status menu always opens as just your current status.
   if (uid === S.me.id) presenceMenu = { open: false, cascade: null };
   card.style.background = cardBgFor(u);
+  // A custom card colour is the card's own backdrop, so the text on it stops
+  // being the theme's business — cardInkFor (servers.js) reads that colour and
+  // says which ink the card must wear. Cleared for a card that has none, so the
+  // theme's own tones come back.
+  const ink = cardInkFor(u);
+  card.classList.toggle('uc-ink-light', ink === 'light');
+  card.classList.toggle('uc-ink-dark', ink === 'dark');
   card.innerHTML = `
     <div class="uc-banner"${ban ? ` style="background-image:url('${esc(ban)}')"` : ''}></div>
     <div class="uc-body">
