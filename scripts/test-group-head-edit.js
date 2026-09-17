@@ -15,8 +15,12 @@
 //     single hover pill the mock shows, and the pencil has to be INSIDE the chip
 //     or a 14px icon would be its own thumb target (the chip's phone rule grows
 //     the box for the whole thing, exactly like the 1:1 DM's name).
-//   - the pencil is visible at REST. A hover-only control does not exist on a
-//     touch screen, and on a desktop an invisible one cannot be discovered.
+//   - the pencil waits for the pointer (owner request: "the pencil should only be
+//     visible when hovering"): hidden at rest, revealed on hover and on
+//     :focus-within, and shown unconditionally on a touch screen, where there is
+//     no hover to reveal it — the same three-rule shape the DM row's ✕ uses. It
+//     keeps its 22px in the layout while invisible, so revealing it cannot jog the
+//     group's name sideways.
 //   - the header is in exactly one of two modes. A group's chip opens its settings
 //     (this file); a 1:1 DM's name opens that person's card (ui.js, and
 //     test-dm-head-avatar.js). paintHeaderNameTap / paintHeaderGroupEdit are set
@@ -138,6 +142,7 @@ function run() {
       glyphBox: { w: g.w, h: g.h, cy: g.cy },
       nameCy: box(named()).cy,
       pencilDisplay: getComputedStyle(pencil()).display,
+      pencilOpacity: getComputedStyle(pencil()).opacity,
       pencilInsideChip: chip().contains(pencil()),
       // The chip holds glyph, name and pencil as one inline run, in that order.
       order: [...chip().children].map((el) => el.id || el.tagName.toLowerCase()),
@@ -255,7 +260,7 @@ function main() {
   check(/const t = \(S\.dms \|\| \[\]\)\.find\(\(x\) => x\.id === S\.dmThreadId\);[\s\S]{0,160}?if \(!t \|\| !t\.isGroup\) return;[\s\S]{0,60}?openGroupEdit\(t\.id\);/.test(home),
     'and a group opens the very editor its row menu opens (openGroupEdit)');
 
-  console.log('\n[4] styles.css: one pill, a visible pencil, a real thumb box');
+  console.log('\n[4] styles.css: one pill, a pencil that waits for the pointer, a real thumb box');
   const chipRule = /#chan-head\{([^}]*)\}/.exec(css);
   check(!!chipRule, 'styles.css styles #chan-head');
   if (chipRule) {
@@ -270,8 +275,14 @@ function main() {
     'the group glyph is a 24px circle — the 1:1 DM face\'s own box', gRule && gRule[1]);
   check(!!gRule && /background:var\(--panel-3\)/.test(gRule[1]), 'on the tonal circle the DM list gives a group', gRule && gRule[1]);
   const pRule = /#btn-group-edit\{([^}]*)\}/.exec(css);
-  check(!!pRule && /display:inline-flex/.test(pRule[1]), 'the pencil is displayed at rest, not only on hover', pRule && pRule[1]);
-  check(/\.hidden\{display:none!important\}/.test(css), 'and .hidden is what takes it away (!important, so the rule above cannot win)');
+  check(!!pRule && /display:inline-flex/.test(pRule[1]),
+    'the pencil keeps its box in the chip (an invisible box, not a removed one)', pRule && pRule[1]);
+  check(!!pRule && /opacity:0/.test(pRule[1]), 'but it is hidden at rest', pRule && pRule[1]);
+  check(/#chan-head:hover #btn-group-edit,#chan-head:focus-within #btn-group-edit\{opacity:1\}/.test(css),
+    'the pointer reveals it, and so does a keyboard (the DM row ✕\'s own pair)');
+  check(/@media \(hover:none\)\{#btn-group-edit\{opacity:1\}\}/.test(css),
+    'and a touch screen — which has no hover to reveal it — simply shows it');
+  check(/\.hidden\{display:none!important\}/.test(css), 'while .hidden still takes it away entirely (!important, so no rule above can win)');
   check(/#chat-header\.group-edit #chan-head:hover\{background:var\(--panel-3\)\}/.test(hoverBlock),
     'the pill hover lives in the "hover, only where hover exists" block (a tap cannot leave it stuck)');
   check(hoverStart > 0 && hoverBlock.length > 100, 'that block is a real block');
@@ -285,16 +296,20 @@ function main() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-grphead-'));
   try {
     console.log('\n[5] the real painters and the real click handler (headless Chrome)');
-    // The thumb box lives under `@media (pointer:coarse)`, and headless Chrome has
-    // no way to claim a coarse pointer — so the SAME stylesheet is loaded a second
-    // time with that one at-rule turned into `@media all`, and the box is then
-    // measured where it lands. Nothing else about the sheet changes.
-    const phoneCss = path.join(dir, 'styles-coarse.css');
-    fs.writeFileSync(phoneCss, css.replace('@media (pointer:coarse){', '@media all{'));
+    // The phone's grown thumb box lives under `@media (pointer:coarse)`, and the
+    // always-visible pencil under `@media (hover:none)`. Headless Chrome can claim
+    // neither (it has a fine pointer and reports that it hovers), so the SAME
+    // stylesheet is loaded again with those at-rules turned into `@media all` and
+    // the states are then measured where they land. Nothing else about the sheet
+    // changes.
+    const coarseCss = path.join(dir, 'styles-coarse.css');
+    const phoneCss = path.join(dir, 'styles-phone.css');
+    fs.writeFileSync(coarseCss, css.replace('@media (pointer:coarse){', '@media all{'));
+    fs.writeFileSync(phoneCss, css.replace('@media (pointer:coarse){', '@media all{').replace('@media (hover:none){', '@media all{'));
     const realCss = path.join(ROOT, 'public/styles.css');
-    for (const [w, dpr, coarse] of [[480, 1, false], [480, 2, false], [960, 1, false], [480, 1, true]]) {
-      const out = measure(chrome, w, dpr, dir, coarse ? phoneCss : realCss);
-      const tag = 'w' + w + '@' + dpr + (coarse ? ' coarse' : '') + ' — ';
+    for (const [w, dpr, mode] of [[480, 1, 'desktop'], [480, 2, 'desktop'], [960, 1, 'desktop'], [480, 1, 'coarse'], [480, 1, 'phone']]) {
+      const out = measure(chrome, w, dpr, dir, mode === 'desktop' ? realCss : mode === 'coarse' ? coarseCss : phoneCss);
+      const tag = 'w' + w + '@' + dpr + ' ' + mode + ' — ';
       if (out.err) { check(false, tag + 'the harness ran', out.err); continue; }
       const g = out.group;
       check(g.name === "Cross's Group" && g.headerText.indexOf("Cross's Group") >= 0,
@@ -304,9 +319,15 @@ function main() {
       check(Math.abs(g.nameCy - g.glyphBox.cy) <= 2, tag + 'on the name\'s line', { name: Math.round(g.nameCy), glyph: Math.round(g.glyphBox.cy) });
       // A flex item's `display:inline-flex` computes to `flex` — it is blockified.
       check((g.pencilDisplay === 'flex' || g.pencilDisplay === 'inline-flex') && g.pencilInsideChip,
-        tag + 'the pencil is drawn at rest, inside the chip', { display: g.pencilDisplay });
+        tag + 'the pencil is in the chip, holding its place', { display: g.pencilDisplay });
       check(g.order.join(',') === 'chan-hash,chan-name,btn-group-edit', tag + 'glyph → name → pencil, one run', g.order);
       check(g.chipPill === '999px', tag + 'the chip is a pill', g.chipPill);
+      // The owner's rule: at rest the title is a title; the pencil arrives with the
+      // pointer. On a touch screen there is no pointer to wait for, so the same
+      // stylesheet shows it outright.
+      check(g.pencilOpacity === (mode === 'phone' ? '1' : '0'),
+        tag + (mode === 'phone' ? 'a touch screen shows the pencil without a hover' : 'the pencil is invisible until the pointer arrives'),
+        { opacity: g.pencilOpacity });
       check(g.groupEdit && !g.dmTap && g.cursor === 'pointer' && g.title === 'Edit group',
         tag + 'a group is in group-edit mode: pointer, tooltip, no person-card',
         { groupEdit: g.groupEdit, dmTap: g.dmTap, cursor: g.cursor, title: g.title });
@@ -335,11 +356,11 @@ function main() {
       // asserted to be at least 44px tall on a coarse pointer and absent otherwise.
       const tb = out.thumb || {};
       const grow = -parseFloat(tb.top || '0') - parseFloat(tb.bottom || '0');
-      if (coarse) {
+      if (mode === 'desktop') {
+        check(tb.content === 'none', tag + 'a desktop header grows no thumb box', tb);
+      } else {
         check(tb.content !== 'none' && tb.top === '-9px' && tb.left === '-4px' && tb.chipH + grow >= 44,
           tag + 'a phone grows ONE thumb box over the whole chip (≥44px tall)', tb);
-      } else {
-        check(tb.content === 'none', tag + 'a desktop header grows none', tb);
       }
 
       if (!out.png) { check(false, tag + 'a screenshot to sample', 'none'); continue; }
@@ -409,8 +430,11 @@ function main() {
           if (!near(px(x, y), PANEL, 25)) ink++;
         }
       }
-      check(nameEnd > maxX && ink >= 3 * dpr * dpr,
-        tag + 'the pencil is drawn too: ink past the end of the name', { nameEnd, circleEnd: maxX, ink });
+      check(nameEnd > maxX, tag + 'the group\'s name is painted right of its glyph', { nameEnd, circleEnd: maxX });
+      // And this is the owner's rule as pixels: at rest NOTHING is drawn past the
+      // name, because the pencil is waiting for the pointer.
+      if (mode === 'phone') check(ink >= 3 * dpr * dpr, tag + 'and a touch screen paints the pencil after all', { ink });
+      else check(ink === 0, tag + 'and NOTHING is painted past the name (the pencil waits for the pointer)', { ink });
     }
   } finally {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}

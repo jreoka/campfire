@@ -597,10 +597,17 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
    drawn thing differs. */
 #chan-hash.group-head-glyph{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:24px;height:24px;border-radius:50%;background:var(--panel-3);color:var(--muted)}
 #chan-hash.group-head-glyph svg{display:block}
-/* The pencil says the name beside it is editable, so it is VISIBLE at rest: a
-   hover-only control does not exist on a touch screen, and on a desktop a
-   hidden one cannot be discovered at all. */
-#btn-group-edit{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex-shrink:0;padding:0;border:0;border-radius:50%;background:transparent;color:var(--muted);cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
+/* The pencil says the name beside it is editable, so at rest the title stays a
+   title and the pencil arrives with the pointer (owner request: "the pencil
+   should only be visible when hovering"). It keeps its 22px in the layout the
+   whole time — an invisible box, not a removed one — so revealing it cannot jog
+   the name sideways, and :focus-within reveals it for a keyboard exactly as a DM
+   row's ✕ does. A touch screen has no hover to reveal it, so there it is simply
+   shown; that is what the (hover:none) rule below is for, and the whole chip is
+   the target either way. */
+#btn-group-edit{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex-shrink:0;padding:0;border:0;border-radius:50%;background:transparent;color:var(--muted);cursor:pointer;opacity:0;transition:background var(--t-fast),color var(--t-fast),opacity var(--t-fast)}
+#chan-head:hover #btn-group-edit,#chan-head:focus-within #btn-group-edit{opacity:1}
+@media (hover:none){#btn-group-edit{opacity:1}}
 #chat-header.group-edit #chan-head{cursor:pointer}
 #chan-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0}
 #chan-topic{color:var(--muted);font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:34vw;border-left:1px solid var(--line);padding-left:.65rem;margin-left:.15rem;cursor:pointer}
