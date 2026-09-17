@@ -1151,6 +1151,18 @@ function renderServerTab() {
   lb.textContent = owner ? 'Delete server' : 'Leave server';
   lb.onclick = async () => {
     if (!owner) {
+      // Leaving is a group-chat leave's twin, and it asks for the same reason:
+      // it drops your membership for good, and joining again needs a fresh
+      // invite (there is no server directory to walk back in through). It also
+      // clears whatever tag you wore from this server, which is invisible until
+      // it happens. The owner's half below is the typed-name Delete instead,
+      // because that one destroys everyone's history rather than your seat.
+      const ok = await openConfirmModal({
+        title: `Leave "${d.name}"?`,
+        message: 'You leave the server and it disappears from your list. Messages you already sent stay, any tag you wore from it is cleared, and you need a fresh invite to get back in.',
+        okLabel: 'Leave',
+      });
+      if (!ok) return;
       try {
         await api(`/api/servers/${d.id}/leave`, { method: 'POST' });
         closeServerSettings();
