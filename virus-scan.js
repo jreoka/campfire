@@ -590,6 +590,64 @@ async function reapStuckClaims() {
   }
 }
 
+// A claim is a LEASE, and the watchdog above only ever expires one on a clock
+// because a slot that is merely SLOW has to keep its row. A slot whose POD is
+// gone will never release anything, though: the process died holding the claim
+// and `claimRow` refuses to hand that row to anyone else until the lease ages
+// out. So a restart or a deploy that caught an upload mid-scan left it sitting
+// at "Processing file" for up to twelve more minutes (reported: "if the server
+// reboots while a file is processing sometimes it can say processing forever").
+//
+// The replica registry already answers "is that pod still alive?" —
+// bus_replicas + PEER_STALE_MS, the same idiom reconcileReplicaState uses to
+// reap voice occupancy and live sessions — so a claim whose owner is not in it
+// is released at once and the next tick picks the row up. A rolling update is
+// unaffected: a peer that is still heartbeating keeps every claim it holds, and
+// so does this process. A graceful stop deletes the row on the way out (see
+// bus.stop), which is why a deploy recovers immediately; a replica that CRASHED
+// is recognised once its heartbeat goes stale, so recovery is bounded by
+// PEER_STALE_MS rather than by the slot lease.
+//
+// `attempts` is deliberately NOT bumped, unlike the stalled-slot watchdog: a
+// restart is not the file's fault, and counting it would let two ordinary
+// deploys push a perfectly good upload to MAX_ATTEMPTS and mark it `error`.
+async function releaseDeadClaims() {
+  let owners = [];
+  try {
+    owners = await db.prepare(
+      "SELECT DISTINCT claimed_by FROM file_scans WHERE status = 'pending' AND claimed_by IS NOT NULL"
+    ).all();
+  } catch (e) {
+    warn('claim liveness read failed: ' + String((e && e.message) || e).slice(0, 160));
+    return;
+  }
+  if (!owners.length) return;
+  const live = new Set([podId()]);
+  try {
+    const bus = require('./bus');
+    // With the registry off there is no second replica to be confused about
+    // (BUS=0 is single-replica by contract, see bus.js), so every claim that is
+    // not this process's belongs to a predecessor that is gone.
+    if (bus.stats().enabled) for (const p of await bus.liveReplicas()) live.add(p.pod_id);
+  } catch {}
+  for (const o of owners) {
+    if (!o.claimed_by || live.has(o.claimed_by)) continue;
+    try {
+      // RETURNING, so the log line can say how many rows actually moved. Nothing
+      // local is touched: `claimed`/`claimAt` only ever hold THIS process's own
+      // claims, and a claim that is not ours is never in them.
+      const freed = await db.prepare(
+        "UPDATE file_scans SET claimed_by = NULL, claimed_at = NULL WHERE status = 'pending' AND claimed_by = ? RETURNING key"
+      ).all(o.claimed_by);
+      if (freed.length) {
+        warn(`released ${freed.length} claim(s) left by a replica that is gone (${o.claimed_by}): ` + freed.map((r) => r.key).join(', '));
+      }
+    } catch (e) {
+      warn('claim release failed: ' + String((e && e.message) || e).slice(0, 160));
+    }
+  }
+}
+
 // Scan a candidate file the compressor produced (a local temp path) BEFORE
 // anything is published: true = publish the smaller bytes, false = the
 // candidate is dropped and the original (already verified) file stays.
@@ -767,6 +825,9 @@ async function loop() {
   let st = 'idle';
   try {
     try { await reapStuckClaims(); } catch {}
+    // ...and hand back anything a replica that is GONE was holding, so a restart
+    // mid-scan recovers in seconds instead of waiting out the slot lease.
+    try { await releaseDeadClaims(); } catch {}
     // Fill every free slot (each 'more' claimed one row into a slot).
     let claimedAny = false;
     for (let i = 0; i < CONCURRENCY; i++) {
@@ -856,4 +917,8 @@ module.exports = {
   _openBytes: openBytes, _probeEngine: () => clamav.probe(), _identityFor: identityFor,
   _virusLabel: virusLabel, _detailFor: detailFor,
   _scanStream: scanStream, _setEngineForTest: setEngineForTest,
+  // exported for tests: the dead-replica claim release and the claim query, so a
+  // test can prove recovery without waiting out a twelve-minute lease.
+  _releaseDeadClaims: releaseDeadClaims, _claimRow: claimRow, _podId: podId,
+  _ensureTables: ensureTables,
 };
