@@ -855,6 +855,53 @@ function messageAttachmentsOnScreen(mid) {
     return !!(document.querySelector('#messages ' + sel) || document.querySelector('#thread-replies ' + sel));
   } catch { return false; }
 }
+// ---------- resync: cards still saying "Processing" after a missed push --------
+// A verdict reaches the reader as a LIVE push (message-updated / dm-updated).
+// That push is gone forever if the socket was down when it fired — a deploy
+// restarts the app, a phone loses signal, a laptop sleeps — and the reader is
+// left looking at "Processing file" for a file that has been ready for hours,
+// with no way out but a reload. The list itself is deliberately NOT refetched on
+// reconnect (that would cost the reader their place in the conversation), so
+// this asks about exactly the messages STILL showing a scanning card and patches
+// them where they stand through the same in-place path the pushes use. In the
+// common case there is nothing pending, and the whole thing costs one DOM query
+// and not a single request.
+async function resyncPendingMedia() {
+  if (!S.me || !store.token) return;
+  const byMid = new Map();
+  try {
+    for (const el of document.querySelectorAll('#messages .scan-block.scanning[data-att-id], #thread-replies .scan-block.scanning[data-att-id]')) {
+      const mid = ((el.closest('.msg') || {}).dataset || {}).mid;
+      if (!mid) continue;
+      if (!byMid.has(mid)) byMid.set(mid, []);
+      byMid.get(mid).push(el);
+    }
+  } catch { return; }
+  if (!byMid.size) return;
+  // Which list these came from decides which twin to ask — the same one the two
+  // socket handlers answer for.
+  const dm = S.view === 'home';
+  for (const [mid, cards] of byMid) {
+    let message = null;
+    try {
+      const r = await api(dm ? `/api/dms/messages/${encodeURIComponent(mid)}` : `/api/messages/${encodeURIComponent(mid)}`);
+      message = r && r.message;
+    } catch { continue; } // deleted, or no longer ours to read: nothing to patch
+    if (!message || !message.id) continue;
+    // Only a card that actually MOVED is worth touching. A re-read that still
+    // reports the very same bytes as pending means the slot is genuinely still
+    // working — and patching then would rebuild the whole list (a scanning card
+    // is not an `.att-slot`, so the in-place patch declines it, see
+    // patchAttachmentsIn) to change nothing at all.
+    const moved = cards.some((el) => {
+      const a = (message.attachments || []).find((x) => String(x.id || '') === String(el.dataset.attId || ''));
+      return !a || a.scan !== 'pending' || String(a.url || '') !== String(el.dataset.fbUrl || '');
+    });
+    if (!moved) continue;
+    updateMsgInCaches(message.id, (old) => Object.assign(old, message));
+    patchMessageAttachmentsInList(message.id, message, () => { if (dm) renderDmMessages(); else renderMessages(); });
+  }
+}
 // ---------- video posters: desktop shows the first frame natively, but the
 // Android WebView shows a black box + giant play button until playback
 // starts. Capture a frame offscreen once per video URL and set it as the

@@ -6302,6 +6302,17 @@ app.delete('/api/dms/:tid/pins/:mid', authRequired, async (req, res) => {
   await dmNotify(t.id, { t: 'dm-pins-changed', threadId: t.id });
   res.json({ ok: true });
 });
+// One DM message, re-read by id — the DM twin of GET /api/messages/:mid, and it
+// exists for the same reason: a client that was offline when a scan verdict
+// landed has to be able to re-read the row it is showing WITHOUT refetching the
+// whole conversation (which would cost the reader their place in it). Answered
+// 404 for a stranger exactly like its neighbours, so the route cannot be used to
+// probe which message ids exist.
+app.get('/api/dms/messages/:mid', authRequired, async (req, res) => {
+  const m = await dmMsg(req.params.mid);
+  if (!m || !(await dmThreadFor(req.user.id, m.thread_id))) return res.status(404).json({ error: 'no_message' });
+  res.json({ message: await fullDm(m.id, req.user.id) });
+});
 app.post('/api/dms/messages/:mid/reactions', authRequired, async (req, res) => {
   const m = await dmMsg(req.params.mid);
   if (!m || !(await dmThreadFor(req.user.id, m.thread_id))) return res.status(404).json({ error: 'no_message' });

@@ -843,6 +843,12 @@ document.addEventListener('visibilitychange', () => {
   try { takeNativeDeepLink(); } catch {}
   try { if (typeof sweepStalledUploads === 'function') sweepStalledUploads(); } catch {}
   try { clearActiveChanUnread(); } catch {}
+  // A tab that was hidden through the verdict has the same hole a dropped socket
+  // has (its pushes were missed), and this one is free when nothing is on screen
+  // still saying "Processing" — so it runs on every foregrounding rather than
+  // behind the throttle below, which exists because each unread pass is three
+  // requests. See resyncPendingMedia.
+  try { resyncPendingMedia(); } catch {}
   if (Date.now() - unreadRefreshAt < 10000) return;
   unreadRefreshAt = Date.now();
   try { refreshUnreadState(); } catch {}
