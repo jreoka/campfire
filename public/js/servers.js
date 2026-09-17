@@ -227,7 +227,7 @@ async function selectServer(id) {
     if (S.srvSetId) { if (server.id === S.srvSetId) renderServerTab(); else closeServerSettings(); }
     if (S.chanSet) { if (server.id === S.chanSet.sid) renderChanSettings(); else closeChannelSettings(); }
     if (firstText) selectChannel(firstText, { keepNav: true });
-    else { $('#chan-name').textContent = '—'; $('#messages').innerHTML = ''; paintHeaderNameTap(false); }
+    else { paintChanGlyph(''); $('#chan-name').textContent = '—'; $('#messages').innerHTML = ''; paintHeaderNameTap(false); paintHeaderGroupEdit(false); }
   } catch (err) {
     toast('Could not load server');
     await refreshServers();
@@ -596,8 +596,10 @@ async function selectChannel(id, opts = {}) {
   renderChannels();
   renderStage();
   const ch = S.serverDetail.channels.find((c) => c.id === id);
+  paintChanGlyph(ch ? '#' : ''); // a channel leads with its hash, never a DM's face
   $('#chan-name').textContent = ch ? ch.name : '—';
   paintHeaderNameTap(false); // a channel name is not a person's card button
+  paintHeaderGroupEdit(false); // …and a channel has no group settings behind it either
   try { clearTyping(); } catch {}
   // NSFW gate: unconfirmed members get the age check instead of the feed.
   if (ch && ch.nsfw && !S.me?.nsfw_ok) {
@@ -724,6 +726,63 @@ function dotHTML(uid, dot) {
   // a stale flag must not outlive the session that set it.
   if (dot === 'offline' || !onMobileNow(uid)) return `<span class="status-dot ${dot}"></span>`;
   return `<span class="status-dot ${dot} phone" title="On mobile"></span>`;
+}
+// ---------- the chat header's leading glyph ----------
+// One writer for #chan-hash, so the state of the conversation you just left can
+// never ride along into the next one: a text channel leads with '#', a group chat
+// with the app's own people mark, Home's panels with nothing, and a 1:1 DM with
+// the peer's own face + presence light where the '@' used to be (owner request)
+// — the header names exactly one person, so their picture and the light that
+// belongs to it are the honest thing to lead with, and they are the same
+// `.avwrap`/`.status-dot` pair every avatar corner in the app wears.
+function paintChanGlyph(text) {
+  const h = $('#chan-hash');
+  if (!h) return;
+  h.classList.remove('dm-head-av', 'group-head-glyph');
+  h.textContent = text || '';
+}
+// A group has no single face, so it leads with the same people mark the members
+// button wears, on the tonal circle the DM list already gives a group: the name
+// beside it says WHICH group, this says "more than the two of you" — and it is
+// the 1:1 DM's own 24px box, so the two kinds of conversation lead their headers
+// identically. The chip that holds it is the group's settings button (see
+// paintDmHead / the #chan-head click in home.js).
+const GROUP_HEAD_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
+function paintGroupHeadGlyph() {
+  const h = $('#chan-hash');
+  if (!h) return;
+  paintChanGlyph('');
+  h.classList.add('group-head-glyph');
+  h.innerHTML = GROUP_HEAD_SVG;
+}
+function paintDmHeadGlyph(peer) {
+  const h = $('#chan-hash');
+  if (!h) return;
+  if (!peer) { paintChanGlyph(''); return; }
+  h.classList.add('dm-head-av');
+  let wrap = h.querySelector('.avwrap');
+  if (!wrap) {
+    h.textContent = '';
+    wrap = document.createElement('span');
+    wrap.className = 'avwrap';
+    wrap.innerHTML = '<span class="avatar"></span>';
+    h.appendChild(wrap);
+  }
+  const av = wrap.querySelector('.avatar');
+  // The face is repainted only when the identity behind it moved: a presence
+  // frame every few seconds must not tear down and reload the same <img>.
+  const sig = [peer.avatar_url || '', peer.display_name || '', peer.avatar_decoration || ''].join('\u0001');
+  if (wrap.dataset.sig !== sig) {
+    wrap.dataset.sig = sig;
+    paintAvatar(av, peer);
+    av.style.boxShadow = 'none';
+  }
+  const st = statusOf(peer.id);
+  const dot = dotOf(st, !isOff(st) && peer.streaming_game ? peer.streaming_game : null);
+  wrap.className = 'avwrap st-' + dot;
+  const cur = wrap.querySelector('.status-dot');
+  if (cur) cur.outerHTML = dotHTML(peer.id, dot);
+  else wrap.insertAdjacentHTML('beforeend', dotHTML(peer.id, dot));
 }
 // ---------- game activity badge (Discord-style) ----------
 // Rows stay exactly one sub-line tall: custom status wins the line, the

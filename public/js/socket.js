@@ -236,6 +236,14 @@ function setPresenceMobile(userId, on) {
   if (want) S.presenceMobile[id] = 1; else delete S.presenceMobile[id];
   if (want !== had && S.me && id === String(S.me.id)) { try { paintMe(); } catch {} }
 }
+// Every presence/profile frame that reaches Home repaints the same surfaces: the
+// member list (which also owns the Active Now rail) and the open DM's header,
+// whose face carries a live status light (repaintDmHead in home.js).
+function repaintHomePresence() {
+  if (S.view !== 'home') return;
+  renderDmMembers();
+  try { repaintDmHead(); } catch {}
+}
 function onWS(m) {
   switch (m.t) {
     case 'hello': {
@@ -602,7 +610,7 @@ function onWS(m) {
       const mob = m.mobile || {};
       for (const id of Object.keys(on)) setPresenceMobile(id, !!mob[id]);
       if (m.serverId === S.serverId) { S.online = on; S.online[S.me.id] = S.me.status || 'online'; }
-      if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
+      if (S.view === 'server') renderMembers(); else repaintHomePresence();
       repaintFriendsIfVisible();
       break;
     }
@@ -616,7 +624,7 @@ function onWS(m) {
       S.presenceAll[m.userId] = m.status || 'online';
       setPresenceMobile(m.userId, !!m.mobile);
       if (m.serverId === S.serverId) S.online[m.userId] = m.status || 'online';
-      if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
+      if (S.view === 'server') renderMembers(); else repaintHomePresence();
       repaintFriendsIfVisible();
       break;
     // The account's mobile-ness on its own: a phone socket went away (and the
@@ -624,14 +632,14 @@ function onWS(m) {
     // that flag can have moved — see the WS close handler in server.js.
     case 'user-mobile':
       setPresenceMobile(m.userId, !!m.mobile);
-      if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
+      if (S.view === 'server') renderMembers(); else repaintHomePresence();
       repaintFriendsIfVisible();
       break;
     case 'user-offline':
       delete S.presenceAll[m.userId];
       setPresenceMobile(m.userId, false);
       if (m.serverId === S.serverId) delete S.online[m.userId];
-      if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
+      if (S.view === 'server') renderMembers(); else repaintHomePresence();
       repaintFriendsIfVisible();
       break;
     case 'user-status':
@@ -646,7 +654,7 @@ function onWS(m) {
         if (m.status === 'invisible') delete S.online[m.userId];
         else S.online[m.userId] = m.status;
       }
-      if (S.view === 'server') renderMembers(); else if (S.view === 'home') renderDmMembers();
+      if (S.view === 'server') renderMembers(); else repaintHomePresence();
       repaintFriendsIfVisible();
       break;
     // Site-admin Overview: live online/session counts pushed by the server on
@@ -707,6 +715,9 @@ function onWS(m) {
       renderMembers();
       if (S.view === 'home') {
         renderDmMembers();
+        // The open DM's header wears this person's face + light, so a rename, a
+        // new picture or a streaming flip has to reach it too.
+        try { repaintDmHead(); } catch {}
         // Streaming flips + friend profile changes land here: keep the
         // friends list and Active Now rail live without a manual refresh.
         try { renderFriendLists(); } catch {}

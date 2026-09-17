@@ -660,9 +660,10 @@ function renderDmBlank() {
   document.querySelectorAll('#home-ui .dmrow').forEach((b) => b.classList.remove('active'));
   const stories = S.homePanel === 'stories';
   $(stories ? '#btn-stories' : '#btn-friends')?.classList.add('active');
-  $('#chan-hash').textContent = '';
+  paintChanGlyph(''); // no conversation is open: no leading glyph in the header
   $('#chan-name').textContent = stories ? 'Stories' : 'Friends';
   paintHeaderNameTap(false);
+  paintHeaderGroupEdit(false); // Home's own feed is nobody's settings — no pencil
   try { clearTyping(); } catch {}
   paintDmCallButtons();
   renderTopic();

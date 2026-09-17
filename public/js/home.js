@@ -805,8 +805,10 @@ function openDmSheet(tid) {
     : { title: (peer || {}).display_name || 'Direct message', sub: peer ? '@' + peer.username : '', serverUser: peer || undefined, glyph: '?' };
   openCtxSheet(items, head);
 }
-// Group chat settings: name + description. The only surface is the DM row's
-// right-click / long-press menu; the server re-checks membership and is_group.
+// Group chat settings: name + description. Reached from the open conversation's
+// own header chip (the name is the button — see paintHeaderGroupEdit) and from the
+// DM row's right-click / long-press menu; the server re-checks membership and
+// is_group.
 async function openGroupEdit(tid) {
   const t = S.dms.find((x) => x.id === tid);
   if (!t || !t.isGroup) return;
@@ -824,8 +826,11 @@ async function openGroupEdit(tid) {
     toast('Group chat updated');
   });
 }
-// The open conversation's header: hash + name + placeholder, plus the topic
-// line (a group's description). Shared by selectDmThread and the socket's
+// The open conversation's header: leading glyph + name + placeholder, plus the
+// topic line (a group's description). The glyph is the peer's own face for a 1:1
+// DM and nothing for a group (see paintChanGlyph/paintDmHeadGlyph in servers.js —
+// one writer for #chan-hash, so a state can never leak between conversations).
+// Shared by selectDmThread and the socket's
 // dm-threads-changed so a rename on another device reaches this header too.
 // A 1:1 DM's name is also the button for that person's card (ui.js), so the
 // header carries `.dm-name-tap` for exactly that case — every other header
@@ -834,14 +839,56 @@ function paintHeaderNameTap(on) {
   const h = $('#chat-header');
   if (h) h.classList.toggle('dm-name-tap', !!on);
 }
+// The other half of the header's title chip: a GROUP's name is the way into its
+// settings (owner request: "clicking allows editing and the little logo"), so the
+// chip wears the pencil, the tooltip and the pointer — and every other header (a
+// channel, a 1:1 DM, a blank Home panel) clears all three. Twin of
+// paintHeaderNameTap() above, and exactly one of the two is ever set: a chip
+// cannot be a person's card and a group's settings button at the same time.
+function paintHeaderGroupEdit(on) {
+  const h = $('#chat-header'), chip = $('#chan-head'), pencil = $('#btn-group-edit');
+  if (h) h.classList.toggle('group-edit', !!on);
+  // The tooltip lives on the chip, not on the pencil: hovering the name and
+  // hovering the pencil then say the same thing ("Edit group"), and the pencil
+  // keeps its own accessible name for a screen reader.
+  if (chip) chip.title = on ? 'Edit group' : '';
+  if (pencil) pencil.classList.toggle('hidden', !on);
+}
+// One handler for the whole chip, registered on the chip itself: the pencil sits
+// INSIDE it, so name, glyph and pencil are one target with one action — which is
+// also what gives a 14px pencil a real thumb box (see the phone rule for
+// #chan-head). A 1:1 DM's name reaches that person's card through ui.js's own
+// #chat-header listener; the two never fight, because this one only runs while
+// the header is in group-edit mode and that one only for a peer.
+$('#chan-head')?.addEventListener('click', (e) => {
+  if (!document.body.classList.contains('dm-open')) return;
+  if (!$('#chat-header')?.classList.contains('group-edit')) return;
+  const t = (S.dms || []).find((x) => x.id === S.dmThreadId);
+  if (!t || !t.isGroup) return;
+  e.preventDefault();
+  openGroupEdit(t.id);
+});
 function paintDmHead(t) {
   if (!t) return;
   const peer = dmPeer(t);
-  $('#chan-hash').textContent = t.isGroup ? '' : '@';
+  // The glyph leads the header: a group wears the app's people mark, a 1:1 DM the
+  // peer's own face + presence light (paintGroupHeadGlyph / paintDmHeadGlyph).
+  if (t.isGroup) paintGroupHeadGlyph();
+  else paintDmHeadGlyph(peer);
   $('#chan-name').textContent = t.isGroup ? (t.name || 'Group chat') : ((peer || {}).display_name || 'DM');
   $('#in-message').placeholder = t.isGroup ? `Message ${t.name || 'group'}` : `Message @${(peer || {}).username || ''}`;
   renderTopic();
   paintHeaderNameTap(!t.isGroup && !!peer);
+  paintHeaderGroupEdit(t.isGroup);
+}
+// Presence, streaming and profile frames all reach the open DM's header through
+// here: the face in it carries a live status light (and the name can change
+// under it). Cheap and idempotent — the avatar's own <img> is only rebuilt when
+// the identity behind it moved (paintDmHeadGlyph).
+function repaintDmHead() {
+  if (S.view !== 'home' || !S.dmThreadId) return;
+  const t = (S.dms || []).find((x) => x.id === S.dmThreadId);
+  if (t) paintDmHead(t);
 }
 async function openGroupAdd(tid) {
   const t = S.dms.find((x) => x.id === tid);
