@@ -12,13 +12,14 @@
 //
 // Three halves:
 //   [1] the markup: a pending attachment WITH a local preview renders the real
-//       media plus a processing chip (never the spinner card), the download link
+//       media and NOTHING over it (never the spinner card, and never the corner
+//       "Processing" chip the owner asked to remove), the download link
 //       and the star wait for the final bytes, and the reserved box is the same
 //       one the final rendering takes;
 //   [2] the patch, driven in headless Chrome against the REAL markup and the REAL
 //       patchAttachmentNode: a pending -> clean image keeps the frame the reader
 //       is looking at until the new bytes land (the old node is still in the DOM
-//       while the preview is in flight), the verdict removes the chip, an
+//       while the preview is in flight), the picture never gains an overlay, an
 //       attachment whose kind or aspect changed is REFUSED so the caller can fall
 //       back to a render, and an audio player swaps its source without being
 //       rebuilt (its playhead survives);
@@ -360,9 +361,9 @@ async function main() {
   check(/function attPendingPreview\(a\)/.test(markSource), 'a pending attachment asks for its picked bytes');
   check(/const local = pending && attPendingPreview\(a\);\s*\n\s*if \(pending && !local\) return `<div class="scan-block scanning"/.test(markSource),
     'the scanning card is now the FALLBACK (no local preview: another device, a reload, a non-media upload)');
-  check(/attProcHTML\(\)/.test(markSource) && /class="att-proc"/.test(markSource), 'a pending media attachment carries the processing chip instead');
-  check(/function attProcHTML\(\)[\s\S]{0,220}pointer-events/ .test(css) || /\.att-proc\{[^}]*pointer-events:none/.test(css),
-    'and the chip cannot eat the lightbox tap or the player controls');
+  check(!/attProcHTML/.test(markSource) && !/att-proc/.test(markSource),
+    'a pending media attachment carries NO processing chip over it (owner request: the corner chip is gone)');
+  check(!/\.att-proc/.test(css), 'and the stylesheet carries no chip either');
   check(/const preview = shot \? shot\.src : \(pending \? attPreviewSrc\(a\) : ''\);/.test(markSource) && /src="\$\{esc\(preview \|\| thumb \|\| a\.url\)\}"/.test(markSource),
     'a pending picture paints the picked bytes, falling back to its derived preview and then its own url');
   check(/function attShot\(a\)/.test(markSource) && /const picked = \/\^blob:\/\.test\(String\(hit\.src \|\| ''\)\);/.test(markSource),
@@ -525,7 +526,7 @@ async function main() {
       process.exit(1);
     }
 
-    console.log('\n[4] pending: the picked bytes are on screen, with the chip');
+    console.log('\n[4] pending: the picked bytes are on screen, with nothing over them');
     // The attachment as the server first sends it, WITH the local registration the
     // upload path made (id + url + the picked bytes as a real data URL).
     const picked = await evaluate('window.__pickedBytes(120, 120, 0x303030)');
@@ -536,7 +537,7 @@ async function main() {
     check(p0.slot && p0.attId === 'att-1', 'the attachment renders inside its id-keyed slot', p0);
     check(!p0.card, 'no spinner card — the media itself is what the reader sees', p0);
     check(p0.imgSrc && p0.imgSrc.startsWith('data:'), 'the picture paints the picked bytes while the slot holds the bytes back', p0);
-    check(p0.proc === 'Processing', 'and the processing chip says so', p0);
+    check(p0.proc === null, 'and no processing chip is painted over the picture', p0);
     check(!p0.dl, 'with nothing to download yet', p0);
     check(p0.boxW > 0 && p0.boxH > 0, 'the box is on screen at a real size (the stored 2500px shape, capped by CSS)', p0);
 
@@ -565,7 +566,7 @@ async function main() {
     check(placed && placed.held === false, 'and the carried frame goes with it', placed);
     check(snap.dl === true, 'the download link arrived with the verdict', snap);
     const landing = await evaluate('window.__state()');
-    check(!landing.proc, 'the processing chip is gone with the verdict', landing);
+    check(landing.proc === null, 'and no chip ever appeared over it, before or after the verdict', landing);
     for (let i = 0; i < 100 && !/pic\.jpg\.webp\?v=2/.test((await evaluate('window.__state()')).imgSrc || ''); i++) await sleep(100);
     const s1 = await evaluate('window.__state()');
     check(await evaluate('window.__whenPainted()') === true, 'the published preview lands and paints', s1);
@@ -611,7 +612,7 @@ async function main() {
     check(slowSnap.rect && slowSnap.rect.h > 0, 'and the box keeps the reserved size while the request is open', slowSnap);
     for (let i = 0; i < 50 && !slowWait; i++) await sleep(100);
     check(!!slowWait, 'the published preview really is in flight (the server is holding it)', { hits });
-    check(!(await evaluate('window.__state()')).proc, 'while the chip is already gone (the verdict is known)', {});
+    check((await evaluate('window.__state()')).proc === null, 'while there is still no chip in the corner (there never is one)', {});
     if (slowWait) slowWait.resolve();
     for (let i = 0; i < 100 && !/slow\.jpg\.webp\?v=2/.test((await evaluate('window.__state()')).imgSrc || ''); i++) await sleep(100);
     const done = await evaluate('window.__state()');
@@ -628,8 +629,8 @@ async function main() {
     const refused = await evaluate(`window.__verdict([{ id: 'att-3', kind: 'image', scan: 'clean', url: '/uploads/files/other.jpg?v=2', name: 'other.jpg', size: 15200, w: 2500, h: 800 }])`);
     check(refused === false, 'a published shape that no longer matches the reserved one is refused (the list rebuilds instead)', refused);
     const afterWrong = await evaluate('window.__state()');
-    check(afterWrong.imgFbOrig === '/uploads/files/other.jpg?v=1' && afterWrong.proc === 'Processing',
-      'and the row is left exactly as it was — never half-patched', afterWrong);
+    check(afterWrong.imgFbOrig === '/uploads/files/other.jpg?v=1' && afterWrong.proc === null,
+      'and the row is left exactly as it was — never half-patched, and chip-free', afterWrong);
     const refusedKind = await evaluate(`(function () {
       window.__render({ id: 'att-4', kind: 'image', scan: 'pending', url: '/uploads/files/other.jpg?v=1', name: 'other.jpg', size: 20480, w: 2500, h: 2500 });
       return window.__verdict([{ id: 'att-4', kind: 'file', scan: 'clean', url: '/uploads/files/other.jpg?v=2', name: 'other.jpg', size: 15200 }]);
@@ -715,7 +716,7 @@ async function main() {
     check(paintedFrames > frames.length - 3, 'and every frame of the hand-over shows a picture with bytes behind it', { painted: paintedFrames, total: frames.length });
     const last = frames[frames.length - 1] || {};
     check(/tl\.jpg\.webp\?v=2/.test(last.src || ''), 'and the row settles on the published bytes', last);
-    check(!last.proc, 'with the processing chip gone', last);
+    check(!last.proc && frames.every((f) => !f.proc), 'and not one frame of the hand-over carried a processing chip', last);
 
     console.log('\n[12] the same, for the renderer fallback (when the patch refuses)');
     // A republish that changes the aspect refuses in the patch, and the app falls
@@ -729,8 +730,8 @@ async function main() {
     check(refusedT === false, 'the patch refuses the reshaped republish', refusedT);
     await evaluate(`window.__fullRender({ id: 'att-f', kind: 'image', scan: 'pending', url: '/uploads/files/tl2.jpg?v=1', name: 'tl2.jpg', size: 20480, w: 2500, h: 2500 })`);
     const afterFull = await evaluate('window.__state()');
-    check(afterFull.proc === 'Processing' && !!afterFull.imgSrc && afterFull.imgSrc.startsWith('data:'),
-      'the rebuilt row still paints the picked bytes with its chip (the renderer keeps the store too)', afterFull);
+    check(afterFull.proc === null && !!afterFull.imgSrc && afterFull.imgSrc.startsWith('data:'),
+      'the rebuilt row still paints the picked bytes, with nothing over them (the renderer keeps the store too)', afterFull);
     check(afterFull.boxW > 0 && afterFull.boxH > 0, 'and the box it reserved is on screen, not a collapsed line', afterFull);
 
     console.log('\n[13] the picked bytes survive the SEND (the upload path carries no id)');

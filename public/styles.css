@@ -1142,8 +1142,9 @@ img,video{-webkit-user-drag:none}
    An upload posts to chat immediately and its bytes stay behind the scan gate
    until the slot has published them. The uploading browser paints its OWN picked
    bytes during that window (see attachmentHTML), so what is on screen is the
-   picture — not a spinner standing where it will be — and the only thing the
-   verdict changes is that small chip in the corner.
+   picture — not a spinner standing where it will be — and the verdict changes
+   nothing the reader can see: it republishes the same picture under the final
+   key. No overlay is painted on top of it (the corner "Processing" chip is gone).
    The slot carries the attachment id: it is the handle a verdict broadcast is
    applied through, so the media element underneath is patched in place instead of
    the list being rebuilt (which would flash the picture back through its
@@ -1153,8 +1154,6 @@ img,video{-webkit-user-drag:none}
    containing block collapses that percentage to zero (the message column would
    then be as wide as the picture's loaded size, not the reserved one). */
 .att-slot{display:block;width:100%;max-width:100%}
-.att-proc{position:absolute;left:.45rem;bottom:.45rem;display:inline-flex;align-items:center;gap:.32rem;padding:.18rem .5rem .18rem .42rem;border-radius:999px;background:rgba(9,12,24,.72);color:#fff;font-size:.68rem;font-weight:600;letter-spacing:.01em;z-index:2;pointer-events:none}
-.att-proc-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:scan-pulse 1.6s ease-in-out infinite}
 /* The frame the reader was already looking at, held over the incoming bytes: the
    swap is invisible when the fetch is warm, and a still picture (never an empty
    box) when it is not. See patchImageNode. */

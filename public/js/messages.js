@@ -208,7 +208,8 @@ function attPreviewSrc(a) {
 }
 // Is this attachment still waiting on the slot AND are the picked bytes here?
 // `attPreviewSrc` answers for the URL a media element should use; this answers
-// "is that URL a local stand-in", which is what the processing chip reports.
+// "is that URL a local stand-in", which is what tells a pending media attachment
+// apart from one with no local preview to show (the scanning card).
 function attPendingPreview(a) {
   return !!(a && a.scan === 'pending' && a.url && attPreviewEntry(a.id, a.url));
 }
@@ -318,20 +319,18 @@ function attachmentHTML(a) {
   // warning — never the bytes, no preview, no download link anywhere. A PENDING
   // file is different when the uploading browser still holds the picked bytes:
   // the media renders from that local preview (the box is the final one's shape)
-  // with a small processing chip over it, and the chip is the only thing the
-  // verdict changes. Only a file with no local preview to show — another device,
-  // a reload, a non-media upload — falls back to the scanning card.
+  // and NOTHING is painted over it — the picture the sender just picked stands on
+  // its own, and the verdict lands on the element underneath without touching what
+  // is on screen. (A "Processing" chip used to sit in the picture's corner; the
+  // owner asked for it gone, and the pending state is already legible from the
+  // composer's own chip and the missing download link.) Only a file with no local
+  // preview to show — another device, a reload, a non-media upload — falls back to
+  // the scanning card, which is a whole card rather than an overlay and stays.
   if (a.scan === 'infected') return `<div class="scan-block infected"${attMeta(a)}><span class="scan-ic">${SCAN_SHIELD_SVG}</span><span class="scan-tx"><b>${esc(a.name)}</b><span>Virus detected — this file was removed and can't be downloaded.</span></span></div>`;
   const pending = a.scan === 'pending';
   const local = pending && attPendingPreview(a);
   if (pending && !local) return `<div class="scan-block scanning"${attMeta(a)}><span class="scan-tx"><b>${esc(a.name)} (${fmtSize(a.size)})</b><span>Processing file<span class="scan-dots"></span></span><span class="scan-track"><span class="scan-fill"></span></span></span></div>`;
-  return `<span class="att-slot" data-att-slot="${esc(a.id || '')}">${attachmentBodyHTML(a)}${local ? attProcHTML() : ''}</span>`;
-}
-// The processing chip: small, over the media's own corner, plain text (no emoji
-// in chrome), and pointer-events:none so it can never eat the lightbox tap or
-// the player's controls underneath it.
-function attProcHTML() {
-  return '<span class="att-proc" aria-live="polite"><span class="att-proc-dot"></span>Processing</span>';
+  return `<span class="att-slot" data-att-slot="${esc(a.id || '')}">${attachmentBodyHTML(a)}</span>`;
 }
 // The attachment itself, whatever shape it takes. Split out so the suspicious
 // marker can precede every one of them without four copies of the call.
@@ -376,8 +375,8 @@ function attachmentBodyHTML(a, opts) {
   return attFileCardHTML(a);
 }
 // A clip is a PLAYER, and the local preview is the only source that can be
-// played while the upload waits: the player, its poster and the chip are all
-// there at once (as with a still, the box is the final one's shape). data-fb-src
+// played while the upload waits: the player, its poster and the picked bytes are
+// all there at once (as with a still, the box is the final one's shape). data-fb-src
 // is the CLEAN source the element will swap to once the slot publishes it — the
 // handover happens without touching the node, so playback never restarts under
 // the person who just sent it.
@@ -767,8 +766,6 @@ function patchAttachmentsIn(node, m) {
       if (!patchAttachmentNode(mb, a)) return false;
     }
     slot.setAttribute('data-att-slot', String(a.id || ''));
-    const proc = slot.querySelector(':scope > .att-proc');
-    if (proc) proc.remove();                   // the verdict landed: the chip goes with it
   }
   return true;
 }
