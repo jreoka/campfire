@@ -78,8 +78,10 @@ function serverBtn(s) {
   if (s.icon_url) {
     const img = document.createElement('img');
     img.src = s.icon_url; img.alt = ''; img.draggable = false;
-    img.width = 48; img.height = 48;
-    img.style.cssText = 'width:48px!important;height:48px!important;object-fit:cover!important;border-radius:inherit!important;display:block!important;pointer-events:none!important';
+    // The image fills whatever box the rail gives an icon (--rail-ico) instead of
+    // restating its size: an icon is the button, so a change to the rail's scale
+    // has to reach every avatar with it.
+    img.style.cssText = 'width:100%!important;height:100%!important;object-fit:cover!important;border-radius:inherit!important;display:block!important;pointer-events:none!important';
     img.onerror = () => { b.classList.remove('has-icon'); b.innerHTML = ''; b.textContent = label; };
     b.appendChild(img);
   } else {
