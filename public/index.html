@@ -215,6 +215,49 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
         <div id="sp-body"></div>
       </div>
 
+      <!-- site admin console: a FULL PAGE, not a dialog (site admins only,
+           opened from the rail shield). It is a positioned sheet inside #chat so
+           it can own the whole window: `body.adm-page` stands the shell down —
+           the rail, the channel sidebar, the member list and the other chat
+           panels — in CSS, never by unmounting anything, so returning finds the
+           conversation exactly as it was left (scroll, draft, uploads). The
+           page's own header carries the way back, a nav row per area builds its
+           pane on demand (admin.js), and the header chip is the shortcut into
+           the moderation queue. -->
+      <div id="admin-page" class="hidden">
+        <header id="admin-head">
+          <button type="button" id="admin-return" class="adm-back" title="Back to chat">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M11 18l-6-6 6-6"/></svg>
+            <span class="adm-back-t">Return to Campfire</span>
+            <span class="adm-back-s">Campfire</span>
+          </button>
+          <span class="adm-brand">
+            <span class="adm-brand-ic" aria-hidden="true"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l7.5 3.2v5.1c0 4.7-3.1 8.8-7.5 10.2-4.4-1.4-7.5-5.5-7.5-10.2V5.7z"/><path d="M8.8 11.8l2.2 2.2 4.3-4.3"/></svg></span>
+            <span class="adm-brand-tx"><strong>Site admin</strong><span id="adm-head-sub">Instance console</span></span>
+          </span>
+          <span class="spacer"></span>
+          <button type="button" id="adm-head-reports" class="adm-head-reports hidden" title="Open the moderation queue" aria-label="Open the moderation queue"><b id="adm-head-reports-n">0</b><span class="adm-head-reports-tx"> open report<span id="adm-head-reports-s">s</span></span></button>
+        </header>
+        <div id="admin-body">
+          <nav id="admin-menu" aria-label="Admin sections">
+            <div class="adm-menu-label">Console</div>
+            <button type="button" class="adm-nav active" data-atab="overview"><span class="adm-nav-ic" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20V10M12 20V4M19 20v-6"/></svg></span><span class="adm-nav-tx">Overview</span></button>
+            <button type="button" class="adm-nav" data-atab="reports"><span class="adm-nav-ic" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 21V4"/><path d="M5.5 4.8h9.4l-1.5 3.2 1.5 3.2H5.5z"/></svg></span><span class="adm-nav-tx">Reports</span><span id="adm-reports-badge" class="tab-badge hidden"></span></button>
+            <button type="button" class="adm-nav" data-atab="media"><span class="adm-nav-ic" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="3"/><circle cx="8.5" cy="10" r="1.6"/><path d="M21 16l-5-5-6 6"/></svg></span><span class="adm-nav-tx">Media</span></button>
+            <button type="button" class="adm-nav" data-atab="users"><span class="adm-nav-ic" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="adm-nav-tx">Users</span></button>
+            <button type="button" class="adm-nav" data-atab="servers"><span class="adm-nav-ic" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 3 7.5l9 4.5 9-4.5z"/><path d="M3 12.2l9 4.5 9-4.5"/><path d="M3 16.7l9 4.5 9-4.5"/></svg></span><span class="adm-nav-tx">Servers</span></button>
+          </nav>
+          <div id="admin-panes">
+            <div id="adm-overview" class="set-pane"><p class="muted small">Loading…</p></div>
+            <div id="adm-reports" class="set-pane hidden"></div>
+            <div id="adm-media" class="set-pane hidden"></div>
+            <div id="adm-users" class="set-pane hidden"></div>
+            <div id="adm-servers" class="set-pane hidden"></div>
+          </div>
+        </div>
+      </div>
+      <!-- end site admin console -->
+
       <div id="stage" class="hidden">
         <div id="stage-head" class="hidden"><span class="live-badge">LIVE</span><strong id="stage-name">voice</strong><span id="stage-sub" class="muted"></span><span class="spacer"></span><button id="sc-min" class="icon-btn" title="Back to chat" style="display:inline-block"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button></div>
         <div id="stage-grid"></div>
@@ -561,28 +604,6 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
       <div id="set-notifs" class="set-pane hidden"></div>
       <div id="set-blocked" class="set-pane hidden"></div>
       <div id="set-themes" class="set-pane hidden"></div>
-    </div>
-  </div>
-</div>
-
-<!-- site admin console (admins only; opened from the rail shield button) -->
-<div id="admin-backdrop" class="hidden">
-  <div class="settings admin-console">
-    <div class="set-tabs adm-tabs">
-      <button data-atab="overview" class="set-tab active">Overview</button>
-      <button data-atab="reports" class="set-tab">Reports<span id="adm-reports-badge" class="tab-badge hidden"></span></button>
-      <button data-atab="media" class="set-tab">Media</button>
-      <button data-atab="users" class="set-tab">Users</button>
-      <button data-atab="servers" class="set-tab">Servers</button>
-      <span class="spacer"></span>
-      <button id="admin-close" class="mini">✕</button>
-    </div>
-    <div class="set-body">
-      <div id="adm-overview" class="set-pane"><p class="muted small">Loading…</p></div>
-      <div id="adm-reports" class="set-pane hidden"></div>
-      <div id="adm-media" class="set-pane hidden"></div>
-      <div id="adm-users" class="set-pane hidden"></div>
-      <div id="adm-servers" class="set-pane hidden"></div>
     </div>
   </div>
 </div>

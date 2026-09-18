@@ -1,9 +1,10 @@
 // The loading spinner for the settings and admin-console tab panes (see
 // AGENTS.md → design language: a pick that has to wait must say so).
 //
-// Both consoles are a `.set-tab` rail over `.set-pane` pages, and both drive one
-// shared helper: `tabSpin`/`tabSpinWhile` (core.js). The contract this test
-// protects:
+// Both consoles drive one shared helper: `tabSpin`/`tabSpinWhile` (core.js) —
+// Settings as a `.set-tab` rail over `.set-pane` pages, the admin console as a
+// full page (`.adm-nav` menu + `.set-pane` panes, see test-admin-page.js). The
+// contract this test protects:
 //   - the mark is on the PANE the reader is looking at, never beside the tab
 //     button — it has to survive the phone layout, where picking a section hides
 //     the rail entirely;
@@ -59,25 +60,30 @@ const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
 const SPIN_FROM = '// A tab whose pane has to be fetched says so IN the pane';
 const SPIN_TO = '/* Default avatar color';
 const spinSrc = core.slice(core.indexOf(SPIN_FROM), core.indexOf(SPIN_TO));
-// Both rails live between the settings block and the server-settings one.
+// The settings rail lives between the settings block and the server-settings
+// one. The admin console is no longer a rail inside that range: it is a FULL
+// PAGE inside #chat now, so its markup is lifted out by its own sentinels and
+// wrapped in the #chat it is positioned against (see test-admin-page.js).
 const railsMarkup = index.slice(index.indexOf('<!-- settings'), index.indexOf('<!-- server settings'));
+const adminMarkup = index.slice(index.indexOf('<!-- site admin console'), index.indexOf('<!-- end site admin console -->'));
 
 function pageHtml() {
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="file:///${ROOT.replace(/\\/g, '/')}/public/styles.css"></head><body>
 ${railsMarkup}
+<div id="chat">${adminMarkup}</div>
 <script>
 ${spinSrc}
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 (async () => {
   const out = {};
   const sr = document.querySelector('#settings-backdrop .set-tab[data-tab="games"]');
-  const ar = document.querySelector('#admin-backdrop .set-tab[data-atab="reports"]');
+  const ar = document.querySelector('#admin-menu .adm-nav[data-atab="reports"]');
   const spane = document.getElementById('set-games');
   const apane = document.getElementById('adm-reports');
   document.getElementById('settings-backdrop').classList.remove('hidden');
-  document.getElementById('admin-backdrop').classList.remove('hidden');
+  document.getElementById('admin-page').classList.remove('hidden');
   // The shown pane, exactly as setSettingsTab/setAdminTab leave it.
   spane.classList.remove('hidden');
   apane.classList.remove('hidden');

@@ -71,7 +71,7 @@ const CF_BACK_LAYERS = [
   { name: 'profile', open: () => cfShown('#profile-backdrop'), close: () => closeProfileScreen() },
   { name: 'modal', open: () => cfShown('#modal-backdrop'), close: () => cancelModal() },
   { name: 'settings', open: () => cfShown('#settings-backdrop'), close: () => closeSettings() },
-  { name: 'admin', open: () => cfShown('#admin-backdrop'), close: () => closeAdminConsole() },
+  { name: 'admin', open: () => cfShown('#admin-page'), close: () => closeAdminConsole() },
   { name: 'server-settings', open: () => cfShown('#srv-settings-backdrop'), close: () => closeServerSettings() },
   { name: 'channel-settings', open: () => cfShown('#chan-settings-backdrop'), close: () => closeChannelSettings() },
   { name: 'call-view', open: () => cfCallOpen(), close: () => closeCallView() },

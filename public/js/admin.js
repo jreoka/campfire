@@ -1,9 +1,12 @@
 'use strict';
 // ---------- site admin console (rail shield button, is_admin users only) ----------
-// A surface of its own rather than a Settings tab: the shield under the
-// create-server button opens it, with a tab per area (Overview / Media / Users
-// / Servers). All data comes from /api/admin/* (server-enforced admin_only)
-// and every row action is delegated through adminClick().
+// A PAGE of its own, not a dialog: the shield under the create-server button
+// opens it, `body.adm-page` stands the shell down (rail, sidebar, member list —
+// CSS only, so the conversation is never torn down and Return puts it back
+// exactly as it was), and the page carries a header with the way back plus a nav
+// menu with one row per area (Overview / Reports / Media / Users / Servers).
+// All data comes from /api/admin/* (server-enforced admin_only) and every row
+// action is delegated through adminClick().
 const Admin = {
   tab: 'overview',
   uq: '', uf: 'all', uoff: 0, utotal: 0,
@@ -12,6 +15,15 @@ const Admin = {
   openReports: 0,
   membersOpen: null,
   stats: null, statsAt: 0, statsErr: false, poll: null, refreshSoon: null,
+};
+// One line per section, shown under the page title — the menu says where you
+// are, this says what you are looking at.
+const ADMIN_SECTIONS = {
+  overview: 'Live counts across the instance',
+  reports: 'The moderation queue',
+  media: 'Storage, compression and malware scanning',
+  users: 'Accounts, roles and sign-ins',
+  servers: 'Every server and its members',
 };
 const ADMIN_PAGE = 25;
 // Recent-files card in Admin → Media: fetch this many, scroll inside the card.
@@ -41,20 +53,26 @@ function fmtCountdown(ts) {
 }
 
 function isSiteAdmin() { return !!(S.me && S.me.is_admin); }
-function adminConsoleOpen() { return !!($('#admin-backdrop') && !$('#admin-backdrop').classList.contains('hidden')); }
+function adminConsoleOpen() { return !!($('#admin-page') && !$('#admin-page').classList.contains('hidden')); }
 function adminTabIs(t) { return Admin.tab === t; }
 
+// Opening is two class flips: the page, and the body flag the stylesheet uses to
+// stand the rest of the shell down. Nothing is hidden by hand and nothing is
+// unmounted, so there is no state to rebuild on the way out — the conversation
+// underneath is exactly as it was, scroll included.
 function openAdminConsole(tab) {
   if (!isSiteAdmin()) { toast('Site admins only'); return; }
-  const box = $('#admin-backdrop');
+  const box = $('#admin-page');
   if (!box) return;
   try { document.body.classList.remove('nav-open'); } catch {} // mobile drawer out of the way
+  try { document.body.classList.add('adm-page'); } catch {}
   box.classList.remove('hidden');
   try { $('#btn-admin')?.classList.add('active'); } catch {}
   setAdminTab(tab || Admin.tab || 'overview');
 }
 function closeAdminConsole() {
-  try { $('#admin-backdrop')?.classList.add('hidden'); } catch {}
+  try { $('#admin-page')?.classList.add('hidden'); } catch {}
+  try { document.body.classList.remove('adm-page'); } catch {}
   try { $('#btn-admin')?.classList.remove('active'); } catch {}
   stopAdminStatsLive();
 }
@@ -64,7 +82,9 @@ function closeAdminConsole() {
 function setAdminTab(t) {
   if (!isSiteAdmin()) return;
   Admin.tab = t;
-  document.querySelectorAll('#admin-backdrop .set-tab').forEach((b) => b.classList.toggle('active', b.dataset.atab === t));
+  document.querySelectorAll('#admin-menu .adm-nav').forEach((b) => b.classList.toggle('active', b.dataset.atab === t));
+  const sub = $('#adm-head-sub');
+  if (sub) sub.textContent = ADMIN_SECTIONS[t] || 'Instance console';
   let pane = null;
   for (const key of ['overview', 'reports', 'media', 'users', 'servers']) {
     const p = document.getElementById('adm-' + key);
@@ -72,6 +92,11 @@ function setAdminTab(t) {
     p.classList.toggle('hidden', key !== t);
     if (key === t) pane = p;
   }
+  // One scroller holds every pane, so a section has to open at its TOP: landing
+  // halfway down a list because the previous section was scrolled reads as a
+  // broken list rather than as a preserved position.
+  const scroller = $('#admin-panes');
+  if (scroller) scroller.scrollTop = 0;
   // Every pane in the console fetches, so the page itself says so until the load
   // lands (tabSpinWhile, core.js) — Overview included: its first paint is a
   // round trip too.
@@ -95,7 +120,7 @@ function ensureAdminUsersPane() {
   if (!pane || pane.dataset.built) return;
   pane.dataset.built = '1';
   pane.innerHTML = `
-    <div class="row" style="gap:.4rem">
+    <div class="row adm-filter" style="gap:.4rem">
       <input id="adm-uq" placeholder="Search username or display name…" style="flex:1" autocomplete="off" />
       <select id="adm-uf" style="max-width:130px">
         <option value="all">Everyone</option>
@@ -129,7 +154,7 @@ function ensureAdminReportsPane() {
   if (!pane || pane.dataset.built) return;
   pane.dataset.built = '1';
   pane.innerHTML = `
-    <div class="row" style="gap:.4rem">
+    <div class="row adm-filter" style="gap:.4rem">
       <input id="adm-rq" placeholder="Search reports, authors, reporters…" style="flex:1" autocomplete="off" />
       <select id="adm-rst" style="max-width:130px">
         <option value="open">Open</option>
@@ -158,15 +183,26 @@ function ensureAdminReportsPane() {
   $('#adm-rrefresh').onclick = () => loadAdminReports();
 }
 
-// Badge on the tab (and a dot on the rail shield) so new reports are visible
-// without the panel being open. Fed by /api/admin/reports*, the Overview stats
-// payload and the live 'report-new' / 'report-updated' pushes.
+// Badge on the menu row (and a dot on the rail shield) so new reports are visible
+// without the panel being open, plus the same number as a chip in the page header
+// — where a reader coming from a report notification looks first, and which is
+// itself the shortcut into the queue. Fed by /api/admin/reports*, the Overview
+// stats payload and the live 'report-new' / 'report-updated' pushes.
 function paintAdminReportBadge(n) {
   Admin.openReports = Number(n) || 0;
+  const label = Admin.openReports > 99 ? '99+' : String(Admin.openReports);
   const b = $('#adm-reports-badge');
   if (b) {
-    b.textContent = Admin.openReports > 99 ? '99+' : String(Admin.openReports);
+    b.textContent = label;
     b.classList.toggle('hidden', !Admin.openReports);
+  }
+  const chip = $('#adm-head-reports');
+  if (chip) {
+    chip.classList.toggle('hidden', !Admin.openReports);
+    const num = $('#adm-head-reports-n');
+    if (num) num.textContent = label;
+    const plural = $('#adm-head-reports-s');
+    if (plural) plural.textContent = Admin.openReports === 1 ? '' : 's';
   }
   try { $('#btn-admin')?.classList.toggle('has-reports', !!Admin.openReports); } catch {}
 }
@@ -316,7 +352,7 @@ function ensureAdminServersPane() {
   if (!pane || pane.dataset.built) return;
   pane.dataset.built = '1';
   pane.innerHTML = `
-    <div class="row" style="gap:.4rem">
+    <div class="row adm-filter" style="gap:.4rem">
       <input id="adm-sq" placeholder="Search servers…" style="flex:1" autocomplete="off" />
       <button id="adm-ssearch" class="btn small">Search</button>
     </div>
@@ -1082,20 +1118,23 @@ async function adminClick(e) {
 }
 
 // ---------- console wiring ----------
-// One delegated listener for every admin row button plus the tab strip, wired
-// once at load (the console markup is static; panes are built on demand).
+// One delegated listener for every admin row button plus the nav menu, wired
+// once at load (the page markup is static; panes are built on demand). There is
+// no backdrop to click away any more — the page is the surface, and its header
+// carries the one way out.
 (function wireAdminConsole() {
-  const box = $('#admin-backdrop');
+  const box = $('#admin-page');
   if (!box) return;
-  const tabs = box.querySelector('.adm-tabs');
-  if (tabs) tabs.addEventListener('click', (e) => {
-    const b = e.target.closest('.set-tab[data-atab]');
+  const menu = $('#admin-menu');
+  if (menu) menu.addEventListener('click', (e) => {
+    const b = e.target.closest('.adm-nav[data-atab]');
     if (b) setAdminTab(b.dataset.atab);
   });
   box.addEventListener('click', adminClick);
-  box.addEventListener('click', (e) => { if (e.target === box) closeAdminConsole(); });
-  const close = $('#admin-close');
-  if (close) close.onclick = closeAdminConsole;
+  const back = $('#admin-return');
+  if (back) back.onclick = closeAdminConsole;
+  const chip = $('#adm-head-reports');
+  if (chip) chip.onclick = () => setAdminTab('reports');
   const rail = $('#btn-admin');
   if (rail) rail.onclick = () => openAdminConsole();
   // Returning to the tab shouldn't show numbers from when it was hidden — the

@@ -464,7 +464,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 /* Square icon close buttons: every settings/admin panel uses the same 30×30
    box so the ✕ lands in the same place everywhere (a stray .mini pill here
    reads as a different control). */
-#settings-close,#admin-close,#srv-settings-close,#chan-settings-close{padding:0;width:30px;height:30px;min-height:30px;flex-shrink:0}
+#settings-close,#srv-settings-close,#chan-settings-close{padding:0;width:30px;height:30px;min-height:30px;flex-shrink:0}
 
 .mini:disabled{opacity:.35;cursor:default}
 .mini:disabled:hover{background:var(--panel-3)}
@@ -1043,7 +1043,6 @@ body.ub-open #lightbox #lb-stage{padding-top:calc(4.4rem + var(--safe-t) + var(-
   body.ub-open #settings-backdrop,
   body.ub-open #srv-settings-backdrop,
   body.ub-open #chan-settings-backdrop,
-  body.ub-open #admin-backdrop,
   body.ub-open #profile-backdrop{padding-top:calc(var(--safe-t) + var(--ub-h))}
 }
 
@@ -2012,7 +2011,7 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 #lightbox.dragging #lb-stage{cursor:grabbing}
 
 /* ---------- settings ---------- */
-#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#admin-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.68);display:flex;align-items:center;justify-content:center;z-index:100;padding:1rem}
+#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.68);display:flex;align-items:center;justify-content:center;z-index:100;padding:1rem}
 .settings{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;width:100%;max-width:780px;max-height:88dvh;display:flex;flex-direction:row;overflow:hidden}
 @media (max-width:820px),(max-height:560px) and (pointer:coarse){
   .settings{max-width:620px}
@@ -2056,7 +2055,7 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
   .set-tabs{flex-direction:row;align-items:center;min-width:0;max-width:100%;flex-shrink:0;overflow-x:auto;overflow-y:hidden;padding:.6rem;border-right:0;border-bottom:1px solid var(--line-soft);overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
   .set-tab{flex-shrink:0;white-space:nowrap}
   .set-tabs .spacer{display:none}
-  #settings-close,#admin-close{flex-shrink:0;margin-left:auto;position:sticky;right:0}
+  #settings-close{flex-shrink:0;margin-left:auto;position:sticky;right:0}
   .set-body{min-height:0}
 }
 .set-pane h4{font-size:.95rem;font-weight:750;letter-spacing:-.01em;margin:1.2rem 0 .55rem}
@@ -2788,7 +2787,7 @@ body{touch-action:manipulation}
   #thread-panel{width:min(360px,100vw)!important}
   #thread-resizer{display:none}
   #usercard{width:min(300px,calc(100vw - 16px))}
-  #settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#admin-backdrop{padding:var(--safe-t) 0 0}
+  #settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop{padding:var(--safe-t) 0 0}
   .settings{max-width:none;max-height:none;height:100%;border-radius:0}
   .srvset-wrap{flex-direction:column;gap:.25rem}
   .srv-subtabs.vertical{flex-direction:row;flex:0 0 auto;width:100%;overflow-x:auto;padding:.25rem 0 .6rem}
@@ -2894,7 +2893,76 @@ body{touch-action:manipulation}
 .mic-meter i{display:block;height:100%;width:0;background:var(--green)}
 .media-note{margin-top:.9rem}
 
-/* ---------- site admin panel (Settings → Admin) ---------- */
+/* ---------- site admin console (a full page, not a dialog) ----------
+   The console owns the whole window: `body.adm-page` stands the shell down —
+   the rail, the channel sidebar, the member list and the chat column's siblings
+   — and #admin-page, a positioned sheet inside #chat, fills what is left. The
+   stand-down is CSS ONLY: nothing inside #chat is display:none'd, so a reader's
+   scroll position, half-written draft and in-flight uploads are untouched and
+   Return puts them back exactly as they were. The page's z-index sits above
+   every floating chat surface (#jump-present is 30) and below the app's own
+   overlays (menus, pickers, modals, lightbox are 60+/100), which is what lets
+   the console keep using openModal for edits. */
+body.adm-page #left,
+body.adm-page #members,
+body.adm-page #thread-panel,
+body.adm-page #find-panel{display:none!important}
+#admin-page{position:absolute;inset:0;z-index:40;display:flex;flex-direction:column;background:var(--bg)}
+#admin-head{display:flex;align-items:center;gap:.7rem;flex-shrink:0;padding:.6rem .9rem;background:var(--panel);border-bottom:1px solid var(--line-soft)}
+.adm-back{display:inline-flex;align-items:center;gap:.45rem;flex-shrink:0;border:0;background:var(--panel-2);color:var(--text);border-radius:999px;padding:.5rem .95rem;font-size:.84rem;font-weight:700;cursor:pointer;transition:background var(--t-fast)}
+.adm-back:hover{background:var(--panel-4)}
+.adm-back svg{display:block}
+/* Two labels, one shown: the full sentence is right on a desktop and too long
+   for a phone's header (see the narrow rule at the bottom of this block). */
+.adm-back-s{display:none}
+.adm-brand{display:flex;align-items:center;gap:.55rem;min-width:0}
+.adm-brand-ic{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:34px;height:34px;border-radius:10px;background:var(--accent-container);color:var(--on-container)}
+.adm-brand-tx{display:flex;flex-direction:column;min-width:0;line-height:1.25}
+.adm-brand-tx strong{font-size:.95rem;font-weight:750;letter-spacing:-.01em}
+.adm-brand-tx span{font-size:.76rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.adm-head-reports{flex-shrink:0;border:0;background:var(--danger-bg);color:var(--danger-tx);border-radius:999px;padding:.42rem .85rem;font-size:.78rem;font-weight:700;cursor:pointer}
+.adm-head-reports b{font-weight:800}
+#admin-body{flex:1;min-height:0;display:flex}
+#admin-menu{width:236px;flex-shrink:0;display:flex;flex-direction:column;gap:.25rem;padding:.9rem .7rem;background:var(--panel);border-right:1px solid var(--line-soft);overflow-y:auto}
+.adm-menu-label{font-size:.68rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:.45rem .8rem .3rem}
+.adm-nav{display:flex;align-items:center;gap:.65rem;width:100%;text-align:left;border:0;background:transparent;color:var(--muted);font-weight:650;font-size:.9rem;padding:.62rem .8rem;border-radius:10px;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
+.adm-nav:hover{background:var(--panel-2);color:var(--text)}
+.adm-nav.active{background:var(--accent-dim);color:var(--on-container)}
+.adm-nav-ic{display:inline-flex;flex-shrink:0}
+.adm-nav-ic svg{display:block}
+.adm-nav-tx{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The pane column is the scroller (the header and the menu stay put), and the
+   reader's prose is capped so a wide window does not stretch a report card or a
+   stat grid across the whole screen. */
+#admin-panes{flex:1;min-width:0;overflow-y:auto;overflow-anchor:none;padding:1.35rem 1.45rem 2.5rem}
+#admin-panes .set-pane{max-width:900px;margin:0 auto}
+@media (max-width:820px),(max-height:560px) and (pointer:coarse){
+  /* The menu becomes a horizontal rail above the panes: a phone has no column
+     to spare, and every section stays one tap away. */
+  #admin-body{flex-direction:column}
+  #admin-menu{width:auto;flex-direction:row;gap:.3rem;padding:.5rem .6rem;border-right:0;border-bottom:1px solid var(--line-soft);overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+  #admin-menu::-webkit-scrollbar{display:none}
+  .adm-menu-label{display:none}
+  .adm-nav{width:auto;flex:0 0 auto;white-space:nowrap;padding:.52rem .85rem;font-size:.85rem}
+  .adm-nav-tx{flex:0 0 auto}
+  #admin-panes{padding:1rem .9rem 2rem}
+}
+@media (max-width:600px){
+  .adm-brand-tx{display:none}
+  .adm-back-t{display:none}
+  .adm-back-s{display:inline}
+  /* The count keeps its chip, the words go: "4 open reports" is wider than the
+     whole header has left once the way out and the shield have taken theirs, and
+     a header that overflows is worse than a badge. `title` carries the meaning. */
+  .adm-head-reports-tx{display:none}
+  /* A search field with a filter select and a button beside it leaves the field
+     about four characters wide on a phone; the field takes its own line and the
+     two controls sit under it. */
+  .adm-filter{flex-wrap:wrap}
+  .adm-filter input{flex:1 1 100%}
+  #admin-head{gap:.5rem;padding:.55rem .65rem}
+}
+/* ---------- site admin console: shared pane pieces ---------- */
 .adm-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:.55rem}
 .adm-stat{background:var(--panel);border:0;border-radius:var(--radius);padding:.75rem .4rem;text-align:center}
 .adm-stat b{display:block;font-size:1.3rem;font-weight:800;letter-spacing:-.02em}
@@ -3560,13 +3628,13 @@ body.story-open{overflow:hidden}
    in this theme); buttons and icon buttons add a hair of scale so the control
    visibly gives under the thumb. Kept to one frame of transition or the lag is
    felt as slowness. */
-.chan,.dmrow,.member,.vuser,.find-row,.inbox-item,.thread-item,.rx-user,.fwd-dest,.anow-card,.anow-tile,.st-tile,.dm-close,.set-row,.set-check,.theme-card,.prow,.share-row,.gmem,.sc-pick-row,.adm-row,.dm-close,.ss-add,.mini,.chip,.ftab,.set-tab,.pk-tab,.pk-subbtn,.pk-rail-btn,.ctx-item,.sheet-row,.sheet-cancel,.uc-tab,.att-dl,.lb-btn,.pcaret{
+.chan,.dmrow,.member,.vuser,.find-row,.inbox-item,.thread-item,.rx-user,.fwd-dest,.anow-card,.anow-tile,.st-tile,.dm-close,.set-row,.set-check,.theme-card,.prow,.share-row,.gmem,.sc-pick-row,.adm-row,.adm-back,.adm-nav,.adm-head-reports,.dm-close,.ss-add,.mini,.chip,.ftab,.set-tab,.pk-tab,.pk-subbtn,.pk-rail-btn,.ctx-item,.sheet-row,.sheet-cancel,.uc-tab,.att-dl,.lb-btn,.pcaret{
   -webkit-tap-highlight-color:transparent;
 }
-.chan:active,.dmrow:active,.member:active,.vuser:active,.find-row:active,.inbox-item:active,.thread-item:active,.rx-user:active,.fwd-dest:active,.anow-card:active,.anow-tile:active,.st-tile:active,.set-row:active,.set-check:active,.theme-card:active,.prow:active,.share-row:active,.gmem:active,.sc-pick-row:active,.adm-row:active,.ctx-item:active,.sheet-row:active,.sheet-cancel:active,.uc-tab:active,.pk-tab:active,.pk-subbtn:active,.pk-rail-btn:active{
+.chan:active,.dmrow:active,.member:active,.vuser:active,.find-row:active,.inbox-item:active,.thread-item:active,.rx-user:active,.fwd-dest:active,.anow-card:active,.anow-tile:active,.st-tile:active,.set-row:active,.set-check:active,.theme-card:active,.prow:active,.share-row:active,.gmem:active,.sc-pick-row:active,.adm-row:active,.adm-nav:active,.ctx-item:active,.sheet-row:active,.sheet-cancel:active,.uc-tab:active,.pk-tab:active,.pk-subbtn:active,.pk-rail-btn:active{
   background:var(--panel-3);
 }
-.chan:active,.dmrow:active,.member:active,.vuser:active,.find-row:active,.inbox-item:active,.inbox-thumb:active,.thread-item:active,.rx-user:active,.fwd-dest:active,.anow-card:active,.anow-tile:active,.st-tile:active,.set-row:active,.set-check:active,.theme-card:active,.prow:active,.share-row:active,.gmem:active,.sc-pick-row:active,.adm-row:active,.ctx-item:active,.sheet-row:active,.sheet-cancel:active,.uc-tab:active,.pk-tab:active,.pk-subbtn:active,.pk-rail-btn:active,.mini:active,.chip:active,.ftab:active,.set-tab:active,.att-dl:active,.lb-btn:active,.dm-close:active,.ss-add:active{
+.chan:active,.dmrow:active,.member:active,.vuser:active,.find-row:active,.inbox-item:active,.inbox-thumb:active,.thread-item:active,.rx-user:active,.fwd-dest:active,.anow-card:active,.anow-tile:active,.st-tile:active,.set-row:active,.set-check:active,.theme-card:active,.prow:active,.share-row:active,.gmem:active,.sc-pick-row:active,.adm-row:active,.adm-nav:active,.ctx-item:active,.sheet-row:active,.sheet-cancel:active,.uc-tab:active,.pk-tab:active,.pk-subbtn:active,.pk-rail-btn:active,.mini:active,.chip:active,.ftab:active,.set-tab:active,.att-dl:active,.lb-btn:active,.dm-close:active,.ss-add:active{
   transition:background 0s,transform var(--t-press) var(--ease-native);
 }
 /* The two rows the app is actually navigated with give the most: a channel or
