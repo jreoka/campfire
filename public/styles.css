@@ -1281,6 +1281,60 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 .att-wrap:hover .att-star,.att-star:focus-visible{opacity:1}
 @media (hover:none){.att-star{opacity:.9}}
 .msg-atts audio{max-width:100%}
+/* ---------- the gallery: more than one picture in one message ----------
+   Photos used to stack one per row, so four of them were a column 1200px tall
+   and an odd count read as a mistake. Two or more pictures — and nothing but
+   pictures — are one block of equal, square tiles, and the arrangement follows
+   the COUNT, because 3 and 5 are exactly the counts a plain two-column grid
+   leaves a hole in:
+     2 -> two squares            3 -> one tall + two stacked
+     4 -> two by two             5 -> one tall + four
+   The tall tile is the first, spanning two rows: 3 = 2x2 cells with it in both
+   rows of column one, 5 = 3x2 with the four left over filling columns two and
+   three. Either way the grid is FULL, which is what "looks good with an odd
+   number of pics" means.
+   A tile is a contact sheet, not the picture: `object-fit:cover` crops to the
+   square and one tap opens the whole photo in the lightbox, exactly as a single
+   chat image always has. Square also means every tile has its size before a byte
+   arrives, so the block never reflows as the pictures land — and it is the TILE
+   that carries the square (not the container), because the row it sits in is then
+   exactly as tall as the tile is wide, with the gap accounted for.
+   The count rides the container (`g3`…) because only the renderer knows it (see
+   attsBlockHTML in messages.js) — and the inline `width` an attachment carries
+   (its own shape's reservation) is the one thing here that has to be overridden. */
+.msg-atts.gallery{display:grid;gap:4px;width:min(420px,100%);grid-template-columns:repeat(2,1fr)}
+.msg-atts.gallery.g5{grid-template-columns:repeat(3,1fr)}
+/* A tile is a square and it fills its cell. The slot is the grid item; for a file
+   still behind the gate it is the scanning card instead (attachmentHTML returns
+   that in place of the slot — see messages.js), and the card's row layout (icon
+   beside a wide text column) does not fit a tile, so in here it stacks and
+   centres. */
+.msg-atts.gallery > .att-slot{width:100%;min-width:0;aspect-ratio:1}
+.msg-atts.gallery > .scan-block{align-self:stretch;width:100%;height:100%;max-width:none;box-sizing:border-box;aspect-ratio:1;flex-direction:column;justify-content:center;text-align:center;gap:.35rem;padding:.5rem;overflow:hidden}
+.msg-atts.gallery > .scan-block .scan-ic{width:30px;height:30px}
+.msg-atts.gallery > .scan-block .scan-tx{flex:0 1 auto;width:100%}
+.msg-atts.gallery > .scan-block .scan-tx>b{white-space:normal;font-size:.72rem}
+.msg-atts.gallery > .scan-block .scan-tx>span{font-size:.68rem}
+/* The odd count's tall tile is the first, spanning both rows: 3 = 2x2 cells with
+   it filling column one, 5 = 3x2 with the four left over filling columns two and
+   three. Either way the grid is FULL — which is what "looks good with an odd
+   number of pics" means — and the span is what makes that tile taller than it is
+   wide, so it must NOT carry the square: that is why this rule comes after the
+   tiles above (same specificity, later wins). It has to be stretched explicitly
+   too: the block inherits `align-items:flex-start` from `.msg-atts`, so a span on
+   its own left the tile as tall as its own content (measured: 138.7px in a 420px
+   area) instead of filling the two rows. */
+.msg-atts.gallery.g3 > :first-child,.msg-atts.gallery.g5 > :first-child{grid-row:span 2;aspect-ratio:auto;align-self:stretch;height:100%}
+.msg-atts.gallery .att-wrap{display:block;width:100%!important;height:100%;max-width:100%;overflow:hidden;border-radius:12px;aspect-ratio:auto}
+.msg-atts.gallery .att-wrap.ar{aspect-ratio:auto}
+.msg-atts.gallery img.att-img{width:100%;height:100%;max-width:100%;max-height:none;object-fit:cover}
+/* A tile whose shape nothing measured, or whose picture is still arriving, holds
+   the TILE's box: the no-shape placeholder is a small fixed box by default. */
+.msg-atts.gallery .att-wrap.pending .att-ph,.msg-atts.gallery .att-wrap.loading .att-ph{position:absolute;inset:0;width:auto;aspect-ratio:auto}
+/* The degraded rendering (a picture this browser cannot decode) is a file card
+   inside the tile — it has no shape of its own to fill the square, so centre it. */
+.msg-atts.gallery .att-wrap:has(.file-card){display:flex;align-items:center;justify-content:center}
+.msg-atts.gallery .att-wrap .file-card{width:100%;margin:0}
 /* ---------- link embeds (YouTube, X, Spotify, Twitch, TikTok, ...) ---------- */
 .embeds{display:flex;flex-direction:column;gap:.55rem;margin-top:.45rem;max-width:520px}
 .embed{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;overflow:hidden;max-width:100%}

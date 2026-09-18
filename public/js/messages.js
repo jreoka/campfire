@@ -473,6 +473,24 @@ function attFileCardHTML(a) {
   const sizeLine = att.size == null ? '' : `<br/><span class="fsize">${fmtSize(att.size)}</span>`;
   return `<a class="file-card" href="${esc(att.url)}" target="_blank" rel="noopener"${attMeta(att, kind)}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span><span class="fname">${esc(att.name)}</span>${sizeLine}</span></a>`;
 }
+// ---------- one message's attachments, as ONE block ----------
+// More than one PICTURE in a message is a gallery (see .msg-atts.gallery in
+// styles.css): equal square tiles whose arrangement follows the count — 3 and 5
+// are the counts that used to leave a hole in a plain two-column grid, which is
+// the whole reason the count is a fact of the message and not a CSS guess (CSS
+// can style a tile, but "one tall picture and two stacked beside it" is markup).
+//
+// Only when EVERY attachment is a picture: a clip, a voice note or a file keeps
+// the full-width rendering it needs, and a tile grid holding one of those would
+// either squeeze it or leave the hole this exists to avoid. A message carries at
+// most five attachments (the composer's own cap, and the server slices the same
+// way), so the layouts are the five below and nothing else.
+function attsBlockHTML(list) {
+  const atts = Array.isArray(list) ? list : [];
+  const gallery = atts.length > 1 && atts.every((a) => (a && a.kind ? a.kind : 'file') === 'image');
+  const cls = 'msg-atts' + (gallery ? ' gallery g' + Math.min(atts.length, 5) : '');
+  return '<div class="' + cls + '">' + atts.map(attachmentHTML).join('') + '</div>';
+}
 // ---------- the pending -> final handover (no unload) ----------
 // A verdict landing re-broadcasts the message with the attachment's final url
 // (and, for a pending one, the fact that it is no longer pending). The list must
@@ -2021,7 +2039,7 @@ function messageEl(m, opts = {}) {
     // uses this to tell a message's attachment from one that was dropped before
     // it was ever posted.
     for (const a of m.attachments) noteAttPreviewRendered(a);
-    inner += '<div class="msg-atts">' + m.attachments.map(attachmentHTML).join('') + '</div>';
+    inner += attsBlockHTML(m.attachments);
   }
   if (m.viewOnce && typeof voCardHTML === 'function') inner += voCardHTML(m);
   if (m.poll) inner += pollHTML(m);
