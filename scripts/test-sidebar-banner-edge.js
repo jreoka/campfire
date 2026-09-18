@@ -25,6 +25,12 @@
 // row is painted that way here and asserted to be the SAME brightness at both
 // ends — the scrimmed picture, evenly lit, with no surface colour blended in.
 //
+// The ramp's stops are asserted as intent too (owner request: "gets dark sooner
+// a bit"): the surface colour holds the row's left end and is not let go of
+// until at least 85%, so the picture is the last sliver rather than the right
+// fifth. The 78% that stop used to be is kept below on the "vintage" row, so the
+// harness still paints the recipe this test's seam complaint came from.
+//
 // Skips (exit 0) when Chrome is unavailable.
 //
 // Usage: node scripts/test-sidebar-banner-edge.js
@@ -139,6 +145,15 @@ function main() {
   const servers = fs.readFileSync(path.join(ROOT, 'public/js/servers.js'), 'utf8');
   const home = fs.readFileSync(path.join(ROOT, 'public/js/home.js'), 'utf8');
   check(!/90deg, var\(--panel/.test(servers) && !/90deg, var\(--panel/.test(home), 'no surface re-inlines the old cover/repeat recipe');
+  // The ramp's own stops, asserted as INTENT rather than as the number: the
+  // surface colour holds the left, and the picture is let through late enough
+  // that a member row reads dark rather than half photo (owner: "gets dark
+  // sooner a bit" — the 78% this replaced handed the right fifth to the bare
+  // picture). A future tweak has to stay on the dark side of that line.
+  const ramp = /linear-gradient\(90deg, \$\{base\} (\d+)%, rgba\(0,0,0,0\) (\d+)%\)/.exec(servers);
+  check(!!ramp, 'the member/DM rows paint the one shared ramp recipe');
+  check(ramp && Number(ramp[1]) <= 10, 'the surface colour holds the ramp\'s left end (the name sits there)', ramp && ramp[1] + '%');
+  check(ramp && Number(ramp[2]) >= 85, 'and is let go of late, so the row darkens sooner than the old 78% did', ramp && ramp[2] + '%');
   check((servers.match(/paintSidebarBanner\(/g) || []).length === 3, 'servers.js paints the me bar + member rows through the helper');
   check((home.match(/paintSidebarBanner\(/g) || []).length === 1, 'home.js paints DM rows through the helper');
   // The one surface that opts out of the ramp is the me bar, and only it: a

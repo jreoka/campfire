@@ -115,7 +115,10 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   headless Chrome (skips without Chrome): the real `paintSidebarBanner` paints a
   white banner at three device scale factors and the row's left edge must stay
   dark while the picture is still visibly painted, plus the recipe assertions
-  (`no-repeat`, box-sized ramps) and that all three surfaces (me bar, member
+  (`no-repeat`, box-sized ramps), the ramp's own stops as intent (the surface
+  colour holds the left end and is not let go of until at least 85%, so a member
+  row darkens rather than reading as half photo — owner request), and that all
+  three surfaces (me bar, member
   rows, DM rows) go through the helper instead of re-inlining the old
   cover/repeat style. The harness keeps a "vintage" row with the old recipe so
   it proves it can still reproduce the light edge. It also paints the me bar's

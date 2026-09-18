@@ -833,6 +833,14 @@ function paintGameBadge(el) {
 // Sidebar banner: the picture behind a member/me row, under a flat scrim plus a
 // left-to-right darkening ramp so the name stays readable.
 //
+// The ramp's two stops are the whole look of the row: the surface colour holds
+// the left and is let go of at the transparent stop, where the picture takes
+// over. That stop is deliberately LATE (88%, owner request: "gets dark sooner a
+// bit") — the earlier 78% handed the right fifth of a member row to the bare
+// photo, so rows read as half picture; at 88% the darkening walks in sooner and
+// the picture is the last ~12% of the row. Member rows and DM rows share it, so
+// the two sidebars cannot drift apart.
+//
 // background-repeat MUST be no-repeat and the ramps must be 100% 100%: these
 // rows are fractional-width (the sidebar's padding makes them e.g. 327.406px),
 // and `cover` + the default `repeat` leaves a sub-pixel tiling seam at the left
@@ -857,7 +865,7 @@ function paintSidebarBanner(el, url, base, opts) {
     el.style.backgroundPosition = '0 0, right center';
     return;
   }
-  el.style.backgroundImage = `${scrim},linear-gradient(90deg, ${base} 5%, rgba(0,0,0,0) 78%), url("${url}")`;
+  el.style.backgroundImage = `${scrim},linear-gradient(90deg, ${base} 5%, rgba(0,0,0,0) 88%), url("${url}")`;
   el.style.backgroundSize = '100% 100%, 100% 100%, cover';
   el.style.backgroundPosition = '0 0, 0 0, right center';
 }
