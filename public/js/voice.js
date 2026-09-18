@@ -1148,32 +1148,108 @@ function renderStage() {
   }
   updateCallHead();
   paintVoiceStatus(); // the call view's own header tints with the same state
+  // The head/controls above only just changed the room the grid has (they are
+  // this stage's other two rows in the call view), and fitStage measures that
+  // room — so the layout has to be settled before it asks.
+  void grid.offsetHeight;
   fitStage();
 }
-// Full call view: size tiles to fit the available area — no scrollbar, no giant tiles.
+// Tiles are sized to fit the room they are given — one tile fills it, a full room
+// (where they stop fitting) scrolls. That room is the GRID's own height in the
+// call view (it is the flex middle column there); in the split view — the stage
+// under the chat header — the grid is content-sized and capped by CSS, so the cap
+// is the room. Both states run this: with the old `max-height` +
+// `overflow-y:auto` on #stage, a split view never reached this function at all,
+// and a lone tile was stretched to fill the scroll container instead of keeping
+// 16:9 — which is what put the scrollbar there.
 function fitStage() {
   const grid = $('#stage-grid');
   if (!grid) return;
   const n = grid.children.length;
-  if (!S.callOpen || !S.voice || !n) { grid.style.gridTemplateColumns = ''; grid.style.justifyContent = ''; return; }
-  const gap = 8, W = grid.clientWidth, H = grid.clientHeight;
-  if (!W || !H) return;
+  if (!S.voice || !n) {
+    grid.style.gridTemplateColumns = ''; grid.style.justifyContent = ''; grid.style.maxHeight = '';
+    grid.classList.remove('has-room');
+    return;
+  }
+  const gap = 8, W = grid.clientWidth;
+  // The cap is `46dvh` less the stage's own padding (see #stage-grid in
+  // styles.css) — the same room the stylesheet gives the grid, measured. It is
+  // read off the PADDING, not off `--stage-pad`: that variable is a rem string
+  // (".65rem") and parseFloat would read it as 0.65 PIXELS. A pixel comes off the
+  // result because the browser lays the tile out at a FRACTIONAL height (a
+  // 412.31px tile in a 412px box is 1px of overflow, which is a visible
+  // scrollbar), and a scrollbar can never be the answer when the call fits.
+  const stageCS = getComputedStyle($('#stage'));
+  const pad = (parseFloat(stageCS.paddingTop) || 0) * 2;
+  // `--vvh` is the shell's VISIBLE height (pickers.js keeps it off
+  // visualViewport), so the cap is right on a phone with the keyboard up — and it
+  // falls back to the window where the shell has not published one. The grid's own
+  // rendered height is NOT a bound here: a size change leaves the stage at the
+  // previous cap for the frame this runs in, and clamping to that would ratchet
+  // the tiles smaller on every resize instead of following the window back up.
+  const cap = (parseFloat(stageCS.getPropertyValue('--vvh')) || window.innerHeight) * 0.46 - pad;
+  const H = (S.callOpen ? grid.clientHeight : Math.max(0, cap)) - 1;
+  if (!W || !H || H < 0) { grid.classList.remove('has-room'); return; }
   // Widest tile that still fits: cap every column layout by the available height.
+  // The width is FLOORED inside the loop, not at the end, because the row box
+  // that picks the layout has to be the box the browser will really lay the tile
+  // into (186.06px of width is 104.66px of height, and a 0.06px overshoot on a row
+  // that sat exactly on the limit is one more row than fits).
+  const rowBox = (c) => Math.floor(((H - (Math.ceil(n / c) - 1) * gap) / Math.ceil(n / c)) * 16 / 9);
   let best = null;
   for (let c = 1; c <= n; c++) {
-    const rows = Math.ceil(n / c);
-    const w = Math.min((W - (c - 1) * gap) / c, ((H - (rows - 1) * gap) / rows) * 16 / 9);
+    const w = Math.min(Math.floor((W - (c - 1) * gap) / c), rowBox(c));
     if (w <= 0) continue;
     if (!best || w > best.w) best = { cols: c, w };
   }
   if (!best) return;
-  let { cols, w } = best;
+  let cols = best.cols, w = best.w;
   const MIN = 140;
-  if (w < MIN) {
+  const belowFloor = w < MIN;
+  if (belowFloor) {
     // Tons of people: keep tiles usable and allow the scroll instead.
     cols = Math.max(1, Math.floor((W + gap) / (MIN + gap)));
-    w = Math.min(MIN, (W - (cols - 1) * gap) / cols);
+    w = Math.min(MIN, Math.floor((W - (cols - 1) * gap) / cols));
   }
+  // A grid that clips is a grid that scrolls; one that fits must not offer a bar.
+  const rows = Math.ceil(n / cols);
+  let needs = rows * (w * 9 / 16) + (rows - 1) * gap;
+  if (!belowFloor && needs > H && cols < n) {
+    // Rounded-up rows can leave the last one nearly empty, which makes the layout
+    // that looks widest the one that does not fit (18 tiles at 3 columns is 4x3
+    // plus a 3-row row). Widen it by a column rather than letting it scroll. NOT
+    // when the floor was already the answer: there the point is to keep the tile
+    // size and let the room run out.
+    const w2 = Math.min(Math.floor((W - cols * gap) / (cols + 1)), rowBox(cols + 1));
+    if (w2 > 0) {
+      cols++;
+      w = Math.min(w2, Math.floor((W - (cols - 1) * gap) / cols));
+      const r2 = Math.ceil(n / cols);
+      needs = r2 * (w * 9 / 16) + (r2 - 1) * gap;
+    }
+  }
+  if (!belowFloor && needs > H + 1) {
+    // The bar it is about to show takes its own width off the grid, and a layout
+    // fitted to the WIDER box would squeeze the tiles below the floor it just
+    // promised. Reserve the bar's width and size the tiles in what is left. (When
+    // the floor IS the answer the scroll is already the decision, and paying for
+    // the bar a second time would shrink the tiles for nothing.)
+    const bar = Math.max(0, grid.offsetWidth - grid.clientWidth) || 15;
+    const W2 = W - bar;
+    if (W2 > MIN) {
+      const w2 = Math.min(Math.floor((W2 - (cols - 1) * gap) / cols), rowBox(cols));
+      if (w2 > 0) {
+        w = w2;
+        const r2 = Math.ceil(n / cols);
+        needs = r2 * (w * 9 / 16) + (r2 - 1) * gap;
+      }
+    }
+  }
+  // The cap is applied to the box in BOTH cases, and it is the box the last row
+  // was measured against — so the tile can never come out a pixel taller than the
+  // box that clips it.
+  grid.style.maxHeight = Math.floor(H) + 'px';
+  grid.classList.toggle('has-room', needs > H + 1);
   grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, ${Math.floor(w)}px))`;
   grid.style.justifyContent = 'center';
 }

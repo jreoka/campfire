@@ -667,15 +667,28 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
   .vb-btn.big{width:44px;height:44px}
 }
 /* ---------- voice stage (video grid) ---------- */
-#stage{border-bottom:1px solid var(--line-soft);background:var(--inset);padding:.65rem;max-height:46dvh;overflow-y:auto;flex-shrink:0}
-#chat.call-open #stage{flex:1;min-height:0;max-height:none;border-bottom:0;display:flex;flex-direction:column;overflow:hidden}
-#chat.call-open #stage-grid{flex:1;min-height:0;overflow-y:auto;align-content:center;justify-content:center;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+/* The stage SIZES TO ITS TILES, in both states — a call with one person in it is
+   one tile tall, not a fixed slab of the pane. It was `max-height:46dvh` +
+   `overflow-y:auto` on this box, and that pair was the scrollbar: a grid scroll
+   container is never sized by what is inside it, so `.vtile`'s aspect-ratio was
+   dropped and the single tile came out as tall as it was wide (646px at 1149px
+   wide), overflowing its own 46dvh box by 232px on a 546px-tall window. The cap
+   now lives on the GRID (whose height IS content-driven), `align-items:start`
+   keeps the tile at 16:9 instead of stretching it to the row, and fitStage()
+   sizes the tile into the cap — so one tile fits exactly and a full room, where
+   the tiles run out of height, is still the thing that scrolls.
+   --stage-pad is the stage's own padding, which fitStage() subtracts to know the
+   room it has; the open call view inherits it too. */
+#stage{--stage-pad:.65rem;border-bottom:1px solid var(--line-soft);background:var(--inset);padding:var(--stage-pad);flex-shrink:0}
+#chat.call-open #stage{flex:1;min-height:0;border-bottom:0;display:flex;flex-direction:column;overflow:hidden}
+#stage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:.55rem;align-items:start;align-content:start;max-height:calc(46dvh - (var(--stage-pad) * 2))}
+#stage-grid.has-room{overflow-y:auto}
+#chat.call-open #stage-grid{flex:1;min-height:0;max-height:none;overflow-y:auto;align-content:center;justify-content:center;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
 #chat.call-open #voice-fab{display:none!important}
 #stage-head{display:flex;align-items:center;gap:.55rem;padding:.1rem .2rem .6rem}
 #stage-head strong{font-size:.92rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #stage-head .muted{font-size:.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #stage-controls{display:flex;align-items:center;justify-content:center;gap:.55rem;padding:.7rem .2rem .15rem}
-#stage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:.55rem}
 .vtile{position:relative;aspect-ratio:16/9;background:var(--panel-2);border-radius:12px;overflow:hidden;min-width:0}
 .vtile video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;background:#000}
 .vtile video.mirror{transform:scaleX(-1)}
