@@ -1,4 +1,4 @@
-// Lightbox: reachable controls, zoom, swipe-down dismissal.
+// Lightbox: reachable controls, zoom, swipe-down dismissal, gallery arrows.
 //
 // The complaint: on a phone the photo viewer's Download/Close controls sat at
 // the very top of a tall photo and could end up off-screen ("way up past the
@@ -16,7 +16,13 @@
 //   - a downward drag dismisses the viewer; a short drag springs back;
 //   - a tap on the backdrop (and the Close button) closes, a tap on the photo
 //     does not, and tapping Download does not;
-//   - closing and reopening resets the zoom.
+//   - closing and reopening resets the zoom;
+//   - a picture posted with others opens with a back and a next arrow on either
+//     side of the screen, the arrows (and the arrow keys, and a sideways swipe)
+//     walk the message's own media in order, each end disables its arrow, and a
+//     lone picture shows no arrows at all;
+//   - a clip in that set gets the shared stage (<video>), and a tap on the
+//     player neither closes the viewer nor zooms it.
 //
 // Usage: node scripts/test-lightbox.js
 
@@ -54,6 +60,7 @@ function findChrome() {
 const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
 const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
 const pickers = fs.readFileSync(path.join(ROOT, 'public/js/pickers.js'), 'utf8');
+const messages = fs.readFileSync(path.join(ROOT, 'public/js/messages.js'), 'utf8');
 
 // Pull the real lightbox implementation out of pickers.js.
 const lbStart = pickers.indexOf('// ---------- lightbox ----------');
@@ -85,6 +92,16 @@ window.__state = () => ({
   hidden: document.getElementById('lightbox').classList.contains('hidden'),
   scale: lb.scale, tx: lb.tx, ty: lb.ty,
   img: document.getElementById('lightbox-img').getAttribute('src') || '',
+  imgHidden: document.getElementById('lightbox-img').classList.contains('hidden'),
+  vid: document.getElementById('lightbox-vid').getAttribute('src') || '',
+  vidHidden: document.getElementById('lightbox-vid').classList.contains('hidden'),
+  dl: document.getElementById('lightbox-dl').getAttribute('href') || '',
+  dlName: document.getElementById('lightbox-dl').getAttribute('download') || '',
+  prevHidden: document.getElementById('lb-prev').classList.contains('hidden'),
+  nextHidden: document.getElementById('lb-next').classList.contains('hidden'),
+  prevOff: document.getElementById('lb-prev').disabled,
+  nextOff: document.getElementById('lb-next').disabled,
+  index: lb.index, n: lb.items ? lb.items.length : 0,
 });
 const pev = (type, id, x, y, target, pointerType) => {
   const el = target || document.elementFromPoint(x, y) || document.body;
@@ -99,6 +116,75 @@ window.__swipe = (x, y, dy) => {
   for (let i = 1; i <= 6; i++) pev('pointermove', 1, x, y + dy * i / 6);
   pev('pointerup', 1, x, y + dy);
 };
+// The same gesture sideways: the gallery's touch twin.
+window.__swipeX = (x, y, dx) => {
+  pev('pointerdown', 1, x, y);
+  for (let i = 1; i <= 6; i++) pev('pointermove', 1, x + dx * i / 6, y);
+  pev('pointerup', 1, x + dx, y);
+};
+// A tap whose target is given outright (a <video> has no layout to hit-test in a
+// headless page with no decodable bytes behind it).
+window.__tapEl = (el) => { pev('pointerdown', 1, 10, 10, el); pev('pointerup', 1, 10, 10, el); };
+// A message's own media block, as messages.js renders one: each attachment is an
+// .att-slot holding its .att-wrap, its media element and its corner chips. The
+// tile paints the derived PREVIEW while data-fb-url is the ORIGINAL, which is
+// exactly what the lightbox has to open — so the two are different pictures of
+// different sizes, and a viewer showing the wrong one is visible in the state.
+window.__pic = (i) => 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="' + (220 + i * 10) + '" height="160"><rect width="100%" height="100%" fill="#33507a"/></svg>');
+window.__thumb = (i) => 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="60" height="40"><rect width="100%" height="100%" fill="#0c1020"/></svg>');
+window.__gallery = (name, n) => {
+  const box = document.createElement('div');
+  box.className = 'msg-atts';
+  box.id = name;
+  for (let i = 0; i < n; i++) {
+    const slot = document.createElement('span');
+    slot.className = 'att-slot';
+    slot.innerHTML = '<span class="att-wrap" data-fb-name="p' + i + '.png" data-fb-url="' + __pic(i) + '">'
+      + '<img class="att-img" src="' + __thumb(i) + '" data-fb-url="' + __pic(i) + '" data-fb-name="p' + i + '.png" />'
+      + '<a class="att-dl" href="' + __pic(i) + '" download="p' + i + '.png"></a></span>';
+    box.appendChild(slot);
+  }
+  document.body.appendChild(box);
+  return true;
+};
+// One picture and one clip in the same message: the gallery has to walk across
+// the two element kinds.
+window.__galleryMix = (name) => {
+  const box = document.createElement('div');
+  box.className = 'msg-atts';
+  box.id = name;
+  box.innerHTML = '<span class="att-slot"><span class="att-wrap" data-fb-name="p.png" data-fb-url="' + __pic(0) + '">'
+    + '<img class="att-img" src="' + __thumb(0) + '" data-fb-url="' + __pic(0) + '" data-fb-name="p.png" />'
+    + '<a class="att-dl" href="' + __pic(0) + '" download="p.png"></a></span></span>'
+    + '<span class="att-slot"><span class="att-wrap" data-fb-name="clip.mp4" data-fb-url="/orig1.mp4">'
+    + '<video class="att-vid" src="/orig1.mp4" data-fb-src="/orig1.mp4" poster="' + __thumb(0) + '"></video>'
+    + '<a class="att-dl" href="/orig1.mp4" download="clip.mp4"></a>'
+    + '<button type="button" class="att-expand"></button></span></span>';
+  document.body.appendChild(box);
+  return true;
+};
+// The two entry points the real click handler owns (see pickers.js): a picture
+// opens through its own url + download name, a clip through its corner chip —
+// both with the gallery read off the element the pointer was over.
+window.__clickMedia = (el) => {
+  if (!el) return false;
+  const g = lbGalleryAt(el);
+  if (!g) return false;
+  if (el.classList.contains('att-img')) {
+    const dl = el.closest('.att-wrap')?.querySelector('.att-dl');
+    openLightbox(el.dataset.fbUrl || el.src, dl?.getAttribute('download') || '', g);
+  } else {
+    openLightbox(g.items[g.index].src, g.items[g.index].name, g);
+  }
+  return true;
+};
+// Click the i-th thing matching sel inside the block called name.
+window.__slotIn = (name, sel, i) => {
+  const box = document.getElementById(name);
+  const list = box ? box.querySelectorAll(sel) : [];
+  return list[i || 0] || null;
+};
+window.__clickIn = (name, sel, i) => __clickMedia(__slotIn(name, sel, i));
 window.__pinch = (x1, y1, x2, y2, spread) => {
   pev('pointerdown', 1, x1, y1); pev('pointerdown', 2, x2, y2);
   const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
@@ -114,13 +200,17 @@ window.__imgSrc = (w, h) => {
 window.__geo = () => {
   const l = $( '#lightbox' ), img = $('#lightbox-img'), stage = $('#lb-stage');
   const rimg = img.getBoundingClientRect();
+  const hit = (sel) => { const el = $(sel); if (!el || el.classList.contains('hidden')) return false; const r = el.getBoundingClientRect(); if (!r.width) return false; const t = document.elementFromPoint(r.left + r.width/2, r.top + r.height/2); return !!t && el.contains(t); };
   return {
     vw: innerWidth, vh: innerHeight,
     bar: __box('#lb-bar'), dl: __box('#lightbox-dl'), close: __box('#lightbox-close'), stage: __box('#lb-stage'),
+    prev: __box('#lb-prev'), next: __box('#lb-next'), vid: __box('#lightbox-vid'),
     img: { l:+rimg.left.toFixed(1), t:+rimg.top.toFixed(1), r:+rimg.right.toFixed(1), b:+rimg.bottom.toFixed(1) },
     lbTouch: getComputedStyle(l).touchAction, barTop: getComputedStyle($('#lb-bar')).top,
-    hitDl: (() => { const r = $('#lightbox-dl').getBoundingClientRect(); const t = document.elementFromPoint(r.left + r.width/2, r.top + r.height/2); return !!t && $('#lightbox-dl').contains(t); })(),
-    hitClose: (() => { const r = $('#lightbox-close').getBoundingClientRect(); const t = document.elementFromPoint(r.left + r.width/2, r.top + r.height/2); return !!t && $('#lightbox-close').contains(t); })(),
+    hitDl: hit('#lightbox-dl'),
+    hitClose: hit('#lightbox-close'),
+    hitPrev: hit('#lb-prev'),
+    hitNext: hit('#lb-next'),
     style: { transform: img.style.transform, rootTransform: l.style.transform, rootOpacity: l.style.opacity },
   };
 };
@@ -175,7 +265,7 @@ async function withChrome(fn) {
     await rpc('Runtime.enable');
     await rpc('Page.navigate', { url: 'file:///' + path.join(tmp, 'page.html').replace(/\\/g, '/') });
     await sleep(900);
-    return await fn({ device, evaluate, tmp });
+    return await fn({ device, evaluate, tmp, shot: async () => (await rpc('Page.captureScreenshot', { format: 'png' })).data });
   } finally {
     try { close(); } catch {}
     try { chrome.kill(); } catch {}
@@ -196,11 +286,23 @@ function staticChecks() {
   // The old bug: no close button at all, and a bare absolute anchor with no
   // safe-area inset.
   check(!/#lightbox-dl\{position:absolute;top:1rem;right:1rem/.test(css), 'the old unsafetied corner anchor is gone');
+
+  console.log('\n[2] a gallery gets an arrow on each side of the screen');
+  check(/id="lb-prev"/.test(index) && /id="lb-next"/.test(index), 'the overlay carries a back and a next arrow');
+  check(/<video id="lightbox-vid"/.test(index), 'and a stage for a clip beside the picture');
+  check(/\.lb-nav\{position:absolute;top:50%;transform:translateY\(-50%\)/.test(css), 'each arrow is vertically centred on its side of the screen');
+  check(/\.lb-prev\{left:calc\(\.6rem \+ var\(--safe-l\)\)\}/.test(css) && /\.lb-next\{right:calc\(\.6rem \+ var\(--safe-r\)\)\}/.test(css), 'and held inside the safe-area insets');
+  check(/\.lb-nav:disabled\{opacity:\.3;cursor:default\}/.test(css), 'the arrow at the end of the set goes dark rather than vanishing');
+  check(/#lightbox-vid\{max-width:100%;max-height:100%/.test(css), 'the clip is bounded by the same stage rules as the picture');
+  check(/function lbMediaOf\(/.test(pickers) && /function lbGalleryAt\(/.test(pickers), 'the gallery is the message\'s own media, in order');
+  check(/openLightbox\(imgEl\.dataset\.fbUrl \|\| imgEl\.src, dl\?\.getAttribute\('download'\) \|\| '', lbGalleryAt\(imgEl\)\)/.test(pickers), 'a picture click hands the viewer that gallery');
+  check(/const expandEl = e\.target\.closest\('\.att-expand'\)/.test(pickers) && /class="att-expand"/.test(messages), 'and a clip gets in through its own corner chip (its controls own the tap on it)');
+  check(/attDl\(a, pending\)\}\$\{attExpandHTML\(\)\}/.test(messages), 'the chip sits beside the download button on every clip');
 }
 
 async function main() {
   staticChecks();
-  await withChrome(async ({ device, evaluate }) => {
+  await withChrome(async ({ device, evaluate, shot }) => {
     const open = async (w, h) => {
       await evaluate(`__open(__imgSrc(${w},${h}), 'photo.png')`);
       await sleep(280);
@@ -316,6 +418,138 @@ async function main() {
     const rs = await state();
     check(rs.hidden === false && rs.scale === 1 && rs.tx === 0 && rs.ty === 0, 'a reopened viewer starts unzoomed', rs);
     check((reopened.img.b - reopened.img.t) <= (reopened.stage.b - reopened.stage.t) + 1, 'the reopened photo fits the stage', reopened.img);
+
+    console.log('\n[7] a message of several pictures: arrows on both sides');
+    await device(390, 844, { touch: true });
+    await evaluate("__gallery('g3', 3)");
+    const opened = await evaluate("__clickIn('g3', '.att-img', 0)");
+    await sleep(280);
+    check(opened === true, 'a picture in a message of three opens the viewer');
+    let g = await evaluate('__geo()');
+    let s7 = await state();
+    check(s7.img === await evaluate('__pic(0)'), 'and it opens the ORIGINAL, never the tile\'s derived preview');
+    check(!s7.prevHidden && !s7.nextHidden && s7.n === 3, 'both arrows appear, on a set of three');
+    check(s7.prevOff === true && s7.nextOff === false, 'the first picture has no way back, and a way on', s7);
+    for (const [tag, box, hit] of [['back', g.prev, g.hitPrev], ['next', g.next, g.hitNext]]) {
+      check(inside(box, g.vw, g.vh) && hit, `the ${tag} arrow is on screen and hit-testable`, box);
+      check(Math.abs((box.t + box.b) / 2 - g.vh / 2) < 3, `the ${tag} arrow is vertically centred on its side`);
+    }
+    check(g.prev.l < g.vw / 2 && g.next.r > g.vw / 2, 'one on the left, one on the right', { prev: g.prev, next: g.next });
+    // A visual artifact for eyeballing the arrows (temp dir), like the video
+    // placeholder test's own.
+    try {
+      const out = path.join(os.tmpdir(), 'campfire-lightbox-gallery.png');
+      fs.writeFileSync(out, Buffer.from(await shot(), 'base64'));
+      console.log('  (wrote ' + out + ')');
+    } catch {}
+
+    // The arrows walk the set, and the end of it disables the way on.
+    await evaluate("document.getElementById('lb-next').click()");
+    await sleep(60);
+    s7 = await state();
+    check(s7.img === await evaluate('__pic(1)') && s7.index === 1, 'next steps to the second picture', s7.index);
+    check(s7.prevOff === false && s7.nextOff === false, 'both ways are open in the middle');
+    await evaluate("document.getElementById('lb-next').click()");
+    await sleep(60);
+    s7 = await state();
+    check(s7.img === await evaluate('__pic(2)') && s7.nextOff === true, 'the last picture disables it: the end is the end');
+    await evaluate("document.getElementById('lb-next').click()");
+    await sleep(60);
+    check((await state()).img === await evaluate('__pic(2)'), 'and clicking a disabled arrow goes nowhere');
+    // The arrow keys are the desktop twin.
+    await evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))");
+    await sleep(60);
+    check((await state()).img === await evaluate('__pic(1)'), 'ArrowLeft steps back');
+    await evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))");
+    await sleep(60);
+    check((await state()).img === await evaluate('__pic(2)'), 'ArrowRight steps on');
+    // A sideways swipe is the touch twin (and is not the dismissal gesture).
+    await evaluate('__swipeX(195, 420, -120)');
+    await sleep(60);
+    s7 = await state();
+    check(s7.hidden === false && s7.img === await evaluate('__pic(2)'), 'a swipe left past the end goes nowhere, and does not close the viewer', s7.index);
+    await evaluate('__swipeX(195, 420, 120)');
+    await sleep(60);
+    s7 = await state();
+    check(s7.hidden === false && s7.img === await evaluate('__pic(1)'), 'a swipe right steps back one picture', s7.index);
+    await evaluate('__swipeX(195, 420, -120)');
+    await sleep(60);
+    check((await state()).img === await evaluate('__pic(2)'), 'and a swipe left steps on');
+    // A tap on an arrow must not reach the stage (which would close the viewer).
+    g = await evaluate('__geo()');
+    await evaluate(`__tap(${(g.next.l + g.next.r) / 2}, ${(g.next.t + g.next.b) / 2})`);
+    await sleep(60);
+    check((await state()).hidden === false, 'tapping an arrow keeps the viewer open');
+
+    console.log('\n[8] nowhere to go, no arrows');
+    await evaluate('__close()');
+    await sleep(30);
+    await evaluate("__gallery('g1', 1)");
+    await evaluate("__clickIn('g1', '.att-img', 0)");
+    await sleep(60);
+    s7 = await state();
+    check(s7.hidden === false && s7.img === await evaluate('__pic(0)'), 'a single-picture message still opens the viewer');
+    check(s7.prevHidden && s7.nextHidden, 'with no arrows at all — there is nowhere to go', s7);
+    await evaluate('__close()');
+    await sleep(30);
+    await open(800, 800);
+    s7 = await state();
+    check(s7.prevHidden && s7.nextHidden, 'and a picture with no message block around it (an embed) never grows arrows', s7);
+    // Desktop too: the arrows are not a phone-only control.
+    await device(1280, 800, { touch: false });
+    await evaluate('__close()');
+    await sleep(30);
+    await evaluate("__clickIn('g3', '.att-img', 0)");
+    await sleep(120);
+    g = await evaluate('__geo()');
+    check(inside(g.prev, g.vw, g.vh) && g.hitPrev && inside(g.next, g.vw, g.vh) && g.hitNext, 'on a desktop both arrows are reachable too');
+    check((await state()).n === 3, 'and the set is the same one');
+
+    console.log('\n[9] a clip in the set gets the shared stage');
+    await device(390, 844, { touch: true });
+    await evaluate('__close()');
+    await sleep(30);
+    await evaluate("__galleryMix('gm')");
+    await evaluate("__clickIn('gm', '.att-img', 0)");
+    await sleep(120);
+    let s9 = await state();
+    check(s9.img === await evaluate('__pic(0)') && s9.vidHidden === true, 'the picture is on the stage, the player is not', s9.vidHidden);
+    await evaluate("document.getElementById('lb-next').click()");
+    await sleep(120);
+    s9 = await state();
+    check(s9.vid === '/orig1.mp4' && s9.vidHidden === false, 'next hands the stage to the clip');
+    check(s9.imgHidden === true, 'and the picture steps off it');
+    check(s9.dl === '/orig1.mp4' && s9.dlName === 'clip.mp4', 'the corner button downloads the clip now', s9.dl);
+    try {
+      const out = path.join(os.tmpdir(), 'campfire-lightbox-clip.png');
+      fs.writeFileSync(out, Buffer.from(await shot(), 'base64'));
+      console.log('  (wrote ' + out + ')');
+    } catch {}
+    check(s9.prevOff === false && s9.nextOff === true, 'with the picture behind it and nothing after it', s9);
+    // A tap on the player belongs to the player: never a zoom, never a close.
+    await evaluate("__tapEl(__slotIn('gm', '.att-vid'))");
+    await sleep(60);
+    s9 = await state();
+    check(s9.hidden === false && s9.scale === 1, 'a tap on the clip neither closes the viewer nor zooms it', s9.scale);
+    await evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))");
+    await sleep(60);
+    s9 = await state();
+    check(s9.img === await evaluate('__pic(0)') && s9.imgHidden === false && s9.vidHidden === true, 'and back steps to the picture again');
+    check(s9.vid === '', 'with the clip\'s bytes released', s9.vid);
+    // The clip's own corner chip is its way in (its controls own a tap on it).
+    await evaluate('__close()');
+    await sleep(30);
+    await evaluate("__clickIn('gm', '.att-expand')");
+    await sleep(60);
+    s9 = await state();
+    check(s9.hidden === false && s9.vid === '/orig1.mp4' && s9.vidHidden === false, 'the clip\'s corner chip opens the viewer ON the clip');
+    check(s9.prevHidden === false && s9.prevOff === false && s9.nextOff === true, 'with the rest of the message behind it', s9);
+    // Closing clears the set: the next single picture gets no arrows back.
+    await evaluate('__close()');
+    await sleep(30);
+    await open(800, 800);
+    s9 = await state();
+    check(s9.hidden === false && s9.prevHidden && s9.nextHidden && s9.vidHidden === true, 'a reopened single picture has no arrows and no player left over', s9);
   });
 
   console.log('');

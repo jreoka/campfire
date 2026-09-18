@@ -1280,6 +1280,17 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 .att-star:active{transform:scale(.92)}
 .att-wrap:hover .att-star,.att-star:focus-visible{opacity:1}
 @media (hover:none){.att-star{opacity:.9}}
+/* The full-screen chip on a CLIP (see attExpandHTML in messages.js). A picture
+   is opened by tapping it; a video's own controls own that tap, so the viewer
+   is reached through this control instead — in the slot beside the download
+   button that the GIF star uses on a picture, so the two never share a corner
+   (a clip has no star). Same 32px box, scrim and reveal as that pair. */
+.att-expand{position:absolute;top:.45rem;right:calc(.45rem + 32px + .8rem);display:flex;align-items:center;justify-content:center;width:32px;height:32px;border:0;padding:0;border-radius:10px;background:rgba(9,12,24,.55);color:#fff;cursor:pointer;opacity:0;z-index:2;transition:opacity .15s,background var(--t-fast),transform var(--t-press) var(--ease-native)}
+.att-expand svg{width:16px;height:16px}
+.att-expand:hover{background:rgba(9,12,24,.82)}
+.att-expand:active{transform:scale(.92)}
+.att-wrap:hover .att-expand,.att-expand:focus-visible{opacity:1}
+@media (hover:none){.att-expand{opacity:.9}}
 .msg-atts audio{max-width:100%}
 /* ---------- the gallery: more than one picture in one message ----------
    Photos used to stack one per row, so four of them were a column 1200px tall
@@ -1964,6 +1975,9 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 #lightbox{position:fixed;inset:0;background:rgba(3,5,10,.94);z-index:200;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;overscroll-behavior:contain}
 #lb-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:calc(4.4rem + var(--safe-t)) calc(1rem + var(--safe-r)) calc(1rem + var(--safe-b)) calc(1rem + var(--safe-l));cursor:zoom-out;touch-action:none}
 #lightbox-img{max-width:100%;max-height:100%;width:auto;height:auto;border-radius:12px;transform-origin:center center;will-change:transform;cursor:zoom-in;-webkit-user-drag:none}
+/* A clip shares the stage with the picture (see lbShow in pickers.js): same box
+   rules, black behind the frame so a letterboxed video reads as a video. */
+#lightbox-vid{max-width:100%;max-height:100%;width:auto;height:auto;border-radius:12px;background:#000}
 #lightbox.zoomed #lb-stage{cursor:grab}
 #lightbox.zoomed #lightbox-img{cursor:grab}
 #lb-bar{position:absolute;top:calc(.6rem + var(--safe-t));right:calc(.6rem + var(--safe-r));display:flex;gap:.5rem;z-index:3}
@@ -1971,6 +1985,19 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .lb-btn:hover{background:rgba(52,59,80,.94)}
 .lb-btn svg{display:block;flex-shrink:0}
 .lb-close{padding:0;width:40px;flex-shrink:0}
+/* The gallery arrows (see lbShow/lbPaintNav in pickers.js): one on each side of
+   the screen, vertically centred, held inside the safe-area insets so a phone's
+   notch or home bar can never cover them. They exist only while the item on
+   screen HAS neighbours, and the one at the end of the set goes dark rather
+   than vanishing — a set of pictures has a first and a last, and the control
+   says which end it is standing on. */
+.lb-nav{position:absolute;top:50%;transform:translateY(-50%);display:flex;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:0;border-radius:999px;background:rgba(28,33,48,.82);color:#fff;cursor:pointer;z-index:3;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);transition:background var(--t-fast),opacity var(--t-fast)}
+.lb-nav:hover{background:rgba(52,59,80,.94)}
+.lb-nav:active{transform:translateY(-50%) scale(.94)}
+.lb-nav:disabled{opacity:.3;cursor:default}
+.lb-nav svg{display:block;flex-shrink:0}
+.lb-prev{left:calc(.6rem + var(--safe-l))}
+.lb-next{right:calc(.6rem + var(--safe-r))}
 /* The photo can be dragged down to dismiss (see closeLightbox) — the overlay
    itself follows the finger, so it gets inline transform/opacity. */
 #lightbox.dragging #lb-stage{cursor:grabbing}
@@ -3593,6 +3620,7 @@ body.story-open{overflow:hidden}
      positioned ancestor they happen to have. */
   .att-wrap .att-dl::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--tap);height:var(--tap)}
   .att-star::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--tap);height:var(--tap)}
+  .att-expand::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--tap);height:var(--tap)}
   /* A hit box may only grow into space that is actually empty. The row's ✕ sits
      in a tight list, so it takes the row's own height and no more. */
   .dm-close::after{content:'';position:absolute;inset:0}

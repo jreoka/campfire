@@ -28,6 +28,15 @@ const DL_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" str
 // reader has nothing to save yet, and a link to a URL that answers 423 is only a
 // way to fail. It arrives with the final bytes (the same moment the chip goes).
 function attDl(a, pending) { return pending ? '' : `<a class="att-dl" href="${esc(a.url)}" download="${esc(a.name)}" target="_blank" rel="noopener" title="Download">${DL_ICON}</a>`; }
+// A picture is opened by tapping it, but a CLIP's own controls own that tap, so
+// the full-screen viewer is reached through this chip instead. It takes the slot
+// beside the download button that the GIF star uses on a picture (a clip has no
+// star), and it is what puts a message of several clips, or a clip among
+// pictures, into the lightbox's arrow gallery (see lbMediaOf in pickers.js).
+const EXPAND_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v4"/><path d="M15 3h4a2 2 0 0 1 2 2v4"/><path d="M15 21h4a2 2 0 0 0 2-2v-4"/><path d="M9 21H5a2 2 0 0 1-2-2v-4"/></svg>';
+function attExpandHTML() {
+  return `<button type="button" class="att-expand" title="Open full screen" aria-label="Open full screen">${EXPAND_ICON}</button>`;
+}
 // ---------- starring a GIF that was shared in chat ----------
 // A GIF posted from the picker carries the Klipy item it came from on the
 // attachment itself (gif_slug/gif_thumb/gif_mp4 — see cleanGifMeta in
@@ -432,7 +441,7 @@ function attVideoHTML(a, opts) {
   const ar = d ? (d.w / d.h) : 0;
   const style = ar ? ` style="--att-ar:${ar.toFixed(4)}"` : '';
   const poster = (!opts || opts.live !== false) ? attPickedFrame(a) : '';
-  return `<span class="att-wrap${poster ? '' : ' loading'}${a.spoiler ? ' spoiler' : ''}${ar ? ' ar' : ' no-ar'}"${style}${attMeta(a, 'video')}><video class="att-vid" draggable="false" src="${esc(a.url)}" data-fb-src="${esc(a.url)}" controls preload="metadata" playsinline${poster ? ` poster="${esc(poster)}"` : ''}></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a, pending)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+  return `<span class="att-wrap${poster ? '' : ' loading'}${a.spoiler ? ' spoiler' : ''}${ar ? ' ar' : ' no-ar'}"${style}${attMeta(a, 'video')}><video class="att-vid" draggable="false" src="${esc(a.url)}" data-fb-src="${esc(a.url)}" controls preload="metadata" playsinline${poster ? ` poster="${esc(poster)}"` : ''}></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a, pending)}${attExpandHTML()}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
 }
 // The still FRAME this page already holds for a clip, as the poster to paint it
 // with — the upload path files the frame the upload card captured under the

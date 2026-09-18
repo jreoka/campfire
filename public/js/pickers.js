@@ -1053,9 +1053,20 @@ document.addEventListener('keydown', (e) => {
     // Thread the attachment filename through so the lightbox corner button
     // can download it (embed images have no attachment — no button then).
     // data-fb-url is the ORIGINAL upload: the inline picture is a derived
-    // preview, and the full-screen viewer has to open the real thing.
+    // preview, and the full-screen viewer has to open the real thing. The third
+    // argument is the message's other media, so a picture posted with others
+    // opens with the arrows that walk them (null for a lone picture).
     const dl = imgEl.closest('.att-wrap')?.querySelector('.att-dl');
-    openLightbox(imgEl.dataset.fbUrl || imgEl.src, dl?.getAttribute('download') || ''); return;
+    openLightbox(imgEl.dataset.fbUrl || imgEl.src, dl?.getAttribute('download') || '', lbGalleryAt(imgEl)); return;
+  }
+  // A clip is played in the message itself — its own controls own a tap — so
+  // its corner chip is the way into the full-screen viewer, and from there into
+  // the rest of the message's media (see attExpandHTML in messages.js).
+  const expandEl = e.target.closest('.att-expand');
+  if (expandEl) {
+    const g = lbGalleryAt(expandEl);
+    if (g) openLightbox(g.items[g.index].src, g.items[g.index].name, g);
+    return;
   }
   if (clEl) {
     const ch = (S.serverDetail?.channels || []).find((c) => c.id === clEl.dataset.clink);
@@ -1364,15 +1375,62 @@ $('#thread-composer').addEventListener('submit', (e) => {
 });
 
 // ---------- lightbox ----------
-// Full-screen photo viewer. The Download / Close controls sit in #lb-bar, a
-// fixed safe-area bar, so a tall photo can never carry them off the top of the
-// screen. One pointer pans a zoomed photo, two pinch it, double-tap toggles
-// zoom, and dragging an unzoomed photo down dismisses the viewer (the whole
-// overlay follows the finger, exactly like the story viewer).
+// Full-screen media viewer: a picture on #lightbox-img, a clip on #lightbox-vid
+// beside it. The Download / Close controls sit in #lb-bar, a fixed safe-area
+// bar, so a tall photo can never carry them off the top of the screen. One
+// pointer pans a zoomed photo, two pinch it, double-tap toggles zoom, and
+// dragging an unzoomed photo down dismisses the viewer (the whole overlay
+// follows the finger, exactly like the story viewer).
+//
+// A picture posted with OTHERS opens on itself with an arrow on each side of the
+// screen: the arrows walk the message's own media, in the order the message
+// shows it, pictures and clips alike (see lbMediaOf). A single picture — an
+// embed, a bookmark's tile — has nowhere to go and shows no arrows at all.
 const LB_MIN = 1, LB_MAX = 6;
-const lb = { open: false, scale: 1, tx: 0, ty: 0, gen: 0, ptrs: new Map(), pinch: null, pan: null, swipe: null, lastTap: 0, tapX: 0, tapY: 0 };
+// How far a sideways drag must travel before it is "the next one" rather than a
+// tap (the touch twin of the arrows).
+const LB_SWIPE_PX = 40;
+const lb = { open: false, scale: 1, tx: 0, ty: 0, gen: 0, ptrs: new Map(), pinch: null, pan: null, swipe: null, lastTap: 0, tapX: 0, tapY: 0, items: null, index: 0 };
 function lbStage() { return $('#lb-stage'); }
 function lbImg() { return $('#lightbox-img'); }
+function lbVid() { return $('#lightbox-vid'); }
+// The pictures and clips the source message is showing, in the order it shows
+// them. Read off the DOM, so it is exactly what the message renders: a file
+// still behind the scan gate is a `.scan-block` rather than a slot, and a
+// picture this browser cannot decode has already become a file card — neither is
+// offered, because there is nothing to put on the stage. `el` is the slot it was
+// read from, which is how the tapped tile is found in the list (the url cannot
+// do it: one message can show the same picture twice). `src` is the ORIGINAL
+// (data-fb-url), never the derived preview the tile paints.
+function lbMediaOf(el) {
+  const box = el && el.closest ? el.closest('.msg-atts, .pin-atts') : null;
+  if (!box) return null;
+  const items = [];
+  for (const slot of box.querySelectorAll(':scope > .att-slot')) {
+    const wrap = slot.querySelector('.att-wrap');
+    const img = slot.querySelector('img.att-img');
+    if (img) {
+      const src = img.dataset.fbUrl || img.dataset.fbOrig || img.getAttribute('src') || '';
+      if (src) items.push({ el: slot, kind: 'image', src, name: img.dataset.fbName || (wrap && wrap.dataset.fbName) || '' });
+      continue;
+    }
+    const vid = slot.querySelector('video.att-vid');
+    if (vid) {
+      const src = vid.dataset.fbSrc || vid.getAttribute('src') || '';
+      if (src) items.push({ el: slot, kind: 'video', src, name: (wrap && wrap.dataset.fbName) || vid.dataset.fbName || '', poster: vid.getAttribute('poster') || '' });
+    }
+  }
+  return items.length ? items : null;
+}
+// …and WHERE in that list the element the reader touched sits. Null when the
+// media is not part of a message block at all (an embed picture).
+function lbGalleryAt(el) {
+  const items = lbMediaOf(el);
+  if (!items) return null;
+  let index = 0;
+  try { index = items.findIndex((x) => x.el === el || x.el.contains(el)); } catch {}
+  return { items, index: index < 0 ? 0 : index };
+}
 // Keep a zoomed photo from being dragged off its own edges (and re-centre it
 // when it is smaller than the stage). Uses layout sizes, not the transformed
 // rect, so it stays correct while the finger is moving.
@@ -1402,6 +1460,66 @@ function lbReset() {
   const root = $('#lightbox');
   if (root) { root.classList.remove('zoomed', 'dragging'); root.style.transform = ''; root.style.opacity = ''; root.style.transition = ''; }
 }
+// The arrows exist only while the item on screen HAS neighbours, and each one
+// goes dark at its end: a set of pictures has a first and a last, and an arrow
+// that silently does nothing is worse than one that says it cannot.
+function lbPaintNav() {
+  const n = lb.items ? lb.items.length : 0;
+  const prev = $('#lb-prev'), next = $('#lb-next');
+  if (prev) { prev.classList.toggle('hidden', n < 2); prev.disabled = lb.index - 1 < 0; }
+  if (next) { next.classList.toggle('hidden', n < 2); next.disabled = lb.index + 1 > n - 1; }
+}
+// Step one item. The ends are the ends — no wrap-around, so "next" on the last
+// picture is the disabled arrow the reader can see.
+function lbGo(delta) {
+  if (!lb.open || !lb.items || !lb.items.length) return;
+  const i = lb.index + delta;
+  if (i < 0 || i > lb.items.length - 1) return;
+  lb.index = i;
+  lbShow(lb.items[i]);
+}
+// Paint ONE item: a picture on the zoomable <img>, a clip on the <video> that
+// shares the stage. Every item change starts from a clean stage, so a zoom can
+// never carry over to the next picture.
+function lbShow(item) {
+  const it = item || {};
+  const img = lbImg(), vid = lbVid();
+  const g = lb.gen;
+  const isVid = it.kind === 'video' && !!it.src;
+  lbReset();
+  if (vid) {
+    try { vid.pause(); } catch {}
+    if (isVid) {
+      if (String(vid.getAttribute('src') || '') !== String(it.src)) vid.src = it.src;
+      vid.poster = it.poster || '';
+      vid.classList.remove('hidden');
+    } else {
+      vid.removeAttribute('src');
+      try { vid.load(); } catch {}
+      vid.classList.add('hidden');
+    }
+    // A clip with no frame in hand paints a black box: the shared capturer
+    // (messages.js) mints one, and for a tile already on screen it is in flight.
+    if (isVid && !it.poster && typeof whenVideoPoster === 'function') {
+      const want = String(it.src);
+      whenVideoPoster(it.src, (shot) => {
+        // Only onto the item that asked for it: the capture can land after the
+        // reader has already walked on to the next clip.
+        if (shot && lb.gen === g && String(vid.getAttribute('src') || '') === want) vid.poster = shot;
+      });
+    }
+  }
+  if (img) {
+    if (isVid) { img.removeAttribute('src'); img.classList.add('hidden'); }
+    else { img.src = it.src || ''; img.classList.remove('hidden'); }
+  }
+  const dl = $('#lightbox-dl');
+  if (dl) {
+    if (it.src && it.name) { dl.href = it.src; dl.setAttribute('download', it.name); dl.classList.remove('hidden'); }
+    else { dl.removeAttribute('href'); dl.classList.add('hidden'); }
+  }
+  lbPaintNav();
+}
 function closeLightbox() {
   const root = $('#lightbox');
   if (!root || !lb.open) return;
@@ -1409,24 +1527,32 @@ function closeLightbox() {
   lb.open = false;
   root.classList.add('hidden');
   const img = lbImg();
-  if (img) img.src = '';
+  if (img) img.removeAttribute('src');
+  const vid = lbVid();
+  if (vid) { try { vid.pause(); } catch {} vid.removeAttribute('src'); try { vid.load(); } catch {} }
   $('#lightbox-dl')?.classList.add('hidden');
+  lb.items = null; lb.index = 0;
+  lbPaintNav();
   lbReset();
 }
-function openLightbox(src, name) {
+// `gallery` (optional) is what lbGalleryAt answered: the message's media in
+// order, and where in it the thing that was tapped sits. With one, the viewer
+// opens on THAT item and the side arrows walk the rest; with more than one item
+// the arrows appear, and with a single item (or none: an embed, a bookmark tile)
+// there is exactly one thing to see and no arrows at all.
+function openLightbox(src, name, gallery) {
   const root = $('#lightbox');
   const img = lbImg();
   if (!root || !img) return;
   lb.gen++;
   lbReset();
-  img.src = src;
-  const dl = $('#lightbox-dl');
-  if (dl) {
-    if (src && name) { dl.href = src; dl.setAttribute('download', name); dl.classList.remove('hidden'); }
-    else { dl.removeAttribute('href'); dl.classList.add('hidden'); }
-  }
+  const list = gallery && Array.isArray(gallery.items) && gallery.items.length ? gallery.items : null;
+  const first = list ? Math.max(0, Math.min(list.length - 1, Number(gallery.index) || 0)) : 0;
+  lb.items = list && list.length > 1 ? list : null;
+  lb.index = first;
   lb.open = true;
   root.classList.remove('hidden');
+  lbShow(list ? list[first] : { kind: 'image', src: src || '', name: name || '' });
 }
 // Zoom about a point given in stage-centre coordinates (the same convention as
 // the story composer's pinch): the content under the point stays under it.
@@ -1460,7 +1586,7 @@ function lbSlideOut() {
 }
 $('#lightbox')?.addEventListener('pointerdown', (e) => {
   if (!lb.open) return;
-  if (e.target.closest('#lb-bar')) return; // the buttons own their own clicks
+  if (e.target.closest('#lb-bar, .lb-nav')) return; // the buttons own their own clicks
   lb.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (lb.ptrs.size === 2) {
     const [a, b] = [...lb.ptrs.values()];
@@ -1502,7 +1628,13 @@ $('#lightbox')?.addEventListener('pointermove', (e) => {
   }
   if (lb.swipe) {
     const dx = e.clientX - lb.swipe.x, dy = e.clientY - lb.swipe.y;
-    if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) { lb.swipe = null; return; } // sideways: not a dismissal
+    if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+      // Sideways is not a dismissal. In a gallery it is the next/previous
+      // gesture, decided on release; a zoomed photo pans instead, and that path
+      // never gets here (see the pointerdown branch above).
+      lb.swipe.dx = dx;
+      return;
+    }
     if (Math.abs(dy) > 8) lb.swipe.moved = true;
     const root = $('#lightbox');
     if (dy > 0) {
@@ -1543,9 +1675,14 @@ function lbPointerUp(e) {
     return;
   }
   if (wasPan && wasPan.moved) return;
+  // A sideways drag past the threshold steps the gallery — the touch twin of the
+  // side arrows (below it the drag was a tap, which the zoom/close rules own).
+  if (swipe && Math.abs(swipe.dx || 0) > LB_SWIPE_PX) { lbGo(swipe.dx < 0 ? 1 : -1); return; }
   // A tap on the photo toggles the zoom. Mouse and pen get it on the first
   // click (click to zoom in, click again to zoom out); touch keeps double-tap
   // so a stray single tap never jumps the zoom. A tap on the backdrop closes.
+  // A clip's own controls own every tap on IT: never a zoom, never a close.
+  if (target === lbVid()) return;
   if (target === lbImg()) {
     if (e.pointerType === 'touch') {
       const now = Date.now();
@@ -1576,6 +1713,20 @@ $('#lightbox-dl')?.addEventListener('click', (e) => {
   e.stopPropagation();
   const dl = e.currentTarget;
   toast(`Downloading ${(dl.getAttribute('download') || 'image').slice(0, 60)}…`);
+});
+// The side arrows. They sit ON the overlay, so a press over them must never
+// reach the stage's gesture handlers (the pointerdown guard above) — and the
+// click that follows steps the gallery, without closing the viewer.
+$('#lb-prev')?.addEventListener('click', (e) => { e.stopPropagation(); lbGo(-1); });
+$('#lb-next')?.addEventListener('click', (e) => { e.stopPropagation(); lbGo(1); });
+// …and their desktop twin: the arrow keys, while the viewer is up. A field
+// keeps its own left/right (nothing opens one behind the lightbox, but the
+// rule costs nothing and a stray keypress must never jump the page).
+document.addEventListener('keydown', (e) => {
+  if (!lb.open || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+  if (e.target && e.target.closest && e.target.closest('input, textarea, select, [contenteditable]')) return;
+  e.preventDefault();
+  lbGo(e.key === 'ArrowRight' ? 1 : -1);
 });
 
 // ---------- user card action tabs ----------
