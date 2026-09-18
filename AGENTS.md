@@ -608,7 +608,8 @@ the view count. Reactions are user content, so the emoji here are intentional
 (the rail's own chrome is text/SVG). Message reports: right-click / long-press → **Report message** (red,
 last item; never your own) files it with a snapshot of the text, media
 references and where it happened, pushes every site admin live, drops an inbox
-entry, and puts a badge on the console's Reports tab + rail shield; admins
+entry, and puts a badge on the console's Reports menu row, its header chip and the
+rail shield; admins
 search/filter the queue and dismiss, delete the message, disable the author,
 delete + disable, or ban from the server (one decision closes every open report
 on that message). Menus are content-aware: an attachment carries its own identity
