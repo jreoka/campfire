@@ -3144,14 +3144,21 @@ function paintUploadCard(el, u) {
 function patchUploadProgress(u) { const el = uploadCardEl(u.id); if (el) paintUploadCard(el, u); }
 // A card's icon is built once at creation; the poster for a video arrives
 // later, so patch it into the existing card instead of rebuilding the list.
+// The placeholder glyph the card was born with has to LEAVE with the frame:
+// inserting the picture beside it left BOTH in the 36px tile, and the flex row
+// shrank the image to make room — a clip's thumbnail came out as a narrow sliver
+// beside a leftover file icon (reported). A picture has one icon, so the
+// placeholder is removed, not painted over.
 function paintUploadIcon(u) {
   const el = uploadCardEl(u.id);
   if (!el || !u.thumb) return;
   const ic = el.querySelector('.up-ic');
   if (!ic) return;
   const img = ic.querySelector('img');
-  if (img) img.src = u.thumb;
-  else try { ic.insertAdjacentHTML('afterbegin', '<img src="' + esc(u.thumb) + '" alt="" />'); } catch {}
+  if (img) { img.src = u.thumb; return; }
+  const ph = ic.querySelector('svg');
+  if (ph) ph.remove();
+  try { ic.insertAdjacentHTML('afterbegin', '<img src="' + esc(u.thumb) + '" alt="" />'); } catch {}
 }
 // Server-owned attachment cap (see /api/config maxUploadMb) — a file the
 // server would reject must never start uploading. The fallback mirrors the

@@ -13,6 +13,13 @@
 //      99% reads as a hang; the card now goes indeterminate and says "Finishing…",
 //      with a stall ceiling that turns a response that never comes into a normal
 //      Retry-able failure.
+//   3. "why does part of it only show in the thumbnail next to that file symbol"
+//      — a video card is born with a placeholder glyph (its poster frame is
+//      captured asynchronously off a temp <video>), and the frame was inserted
+//      BESIDE that glyph: two flex children in a 36px tile meant the picture was
+//      shrunk into a cover-cropped sliver next to a file icon. The frame now
+//      replaces the glyph, and the CSS takes it out of flow so no sibling can
+//      squeeze it. See [2c] + [9].
 //
 // Runs the REAL upload block sliced out of public/js/messages.js in headless
 // Chrome against a fake XMLHttpRequest, and checks the wiring statically. Skips
@@ -54,6 +61,7 @@ function findChrome() {
 }
 
 const messages = fs.readFileSync(path.join(ROOT, 'public/js/messages.js'), 'utf8');
+const styles = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
 const servers = fs.readFileSync(path.join(ROOT, 'public/js/servers.js'), 'utf8');
 const pins = fs.readFileSync(path.join(ROOT, 'public/js/pins.js'), 'utf8');
 const auth = fs.readFileSync(path.join(ROOT, 'public/js/auth.js'), 'utf8');
@@ -91,6 +99,7 @@ const attachPreviewMarkup = (() => {
 
 function pageHtml() {
   return `<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="/styles.css">
 <style>body{margin:0;font:14px system-ui}</style></head><body>
 <div id="composer">${attachPreviewMarkup}${uploadListMarkup}</div>
 <script>
@@ -101,7 +110,13 @@ function fmtSize(n) { return Math.max(0, Math.round((Number(n) || 0) / 1024)) + 
 function prettyError(e) { const m = { network_error: 'Network error', upload_timeout: 'The server stopped responding — try again.' }; return m[e] || String(e).replace(/_/g, ' '); }
 const attPreviews = new Map();
 function setAttPreview(url, src) { attPreviews.set(url, { src: src }); return true; }
-function whenVideoPoster(url, cb) { if (cb) cb(null); }
+function whenVideoPoster(url, cb) { if (cb) window.__posters.push(cb); }
+// A video's frame capture is ASYNC in the real app (a temp <video> loads, seeks,
+// then paints a canvas), so the stubbed one HOLDS its callback: the card is
+// already on screen with the glyph it was born with when the frame lands — the
+// exact shape of the reported thumbnail bug. window.__firePosters lands it.
+window.__posters = [];
+window.__firePosters = (shot) => { const list = window.__posters.splice(0); list.forEach((fn) => fn(shot)); };
 function $(sel) { return document.querySelector(sel); }
 window.__metaRenders = 0;
 // The composer "has a conversation" whenever the page says so.
@@ -168,6 +183,27 @@ window.__chips = () => [...document.querySelectorAll('#attach-preview .att-chip'
 }));
 window.__chip = () => window.__chips()[0] || null;
 window.__cards = () => document.querySelectorAll('#upload-list .up-card').length;
+// The card's icon tile: what is IN it and how much of the 36px tile the picture
+// actually takes. Both halves mattered in the report — a leftover glyph sat
+// beside the frame and the flex row shrank the frame to make room for it.
+window.__cardIcon = (name) => {
+  const cards = [...document.querySelectorAll('#upload-list .up-card')];
+  const card = name ? cards.find((c) => (c.querySelector('.up-name') || {}).textContent === name) : cards[0];
+  if (!card) return null;
+  const ic = card.querySelector('.up-ic');
+  if (!ic) return null;
+  const img = ic.querySelector('img');
+  const r = img ? img.getBoundingClientRect() : null;
+  const b = ic.getBoundingClientRect();
+  return {
+    imgs: ic.querySelectorAll('img').length,
+    svgs: ic.querySelectorAll('svg').length,
+    imgW: r ? Math.round(r.width) : 0,
+    imgH: r ? Math.round(r.height) : 0,
+    boxW: Math.round(b.width),
+    boxH: Math.round(b.height),
+  };
+};
 window.__hidden = () => document.querySelector('#upload-list').classList.contains('hidden');
 window.__upload = (name, size, mime) => {
   const f = new File([new Uint8Array(8)], name, { type: mime || 'application/octet-stream' });
@@ -265,11 +301,32 @@ async function main() {
   check(/clearTimeout\(u\.watch\); u\.watch = null;/.test(upSource), 'and cleared on every exit (load/error/abort/fail/remove)');
   check(/upload_timeout: 'The server stopped responding/.test(auth), 'the timeout has a human message');
 
+  console.log('\n[2c] a video card\'s frame REPLACES the glyph it was born with');
+  // Reported: "why does part of it only show in the thumbnail next to that file
+  // symbol" — a video card is created while the poster frame is still being
+  // captured, so it is born with the placeholder glyph; the frame then arrived
+  // BESIDE it. Two icons in a 36px flex tile meant the picture was shrunk (and
+  // cover-cropped) into whatever was left.
+  check(/const ph = ic\.querySelector\('svg'\);\s*if \(ph\) ph\.remove\(\);/.test(upSource),
+    'the placeholder glyph is removed when the poster lands, not left beside it');
+  check(upSource.indexOf("if (ph) ph.remove();") < upSource.indexOf("ic.insertAdjacentHTML('afterbegin'"),
+    'removed BEFORE the frame goes in');
+  check(/function paintUploadIcon\(u\) \{[\s\S]{0,400}if \(img\) \{ img\.src = u\.thumb; return; \}/.test(upSource),
+    'and an already-painted frame is just re-pointed (one icon per card, always)');
+  check(/\.up-ic img\{position:absolute;inset:0;width:100%;height:100%;object-fit:cover\}/.test(styles),
+    'the frame is out of flow, so no sibling can squeeze it out of the tile');
+
   const chromePath = findChrome();
   if (!chromePath) return skip('no Chrome/Edge found (set CHROME_PATH)');
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-upcards-'));
   const srv = http.createServer((req, res) => {
+    // The real stylesheet: the tile's geometry is half of the reported bug.
+    if (/^\/styles\.css/.test(req.url || '')) {
+      res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8' });
+      res.end(styles);
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(pageHtml());
   });
@@ -449,6 +506,22 @@ async function main() {
     await ev("window.__upload('nowhere.jpg', 1024)");
     check((await ev('window.__S.uploads.length')) === before, 'an attach with no conversation is refused (no orphan upload)');
     check((await ev('window.__toasts.some((t) => /Pick a chat first, then attach/.test(t))')) === true, 'with the reason', await ev('JSON.stringify(window.__toasts)'));
+
+    console.log('\n[9] a video\'s frame takes over the tile its placeholder glyph held');
+    await ev("window.__switchTo('s1', 'c1')");
+    await ev('window.__ready = true');
+    await ev("window.__upload('clip.mp4', 4096, 'video/mp4')");
+    await sleep(30);
+    let icon = await ev("window.__cardIcon('clip.mp4')");
+    check(!!icon && icon.imgs === 0 && icon.svgs === 1,
+      'while the frame is still being captured the card shows its placeholder glyph', icon);
+    await ev("window.__firePosters('data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ==')");
+    await sleep(40);
+    icon = await ev("window.__cardIcon('clip.mp4')");
+    check(!!icon && icon.imgs === 1 && icon.svgs === 0,
+      'the frame REPLACES it — one icon in the tile, never the picture beside a file symbol', icon);
+    check(!!icon && icon.imgW === icon.boxW && icon.imgH === icon.boxH && icon.boxW === 36,
+      'and it fills the whole 36px tile instead of being shrunk to make room (the reported sliver)', icon);
   } catch (e) {
     console.error('[test] ' + (e && e.stack || e));
     process.exit(1);
