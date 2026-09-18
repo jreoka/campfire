@@ -1628,6 +1628,19 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 #usercard .uc-bio code,#usercard .uc-bio .spoiler.shown{background:var(--uc-chip)}
 #usercard .role-pill{border-color:var(--uc-chip-line)}
 #usercard button.role-pill:hover{background:var(--uc-chip);color:var(--uc-text)}
+/* A rank the person HOLDS is its own backdrop: a fixed dark grey chip, and the
+   role's own colour is the ink on it (the inline style in cardRolesHTML sets the
+   ink and the ring; this sets only the chip, so the two cannot fight).
+   Why fixed and why opaque: the ink here is a USER-CHOSEN colour sitting on a
+   USER-CHOSEN card, and either one can be anything — a violet rank on a violet
+   card was an invisible pill, which is what was reported. `--uc-chip` cannot fix
+   it, because that tone is a translucent tint of the card underneath — exactly
+   the backdrop this exists to get out from under. A grey that does not move with
+   the card is the one thing that makes the role colour the only variable left,
+   and on it a saturated role reads (the app's own accent still clears 3.5:1,
+   where the pill it replaced could sit at 1:1). */
+#usercard .role-pill.on{background:#181c25;border-color:currentColor}
+#usercard button.role-pill.on:hover{background:#21262f}
 #usercard.uc-ink-light .early-badge{background:rgba(0,0,0,.24);color:#fff}
 #usercard.uc-ink-dark .early-badge{background:rgba(43,53,144,.14);color:#2b3590}
 #usercard.uc-ink-light .sysadmin-badge{background:rgba(0,0,0,.24);color:#ffdada}

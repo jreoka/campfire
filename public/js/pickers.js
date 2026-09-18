@@ -1871,6 +1871,15 @@ async function openTagCard(sid, x, y) {
   if (cl) cl.onclick = closeTagCard;
   place();
 }
+// The role pills on the card. A rank the person HOLDS wears the role's own
+// colour as its ink, which is a user-chosen colour sitting on a user-chosen
+// backdrop — so it may not touch the backdrop directly. The chip's dark grey
+// belongs to the stylesheet (`#usercard .role-pill.on`), which is why the inline
+// style here sets the border and the ink and never a background: the 13% tint of
+// the role colour that used to be the background made the pill part of the card
+// again, and a violet rank on a violet card was invisible (reported). `on` marks
+// held in BOTH shapes — the manager's toggle and a viewer's plain span — because
+// the chip is what the class turns on.
 function cardRolesHTML(uid) {
   if (S.view !== 'server' || !S.serverDetail) return '';
   const d = S.serverDetail;
@@ -1881,9 +1890,9 @@ function cardRolesHTML(uid) {
   let h = '<div class="uc-roles">';
   for (const r of d.roles) {
     const has = mine.has(r.id);
-    const col = r.color ? ` style="border-color:${esc(r.color)};${has ? `background:${esc(r.color)}22;color:${esc(r.color)};` : ''}"` : '';
+    const col = r.color ? ` style="border-color:${esc(r.color)};${has ? `color:${esc(r.color)};` : ''}"` : '';
     if (editable) h += `<button class="role-pill${has ? ' on' : ''}" data-role-toggle="${r.id}" data-has="${has ? '1' : '0'}"${col}>${has ? '✓ ' : '+ '}${esc(r.name)}</button>`;
-    else if (has) h += `<span class="role-pill"${col}>${esc(r.name)}</span>`;
+    else if (has) h += `<span class="role-pill on"${col}>${esc(r.name)}</span>`;
   }
   return h + '</div>';
 }

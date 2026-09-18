@@ -105,7 +105,7 @@ function inkPageHtml() {
     <div class="uc-badges"><span class="early-badge">Early user</span><span class="sysadmin-badge">System admin</span></div>
     <div class="uc-statustext ustream"><span class="vlive">LIVE</span><span>Streaming</span></div>
     <div class="uc-statustext ugame"><span class="gbadge"></span><span>Playing Chess</span></div>
-    <div class="uc-roles"><span class="role-pill">Admin</span></div>
+    <div class="uc-roles"><button type="button" class="role-pill" data-role-toggle="r1" data-has="0">+ Usagi</button><span class="role-pill on" style="border-color:#b06ef0;color:#b06ef0;">Sempai</span><button type="button" class="role-pill on" data-role-toggle="r2" data-has="1">✓ Admin</button></div>
     <div class="uc-head"><span class="avatar big"></span><div class="uc-bubble-wrap"><div class="uc-bubble">a status</div></div></div>
     <div class="uc-presence"><button type="button" class="prow"><span class="plabel">Online</span></button></div>
   </div>
@@ -138,7 +138,9 @@ const snap = () => ({
   streamLive: color('.uc-statustext.ustream .vlive'),
   game: { color: color('.uc-statustext.ugame'), bg: bg('.uc-statustext.ugame') },
   gameBadge: { color: color('.gbadge'), bg: bg('.gbadge') },
-  pill: { color: color('.role-pill'), border: border('.role-pill') },
+  pill: { color: color('.role-pill'), bg: bg('.role-pill'), border: border('.role-pill') },
+  pillOn: { color: color('.role-pill.on'), bg: bg('.role-pill.on'), border: border('.role-pill.on') },
+  pillOnPlain: { color: color('button.role-pill.on'), bg: bg('button.role-pill.on') },
 });
 const both = { light: {}, dark: {} };
 for (const theme of ['dark', 'light']) {
@@ -223,6 +225,22 @@ async function main() {
   check(/card\.classList\.toggle\('uc-ink-light', ink === 'light'\)/.test(paint), 'and toggles the light-ink class', paint);
   check(/card\.classList\.toggle\('uc-ink-dark', ink === 'dark'\)/.test(paint), 'as well as the dark-ink one — toggled, not added, so a card with no custom colour clears both', paint);
 
+  console.log('\n[6b] a held rank carries its own chip, and the stylesheet is what paints it');
+  // The reported pill: a rank whose role colour was close to the card colour, so
+  // the 13% tint that used to be its background was the backdrop over again.
+  const rolePills = slice(pickers, 'function cardRolesHTML(uid) {', 'function fmtPlay(ms) {');
+  const colLine = /const col = [^\n]*/.exec(rolePills);
+  check(!!colLine && !/background:/.test(colLine[0]),
+    'the pill\'s inline style sets the ink and the ring, never a background — the chip is not the card\'s business',
+    colLine && colLine[0]);
+  check(/class="role-pill\$\{has \? ' on' : ''\}"/.test(rolePills), 'the manager\'s toggle marks a held rank with `on`');
+  check(/<span class="role-pill on"\$\{col\}>/.test(rolePills),
+    'and so does a viewer\'s plain span, which has no toggle to carry the state for it');
+  check(/#usercard \.role-pill\.on\{background:#[0-9a-f]{6};border-color:currentColor\}/.test(css),
+    'and the stylesheet paints that chip a fixed dark grey, ringed in the role\'s own ink');
+  check(/#usercard button\.role-pill\.on:hover\{/.test(css),
+    'whose hover keeps the chip instead of falling back to the card\'s own tint');
+
   console.log('\n[7] the stylesheet paints the tones it promised');
   check(!!INK_LIGHT_HEX && !!INK_DARK_HEX, 'both ink classes define --uc-text', { INK_LIGHT_HEX, INK_DARK_HEX });
   check(/\n#usercard\{[^}]*--uc-text:var\(--text\)/.test(css), 'and the card defaults its tones to the theme\'s');
@@ -260,6 +278,9 @@ async function main() {
         const WHITE = 'rgb(255, 255, 255)';
         const DARK = 'rgb(17, 21, 31)';
         const THEME_TEXT = { dark: 'rgb(238, 241, 248)', light: 'rgb(20, 26, 38)' };
+        // The held rank's chip and the role colour the fixture's pill wears.
+        const CHIP = 'rgb(24, 28, 37)';
+        const ROLE_INK = 'rgb(176, 110, 240)';
         for (const theme of ['dark', 'light']) {
           const l = out.light[theme], d = out.dark[theme], t = out.themeOnly[theme];
           check(l.name === WHITE && l.status === WHITE && l.bio === WHITE && l.gamingRow === WHITE,
@@ -301,9 +322,44 @@ async function main() {
             '[' + theme + '] and the game badge goes tonal with the row it rides in', { light: l.gameBadge, dark: d.gameBadge });
           check(l.pill.color === l.sub && d.pill.color === d.sub && l.pill.border !== d.pill.border,
             '[' + theme + '] and the role pills take the ink and a matching hairline', { light: l.pill, dark: d.pill });
+          // A rank that is NOT held is a toggle, not a rank: it stays the tonal
+          // outline it was, so the chip means "you have this".
+          check(l.pill.bg === 'rgba(0, 0, 0, 0)' && d.pill.bg === 'rgba(0, 0, 0, 0)',
+            '[' + theme + '] an unheld rank keeps its transparent tonal chip', chip(l.pill));
+          check(l.pillOn.bg === CHIP && d.pillOn.bg === CHIP,
+            '[' + theme + '] a held rank sits on the dark chip whatever the card\'s colour and ink are', chip(l.pillOn));
+          check(l.pillOn.color === ROLE_INK && d.pillOn.color === ROLE_INK,
+            '[' + theme + '] with the role\'s own colour as the ink on it', l.pillOn.color);
+          check(l.pillOn.border === ROLE_INK && d.pillOn.border === ROLE_INK,
+            '[' + theme + '] and as the ring, so the rank still says which one it is', l.pillOn.border);
+          check(l.pillOnPlain.bg === CHIP && l.pillOnPlain.color === l.sub && d.pillOnPlain.bg === CHIP,
+            '[' + theme + '] a held rank with no colour of its own gets the same chip, in the card\'s own ink', chip(l.pillOnPlain));
         }
         check(!!out.light.dark && !!out.light.light && !!out.dark.dark && !!out.dark.light,
           'both inks were measured against both themes');
+        // The reported bug in one number: the chip must be the SAME grey under
+        // every card and theme (nothing about the person can move it), and on it
+        // the role colour must be the legible thing. 4.5:1 is out of reach for a
+        // mid-tone ink on any dark chip — the app's own accent tops out near 4 —
+        // so the floor is the 3.5:1 the card's other chips are held to, against
+        // the pill this replaces, which sat at 1:1 on a matching card. (A role
+        // coloured near-black is a lost cause on ANY chip, and already is
+        // everywhere else the colour is worn — the member list paints names in
+        // it too — which is why the palette below is the saturated range.)
+        const rgb2hex = (s) => {
+          const m = /rgba?\((\d+), (\d+), (\d+)/.exec(s || '');
+          return m ? '#' + [1, 2, 3].map((i) => Number(m[i]).toString(16).padStart(2, '0')).join('') : null;
+        };
+        const chipHex = rgb2hex(out.light.dark.pillOn.bg);
+        check(out.light.dark.pillOn.bg === CHIP && out.light.light.pillOn.bg === CHIP && out.dark.dark.pillOn.bg === CHIP
+          && out.dark.light.pillOn.bg === CHIP,
+          'the chip is one fixed grey across both cards and both themes — the card cannot move it', out.light.dark.pillOn.bg);
+        const ROLE_COLORS = ['#5865f2', '#b06ef0', '#ff79c6', '#e91e63', '#ed4245', '#faa81a', '#3ba55d', '#1abc9c', '#00b0f4', '#9b59b6'];
+        const worst = ROLE_COLORS.map((c) => [c, +contrast(c, chipHex).toFixed(2)]).reduce((a, b) => (b[1] < a[1] ? b : a));
+        check(worst[1] >= 3.5, 'and every role colour the picker can produce still reads on it', { worst, chip: chipHex });
+        const violet = rgb2hex(ROLE_INK);
+        check(contrast(violet, chipHex) >= 3.5, 'including the violet that was invisible on its own card',
+          { role: violet, chip: chipHex, ratio: +contrast(violet, chipHex).toFixed(2) });
       }
     } finally {
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}

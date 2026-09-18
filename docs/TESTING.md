@@ -142,6 +142,25 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   banner through the real `paintSidebarBanner`, screenshots at dpr 1 and 2 and
   samples the inside of each mark — every sample must still be that mark's own
   fill (accent for the pin, a flat dark scrim for the ✕), never the picture.
+  `node scripts/test-card-ink.js` covers the user card's ink following a custom
+  card colour (offline but for a headless-Chrome section that reads computed
+  styles off the real stylesheet; skips without Chrome). It drives the real
+  `cardInkFor`, `cardBgFor` and `hexRelLum` out of `servers.js` over the colours
+  people pick: no custom colour paints no ink, pale cards take dark ink, deep or
+  saturated ones take light, a gradient is judged on the middle of its ramp, and
+  the whole grey ramp flips exactly once at mid-grey while never dropping below
+  3.5:1. It then measures the card in a browser under both inks and both themes —
+  the plain tones, the muted tiers, the tonal chips (inline code, badges, the
+  game and stream rows) against the opaque panels (tab list, status bubble,
+  presence switcher) that must keep the theme's own tones. Since the reported
+  violet-rank-on-a-violet-card it also covers the role pills: a held rank wears
+  the role's own colour as its ink and its ring on ONE fixed dark grey chip
+  (`#usercard .role-pill.on`) that neither the card's colour nor the theme can
+  move — the inline style in `cardRolesHTML` sets the ink and never a background,
+  and every saturated role colour the picker can produce still clears 3.5:1 on
+  it — while an UNHELD rank keeps the transparent tonal outline that makes the
+  chip mean "you have this", in both the manager's toggle and a viewer's plain
+  span.
   `node scripts/test-presence-widget.js` covers the presence switcher that now
   lives on your own user card as a vertical menu (offline; it runs the real
   `presenceWidgetHTML`, `statusLineHTML`, `presenceDurationSel`, `choosePresence`
