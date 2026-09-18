@@ -1,24 +1,31 @@
 // The server rail's icons are ONE size, and the active pill is pinned to the
 // rail's own left edge (see AGENTS.md verification conventions).
 //
-// The complaint: "make the server rail icons all a bit smaller." Every rail icon
-// — home, the DM avatars, servers, folders, the ＋ and the admin shield — is the
-// same square in one column, and five different rules used to restate 48px for
-// it, so a change had to be made in five places and could be made in four. They
-// now all read --rail-ico, and the things derived from that size are derived in
-// CSS too: the active pill's offset (the icons are centred, so it is exactly half
-// of what the rail has left over), the campfire art's 3px inset, and the open
-// folder's panel.
+// Two owner asks shaped this. First "make the server rail icons all a bit
+// smaller": every rail icon — home, the DM avatars, servers, folders, the ＋ and
+// the admin shield — is the same square in one column, and five different rules
+// used to restate 48px for it, so a change had to be made in five places and
+// could be made in four. They now all read --rail-ico, and the things derived
+// from that size are derived in CSS too: the active pill's offset (the icons are
+// centred, so it is exactly half of what the rail has left over), the campfire
+// art's 3px inset, and the open folder's panel.
+//
+// Then "make the server rail and its icons larger on mobile/tablet only": the
+// rail is the primary navigation there and it carried the smallest icons in the
+// app (40px on the phone, under the 44px a thumb can hit), so ONE touch rule
+// ("a larger rail for touch") restates both numbers upward — 52px in a 72px
+// rail — for a phone AND a tablet, and nothing on the desktop moves.
 //
 // This test has two halves:
 //   [0] static wiring, always: the size is one variable (restated only by the
-//       phone block), every box reads it, the pill never goes back to a number,
-//       and no rail glyph is left at a size that no longer matches its box;
+//       touch rule), every box reads it, the pill never goes back to a number,
+//       no rail glyph is left at a size that no longer matches its box, and the
+//       touch rule is genuinely larger than the desktop one;
 //   [1] the REAL stylesheet in headless Chrome against a fixture that mirrors the
-//       live rail, at a desktop and a phone width: every icon is the documented
-//       square, they share one column, the pill lands on the rail's edge, the
-//       badge stays inside, and the rail itself did NOT change width (the owner
-//       asked for smaller icons, not a narrower rail).
+//       live rail, at a desktop, a phone and a tablet viewport: every icon is the
+//       documented square, they share one column, the pill lands on the rail's
+//       edge, the badge stays inside, and the desktop rail did NOT change (the
+//       owner asked for larger icons on touch, not a different desktop).
 //
 // Skips the browser half (exit 0) when Chrome is unavailable.
 //
@@ -36,9 +43,10 @@ const WebSocket = require('ws');
 const ROOT = path.join(__dirname, '..');
 const CDP_PORT = parseInt(process.env.TEST_CDP_PORT || '9356', 10);
 const DESKTOP_ICO = 44;
-const PHONE_ICO = 40;
 const DESKTOP_RAIL = 64;
-const PHONE_RAIL = 62;
+// Phone and tablet share one touch size, deliberately: one rule, one number.
+const TOUCH_ICO = 52;
+const TOUCH_RAIL = 72;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let passed = 0;
@@ -171,8 +179,14 @@ async function main() {
     (css.match(/left:calc\(\(var\(--rail-ico\) - var\(--rail-w\)\) \/ 2\)/g) || []).length);
   check(!/\.(server-btn|folder-btn)[^{]*\{[^}]*left:-8px/.test(css) && !/#home-wrap[^{]*\{[^}]*left:-8px/.test(css),
     'and no pill rule went back to the hard-coded -8px');
-  check(/#left\{--rail-w:62px;--rail-ico:40px\}/.test(css),
-    'the phone block steps both numbers down together (62px rail, 40px icons)');
+  check(/#left\{--rail-w:72px;--rail-ico:52px\}/.test(css),
+    'the touch rule restates BOTH numbers, larger (72px rail, 52px icons)');
+  const deskIco = +((css.match(/--rail-ico:(\d+)px/) || [])[1] || 0);
+  const touchIco = +((css.match(/#left\{--rail-w:\d+px;--rail-ico:(\d+)px\}/) || [])[1] || 0);
+  check(touchIco > deskIco, 'and it really is larger than the desktop rail, not a restatement of it',
+    { desktop: deskIco, touch: touchIco });
+  check(/@media \(max-width:700px\),\(pointer:coarse\) and \(min-width:701px\) and \(max-width:1400px\)\{/.test(css),
+    'one rule covers the phone AND the tablet (a touch desktop monitor is left out)');
   check(!/#left \.(server-btn|fwrap|folder-btn)[^{]*\{width:44px/.test(css),
     'and no longer restates icon boxes of its own (the variable carries them)');
   check(/\.home-btn img\{width:calc\(var\(--rail-ico\) - 6px\)/.test(css) && /\.home-btn \.home-fire\{[^}]*width:calc\(var\(--rail-ico\) - 6px\)/.test(css),
@@ -180,11 +194,13 @@ async function main() {
   check(/\.folder-open\{[^}]*width:calc\(var\(--rail-ico\) \+ 4px\)/.test(css),
     'the open folder\'s panel is the icon plus its own 2px padding');
   check(/#btn-add-server svg\{display:block;width:26px;height:26px\}/.test(css) && /#btn-admin svg\{display:block;width:22px;height:22px\}/.test(css),
-    'the ＋ and the shield glyphs keep their proportion to the box (26px / 22px)');
-  check(/#left #btn-add-server svg\{width:24px;height:24px\}/.test(css) && /#left #btn-admin svg\{width:20px;height:20px\}/.test(css),
-    'with a phone step for both');
-  check(/#left \.fg1\{grid-template-columns:18px\}/.test(css) && /#left \.fc,#left \.fg1 \.fc\{width:14px;height:14px\}/.test(css),
-    'the folder preview cells step down with the phone box');
+    'the ＋ and the shield glyphs keep their proportion to the desktop box (26px / 22px)');
+  check(/#left #btn-add-server svg\{width:30px;height:30px\}/.test(css) && /#left #btn-admin svg\{width:26px;height:26px\}/.test(css),
+    'with a larger step for the touch box');
+  check(/#left \.fg1\{grid-template-columns:24px\}/.test(css) && /#left \.fc\{width:19px;height:19px\}/.test(css) && /#left \.fg1 \.fc\{width:24px;height:24px\}/.test(css),
+    'the folder preview cells grow with the touch box (19px, 24px for a one-cell folder)');
+  check(/#left \.server-btn\{font-size:1\.35rem\}/.test(css) && /#left #dm-rail \.server-btn \.avatar\{font-size:1\.35rem\}/.test(css),
+    'and the letter a letter-server / DM avatar carries grows with it');
   check(/\.fwrap\.active \.folder-btn::before\{[^}]*width:4px;height:22px\}/.test(css),
     'the phone still slims the pill itself (width/height), only its offset is derived');
   check(/width:100%!important;height:100%!important/.test(serversJs) && !/img\.width = 48/.test(serversJs),
@@ -249,15 +265,25 @@ async function main() {
     await sess('Page.enable');
     await sess('Runtime.enable');
 
-    for (const [tag, vw, vh, mobile, ico, rail] of [['desktop', 1280, 900, false, DESKTOP_ICO, DESKTOP_RAIL], ['phone', 390, 844, true, PHONE_ICO, PHONE_RAIL]]) {
+    for (const [tag, vw, vh, mobile, ico, rail] of [
+      ['desktop', 1280, 900, false, DESKTOP_ICO, DESKTOP_RAIL],
+      ['phone', 390, 844, true, TOUCH_ICO, TOUCH_RAIL],
+      ['tablet', 834, 1112, true, TOUCH_ICO, TOUCH_RAIL],
+    ]) {
+      const deskLayout = tag === 'desktop';
+      // The phone LAYOUT slims the active pill; the tablet gets the desktop's.
+      const phoneLayout = tag === 'phone';
       console.log(`\n[1] ${tag}: every rail icon is ${ico}px in a ${rail}px rail`);
+      // Touch emulation is what makes `pointer:coarse` true, exactly like a real
+      // phone or tablet — the touch rail hangs off that, so it has to be on.
+      await sess('Emulation.setTouchEmulationEnabled', { enabled: !deskLayout, maxTouchPoints: deskLayout ? 1 : 5 });
       await sess('Emulation.setDeviceMetricsOverride', { width: vw, height: vh, deviceScaleFactor: 2, mobile });
       await sess('Page.navigate', { url: 'http://127.0.0.1:' + port + '/' });
       await sleep(400);
       const p = await evaluate('window.__probe()');
 
       check(p.ico === ico + 'px' && p.railW === rail + 'px', `the rail reads --rail-ico:${ico}px inside --rail-w:${rail}px`, { ico: p.ico, rail: p.railW });
-      check(Math.abs(p.rail.w - rail) <= 1, `the rail is still ${rail}px wide (smaller icons, not a narrower rail)`, { w: p.rail.w });
+      check(Math.abs(p.rail.w - rail) <= 1, `the rail really is ${rail}px wide`, { w: p.rail.w });
       check(p.icons.length >= 9, 'every button in the rail was measured', p.icons.length);
       const sizes = [...new Set(p.icons.map((i) => i.w + 'x' + i.h))];
       check(sizes.length === 1 && sizes[0] === ico + 'x' + ico, `all of them are the same square (${ico}px)`, sizes);
@@ -269,16 +295,16 @@ async function main() {
       check(p.serverIconImg.w === ico && p.serverIconImg.h === ico, 'a server ICON image fills the button exactly', p.serverIconImg);
       check(p.homeArt.w === ico - 6 && p.homeFire.w === ico - 6, `the campfire art keeps its 3px inset (${ico - 6}px)`, { img: p.homeArt, fire: p.homeFire });
       check(p.panel.w === ico + 4, `an open folder\'s panel is the icon plus its 2px padding (${ico + 4}px)`, p.panel);
-      check(p.addGlyph.w === (tag === 'desktop' ? 26 : 24) && p.adminGlyph.w === (tag === 'desktop' ? 22 : 20),
+      check(p.addGlyph.w === (deskLayout ? 26 : 30) && p.adminGlyph.w === (deskLayout ? 22 : 26),
         'the ＋ and the shield scale with the box', { add: p.addGlyph.w, admin: p.adminGlyph.w });
-      check(p.cells.join(',') === (tag === 'desktop' ? '16,16,20' : '14,14,14'),
+      check(p.cells.join(',') === (deskLayout ? '16,16,20' : '19,19,24'),
         'the folder preview cells scale too (a one-cell folder keeps its larger preview)', p.cells);
 
       for (const [name, pill] of Object.entries(p.pills)) {
         check(!!pill, `the ${name}'s active pill exists`);
         check(pill && Math.abs(pill.left) <= 0.6, `and sits on the rail's own left edge (${name})`, pill);
       }
-      check(p.pills.server && p.pills.server.w === (tag === 'desktop' ? 6 : 4) && p.pills.server.h === (tag === 'desktop' ? 28 : 22),
+      check(p.pills.server && p.pills.server.w === (phoneLayout ? 4 : 6) && p.pills.server.h === (phoneLayout ? 22 : 28),
         `the ${tag} pill keeps its own bar`, p.pills.server);
       check(p.badgeRight.right === '-4px' && p.badgeRight.iconRight + 4 <= p.rail.r + 0.5,
         'an unread badge still hangs inside the rail, off the icon\'s corner', p.badgeRight);

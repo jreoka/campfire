@@ -48,14 +48,14 @@
      because the me bar and the in-call bar hang UNDER the rail: they are one
      card spanning rail + sidebar, so their negative left margin is derived from
      this. As a hard-coded -70px it was tuned to the 80px rail and silently went
-     6px off the screen the moment the rail was narrowed. The phone block
-     restates it (62px). */
+     6px off the screen the moment the rail was narrowed. The touch rail
+     restates it (72px — see "a larger rail for touch"). */
   --rail-w:64px;
   /* The square every rail icon is — home, the DM avatars, servers, folders, the
      ＋ and the admin shield. One number for all of them (they have to line up in
      one column), and the active pill's offset is derived from it and --rail-w
-     (see .server-btn.active::before), so narrowing the icons can never leave the
-     pill floating away from the rail's edge. The phone block restates it (40px). */
+     (see .server-btn.active::before), so changing the icons can never leave the
+     pill floating away from the rail's edge. The touch rail restates it (52px). */
   --rail-ico:44px;
   --radius:10px;
   --r-sm:8px;
@@ -2789,21 +2789,14 @@ body{touch-action:manipulation}
      grown hit box. Its row is only ~38px tall and the TEXT CHANNELS label below
      sits in its own padding, so ±10px stays inside the row's own neighbours. */
   #srv-stories .ss-add::after{content:'';position:absolute;inset:-10px -9px;border-radius:50%}
-  /* The rail narrows on a phone, and the bars that hang under it follow because
-     their margin is derived from --rail-w (see :root) rather than restated. The
-     icons step down with it (--rail-ico), and everything computed off those two
-     — the campfire art's inset, the folder panel's width, the active pill's
-     offset — follows without a phone copy of its own. */
-  #left{--rail-w:62px;--rail-ico:40px}
+  /* The rail's own SIZE comes from the touch rule below ("a larger rail for
+     touch") — the phone layout only tightens the rail's own paddings and slims
+     the active pill. The bars that hang under the rail follow either way,
+     because their margin is derived from --rail-w (see :root). */
   #left #rail{width:var(--rail-w);flex-shrink:0}
   #left .rail-head{padding:.7rem 0 .5rem}
   #left .folder-open{padding:5px 2px;gap:8px}
   #left .fwrap.active .folder-btn::before{width:4px;height:22px}
-  #left .fg1{grid-template-columns:18px}
-  #left .fg2,#left .fg3,#left .fg4{grid-template-columns:repeat(2,14px)}
-  #left .fc,#left .fg1 .fc{width:14px;height:14px}
-  #left #btn-add-server svg{width:24px;height:24px}
-  #left #btn-admin svg{width:20px;height:20px}
   #home-wrap:has(> .active)::before{width:4px;height:22px}
   #server-list{align-items:center;padding:.4rem 0 64px;gap:.5rem}
   #sidebar-resizer{display:none}
@@ -2811,6 +2804,31 @@ body{touch-action:manipulation}
   .server-btn.active::before{width:4px;height:22px}
   #left #sidebar{position:static;transform:none;width:auto!important;flex:1;min-width:0;border-left:1px solid var(--line)}
   .icon-btn{display:inline-flex}
+}
+
+/* ---------- a larger rail for touch ----------
+   The rail is the primary navigation on a phone or a tablet, and it carried the
+   SMALLEST icons in the app there: the desktop's 44px, stepped down to 40px on
+   the phone — under the 44px a thumb can reliably hit. Touch therefore gets a
+   bigger square: 52px in a 72px rail, keeping the same 10px gutter the active
+   pill's offset is computed from, with everything the box sizes stepping with it
+   — the ＋ and the shield glyphs, the folder previews, and the letter a
+   letter-server or a DM avatar carries. One rule with one condition list, so the
+   phone and the tablet cannot drift apart.
+
+   The width cap is deliberate: a touch DESKTOP monitor is not a tablet (this is
+   a form-factor decision, not a pointer one), and a giant tablet held sideways
+   has room for the desktop rail. */
+@media (max-width:700px),(pointer:coarse) and (min-width:701px) and (max-width:1400px){
+  #left{--rail-w:72px;--rail-ico:52px}
+  #left .server-btn{font-size:1.35rem}
+  #left #dm-rail .server-btn .avatar{font-size:1.35rem}
+  #left #btn-add-server svg{width:30px;height:30px}
+  #left #btn-admin svg{width:26px;height:26px}
+  #left .fg1{grid-template-columns:24px}
+  #left .fg2,#left .fg3,#left .fg4{grid-template-columns:repeat(2,19px)}
+  #left .fc{width:19px;height:19px}
+  #left .fg1 .fc{width:24px;height:24px}
 }
 
 /* ---------- phone held sideways: Discord's three-pane shape ----------
