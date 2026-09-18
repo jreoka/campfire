@@ -92,11 +92,13 @@ document.addEventListener('click', (e) => {
 });
 // Full-size chat images are what makes opening a channel crawl on a slow link:
 // one photo is 10-30x the bytes of its own 640px preview, and a backlog is
-// mostly pictures. Every chat/DM image therefore renders its DERIVED preview
-// (/uploads/thumbs/files/<name>.<ext>.webp — minted on first request, see
-// media-compress.js) with the attachment's own bytes one error away: the
+// mostly pictures. Every chat/DM STILL image therefore renders its DERIVED
+// preview (/uploads/thumbs/files/<name>.<ext>.webp — minted on first request,
+// see media-compress.js) with the attachment's own bytes one error away: the
 // document error handler (final.js) swaps in the original exactly once, so a
 // preview that cannot be minted costs a slower load, never a broken picture.
+// An ANIMATED picture is the one case that preview cannot stand in for — it is
+// a single frame (see attIsAnimated below).
 // ---------- the shape of a picture, before its bytes ----------
 // A chat picture used to render at zero height and then snap to full size as it
 // landed, which collapses the row it is in and shoves everything below it — the
@@ -314,6 +316,27 @@ function imageSrcFor(a) {
   const q = url.indexOf('?');
   return thumb + (q >= 0 ? url.slice(q) : '');
 }
+// …except for a picture whose whole point is that it MOVES. The derived preview
+// is ONE WebP frame by construction (media-compress.js: `-frames:v 1`), so an
+// animated source painted from it is a still picture — reported exactly that way:
+// "a manually uploaded GIF doesn't autoplay, linked ones do." A Klipy GIF is an
+// https url with no /uploads/ key behind it, so it never had a preview to be
+// frozen by; an uploaded one always did. An animated attachment therefore skips
+// the preview and renders its own bytes, which the browser animates on its own.
+// The preview is still minted and still wanted by surfaces that ask for a STILL
+// TILE (an inbox bookmark's thumbnails, security.js), which is why the server
+// side is unchanged.
+//
+// GIF and APNG are what can be recognized from here without downloading the file
+// (mime, else the stored extension): an animated WebP is indistinguishable from a
+// still one until its bytes are read, and treating every WebP as animated would
+// take the preview away from the far more common still one.
+const ATT_ANIMATED_EXT_RE = /\.(gif|apng)$/i;
+function attIsAnimated(a) {
+  const mime = String((a && a.mime) || '').toLowerCase();
+  if (mime === 'image/gif' || mime === 'image/apng') return true;
+  return ATT_ANIMATED_EXT_RE.test(attCleanUrl(a && a.url));
+}
 // The attachment's OWN identity, on every element that represents it. The menus
 // (desktop right-click, the phone's long-press sheet) resolve from the element
 // the pointer is actually over, so a rendering that does not carry this is an
@@ -366,7 +389,12 @@ function attachmentBodyHTML(a, opts) {
     // gets (see attPreviewEntry / attPendingPreview).
     const pending = a.scan === 'pending';
     const preview = shot ? shot.src : (pending ? attPreviewSrc(a) : '');
-    const thumb = preview ? '' : imageSrcFor(a);
+    // An animated source has no preview to paint: the derived one is a still
+    // frame, and `src` then falls through to the attachment's own animating
+    // bytes (see attIsAnimated). `thumb` empty also means no data-fb-thumb, so
+    // a failure here degrades straight to the file card rather than asking for
+    // the same still preview that was skipped.
+    const thumb = (preview || attIsAnimated(a)) ? '' : imageSrcFor(a);
     // A known size reserves the box. It has to go on the WRAP rather than the
     // image: the wrap is shrink-to-fit, so the image's own max-width:100% has no
     // definite containing block to resolve against until the bytes arrive — the

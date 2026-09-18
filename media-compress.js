@@ -1096,6 +1096,11 @@ async function encodeThumb(srcKey, tkey) {
     // than it — min() rather than force_original_aspect_ratio alone, which would
     // happily upscale a 200px image to 640. The expressions are quoted because
     // a bare comma is a filtergraph separator ("No option name near ...").
+    // The single frame is deliberate for an ANIMATED source too: a preview is
+    // what a list TILE wants (an inbox bookmark's thumbnails, security.js), and
+    // the CHAT never paints this still for one — an animated attachment renders
+    // its own bytes instead (attIsAnimated, public/js/messages.js), because a
+    // GIF painted from here stopped moving, which is the whole file.
     const box = `scale='min(${THUMB_PX},iw)':'min(${THUMB_PX},ih)':force_original_aspect_ratio=decrease`;
     const r = await runFfmpeg([
       '-hide_banner', '-loglevel', 'error', '-y', '-i', tmpIn, '-threads', '1', '-map_metadata', '-1', '-an',

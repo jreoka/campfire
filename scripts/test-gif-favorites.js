@@ -142,7 +142,9 @@ function wiringChecks() {
     'a forwarded GIF keeps it (it must stay starrable in its new home)');
 
   console.log('\n[A4] the star is on the picture, and the menu carries the same action');
-  check(/function attFavHTML\(a\)/.test(messages) && /\$\{attFavHTML\(a\)\}/.test(messages),
+  // The image branch hands the star the pending flag (nothing to star until the
+  // bytes are the final ones — see attFavHTML), so the call form carries it.
+  check(/function attFavHTML\(a, pending\)/.test(messages) && /\$\{attFavHTML\(a, pending\)\}/.test(messages),
     'the image branch renders it');
   check(/function gifFavKeyFor\(a\)/.test(messages) && /if \(a\.gif_slug\) return a\.gif_slug;/.test(messages),
     'a picker post is keyed on its Klipy slug');
@@ -165,9 +167,9 @@ function wiringChecks() {
     && /Add GIF to favorites/.test(actions) && /Remove GIF from favorites/.test(actions),
     'the message menu offers the same action for a touch/keyboard path');
   const imageBranch = slice(messages, "if (a.kind === 'image') {", "if (a.kind === 'video')");
-  check(imageBranch.includes('${attFavHTML(a)}') && (messages.match(/attFavHTML\(a\)/g) || []).length === 2,
+  check(imageBranch.includes('${attFavHTML(a, pending)}') && (messages.match(/attFavHTML\(a, pending\)/g) || []).length === 2,
     'and it rides the image branch only (never a video or a file card)',
-    (messages.match(/attFavHTML\(a\)/g) || []).length);
+    (messages.match(/attFavHTML\(a, pending\)/g) || []).length);
   check(/else for \(const g of gifResults\) box\.appendChild\(gifButton\(g, gifFavMatch\(S\.gifFavs, g\.slug, g\.gif\),/.test(pickers),
     'a picker tile reads starred from either key too (starred in chat, lit in All GIFs)');
 
