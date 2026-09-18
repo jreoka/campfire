@@ -857,11 +857,17 @@ body.members-collapsed #members{display:none}
 .member .avatar{width:28px;height:28px;font-size:.7rem}
 .member .mnames{display:flex;flex-direction:column;min-width:0;line-height:1.25}
 .member .mstatus{font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* Discord-style presence light: ring on the avatar + corner dot (member list + DM rows) */
+/* Discord-style presence light: ring on the avatar + corner dot (member list + DM rows).
+   MEASURED: the slot is 38.2px (a 28px avatar inside .32rem of padding), so a dot hung
+   -3px under the avatar left just 2.1px to the slot's own bottom edge — less than the dot's
+   own 2.5px halo, which is why the light read as jammed against the bottom (and the ring
+   bled out of the slot into the row gap). At -1px the disc still overhangs the avatar — it
+   stays a corner badge — while the halo ends 1.6px INSIDE the slot. The slot's height is
+   untouched either way: an absolutely positioned dot is not in the layout. */
 .member .avwrap{position:relative;width:28px;height:28px;flex-shrink:0}
 .dmrow .avwrap{position:relative;width:28px;height:28px;flex-shrink:0}
 .member .avwrap .avatar,.dmrow .avwrap .avatar{width:100%;height:100%;font-size:.75rem}
-.member .avwrap .status-dot,.dmrow .avwrap .status-dot{position:absolute;bottom:-3px;right:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2.5px var(--panel);z-index:2}
+.member .avwrap .status-dot,.dmrow .avwrap .status-dot{position:absolute;bottom:-1px;right:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2.5px var(--panel);z-index:2}
 .edit-box textarea{width:100%;min-height:64px;background:var(--inset);border:1px solid var(--accent);color:var(--text);border-radius:10px;padding:.55rem .65rem;font-size:.9rem;outline:none;resize:vertical}
 .edit-box .row{margin-top:.35rem}
 .edit-atts{display:flex;flex-direction:column;gap:.35rem;margin:.5rem 0}
@@ -2961,6 +2967,14 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 [data-theme="light"] #me-card.has-banner .mstatus.ugame{color:#b9c1ff}
 [data-theme="light"] .member.has-banner .mstatus.ustream,
 [data-theme="light"] #me-card.has-banner .mstatus.ustream{color:#d6b8ff}
+/* The bar's own ICONS are the same ink question as its text: the light theme
+   darkens .me-icobtn for a --panel-2 bar, and that ink vanishes into the 45%
+   scrim over a sidebar banner (reported: "on light mode the buttons arent visible
+   on the me bar"). Over a banner they wear the name's white — mute / deafen /
+   settings are borderless glyphs, so the colour IS their only chrome. The game
+   badge beside the name is the same picture on a bar, so it follows. */
+[data-theme="light"] #me-card.has-banner .me-icobtn,
+[data-theme="light"] #me-card.has-banner .gbadge{color:#fff}
 
 /* ---------- settings: blocked list ---------- */
 .set-blocked-list{display:flex;flex-direction:column}
@@ -3805,6 +3819,10 @@ html.wrapper-app .msg .text,html.wrapper-app .msg .text *,html.wrapper-app input
   .btn.danger:hover{background:rgba(248,113,113,.17)}
   .me-icobtn:hover{background:rgba(255,255,255,.12)}
   [data-theme="light"] .me-icobtn:hover{background:rgba(0,0,0,.08)}
+  /* …except over a banner, where the bar is dark in every theme: the light
+     theme's black hover tint would be the one invisible thing on an otherwise
+     white row of icons. */
+  [data-theme="light"] #me-card.has-banner .me-icobtn:hover{background:rgba(255,255,255,.16)}
   .vb-btn:hover{background:var(--panel-4);outline-color:var(--line);transform:translateY(-1px)}
   .vb-btn:hover svg{transform:scale(1.08)}
   /* An engaged key stays red under the pointer (it was the one state a hover
