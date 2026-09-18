@@ -120,18 +120,6 @@ window.__state = function (wrap) {
     loadTag: load.tagName,
     poster: (vid.poster || '').slice(0, 24),
     hasPoster: /^data:image/.test(vid.poster || ''),
-    // The way into the full-screen viewer: a clip's own controls own a tap on
-    // it, so the chip in the corner beside the download button is the entry
-    // point (see attExpandHTML in messages.js).
-    expand: !!wrap.querySelector('.att-expand'),
-    hitExpand: (() => {
-      const el = wrap.querySelector('.att-expand');
-      if (!el) return false;
-      const r = el.getBoundingClientRect();
-      if (!r.width) return false;
-      const t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-      return !!t && el.contains(t);
-    })(),
     box: { w: Math.round(vr.width), h: Math.round(vr.height) },
     rects: { wrap: box(wr), video: box(vr), load: box(lr) },
     // The overlay must cover the video's box exactly, and it (or its spinner)
@@ -257,7 +245,6 @@ async function main() {
     check(s.covers, 'the overlay covers the video box exactly', s);
     check(s.hitOverlay && !s.hitVideo, 'a tap in the middle lands on the overlay, not the native control', s);
     check(!s.hasPoster, 'no poster has been captured yet at this point', s);
-    check(s.expand && s.hitExpand, 'a clip carries its full-screen chip, clickable over the loading shell', { expand: s.expand, hit: s.hitExpand });
     // A visual artifact for eyeballing the loading panel (temp dir).
     try {
       const shot = (await sess('Page.captureScreenshot', { format: 'png' })).data;

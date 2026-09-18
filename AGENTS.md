@@ -641,26 +641,26 @@ into) — the same order in the long-press handler, which opens `openMsgSheet(mi
 el)` for anything inside a message. `attFromEl` reads the identity and the
 same `a:not([data-att-id])` exemption in the contextmenu guard is what lets a file
 card through without taking the browser's own link menu away from ordinary links.
-**The lightbox walks a message's media.** A picture posted with others opens in
-`#lightbox` ON the tile that was tapped, with a back/next arrow on each side of
-the screen (`#lb-prev`/`#lb-next`, 44px, safe-area insets, vertically centred;
-the arrow at an end is `:disabled` rather than hidden — the set has a first and a
-last), plus the keyboard's ArrowLeft/ArrowRight and a sideways drag
-(`LB_SWIPE_PX`, which is what the old "sideways is not a dismissal" branch in
-`lbPointerMove` became; a zoomed photo still pans instead). The set is
-`lbMediaOf` — read OFF THE DOM, `.msg-atts` or `.pin-atts`, `:scope > .att-slot` —
-so it is exactly what the message renders (a `scan-block` is not a slot and a
-picture this browser cannot decode has already become a file card; neither is
-offered) and it carries images AND clips in message order, `data-fb-url` being
-the ORIGINAL the viewer opens while the tile paints the derived preview.
-`lbGalleryAt` finds the tapped item by SLOT IDENTITY, not by url, because one
-message can show the same picture twice. A single item (an embed, a bookmark
-tile) shows no arrows at all. Clips ride the `<video id="lightbox-vid">` beside
-the zoomable `<img>` — and since a clip's own controls own a tap on it, its way
-into the viewer is the `.att-expand` chip in the corner slot the GIF star uses on
-pictures (see `attExpandHTML`); a tap on the player never closes the viewer or
-zooms it. `scripts/test-lightbox.js` pins the block, the arrows at both ends and
-both element kinds.
+**The lightbox walks a message's PICTURES** (Discord's behaviour, and the
+behaviour this viewer already had: a video plays where it sits, by its own
+controls — play/pause, scrub, fullscreen — so it is deliberately NOT in the set;
+there is no video stage in the viewer, and no chip on a clip pretending to open
+one). A picture posted with others opens in `#lightbox` ON the tile that was
+tapped, with a back/next arrow on each side of the screen
+(`#lb-prev`/`#lb-next`, 44px, safe-area insets, vertically centred; the arrow at
+an end is `:disabled` rather than hidden — the set has a first and a last), plus
+the keyboard's ArrowLeft/ArrowRight and a sideways drag (`LB_SWIPE_PX`, which is
+what the old "sideways is not a dismissal" branch in `lbPointerMove` became; a
+zoomed photo still pans instead). The set is `lbMediaOf` — read OFF THE DOM,
+`.msg-atts` or `.pin-atts`, `:scope > .att-slot`, taking only `img.att-img` — so
+it is exactly what the message renders (a `scan-block` is not a slot and a picture
+this browser cannot decode has already become a file card; neither is offered),
+and its `src` is the ORIGINAL the tile's `data-fb-url` names while the tile paints
+the derived preview. `lbGalleryAt` finds the tapped item by SLOT IDENTITY, not by
+url, because one message can show the same picture twice. A single picture (an
+embed, a bookmark tile, a picture sharing its message with a clip) shows no
+arrows at all. `scripts/test-lightbox.js` pins the block, the arrows at both ends,
+and those two absences (no video stage, no chip).
 A file whose bytes were removed (`infected`) or are not published yet
 (`pending`) offers ONLY "Scan info", because there is nothing left to save.
 The message menu adds Mark unread,

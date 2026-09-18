@@ -1167,7 +1167,7 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   that form comes back). Re-run it after touching the composer's padding,
   `--strip-h`, `#attach-preview`/`#upload-list`, or the order of those elements
   in `index.html`.
-  `node scripts/test-lightbox.js` covers the media lightbox (headless Chrome,
+  `node scripts/test-lightbox.js` covers the photo lightbox (headless Chrome,
   skipping without Chrome; it runs the real lightbox block pulled out of
   `pickers.js` against the real `#lightbox` markup and `styles.css`): the
   Download/Close controls live in `#lb-bar`, a fixed safe-area row, so they stay
@@ -1179,21 +1179,24 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   downward drag past the threshold dismisses the viewer while a
   short drag springs back; a tap on the backdrop or Close closes, a tap on the
   photo does not, and tapping Download does not; and closing/reopening resets the
-  zoom. Sections [2] and [7]-[9] cover the gallery: a picture in a message of
-  several opens the ORIGINAL on the tile that was tapped (never the derived
+  zoom. Sections [2] and [7]-[9] cover the arrow gallery: a picture in a message
+  of several opens the ORIGINAL on the tile that was tapped (never the derived
   preview) with a back/next arrow on each side of the screen — inside the
   safe-area insets, vertically centred, hit-testable on a phone and a desktop,
   the arrow at each end `:disabled` rather than hidden — and the arrows, the
   arrow keys and a sideways drag walk the set (a swipe left past the last
   picture goes nowhere and never closes the viewer; a tap on an arrow does not
-  reach the stage); a single-picture message and a picture with no message block
-  around it (an embed) show no arrows at all; a clip in the set rides the
-  shared `<video>`, its corner chip opens the viewer ON it, and a tap on the
-  player neither closes the viewer nor zooms it. It writes
-  `campfire-lightbox-gallery.png` / `-clip.png` to the temp dir for eyeballing,
-  like the video placeholder test's own artifact. Re-run it after touching the
-  lightbox block, `#lightbox`'s markup, `.lb-*`/`#lightbox-vid` in the
-  stylesheet, or `.att-expand` in `messages.js`.
+  reach the stage); a single-picture message, a picture with no message block
+  around it (an embed) and a picture sharing its message with a clip show no
+  arrows at all. A CLIP is deliberately not in the set — Discord's behaviour,
+  where a video plays where it sits by its own controls — and that is pinned as
+  an ABSENCE: no `#lightbox-vid` stage in the markup or the stylesheet, no
+  `.att-expand` chip in `messages.js`, `styles.css` or `pickers.js`, and
+  `lbMediaOf` taking only `img.att-img`. It writes
+  `campfire-lightbox-gallery.png` to the temp dir for eyeballing, like the video
+  placeholder test's own artifact. Re-run it after touching the lightbox block,
+  `#lightbox`'s markup, the `.lb-*` rules, or the attachment block in
+  `messages.js`.
   `node scripts/test-chan-unread.js` covers unread channel dots and the rail's
   unread badges (offline; runs the real helpers sliced out of `servers.js`
   against a fake DOM + localStorage, then checks the render/menu/socket wiring

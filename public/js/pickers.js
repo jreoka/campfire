@@ -1059,15 +1059,6 @@ document.addEventListener('keydown', (e) => {
     const dl = imgEl.closest('.att-wrap')?.querySelector('.att-dl');
     openLightbox(imgEl.dataset.fbUrl || imgEl.src, dl?.getAttribute('download') || '', lbGalleryAt(imgEl)); return;
   }
-  // A clip is played in the message itself — its own controls own a tap — so
-  // its corner chip is the way into the full-screen viewer, and from there into
-  // the rest of the message's media (see attExpandHTML in messages.js).
-  const expandEl = e.target.closest('.att-expand');
-  if (expandEl) {
-    const g = lbGalleryAt(expandEl);
-    if (g) openLightbox(g.items[g.index].src, g.items[g.index].name, g);
-    return;
-  }
   if (clEl) {
     const ch = (S.serverDetail?.channels || []).find((c) => c.id === clEl.dataset.clink);
     if (ch && S.view === 'server') {
@@ -1375,17 +1366,18 @@ $('#thread-composer').addEventListener('submit', (e) => {
 });
 
 // ---------- lightbox ----------
-// Full-screen media viewer: a picture on #lightbox-img, a clip on #lightbox-vid
-// beside it. The Download / Close controls sit in #lb-bar, a fixed safe-area
-// bar, so a tall photo can never carry them off the top of the screen. One
-// pointer pans a zoomed photo, two pinch it, double-tap toggles zoom, and
-// dragging an unzoomed photo down dismisses the viewer (the whole overlay
-// follows the finger, exactly like the story viewer).
+// Full-screen PHOTO viewer. The Download / Close controls sit in #lb-bar, a
+// fixed safe-area bar, so a tall photo can never carry them off the top of the
+// screen. One pointer pans a zoomed photo, two pinch it, double-tap toggles
+// zoom, and dragging an unzoomed photo down dismisses the viewer (the whole
+// overlay follows the finger, exactly like the story viewer).
 //
 // A picture posted with OTHERS opens on itself with an arrow on each side of the
-// screen: the arrows walk the message's own media, in the order the message
-// shows it, pictures and clips alike (see lbMediaOf). A single picture — an
-// embed, a bookmark's tile — has nowhere to go and shows no arrows at all.
+// screen: the arrows walk the message's PICTURES in the order the message shows
+// them (see lbMediaOf). A single picture — an embed, a bookmark's tile — has
+// nowhere to go and shows no arrows at all. A CLIP is not part of that set:
+// Discord does the same, and a video is played where it sits by its own controls
+// (play/pause, scrub, fullscreen) rather than being handed to a photo viewer.
 const LB_MIN = 1, LB_MAX = 6;
 // How far a sideways drag must travel before it is "the next one" rather than a
 // tap (the touch twin of the arrows).
@@ -1393,32 +1385,29 @@ const LB_SWIPE_PX = 40;
 const lb = { open: false, scale: 1, tx: 0, ty: 0, gen: 0, ptrs: new Map(), pinch: null, pan: null, swipe: null, lastTap: 0, tapX: 0, tapY: 0, items: null, index: 0 };
 function lbStage() { return $('#lb-stage'); }
 function lbImg() { return $('#lightbox-img'); }
-function lbVid() { return $('#lightbox-vid'); }
-// The pictures and clips the source message is showing, in the order it shows
-// them. Read off the DOM, so it is exactly what the message renders: a file
-// still behind the scan gate is a `.scan-block` rather than a slot, and a
-// picture this browser cannot decode has already become a file card — neither is
-// offered, because there is nothing to put on the stage. `el` is the slot it was
-// read from, which is how the tapped tile is found in the list (the url cannot
-// do it: one message can show the same picture twice). `src` is the ORIGINAL
-// (data-fb-url), never the derived preview the tile paints.
+// The PICTURES the source message is showing, in the order it shows them. Read
+// off the DOM, so it is exactly what the message renders: a file still behind the
+// scan gate is a `.scan-block` rather than a slot, and a picture this browser
+// cannot decode has already become a file card — neither is offered, because
+// there is nothing to put on the stage. `el` is the slot it was read from, which
+// is how the tapped tile is found in the list (the url cannot do it: one message
+// can show the same picture twice). `src` is the ORIGINAL (data-fb-url), never
+// the derived preview the tile paints.
+//
+// A CLIP is deliberately not in this list, which is Discord's behaviour and the
+// behaviour this viewer already had: a video is played where it sits, by its own
+// controls (play/pause, scrub, fullscreen), so there is nothing for a photo
+// viewer to walk to. The arrows are the message's picture set.
 function lbMediaOf(el) {
   const box = el && el.closest ? el.closest('.msg-atts, .pin-atts') : null;
   if (!box) return null;
   const items = [];
   for (const slot of box.querySelectorAll(':scope > .att-slot')) {
-    const wrap = slot.querySelector('.att-wrap');
     const img = slot.querySelector('img.att-img');
-    if (img) {
-      const src = img.dataset.fbUrl || img.dataset.fbOrig || img.getAttribute('src') || '';
-      if (src) items.push({ el: slot, kind: 'image', src, name: img.dataset.fbName || (wrap && wrap.dataset.fbName) || '' });
-      continue;
-    }
-    const vid = slot.querySelector('video.att-vid');
-    if (vid) {
-      const src = vid.dataset.fbSrc || vid.getAttribute('src') || '';
-      if (src) items.push({ el: slot, kind: 'video', src, name: (wrap && wrap.dataset.fbName) || vid.dataset.fbName || '', poster: vid.getAttribute('poster') || '' });
-    }
+    if (!img) continue;
+    const wrap = slot.querySelector('.att-wrap');
+    const src = img.dataset.fbUrl || img.dataset.fbOrig || img.getAttribute('src') || '';
+    if (src) items.push({ el: slot, src, name: img.dataset.fbName || (wrap && wrap.dataset.fbName) || '' });
   }
   return items.length ? items : null;
 }
@@ -1478,41 +1467,15 @@ function lbGo(delta) {
   lb.index = i;
   lbShow(lb.items[i]);
 }
-// Paint ONE item: a picture on the zoomable <img>, a clip on the <video> that
-// shares the stage. Every item change starts from a clean stage, so a zoom can
-// never carry over to the next picture.
+// Paint ONE picture: the stage, the corner download button (the attachment's own
+// name, so the file lands as the file it was posted as) and the arrows that say
+// where in the set this one is. Every change starts from a clean stage, so a zoom
+// can never carry over to the next picture.
 function lbShow(item) {
   const it = item || {};
-  const img = lbImg(), vid = lbVid();
-  const g = lb.gen;
-  const isVid = it.kind === 'video' && !!it.src;
+  const img = lbImg();
   lbReset();
-  if (vid) {
-    try { vid.pause(); } catch {}
-    if (isVid) {
-      if (String(vid.getAttribute('src') || '') !== String(it.src)) vid.src = it.src;
-      vid.poster = it.poster || '';
-      vid.classList.remove('hidden');
-    } else {
-      vid.removeAttribute('src');
-      try { vid.load(); } catch {}
-      vid.classList.add('hidden');
-    }
-    // A clip with no frame in hand paints a black box: the shared capturer
-    // (messages.js) mints one, and for a tile already on screen it is in flight.
-    if (isVid && !it.poster && typeof whenVideoPoster === 'function') {
-      const want = String(it.src);
-      whenVideoPoster(it.src, (shot) => {
-        // Only onto the item that asked for it: the capture can land after the
-        // reader has already walked on to the next clip.
-        if (shot && lb.gen === g && String(vid.getAttribute('src') || '') === want) vid.poster = shot;
-      });
-    }
-  }
-  if (img) {
-    if (isVid) { img.removeAttribute('src'); img.classList.add('hidden'); }
-    else { img.src = it.src || ''; img.classList.remove('hidden'); }
-  }
+  if (img) img.src = it.src || '';
   const dl = $('#lightbox-dl');
   if (dl) {
     if (it.src && it.name) { dl.href = it.src; dl.setAttribute('download', it.name); dl.classList.remove('hidden'); }
@@ -1528,18 +1491,16 @@ function closeLightbox() {
   root.classList.add('hidden');
   const img = lbImg();
   if (img) img.removeAttribute('src');
-  const vid = lbVid();
-  if (vid) { try { vid.pause(); } catch {} vid.removeAttribute('src'); try { vid.load(); } catch {} }
   $('#lightbox-dl')?.classList.add('hidden');
   lb.items = null; lb.index = 0;
   lbPaintNav();
   lbReset();
 }
-// `gallery` (optional) is what lbGalleryAt answered: the message's media in
-// order, and where in it the thing that was tapped sits. With one, the viewer
-// opens on THAT item and the side arrows walk the rest; with more than one item
-// the arrows appear, and with a single item (or none: an embed, a bookmark tile)
-// there is exactly one thing to see and no arrows at all.
+// `gallery` (optional) is what lbGalleryAt answered: the message's pictures in
+// order, and where in them the one that was tapped sits. With it, the viewer
+// opens on THAT picture and the side arrows walk the rest; with more than one
+// picture the arrows appear, and with a single one (or none: an embed, a bookmark
+// tile) there is exactly one thing to see and no arrows at all.
 function openLightbox(src, name, gallery) {
   const root = $('#lightbox');
   const img = lbImg();
@@ -1552,7 +1513,7 @@ function openLightbox(src, name, gallery) {
   lb.index = first;
   lb.open = true;
   root.classList.remove('hidden');
-  lbShow(list ? list[first] : { kind: 'image', src: src || '', name: name || '' });
+  lbShow(list ? list[first] : { src: src || '', name: name || '' });
 }
 // Zoom about a point given in stage-centre coordinates (the same convention as
 // the story composer's pinch): the content under the point stays under it.
@@ -1681,8 +1642,6 @@ function lbPointerUp(e) {
   // A tap on the photo toggles the zoom. Mouse and pen get it on the first
   // click (click to zoom in, click again to zoom out); touch keeps double-tap
   // so a stray single tap never jumps the zoom. A tap on the backdrop closes.
-  // A clip's own controls own every tap on IT: never a zoom, never a close.
-  if (target === lbVid()) return;
   if (target === lbImg()) {
     if (e.pointerType === 'touch') {
       const now = Date.now();

@@ -19,10 +19,12 @@
 //   - closing and reopening resets the zoom;
 //   - a picture posted with others opens with a back and a next arrow on either
 //     side of the screen, the arrows (and the arrow keys, and a sideways swipe)
-//     walk the message's own media in order, each end disables its arrow, and a
+//     walk the message's PICTURES in order, each end disables its arrow, and a
 //     lone picture shows no arrows at all;
-//   - a clip in that set gets the shared stage (<video>), and a tap on the
-//     player neither closes the viewer nor zooms it.
+//   - a CLIP beside those pictures is not in that set, and there is no video
+//     stage in the viewer and no chip on a clip pretending to open one — the
+//     behaviour Discord has, where a video plays where it sits by its own
+//     controls.
 //
 // Usage: node scripts/test-lightbox.js
 
@@ -92,9 +94,6 @@ window.__state = () => ({
   hidden: document.getElementById('lightbox').classList.contains('hidden'),
   scale: lb.scale, tx: lb.tx, ty: lb.ty,
   img: document.getElementById('lightbox-img').getAttribute('src') || '',
-  imgHidden: document.getElementById('lightbox-img').classList.contains('hidden'),
-  vid: document.getElementById('lightbox-vid').getAttribute('src') || '',
-  vidHidden: document.getElementById('lightbox-vid').classList.contains('hidden'),
   dl: document.getElementById('lightbox-dl').getAttribute('href') || '',
   dlName: document.getElementById('lightbox-dl').getAttribute('download') || '',
   prevHidden: document.getElementById('lb-prev').classList.contains('hidden'),
@@ -122,60 +121,51 @@ window.__swipeX = (x, y, dx) => {
   for (let i = 1; i <= 6; i++) pev('pointermove', 1, x + dx * i / 6, y);
   pev('pointerup', 1, x + dx, y);
 };
-// A tap whose target is given outright (a <video> has no layout to hit-test in a
-// headless page with no decodable bytes behind it).
-window.__tapEl = (el) => { pev('pointerdown', 1, 10, 10, el); pev('pointerup', 1, 10, 10, el); };
-// A message's own media block, as messages.js renders one: each attachment is an
-// .att-slot holding its .att-wrap, its media element and its corner chips. The
-// tile paints the derived PREVIEW while data-fb-url is the ORIGINAL, which is
+// A message's own attachment block, as messages.js renders one: each attachment
+// is an .att-slot holding its .att-wrap, its media element and its corner chips.
+// The tile paints the derived PREVIEW while data-fb-url is the ORIGINAL, which is
 // exactly what the lightbox has to open — so the two are different pictures of
 // different sizes, and a viewer showing the wrong one is visible in the state.
 window.__pic = (i) => 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="' + (220 + i * 10) + '" height="160"><rect width="100%" height="100%" fill="#33507a"/></svg>');
 window.__thumb = (i) => 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="60" height="40"><rect width="100%" height="100%" fill="#0c1020"/></svg>');
+window.__picSlot = (i) => '<span class="att-slot"><span class="att-wrap" data-fb-name="p' + i + '.png" data-fb-url="' + __pic(i) + '">'
+  + '<img class="att-img" src="' + __thumb(i) + '" data-fb-url="' + __pic(i) + '" data-fb-name="p' + i + '.png" />'
+  + '<a class="att-dl" href="' + __pic(i) + '" download="p' + i + '.png"></a></span></span>';
+window.__clipSlot = () => '<span class="att-slot"><span class="att-wrap" data-fb-name="clip.mp4" data-fb-url="/clip.mp4">'
+  + '<video class="att-vid" src="/clip.mp4" data-fb-src="/clip.mp4"></video>'
+  + '<a class="att-dl" href="/clip.mp4" download="clip.mp4"></a></span></span>';
 window.__gallery = (name, n) => {
   const box = document.createElement('div');
   box.className = 'msg-atts';
   box.id = name;
-  for (let i = 0; i < n; i++) {
-    const slot = document.createElement('span');
-    slot.className = 'att-slot';
-    slot.innerHTML = '<span class="att-wrap" data-fb-name="p' + i + '.png" data-fb-url="' + __pic(i) + '">'
-      + '<img class="att-img" src="' + __thumb(i) + '" data-fb-url="' + __pic(i) + '" data-fb-name="p' + i + '.png" />'
-      + '<a class="att-dl" href="' + __pic(i) + '" download="p' + i + '.png"></a></span>';
-    box.appendChild(slot);
-  }
+  let html = '';
+  for (let i = 0; i < n; i++) html += __picSlot(i);
+  box.innerHTML = html;
   document.body.appendChild(box);
   return true;
 };
-// One picture and one clip in the same message: the gallery has to walk across
-// the two element kinds.
-window.__galleryMix = (name) => {
+// A message of pictures AND a clip: the clip is not a picture, so the arrows walk
+// the pictures and never land on the player (Discord does the same — a video
+// plays where it sits, by its own controls).
+window.__galleryWithClip = (name, pics) => {
   const box = document.createElement('div');
   box.className = 'msg-atts';
   box.id = name;
-  box.innerHTML = '<span class="att-slot"><span class="att-wrap" data-fb-name="p.png" data-fb-url="' + __pic(0) + '">'
-    + '<img class="att-img" src="' + __thumb(0) + '" data-fb-url="' + __pic(0) + '" data-fb-name="p.png" />'
-    + '<a class="att-dl" href="' + __pic(0) + '" download="p.png"></a></span></span>'
-    + '<span class="att-slot"><span class="att-wrap" data-fb-name="clip.mp4" data-fb-url="/orig1.mp4">'
-    + '<video class="att-vid" src="/orig1.mp4" data-fb-src="/orig1.mp4" poster="' + __thumb(0) + '"></video>'
-    + '<a class="att-dl" href="/orig1.mp4" download="clip.mp4"></a>'
-    + '<button type="button" class="att-expand"></button></span></span>';
+  let html = __picSlot(0) + __clipSlot();
+  for (let i = 1; i < pics; i++) html += __picSlot(i);
+  box.innerHTML = html;
   document.body.appendChild(box);
   return true;
 };
-// The two entry points the real click handler owns (see pickers.js): a picture
-// opens through its own url + download name, a clip through its corner chip —
-// both with the gallery read off the element the pointer was over.
+// The entry point the real click handler owns (see pickers.js): a picture opens
+// through its own url + download name, with the gallery read off the element the
+// pointer was over.
 window.__clickMedia = (el) => {
-  if (!el) return false;
+  if (!el || !el.classList.contains('att-img')) return false;
   const g = lbGalleryAt(el);
   if (!g) return false;
-  if (el.classList.contains('att-img')) {
-    const dl = el.closest('.att-wrap')?.querySelector('.att-dl');
-    openLightbox(el.dataset.fbUrl || el.src, dl?.getAttribute('download') || '', g);
-  } else {
-    openLightbox(g.items[g.index].src, g.items[g.index].name, g);
-  }
+  const dl = el.closest('.att-wrap')?.querySelector('.att-dl');
+  openLightbox(el.dataset.fbUrl || el.src, dl?.getAttribute('download') || '', g);
   return true;
 };
 // Click the i-th thing matching sel inside the block called name.
@@ -204,7 +194,7 @@ window.__geo = () => {
   return {
     vw: innerWidth, vh: innerHeight,
     bar: __box('#lb-bar'), dl: __box('#lightbox-dl'), close: __box('#lightbox-close'), stage: __box('#lb-stage'),
-    prev: __box('#lb-prev'), next: __box('#lb-next'), vid: __box('#lightbox-vid'),
+    prev: __box('#lb-prev'), next: __box('#lb-next'),
     img: { l:+rimg.left.toFixed(1), t:+rimg.top.toFixed(1), r:+rimg.right.toFixed(1), b:+rimg.bottom.toFixed(1) },
     lbTouch: getComputedStyle(l).touchAction, barTop: getComputedStyle($('#lb-bar')).top,
     hitDl: hit('#lightbox-dl'),
@@ -287,17 +277,20 @@ function staticChecks() {
   // safe-area inset.
   check(!/#lightbox-dl\{position:absolute;top:1rem;right:1rem/.test(css), 'the old unsafetied corner anchor is gone');
 
-  console.log('\n[2] a gallery gets an arrow on each side of the screen');
+  console.log('\n[2] a gallery of pictures gets an arrow on each side of the screen');
   check(/id="lb-prev"/.test(index) && /id="lb-next"/.test(index), 'the overlay carries a back and a next arrow');
-  check(/<video id="lightbox-vid"/.test(index), 'and a stage for a clip beside the picture');
   check(/\.lb-nav\{position:absolute;top:50%;transform:translateY\(-50%\)/.test(css), 'each arrow is vertically centred on its side of the screen');
   check(/\.lb-prev\{left:calc\(\.6rem \+ var\(--safe-l\)\)\}/.test(css) && /\.lb-next\{right:calc\(\.6rem \+ var\(--safe-r\)\)\}/.test(css), 'and held inside the safe-area insets');
   check(/\.lb-nav:disabled\{opacity:\.3;cursor:default\}/.test(css), 'the arrow at the end of the set goes dark rather than vanishing');
-  check(/#lightbox-vid\{max-width:100%;max-height:100%/.test(css), 'the clip is bounded by the same stage rules as the picture');
-  check(/function lbMediaOf\(/.test(pickers) && /function lbGalleryAt\(/.test(pickers), 'the gallery is the message\'s own media, in order');
+  check(/function lbMediaOf\(/.test(pickers) && /function lbGalleryAt\(/.test(pickers), 'the gallery is the message\'s own attachments, in order');
   check(/openLightbox\(imgEl\.dataset\.fbUrl \|\| imgEl\.src, dl\?\.getAttribute\('download'\) \|\| '', lbGalleryAt\(imgEl\)\)/.test(pickers), 'a picture click hands the viewer that gallery');
-  check(/const expandEl = e\.target\.closest\('\.att-expand'\)/.test(pickers) && /class="att-expand"/.test(messages), 'and a clip gets in through its own corner chip (its controls own the tap on it)');
-  check(/attDl\(a, pending\)\}\$\{attExpandHTML\(\)\}/.test(messages), 'the chip sits beside the download button on every clip');
+  // Discord's viewer is the PHOTO viewer and this one is too: a clip's own
+  // controls own a tap on it, it plays where it sits, and it is deliberately not
+  // in the set the arrows walk. Pinned as an absence so re-adding a video stage
+  // (or a chip that opens the viewer from a clip) has to be a decision.
+  check(!/lightbox-vid/.test(index) && !/lightbox-vid/.test(css) && !/lbVid/.test(pickers), 'there is no video stage in the photo viewer');
+  check(!/att-expand/.test(messages) && !/att-expand/.test(css) && !/att-expand/.test(pickers), 'and no chip on a clip pretending to open one');
+  check(/for \(const slot of box\.querySelectorAll\(':scope > \.att-slot'\)\) \{\s*\n\s*const img = slot\.querySelector\('img\.att-img'\);\s*\n\s*if \(!img\) continue;/.test(pickers), 'lbMediaOf takes the pictures and skips everything else');
 }
 
 async function main() {
@@ -505,51 +498,39 @@ async function main() {
     check(inside(g.prev, g.vw, g.vh) && g.hitPrev && inside(g.next, g.vw, g.vh) && g.hitNext, 'on a desktop both arrows are reachable too');
     check((await state()).n === 3, 'and the set is the same one');
 
-    console.log('\n[9] a clip in the set gets the shared stage');
+    console.log('\n[9] a clip in the message is not part of the picture set');
     await device(390, 844, { touch: true });
     await evaluate('__close()');
     await sleep(30);
-    await evaluate("__galleryMix('gm')");
+    // Two pictures and a clip between them: the arrows walk the two pictures, in
+    // their own order, and never land on the player.
+    await evaluate("__galleryWithClip('gm', 2)");
     await evaluate("__clickIn('gm', '.att-img', 0)");
     await sleep(120);
     let s9 = await state();
-    check(s9.img === await evaluate('__pic(0)') && s9.vidHidden === true, 'the picture is on the stage, the player is not', s9.vidHidden);
+    check(s9.n === 2 && !s9.prevHidden && !s9.nextHidden, 'two pictures beside a clip are a set of TWO', s9);
+    check(s9.prevOff === true && s9.nextOff === false, 'the first picture is the first of the set', s9);
     await evaluate("document.getElementById('lb-next').click()");
     await sleep(120);
     s9 = await state();
-    check(s9.vid === '/orig1.mp4' && s9.vidHidden === false, 'next hands the stage to the clip');
-    check(s9.imgHidden === true, 'and the picture steps off it');
-    check(s9.dl === '/orig1.mp4' && s9.dlName === 'clip.mp4', 'the corner button downloads the clip now', s9.dl);
-    try {
-      const out = path.join(os.tmpdir(), 'campfire-lightbox-clip.png');
-      fs.writeFileSync(out, Buffer.from(await shot(), 'base64'));
-      console.log('  (wrote ' + out + ')');
-    } catch {}
-    check(s9.prevOff === false && s9.nextOff === true, 'with the picture behind it and nothing after it', s9);
-    // A tap on the player belongs to the player: never a zoom, never a close.
-    await evaluate("__tapEl(__slotIn('gm', '.att-vid'))");
-    await sleep(60);
-    s9 = await state();
-    check(s9.hidden === false && s9.scale === 1, 'a tap on the clip neither closes the viewer nor zooms it', s9.scale);
-    await evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))");
-    await sleep(60);
-    s9 = await state();
-    check(s9.img === await evaluate('__pic(0)') && s9.imgHidden === false && s9.vidHidden === true, 'and back steps to the picture again');
-    check(s9.vid === '', 'with the clip\'s bytes released', s9.vid);
-    // The clip's own corner chip is its way in (its controls own a tap on it).
+    check(s9.img === await evaluate('__pic(1)'), 'next goes straight to the picture after the clip');
+    check(s9.nextOff === true, 'and that picture is the end of the set', s9);
+    check(s9.dl === await evaluate('__pic(1)') && s9.dlName === 'p1.png', 'the corner button still downloads the picture on the stage');
+    // A picture with a clip beside it and nothing else: one picture, no arrows.
     await evaluate('__close()');
     await sleep(30);
-    await evaluate("__clickIn('gm', '.att-expand')");
+    await evaluate("__galleryWithClip('gm1', 1)");
+    await evaluate("__clickIn('gm1', '.att-img', 0)");
     await sleep(60);
     s9 = await state();
-    check(s9.hidden === false && s9.vid === '/orig1.mp4' && s9.vidHidden === false, 'the clip\'s corner chip opens the viewer ON the clip');
-    check(s9.prevHidden === false && s9.prevOff === false && s9.nextOff === true, 'with the rest of the message behind it', s9);
+    check(s9.hidden === false && s9.img === await evaluate('__pic(0)'), 'a picture sharing its message with a clip still opens');
+    check(s9.prevHidden && s9.nextHidden, 'and grows no arrows: a clip is not somewhere the photo viewer can go', s9);
     // Closing clears the set: the next single picture gets no arrows back.
     await evaluate('__close()');
     await sleep(30);
     await open(800, 800);
     s9 = await state();
-    check(s9.hidden === false && s9.prevHidden && s9.nextHidden && s9.vidHidden === true, 'a reopened single picture has no arrows and no player left over', s9);
+    check(s9.hidden === false && s9.prevHidden && s9.nextHidden, 'a reopened single picture has no arrows left over', s9);
   });
 
   console.log('');
