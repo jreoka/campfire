@@ -21,6 +21,10 @@
 // picture is still visibly painted further in. A "vintage" row keeps the old
 // inline recipe so the harness proves it can reproduce the seam at all.
 //
+// The me bar asks for no ramp at all (`{ ramp: false }`, owner request): its own
+// row is painted that way here and asserted to be the SAME brightness at both
+// ends — the scrimmed picture, evenly lit, with no surface colour blended in.
+//
 // Skips (exit 0) when Chrome is unavailable.
 //
 // Usage: node scripts/test-sidebar-banner-edge.js
@@ -74,7 +78,7 @@ function bannerSource() {
 }
 
 function pageHtml() {
-  const rows = ['panel', 'panel2', 'vintage']
+  const rows = ['panel', 'panel2', 'vintage', 'mebar']
     .map((id, i) => `<div class="member has-banner" data-row="${i}" id="${id}"><span class="mnames"><span class="mname-row"><span class="mname">Ada</span></span></span></div>`)
     .join('');
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
@@ -92,6 +96,8 @@ const WHITE = 'data:image/svg+xml;base64,' + btoa('<svg xmlns="http://www.w3.org
 ${bannerSource()}
 paintSidebarBanner(document.getElementById('panel'), WHITE, 'var(--panel)');
 paintSidebarBanner(document.getElementById('panel2'), WHITE, 'var(--panel-2)');
+// The me bar's own recipe: flat scrim + picture, no directional ramp.
+paintSidebarBanner(document.getElementById('mebar'), WHITE, 'var(--panel-2)', { ramp: false });
 // The recipe this test exists to keep out: cover + right-anchored + default repeat.
 const v = document.getElementById('vintage');
 v.style.backgroundImage = 'linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, var(--panel) 5%, rgba(0,0,0,0) 78%), url("' + WHITE + '")';
@@ -109,7 +115,7 @@ function runChrome(chromePath, url, dpr, outPng, dir) {
     '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
     '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'profile-' + dpr),
     '--force-device-scale-factor=' + dpr,
-    '--window-size=' + SIDE_W + ',' + (ROW_H * 3 + GAP * 2),
+    '--window-size=' + SIDE_W + ',' + (ROW_H * 4 + GAP * 3),
     '--screenshot=' + outPng, url,
   ];
   const r = spawnSync(chromePath, args, { stdio: 'ignore', timeout: 60000 });
@@ -128,11 +134,18 @@ function main() {
   check(/backgroundRepeat = 'no-repeat'/.test(html), 'the banner layers are painted no-repeat');
   check(/backgroundSize = '100% 100%, 100% 100%, cover'/.test(html), 'the two ramps are exactly box-sized, only the picture is cover');
   check(/backgroundPosition = '0 0, 0 0, right center'/.test(html), 'the ramps are box-anchored, only the picture is right-anchored');
+  check(/backgroundSize = '100% 100%, cover'/.test(html) && /backgroundPosition = '0 0, right center'/.test(html),
+    'the ramp-free paint binds its two layers to the box the same way');
   const servers = fs.readFileSync(path.join(ROOT, 'public/js/servers.js'), 'utf8');
   const home = fs.readFileSync(path.join(ROOT, 'public/js/home.js'), 'utf8');
   check(!/90deg, var\(--panel/.test(servers) && !/90deg, var\(--panel/.test(home), 'no surface re-inlines the old cover/repeat recipe');
   check((servers.match(/paintSidebarBanner\(/g) || []).length === 3, 'servers.js paints the me bar + member rows through the helper');
   check((home.match(/paintSidebarBanner\(/g) || []).length === 1, 'home.js paints DM rows through the helper');
+  // The one surface that opts out of the ramp is the me bar, and only it: a
+  // member row or a DM row without the ramp would set a name over a bare photo.
+  check(/\{ ramp: false \}/.test(servers), 'the me bar paints with the ramp off');
+  check((servers.match(/\{ ramp: false \}/g) || []).length === 1, 'and it is the only surface in servers.js that does');
+  check(!/\{ ramp: false \}/.test(home), 'DM rows keep the ramp');
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-banner-'));
   let vintageLeaked = 0;
@@ -175,11 +188,22 @@ function main() {
       const painted = scanRow(0);
       const painted2 = scanRow(1);
       const vintage = scanRow(2);
+      const mebar = scanRow(3);
       if (vintage.lightest > 40) vintageLeaked++;
 
       check(painted.lightest <= 30, 'dpr ' + dpr + ' — me bar (panel base) left edge is dark', { lightest: painted.lightest, at: painted.lightestAt });
       check(painted2.lightest <= 30, 'dpr ' + dpr + ' — banner row (panel-2 base) left edge is dark', { lightest: painted2.lightest, at: painted2.lightestAt });
       check(painted.far >= 120 && painted2.far >= 120, 'dpr ' + dpr + ' — the banner is still painted (right side is bright)', { panel: painted.far, panel2: painted2.far });
+
+      // The me bar's `{ ramp: false }` path: the picture under the flat scrim
+      // ALONE. Over pure white that is 255 * 0.55 ≈ 140 at every x — so the left
+      // edge carries the picture (nothing blended in) and reads the same as the
+      // right end, which is exactly what "no ramp" means.
+      check(mebar.lightest >= 100, 'dpr ' + dpr + ' — the me bar shows the picture at its left edge (no ramp layer)',
+        { lightest: mebar.lightest, at: mebar.lightestAt });
+      check(mebar.far >= 120, 'dpr ' + dpr + ' — and the me bar picture is painted (right side is bright)', { far: mebar.far });
+      check(Math.abs(mebar.lightest - mebar.far) <= 30, 'dpr ' + dpr + ' — the me bar is evenly lit end to end (ramp removed)',
+        { left: mebar.lightest, right: mebar.far });
     }
     if (!vintageLeaked) note('the vintage cover/repeat recipe did not reproduce the seam on this Chrome — the harness may have gone stale');
     else console.log('  (harness check: the old cover/repeat recipe still reproduces the light edge at ' + vintageLeaked + '/' + DPFS.length + ' dprs)');

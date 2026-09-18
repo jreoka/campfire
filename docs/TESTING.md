@@ -118,7 +118,11 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   (`no-repeat`, box-sized ramps) and that all three surfaces (me bar, member
   rows, DM rows) go through the helper instead of re-inlining the old
   cover/repeat style. The harness keeps a "vintage" row with the old recipe so
-  it proves it can still reproduce the light edge.
+  it proves it can still reproduce the light edge. It also paints the me bar's
+  own recipe (`{ ramp: false }`, owner request — no directional layer on your
+  own bar) and asserts that row is evenly lit end to end: the scrimmed picture
+  at the left edge, the same brightness as the right end, so the surface colour
+  the ramp used to blend in cannot come back unnoticed.
   `node scripts/test-dm-row-marks.js` covers the marks on a DM row staying
   legible over the person's banner (static checks plus a headless-Chrome pixel
   proof; skips without Chrome). Both trailing marks had it: the pin was a bare

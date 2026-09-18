@@ -838,11 +838,28 @@ function paintGameBadge(el) {
 // and `cover` + the default `repeat` leaves a sub-pixel tiling seam at the left
 // edge — at 1x that lands on a whole device pixel and reads as a light 1px line
 // down the left of the slot where the undarkened picture leaks through.
-function paintSidebarBanner(el, url, base) {
-  el.style.backgroundImage = `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),linear-gradient(90deg, ${base} 5%, rgba(0,0,0,0) 78%), url("${url}")`;
+//
+// `opts.ramp === false` paints the picture under the flat scrim ALONE, with no
+// directional layer at all. The me bar asks for that (owner request: see the
+// note on paintMe): the ramp merges the theme's own surface colour into the
+// left of the bar, so the banner faded out toward the left instead of sitting
+// under the bar. Member rows and DM rows keep the ramp — their names are set
+// over whatever photo the person picked, and the ramp is what keeps a pale
+// picture from swallowing the text at the name's end.
+function paintSidebarBanner(el, url, base, opts) {
+  const scrim = 'linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45))';
+  el.style.backgroundRepeat = 'no-repeat';
+  if (opts && opts.ramp === false) {
+    // The flat scrim and the picture, nothing else: two box-sized layers, the
+    // picture covering.
+    el.style.backgroundImage = `${scrim}, url("${url}")`;
+    el.style.backgroundSize = '100% 100%, cover';
+    el.style.backgroundPosition = '0 0, right center';
+    return;
+  }
+  el.style.backgroundImage = `${scrim},linear-gradient(90deg, ${base} 5%, rgba(0,0,0,0) 78%), url("${url}")`;
   el.style.backgroundSize = '100% 100%, 100% 100%, cover';
   el.style.backgroundPosition = '0 0, 0 0, right center';
-  el.style.backgroundRepeat = 'no-repeat';
 }
 // ---------- the me bar's sub-line: what I am doing, or my handle on hover ----------
 // The line under my name carries ONE thing, in this order: streaming, my custom
@@ -894,7 +911,11 @@ function paintMe() {
   name.textContent = S.me.display_name;
   name.style.cssText = nameStyleFor(S.me);
   const card = $('#me-card');
-  if (S.me.sidebar_banner_url && !off) paintSidebarBanner(card, S.me.sidebar_banner_url, 'var(--panel-2)');
+  // No ramp on my own bar (owner request): the directional layer blended
+  // --panel-2 into the left of the bar, so the banner faded away toward the
+  // name instead of simply sitting behind the bar. It is the flat scrim + the
+  // picture there now, evenly lit end to end.
+  if (S.me.sidebar_banner_url && !off) paintSidebarBanner(card, S.me.sidebar_banner_url, 'var(--panel-2)', { ramp: false });
   else card.style.backgroundImage = '';
   card.classList.toggle('off', off);
   card.classList.toggle('has-banner', !!(S.me.sidebar_banner_url && !off));

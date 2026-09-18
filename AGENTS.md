@@ -1067,7 +1067,13 @@ rows are fractional-width, and `background-size: cover` with the default
 `background-repeat: repeat` on a right-anchored picture leaves a sub-pixel
 tiling seam at the LEFT edge that lands on a whole device pixel at dpr 1: a
 light 1px line down the left of the slot. Keep the layers `no-repeat` and the
-two ramps at `100% 100%`. The phone layout is not a width: it is
+two ramps at `100% 100%`. The ME BAR is the one surface that opts out of the
+ramp (`{ ramp: false }`, owner request): its banner sits under the flat scrim
+alone, evenly lit end to end, because the ramp blends the theme's own surface
+colour into the left of the bar and the banner then fades out toward the name
+instead of sitting behind the bar. Member and DM rows keep the ramp — their
+names sit over a stranger's photo, and the ramp is what keeps a pale one from
+swallowing the text. The phone layout is not a width: it is
 `(max-width:700px), (max-height:560px) and (pointer:coarse)` — a phone held
 sideways is 850+px wide but only ~390px tall, and keying on width alone dropped
 landscape onto the desktop three-pane shell (static rail + chat list + members
