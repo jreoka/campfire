@@ -412,6 +412,67 @@ async function main() {
         'the mime type is a container we can upload', s.opts.mimeType);
     }
 
+    console.log('\n[9] the camera you chose is the one the next story opens on');
+    // Reported: every new story opened on the front camera, so a phone whose
+    // owner shoots with the back one had to flip it again on every single post.
+    // The choice is a DEVICE pref (cf_story_facing in localStorage), written by
+    // the flip button and read by openStoryComposer — and the assertion that
+    // matters is the request the NEXT composer makes, not the stored string.
+    const facing = await evaluate(`(async () => {
+      const wait = (fn, ms) => new Promise((res) => {
+        const t0 = performance.now();
+        (function tick() {
+          if (fn()) return res(true);
+          if (performance.now() - t0 > ms) return res(false);
+          setTimeout(tick, 60);
+        })();
+      });
+      // The mic is re-asked for after every camera start, so only the requests
+      // that carry a video constraint are this assertion's business.
+      const cams = (list) => list.filter((c) => c && c.video);
+      const mode = (c) => (c && c.video && c.video.facingMode) || null;
+      try { localStorage.removeItem('cf_story_facing'); } catch {}
+      closeStoryComposer();
+      openStoryComposer();
+      const fresh = { facing: sc && sc.facing, stored: localStorage.getItem('cf_story_facing') };
+      if (!(await wait(() => sc && sc.camReady, 12000))) return { camReady: false, fresh };
+      const md = navigator.mediaDevices, real = md.getUserMedia.bind(md);
+      const asked = [];
+      md.getUserMedia = (c) => { asked.push(c); return real(c); };
+      try {
+        document.querySelector('#sc-flip').click();
+        const flipped = sc && sc.facing;
+        const stored = localStorage.getItem('cf_story_facing');
+        // The stream landing is what says the request loop is finished — the
+        // 720p floor retry makes a second one, so a request count is not a
+        // settled state.
+        await wait(() => sc && sc.stream, 12000);
+        const flipAsked = mode(cams(asked)[0]);
+        asked.length = 0;                            // the NEXT story's requests only
+        closeStoryComposer();
+        openStoryComposer();
+        const reopened = sc && sc.facing;
+        await wait(() => cams(asked).length >= 1, 12000);
+        const reopenedAsked = mode(cams(asked)[0]);
+        await wait(() => sc && sc.camReady, 12000);
+        const camBack = !!(sc && sc.camReady);
+        try { localStorage.removeItem('cf_story_facing'); } catch {}
+        closeStoryComposer();
+        return { camReady: true, fresh, flipped, stored, flipAsked, reopened, reopenedAsked, camBack };
+      } finally { md.getUserMedia = real; }
+    })()`, 90000);
+    check(!!facing && facing.camReady === true, 'the composer opens on the fake camera', facing);
+    if (facing && facing.camReady) {
+      check(facing.fresh.facing === 'user' && facing.fresh.stored === null,
+        'a device that has never flipped opens on the front camera', facing.fresh);
+      check(facing.flipped === 'environment' && facing.stored === 'environment',
+        'flipping to the back camera is remembered as a device preference', facing);
+      check(facing.flipAsked === 'environment',
+        'the flip asks the camera for the back lens (it is not a label the UI keeps to itself)', facing);
+      check(facing.reopened === 'environment' && facing.reopenedAsked === 'environment' && facing.camBack,
+        'and a brand-new story opens on it', facing);
+    }
+
     check(pageErrors.length === 0, 'no uncaught page errors', pageErrors.slice(0, 3));
     if (pageErrors.length) console.log('  page errors: ' + JSON.stringify(pageErrors.slice(0, 5)));
   } finally {

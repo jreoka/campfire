@@ -564,7 +564,17 @@ handed an explicit `videoBitsPerSecond` (~0.15 bits/pixel/frame, capped at 5 Mbp
 so the 60s maximum take stays under the 50 MB upload ceiling) — the engine's own
 ~2.5 Mbps default was the last thing squeezing a take — and the MP4 fallback
 names H.264 **High** profile, because Safari's default for a bare `video/mp4` is
-Baseline.
+Baseline. The lens is remembered across stories: the flip button is the only
+writer of `cf_story_facing` (a per-device localStorage pref like the other
+`cf_*` ones) and every composer opens on it, so a phone that shoots with the
+back camera stops having to flip it on every post. The caption field beside the
+preview is `rows=1` and grows with the text through `storyCaptionGrow`, which
+adds the BORDER back to `scrollHeight` (the height it sets is border-box, so
+measuring without it left a permanent 2px scroll range — a full-height
+scrollbar thumb in an empty field) and keeps `overflow-y:hidden` until the text
+really passes the cap; every path that clears the caption or re-enters preview
+re-derives it. `scripts/test-story-composer.js` measures the scroll range in
+headless Chrome.
 A URL typed into a story is handled in one of two ways, and the difference is
 whether the author put it on the picture or in the caption. On a **sticker** the
 URL is REPLACED BY the card itself (`storyTextHTML`, embeds.js): a sticker is

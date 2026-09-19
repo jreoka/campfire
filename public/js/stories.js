@@ -1803,6 +1803,22 @@ function createStory(opts = {}) {
   if (isCoarse()) { openStoryComposer(opts); return; }
   openStoryNewMenu(opts);
 }
+// Which of the two cameras a story opens on is a DEVICE preference, not a story
+// one: flipping to the back camera once has to mean the next story opens on the
+// back camera (owner request). Stored in localStorage under the same `cf_*`
+// shape as every other local pref — it belongs to this phone, never to the
+// account, and a TV/desktop with a single webcam carries it harmlessly because
+// `facingMode` is asked for as a preference, not an exact match.
+const STORY_FACING_KEY = 'cf_story_facing';
+function storySavedFacing() {
+  try { return localStorage.getItem(STORY_FACING_KEY) === 'environment' ? 'environment' : 'user'; }
+  catch { return 'user'; }
+}
+function storySaveFacing(f) {
+  const v = f === 'environment' ? 'environment' : 'user';
+  try { localStorage.setItem(STORY_FACING_KEY, v); } catch {}
+  return v;
+}
 async function openStoryComposer(opts = {}) {
   if (sc) return;
   const el = $('#story-compose');
@@ -1810,7 +1826,7 @@ async function openStoryComposer(opts = {}) {
   el.classList.remove('hidden');
   document.body.classList.add('story-open');
   sc = {
-    stream: null, audio: null, outTrack: null, micDenied: false, facing: 'user',
+    stream: null, audio: null, outTrack: null, micDenied: false, facing: storySavedFacing(),
     rec: null, chunks: [], recT0: 0, recTimer: null, blob: null, kind: null,
     previewUrl: null, durationMs: 0, busy: false, camFailed: false, xhr: null,
     step: 'capture', camSeq: 0, camReady: false,
@@ -1885,6 +1901,10 @@ function storySetStep(step) {
   if (capture) $('#sc-hint').classList.add('hidden');
   if (preview) storyPaintOv();
   else $('#sc-ov').classList.add('hidden');
+  // Entering preview is where the caption slot gets layout again, so the
+  // one-line height is re-derived here rather than trusting whatever an earlier
+  // editing session (or a cleared field) left on the element.
+  storyCaptionGrow($('#sc-caption'));
   storyRenderColors();
   if (pick) {
     renderStoryAudience();
@@ -2236,7 +2256,7 @@ async function storyToggleMic() {
 }
 function storyFlipCam() {
   if (!sc || sc.step !== 'capture') return;
-  sc.facing = sc.facing === 'user' ? 'environment' : 'user';
+  sc.facing = storySaveFacing(sc.facing === 'user' ? 'environment' : 'user');
   storyResetZoom();
   storyStartCam();
 }
@@ -3138,6 +3158,7 @@ function storyRetake() {
   vid.removeAttribute('src');
   $('#sc-shot').removeAttribute('src');
   $('#sc-caption').value = '';
+  storyCaptionGrow($('#sc-caption'));
   storySetStep('capture');
   storyStartCam();
 }
@@ -3321,7 +3342,7 @@ function closeStoryComposer() {
   if (shot) shot.removeAttribute('src');
   storyClearFreeze();
   const cap = $('#sc-caption');
-  if (cap) cap.value = '';
+  if (cap) { cap.value = ''; storyCaptionGrow(cap); }
   $('#sc-file').value = '';
   const ov = $('#sc-ov');
   if (ov) { ov.textContent = ''; ov.classList.add('hidden'); }
@@ -3771,6 +3792,27 @@ $('#sc-back').onclick = () => { if (sc && !sc.busy) storySetStep('preview'); };
 $('#sc-pick-back').onclick = () => { if (sc && !sc.busy) storySetStep('preview'); };
 $('#sc-pick-close').onclick = () => closeStoryComposer();
 $('#sc-pick-search').addEventListener('input', () => renderStoryAudience());
+// The caption grows with the text (chat-composer behaviour) and must not carry
+// a scrollbar a one-line caption has nothing to scroll. `scrollHeight` excludes
+// the border while the height we set is border-box (`*{box-sizing:border-box}`),
+// so `height = scrollHeight` left a permanent 2px scroll range — a full-height
+// scrollbar thumb in a field the owner had merely typed and cleared. Add the
+// border back, and keep the field's own scrollbar for the one case it is for:
+// text longer than the 88px cap. A field with no layout (the caption slot is
+// hidden on the capture step, and this is also the reset path) cannot be
+// measured at all: hand it back to the stylesheet, whose one-line height is
+// already the right answer for an empty caption.
+function storyCaptionGrow(el) {
+  if (!el) return;
+  if (el.scrollHeight <= 0) { el.style.height = ''; el.style.overflowY = ''; return; }
+  const cs = getComputedStyle(el);
+  const border = (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+  const max = parseFloat(cs.maxHeight) || 88;
+  el.style.height = 'auto';
+  const full = el.scrollHeight + border;
+  el.style.height = Math.min(full, max) + 'px';
+  el.style.overflowY = full > max ? 'auto' : 'hidden';
+}
 $('#sc-file').addEventListener('change', (e) => {
   const f = e.target.files && e.target.files[0];
   // Clear only after handing the File over: some browsers invalidate blobs
@@ -3778,10 +3820,7 @@ $('#sc-file').addEventListener('change', (e) => {
   if (f) storyPickFile(f);
   e.target.value = '';
 });
-$('#sc-caption').addEventListener('input', (e) => {
-  e.target.style.height = 'auto';
-  e.target.style.height = Math.min(e.target.scrollHeight, 88) + 'px';
-});
+$('#sc-caption').addEventListener('input', (e) => storyCaptionGrow(e.target));
 // The text sheet grows with the text; the colour row and tool rail above it
 // have to move up with it.
 $('#sc-te-input').addEventListener('input', () => storySheetHeight());
