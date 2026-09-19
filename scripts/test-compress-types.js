@@ -192,6 +192,40 @@ async function main() {
       check(mime + ' ' + path.extname(key) + ' -> mp4' + (normalize ? ' (normalize: playable beats smaller)' : ''), ok, JSON.stringify(plan));
     }
 
+    // The video box: a CAP (never an upscale), and it must land on EVEN
+    // dimensions. libx264 with yuv420p refuses an odd width or height, and
+    // fitting an arbitrary aspect ratio into a box lands on one constantly — a
+    // 720x726 portrait clip fitted to 1080 tall is 1071 wide, which is how a real
+    // upload died with `libx264: width not divisible by 2 (1071x1080)` and stayed
+    // uncompressed forever (the fix is the second scale stage; see SCALE_VID).
+    const vidArgs = media.buildArgs('mp4', 'in.mp4', 'out.mp4').join(' ');
+    check(/scale='min\(1920,iw\)':'min\(1080,ih\)':force_original_aspect_ratio=decrease/.test(vidArgs),
+      'the video box is capped at the SOURCE size too (a 720p clip is never re-encoded up to 1080p)', vidArgs);
+    check(/scale=trunc\(iw\/2\)\*2:trunc\(ih\/2\)\*2/.test(vidArgs),
+      '...and rounds the fitted result to even dimensions, which yuv420p requires', vidArgs);
+    if (enc.x264) {
+      // The regression itself, against real bytes: a portrait clip whose fitted
+      // width is odd used to fail the encode outright.
+      const odd = f('portrait.mp4');
+      const built = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi',
+        '-i', 'testsrc=size=720x726:rate=15:duration=1', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', odd], { stdio: 'ignore' });
+      if (built && built.status === 0) {
+        const outOdd = f('portrait-out.mp4');
+        const plan = media.planFor('video/mp4', 'files/portrait.mp4');
+        const r = await media.encodeCandidate(plan, odd, outOdd, 'test');
+        check(r.ok === true, 'a 720x726 portrait clip encodes (the case that used to fail on an odd fitted width)', r);
+        if (r.ok) {
+          const probe = spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', outOdd], { encoding: 'utf8' });
+          const m = /^(\d+),(\d+)/.exec(String((probe && probe.stdout) || '').trim());
+          const dim = m ? { w: Number(m[1]), h: Number(m[2]) } : null;
+          check(!!dim && dim.w % 2 === 0 && dim.h % 2 === 0, '...at even dimensions', dim);
+          check(!!dim && dim.w <= 720 && dim.h <= 726, '...and never upscaled past the source', dim);
+        }
+      } else {
+        console.log('  note  this ffmpeg could not build the portrait fixture — the encode case is skipped');
+      }
+    }
+
     // Audio: MP3 or AAC/MP4, the two formats every Apple product plays.
     for (const [mime, key, want, need] of [
       ['audio/wav', 'files/a.wav', 'wav2mp3', 'mp3'], ['audio/flac', 'files/a.flac', 'wav2mp3', 'mp3'],

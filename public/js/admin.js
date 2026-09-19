@@ -593,15 +593,19 @@ async function loadAdminMedia() {
       const kept = j.result === 'kept';
       const pct = ok && j.orig_size > 0 ? ` (-${Math.round((1 - j.new_size / j.orig_size) * 100)}%)` : '';
       const sizes = ok ? `${fmtSize(j.orig_size)} → ${fmtSize(j.new_size)}${pct}` : fmtSize(j.orig_size);
-      // A kept file was examined and deliberately left byte-for-byte alone.
-      // Saying WHY is the whole point: "no gain" on a screenshot is a different
-      // thing from "type not handled", and neither is a failure.
-      const why = kept ? (KEPT_WHY[j.error] || j.error || 'no change needed') : '';
+      // A kept file was examined and deliberately left byte-for-byte alone, and a
+      // FAILED one was examined and could not be settled. Saying WHY is the whole
+      // point for both: "no gain" on a screenshot is a different thing from "type
+      // not handled", and a bare FAILED badge with nothing after it is a dead end
+      // for whoever has to decide whether to care. The encoder's own words can be
+      // long and multi-line, so the row takes the first line and caps it.
+      const raw = String(j.error || '').split('\n')[0].slice(0, 120);
+      const why = kept ? (KEPT_WHY[j.error] || raw || 'no change needed') : (raw || 'unknown error');
       return `<div class="adm-subrow">
         <span class="adm-subname" title="${esc(j.filename || '')}">${esc(j.filename || 'file')}</span>
         ${badge(j.kind || '?', '')}
         ${ok ? '' : kept ? badge('KEPT', 'me') : badge('FAILED', 'off')}
-        ${kept ? `<span class="muted small">${esc(why)}</span>` : ''}
+        ${ok ? '' : `<span class="muted small" title="${esc(String(j.error || ''))}">${esc(why)}</span>`}
         <span class="spacer"></span>
         <span class="muted small">${esc(sizes)} · ${esc(j.pipeline || '')} · ${agoStr(j.created_at)}</span>
       </div>`;

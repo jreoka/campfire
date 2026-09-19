@@ -316,6 +316,19 @@ async function ensureColumns() {
   // Guarded on ffmpeg like the HEIC policy: with no encoder the one shot must
   // not be spent on work that cannot run.
   if (checkFfmpeg()) {
+    // A video whose encode USED to fail on libx264's even-dimension rule (see
+    // SCALE_VID) is sitting in the ledger as `kept/encode_failed`, which is a
+    // terminal verdict — without this it would never be attempted again and would
+    // stay at full size forever. Dropping just those verdicts hands the objects
+    // back to the bucket sweep (which ignores the `compressed` flag, so the rows
+    // need no touching). Video extensions only: nothing else can produce it.
+    await oncePolicy('even-dim-video', async () => {
+      try {
+        return Number((await db.prepare(
+          "DELETE FROM media_compress_keys WHERE status = 'kept' AND mode = 'encode_failed' AND lower(key) ~ '\\.(mp4|m4v|mov|webm|mkv|avi|wmv|flv|3gp|3g2|mpg|mpeg|m2ts|mts|ogv|vob|rm|rmvb|asf|f4v)$'"
+        ).run()).changes) || 0;
+      } catch (e) { warn('even-dimension hand-back skipped:', String((e && e.message) || e).slice(0, 120)); return 0; }
+    });
     await oncePolicy('apple-playable', async () => {
       // The exact set planFor now converts for compatibility: every audio
       // format Safari cannot play, plus every video container that is not
@@ -791,7 +804,20 @@ function isCandidate(mime, key, size) {
 // it costs the encode either way, so the cap is honest now.
 const SCALE_IMG = "scale='min(2048,iw)':'min(2048,ih)':force_original_aspect_ratio=decrease";
 const SCALE_GIF = 'fps=20,scale=1280:1280:force_original_aspect_ratio=decrease:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=256[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5';
-const SCALE_VID = 'scale=1920:1080:force_original_aspect_ratio=decrease';
+// The video box is a CAP as well (min(1920,iw)/min(1080,ih)), for the same reason
+// the still one is: a 720p phone clip has no business being re-encoded UP to
+// 1080p — it costs the CPU, it lands bigger than the source, and the 8% rule then
+// throws the result away. A previous `scale=1920:1080:...:decrease` did exactly
+// that.
+//
+// ...and the second stage is load-bearing, not cosmetic. libx264 with
+// `-pix_fmt yuv420p` refuses an ODD width or height ("width not divisible by 2"),
+// and fitting an arbitrary aspect ratio into a box lands on one constantly: a
+// 720x726 portrait clip fitted to 1080 tall is 1071 wide, so the encode died with
+// `ffmpeg_exit_187 / libx264 ... -22 (Invalid argument)` and the file was left
+// uncompressed forever. `trunc(iw/2)*2` can only ever shave one pixel off, which
+// is invisible, and it makes the dimension even for any source and any box.
+const SCALE_VID = "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2";
 
 // Quality rationale (chat embeds, not archival):
 // - jpeg q:v 3 (~quality 85): artifacts invisible at embed sizes.
@@ -1369,7 +1395,10 @@ async function compressLocked(key, opts) {
       stats.errors++;
       stats.lastError = { key, error: err, at: now() };
       warn('encode failed, keeping original:', key, err);
-      await logJob({ tbl: row.tbl, url: row.url, filename: row.filename, kind: plan.group, pipeline: plan.pipeline, result: 'error', origSize: inStat.size, newSize: 0, error: err });
+      // ONE row for one attempt: the file is kept exactly as it was and that is
+      // what the panel shows ("KEPT · encode failed"). The encoder's own words
+      // stay in the log line above and in stats.lastError — logging a second
+      // `error` row for the same attempt made one file look like two.
       return done('encode_failed', inStat.size);
     }
     const outStat = await fs.promises.stat(tmpOut).catch(() => null);
