@@ -6,8 +6,13 @@ const EMOJI = [
  ['sec','Hearts & fun'],
  ['❤️','heart love red'],['💔','broken heart'],['💯','100 hundred'],['✨','sparkles new'],['🔥','fire lit'],['🎉','party tada celebrate'],['⭐','star'],['🌈','rainbow'],['🎮','game controller gaming'],['🚀','rocket ship'],['🎁','gift present'],['🏆','trophy win'],['🎵','music note'],['💡','idea lightbulb'],['✅','check yes'],['❌','cross no'],['❓','question'],['💩','poop'],['👻','ghost'],['🤖','robot'],['🍕','pizza'],['☕','coffee'],['🐱','cat kitten'],['🐶','dog puppy'],
 ];
-S.picker = null; // {mode:'insert'|'react', mid?, input?}
+S.picker = null; // {mode:'insert'|'react'|'tag'|'field', mid?, input?}
 S.pickerReturnFocus = null; // the field a phone picker took the caret from
+// The dialog layers a profile field can live in. A picker opened from one has to
+// beat it (see #picker.pk-over in styles.css): #picker is z-index 150 and the
+// dialog layer reaches 175, so without the lift the picker for a status would
+// open BEHIND the very dialog holding the field.
+const PICKER_DIALOG_SEL = '#modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#profile-backdrop,#story-new';
 
 // ---------- emoji / GIF picker ----------
 // `input` names the composer field a pick belongs to: 'main' (the chat bar, the
@@ -20,11 +25,14 @@ S.pickerReturnFocus = null; // the field a phone picker took the caret from
 // measured rather than guessed — see sizePicker and the phone block in
 // styles.css. Keyboard-down is the normal state, which is the whole point: a
 // picker and a keyboard competing for a 400px screen leaves neither usable.
-function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null, input = null) {
-  S.picker = { mode, mid, input };
+function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null, input = null, opts = null) {
+  S.picker = { mode, mid, input, ...(opts || {}) };
   const pk = $('#picker');
   pk.classList.remove('hidden');
   const phone = phoneLayout();
+  // `field` (a status / bio box) carries the ELEMENT it is inserting into, not a
+  // bar name, and that element lives in a dialog the picker has to sit over.
+  pk.classList.toggle('pk-over', !!(input && input.closest && input.closest(PICKER_DIALOG_SEL)));
   // The caret the phone picker is about to take (the field that opened it), so
   // closing the picker can hand it straight back — see closePicker. Only an
   // editable counts: a phone has no caret to return when nothing was focused,
@@ -52,11 +60,16 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null, i
   if (phone) { try { document.activeElement && document.activeElement.blur(); } catch {} }
   setPickerTab(tab);
   document.querySelector('#picker .pk-tabs').style.display = mode === 'react' ? 'none' : '';
+  // The GIF tab POSTS into the conversation, so it only ever belongs to a
+  // composer pick: from a profile field (or the server-tag editor) the button
+  // would have nowhere to go and clicking a GIF would post to chat.
+  const gifTab = document.querySelector('#picker .pk-tab[data-ptab="gifs"]');
+  if (gifTab) gifTab.classList.toggle('hidden', mode !== 'insert');
   $('#pk-search').value = '';
   renderEmojiRail();
   renderEmojiGrid('');
   ensureEmojiData().then(() => { if (S.picker) renderEmojiGrid($('#pk-search').value); });
-  if (mode !== 'react' && mode !== 'tag') loadGifTrending();
+  if (mode === 'insert') loadGifTrending();
   loadGifFavs();
   sizePicker();
   if (!phone) setTimeout(() => { const s = $('#pk-search'); if (S.picker) s.focus(); }, 0);
@@ -354,21 +367,37 @@ function renderEmojiGrid(filter) {
   if (!box.children.length) box.innerHTML = '<div class="pk-empty">No emoji match.</div>';
 }
 // The field the open picker belongs to (see openPicker). The elements are never
-// re-created, so naming the bar is enough — and safer than holding a node.
+// re-created, so naming the bar is enough — and safer than holding a node. A
+// `field` pick carries the element itself (a status / bio box), which is not a
+// composer at all.
 function pickerBar() { return S.picker && S.picker.input === 'thread' ? 'thread' : 'main'; }
-function pickerInputEl() { return pickerBar() === 'thread' ? $('#in-thread') : $('#in-message'); }
+function pickerInputEl() {
+  if (S.picker && S.picker.mode === 'field' && S.picker.input && S.picker.input.isConnected) return S.picker.input;
+  return pickerBar() === 'thread' ? $('#in-thread') : $('#in-message');
+}
+// Is this the unicode emoji a plain-text surface can hold? A custom `:name:` is
+// an image in a message, and neither a server tag (a name suffix) nor a status
+// (escaped text) can show one.
+function isStdEmoji(e) { return /\p{Extended_Pictographic}/u.test(e) && !/^:[\w+-]+:$/.test(e); }
 function pickEmoji(e) {
   haptic(10); // picking an option ticks; merely opening the picker does not
   if (S.picker?.mode === 'tag') {
     // Server-tag emoji: standard unicode emoji only (no custom :shortcodes:).
     // Done (auto-save) runs only on a valid pick.
-    if (!/\p{Extended_Pictographic}/u.test(e) || /^:[\w+-]+:$/.test(e)) { toast('Tags support standard emoji only'); }
+    if (!isStdEmoji(e)) { toast('Tags support standard emoji only'); }
     else {
       if (S.tagEmojiInput && S.tagEmojiInput.isConnected) S.tagEmojiInput.dataset.emoji = e;
       try { S.tagEmojiDone && S.tagEmojiDone(); } catch {}
     }
     S.tagEmojiInput = null; S.tagEmojiDone = null;
     closePicker(false); // a tag editor is not this picker's composer
+    return;
+  }
+  // A status is escaped plain text (statusBubbleHTML), so a custom :name: would
+  // sit there literally — the picker is held to standard emoji for it. A bio
+  // goes through renderRich like a message and takes both.
+  if (S.picker?.mode === 'field' && S.picker.stdOnly && !isStdEmoji(e)) {
+    toast('Status supports standard emoji only');
     return;
   }
   const inp = pickerInputEl();
@@ -382,21 +411,70 @@ function pickEmoji(e) {
   // the keyboard back up under the sheet is exactly what this layout avoids.
   closePicker(!phoneLayout(), inp);
 }
+// The two composer bars are the only fields the draft store owns; a profile
+// field (status, bio) is not one, and filing its text as a chat draft would put
+// a bio in the message box on the next channel switch.
+function isComposerField(el) { return !!el && (el.id === 'in-message' || el.id === 'in-thread'); }
 function insertAtCursor(input, text) {
   if (!input) return;
   const s = input.selectionStart ?? input.value.length, e = input.selectionEnd ?? input.value.length;
   input.value = input.value.slice(0, s) + text + input.value.slice(e);
   input.selectionStart = input.selectionEnd = s + text.length;
   syncRenderFor(input);
+  // A plain field is not a composer: it gets a real 'input' event instead (the
+  // bio counter listens for one) and never a draft write.
+  if (!isComposerField(input)) {
+    try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch {}
+    return;
+  }
   // Programmatic insert (emoji / mention pickers) fires no 'input' event, so
   // the composer draft has to be told about it explicitly.
   try { draftSoon(input, draftCtxForEl(input)); } catch {}
 }
 // One backdrop painter per bar; the caller says which field it just changed.
 function syncRenderFor(input) {
-  if (input && input.id === 'in-thread') { try { syncThreadRender(); } catch {} return; }
+  if (!isComposerField(input)) return;
+  if (input.id === 'in-thread') { try { syncThreadRender(); } catch {} return; }
   try { syncComposerRender(); } catch {}
 }
+// ---------- the emoji button inside a profile field (status, bio) ----------
+// The icon is chrome, so it is an inline SVG smiley and never an emoji glyph
+// (see the design language in AGENTS.md). The buttons in index.html carry the
+// same svg literally, the way every other shell button does.
+const EMOJI_FIELD_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8.3 14.3a4.6 4.6 0 0 0 7.4 0"/><circle cx="9" cy="9.8" r="1.1" fill="currentColor" stroke="none"/><circle cx="15" cy="9.8" r="1.1" fill="currentColor" stroke="none"/></svg>';
+// `opts.std` marks a field that can only hold standard emoji (a status);
+// `opts.area` is a textarea, whose button sits in the bottom-right corner.
+function emojiFieldHTML(field, opts = {}) {
+  return `<span class="emoji-field${opts.area ? ' area' : ''}">${field}`
+    + `<button type="button" class="emoji-field-btn"${opts.std ? ' data-emoji-std="1"' : ''} title="Add emoji" aria-label="Add emoji">${EMOJI_FIELD_ICON}</button></span>`;
+}
+// Open the picker for a profile field. `mode:'field'` carries the element, so a
+// pick inserts at its caret and closePicker hands the caret back to it; desktop
+// floats the picker against the button that opened it, a phone gets the sheet.
+function openFieldPicker(field, btn, opts = {}) {
+  if (!field || field.disabled || field.readOnly) return;
+  const r = btn.getBoundingClientRect();
+  openPicker('field', null, 'emoji', { x: r.left + r.width / 2, y: r.top }, field, { stdOnly: !!opts.stdOnly });
+}
+// One delegated handler for every one of them: the buttons are static (settings)
+// or painted later (the status editor, the admin user editor), so the button
+// names the field it sits in instead of each surface wiring its own. Clicking
+// the button of the field the picker is already editing closes it, like the
+// composer's own emoji button.
+document.addEventListener('click', (e) => {
+  const btn = e.target && e.target.closest ? e.target.closest('.emoji-field-btn') : null;
+  if (!btn) return;
+  const wrap = btn.closest('.emoji-field');
+  const field = wrap && wrap.querySelector('input,textarea');
+  if (!field) return;
+  const pk = $('#picker');
+  if (S.picker && S.picker.mode === 'field' && S.picker.input === field && !pk.classList.contains('hidden')) {
+    S.pickerReturnFocus = null;
+    closePicker(false);
+    return;
+  }
+  openFieldPicker(field, btn, { stdOnly: btn.hasAttribute('data-emoji-std') });
+});
 // The autocomplete popovers are anchored to the chat bar. A completion in the
 // thread bar has to sit over the thread panel instead, so the pop is placed
 // against the field it belongs to (measured, like the picker). The chat bar's own
@@ -2432,8 +2510,10 @@ function openStatusEditor() {
     presets.forEach((p, i) => { if (p.ts) { const d = Math.abs(p.ts - curExp); if (d < bd) { bd = d; best = i; } } });
     if (best > 0 && bd < 5 * 60e3) sel = best;
   }
+  // A status is escaped plain text, so its picker is held to standard emoji.
+  const field = `<input id="m-status-text" maxlength="64" placeholder="What's up?" value="${esc(cur)}" />`;
   openModal('Custom status', `
-    <label>Status<input id="m-status-text" maxlength="64" placeholder="What's up?" value="${esc(cur)}" /></label>
+    <label>Status${emojiFieldHTML(field, { std: true })}</label>
     <div class="uc-sec-label">Clear after</div>
     <select id="m-status-exp" aria-label="Clear custom status after">${presets.map((p, i) => `<option value="${i}"${i === sel ? ' selected' : ''}>${p.label}</option>`).join('')}</select>
     ${cur ? '<div class="row" style="margin-top:.7rem"><button type="button" class="btn small danger" id="m-status-clear">Clear status</button></div>' : ''}

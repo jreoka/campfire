@@ -478,8 +478,10 @@ function clickInOverPopDialog(e) {
 }
  document.addEventListener('click', (e) => {
   // Clicks inside the bottom sheet are handled by the sheet's own rows (a row may
-  // open the picker), so they must not close it again in the same click.
-  if (!e.target.closest('#picker') && !e.target.closest('#btn-emoji') && !e.target.closest('#btn-gif') && !e.target.closest('#tbtn-emoji') && !e.target.closest('#tbtn-gif') && !e.target.closest('#srv-tag-emoji') && !e.target.closest('.msg-actions') && !e.target.closest('#sheet')) closePicker(false);
+  // open the picker), so they must not close it again in the same click. The same
+  // goes for the emoji button inside a profile field (status / bio): its own
+  // handler opens the picker, and this closer runs after it in the same click.
+  if (!e.target.closest('#picker') && !e.target.closest('#btn-emoji') && !e.target.closest('#btn-gif') && !e.target.closest('#tbtn-emoji') && !e.target.closest('#tbtn-gif') && !e.target.closest('#srv-tag-emoji') && !e.target.closest('.emoji-field-btn') && !e.target.closest('.msg-actions') && !e.target.closest('#sheet')) closePicker(false);
   // ...and a click that just OPENED the card is not a click outside it either:
   // this listener runs after the opener in the same click, and an already-loaded
   // friend list paints the card before it gets here (ucOpenedByThisClick).

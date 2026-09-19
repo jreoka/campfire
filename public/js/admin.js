@@ -895,7 +895,7 @@ async function adminClick(e) {
       if (!u) return toast('User not found');
       openModal(`Edit @${u.username}`, `
         <label>Display name<input id="m-adm-display" maxlength="32" value="${esc(u.display_name)}" /></label>
-        <label style="margin-top:.6rem">Bio<textarea id="m-adm-bio" maxlength="300" rows="3">${esc(u.bio || '')}</textarea></label>
+        <label style="margin-top:.6rem">Bio${emojiFieldHTML('<textarea id="m-adm-bio" maxlength="300" rows="3">' + esc(u.bio || '') + '</textarea>', { area: true })}</label>
         <div class="pf-sec-label">Avatar</div>
         <div class="row" style="gap:.6rem"><span class="avatar adm-av" id="m-adm-avatar"></span>
           <button class="btn small primary" id="m-adm-avatar-up">Upload</button>

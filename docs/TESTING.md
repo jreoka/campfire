@@ -103,6 +103,42 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   lapsed timer, the text is escaped, and the old body section
   (`statusEditHTML`/`uc-statusbox`) is gone while the bubble still renders in the
   avatar row.
+  `node scripts/test-emoji-field.js` covers the emoji button that rides inside a
+  profile field — both custom-status inputs (the settings profile pane and the
+  "Custom status" dialog your own card opens) and the bio box (settings, plus the
+  admin user editor's). Offline it runs the real markup out of `index.html`, the
+  real helper `emojiFieldHTML` and the real `isStdEmoji`/`insertAtCursor`/
+  `isComposerField` out of `pickers.js`, and pins: the button is chrome (inline
+  SVG, never an emoji glyph), a status field is marked standard-emoji-only while a
+  bio is not, the picker has a `field` mode that carries the ELEMENT (not a
+  composer bar), the GIF tab and its `/api/gifs` call belong to a composer pick
+  only, `.pk-over` lifts the picker over the dialog the field lives in (150 -> 180
+  against the dialog layer's 175), `final.js`'s outside-click closer does not shut
+  the picker it just opened, and an insert into a plain field fires a real `input`
+  event and returns before the draft store (a bio must never be filed as a chat
+  draft). In headless Chrome (the real `styles.css`, the real `#picker` + status,
+  bio and modal markup) it measures the button inside the field's own box
+  (centred on a single-line field, bottom-right on a textarea, with the field
+  reserving trailing padding), that a hit test at the picker's centre lands on the
+  picker rather than the dialog, that clicking the button does not push the caret
+  into the field (a phone would raise the keyboard), that a pick lands at the
+  field's caret and hands it back, that a custom `:name:` is refused by a status
+  out loud, that the same button toggles the picker shut, and that the phone gets
+  the usual bottom sheet above the dialog. Skips without Chrome.
+  `node scripts/test-emoji-picker-mobile.js` covers the picker on a phone, where
+  it TAKES THE KEYBOARD'S PLACE instead of fighting it for the bottom of the
+  screen (offline checks, then the real `styles.css` + `pickers.js` + the `#picker`
+  block out of `index.html` in headless Chrome over CDP with touch emulation, so
+  the phone block compiles; skips without Chrome): opening it blurs the composer
+  and never focuses its own search field (an emoji key must not answer with a
+  keyboard — a desktop still focuses search), the sheet's height is measured
+  against the room above the composer rather than a fixed vh and it holds under
+  both viewport models (Android's resizes-content, where the layout box shrinks,
+  and iOS/WKWebView's visual-only one, where `--kb` is what puts the sheet's
+  bottom edge on the keyboard), search is the one moment the keyboard is welcome
+  back, and a dismissal never hands the caret back while a pick still does.
+  Re-run it (or `test-emoji-field.js`) after touching `openPicker`, `closePicker`,
+  `sizePicker` or the picker's own CSS.
   `node scripts/test-mobile-nav-mebar.js` covers two surfaces in headless Chrome
   (skips without Chrome): the phone nav is a whole page — it covers the viewport
   edge to edge, the chat behind it is unreachable by hit test, it carries its own
