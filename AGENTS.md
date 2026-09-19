@@ -528,7 +528,11 @@ OpenGraph/oEmbed unfurl → cached card with thumbnail, SSRF-guarded), stories
 (24h photo/video posts with an in-app camera, friend + server audiences,
 thumbnails cropped into the rings), view-once messages (one view, then one
 replay that has to be STARTED within 30s of it — `VIEWONCE_REPLAY_SECONDS`; per
-friend DMs, media gated until opened and deleted after use).
+friend DMs, media gated until opened and deleted after use — and the chat bar's
+`+` menu offers "Send a view-once" **only in a 1:1 DM**: a server channel has no
+single recipient to shoot for and a group chat has several, so
+`paintComposerViewOnce()` (stories.js) hides that row on every open of the menu
+in those two, and on blank Home).
 The story camera is a Snapchat-style composer: tap the shutter for a photo, hold
 it to record (release to stop), pinch to zoom the viewfinder (the capture crops
 to what you saw, and a zoomed recording is composited so it matches), double-tap

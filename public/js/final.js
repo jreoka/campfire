@@ -554,9 +554,13 @@ function threadComposerAnchor() {
 }
 $('#btn-emoji').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'emoji', composerAnchor()) : closePicker(); };
 $('#btn-gif').onclick = () => { $('#picker').classList.contains('hidden') ? openPicker('insert', null, 'gifs', composerAnchor()) : closePicker(); };
-// Mobile: composer options live under a + menu (attach / emoji / GIF stay visible on desktop)
-$('#btn-more').onclick = (e) => { e.stopPropagation(); closePicker(false); $('#composer-more').classList.toggle('hidden'); };
-$('#btn-plus').onclick = (e) => { e.stopPropagation(); closePicker(false); $('#composer-more').classList.toggle('hidden'); };
+// Mobile: composer options live under a + menu (attach / emoji / GIF stay visible on desktop).
+// The list is static and shared by every conversation, so each open repaints the
+// rows that depend on WHERE the bar is: view-once exists only in a 1:1 DM
+// (paintComposerViewOnce, stories.js) — a server channel and a group chat get
+// the same menu without it.
+$('#btn-more').onclick = (e) => { e.stopPropagation(); closePicker(false); paintComposerViewOnce(); $('#composer-more').classList.toggle('hidden'); };
+$('#btn-plus').onclick = (e) => { e.stopPropagation(); closePicker(false); paintComposerViewOnce(); $('#composer-more').classList.toggle('hidden'); };
 $('#cm-attach').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); $('#btn-attach').click(); };
 $('#cm-emoji').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); $('#btn-emoji').click(); };
 $('#cm-gif').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); $('#btn-gif').click(); };

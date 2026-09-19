@@ -15,6 +15,10 @@
 // lit, aria-pressed one and the count/button agree, an un-picked peer leaves
 // the menu honestly empty, and tapping a second friend adds them.
 //
+// [5] also drives the REAL paintComposerViewOnce (public/js/stories.js): the
+// composer's + menu keeps "Send a view-once" in a 1:1 DM and drops it in a
+// server channel, a group chat and blank Home.
+//
 // Usage: node scripts/test-viewonce-pick.js
 'use strict';
 
@@ -57,7 +61,7 @@ function slice(from, to) {
 const code = slice('function viewOnceDmPeerId() {', 'async function openStoryComposer(');
 global.S = { me: { id: 'me' } };
 // Strict mode gives eval its own scope, so hand the functions back explicitly.
-const { viewOnceDmPeerId, viewOncePrePick } = eval(code + '\n;({ viewOnceDmPeerId, viewOncePrePick })');
+const { viewOnceDmPeerId, viewOncePrePick, paintComposerViewOnce } = eval(code + '\n;({ viewOnceDmPeerId, viewOncePrePick, paintComposerViewOnce })');
 
 const dm = (id, members, extra) => ({ id, members, ...(extra || {}) });
 const me = { id: 'me', username: 'me' };
@@ -98,6 +102,40 @@ check(!/sc\.voIds = viewOncePrePick/.test(src.slice(0, src.indexOf('if (opts.vie
 check(/const dmIds = st\.vo \? \(st\.voIds \|\| \[\]\)\.slice\(\)/.test(src), 'the send path reads the same voIds the picker shows');
 check(/if \(sc\.vo\) return n \? `Send \(\$\{n\}\)` : 'Send';/.test(src), 'one picked friend reads as "Send (1)"');
 check(/\$\('#sc-pick-list \.sc-pick-row\.on'\)/.test(src), 'the pre-picked row is scrolled into view when the picker opens');
+
+console.log('\n[5] the + menu offers the row only where it can deliver');
+// "Send a view-once" belongs in a 1:1 DM and nowhere else: a server channel has
+// nobody to pre-pick, and a group chat has more than one recipient. The chat
+// bar's + menu is ONE static list, so the row is painted on every open rather
+// than deleted from the markup — drive the REAL painter against a stub of the
+// one row it touches.
+function stubRow() {
+  const on = new Set(['hidden']);
+  return {
+    classList: {
+      contains: (c) => on.has(c),
+      toggle: (c, force) => {
+        if (force === undefined) { if (on.has(c)) on.delete(c); else on.add(c); }
+        else if (force) on.add(c); else on.delete(c);
+      },
+    },
+  };
+}
+const voRow = stubRow();
+global.$ = (sel) => (sel === '#cm-viewonce' ? voRow : null);
+const rowShownIn = (st) => { global.S = st; paintComposerViewOnce(); return !voRow.classList.contains('hidden'); };
+check(rowShownIn({ me, view: 'home', dmThreadId: 't1', dms: [dm('t1', [me, them])] }), 'offered in a 1:1 DM (the case it is for)');
+check(!rowShownIn({ me, view: 'server', serverId: 's', channelId: 'c1', dmThreadId: 't1', dms: [dm('t1', [me, them])] }),
+  'removed in a server channel — no single recipient to shoot for', { hidden: voRow.classList.contains('hidden') });
+check(!rowShownIn({ me, view: 'home', dmThreadId: 't1', dms: [dm('t1', [me, them], { isGroup: true })] }), 'removed in a group chat too');
+check(!rowShownIn({ me, view: 'home', dmThreadId: null, dms: [dm('t1', [me, them])] }), 'and on blank Home (no conversation)');
+// Both openers of the chat bar's + menu (desktop and phone) repaint it, and the
+// row stays in the markup rather than being deleted from the list.
+const finalSrc = fs.readFileSync(path.join(ROOT, 'public/js/final.js'), 'utf8');
+check(/\$\('#btn-more'\)\.onclick = \(e\) => \{[^}]*paintComposerViewOnce\(\)/.test(finalSrc)
+  && /\$\('#btn-plus'\)\.onclick = \(e\) => \{[^}]*paintComposerViewOnce\(\)/.test(finalSrc),
+  'both + menu openers repaint the row before showing the menu');
+check(/<button type="button" class="ctx-item" id="cm-viewonce">/.test(index), 'the row is still the menu\'s own markup (hidden where it does not apply, never deleted)');
 
 // ---------- the real picker menu, in a browser ----------
 const menuSrc = slice('function renderStoryAudience() {', '\nfunction storyProgress(pct) {');
@@ -170,7 +208,7 @@ function runChrome(pre) {
 if (!findChrome()) {
   console.log('\n[test] SKIP browser half: no Chrome/Edge found (set CHROME_PATH)');
 } else {
-  console.log('\n[5] the menu itself (headless Chrome)');
+  console.log('\n[6] the menu itself (headless Chrome)');
   const picked = runChrome(['f2']);
   if (picked.skip) {
     console.log('[test] SKIP: no Chrome');

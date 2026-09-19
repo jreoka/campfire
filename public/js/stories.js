@@ -1767,6 +1767,18 @@ function viewOncePrePick(peerId, friends) {
   const f = (friends || []).find((u) => String(u.id) === p);
   return f ? [f.id] : [];
 }
+// The chat bar's + menu is ONE static list shared by every conversation, so the
+// view-once row has to be painted per context rather than sitting in it always.
+// View-once is "one person, one look", and only a 1:1 DM names that person: a
+// server channel has nobody to pre-pick (the picture would be shot for a picker
+// that starts empty) and a group chat has several recipients, so neither offers
+// the row at all. `viewOnceDmPeerId()` is exactly that test — and it is the same
+// value the row hands the composer when it IS offered, so the menu can never
+// offer a flow the peer cannot fill in.
+function paintComposerViewOnce() {
+  const b = $('#cm-viewonce');
+  if (b) b.classList.toggle('hidden', !viewOnceDmPeerId());
+}
 // ---------- the way into a new post (desktop asks first) ----------
 // Every "add to your story" entry used to open the camera, so anyone who meant
 // to upload a photo or write a text card was asked for camera permission first
