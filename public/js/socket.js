@@ -848,6 +848,12 @@ function onWS(m) {
       onDmCallEnded(m.threadId);
       break;
     // ---- voice ----
+    case 'voice-nsfw-required':
+      // The server refused a voice join for an account that has not confirmed
+      // 18+ (see nsfwConfirmed in server.js) — the client gate was skipped, or
+      // the room's flag was not visible from where the join started.
+      onVoiceNsfwRequired(m);
+      break;
     case 'voice-peers': {
       if (m.threadId) {
         // DM call occupancy (also arrives when we're not in the call — drives badges)

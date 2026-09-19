@@ -124,6 +124,21 @@ async function openVoiceChannel(serverId, channelId) {
   await joinVoice(serverId, channelId);
   if (S.voice && S.voice.kind !== 'dm' && S.voice.serverId === serverId && S.voice.channelId === channelId) openCallView();
 }
+// The server refused a voice join because this account has not confirmed 18+
+// yet (see nsfwConfirmed in server.js). The client gate above asks first
+// whenever it can see the room's flag, so this is the backstop: a room joined
+// from somewhere that could not see it, or a build that skipped the check.
+// joinVoice has already put this client in a call the room never accepted, so
+// that local state goes first — silently, because the server registered no
+// membership and a voice-leave frame would be about a room we were never in.
+// A refusal for a join we are no longer making (we left, or moved on) is not
+// ours to answer.
+async function onVoiceNsfwRequired(m) {
+  const mine = !!(S.voice && S.voice.kind !== 'dm' && S.voice.serverId === m.serverId && S.voice.channelId === m.channelId);
+  if (!mine) return;
+  leaveVoice(true);
+  if (await openNsfwVoiceModal({ name: m.name || 'voice' })) await joinVoice(m.serverId, m.channelId);
+}
 // ---------- DM calls (1:1 + group): the thread itself is the voice room ----------
 function dmOccKey(tid) { return 'dm:' + tid; }
 function myVoiceKey() {
@@ -1024,22 +1039,39 @@ function voicePeerInfo(id) {
   const p = (S.voiceOccupancy.get(myVoiceKey()) || []).find((x) => x.id === id);
   return p || { id, display_name: '?', username: '?', avatar_color: '#555', avatar_url: null };
 }
+// Which room is this user streaming in? The occupancy cache is authoritative
+// for "is sharing", but a server room's key is the CHANNEL id (socket.js
+// 'voice-peers'), so it can never say which server owns it — the old code split
+// that key on ':' and passed the halves on as (serverId, channelId), asking the
+// server to join a room whose "server" was a channel. It refused every time,
+// leaving this client in a call nobody else was in. Active Now carries the
+// authoritative pair for a friend; the open server's own channel list answers
+// for anyone else in view.
+function voiceRoomOfUser(uid) {
+  let key = null;
+  for (const [k, occ] of S.voiceOccupancy) {
+    if ((occ || []).some((p) => p.id === uid && p.sharing)) { key = k; break; }
+  }
+  if (!key) return null;
+  if (key.startsWith('dm:')) return { kind: 'dm', threadId: key.slice(3) };
+  if ((S.serverDetail?.channels || []).some((c) => c.id === key && c.type === 'voice')) {
+    return { kind: 'server', serverId: S.serverId, channelId: key };
+  }
+  const fv = (S.friendsVoice || new Map()).get(uid);
+  if (fv && fv.kind === 'server' && fv.channelId === key && fv.serverId) return { kind: 'server', serverId: fv.serverId, channelId: key };
+  return null;
+}
 // Jump to someone's stream: join their room if needed, open the call view,
 // and enlarge their screen tile.
 async function watchStream(uid) {
   if (!S.voice) {
     // Find which room they're streaming in and join it.
-    let found = null;
-    for (const [key, occ] of S.voiceOccupancy) {
-      const p = (occ || []).find((x) => x.id === uid && x.sharing);
-      if (p) { found = key; break; }
-    }
-    if (!found) { toast('That stream ended'); return; }
-    if (found.startsWith('dm:')) { await joinDmCall(found.slice(3), false); }
-    else {
-      const [srv, ch] = found.split(':');
-      await joinVoice(srv, ch);
-    }
+    const room = voiceRoomOfUser(uid);
+    if (!room) { toast('That stream ended'); return; }
+    if (room.kind === 'dm') await joinDmCall(room.threadId, false);
+    // Through the gated door: a watch is still a join, and an 18+ room asks for
+    // the age confirmation like every other way in (openVoiceChannel).
+    else await openVoiceChannel(room.serverId, room.channelId);
     if (!S.voice) return;
   }
   openCallView();

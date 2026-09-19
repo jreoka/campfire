@@ -1989,6 +1989,18 @@ async function nsfwBlocked(chId, serverId, user) {
     return !!(ch && ch.nsfw);
   } catch { return false; }
 }
+// The same rule for the WebSocket doors (a voice join has no req.user). The
+// account's flag is read from the ROW rather than off ws.meta, because ws.meta
+// is a connect-time snapshot: confirming 18+ later in the same session would
+// not be on it, and an account that had already unlocked would still be
+// refused. A read that fails does not block — the REST gate fails open the
+// same way, and a database hiccup must not seal every voice room.
+async function nsfwConfirmed(userId) {
+  try {
+    const u = await db.prepare('SELECT nsfw_ok FROM users WHERE id = ?').get(userId);
+    return !!(u && u.nsfw_ok);
+  } catch { return true; }
+}
 app.post('/api/me/nsfw-confirm', authRequired, async (req, res) => {
   await db.prepare('UPDATE users SET nsfw_ok = 1 WHERE id = ?').run(req.user.id);
   const u = await freshUser(req.user.id);
@@ -7713,7 +7725,21 @@ wss.on('connection', async (ws, req) => {
       if (!me.servers.has(serverId) || !(await isMember(serverId, me.userId))) return;
       const ch = await db.prepare('SELECT * FROM channels WHERE id = ? AND server_id = ?').get(channelId, serverId);
       if (!ch || ch.type !== 'voice') return;
+      // A join is also a room SWITCH, so the room this session was in goes
+      // first — the client sent its own leave when it built the new call, and
+      // the two sides must not disagree about where this session is. A refusal
+      // below therefore lands on "nowhere", which is exactly what the client's
+      // own state says.
       if (me.voice) await leaveVoice(ws);
+      // The 18+ gate is enforced HERE, not only in the client: the age modal is
+      // the reader's side of the rule, and a client that skipped it — an older
+      // build, a room whose flag it could not see, a raw frame — must not end
+      // up in the room either. Nothing is registered before this, so a refusal
+      // is just a refusal; the client is told why so it can ask and retry.
+      if (ch.nsfw && !(await nsfwConfirmed(me.userId))) {
+        safeSend(ws, { t: 'voice-nsfw-required', serverId, channelId, name: ch.name });
+        return;
+      }
       me.voice = { kind: 'server', serverId, channelId, muted: false, deafened: false, camera: false, sharing: false };
       const key = voiceKey(serverId, channelId);
       if (!voiceRooms.has(key)) voiceRooms.set(key, new Set());
