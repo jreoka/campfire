@@ -152,8 +152,8 @@ function staticChecks() {
     'the members button is a desktop control now, not a phone-only one');
   check(!/^\s*\.members-btn\{display:none\}/m.test(css),
     'the old "hidden on desktop" rule is gone');
-  check(/#btn-find,\s*#btn-notifs,\s*#btn-threads,\s*#btn-pins,\s*#btn-members\{display:none\}/.test(css),
-    'the phone header still hands it to the ⋯ sheet (unchanged)');
+  check(/#btn-threads,\s*#btn-find,\s*#btn-pins,\s*#btn-notifs,\s*#btn-members\{display:none\}/.test(css),
+    'the phone header still hands it to the ⋯ sheet (the same five rails, in rail order)');
   const homeRule = css.indexOf('body.view-home:not(.dm-open) #btn-members{display:none!important}');
   const drawerBlock = css.search(/@media \(max-width:900px\),\(max-height:560px\) and \(pointer:coarse\)\{\s*#members\{display:flex/);
   check(homeRule > drawerBlock && drawerBlock > 0,

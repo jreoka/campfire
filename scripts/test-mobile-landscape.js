@@ -124,6 +124,9 @@ window.__state = (s) => {
   cls('#btn-call-voice', !!(s.dm && s.call));
   cls('#btn-call-video', !!(s.dm && s.call));
   cls('#btn-pins', !!s.pins);
+  // Active threads is a server control (paintThreadsBtn), hidden in the markup;
+  // the desktop rail-order check asks for it so the varying side is real.
+  cls('#btn-threads', !!s.threads);
   const box = (sel, open, cls) => {
     const el = $$(sel);
     if (!el) return;
@@ -377,7 +380,7 @@ function staticChecks() {
   // those rails. Members stays out of it on Home's feed, where the drawer has no
   // content (the Active Now strip stands in).
   const ui = fs.readFileSync(path.join(ROOT, 'public/js/ui.js'), 'utf8');
-  check(/#btn-find,\s*#btn-notifs,\s*#btn-threads,\s*#btn-pins,\s*#btn-members\{display:none\}/.test(css)
+  check(/#btn-threads,\s*#btn-find,\s*#btn-pins,\s*#btn-notifs,\s*#btn-members\{display:none\}/.test(css)
     && /#btn-chat-more\{display:inline-flex\}/.test(css),
     'the phone chat header hides its secondary rails and offers the ⋯ sheet (.css)');
   check(/const homeFeed = document\.body\.classList\.contains\('view-home'\) && !document\.body\.classList\.contains\('dm-open'\);/.test(ui)
@@ -566,6 +569,24 @@ async function main() {
     check(desk.leftPos !== 'fixed' && desk.membersPos !== 'fixed', 'desktop: the rail and members stay in the layout', { leftPos: desk.leftPos, membersPos: desk.membersPos });
     check(desk.sw <= desk.vw + 1, 'desktop: no horizontal overflow', { sw: desk.sw, vw: desk.vw });
     check(desk.members && desk.members.r <= desk.vw + 1 && desk.members.w >= 200, 'desktop: the members panel is the usual column', desk.members);
+    // The header rails render in the header's ONE order (index.html): the fixed
+    // controls rightmost — search, pins, inbox, members — with the ones that
+    // come and go with the conversation (a DM's calls, a server's threads) to
+    // their left. Read back off the PIXELS, not the markup, so a CSS `order:`
+    // or a row-reverse container cannot pass. A server channel has no calls; a
+    // 1:1 DM has them and no threads. The offline half of this contract (the
+    // markup, the ⋯ sheet, the phone hide list) is scripts/test-header-rails.js.
+    const railOrder = async (s) => {
+      await state(s);
+      return (await dump()).btns.slice().sort((a, b) => a.l - b.l).map((b) => b.id);
+    };
+    const chanRails = await railOrder({ pins: true, threads: true });
+    check(JSON.stringify(chanRails) === JSON.stringify(['btn-threads', 'btn-find', 'btn-pins', 'btn-notifs', 'btn-members']),
+      'desktop channel: Active threads sits LEFT of the fixed rails (search → pins → inbox → members)', chanRails);
+    const dmRails = await railOrder({ home: true, dm: true, call: true, pins: true });
+    check(JSON.stringify(dmRails) === JSON.stringify(['btn-call-voice', 'btn-call-video', 'btn-find', 'btn-pins', 'btn-notifs', 'btn-members']),
+      'desktop DM: the call buttons sit LEFT of the fixed rails (right to left still members, inbox, pins, search)', dmRails);
+    await state({});
     await device(1024, 500, { touch: false });
     const short = await dump();
     check(short.phone === false, 'a short DESKTOP window (fine pointer) keeps the desktop shell');

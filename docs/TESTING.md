@@ -1539,3 +1539,19 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   advisory locks (`withLock` skipping rather than queueing, `withLockWait`
   blocking, `withKeyLock` per storage key). `scripts/bus-probe.js` and
   `scripts/lock-probe.js` are the manual two-terminal probes for a live cluster.
+  `node scripts/test-header-rails.js` pins the chat header's rail ORDER offline
+  (no browser, no server): the controls that never change with the view sit at
+  the right edge reading left to right `search, pins, inbox, members`, the ones
+  that come and go with the conversation (a 1:1 DM's voice/video calls, a
+  server's Active threads) sit to their left, and the phone's ⋯ overflow is last.
+  It checks all three surfaces that carry the order — `index.html`'s markup,
+  `ui.js`'s ⋯ sheet rows (which must be the same five rails in the same order,
+  and exactly the rails `styles.css`'s phone block hides, or a control would be
+  unreachable on a phone), and that hide list itself — plus the invariants behind
+  it: no rail carries a CSS `order:`, the varying rails are the `.hidden`-toggled
+  ones (calls by `S.view === 'home' && S.dmThreadId`, threads by
+  `S.view === 'server'`), and pins is gated on there being a conversation rather
+  than a view. Re-run after touching the header markup, the ⋯ sheet's `defs`, or
+  the phone block. The RENDERED half (the same order read back off the pixels at
+  desktop width, which is what catches a `row-reverse` container) lives in
+  `scripts/test-mobile-landscape.js` [6]; the offline test can only see source.

@@ -224,6 +224,16 @@ declared in the manifest); no tray/watcher on mobile — that Rust code is
   row on the card must read those tones, not `var(--text)`, and a new *opaque*
   panel inside it must keep the theme's — it is its own backdrop.
   `scripts/test-card-ink.js`.
+- **The chat header's rails have ONE order** (owner directive): the controls
+  that never change with the view sit at the RIGHT edge, reading left to right
+  `search, pins, inbox, members` (right to left: members, inbox, pins, search),
+  and the ones that come and go with the conversation — a 1:1 DM's voice/video
+  call buttons, a server's Active threads — sit to their LEFT, with the phone's
+  ⋯ overflow last. A familiar rail must never move when a DM becomes a channel.
+  Three surfaces carry the order and must agree: `index.html`'s markup, `ui.js`'s
+  ⋯ sheet rows, and the phone block's hide list in `styles.css`.
+  `scripts/test-header-rails.js` pins all three offline; the rendered order is
+  measured off the pixels in `scripts/test-mobile-landscape.js` [6].
 - **No emoji in UI chrome** (use SVG/text: `Invite`, `···`, `Mute`, `↩`, `⋯`).
   Exceptions, both user-driven content: message text/reactions, and the hover
   bar's most-used emoji. Toast copy is plain text, no emoji.

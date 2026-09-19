@@ -278,13 +278,17 @@ if (window.matchMedia) {
 // pinned, threads in a DM), and Members is only offered where the drawer has
 // something in it — a conversation (a DM/group, or a server channel). Home's
 // feed keeps the Active Now strip instead and hides that button outright.
+// The rows read in the HEADER's own rail order (index.html): the controls that
+// come and go with the conversation first, then the fixed ones — search, pins,
+// inbox, members — so a phone and a desktop never disagree about where a
+// familiar control lives. scripts/test-header-rails.js pins it.
 $('#btn-chat-more').onclick = (e) => {
   e.stopPropagation();
   const defs = [
-    ['#btn-find', 'Search chats'],
-    ['#btn-notifs', 'Inbox'],
     ['#btn-threads', 'Active threads'],
+    ['#btn-find', 'Search chats'],
     ['#btn-pins', 'Pinned messages'],
+    ['#btn-notifs', 'Inbox'],
     ['#btn-members', 'Members'],
   ];
   const homeFeed = document.body.classList.contains('view-home') && !document.body.classList.contains('dm-open');

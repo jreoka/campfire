@@ -2630,17 +2630,20 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
    the members column (ui.js). Its one remaining hidden case — Home's feed — is
    a drawer rule and lives in the 900px block below. */
 /* The phone's chat header keeps only its essentials. In a DM the voice/video call
-   buttons stay on top; everywhere the secondary rails — search, notifications,
-   active threads, pins and the members drawer — move into the ⋯ sheet (ui.js
-   builds it from the same buttons, so the two can never disagree). Five 36px
-   icons plus a conversation name never fit a phone header, and a phone held
-   sideways has even less room: a server channel reads ☰ #channel ⋯ there. */
+   buttons stay on top; everywhere the secondary rails — active threads, search,
+   inbox (notifications), pins and the members drawer — move into the ⋯ sheet
+   (ui.js builds it from the same buttons, in the same order, so the two can
+   never disagree). Five 36px icons plus a conversation name never fit a phone
+   header, and a phone held sideways has even less room: a server channel reads
+   ☰ #channel ⋯ there. The selector list is the header's own rail order
+   (index.html: varying rails first, then the fixed ones, members rightmost);
+   scripts/test-header-rails.js pins that order. */
 #btn-chat-more{display:none}
 @media (max-width:700px),(max-height:560px) and (pointer:coarse){
-  #btn-find,
-  #btn-notifs,
   #btn-threads,
+  #btn-find,
   #btn-pins,
+  #btn-notifs,
   #btn-members{display:none}
   #btn-chat-more{display:inline-flex}
   body.view-home.dm-open #chan-name{flex-shrink:1;min-width:0}
