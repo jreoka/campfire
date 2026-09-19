@@ -924,12 +924,21 @@ async function jumpToMessage(id) {
     land();
   } catch { toast('Message not found'); }
 }
-function startEdit(mid) {
-  S.editing = mid;
-  S.editRemovals = new Set(); // attachment ids to drop on save
+// Every surface an edit box can be sitting on, repainted. The box is built by
+// messageEl, so it only ever exists in the channel/DM list or the open thread
+// panel — but each of those holds its own copy of the message, so opening,
+// cancelling and saving all have to repaint all of them or a box outlives the
+// edit it belonged to. (Renders are cheap next to a wrong-looking UI; the list's
+// own anchor logic keeps the reader's place.)
+function repaintEditHosts() {
   if (S.channelId) renderMessages();
   if (S.view === 'home' && S.dmThreadId) renderDmMessages();
   if (S.thread) renderThread();
+}
+function startEdit(mid) {
+  S.editing = mid;
+  S.editRemovals = new Set(); // attachment ids to drop on save
+  repaintEditHosts();
   setTimeout(() => { const t = $('#edit-area'); if (t) { t.focus(); t.selectionStart = t.value.length; } }, 0);
 }
 // Abandon an in-progress edit (Cancel button, Escape). `focus` hands the caret
@@ -939,9 +948,7 @@ function cancelEdit(opts = {}) {
   if (!S.editing) return;
   S.editing = null;
   S.editRemovals = new Set();
-  if (S.channelId) renderMessages();
-  if (S.view === 'home' && S.dmThreadId) renderDmMessages();
-  if (S.thread) renderThread();
+  repaintEditHosts();
   if (opts.focus) { try { $('#in-message')?.focus(); } catch {} }
 }
 document.addEventListener('keydown', (e) => {
@@ -993,11 +1000,32 @@ async function saveEdit(mid) {
   const content = (t?.value || '').trim();
   if (!content) return;
   const remove = [...(S.editRemovals || [])];
+  const before = msgById(mid);
+  const snapshot = before ? { content: before.content, edited: before.edited, attachments: before.attachments } : null;
   S.editing = null;
   S.editRemovals = new Set();
-  const base = msgById(mid)?._dm ? '/api/dms/messages/' : '/api/messages/';
-  try { await api(base + mid, { method: 'PATCH', body: JSON.stringify({ content, removeAttachments: remove }) }); }
-  catch (err) { toast('Edit failed: ' + prettyError(err.message)); if (S.channelId) renderMessages(); }
+  // Paint the edit and take the box down on the spot. The socket echo used to be
+  // the only repaint, and a message carrying an attachment never repainted at
+  // all (the node exists, so the update was treated as already applied) — so Save
+  // looked like a dead button and the box sat there until a reload, at which
+  // point Cancel looked dead too, because clearing S.editing had already
+  // disarmed it. The local copy is optimistic; the server's answer below is what
+  // finally stands, and a failure puts the old text back.
+  updateMsgInCaches(mid, (m) => {
+    m.content = content;
+    m.edited = true;
+    if (remove.length) m.attachments = (m.attachments || []).filter((a) => !remove.includes(String(a.id)));
+  });
+  repaintEditHosts();
+  const base = (before && before._dm) ? '/api/dms/messages/' : '/api/messages/';
+  try {
+    const r = await api(base + mid, { method: 'PATCH', body: JSON.stringify({ content, removeAttachments: remove }) });
+    if (r && r.message) updateMsgInCaches(mid, (m) => Object.assign(m, r.message));
+  } catch (err) {
+    if (snapshot) updateMsgInCaches(mid, (m) => { m.content = snapshot.content; m.edited = snapshot.edited; m.attachments = snapshot.attachments; });
+    toast('Edit failed: ' + prettyError(err.message));
+  }
+  repaintEditHosts();
 }
 // Edit box: Enter saves the edit, Shift+Enter inserts a line break — same
 // contract as the composer. Without this, Enter only added a newline and the

@@ -423,11 +423,16 @@ async function main() {
 
   console.log('\n[3] the wiring asks for the patch before it rebuilds');
   check(/patchMessageAttachmentsInList\(m\.message\.id, m\.message,/.test(socket), 'message-updated patches the attachments first');
-  check(/case 'dm-updated':[\s\S]{0,600}patchMessageAttachmentsInList\(m\.message\.id, m\.message,/.test(socket),
+  check(/case 'dm-updated':[\s\S]{0,900}patchMessageAttachmentsInList\(m\.message\.id, m\.message,/.test(socket),
     'so does dm-updated (a DM photo or voice note must not blink either)');
+  // The rebuild is skipped for the row that was patched — but only while the
+  // TEXT is unchanged. A patch moves attachments, so an EDIT cannot ride it:
+  // gating the rebuild on "the row exists" alone left edited words unpainted
+  // forever (see scripts/test-message-edit.js).
   const upBlock = socket.slice(socket.indexOf("case 'message-updated'"), socket.indexOf("case 'reaction-update'"));
-  check(/!upOnScreen\)\) renderMessages\(\)/.test(upBlock) || /!upOnScreen && !inHistUp\)/.test(upBlock) || /&& !upOnScreen\) renderMessages/.test(upBlock),
-    'and the full rebuild is skipped for a message that is on screen');
+  check(/const edited = typeof wasText === 'string' && wasText !== m\.message\.content;/.test(upBlock) &&
+    /\(!upOnScreen \|\| edited\)\) renderMessages\(\)/.test(upBlock),
+    'and the full rebuild is skipped for an on-screen message — except when its text changed');
   check(/function messageAttachmentsOnScreen\(/.test(messages), 'the "is this row painted" question is a helper of its own');
   check(/setAttPreviewFor\(data, URL\.createObjectURL\(u\.file\), true, u\.file\.size\)/.test(messages),
     'the upload path registers the picked bytes against the attachment id, with its byte size for the cap');

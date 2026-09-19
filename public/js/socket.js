@@ -56,6 +56,14 @@ function connHide() {
   }, 240);
 }
 function showConn() {
+  // Never cover a page nobody is looking at. On a phone the socket is usually
+  // gone by the time the app is opened again (Android suspends the process and
+  // the radio underneath it), and raising the splash while the app sits in the
+  // background means the very first thing the reader sees on the way back is the
+  // campfire — every single time, for as long as the reconnect takes. The splash
+  // exists to cover a stale app in front of someone; the resume path below arms
+  // it again the moment they are actually looking.
+  if (document.hidden) { paintConn(); return; }
   if (connVisible) { paintConn(); return; }
   if (!navigator.onLine) {
     // Genuinely offline: the whole app is dead, including sign-in — say so
@@ -78,12 +86,39 @@ function hideConn() {
 }
 function armConnSoon() {
   paintConn();
+  if (document.hidden) return; // see showConn: a hidden page is not covered
   if (connVisible || connTimer || !store.token || !inMainView()) return;
   // Offline shows instantly (no grace); a dropped socket gets a short grace
   // window so fast blips and the initial boot handshake never flash it.
   const delay = !navigator.onLine ? 0 : (connAttempts <= 1 ? 1200 : 0);
   connTimer = setTimeout(() => { connTimer = null; showConn(); }, delay);
 }
+// A resume is not a disconnect. On a phone the socket is usually gone by the
+// time the app is opened again (Android suspends the process and the radio
+// underneath it), and the reconnect backoff (2.5s) plus the splash's own grace is
+// exactly the "connection screen for a few seconds" the reader sees on the way
+// back, every time. So a drop that happened while the app was hidden never arms
+// the splash (see showConn/armConnSoon), and the way back in reconnects NOW
+// instead of waiting the backoff out — the overlay is left to the attempt that
+// is actually made in front of a reader. An OPEN socket is not enough to trust
+// either: Android suspends the network under it and a half-open TCP socket never
+// fires onclose, so one that has gone quiet past the point a healthy socket ever
+// does (the watchdog's own ping keeps S.lastWsMsg inside ~11s) is replaced now
+// rather than leaving the reader on silent, stale content until the watchdog's
+// ~9s timeout notices.
+const RESUMED_SOCKET_IDLE_MS = 20000;
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') return; // nothing to raise: showConn refuses while hidden
+  // Offline is the one state that comes straight back, on whichever view is
+  // showing (sign-in included) — the same instant answer the watchdog gives.
+  if (!navigator.onLine) { showConn(); return; }
+  if (!store.token || !inMainView()) { hideConn(); return; } // a live network lifts the sign-in overlay
+  const ws = S.ws;
+  if (ws && ws.readyState === WebSocket.OPEN && Date.now() - (S.lastWsMsg || 0) < RESUMED_SOCKET_IDLE_MS) return; // watchdog owns a live socket
+  connAttempts = 0; // a resume is a fresh start: boot grace, not "attempt N"
+  if (ws && ws.readyState === WebSocket.CONNECTING) { armConnSoon(); return; } // already on its way up
+  connectWS();
+});
 // Auth was revoked server-side (bad/expired token): stop the reconnect loop
 // and send the user back to sign in instead of spinning forever.
 async function connAuthDead() {
@@ -331,7 +366,17 @@ function onWS(m) {
       break;
     }
     case 'message-updated': {
+      // An EDIT moves the message's TEXT, and the in-place patch below only ever
+      // moves attachments — so a changed body has to rebuild the node, or the
+      // words on screen stay the old ones. The gate under it asks only "is this
+      // message's row on screen?", which is true for the very message that was
+      // edited, so an edit used to paint nothing anywhere: the editor's own Save
+      // read as a dead button until a reload, and the other side of the
+      // conversation never saw the new words at all. Read before the merge — the
+      // cached copy is the before.
+      const wasText = (msgById(m.message.id) || {}).content;
       updateMsgInCaches(m.message.id, (old) => Object.assign(old, m.message));
+      const edited = typeof wasText === 'string' && wasText !== m.message.content;
       // An edit to the reply the root's card previews has to reach the card —
       // the card is a snapshot, and a stale snapshot of an edited message is
       // exactly the kind of thing nobody thinks to reload to fix.
@@ -348,7 +393,11 @@ function onWS(m) {
         if (which === '#thread-replies') renderThread(); else renderMessages();
       });
       const upOnScreen = messageAttachmentsOnScreen(m.message.id);
-      if (m.channelId === S.channelId && !inHistUp && !upOnScreen) renderMessages();
+      if (m.channelId === S.channelId && !inHistUp && (!upOnScreen || edited)) renderMessages();
+      // The open thread panel holds the same row in its own markup: an edited
+      // body has to be rebuilt there too (a patched attachment list is not an
+      // edited message), and only the patch's own fallback used to repaint it.
+      if (edited && S.thread && (S.thread.rootId === m.message.id || S.thread.replies.some((r) => r.id === m.message.id))) renderThread();
       break;
     }
     case 'reaction-update': {
@@ -497,13 +546,17 @@ function onWS(m) {
       break;
     }
     case 'dm-updated': {
+      // Same text-vs-attachments split as message-updated (see there): an edit
+      // changes the body, which only a rebuild carries.
+      const wasDmText = (msgById(m.message.id) || {}).content;
       updateMsgInCaches(m.message.id, (old) => Object.assign(old, m.message));
+      const dmEdited = typeof wasDmText === 'string' && wasDmText !== m.message.content;
       const inHistDu = S.histMode && S.histMode.kind === 'dm' && S.histMode.id === m.message.threadId;
       // Same in-place attachment patch as message-updated: a DM photo or voice
       // note must not blink back through its placeholder when the verdict lands.
       patchMessageAttachmentsInList(m.message.id, m.message, () => renderDmMessages());
       const duOnScreen = messageAttachmentsOnScreen(m.message.id);
-      if (S.view === 'home' && S.dmThreadId === m.message.threadId && !inHistDu && !duOnScreen) renderDmMessages();
+      if (S.view === 'home' && S.dmThreadId === m.message.threadId && !inHistDu && (!duOnScreen || dmEdited)) renderDmMessages();
       // Same snapshot problem as dm-deleted: an edit to the newest message (its
       // text, or its last attachment going away) is what the row's preview is
       // showing, so the row has to be re-read.
