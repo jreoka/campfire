@@ -206,7 +206,9 @@ async function e2e() {
   // the REAL media bucket, scanner and push keys and run its own sweeps there.
   // Everything that addresses data is dropped and the workers are forced off,
   // which is what makes this test safe to run beside a live instance.
-  const DATA_ENV = /^(S3_|R2_|CLAMAV_|VIRUS_SCAN|MEDIA_|BUCKET_SCAN|ORPHAN_SWEEP|BACKUP|VAPID|PUSH_|WEBPUSH_|TURN_|STUN_|TURNSTILE)/;
+  // DATABASE_URL matters most of all: db.js lets it win over the PG* parts, so
+  // leaving it in would point the throwaway server at the live database.
+  const DATA_ENV = /^(S3_|R2_|CLAMAV_|VIRUS_SCAN|MEDIA_|BUCKET_SCAN|ORPHAN_SWEEP|BACKUP|VAPID|PUSH_|WEBPUSH_|TURN_|STUN_|TURNSTILE|DATABASE_URL)/;
   const cleanEnv = {};
   for (const [k, v] of Object.entries(process.env)) if (!DATA_ENV.test(k)) cleanEnv[k] = v;
 
