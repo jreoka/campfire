@@ -154,12 +154,6 @@ function connectWS() {
     // DMs, inbox) instead of leaving last night's gaps on screen.
     if (wsOpened) {
       try { refreshUnreadState(); } catch {}
-      // ...and the cards that are still saying "Processing". A scan verdict is
-      // also only ever a live push, so one that fired while this socket was down
-      // (a deploy restarting the app, a phone out of signal) would otherwise
-      // leave the reader staring at "Processing file" for a file that is ready
-      // until they happen to reload (see resyncPendingMedia).
-      try { resyncPendingMedia(); } catch {}
     }
     wsOpened = true;
   };

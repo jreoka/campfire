@@ -34,7 +34,6 @@
     try {
       const src = String(attachmentHTML || '');
       return {
-        pendingPreview: src.includes('attPendingPreview'),
         slot: src.includes('att-slot'),
         sameFileFastPath: src.includes('srcPathOf'),
         version: (W.S && (W.S.bootVersion || W.S.appVersion)) || null,

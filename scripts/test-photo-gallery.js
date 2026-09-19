@@ -16,15 +16,15 @@
 //       gallery needs 2+ attachments that are ALL pictures, the pinned-message
 //       panel (which renders its own narrow list) is untouched, and the CSS rules
 //       are in an order that works — the spanning tile's `aspect-ratio:auto` must
-//       come AFTER the square, and the scanning card IS a grid item, not a child
+//       come AFTER the square, and the warning card IS a grid item, not a child
 //       of a slot;
 //   [1] the REAL attachmentHTML + attsBlockHTML + styles.css in headless Chrome:
 //       for 1..5 photos the class, the tile sizes, the exact span, that the grid
 //       is completely FILLED (no hole at any count), the square crop, the
-//       original kept on every tile for the lightbox, and the two rendered-in-
-//       place states (still processing, virus-removed);
-//   [2] the pending -> final patch still fits a tile (its markup is rebuilt
-//       without any gallery class of its own — the tile must style it anyway).
+//       original kept on every tile for the lightbox, and the one state rendered
+//       in place of a slot (virus-removed);
+//   [2] the republish patch still fits a tile (its markup is rebuilt without any
+//       gallery class of its own — the tile must style it anyway).
 //
 // Skips the browser half (exit 0) when Chrome is unavailable.
 //
@@ -101,7 +101,6 @@ const CASES = [
   { title: '5 photos', atts: [photo(0), photo(1), photo(2), photo(3), photo(4)] },
   { title: '2 photos + a file', atts: [photo(0), photo(1), { id: 'f1', kind: 'file', url: '/uploads/files/p0.jpg', name: 'notes.pdf', size: 40213 }] },
   { title: '2 photos + a clip', atts: [photo(0), { id: 'v1', kind: 'video', mime: 'video/mp4', url: '/uploads/files/clip.mp4', name: 'clip.mp4', size: 900000, w: 1280, h: 720 }] },
-  { title: '3 photos, one still processing', atts: [photo(0), photo(1), photo(2, { scan: 'pending' })] },
   { title: '3 photos, one removed', atts: [photo(0), photo(1), photo(2, { scan: 'infected' })] },
 ];
 
@@ -232,7 +231,7 @@ async function main() {
   check(/\.msg-atts\.gallery\.g3 > :first-child,\.msg-atts\.gallery\.g5 > :first-child\{grid-row:span 2;aspect-ratio:auto;align-self:stretch;height:100%\}/.test(css),
     'the first tile spans both rows — and is told to fill them (a span alone left it content-tall, measured)');
   check(/\.msg-atts\.gallery > \.scan-block\{[^}]*aspect-ratio:1[^}]*\}/.test(css),
-    'the scanning card IS the grid item (attachmentHTML returns it in place of the slot), so it is square too');
+    'the warning card IS the grid item (attachmentHTML returns it in place of the slot), so it is square too');
   check(!/\.msg-atts\.gallery > \.att-slot > \.scan-block/.test(css), 'and is not looked for inside a slot it never has');
   check(/\.msg-atts\.gallery img\.att-img\{width:100%;height:100%;max-width:100%;max-height:none;object-fit:cover\}/.test(css),
     'the photo fills the tile (a contact sheet: the crop is the tile, the whole picture is the lightbox)');
@@ -339,16 +338,13 @@ async function main() {
         'every tile keeps the ORIGINAL url, so a tap opens the whole photo (not the crop)', g.tiles.map((t) => t.orig));
     }
 
-    console.log('\n[3] the states a tile can be in');
-    const pendingCard = grids[7].tiles[2];
-    const infectedCard = grids[8].tiles[2];
-    check(grids[7].cls === 'msg-atts gallery g3' && pendingCard.cls === 'scan-block',
-      'a photo still behind the gate is the scanning card, IN the grid', { cls: grids[7].cls, tile: pendingCard.cls });
-    check(Math.abs(pendingCard.w - grids[7].tiles[1].w) <= 1 && Math.abs(pendingCard.h - grids[7].tiles[1].h) <= 1,
+    console.log('\n[3] the state a tile can be in');
+    const infectedCard = grids[7].tiles[2];
+    check(grids[7].cls === 'msg-atts gallery g3' && infectedCard.cls === 'scan-block',
+      'a photo the scanner removed is the warning card, IN the grid', { cls: grids[7].cls, tile: infectedCard.cls });
+    check(Math.abs(infectedCard.w - grids[7].tiles[1].w) <= 1 && Math.abs(infectedCard.h - grids[7].tiles[1].h) <= 1,
       'and it is a tile like any other (the card IS the grid item, not a slot child)',
-      { card: pendingCard.w + '×' + pendingCard.h, square: grids[7].tiles[1].w + '×' + grids[7].tiles[1].h });
-    check(infectedCard.cls === 'scan-block' && Math.abs(infectedCard.h - grids[8].tiles[1].h) <= 1,
-      'so is a virus-removed one, which has no bytes left to show', infectedCard);
+      { card: infectedCard.w + '×' + infectedCard.h, square: grids[7].tiles[1].w + '×' + grids[7].tiles[1].h });
 
     console.log('\n[4] a verdict landing must not break the tile');
     await evaluate('window.__repatch(1)');

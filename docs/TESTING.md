@@ -679,6 +679,13 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   the same on Windows, macOS and Linux. Its own switch is `FAKE_CLAMAV_VERDICT`
   (force clean/malware/error) and `FAKE_CLAMAV_DELAY_MS` (hold the verdict open so
   the window in which the bytes are served but not yet judged is observable).
+  `node scripts/test-dm-message-route.js` covers `GET /api/dms/messages/:mid`
+  against a throwaway database with no scanner at all (skips without Postgres):
+  a member re-reads one message on its thread with its attachment identity, a
+  stranger gets 404 rather than being able to probe ids, an unknown id is a 404
+  too, and no session is a 401. It is the DM twin of the channel route the
+  pin/reaction surfaces use (`pickers.js`); its only in-app caller used to be the
+  client's "Processing" resync, which went with the scanning card.
   `node scripts/test-compress-types.js` covers the compressor's **coverage
   contract** offline (no server, no database): that there is no size floor
   (`MIN_BYTES` all zero, so a 174-byte png / 300-byte mp4 / 2 KB wav are all

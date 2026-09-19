@@ -24,10 +24,10 @@ function updateMsgInCaches(mid, fn) {
   for (const [, arr] of S.dmMessages) { const i = arr.findIndex((x) => x.id === mid); if (i >= 0) fn(arr[i]); }
 }
 const DL_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>';
-// The download link, withheld while a file is still behind the scan gate: the
-// reader has nothing to save yet, and a link to a URL that answers 423 is only a
-// way to fail. It arrives with the final bytes (the same moment the chip goes).
-function attDl(a, pending) { return pending ? '' : `<a class="att-dl" href="${esc(a.url)}" download="${esc(a.name)}" target="_blank" rel="noopener" title="Download">${DL_ICON}</a>`; }
+// The download link. It is always offered: an upload is servable the moment it
+// lands (see virus-scan.js), so the URL behind it answers with the file rather
+// than with a gate.
+function attDl(a) { return `<a class="att-dl" href="${esc(a.url)}" download="${esc(a.name)}" target="_blank" rel="noopener" title="Download">${DL_ICON}</a>`; }
 // ---------- starring a GIF that was shared in chat ----------
 // A GIF posted from the picker carries the Klipy item it came from on the
 // attachment itself (gif_slug/gif_thumb/gif_mp4 — see cleanGifMeta in
@@ -69,8 +69,7 @@ function gifFavMatch(favs, key, gifUrl) {
   const list = favs || (typeof S !== 'undefined' && S.gifFavs) || [];
   return list.some((f) => f && ((!!key && f.slug === key) || (!!gifUrl && f.gif === gifUrl)));
 }
-function attFavHTML(a, pending) {
-  if (pending) return ''; // nothing to star until the bytes are the final ones
+function attFavHTML(a) {
   const key = gifFavKeyFor(a);
   if (!key) return '';
   const on = gifFavMatch(null, key, a.url);
@@ -157,22 +156,16 @@ function wireAttImage(img) {
   if (img.complete && img.naturalWidth > 0) done();
   else img.addEventListener('load', done, { once: true });
 }
-// ---------- the picked bytes as a stand-in for a pending one ----------
-// A chat upload is not servable until the scan slot has judged it AND the
-// compressor has settled its bytes: the file posts to chat immediately, and the
-// gate answers 423 in the meantime (see server.js scanGate). The uploading
-// browser is holding those very bytes, so the honest rendering during that
-// window is the picture itself — not a spinner card standing where it will be —
-// and the same bytes are what the composer chip already paints.
-//
-// So a preview is kept from the moment the file is picked and is keyed BOTH by
-// the attachment id (stable across the whole pipeline: the compressor may republish
-// the bytes under a new key and a fresh ?v, and the id is what survives that) and
-// by the attachment url (what the composer's chip lookups ask for). Rendering a
-// pending attachment with a preview gives a box the exact shape of the final one,
-// so the pending -> final handover moves no pixels; once the verdict lands the
-// element keeps the preview it already has and only swaps the url it will fall
-// back to, so the reader never sees an unload.
+// ---------- the picked bytes, so the sender's own copy never reloads ----------
+// The uploading browser is holding the file's bytes, and the composer chip
+// already paints them (see setAttPreview / setAttPreviewFor). Those bytes are
+// worth keeping past the send: the message that appears a WebSocket round trip
+// later can paint the picture the reader just picked instead of fetching it back,
+// and when the compressor later republishes the file under a new key (or the
+// server hands the attachment a fresh ?v=) the element under it keeps the frame
+// it already has — the handover moves no pixels and nothing blinks (see
+// attShot / patchImageNode). A clip's entry is a still FRAME captured off the
+// picked file, which is its poster, never a playable source (see attPickedFrame).
 //
 // Entries older than LOCAL_PREVIEW_CAP_BYTES are dropped oldest-first (blob urls
 // revoked) — the map outlives the composer now that it feeds the message list, so
@@ -199,49 +192,25 @@ function attPreviewEntry(id, url) {
   if (id) { const hit = attPreviews.get(id); if (hit) return hit; }
   return url ? (attPreviews.get(url) || null) : null;
 }
-// What a MEDIA element for this attachment should point at right now: its local
-// preview while there is one (the only bytes that are certainly servable), else
-// the attachment's own url.
+// What a MEDIA element for this attachment should point at: its picked bytes while
+// this page still holds them, else the attachment's own url.
 function attPreviewSrc(a) {
   if (!a || !a.url) return '';
   const hit = attPreviewEntry(a.id, a.url);
   if (hit) return hit.src;
-  return (a.kind === 'image' && a.scan !== 'pending' && a.scan !== 'infected') ? a.url : '';
-}
-// Is this attachment still waiting on the slot AND are the picked bytes here?
-// `attPreviewSrc` answers for the URL a media element should use; this answers
-// "is that URL a local stand-in", which is what tells a pending media attachment
-// apart from one with no local preview to show (the scanning card).
-function attPendingPreview(a) {
-  return !!(a && a.scan === 'pending' && a.url && attPreviewEntry(a.id, a.url));
-}
-// …and is that entry the MEDIA, or only a picture OF it? A picture and a voice
-// note keep their own picked bytes, so a pending one paints the real thing. A
-// CLIP does not: the store's entry for a video is a still FRAME captured off the
-// picked file (see videoPreviewShot) — a poster, not a playable source. A pending
-// clip therefore falls through to the scanning card, which is the honest
-// "Processing file" state a reload already shows. Handing that frame to a <video>
-// (which is what used to happen) is a broken element: the browser refuses an image
-// as a media source, and its failed load ALSO lifted the loading shell — so the
-// sender was left looking at a dead player until a refresh (reported: "a video
-// uploaded just fails to render").
-function attPendingStandIn(a) {
-  return !!(a && a.scan === 'pending' && a.kind !== 'video' && attPendingPreview(a));
+  return (a.kind === 'image' && a.scan !== 'infected') ? a.url : '';
 }
 // The picked bytes, when they are a STAND-IN rather than the attachment's own
 // file. Only the uploading browser's own copy qualifies: it is the one entry made
-// from a File this page is holding (a blob url), plus any preview at all while the
-// upload is still waiting on the slot. A clean attachment has no stand-in: its own
-// bytes, and the derived preview of them, are what it renders, exactly as before
-// this existed. PICTURES and VOICE NOTES only — a clip's entry is a still frame,
+// from a File this page is holding (a blob url). Anything else — another device, a
+// reload, a derived preview — has no stand-in, and the attachment's own bytes are
+// what it renders. PICTURES and VOICE NOTES only: a clip's entry is a still frame,
 // which is its poster (see attVideoHTML / attPickedFrame), never a source.
 function attShot(a) {
   if (!a || !a.url) return null;
   const hit = attPreviewEntry(a.id, a.url);
   if (!hit) return null;
-  const picked = /^blob:/.test(String(hit.src || ''));
-  const stand_in = picked || a.scan === 'pending';
-  return stand_in ? { src: String(hit.src || '') } : null;
+  return /^blob:/.test(String(hit.src || '')) ? { src: String(hit.src || '') } : null;
 }
 function setAttPreview(url, src, blob, bytes) {
   if (!url || !src) return false;
@@ -352,23 +321,13 @@ function attMeta(a, kind) {
     + ` data-fb-scan="${esc((a && a.scan) || 'clean')}"`;
 }
 function attachmentHTML(a) {
-  // Virus-scan states (see virus-scan.js): infected files render a greyed-out
-  // warning — never the bytes, no preview, no download link anywhere. A PENDING
-  // file is different when the uploading browser still holds the picked bytes:
-  // the media renders from that local preview (the box is the final one's shape)
-  // and NOTHING is painted over it — the picture the sender just picked stands on
-  // its own, and the verdict lands on the element underneath without touching what
-  // is on screen. (A "Processing" chip used to sit in the picture's corner; the
-  // owner asked for it gone, and the pending state is already legible from the
-  // composer's own chip and the missing download link.) Only a file with no local
-  // preview to show — another device, a reload, a non-media upload, and a CLIP
-  // (whose entry in the store is a still frame, not its bytes — see
-  // attPendingStandIn) — falls back to the scanning card, which is a whole card
-  // rather than an overlay and stays.
+  // One virus-scan state is rendered, and it is the only one the server can
+  // report about a file that is still readable: an infected one, greyed out with
+  // no preview and no download link anywhere. There is deliberately no
+  // "Processing file" card: an upload is servable the moment it lands (see
+  // virus-scan.js), a verdict is a background judgement that can only take bytes
+  // away, and the client is never told about one in flight.
   if (a.scan === 'infected') return `<div class="scan-block infected"${attMeta(a)}><span class="scan-ic">${SCAN_SHIELD_SVG}</span><span class="scan-tx"><b>${esc(a.name)}</b><span>Virus detected — this file was removed and can't be downloaded.</span></span></div>`;
-  const pending = a.scan === 'pending';
-  const local = attPendingStandIn(a);
-  if (pending && !local) return `<div class="scan-block scanning"${attMeta(a)}><span class="scan-tx"><b>${esc(a.name)} (${fmtSize(a.size)})</b><span>Processing file<span class="scan-dots"></span></span><span class="scan-track"><span class="scan-fill"></span></span></span></div>`;
   return `<span class="att-slot" data-att-slot="${esc(a.id || '')}">${attachmentBodyHTML(a)}</span>`;
 }
 // The attachment itself, whatever shape it takes. Split out so the suspicious
@@ -383,12 +342,10 @@ function attachmentBodyHTML(a, opts) {
   if (a.kind === 'image') {
     // data-fb-url is the ORIGINAL: the lightbox and the download link use it, and
     // it is where the preview falls back to. data-fb-thumb marks a src that may
-    // still need that fallback. While the file is pending there is no download
-    // link (see attDl) and `src` is the picked bytes when this browser still has
-    // them — otherwise the derived preview, which is what a reader anywhere else
-    // gets (see attPreviewEntry / attPendingPreview).
-    const pending = a.scan === 'pending';
-    const preview = shot ? shot.src : (pending ? attPreviewSrc(a) : '');
+    // still need that fallback. `src` is this browser's own picked bytes when it
+    // still has them, otherwise the derived preview, which is what a reader
+    // anywhere else gets.
+    const preview = shot ? shot.src : '';
     // An animated source has no preview to paint: the derived one is a still
     // frame, and `src` then falls through to the attachment's own animating
     // bytes (see attIsAnimated). `thumb` empty also means no data-fb-thumb, so
@@ -411,7 +368,7 @@ function attachmentBodyHTML(a, opts) {
     // over, which is the wrap, the image, the download chip or the star — one
     // read from the wrap covers all of them (see attFromEl in actions.js).
     const meta = attMeta(a, 'image');
-    return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}${d ? ' ar' : ' no-ar'}"${style}${meta}><span class="att-ph" aria-hidden="true"><span class="att-spin"></span></span><img class="att-img" draggable="false" src="${esc(preview || thumb || a.url)}" alt="${esc(a.name)}" loading="lazy" decoding="async"${d ? ` width="${d.w}" height="${d.h}"` : ''}${thumb ? ' data-fb-thumb="1"' : ''} data-fb-orig="${esc(a.url)}" data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a, pending)}${attFavHTML(a, pending)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+    return `<span class="att-wrap${a.spoiler ? ' spoiler' : ''}${d ? ' ar' : ' no-ar'}"${style}${meta}><span class="att-ph" aria-hidden="true"><span class="att-spin"></span></span><img class="att-img" draggable="false" src="${esc(preview || thumb || a.url)}" alt="${esc(a.name)}" loading="lazy" decoding="async"${d ? ` width="${d.w}" height="${d.h}"` : ''}${thumb ? ' data-fb-thumb="1"' : ''} data-fb-orig="${esc(a.url)}" data-fb-name="${esc(a.name)}" data-fb-url="${esc(a.url)}" />${attDl(a)}${attFavHTML(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
   }
   if (a.kind === 'video') return attVideoHTML(a, opts);
   if (a.kind === 'audio') return audioPlayerHTML(a, opts);
@@ -427,12 +384,11 @@ function attachmentBodyHTML(a, opts) {
 // the spinner shell until `requestVideoPoster` has one. data-fb-src is the
 // published source the element receives the moment the verdict lands.
 function attVideoHTML(a, opts) {
-  const pending = a.scan === 'pending';
   const d = attDimsFor(a);
   const ar = d ? (d.w / d.h) : 0;
   const style = ar ? ` style="--att-ar:${ar.toFixed(4)}"` : '';
   const poster = (!opts || opts.live !== false) ? attPickedFrame(a) : '';
-  return `<span class="att-wrap${poster ? '' : ' loading'}${a.spoiler ? ' spoiler' : ''}${ar ? ' ar' : ' no-ar'}"${style}${attMeta(a, 'video')}><video class="att-vid" draggable="false" src="${esc(a.url)}" data-fb-src="${esc(a.url)}" controls preload="metadata" playsinline${poster ? ` poster="${esc(poster)}"` : ''}></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a, pending)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+  return `<span class="att-wrap${poster ? '' : ' loading'}${a.spoiler ? ' spoiler' : ''}${ar ? ' ar' : ' no-ar'}"${style}${attMeta(a, 'video')}><video class="att-vid" draggable="false" src="${esc(a.url)}" data-fb-src="${esc(a.url)}" controls preload="metadata" playsinline${poster ? ` poster="${esc(poster)}"` : ''}></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
 }
 // The still FRAME this page already holds for a clip, as the poster to paint it
 // with — the upload path files the frame the upload card captured under the
@@ -491,22 +447,22 @@ function attsBlockHTML(list) {
   const cls = 'msg-atts' + (gallery ? ' gallery g' + Math.min(atts.length, 5) : '');
   return '<div class="' + cls + '">' + atts.map(attachmentHTML).join('') + '</div>';
 }
-// ---------- the pending -> final handover (no unload) ----------
-// A verdict landing re-broadcasts the message with the attachment's final url
-// (and, for a pending one, the fact that it is no longer pending). The list must
-// NOT be rebuilt for that: a rebuild recreates every <img> and <video> on screen
-// — the picture the reader just sent flickers back through its placeholder, and
-// a clip that is already playing restarts. So a media attachment whose node can
-// carry the change is patched where it stands, and a message with nothing to
-// patch falls back to the ordinary render.
+// ---------- the handover: a republished file, patched in place ----------
+// The compressor republishes a file it settles under a new key (see
+// media-compress.js), and the message is re-broadcast with the new url. The list
+// must NOT be rebuilt for that: a rebuild recreates every <img> and <video> on
+// screen — the picture the reader is looking at flickers back through its
+// placeholder, and a clip that is already playing restarts. So a media attachment
+// whose node can carry the change is patched where it stands, and a message with
+// nothing to patch falls back to the ordinary render.
 //
 // Only the two things that cannot be done in place go back through the renderer:
 // an attachment that appeared or went away (the slot list no longer lines up),
 // and one whose KIND changed (a card became a picture — an unmeasurable HEIC
 // becoming a JPEG, a picture this browser cannot decode). The shape has to match
-// too: the pending box was reserved from the stored size, and the published
-// bytes normally have exactly that size. When they do not, a full render lets
-// the picture take its own shape instead of being squashed into a stale box.
+// too: the box was reserved from the stored size, and the published bytes
+// normally have exactly that size. When they do not, a full render lets the
+// picture take its own shape instead of being squashed into a stale box.
 function attApproxAr(w, h) {
   if (!(w > 0) || !(h > 0)) return 0;
   return w / h;
@@ -601,20 +557,16 @@ function patchAttachmentNode(oldEl, a) {
   // Left to the `!clean` line below an unchanged url returned "nothing to move" and
   // the reader went on looking at a picture of a file that was removed.
   if (a.scan === 'infected') return false;
-  const clean = a.scan !== 'pending' && a.scan !== 'infected';
   const newRole = a.kind === 'image' ? 'image' : a.kind === 'video' ? 'video' : a.kind === 'audio' ? 'audio' : (textPreviewable(a) ? 'text' : 'file');
   const oldRole = attElementRole(oldEl);
-  // The photo the reader sent arrives as 'image' both times; a scan card standing
-  // in for something with no local preview is the renderer's to replace.
+  // The photo the reader is looking at arrives as 'image' both times.
   if (oldRole !== newRole) return false;
-  // The pending box was reserved from the stored size and the published bytes
-  // normally have exactly that size. When they do not (a re-encode that changed
-  // the aspect), let the renderer reshape it instead of squashing the picture.
+  // The box was reserved from the stored size and the published bytes normally
+  // have exactly that size. When they do not (a re-encode that changed the
+  // aspect), let the renderer reshape it instead of squashing the picture.
   const oldAr = attReservedAr(oldEl);
   const newAr = attApproxAr(Number(a.w) || 0, Number(a.h) || 0);
   if (!attSameShape(oldAr, newAr)) return false;
-  const oldSrc = oldEl.getAttribute('data-fb-orig') || oldEl.getAttribute('data-fb-url') || '';
-  if (oldSrc === String(a.url || '') && !clean) return true;  // nothing to move yet
   if (newRole === 'image') return patchImageNode(oldEl, a);
   if (newRole === 'video') return patchVideoNode(oldEl, a);
   if (newRole === 'audio') return patchAudioNode(oldEl, a);
@@ -850,17 +802,12 @@ function patchAttachmentsIn(node, m) {
     if (kind !== (a.kind || 'file')) return false;
     // An infected verdict cannot be patched in place at all: the server DELETED the
     // bytes, so the rendering has to become the warning card, which only the
-    // renderer builds. (The `!clean` skip below is for a file still waiting on the
-    // slot: its picked bytes are on screen, and the verdict that settles it is
-    // applied by the patch itself.)
+    // renderer builds.
     if (a.scan === 'infected') return false;
-    const clean = a.scan !== 'pending' && a.scan !== 'infected';
-    if (clean) {
-      // Not an in-place change: the attachment is already what it will be, and
-      // rewriting it here would only lose playback state.
-      if ((mb.getAttribute('data-fb-url') || '') === String(a.url || '')) continue;
-      if (!patchAttachmentNode(mb, a)) return false;
-    }
+    // Not an in-place change: the attachment is already what it will be, and
+    // rewriting it here would only lose playback state.
+    if ((mb.getAttribute('data-fb-url') || '') === String(a.url || '')) continue;
+    if (!patchAttachmentNode(mb, a)) return false;
     slot.setAttribute('data-att-slot', String(a.id || ''));
   }
   return true;
@@ -900,53 +847,6 @@ function messageAttachmentsOnScreen(mid) {
     const sel = '.msg[data-mid="' + CSS.escape(String(mid)) + '"]';
     return !!(document.querySelector('#messages ' + sel) || document.querySelector('#thread-replies ' + sel));
   } catch { return false; }
-}
-// ---------- resync: cards still saying "Processing" after a missed push --------
-// A verdict reaches the reader as a LIVE push (message-updated / dm-updated).
-// That push is gone forever if the socket was down when it fired — a deploy
-// restarts the app, a phone loses signal, a laptop sleeps — and the reader is
-// left looking at "Processing file" for a file that has been ready for hours,
-// with no way out but a reload. The list itself is deliberately NOT refetched on
-// reconnect (that would cost the reader their place in the conversation), so
-// this asks about exactly the messages STILL showing a scanning card and patches
-// them where they stand through the same in-place path the pushes use. In the
-// common case there is nothing pending, and the whole thing costs one DOM query
-// and not a single request.
-async function resyncPendingMedia() {
-  if (!S.me || !store.token) return;
-  const byMid = new Map();
-  try {
-    for (const el of document.querySelectorAll('#messages .scan-block.scanning[data-att-id], #thread-replies .scan-block.scanning[data-att-id]')) {
-      const mid = ((el.closest('.msg') || {}).dataset || {}).mid;
-      if (!mid) continue;
-      if (!byMid.has(mid)) byMid.set(mid, []);
-      byMid.get(mid).push(el);
-    }
-  } catch { return; }
-  if (!byMid.size) return;
-  // Which list these came from decides which twin to ask — the same one the two
-  // socket handlers answer for.
-  const dm = S.view === 'home';
-  for (const [mid, cards] of byMid) {
-    let message = null;
-    try {
-      const r = await api(dm ? `/api/dms/messages/${encodeURIComponent(mid)}` : `/api/messages/${encodeURIComponent(mid)}`);
-      message = r && r.message;
-    } catch { continue; } // deleted, or no longer ours to read: nothing to patch
-    if (!message || !message.id) continue;
-    // Only a card that actually MOVED is worth touching. A re-read that still
-    // reports the very same bytes as pending means the slot is genuinely still
-    // working — and patching then would rebuild the whole list (a scanning card
-    // is not an `.att-slot`, so the in-place patch declines it, see
-    // patchAttachmentsIn) to change nothing at all.
-    const moved = cards.some((el) => {
-      const a = (message.attachments || []).find((x) => String(x.id || '') === String(el.dataset.attId || ''));
-      return !a || a.scan !== 'pending' || String(a.url || '') !== String(el.dataset.fbUrl || '');
-    });
-    if (!moved) continue;
-    updateMsgInCaches(message.id, (old) => Object.assign(old, message));
-    patchMessageAttachmentsInList(message.id, message, () => { if (dm) renderDmMessages(); else renderMessages(); });
-  }
 }
 // ---------- video posters: desktop shows the first frame natively, but the
 // Android WebView shows a black box + giant play button until playback
@@ -1702,15 +1602,14 @@ function vpVolIcon() {
 }
 function audioPlayerHTML(a, opts) {
   const tag = 'vp' + (++vpSeq).toString(36) + Date.now().toString(36).slice(-3);
-  // While the upload waits, the player points at the local preview when the
-  // uploading browser still holds the take — a voice message is playable the
-  // moment it is sent, and the player is already pointing at its final source
-  // (data-fb-src) when the slot publishes it, so the verdict swaps the <audio>
-  // source without rebuilding the player (see patchAttachmentNode). A patch
-  // passes `live:false` — it is building the FINAL rendering.
-  const pending = a.scan === 'pending';
+  // The player points at this page's own picked take when it still has one, so a
+  // voice message is playable without fetching back what the sender just
+  // recorded; `data-fb-src` is the published source, which is what the in-place
+  // patch follows when the file is republished under a new key (see
+  // patchAttachmentNode). A patch passes `live:false` — it is building the FINAL
+  // rendering.
   const shot = (!opts || opts.live !== false) ? attShot(a) : null;
-  const src = shot ? shot.src : (pending ? attPreviewSrc(a) : '');
+  const src = shot ? shot.src : '';
   return `<div class="vplayer" data-vp="${tag}" data-url="${esc(a.url)}" data-size="${a.size || 0}"${attMeta(a, 'audio')}>`
     + `<button type="button" class="vp-play" data-vp-toggle title="Play"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path class="vp-ic-play" d="M8 5v14l11-7z"/><path class="vp-ic-pause" d="M7 5h4v14H7zM13 5h4v14h-4z" style="display:none"/></svg></button>`
     + `<audio src="${esc(src || a.url)}" data-fb-src="${esc(a.url)}" preload="metadata"></audio>`
@@ -1718,7 +1617,7 @@ function audioPlayerHTML(a, opts) {
     + `<div class="vp-meta"><span data-vp-cur>0:00</span><span class="vp-dur">…</span></div></div>`
     + `<div class="vp-vol"><button type="button" class="vp-volbtn" data-vp-volbtn title="Volume">${vpVolIcon()}</button>`
     + `<span class="vp-volpop"><input type="range" class="vp-volslider" data-vp-vol min="0" max="1" step="0.01" value="${vpVol}" style="--fill:${Math.round(vpVol * 100)}%" aria-label="Preview volume" /></span></div>`
-    + attDl(a, pending) + `</div>`;
+    + attDl(a) + `</div>`;
 }
 function vpAudio(root) { return root ? root.querySelector('audio') : null; }
 function vpPaint(root) {
@@ -2027,7 +1926,7 @@ function messageEl(m, opts = {}) {
   if (S.editing === m.id) {
     const eatts = (m.attachments || []).filter((a) => a.id && !(S.editRemovals && S.editRemovals.has(a.id)));
     inner += `<div class="edit-box"><textarea id="edit-area" maxlength="5000">${esc(m.content)}</textarea>`
-      + (eatts.length ? `<div class="edit-atts">` + eatts.map((a) => `<span class="edit-att">${a.kind === 'image' && a.scan !== 'pending' && a.scan !== 'infected' ? `<img src="${esc(a.url)}" alt="" loading="lazy" />` : ''}<span class="edit-att-name">${esc(a.name)}${a.scan === 'pending' ? ' (processing…)' : ''}${a.scan === 'infected' ? ' (removed: virus detected)' : ''}</span><button type="button" class="mini edit-att-x" data-act="edit-unattach" data-aid="${esc(a.id)}" title="Remove attachment">✕</button></span>`).join('') + `</div>` : '')
+      + (eatts.length ? `<div class="edit-atts">` + eatts.map((a) => `<span class="edit-att">${a.kind === 'image' && a.scan !== 'infected' ? `<img src="${esc(a.url)}" alt="" loading="lazy" />` : ''}<span class="edit-att-name">${esc(a.name)}${a.scan === 'infected' ? ' (removed: virus detected)' : ''}</span><button type="button" class="mini edit-att-x" data-act="edit-unattach" data-aid="${esc(a.id)}" title="Remove attachment">✕</button></span>`).join('') + `</div>` : '')
       + `<div class="row"><button class="btn small primary" data-act="edit-save">Save</button><button class="btn small" data-act="edit-cancel">Cancel</button></div></div>`;
   } else if (m.content) {
     const big = isBigEmoji(m.content) && !m.attachments?.length;
@@ -2928,7 +2827,7 @@ function paintComposerChips(box, list, reply, clearReply, held) {
   const staged = held ? [...list, ...(S.uploads || []).filter((u) => u.att && u.attHere).map((u) => u.att)] : list;
   staged.forEach((a) => {
     const chip = document.createElement('div');
-    chip.className = 'att-chip' + (a.scan === 'pending' ? ' scanning' : '');
+    chip.className = 'att-chip';
     chip.innerHTML = attChipHTML(a);
     const x = document.createElement('button'); x.className = 'mini'; x.type = 'button'; x.textContent = '✕';
     x.onclick = () => {

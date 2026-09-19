@@ -401,6 +401,17 @@ so the card can explain itself, re-broadcasts the message as the warning, and th
 `/uploads` gate then answers 410. A `pending` row reads as `clean` everywhere
 (`effectiveStatus`), so no reader ever waits on a scan, and nothing blinks back to
 "Processing". Compression is not on this path at all — see the compressor below.
+**The client renders no scanning state at all**: the `scan-block.scanning` card,
+the preview-while-pending stand-ins (`attPendingPreview`/`attPendingStandIn`) and
+the reconnect/foreground resync that repaired a stranded card
+(`resyncPendingMedia`, and its `GET /api/messages|dms/messages/:mid` calls) are
+gone, because the server can no longer report a pending attachment — `infected`
+is the only non-clean state the renderer knows, and `scripts/test-photo-gallery.js`
+pins it as the one card that stands in for a slot. What survives is the
+picked-bytes store, which keeps the sender's own copy from reloading when the
+compressor republishes a file under a new key (see messages.js). The **Scan info**
+panel still says "Scanning…" for a row the worker has not judged yet: it reads the
+STORED record, not the client's rendering.
 Prove the daemon rather than assuming it:
 `node scripts/verify-clamav.js` (run it in the app container) checks that it
 answers and names its ClamAV version, how old the signature database is, that
@@ -707,8 +718,10 @@ url, because one message can show the same picture twice. A single picture (an
 embed, a bookmark tile, a picture sharing its message with a clip) shows no
 arrows at all. `scripts/test-lightbox.js` pins the block, the arrows at both ends,
 and those two absences (no video stage, no chip).
-A file whose bytes were removed (`infected`) or are not published yet
-(`pending`) offers ONLY "Scan info", because there is nothing left to save.
+A file whose bytes were removed (`infected`) offers ONLY "Scan info", because
+there is nothing left to save. (There is no "not published yet" state any more:
+an upload is servable the moment it lands, so the warning card is the only thing
+the renderer builds in place of a slot.)
 The message menu adds Mark unread,
 Bookmark message and Create reminder… beside Copy text, and View reactions
 whenever the message has any. Mark unread moves the WATERMARK

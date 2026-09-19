@@ -235,7 +235,7 @@ async function main() {
 
   console.log('\n[3] the client asks for the preview, with the original one error away');
   check(/class="att-img"[^>]*\ssrc="\$\{esc\(preview \|\| thumb \|\| a\.url\)\}"/.test(markSource),
-    'the markup prefers the derived preview (and the picked bytes first, while the upload is pending)');
+    'the markup prefers the derived preview (and this browser\'s own picked bytes first, when it still has them)');
   check(/data-fb-thumb="1"/.test(markSource) && /data-fb-url="\$\{esc\(a\.url\)\}"/.test(markSource),
     'and carries the original it falls back to');
   check(/loading="lazy"/.test(markSource), 'integration with native lazy loading is kept');
@@ -250,8 +250,8 @@ async function main() {
   check(/attFromEl\(t\)/.test(errSource), 'the fallback reads the real attachment identity (id/url/name/size/kind) off the element it replaces');
   check(/data-fb-size="\$\{esc\(\(a && a\.size\) \|\| 0\)\}"/.test(markSource), 'every rendering carries its size for that fallback to read');
   check(/openLightbox\(imgEl\.dataset\.fbUrl \|\| imgEl\.src/.test(pickers), 'the lightbox opens the ORIGINAL, never the preview');
-  check(/attDl\(a, pending\)\}/.test(markSource) || /function attDl\(a, pending\)/.test(markSource),
-    'the download link is unchanged (it was always the original), and withheld only while the file is still behind the gate');
+  check(/attDl\(a\)\}/.test(markSource) || /function attDl\(a\)/.test(markSource),
+    'the download link is unchanged (it was always the original), and is offered with every rendering');
   // The bug this section's last checks exist for: "a manually uploaded GIF
   // doesn't autoplay, linked ones do." A Klipy GIF is an https url with no
   // /uploads/ key, so it never had a preview to be frozen by; an uploaded one did

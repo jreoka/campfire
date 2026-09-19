@@ -232,10 +232,9 @@ function attItemsFor(a) {
   const img = kind === 'image', video = kind === 'video';
   const url = absUrl(a.url);
   const items = [];
-  // Nothing to copy, save or link to when the bytes were removed or are not
-  // published yet: the reader gets the explanation instead (Scan info), and
-  // nothing that would 404 at them.
-  if (a.scan !== 'infected' && a.scan !== 'pending' && a.url) {
+  // Nothing to copy, save or link to when the bytes were removed: the reader gets
+  // the explanation instead (Scan info), and nothing that would 404 at them.
+  if (a.scan !== 'infected' && a.url) {
     if (img) items.push({ label: 'Copy image', icon: IMG_COPY_SVG, fn: () => copyImageToClipboard(a) });
     items.push({ label: img ? 'Save image' : video ? 'Save video' : kind === 'audio' ? 'Save audio' : 'Save file', icon: SAVE_SVG, fn: () => saveMediaFile(a) });
     items.push({

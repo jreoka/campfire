@@ -69,14 +69,14 @@ const msgBuild = new Function(
   'S', 'openPicker', 'replyToMsg', 'openForward', 'gifFavOf', 'gifFavMatch', 'toggleGifFav', 'openThread',
   'openReactionsModal', 'togglePin', 'canMod', 'api', 'toast', 'msgAttItems', 'markMessageUnread',
   'toggleBookmark', 'openReminderModal', 'openReportModal',
-  'PIN_SVG', 'RX_SVG', 'GIF_STAR_SVG', 'BOOKMARK_SVG', 'BOOKMARK_ON_SVG', 'UNREAD_SVG', 'CLOCK_SVG', 'REPORT_SVG',
+  'PIN_SVG', 'RX_SVG', 'GIF_STAR_SVG', 'BOOKMARK_SVG', 'BOOKMARK_ON_SVG', 'UNREAD_SVG', 'CLOCK_SVG', 'REPORT_SVG', 'plusSVG',
   msgSrc + '\nreturn messageMenuItems;'
 );
 const messageMenuItems = msgBuild(
   S, noop, noop, noop, () => null, () => false, noop, noop,
   noop, noop, () => false, () => Promise.resolve(), noop, att.msgAttItems, noop,
   noop, noop, noop,
-  SVG, SVG, SVG, SVG, SVG, SVG, SVG, SVG
+  SVG, SVG, SVG, SVG, SVG, SVG, SVG, SVG, () => SVG
 );
 const seq = (items) => items.map((i) => (i.sep ? '—' : i.head ? '[' + i.head + ']' : i.label));
 const img = (id, name) => ({ id, url: '/uploads/files/' + name, name, kind: 'image', scan: 'clean' });
@@ -149,10 +149,10 @@ for (const [kind, want] of Object.entries(shapes)) {
 }
 const vid = labels(att.attItemsFor({ id: 'v', url: '/uploads/files/v.mp4', name: 'v.mp4', kind: 'video', scan: 'clean' }));
 check(!vid.some((l) => /^Copy video$/.test(l)), 'a video never promises to put its bytes on the clipboard', vid);
-for (const scan of ['infected', 'pending']) {
-  const gone = labels(att.attItemsFor({ id: 'x', url: '/uploads/files/x', name: 'x', kind: 'image', scan }));
+{
+  const gone = labels(att.attItemsFor({ id: 'x', url: '/uploads/files/x', name: 'x', kind: 'image', scan: 'infected' }));
   check(JSON.stringify(gone) === JSON.stringify(['Scan info']),
-    'a ' + scan + ' file offers the explanation and nothing that would 404', gone);
+    'a removed file offers the explanation and nothing that would 404', gone);
 }
 check(labels(att.attItemsFor({ id: '', url: '/uploads/files/x', name: 'x', kind: 'file', scan: 'clean' })).length === 2,
   'an optimistic attachment with no id keeps save/link, minus the scanner row',
