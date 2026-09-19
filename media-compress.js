@@ -1,20 +1,34 @@
 // Background media compressor: shrinks chat uploads (images, GIFs, video,
-// audio) in place so storage + bandwidth stay small without anyone noticing.
+// audio) so storage + bandwidth stay small without anyone noticing.
+//
+// It is deliberately NOT part of the upload path. An upload is served the moment
+// it lands (see virus-scan.js): nothing about it waits for an encode, and no
+// client is ever shown a "Processing file" card on its account. Everything here
+// runs out of band, behind the reader.
 //
 // Design notes:
 // - Single-container friendly: runs in-process (see startMediaCompress),
 //   never on the request path, so uploads stay instant.
-// - Continuous while work exists: the worker chains ticks back-to-back with
-//   a short breather (MEDIA_COMPRESS_ACTIVE_MS, default 2s) whenever the
-//   queue still has pending files, and falls back to a slow idle poll
-//   (MEDIA_COMPRESS_EVERY_MS, default 30s) once the queue drains. New
-//   uploads also wake it via kickMediaCompress, so files typically compress
-//   within seconds instead of waiting for the next idle poll.
+// - Two triggers, deliberately split by WHAT the encode is for:
+//   - the COMPATIBILITY QUEUE, for bytes a reader's platform cannot open at
+//     all: Opus/Vorbis audio (a voice message recorded on Android is WebM/Opus,
+//     which no Apple product can put in an <audio> element before iOS 17.4 and
+//     never in Ogg) -> AAC/MP4, every video container Safari cannot demux ->
+//     MP4, and HEIC/HEIF stills (no Windows browser can display one) -> JPEG.
+//     Those are not "make it smaller" jobs — the file is unusable on that
+//     platform until they run — so they are settled promptly, seconds after
+//     the upload lands. Continuous while work exists, with a short breather
+//     (MEDIA_COMPRESS_ACTIVE_MS) between hot ticks and a slower idle poll
+//     (MEDIA_COMPRESS_EVERY_MS) once the queue drains; a new upload wakes it.
+//   - the SCHEDULED BUCKET SWEEP (reconcileBucket) for everything else: the
+//     ordinary shrinking of media every reader can already open. It lists the
+//     bucket on a timer (MEDIA_SWEEP_EVERY_MS, default 6h) so a file the reader
+//     was just handed is never rewritten underneath them, and it is the one
+//     path that sees profile media and anything a flag table never carried.
 // - Low CPU by construction: at most MEDIA_COMPRESS_CONCURRENCY files at a
-//   time (process-wide lock across the sweeper and the scan pipeline; default
-//   1), `nice -n 19` on POSIX, ffmpeg `-threads 1` per file, small per-tick
-//   batch, short breather between hot ticks, and a load-average check that
-//   defers ticks when the box is busy.
+//   time (process-wide lock), `nice -n 19` on POSIX, ffmpeg `-threads 1` per
+//   file, small per-tick batch, short breather between hot ticks, and a
+//   load-average check that defers ticks when the box is busy.
 // - Visually transparent settings only (see PIPELINES): quality levels where
 //   artifacts are essentially invisible in chat embeds, plus downscale caps
 //   (2048px stills / 1280px GIFs / 1080p video) that only bite oversized
@@ -43,7 +57,9 @@
 //   either — Opus leaves the difference channel only ~25 dB down on a dual-mono
 //   source, which a quiet genuine stereo mix also reaches. Duration and channel
 //   count are facts; those are what the rule uses. The same normalize rule covers
-//   non-Apple video containers (WebM/Matroska/AVI/WMV/…).
+//   non-Apple video containers (WebM/Matroska/AVI/WMV/…). These are exactly the
+//   jobs the compatibility queue runs promptly (see above) — a voice note an
+//   iPhone cannot play for six hours is not a compression policy, it is a bug.
 // - HEIC/HEIF is the other `normalize` case: the container's ffmpeg
 //   has no HEIF demuxer at all (Alpine builds it without libheif), and no
 //   browser on Windows can decode those bytes either, so leaving the original
@@ -52,27 +68,19 @@
 //   the conversion is published even when it is bigger, because being viewable
 //   is the point. See checkHeifConvert + the 'heic-viewable' policy.
 // - Idempotent + resumable: attachments/dm_attachments carry a `compressed`
-//   flag (0 = pending, 1 = done). Every upload is queued automatically via
-//   the column default; the backlog of pre-existing media drains gradually.
-// - Single pass with the scanner: virus-scan.js calls processUpload() after a
-//   clean verdict, scans the candidate output too, and only then publishes
-//   the file. Clients see ONE pending -> final transition, so a player that
-//   just appeared is never swapped out from under itself. This sweeper stays
-//   as the fallback for anything the pipeline missed (scanning off or
-//   unavailable, the pre-existing backlog, a failed candidate scan).
-// - ... and the same slot runs WITHOUT a scanner: with VIRUS_SCAN=0 the
-//   worker still claims every upload, compresses it before anything is
-//   published, and only then lets it be served (virus-scan.js processRow). So
-//   the one-transition promise holds on a box that cannot afford scanning.
-// - Anything the sweeper touches is ALREADY visible, so it always publishes
-//   under a fresh key and leaves the old bytes for the orphan sweep: bytes
-//   behind a live URL are never rewritten under a reader.
-// - Same URL shape always (/uploads/<sub>/<file>?v=<cachekey>). Before
-//   publication a same-format result overwrites in place with a fresh ?v
-//   cache-buster; format changes (wav/flac -> mp3, ogg/webm audio -> m4a,
-//   mov/webm/mkv video -> mp4) mint a new random filename and the DB row
-//   (url/mime/size/filename) is updated to match. The sweeper's path always
-//   mints a new filename (see above). Display filenames are never touched.
+//   flag (0 = not settled yet, 1 = done). It is also what the admin panel counts
+//   as "queued", and the compatibility queue's candidate query reads it — the
+//   bucket sweep deliberately ignores it (`any`), because it found the object by
+//   listing the bucket and a row that claims to be done can still point at
+//   oversized bytes.
+// - Anything here touches bytes that are ALREADY visible, so it always publishes
+//   under a fresh key and leaves the old object for the orphan sweep: bytes
+//   behind a live URL are never rewritten under a reader, and a player reading
+//   ranges out of one is the worst case that rule exists to prevent.
+// - Same URL shape always (/uploads/<sub>/<file>?v=<cachekey>). The bytes move
+//   to a new random filename and the DB row (url/mime/size/filename) is updated
+//   to match, so a download is never named after a format its bytes are not in.
+//   Display filenames are otherwise never touched.
 // - Needs ffmpeg on PATH (Docker image installs it via apk). Without ffmpeg
 //   the worker logs once and stays idle — the app runs fine uncompressed.
 //
@@ -300,12 +308,13 @@ async function ensureColumns() {
   // message recorded on Android stayed silent on every iPhone and iPad. The
   // plans for those inputs now carry `normalize` (see planFor), so the files
   // that predate that rule are handed back once: their rows re-queued
-  // (compressed = 0, which the flag queue picks up within seconds) and their
-  // ledger verdicts dropped, so the bucket scan rejudges the objects the flag
-  // queue can never see. `media_compress_meta` is the memory, so this runs once
-  // per database; the objects themselves are only replaced when the queue
-  // republishes them under a new key. Guarded on ffmpeg like the HEIC policy:
-  // with no encoder the one shot must not be spent on work that cannot run.
+  // (compressed = 0, which the compatibility queue picks up — these are exactly
+  // its types, see COMPATIBILITY_EXTS) and their ledger verdicts dropped, so the
+  // bucket sweep rejudges the objects the queue can never see. `media_compress_meta`
+  // is the memory, so this runs once per database; the objects themselves are
+  // only replaced when one of those paths republishes them under a new key.
+  // Guarded on ffmpeg like the HEIC policy: with no encoder the one shot must
+  // not be spent on work that cannot run.
   if (checkFfmpeg()) {
     await oncePolicy('apple-playable', async () => {
       // The exact set planFor now converts for compatibility: every audio
@@ -506,6 +515,52 @@ const AUDIO_EXTS = new Set(['.mp3', '.m4a', '.m4b', '.aac', '.ogg', '.oga', '.op
 // MP3 are the two the Apple stack has always played; WAV and FLAC are older
 // than that stack and universal today.)
 const EVERYWHERE_AUDIO = new Set(['.mp3', '.m4a', '.m4b', '.aac', '.wav', '.flac']);
+
+// ---------- the compatibility set ----------
+// planFor's `normalize` cases, expressed as something the compatibility queue's
+// candidate query can filter on: the containers and codecs a reader's platform
+// cannot open AT ALL, so the encode is a repair rather than an optimization.
+//   - Opus/Vorbis audio (WebM, Ogg) and every video container that is not
+//     MP4/M4V/QuickTime: no Apple product can play them (see the header). This
+//     is an owner requirement — "audio messages must be heard on
+//     Mac/iPhone/iPad" — not a size policy, so it is worth doing immediately
+//     rather than at the next bucket sweep, hours later.
+//   - HEIC/HEIF stills: no Windows browser can display one, and the image's own
+//     ffmpeg cannot demux it (libheif's heif-convert does).
+// The extension list is DERIVED from the same Sets planFor reads, so a container
+// added there flows here; what is hand-written is only which of those families
+// counts as a repair. Everything else — JPEG, PNG, GIF, MP4, MOV, MP3, WAV — is
+// ordinary shrinking, and that belongs to the scheduled bucket sweep
+// (reconcileBucket), which is why a freshly posted photo is never re-encoded
+// seconds after the reader received it.
+const APPLE_VIDEO_EXTS = new Set(['.mp4', '.m4v', '.mov']);
+const COMPATIBILITY_EXTS = new Set([
+  ...HEIF_EXTS,
+  ...[...VIDEO_EXTS].filter((e) => !APPLE_VIDEO_EXTS.has(e)),
+  '.ogg', '.oga', '.opus', '.weba', '.webm',
+  ...[...AUDIO_EXTS].filter((e) => !EVERYWHERE_AUDIO.has(e)),
+]);
+const COMPATIBILITY_RE = '\\.(' + [...COMPATIBILITY_EXTS].map((e) => e.slice(1)).join('|') + ')$';
+// The MIME half of the same rule. An upload keeps its original extension, so the
+// stored name normally says it; this is the second chance for a name that does
+// not (and for rows written by paths that filed the family differently).
+const COMPATIBILITY_MIMES = ['image/heic', 'image/heif', 'audio/ogg', 'audio/opus', 'audio/webm', 'audio/x-opus+ogg', 'video/webm'];
+const COMPATIBILITY_MIME_SQL = COMPATIBILITY_MIMES.map((m) => `'${m}'`).join(',');
+// `~` is the POSIX regex match in Postgres; the pattern is this module's own
+// constant, never anything a request supplied.
+function compatWhere(alias) {
+  return `(lower(split_part(${alias}.url, '?', 1)) ~ '${COMPATIBILITY_RE}'`
+    + ` OR lower(${alias}.mime) IN (${COMPATIBILITY_MIME_SQL}))`;
+}
+// Is this stored key a compatibility job? The same test the SQL makes, for the
+// callers that only have a key (a profile upload's own kick), so the two cannot
+// disagree about whether a file is "broken for a platform".
+function needsCompatibility(key) {
+  return COMPATIBILITY_EXTS.has(extOf(key))
+    || /^audio\/(ogg|opus|webm|x-opus\+ogg)$/.test(storage.mimeForFilename(key) || '')
+    || storage.mimeForFilename(key) === 'image/heic' || storage.mimeForFilename(key) === 'image/heif'
+    || storage.mimeForFilename(key) === 'video/webm';
+}
 
 // A MIME that names no family at all — only then is the extension the best
 // available evidence. A file that calls itself text/plain or application/zip is
@@ -715,12 +770,11 @@ async function resolvePlan(plan, inPath) {
   return { ...plan, pipeline, outExt };
 }
 
-function compressionEnabled() { return ENABLED; }
-
-// Would this upload be re-encoded? The upload route asks (see /api/upload): with
-// no scanner the gate holds a file back until the compressor has settled it, and
-// a file the compressor will never touch must not pay that wait — it is served
-// the moment it lands, exactly as it is with compression off.
+// Would this upload ever be re-encoded by the compressor? A predicate kept for
+// the coverage contract (`scripts/test-compress-types.js`) rather than for the
+// request path: with no size floor it is "is this media at all", and the two
+// real triggers — the compatibility queue and the bucket sweep — pick their own
+// work (see COMPATIBILITY_EXTS and reconcileBucket).
 function isCandidate(mime, key, size) {
   if (!ENABLED || !key) return false;
   const plan = planFor(mime, key);
@@ -929,16 +983,6 @@ async function replaceBytes(key, srcPath, mime) {
   }
   const buf = await fs.promises.readFile(srcPath);
   await storage.s3Put(key, buf, mime || storage.mimeForFilename(key));
-}
-
-async function removeKey(key) {
-  if (storage.s3Enabled()) {
-    try { await storage.s3DeleteNow(key); } catch {}
-  }
-  const p = path.join(UPLOAD_DIR, key);
-  if (path.resolve(p).startsWith(path.resolve(UPLOAD_DIR))) {
-    try { await fs.promises.unlink(p); } catch {}
-  }
 }
 
 async function keyExists(key) {
@@ -1195,9 +1239,10 @@ function withCompressLock(fn) {
   });
 }
 
-// Keys with a compression pass in flight (either path). Stops a scan slot and
-// the sweeper from chewing through the same upload at the same time — and the
-// scan watchdog (virus-scan.js) from reaping a slot parked in a long encode.
+// Keys with a compression pass in flight. Stops two callers from chewing
+// through the same object at the same time — the compatibility queue on one
+// replica and the bucket sweep on another, say — which would double the CPU and
+// race two candidate byte streams to publication.
 const inflight = new Set();
 function isCompressing(key) { return inflight.has(key); }
 
@@ -1232,42 +1277,37 @@ async function pendingRowsForKey(key, opts) {
   return out;
 }
 
-// Single-pass media processing, shared by every caller:
-//   - virus-scan.js (the pre-publication slot): hand each candidate output to
-//     `inspect({path,size})` and only commit when the scanner approves it, so
-//     the verdict that reaches clients describes the bytes they will actually
-//     play. Nothing can be serving this file yet, so it is committed in place
-//     (same key) whenever the format does not change.
-//   - this sweeper's queue, and the bucket scan: `opts.visible` — the bytes are
-//     already being served. An image is still committed in place (see below);
-//     video/audio moves to a NEW key, so a player reading ranges out of it can
-//     never see the bytes change underneath it.
+// One media object, rewritten in the background. Every caller is the same kind
+// of caller now — the bytes are already being served, so a successful encode is
+// always published under a FRESH KEY (never over the URL a reader may be
+// streaming) and the rows that point at it are repointed:
+//   - the compatibility queue (processRow) after it picked the row up, and
+//   - the scheduled bucket sweep (reconcileBucket), which is the only path that
+//     sees profile media and anything the flag tables never carried.
 //   - `opts.any` ignores the `compressed` flag when looking up the rows that
-//     point at this key (the bucket scan found the object by listing the bucket,
-//     so a row that claims to be done but still points at oversized bytes has to
-//     be repointed too).
+//     point at this key (the bucket sweep found the object by listing the
+//     bucket, so a row that claims to be done but still points at oversized
+//     bytes has to be repointed too).
 // Returns null when there is nothing to do (rows are marked done), else
 // { key, url, size, origSize, mime, group, pipeline, renamed }.
-async function processUpload(key, inspect, opts) {
+async function processUpload(key, opts) {
   if (!ENABLED || !key || inflight.has(key)) return null;
   inflight.add(key);
   try {
     // Two guards, and both are needed:
     //   withCompressLock  — at most MEDIA_COMPRESS_CONCURRENCY ffmpeg per POD,
     //     the low-CPU promise.
-    //   withKeyLock       — one ffmpeg per FILE across all pods. Without it a
-    //     scan slot on one replica and the sweeper on another could compress the
-    //     same upload simultaneously: double the CPU, two different candidate
-    //     byte streams, and a race to publish them (which is exactly the
-    //     "one pending->final transition per file" rule this pipeline keeps).
-    const r = await db.withKeyLock('media:' + key, () => withCompressLock(() => compressLocked(key, inspect, opts)));
+    //   withKeyLock       — one ffmpeg per FILE across all pods. Without it the
+    //     compatibility queue on one replica and the bucket sweep on another
+    //     could compress the same object simultaneously: double the CPU, two
+    //     different candidate byte streams, and a race to publish them.
+    const r = await db.withKeyLock('media:' + key, () => withCompressLock(() => compressLocked(key, opts)));
     return r.ran ? r.value : null;
   } finally { inflight.delete(key); }
 }
 
-async function compressLocked(key, inspect, opts) {
-  const visible = !!(opts && opts.visible);
-  const mode = visible ? 'sweep' : 'slot';
+async function compressLocked(key, opts) {
+  const mode = 'sweep';
   const rows = await pendingRowsForKey(key, opts);
   if (!rows.length) return null; // no chat/story row points here (profile media, an abandoned upload, …)
   // Verdicts are recorded for keys we actually examined: the bucket scan uses
@@ -1314,7 +1354,6 @@ async function compressLocked(key, inspect, opts) {
   // tmpOut is minted once the plan is concrete: a deferred 'still' plan has no
   // output extension of its own until the bytes have been read.
   let tmpOut = null;
-  let inScan = !!inspect;
   try {
     await downloadToTemp(key, tmpIn);
     const inStat = await fs.promises.stat(tmpIn).catch(() => null);
@@ -1337,34 +1376,16 @@ async function compressLocked(key, inspect, opts) {
     if (!outStat || !outStat.size) return done('no_output', inStat.size);
     if (!shouldPublish(plan, inStat.size, outStat.size)) return done('no_saving', inStat.size);
 
-    // Nothing is published until the caller's scanner approves the candidate.
-    // A rejected one leaves the original (already verified) file alone and
-    // marks the row done so the sweep doesn't re-encode it forever.
-    if (inspect) {
-      const publish = await inspect({ path: tmpOut, size: outStat.size });
-      inScan = false;
-      if (!publish) {
-        await logJob({ tbl: row.tbl, url: row.url, filename: row.filename, kind: plan.group, pipeline: plan.pipeline, result: 'error', origSize: inStat.size, newSize: 0, error: 'candidate_output_flagged' });
-        return done('candidate_flagged', inStat.size);
-      }
-    }
-
     const sameFormat = extOf(key) === plan.outExt;
     const newMime = sameFormat ? String(row.mime) : (MIME_BY_OUT[plan.outExt] || String(row.mime));
-    // A file that is already being served moves to a NEW key: rewriting bytes
-    // behind a live URL is what swaps a file out from under a reader (a player
-    // reading ranges is only the worst case). The row — and, for stories, the
-    // story row — gets the new URL plus a fresh cache-buster, and the old object
-    // stays until the orphan sweep's grace period is up. Only the slot, which
-    // compresses before anything can fetch the bytes, keeps the key.
-    const freshKey = !sameFormat || visible;
-    let newKey = key;
-    if (freshKey) {
-      // Format change (wav->mp3, mov/webm video->mp4), or a post-publication
-      // rewrite of bytes something could be streaming: mint a fresh name.
-      const dir = key.slice(0, key.lastIndexOf('/') + 1);
-      newKey = dir + crypto.randomBytes(16).toString('hex') + plan.outExt;
-    }
+    // Every object this pipeline touches is already being served (see the
+    // header), so the result ALWAYS lands on a fresh name: rewriting bytes behind
+    // a live URL is what swaps a file out from under a reader, and a player
+    // reading ranges out of one is only the worst case. The row — and, for
+    // stories, the story row — gets the new URL plus a fresh cache-buster, and
+    // the old object stays until the orphan sweep's grace period is up.
+    const dir = key.slice(0, key.lastIndexOf('/') + 1);
+    const newKey = dir + crypto.randomBytes(16).toString('hex') + plan.outExt;
     await replaceBytes(newKey, tmpOut, newMime);
     const newUrl = cacheBust('/uploads/' + newKey);
     for (const rr of rows) {
@@ -1389,17 +1410,11 @@ async function compressLocked(key, inspect, opts) {
         await db.prepare(`UPDATE ${table} SET ${sets.join(', ')} WHERE id = ?`).run(...args, rr.id);
       } catch (e) { warn('row update failed:', String((e && e.message) || e).slice(0, 120)); }
     }
-    if (newKey !== key && !visible) {
-      // Only the not-yet-visible copy is dropped. A published one is left in
-      // place: something may still be streaming it, and the orphan sweep knows
-      // how to reap it once nothing references it any more.
-      await removeKey(key);
-      try { require('./virus-scan').dropScan(key); } catch {}
-    }
-    // Terminal verdicts, both keys: the old one is settled (its bytes are gone
-    // or superseded) and the new one must never be re-encoded by the bucket scan.
+    // Terminal verdicts, both keys: the old one is settled (its bytes are
+    // superseded, and the object is left to the orphan sweep) and the new one
+    // must never be re-encoded by the sweep.
     await recordKey(key, 'compressed', `${mode}:${plan.pipeline}`, inStat.size, outStat.size);
-    if (newKey !== key) await recordKey(newKey, 'compressed', `${mode}:${plan.pipeline}`, outStat.size, outStat.size);
+    await recordKey(newKey, 'compressed', `${mode}:${plan.pipeline}`, outStat.size, outStat.size);
     stats.processed++;
     stats.savedBytes += inStat.size - outStat.size;
     stats.lastJob = { key, group: plan.group, pipeline: plan.pipeline, origSize: inStat.size, newSize: outStat.size, at: now() };
@@ -1407,15 +1422,6 @@ async function compressLocked(key, inspect, opts) {
     log(`${plan.group} ${key}: ${Math.round(inStat.size / 1024)}KB -> ${Math.round(outStat.size / 1024)}KB (${pctMove(inStat.size, outStat.size)})`);
     return { key: newKey, url: newUrl, size: outStat.size, origSize: inStat.size, mime: newMime, group: plan.group, pipeline: plan.pipeline, renamed: newKey !== key };
   } catch (e) {
-    // A scanner failure on the candidate is NOT a reason to give up on the
-    // file: keep the original bytes in place, stay queued (compressed = 0) so
-    // the sweeper can retry, and let the caller publish the original verdict.
-    if (inScan) {
-      stats.errors++;
-      stats.lastError = { key, error: String((e && e.message) || e).slice(0, 160), at: now() };
-      warn('candidate scan failed, keeping original:', key, String((e && e.message) || e).slice(0, 160));
-      throw e;
-    }
     const err = String((e && e.message) || e).slice(0, 160);
     stats.errors++;
     stats.lastError = { key, error: err, at: now() };
@@ -1428,25 +1434,23 @@ async function compressLocked(key, inspect, opts) {
   }
 }
 
-// Sweeper path: returns 'compressed' | 'skipped' (both mean: never look at
-// this row again). The scan-integrated path is the primary one; this is
-// the safety net for files it missed — the backlog from before the single-pass
-// change, a file that was published before its encode finished (the slot and
-// the message insert can race), a story whose row landed after the slot ran.
-// Everything it touches is already visible (`visible: true`), and a story row
-// is queued exactly like an attachment.
+// Compatibility queue: returns 'compressed' | 'skipped' (both mean: never look
+// at this row again). It picks up ONLY the types a reader's platform cannot open
+// (see COMPATIBILITY_EXTS) — a repair, worth doing seconds after the upload
+// lands. Ordinary shrinking of playable media is the scheduled bucket sweep's
+// job, so a file the reader was just handed is not rewritten underneath them.
 async function processRow(row) {
   const key = cleanKey(row.url);
   if (!key) { stats.skipped++; await markDone(row.tbl, row.id); return 'skipped'; } // remote GIF URL etc.
-  const out = await processUpload(key, null, { visible: true });
+  const out = await processUpload(key);
   if (!out) { stats.skipped++; return 'skipped'; }
   try {
     const vs = require('./virus-scan');
-    // Where a scanner exists the rewritten bytes need a fresh verdict, and that
-    // verdict is what re-broadcasts the message showing them. With scanning off
-    // there is no verdict to earn (an unknown key is served) and queueing one
-    // would only gate the file this sweep just published — but the clients
-    // still have to learn its new URL, so the change is emitted directly.
+    // Where a scanner exists the rewritten bytes get a verdict of their own —
+    // and that verdict is what re-broadcasts the message now showing them, so
+    // the reader learns the new URL. With scanning off there is no verdict to
+    // earn (nothing is refused) but the clients still have to learn the new
+    // URL, so the change is emitted directly.
     if (vs.scanningEnabled()) vs.queueFileScan(out.key);
     else await vs.emitScanChange(out.key, 'clean');
   } catch {}
@@ -1454,37 +1458,47 @@ async function processRow(row) {
 }
 
 async function fetchCandidates(limit) {
-  // Oldest first so the pre-existing backlog drains in upload order.
-  // Candidates are rows the compressor has not already handled; the scan key a
-  // virus verdict hangs off is derived from the URL, never the row id. Stories
-  // are media too: they live in their own table with their own flag.
+  // Oldest first so a backlog drains in upload order.
+  // Candidates are rows the compressor has not settled; the scan key a virus
+  // verdict hangs off is derived from the URL, never the row id. Stories are
+  // media too: they live in their own table with their own flag.
+  //
+  // The compatibility test is the whole point of this queue (see the header):
+  // a row is offered here only when planFor would mark it `normalize` — bytes no
+  // Apple product can play, or a HEIC no Windows browser can display — because
+  // those are broken for a reader rather than merely large. Everything else is
+  // left to the scheduled bucket sweep.
+  const compat = (alias) => `(${compatWhere(alias)})`;
   return await db.prepare(`
     SELECT a.id, a.url, a.filename, a.mime, a.size, a.kind, a.created_at, 'att' AS tbl FROM attachments a
-    WHERE a.compressed = 0 AND a.kind IN ('image','video','audio')
+    WHERE a.compressed = 0 AND a.kind IN ('image','video','audio') AND ${compat('a')}
     UNION ALL
     SELECT d.id, d.url, d.filename, d.mime, d.size, d.kind, d.created_at, 'dm' AS tbl FROM dm_attachments d
-    WHERE d.compressed = 0 AND d.kind IN ('image','video','audio')
+    WHERE d.compressed = 0 AND d.kind IN ('image','video','audio') AND ${compat('d')}
     UNION ALL
     SELECT s.id, s.url, '' AS filename, s.mime, s.size, s.kind, s.created_at, 'story' AS tbl FROM stories s
-    WHERE s.compressed = 0 AND s.kind IN ('image','video')
+    WHERE s.compressed = 0 AND s.kind IN ('image','video') AND ${compat('s')}
     ORDER BY created_at ASC LIMIT ?`).all(limit);
 }
 
-// ---------- everything else: profile media + the bucket scan ----------
+// ---------- everything else: profile media + the bucket sweep ----------
 //
 // The queue above is flag-driven, so it only ever sees tables that carry a
 // `compressed` column (chat attachments, DMs, stories). Profile media —
 // avatars, banners, sidebar banners, server icons, custom emoji, webhook
-// avatars, the profile-media picker's history — has no flag and is served
-// ungated the moment it is uploaded, so it is handled from the other end:
-// find the object, find every row that points at it, compress, republish under
-// a new key, and repoint those rows. Two triggers:
-//   - a profile upload kicks its own key (kickProfileMedia), so a new avatar is
-//     settled within a second or two;
+// avatars, the profile-media picker's history — has no flag and is served the
+// moment it is uploaded, so it is handled from the other end: find the object,
+// find every row that points at it, compress, republish under a new key, and
+// repoint those rows. Two triggers:
+//   - a profile upload of a COMPATIBILITY type kicks its own key
+//     (kickProfileMedia) so a HEIC avatar becomes a picture Windows can show
+//     within a second or two — the same repair the queue does for chat, applied
+//     to the one upload path that has no row to queue. An ordinary avatar is
+//     left to the scheduled pass like any other ordinary media;
 //   - a scheduled pass lists the bucket and adopts everything else that is
 //     referenced, above the size floor, and absent from the key ledger
-//     (reconcileBucket) — the backlog, and anything a future code path forgets
-//     to queue.
+//     (reconcileBucket) — the backlog, the ordinary shrinking, and anything a
+//     future code path forgets to queue.
 
 const FLAG_TABLES = new Set(['attachments', 'dm_attachments', 'stories']);
 const SWEEP_MIN_AGE_MS = Math.max(0, parseInt(process.env.MEDIA_SWEEP_MIN_AGE_MS || String(10 * 60 * 1000), 10) || 0);
@@ -1661,15 +1675,26 @@ async function reconcileBucket(opts) {
       if (now() - t0 > SWEEP_MAX_MS) { result.deferred++; continue; }
       try {
         // A key the flag tables point at goes through the row path: it repoints
-        // them and re-broadcasts the affected messages. Everything else (profile
-        // media) is committed standalone.
+        // them (MIME, family and display name included) and re-broadcasts the
+        // affected messages. Everything else (profile media) is committed
+        // standalone.
         const out = j.refs.some((r) => FLAG_TABLES.has(r.table))
-          ? await processUpload(j.key, null, { visible: true, any: true })
+          ? await processUpload(j.key, { any: true })
           : await compressStandalone(j.key, j.refs, { size: j.size });
         if (out) {
           result.compressed++;
           result.jobs++;
           result.savedBytes += Math.max(0, (Number(out.origSize) || 0) - (Number(out.size) || 0));
+          // Tell the clients, exactly as the compatibility queue's own path
+          // does: the bytes moved to a new URL and the readers still holding the
+          // old one must learn it (the old object stays, so nothing breaks in
+          // the meantime). Where a scanner exists the new bytes also get a
+          // verdict of their own — which is what carries the re-broadcast.
+          try {
+            const vs = require('./virus-scan');
+            if (vs.scanningEnabled()) vs.queueFileScan(out.key);
+            else await vs.emitScanChange(out.key, 'clean');
+          } catch (e) { warn('re-broadcast failed for ' + out.key + ': ' + String((e && e.message) || e).slice(0, 140)); }
         }
       } catch (e) {
         result.errors++;
@@ -1729,10 +1754,14 @@ function scheduleSweep(ms) {
   try { sweepTimer.unref(); } catch {}
 }
 
-// Called after a profile-media upload: settle that key within the second,
-// rather than waiting for the next scheduled pass.
+// Called after a profile-media upload: settle that key within the second IF it
+// is one a reader's platform cannot open (a HEIC from an iPhone, an Opus clip
+// used as a profile banner). An ordinary avatar or icon is left to the
+// scheduled bucket sweep, like every other ordinary file — nothing rewrites a
+// picture the user just uploaded and is looking at.
 function kickProfileMedia(key) {
   if (!started || !ENABLED || !ready || !key) return;
+  if (!needsCompatibility(key)) return;
   if (!pendingKeys.includes(key)) pendingKeys.push(key);
   schedule(KICK_MS);
 }
@@ -1774,10 +1803,10 @@ async function tick() {
   stats.ticks++;
   stats.lastTickAt = now();
   try {
-    // Profile uploads asked to be settled now (kickProfileMedia): no flag table
-    // points at those bytes, so the candidate query can never surface them.
-    // A couple per tick, before the queue — an avatar is small and the user is
-    // looking at it.
+    // Profile uploads of a type a platform cannot open asked to be settled now
+    // (kickProfileMedia): no flag table points at those bytes, so the candidate
+    // query can never surface them, and a HEIC avatar has to become a picture
+    // Windows can show rather than waiting for the next sweep.
     let kicked = 0;
     while (pendingKeys.length && kicked < 3) {
       const key = pendingKeys.shift();
@@ -1798,10 +1827,12 @@ async function tick() {
     // tick looking for real work, but cap compressions at BATCH.
     const rows = await fetchCandidates(BATCH + 25);
     if (!rows.length) return (pendingKeys.length || thumbBacklog.length) ? 'more' : 'idle';
-    // Virus-scan gate: only compress scan-clean files. Anything else stays
-    // queued (compressed = 0); the scan worker's clean verdict kicks us
-    // back, and rewritten bytes get rescanned anyway (see processRow).
-    // Lookup failures fail open — a rescan after rewrite keeps it correct.
+    // Don't spend an encode on a file the scanner has already condemned: an
+    // `infected` row's bytes are deleted, and an `error` row is one the engine
+    // could not judge. A `pending` verdict reads as clean (see effectiveStatus
+    // in virus-scan.js) — a scan never holds a file back, so it never holds a
+    // compression back either. Lookup failures fail open, like everything else
+    // on this path.
     let scanMap = null;
     try {
       scanMap = await require('./virus-scan').scanStatusMap(rows.map((r) => cleanKey(r.url)).filter(Boolean));
@@ -1810,12 +1841,12 @@ async function tick() {
     // is what limits how many actually encode at once
     // (MEDIA_COMPRESS_CONCURRENCY), so a batch wider than that still settles
     // several files per breather instead of one per tick. Rows that are already
-    // in flight or not yet scan-clean are skipped without costing a slot.
+    // in flight are skipped without costing a slot.
     const picked = [];
     for (const row of rows) {
       if (picked.length >= BATCH) break;
       const k = cleanKey(row.url);
-      if (k && isCompressing(k)) continue; // the scan pipeline is already on it
+      if (k && isCompressing(k)) continue; // already being encoded (another tick, or the bucket sweep)
       if (scanMap && k && (scanMap.get(k) || 'clean') !== 'clean') continue;
       picked.push(row);
     }
@@ -1851,9 +1882,10 @@ async function loop() {
   schedule(st === 'more' ? ACTIVE_MS : (st === 'busy' || st === 'deferred') ? DEFER_MS : EVERY_MS);
 }
 
-// Wake the worker soon (called on the message-send path after attachment
-// rows are inserted). Cheap + debounced by nature: it just pulls the next
-// tick forward, and no-ops while a tick is already running.
+// Wake the worker soon (called after an upload lands, and on a clean scan
+// verdict). Cheap + debounced by nature: it just pulls the next tick forward,
+// and no-ops while a tick is already running. It only ever has the
+// compatibility queue to work on — ordinary shrinking waits for the sweep.
 function kickMediaCompress() {
   if (!started || !ENABLED || !ready || busy) return;
   schedule(KICK_MS);
@@ -1942,17 +1974,17 @@ function startMediaCompress() {
     stats.startedAt = now();
     sweepStats.startedAt = now();
     ready = true;
-    log(`worker on: continuous while queued (every ~${Math.round(ACTIVE_MS / 100) / 10}s), idle poll every ${Math.round(EVERY_MS / 1000)}s, ${BATCH}/tick, ${CONCURRENCY} at once (1 thread each)${checkNice() ? ', nice 19' : ''}` +
+    log(`worker on: compatibility queue (every ~${Math.round(ACTIVE_MS / 100) / 10}s while it has work, idle poll ${Math.round(EVERY_MS / 1000)}s), ${BATCH}/tick, ${CONCURRENCY} at once (1 thread each)${checkNice() ? ', nice 19' : ''}` +
       (missing.length ? ` (encoders missing, related types skipped: ${missing.join(', ')})` : ' (all encoders present)'));
     log(checkHeifConvert()
       ? `HEIC decoder on: ${HEIF_CONVERT} (libheif) — .heic/.heif uploads are converted to viewable JPEGs`
       : `HEIC decoder OFF: ${HEIF_CONVERT} not on PATH — .heic/.heif uploads cannot be previewed (install libheif-tools)`);
     if (SWEEP_ENABLED) {
       const every = SWEEP_EVERY_MS < 3600000 ? `${Math.round(SWEEP_EVERY_MS / 60000)}min` : `${Math.round(SWEEP_EVERY_MS / 3600000)}h`;
-      log(`bucket scan on: every ${every} (first in ${Math.round(SWEEP_FIRST_MS / 60000)}min), up to ${SWEEP_MAX_JOBS} files/pass, skips anything under ${Math.round(SWEEP_MIN_AGE_MS / 60000)}min old`);
+      log(`bucket sweep on: every ${every} (first in ${Math.round(SWEEP_FIRST_MS / 60000)}min), up to ${SWEEP_MAX_JOBS} files/pass, skips anything under ${Math.round(SWEEP_MIN_AGE_MS / 60000)}min old — this is what shrinks ordinary media`);
       scheduleSweep(SWEEP_FIRST_MS);
     } else {
-      log('bucket scan off (MEDIA_BUCKET_SWEEP=0)');
+      log('bucket sweep off (MEDIA_BUCKET_SWEEP=0) — only the compatibility queue runs');
     }
     if (!timer) schedule(10000); // first pass after boot settles; kicks pull it forward
   }).catch((e) => warn('migration failed:', String((e && e.message) || e).slice(0, 200)));
@@ -1960,8 +1992,8 @@ function startMediaCompress() {
 
 module.exports = {
   startMediaCompress, tickMediaCompress: tick, kickMediaCompress, ensureColumns, planFor, resolvePlan, probeEncoders, buildArgs, cleanKey,
-  MIN_BYTES, MIN_KB, getMediaStats, mediaQueueCounts, mediaTotals, mediaRecentJobs, processUpload, isCompressing,
-  isCandidate, compressionEnabled,
+  MIN_BYTES, MIN_KB, getMediaStats, mediaQueueCounts, mediaTotals, mediaRecentJobs, processUpload,
+  isCandidate, COMPATIBILITY_EXTS, needsCompatibility,
   // the one pipeline whose input ffmpeg cannot read (HEIC/HEIF -> JPEG): the
   // decoder probe, the two-step encode, and the "publish even when bigger" rule
   checkHeifConvert, encodeCandidate, shouldPublish, HEIF_EXTS,

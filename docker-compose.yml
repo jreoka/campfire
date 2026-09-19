@@ -85,8 +85,9 @@ services:
       - PGUSER=${POSTGRES_USER:-campfire}
       - PGPASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       - "JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env (generate with openssl rand -base64 32)}"
-      # Malware scanning: clamd, by service name. Set VIRUS_SCAN=0 in .env to run
-      # the slot as compress-only (see virus-scan.js).
+      # Malware scanning: clamd, by service name. A verdict is a BACKGROUND
+      # judgement (the upload is served as it lands; see virus-scan.js), so
+      # VIRUS_SCAN=0 in .env simply means nothing is judged.
       - CLAMAV_HOST=clamav
       - CLAMAV_PORT=3310
       # Voice (WebRTC) NAT traversal: STUN + TURN relay for strict NATs.

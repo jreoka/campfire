@@ -1,4 +1,5 @@
-// Virus scanning for uploads (ClamAV) + gated serving until clean.
+// Virus scanning for uploads (ClamAV): every stored file is judged by content,
+// and a verdict can only ever REMOVE malware — it never holds a file back.
 //
 // Why scan everything, not just .exe: beyond blocking obviously dangerous
 // types, anyone can rename malware.exe to photo.jpg, share it, and tell
@@ -19,26 +20,26 @@
 // - /api/upload (and every image uploader) stores the bytes, then
 //   queueFileScan(key) records a `pending` row in file_scans.
 // - The worker below STREAMS those bytes into clamd (from disk, or straight
-//   from the object store — neither is ever staged) in one file per slot.
-// - /uploads/* refuses to serve files/ keys until the row is `clean`
-//   (423 while pending, 410 once an infected file is deleted). Message
-//   attachments carry the row status, so chat renders a scanning /
-//   infected state instead of the file (see attachmentHTML).
+//   from the object store — neither is ever staged) a few files at a time.
+// - THE UPLOAD IS SERVED THE MOMENT IT LANDS. A pending row is not a gate:
+//   `effectiveStatus` reports it as clean, so the file the sender attached is
+//   the file the reader gets and the verdict follows behind them. That is the
+//   whole posture — an upload used to be held back until a scan AND an ffmpeg
+//   pass had both finished, which is the "Processing file" card this module no
+//   longer produces. /uploads/* still refuses an INFECTED key (410, its bytes
+//   are deleted), which is the only thing the gate is for now.
 // - `infected` deletes the bytes immediately (S3 + local) but keeps the
-//   message + attachment row so the chat shows a greyed-out warning.
-// - On a clean verdict for a chat upload the slot ALSO compresses the file
-//   (scan -> compress -> scan the smaller bytes -> publish, see
-//   processMedia) so clients only ever see one transition. Files the
-//   pipeline misses are picked up by the media sweeper.
-// - WITHOUT a scanner the slot still runs, as a compress-and-publish slot:
-//   there is no verdict to ask for, so it compresses the upload (when it is
-//   one the compressor would rewrite) and only then marks it clean. The gate
-//   below stays on for exactly that reason — a candidate has to wait for its
-//   encode or clients would get the uncompressed bytes and then a swap. A box
-//   that cannot afford scanning gets compression and one transition per upload.
-// - On every verdict change the server re-broadcasts the affected
-//   messages (hooked via setScanHooks) so scanning cards flip to the
-//   real file without a refresh.
+//   message + attachment row so the chat shows a greyed-out warning, and the
+//   message is re-broadcast so the card flips without a refresh.
+// - COMPRESSION IS NOT PART OF THIS MODULE. Making bytes smaller is
+//   media-compress.js's business, entirely out of band: the scheduled bucket
+//   sweep for anything ordinary, and its compatibility queue for the formats a
+//   reader's platform cannot open at all. Nothing about an upload waits for
+//   either of them, and no part of this pipeline calls the compressor.
+// - On every verdict change the server re-broadcasts the affected messages
+//   (hooked via setScanHooks) so an infected card turns into the warning —
+//   and so a message whose bytes the compressor republished under a new key
+//   learns the new URL.
 //
 // Verdicts are recorded against the ENGINE THAT MADE THEM (`engine`, e.g.
 // `clamav/1.4.6`) rather than against "ClamAV" as a word. That column is the
@@ -56,10 +57,11 @@
 // uploads must keep working, never wedge in `pending` forever.
 //
 // Env:
-//   VIRUS_SCAN=0             disable scanning entirely. Uploads are still gated
-//                            while the slot compresses them, provided
-//                            MEDIA_COMPRESS is on; with both off they record
-//                            `clean` immediately.
+//   VIRUS_SCAN=0             disable scanning entirely. With no scanner there
+//                            are no verdicts at all: every upload is recorded
+//                            `clean` as it lands and nothing is ever refused
+//                            (compression is unaffected either way — it is a
+//                            separate, background concern).
 //   CLAMAV_HOST              clamd host (default `clamav`, the compose service)
 //   CLAMAV_PORT              clamd TCP port (default 3310)
 //   CLAMAV_TIMEOUT_MS        base per-file scan timeout in ms (default 120000,
@@ -79,14 +81,6 @@ const clamav = require('./clamav');
 const now = () => Date.now();
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'data', 'uploads');
 const SCANNING = process.env.VIRUS_SCAN !== '0';
-// The slot is not only a scan slot. Compression has to happen BEFORE the bytes
-// are published (the sweeper only ever sees files clients can already fetch),
-// so with scanning off the worker keeps running as a compress-and-publish slot
-// and the serving gate stays on. Lazy requires keep the module graph flat.
-function compressing() {
-  try { return require('./media-compress').compressionEnabled(); } catch { return false; }
-}
-function slotOn() { return SCANNING || compressing(); }
 
 const KICK_MS = 500;
 const IDLE_MS = 10000;
@@ -165,83 +159,65 @@ async function ensureTables() {
   // is the bucket sweep's ledger marker, and a generation change is what makes
   // the stored tree get re-judged (see the header).
   await db.exec("ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS engine TEXT NOT NULL DEFAULT ''");
-  // Whether a `pending` row holds serving back. 1 = yes, which is every upload:
-  // the bytes must not be published before the verdict lands. 0 = a BACKGROUND
-  // re-scan (bucket-scan.js adopting an object nothing ever judged) — a file a
-  // reader can already fetch must never be taken away from them by a scan they
-  // did not ask for, so those are served while they wait and only an actual
-  // detection changes anything.
+  // Legacy column, kept so an existing database upgrades in place and so a
+  // replica still running the previous build reads a row the way that build
+  // expects. It is written 0 by every queue in THIS build (nothing holds a file
+  // back while a verdict is in flight — see effectiveStatus) and nothing here
+  // reads it any more.
   await db.exec('ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS gated INTEGER NOT NULL DEFAULT 1');
   ready = true;
 }
 
 // ---------- public intake ----------
 
-// Record a fresh upload for the slot. The row goes to `pending` whenever the
-// slot owns the bytes: a scanner will judge them, or (scanning off) the
-// compressor will rewrite them before anyone can fetch them — either way the
-// file has to wait, or clients would see the uncompressed bytes and then a
-// swap. `opts.compress` is the upload route's candidate verdict (see
-// media-compress isCandidate): with no scanner, anything the compressor would
-// never touch is marked `clean` here and served immediately, exactly as it is
-// with compression off. Every other reader stays uniform: unknown keys read as
-// `clean`, and media-compress re-queues keys it rewrote.
-async function queueFileScan(key, opts) {
+// Record an upload for the worker to judge. The row goes to `pending` and is
+// UNGATED: the bytes are already being served, so the verdict that comes back
+// can only ever remove them (see effectiveStatus). Without a scanner there is no
+// verdict to record and nothing to ask, so nothing is written at all — an
+// unknown key is clean everywhere (see scanStatus).
+//
+// (`gated` is written explicitly as 0 rather than left to the column default of
+// 1: during a rolling update an older replica is still running the code that
+// read it, and it must not start holding this upload back. Nothing in THIS
+// build reads the column — the Scan info panel is the only place it survives.)
+async function queueFileScan(key) {
   if (!key) return 'clean';
   try { await ensureTables(); } catch {}
-  const retro = !!(opts && opts.retro);
-  const gate = SCANNING || (compressing() && !!(opts && opts.compress));
-  if (!gate) {
-    try {
-      await db.prepare(`INSERT INTO file_scans (key,status,attempts,error,created_at,scanned_at,gated)
-        VALUES (?,'clean',0,'',?,?,?) ON CONFLICT(key) DO NOTHING`).run(key, now(), now(), retro ? 0 : 1);
-    } catch {}
-    return 'clean';
-  }
+  if (!SCANNING) return 'clean';
   try {
-    // On conflict `gated` only ever moves toward "not gated": a background
-    // re-scan adopts a key whose row was written by an earlier era (or an
-    // earlier engine) and that a reader may already be fetching, so adopting it
-    // must not start holding it back. A normal upload's rows keep whatever they
-    // had, which for every upload row is 1.
+    // On conflict `gated` only ever moves toward "not gated" — a key queued by
+    // an older build (or before the column existed) is not held back either.
     await db.prepare(`INSERT INTO file_scans (key,status,attempts,error,created_at,scanned_at,gated)
-      VALUES (?,'pending',0,'',?,NULL,?) ON CONFLICT(key) DO UPDATE SET
+      VALUES (?,'pending',0,'',?,NULL,0) ON CONFLICT(key) DO UPDATE SET
       status = CASE WHEN file_scans.status = 'infected' THEN 'infected' ELSE 'pending' END,
       attempts = 0, error = '', scanned_at = NULL,
       verdict = NULL, score = NULL, evidence = '', engine = '',
-      gated = CASE WHEN EXCLUDED.gated = 0 THEN 0 ELSE file_scans.gated END`).run(key, now(), retro ? 0 : 1);
+      gated = 0`).run(key, now());
   } catch (e) {
     warn('queue failed for ' + key + ': ' + String((e && e.message) || e).slice(0, 120));
     return 'clean'; // fail open: never wedge an upload on a DB hiccup
   }
   kickVirusScan();
-  return 'pending';
+  return 'clean';
 }
 
-async function dropScan(key) {
-  if (!key) return;
-  try { await db.prepare('DELETE FROM file_scans WHERE key = ?').run(key); } catch {}
-}
-
-// What serving and the clients are told. This is the RAW status except for one
-// case: a `pending` row that is NOT gated is a background re-scan of a file that
-// was already servable, so it reports `clean` — the reader keeps their file, the
-// chat card stays the real file instead of blinking back to "Processing", and
-// only an actual detection changes anything. A `pending` row that IS gated is an
-// upload waiting for its verdict, which is the promise the 423 exists to keep.
-function effectiveStatus(status, gated) {
+// What serving and the clients are told. A `pending` row is CLEAN as far as
+// anyone is concerned: the bytes are served, the chat card is the real file, and
+// only an actual detection changes anything. Nothing holds a file back while a
+// verdict is in flight — that promise was the old gate, and it is gone.
+function effectiveStatus(status) {
   if (!status) return 'clean';
-  if (status === 'pending' && Number(gated) === 0) return 'clean';
+  if (status === 'pending') return 'clean';
   return status;
 }
 
-// Single status; unknown keys (pre-feature uploads, non-chat prefixes)
-// are `clean` — only rows say otherwise.
+// Single status; unknown keys (non-chat prefixes, uploads from before the
+// feature) are `clean` — only rows say otherwise.
 async function scanStatus(key) {
-  if (!key || !slotOn()) return 'clean';
+  if (!key || !SCANNING) return 'clean';
   try {
     const r = await db.prepare('SELECT status, gated FROM file_scans WHERE key = ?').get(key);
-    return r ? effectiveStatus(r.status, r.gated) : 'clean';
+    return r ? effectiveStatus(r.status) : 'clean';
   } catch { return 'clean'; }
 }
 
@@ -249,11 +225,11 @@ async function scanStatus(key) {
 async function scanInfoMap(keys) {
   const out = new Map();
   const uniq = [...new Set((keys || []).filter(Boolean))];
-  if (!uniq.length || !slotOn()) return out;
+  if (!uniq.length || !SCANNING) return out;
   try {
     const ph = uniq.map(() => '?').join(',');
     const rows = await db.prepare(`SELECT key, status, gated FROM file_scans WHERE key IN (${ph})`).all(...uniq);
-    for (const r of rows) out.set(r.key, { status: effectiveStatus(r.status, r.gated) });
+    for (const r of rows) out.set(r.key, { status: effectiveStatus(r.status) });
   } catch {}
   return out;
 }
@@ -266,21 +242,22 @@ async function scanStatusMap(keys) {
 }
 
 // The RAW record, for the "Scan info" panel: the effective status hides the
-// fact that a background re-scan is queued, and hides `attempts`/`error`
-// entirely, and this view exists to show the reader exactly that.
+// fact that a re-scan is queued, and hides `attempts`/`error` entirely, and this
+// view exists to show the reader exactly that.
 async function scanDetail(key) {
   if (!key) return null;
   try { await ensureTables(); } catch {}
   try {
     return await db.prepare(`SELECT key, status, attempts, error, created_at, scanned_at,
-      verdict, score, evidence, engine, gated FROM file_scans WHERE key = ?`).get(key) || null;
+      verdict, score, evidence, engine FROM file_scans WHERE key = ?`).get(key) || null;
   } catch { return null; }
 }
 
-// Whether the /uploads gate should enforce verdicts at all: it must, whenever
-// the slot owns the bytes a client would otherwise fetch.
+// Whether the /uploads gate enforces verdicts at all: it does whenever a scanner
+// is configured, because an infected key's bytes are deleted and a direct link
+// has to be told why. It never holds a pending file back — see effectiveStatus.
 function scanGating() {
-  return slotOn();
+  return SCANNING;
 }
 
 function setScanHooks(h) {
@@ -506,7 +483,7 @@ async function markRow(key, status, error, detail) {
 }
 
 async function tick() {
-  if (!slotOn() || !ready) return 'deferred';
+  if (!SCANNING || !ready) return 'deferred';
   if (active >= CONCURRENCY) return 'busy';
   const row = await claimRow();
   if (!row) return 'idle';
@@ -531,10 +508,10 @@ function podId() {
 
 // Claim the oldest claimable pending row ATOMICALLY IN THE DATABASE.
 // The in-process Set this replaced was only safe with one process driving one
-// loop: with two replicas both would claim the same key and scan (and compress)
-// the same upload twice, which breaks the exactly-one pending->final transition
-// clients depend on and doubles the work. FOR UPDATE SKIP LOCKED makes
-// concurrent claimers step over each other's rows instead of colliding.
+// loop: with two replicas both would claim the same key and scan the same bytes
+// twice, doubling the work against a daemon whose threads are the real ceiling.
+// FOR UPDATE SKIP LOCKED makes concurrent claimers step over each other's rows
+// instead of colliding.
 // A claim older than SLOT_TIMEOUT_MS is reclaimable, so a crashed replica's rows
 // come back on their own.
 async function claimRow() {
@@ -566,9 +543,9 @@ async function claimRow() {
 // timeouts somehow missed). The row stays pending for retry and the attempt
 // counter still bounds a permanently broken file. Read from the DATABASE, so a
 // claim held by a replica that died is released too — the in-process map could
-// only ever see its own. Exception: a slot parked in an inline ffmpeg pass is
-// NOT stuck (media compression runs inside the slot now); only this replica can
-// know that about its own slots, so those are skipped locally.
+// only ever see its own. A slot only ever streams bytes into clamd, so a claim
+// older than the lease is genuinely stuck (the compressor no longer runs inside
+// this worker — see the header).
 async function reapStuckClaims() {
   let rows = [];
   try {
@@ -580,9 +557,6 @@ async function reapStuckClaims() {
     return;
   }
   for (const r of rows) {
-    let compressing = false;
-    try { compressing = require('./media-compress').isCompressing(r.key); } catch {}
-    if (compressing) continue;
     claimAt.delete(r.key);
     claimed.delete(r.key);
     warn('slot watchdog: released stuck claim on ' + r.key);
@@ -594,9 +568,10 @@ async function reapStuckClaims() {
 // because a slot that is merely SLOW has to keep its row. A slot whose POD is
 // gone will never release anything, though: the process died holding the claim
 // and `claimRow` refuses to hand that row to anyone else until the lease ages
-// out. So a restart or a deploy that caught an upload mid-scan left it sitting
-// at "Processing file" for up to twelve more minutes (reported: "if the server
-// reboots while a file is processing sometimes it can say processing forever").
+// out. So a restart or a deploy that caught a file mid-scan left its row
+// `pending` for up to twelve more minutes — no longer a card the reader stares
+// at (the bytes are served either way now), but twelve minutes without the
+// verdict the whole feature exists to produce.
 //
 // The replica registry already answers "is that pod still alive?" —
 // bus_replicas + PEER_STALE_MS, the same idiom reconcileReplicaState uses to
@@ -648,63 +623,6 @@ async function releaseDeadClaims() {
   }
 }
 
-// Scan a candidate file the compressor produced (a local temp path) BEFORE
-// anything is published: true = publish the smaller bytes, false = the
-// candidate is dropped and the original (already verified) file stays.
-// The candidate is streamed in from the compressor's own temp file, so this
-// costs one more pass over bytes that are already on local disk.
-// An engine failure throws — media-compress leaves the original bytes and the
-// row queued (compressed = 0, the sweeper retries) while the caller falls back
-// to publishing the verdict for the original bytes.
-async function scanCandidate(cand) {
-  if (!cand || !cand.path) return true;
-  const src = { stream: fs.createReadStream(cand.path), size: Number(cand.size) || 0, close: () => {} };
-  try {
-    const verdict = await scanStream(src, { label: 'compressed candidate' });
-    if (verdict.clean) return true;
-    warn('compressed output flagged (' + virusLabel(verdict.signature) + ') — keeping the original bytes');
-    return false;
-  } finally {
-    src.close();
-  }
-}
-
-// Single-pass media processing, run inside the slot before the bytes are
-// published: compress now, verify the smaller bytes when there is a scanner,
-// and publish them — so clients get ONE pending -> final transition instead of
-// the file appearing, being played, then swapping under the player when a
-// background compression lands (see media-compress.js processUpload).
-// `inspect` is null when there is no scanner: the compressed bytes are then the
-// final bytes, with nothing left to ask.
-// Returns the storage key whose verdict should be published (the format
-// change on wav->mp3 / mov->mp4 mints a new key; the verdict follows it).
-async function processMedia(key, inspect) {
-  let out = null;
-  try {
-    out = await require('./media-compress').processUpload(key, inspect);
-  } catch (e) {
-    // Compression or candidate-scan hiccup: publish the verdict for the
-    // original, already-verified bytes. The sweeper retries the encode.
-    warn('inline compression failed for ' + key + ': ' + String((e && e.message) || e).slice(0, 160));
-    return key;
-  }
-  if (!out || !out.key || out.key === key) return key;
-  // Bytes moved to a fresh key: carry the verdict over, drop the row for the
-  // old (deleted) key so nothing lingers behind the sweep. The engine's own
-  // record travels with it — the new key was never judged by anything else.
-  let old = null;
-  try { old = await db.prepare('SELECT verdict, score, evidence, engine FROM file_scans WHERE key = ?').get(key); } catch {}
-  try { await db.prepare('DELETE FROM file_scans WHERE key = ?').run(key); } catch {}
-  try {
-    await db.prepare(`INSERT INTO file_scans (key,status,attempts,error,created_at,scanned_at,verdict,score,evidence,engine)
-      VALUES (?,'clean',0,'',?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET status = 'clean', error = '', scanned_at = ?`)
-      .run(out.key, now(), now(),
-        old ? old.verdict : null, old ? old.score : null,
-        (old && old.evidence) || '', (old && old.engine) || '', now());
-  } catch {}
-  return out.key;
-}
-
 // Returns 'done' (slot refills immediately) or 'later' (back off: engine
 // unavailable, nothing to do until ensureEngine finishes).
 // NOTE: every return path below runs through the outer finally — early
@@ -712,25 +630,6 @@ async function processMedia(key, inspect) {
 // attempts=0 with an idle box: claimed but no live slot).
 async function processRow(row) {
   try {
-  // Compression-only slot (no scanner): settle the bytes and publish. There is
-  // no verdict to ask for, no engine to fail open from — processMedia hands
-  // back the key holding the final bytes (the original one when there was
-  // nothing to compress, a fresh one after a format change) and the row goes
-  // clean, which is what lifts the serving gate. Everything here is bounded by
-  // the encode's own timeout, so a pathological file cannot park an upload in
-  // `pending` for good.
-  if (!SCANNING) {
-    let finalKey = row.key;
-    try { finalKey = await processMedia(row.key, null); }
-    catch (e) { warn('compression-only slot failed for ' + row.key + ': ' + String((e && e.message) || e).slice(0, 160)); }
-    // Fail open on anything unforeseen: an upload that cannot be compressed is
-    // served uncompressed, never left waiting behind the gate.
-    await markRow(finalKey, 'clean', '');
-    stats.scanned++; stats.clean++;
-    stats.lastScan = { key: finalKey, result: 'clean', at: now() };
-    await emitChange(finalKey, 'clean');
-    return 'done';
-  }
   // Fail-open paths: no engine (local dev) marks clean; a broken engine
   // marks `error` (served, but visible in admin) — never wedge uploads. A
   // broken engine is re-probed on the retry interval, so a transient failure
@@ -762,21 +661,21 @@ async function processRow(row) {
   try {
     src = await openBytes(row.key);
     if (!src) {
-      // Bytes already gone (deleted message, sweep) — nothing to gate.
+      // Bytes already gone (deleted message, sweep) — nothing to judge.
       try { await db.prepare('DELETE FROM file_scans WHERE key = ?').run(row.key); } catch {}
       return 'done';
     }
     const verdict = await scanStream(src, { label: row.key });
     stats.scanned++;
     if (verdict.clean) {
-      // The bytes the client will actually get are verified before this
-      // verdict is published (see processMedia): scan -> compress -> scan.
-      const finalKey = await processMedia(row.key, scanCandidate);
-      await markRow(finalKey, 'clean', '', detailFor(verdict));
+      // The verdict describes the bytes that are already being served: this
+      // module never rewrites an upload (see the header), so the key it was
+      // asked about is the key it publishes for.
+      await markRow(row.key, 'clean', '', detailFor(verdict));
       stats.clean++;
-      stats.lastScan = { key: finalKey, result: 'clean', at: now() };
-      await emitChange(finalKey, 'clean');
-      log('clean: ' + finalKey);
+      stats.lastScan = { key: row.key, result: 'clean', at: now() };
+      await emitChange(row.key, 'clean');
+      log('clean: ' + row.key);
     } else {
       const virus = virusLabel(verdict.signature);
       await markRow(row.key, 'infected', virus, detailFor(verdict));
@@ -852,7 +751,7 @@ async function loop() {
 }
 
 function kickVirusScan() {
-  if (!started || !slotOn() || !ready || active >= CONCURRENCY) return;
+  if (!started || !SCANNING || !ready || active >= CONCURRENCY) return;
   schedule(KICK_MS);
 }
 
@@ -865,8 +764,7 @@ async function getScanStats() {
     }
   } catch {}
   return {
-    enabled: slotOn(), scanning: SCANNING, compressing: compressing(),
-    mode: SCANNING ? 'scan' : slotOn() ? 'compress' : 'off',
+    enabled: SCANNING, scanning: SCANNING,
     engine: !SCANNING ? 'off' : noEngine ? 'none' : engineFailed ? 'failed' : engineReady ? 'ready' : 'starting',
     engineReady, engineIdentity, engineInfo,
     engineHost: clamav.host() + ':' + clamav.port(),
@@ -884,25 +782,21 @@ async function getScanStats() {
 function startVirusScan() {
   if (started) return;
   started = true;
-  if (!slotOn()) { log('disabled (VIRUS_SCAN=0, MEDIA_COMPRESS=0) — uploads marked clean'); return; }
+  // No scanner: there is no verdict to ask for, so nothing is queued (see
+  // queueFileScan) and this worker has nothing to do. Uploads are served the
+  // moment they land, exactly as they are with a scanner — they are simply
+  // never judged.
+  if (!SCANNING) { log('disabled (VIRUS_SCAN=0) — uploads are served as they land, unscanned'); return; }
   ensureTables().then(() => {
     stats.startedAt = now();
-    // No scanner: the slot's whole job is to settle each upload's bytes before
-    // they are published, so there is no engine to probe and no signatures to
-    // load.
-    if (!SCANNING) {
-      log('worker on (compression-only slot: no engine — uploads wait for compression, then serve)');
-      schedule(2000);
-      return;
-    }
-    log('worker on (ClamAV at ' + clamav.host() + ':' + clamav.port() + ', streaming with INSTREAM)');
+    log('worker on (ClamAV at ' + clamav.host() + ':' + clamav.port() + ', streaming with INSTREAM; verdicts are background — they never hold a file back)');
     schedule(2000);
     ensureEngine().catch(() => {});
   }).catch((e) => warn('migration failed: ' + String((e && e.message) || e).slice(0, 200)));
 }
 
 module.exports = {
-  startVirusScan, kickVirusScan, queueFileScan, dropScan,
+  startVirusScan, kickVirusScan, queueFileScan,
   scanStatus, scanStatusMap, scanInfoMap, scanGating, setScanHooks, getScanStats,
   scanDetail, effectiveStatus,
   scanningEnabled: () => SCANNING,

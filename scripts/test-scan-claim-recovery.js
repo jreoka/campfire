@@ -2,9 +2,14 @@
 // and the only thing that ever expired it was a clock: SLOT_TIMEOUT_MS, twelve
 // minutes, because a slot that is merely SLOW has to keep its row. A slot whose
 // POD is gone never releases anything, though — the process died holding the
-// claim — so a restart or a deploy that caught an upload mid-scan left it saying
-// "Processing file" for up to twelve more minutes. Reported as: "if the server
-// reboots while a file is processing sometimes it can say processing forever."
+// claim — so a restart or a deploy that caught a file mid-scan left its row
+// `pending` for up to twelve more minutes. That was reported as "if the server
+// reboots while a file is processing sometimes it can say processing forever":
+// the reader was looking at a "Processing file" card, and the file was unservable
+// until the lease aged out. (The card is gone — a verdict is a background
+// judgement now and the bytes are served either way — but the row still has to
+// be handed back, or the verdict the feature exists to produce is delayed by
+// twelve minutes.)
 //
 // Seen live before this existed: an `.mp4` uploaded 503ms before a deploy, its
 // claim left by the container the deploy replaced, still `pending` at 9 and 11
@@ -20,7 +25,7 @@
 //       claim held by a LIVE peer, and one held by this process, are NOT. That
 //       second half is the safety property a rolling update depends on.
 //   [2] the PROMISE, end to end: a real server, a slow stand-in clamd, an upload
-//       caught mid-scan, a restart, and the file served within seconds — where
+//       caught mid-scan, a restart, and the row judged within seconds — where
 //       the old behaviour needed twelve minutes.
 //
 // Needs Postgres (docker compose up -d db); skips (exit 0) without it.
@@ -230,9 +235,11 @@ async function restartChecks(pg) {
 
     const up = await uploadFile(file, 'notes.txt', 'text/plain', token);
     const key = up.url.split('?')[0].replace('/uploads/', '');
-    check('the upload is gated while it is being judged', up.scan === 'pending', 'scan=' + up.scan);
-    const gated = await fetch(`http://127.0.0.1:${PORT}/uploads/${key}`);
-    check('and the gate refuses its bytes', gated.status === 423, 'status=' + gated.status);
+    // A verdict is a background judgement (see virus-scan.js): the upload is
+    // served the moment it lands, and the row is what is left waiting.
+    check('the upload is served as it lands', up.scan === 'clean', 'scan=' + up.scan);
+    const servedEarly = await fetch(`http://127.0.0.1:${PORT}/uploads/${key}`);
+    check('...with its bytes, while the scanner is still judging it', servedEarly.status === 200, 'status=' + servedEarly.status);
 
     const claimed = await waitFor(async () => {
       const r = await rowFor(key);
@@ -262,7 +269,7 @@ async function restartChecks(pg) {
       const r = await fetch(`http://127.0.0.1:${PORT}/uploads/${key}`);
       return r.status === 200 ? r : null;
     }, 10000);
-    check('the file is served once the verdict lands', !!served, served && served.status);
+    check('and the bytes were served the whole way through', !!served, served && served.status);
     check('and the app said why it could', /left by a replica that is gone/.test(serverLog),
       (serverLog.match(/\[virusscan\].*/g) || []).slice(-3));
   } finally {

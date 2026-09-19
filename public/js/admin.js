@@ -446,11 +446,11 @@ function stopAdminStatsLive() {
 function scanLine(sc) {
   if (!sc) return '';
   const c = sc.counts || {};
-  // No engine (a box that cannot afford scanning runs VIRUS_SCAN=0): the slot is
-  // still doing work — it holds every compression candidate until the compressor
-  // has settled it — so the line must not read as "idle".
-  if (sc.mode === 'compress') {
-    return `Virus scan: OFF (no engine) · uploads wait for compression, then serve · pending ${c.pending || 0} · errors ${c.error || 0}`;
+  // With no engine (VIRUS_SCAN=0) there are no verdicts at all — every upload is
+  // served as it lands, unscanned — so the line has to say that rather than read
+  // as a scanner that is merely behind.
+  if (!sc.scanning) {
+    return `Virus scan: OFF (VIRUS_SCAN=0) · uploads are served as they land, unscanned · infected ${c.infected || 0}`;
   }
   const eng = { off: 'OFF', none: 'NO ENGINE (fail-open)', starting: 'STARTING', ready: 'READY', failed: 'ENGINE FAILED (fail-open)' }[sc.engine || ''] || String(sc.engine || '?');
   // ClamAV is a signature engine, so the two things worth reporting are the
@@ -459,12 +459,14 @@ function scanLine(sc) {
   // signature revision + its date. Nothing here is a "model": what proves the
   // daemon is really detecting is CLAMAV_VERIFY_EICAR at boot (see the
   // Dockerfile) and scripts/verify-clamav.js.
+  // `pending` is the queue being judged right now, never a file a reader is
+  // waiting on: the verdict is a background one (see virus-scan.js).
   const info = sc.engineInfo;
   const sig = info && info.db
     ? `sig ${info.db} (${info.dbDate})`
     : sc.engine === 'ready' ? 'signatures unreadable' : 'no signatures loaded';
   const id = sc.engineIdentity ? `${esc(sc.engineIdentity)} · ` : '';
-  return `Virus scan: ${esc(eng)} · pending ${c.pending || 0} · infected ${c.infected || 0} · errors ${c.error || 0} · ${id}${esc(sig)}${sc.engineHost ? ' · ' + esc(sc.engineHost) : ''}`;
+  return `Virus scan: ${esc(eng)} · judging ${c.pending || 0} · infected ${c.infected || 0} · errors ${c.error || 0} · ${id}${esc(sig)}${sc.engineHost ? ' · ' + esc(sc.engineHost) : ''} · uploads serve immediately`;
 }
 function sweepLine(sw) {
   if (!sw) return '';
@@ -524,7 +526,7 @@ function storageCard(usage, tracked) {
 // existed, or while an earlier engine was in place — and lets the scan queue
 // judge them. A key the current engine has already judged is never re-queued
 // (the row is the ledger), so a pass is bounded by what is genuinely unjudged.
-// Adopted objects are queued UNGATED: they stay servable while the verdict is
+// Every verdict is a background one: the bytes stay servable while it is
 // pending, so the sweep can only ever remove malware, never briefly take a
 // working file away from a reader.
 function scanSweepLine(s) {
@@ -543,13 +545,16 @@ function scanSweepLine(s) {
   const err = s.lastError ? ` · last error: ${s.lastError.error}` : '';
   return ` · Malware sweep: every ${esc(every)}, last ${esc(last)} — ${esc(did)}${esc(err)}`;
 }
-// The bucket reconciliation pass: it lists the bucket itself and compresses
-// what the flag-driven queue never saw (profile media, a story whose row landed
-// late, anything an older build left behind). The ledger is what stops it
-// re-encoding a file it already handled.
+// The bucket reconciliation pass: the compression path that owns ordinary media.
+// It lists the bucket itself and compresses everything referenced that the key
+// ledger has not settled — which is every fresh upload, because the upload path
+// deliberately does not compress anything (see media-compress.js): the only
+// queue that runs on its own is the compatibility one, for the types a reader's
+// platform cannot open at all. The ledger is what stops it re-encoding a file it
+// already handled.
 function bucketScanLine(b) {
   if (!b) return '';
-  if (!b.enabled) return ' · Bucket scan: OFF';
+  if (!b.enabled) return ' · Bucket sweep: OFF';
   const every = (b.everyMs || 0) < 3600000 ? `${Math.round((b.everyMs || 0) / 60000)}min` : `${Math.round((b.everyMs || 0) / 3600000)}h`;
   const last = b.lastRunAt ? agoStr(b.lastRunAt) : 'not yet';
   const r = b.lastResult;
@@ -561,7 +566,7 @@ function bucketScanLine(b) {
   if (r && r.skippedText) extra.push(`${r.skippedText} pasted-link only`);
   if (r && r.errors) extra.push(`${r.errors} errors`);
   const led = b.ledger ? ` · ledger ${b.ledger.keys} key${b.ledger.keys === 1 ? '' : 's'}` : '';
-  return ` · Bucket scan: every ${every}, last ${esc(last)} — ${esc(did)}${extra.length ? ' · ' + esc(extra.join(' · ')) : ''}${led}`;
+  return ` · Bucket sweep: every ${every}, last ${esc(last)} — ${esc(did)}${extra.length ? ' · ' + esc(extra.join(' · ')) : ''}${led}`;
 }
 // Why the compressor looked at a file and left it exactly as it was.
 const KEPT_WHY = {
@@ -611,8 +616,8 @@ async function loadAdminMedia() {
       ${storageCard(m.usage, m.tracked)}
       <div class="pf-sec-label" style="margin-top:1rem">Compression</div>
       <div class="adm-stats" style="grid-template-columns:repeat(4,1fr)">
-        ${card(pendN, 'Queued')}
-        ${card(fmtSize(pendB), 'Queued size')}
+        ${card(pendN, 'Awaiting sweep')}
+        ${card(fmtSize(pendB), 'Awaiting size')}
         ${card(m.totals?.compressed || 0, 'Compressed')}
         ${card(fmtSize(m.totals?.savedBytes || 0), 'Saved total')}
       </div>

@@ -596,43 +596,36 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   the second it closes, the sender's own card runs the same clock, and a window
   the server already reports as lapsed paints the tombstone outright. Re-run it
   after touching the view-once card, its ticker, or the window copy.
-  `node scripts/test-upload-pipeline.js` covers the whole upload pipeline
-  end-to-end against a throwaway database with a slow STAND-IN clamd
-  (`scripts/fake-clamd.js`, handed to the app as `CLAMAV_HOST`/`CLAMAV_PORT`), in
-  the two shapes production runs. **Scan mode** (`VIRUS_SCAN=1`): the message
-  renders the file as pending, exactly ONE `message-updated` follows carrying
-  bytes the scanner also approved, the old key is deleted on a format change and
-  `file_scans` follows the new one; a file the daemon refuses is deleted, its row
-  goes `infected` naming the signature that matched, the gate answers 410 and the
-  message is re-broadcast as blocked; the sweeper fallback still compresses a file
-  the slot never saw. What the daemon was ASKED is read from its log
-  (`FAKE_CLAMAV_LOG`) — the candidate's own byte count is the tell, because a scan
-  of the original bytes and a scan of the compressor's output are different sizes
-  — so "the rewritten bytes were re-scanned before publishing" stays a real
-  assertion. **Compression-only mode** (the server is restarted with
-  `VIRUS_SCAN=0`, no engine at all): a candidate upload
-  is gated (423) until the slot publishes it and then raises ONE transition with
-  no engine contacted, a non-media upload (a zip/text file) is served the instant
-  it lands while a tiny image is gated like any other and still published after
-  the encoder declines to rewrite it (`no_saving`), and **concurrency** really
-  is parallel: four rows are planted at once and the worker's own high-water
-  mark (`worker.peak`, reported by `/api/admin/media`) has to show more than one
-  encode in flight and never more than `MEDIA_COMPRESS_CONCURRENCY`, and a tiny
-  image that was posted has to appear in the panel's feed whether it was kept or
-  compressed — with the reason it was left alone when it was kept, so "examined,
-  nothing to gain" can never look like "never looked at",
-  and a sweeper-compressed file that clients could already fetch lands on a NEW
-  key with the old object left intact (never rewritten in place, nothing
-  referencing it, so the orphan sweep reaps it). Then the coverage the flags
-  cannot reach: **story media** (a story row is created with `compressed = 0`,
-  the queue settles it — either in the slot before publication or under a fresh
-  key after — and the row's url/size/mime follow), and the **bucket
-  reconciliation** (a dry pass finds the flagless avatar candidate and changes
+  `node scripts/test-upload-pipeline.js` covers the whole upload path end-to-end
+  against a throwaway database with a slow STAND-IN clamd
+  (`scripts/fake-clamd.js`, handed to the app as `CLAMAV_HOST`/`CLAMAV_PORT`).
+  The posture it pins first is the owner's: an upload answers `clean`, its bytes
+  are fetchable WHILE the verdict is still in flight, and the message renders the
+  real file (no scanning card) — while the verdict behind it is still real (a
+  file the daemon refuses has its bytes deleted, its row goes `infected` naming
+  the signature that matched, the gate answers 410 and the message is
+  re-broadcast as blocked). What the daemon was ASKED is read from its log
+  (`FAKE_CLAMAV_LOG`) — the byte count is the tell — so "every byte was really
+  streamed to the engine" stays a real assertion. Then the **compatibility
+  queue**: a WebM/Opus voice message is republished as AAC/MP4 in ONE channel
+  with `moov` before `mdat`, published even though it is bigger, and answered 206
+  to a range request. Then the opposite rule for ordinary media: a fresh JPEG is
+  NOT rewritten by the upload path or the queue (byte-identical after a settle
+  window), and the **bucket sweep** — driven through `/api/admin/media/scan` —
+  republishes it under a NEW key with the old object left intact (never rewritten
+  in place) and the readers told through a `message-updated`. Then the coverage
+  the flags cannot reach: **story media** (a story row settles, under a fresh key,
+  with its url/size/mime following), a **story row with no recorded size** (read
+  from the object rather than mistaken for a tiny file), **DM attachments**, and
+  **profile media** (a dry pass reports the flagless avatar candidate and changes
   nothing; a real pass repoints that avatar to a smaller new object and ledgers
-  both keys; an unreferenced object and an object only a pasted link mentions
-  come back byte-identical, the second counted as `skippedText`; a second dry
-  pass reports zero candidates, which is the ledger doing its job; the admin
-  payload carries the scan state). Skips without ffmpeg or Postgres.
+  both keys; an unreferenced object and an object only a pasted link mentions come
+  back byte-identical, the second counted as `skippedText`; a second dry pass
+  reports zero candidates, which is the ledger doing its job; the admin payload
+  carries the sweep state). It ends by restarting with **`VIRUS_SCAN=0`**: nothing
+  is judged at all (no `file_scans` row is even created, the bytes serve at once,
+  the engine is asked nothing) while the compatibility queue still repairs an Opus
+  note. Skips without ffmpeg or Postgres.
   `node scripts/verify-clamav.js` is the acceptance check against a REAL daemon —
   the container, not the stand-in. Run it on the server:
   `docker compose exec campfire node scripts/verify-clamav.js`. It checks that the
@@ -676,18 +669,25 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   with one way out rather than two; and a long-press on an emulated touch device
   gets the same item in the phone's sheet. It also pins the band's REMOVAL:
   ClamAV has no suspicious band, so the message is handed no band at all and no
-  attachment carries the old amber chip.
+  attachment carries the old amber chip. Its uploads are served as they land (the
+  verdict is a background judgement), so it waits for the state a card moves TO —
+  a benign file is clean immediately, a flagged one becomes `infected` when the
+  push lands — rather than treating the optimistic `clean` as settled.
   Both it and the pipeline test run the scanner through
   `scripts/fake-clamd.js`, which speaks the real clamd wire protocol in-process —
   so neither needs ClamAV, a container or a signature database, and both behave
   the same on Windows, macOS and Linux. Its own switch is `FAKE_CLAMAV_VERDICT`
-  (force clean/malware/error) and `FAKE_CLAMAV_DELAY_MS` (make the `pending` state
-  observable).
+  (force clean/malware/error) and `FAKE_CLAMAV_DELAY_MS` (hold the verdict open so
+  the window in which the bytes are served but not yet judged is observable).
   `node scripts/test-compress-types.js` covers the compressor's **coverage
   contract** offline (no server, no database): that there is no size floor
   (`MIN_BYTES` all zero, so a 174-byte png / 300-byte mp4 / 2 KB wav are all
   candidates while a zip, a pdf, source code, an svg and an unidentifiable
-  binary are not), that `planFor` routes every family — jpeg/png/gif/webp, the
+  binary are not), that the **compatibility set** is exactly the types a reader's
+  platform cannot open (`.webm/.ogg/.oga/.opus/.weba/.mkv/.avi/.wmv/…` and
+  `.heic/.heif` in; `.jpg/.png/.gif/.webp/.mp4/.mov/.mp3/.m4a/.wav/.flac` out,
+  case-insensitively) so the queue that runs on its own never rewrites ordinary
+  media, that `planFor` routes every family — jpeg/png/gif/webp, the
   deferred `still` plan for BMP/TIFF/AVIF/JXL/ICO by MIME *and* by name
   alone (the bucket scan's only evidence), any video container to mp4, any audio
   codec to mp3/m4a/ogg/webaudio, and neither `.ts` (TypeScript, not MPEG-TS) as

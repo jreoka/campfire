@@ -207,7 +207,10 @@ async function main() {
     })()`);
     if (!srv || !srv.cid) return fail('no channel open');
 
-    // Upload + post from inside the page, then wait for the verdict to land.
+    // Upload + post from inside the page. The attachment is `clean` from the
+    // moment it is cached — an upload is served as it lands and the verdict is a
+    // background judgement (virus-scan.js) — so a verdict is awaited separately,
+    // by the state it moves the card TO.
     const postFile = async (name, mime, body) => {
       const res = await evaluate(`(async () => {
         const fd = new FormData();
@@ -217,25 +220,33 @@ async function main() {
           attachments: [{ url: up.url, name: up.name, mime: up.mime, size: up.size, kind: up.kind }] }));
         return up;
       })()`);
-      const settled = await waitFor(`(() => {
+      const cached = await waitFor(`(() => {
         const m = (S.messages.get(S.channelId) || []).find((x) => (x.attachments || []).some((a) => a.url === ${JSON.stringify(res.url)}));
         if (!m) return false;
-        const a = m.attachments.find((x) => x.url === ${JSON.stringify(res.url)});
-        return (a.scan === 'clean' || a.scan === 'infected') ? a.scan : false;
-      })()`, 30000);
-      if (!settled) fail('the upload for ' + name + ' never settled');
-      return { up: res, scan: settled };
+        return m.attachments.find((x) => x.url === ${JSON.stringify(res.url)}) || false;
+      })()`, 15000);
+      if (!cached) fail('the upload for ' + name + ' was never cached');
+      return { up: res, att: cached, scan: cached.scan };
     };
+    // Wait for the verdict itself: the push that turns the card into the warning.
+    const waitForVerdict = (url, want) => waitFor(`(() => {
+      const m = (S.messages.get(S.channelId) || []).find((x) => (x.attachments || []).some((a) => a.url === ${JSON.stringify(url)}));
+      if (!m) return false;
+      const a = m.attachments.find((x) => x.url === ${JSON.stringify(url)});
+      return a && a.scan === ${JSON.stringify(want)} ? a.scan : false;
+    })()`, 30000);
 
     const clean = await postFile('holiday-notes.txt', 'text/plain', 'a harmless text file, nothing to see\n');
-    check(clean.scan === 'clean', 'a benign file is judged clean', clean.scan);
+    check(clean.scan === 'clean', 'a benign file is servable as it lands', clean.scan);
     const cleanImg = await postFile('holiday.png', 'image/png', 'not really a png, but a picture by name\n');
     check(cleanImg.scan === 'clean', 'and so is an image (its own menu shape)', cleanImg.scan);
     // A binary that is neither media nor previewable text: the plain file card.
     const cleanZip = await postFile('holiday-archive.zip', 'application/zip', 'PK\u0003\u0004 not a real archive\n');
     check(cleanZip.scan === 'clean', 'and so is a plain file', cleanZip.scan);
     const bad = await postFile('holiday-photo-2019.txt', 'text/plain', 'innocent looking\n' + MARKER + '\nmore innocent looking text\n');
-    check(bad.scan === 'infected', 'a file whose BYTES are flagged is blocked, whatever it is called', bad.scan);
+    check(bad.scan === 'clean', 'a flagged file is served too — the verdict is what removes it', bad.scan);
+    const badScan = await waitForVerdict(bad.up.url, 'infected');
+    check(badScan === 'infected', 'a file whose BYTES are flagged is blocked, whatever it is called', badScan);
 
     const attFor = async (url) => waitFor(`(() => {
       const m = (S.messages.get(S.channelId) || []).find((x) => (x.attachments || []).some((a) => a.url === ${JSON.stringify(url)}));
@@ -253,7 +264,8 @@ async function main() {
     })()`);
     check(warnEl.count === 0, 'no attachment carries a suspicious marker', warnEl);
     const badKey = bad.up.url.split('?')[0].replace('/uploads/', '');
-    check(!fs.existsSync(path.join(uploads, badKey)), 'the flagged bytes were deleted from disk');
+    const gone = await waitFor(() => !fs.existsSync(path.join(uploads, badKey)), 15000);
+    check(gone, 'the flagged bytes were deleted from disk');
     check((await fetch(`http://127.0.0.1:${PORT}${bad.up.url}`)).status === 410, 'and the gate refuses them (410)');
     check(fs.existsSync(path.join(uploads, clean.up.url.split('?')[0].replace('/uploads/', ''))), 'the clean bytes are still there');
 

@@ -25,12 +25,12 @@
 //     the ledger (`engine` holds the generation that judged it), so a pass is
 //     bounded by what is genuinely unjudged, and a file is never re-scanned —
 //     and so never re-judged — just because a day went by.
-//   - An adopted key is queued UNGATED. A file a reader can already fetch is
-//     served while its background verdict is pending (see effectiveStatus in
-//     virus-scan.js), so a scan can only ever remove malware; it can never
-//     briefly take a working file away, or blink a chat card back to
-//     "Processing". An upload is still gated, because that promise is about
-//     bytes nobody has been handed yet.
+//   - An adopted key is queued UNGATED — which is every key now: a scan verdict
+//     is a background judgement everywhere in this app (see effectiveStatus in
+//     virus-scan.js), so a file a reader can already fetch is never withheld
+//     while its verdict is in flight. A scan can therefore only ever remove
+//     malware; it can never briefly take a working file away, or blink a chat
+//     card back to "Processing".
 //   - An object already flagged is left alone. Its bytes are gone and its row
 //     is the record of the removal that the chat card reads.
 //
@@ -162,9 +162,10 @@ async function runOnce(opts) {
 
     for (const f of candidates.slice(0, MAX_JOBS)) {
       try {
-        // `retro` is what keeps the reader's file: the row is queued ungated, so
-        // the gate keeps serving it until a verdict actually changes something.
-        if ((await vs.queueFileScan(f.key, { retro: true })) === 'pending') result.queued++;
+        // The row is queued ungated like every other: the gate keeps serving
+        // these bytes until a verdict actually changes something.
+        await vs.queueFileScan(f.key);
+        result.queued++;
       } catch (e) {
         warn('queue failed for ' + f.key + ': ' + String((e && e.message) || e).slice(0, 140));
       }

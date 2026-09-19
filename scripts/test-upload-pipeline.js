@@ -1,23 +1,29 @@
-// End-to-end check of the single-pass upload pipeline
-// (server.js upload -> virus-scan.js slot -> media-compress.js processUpload).
+// End-to-end check of the upload path: stored, SCANNED IN THE BACKGROUND, and
+// SERVED IMMEDIATELY — with compression entirely out of band.
 //
-// The point of the single pass: a client must see ONE transition per upload
-// (pending -> final file). Before this test existed, an uploaded song appeared
-// as a clean file, the sweeper compressed it a few seconds later, and the
-// follow-up verdict re-broadcast the message with a new URL — which reset
-// playback under anyone listening. Here we boot a real server against a
-// throwaway Postgres database with a slow STAND-IN ClamAV daemon
-// (scripts/fake-clamd.js) and assert:
-//   - the message shows the file as pending first,
-//   - exactly ONE message-updated follows, already pointing at compressed
-//     bytes that the engine approved,
-//   - the old bytes are gone (format change) and file_scans followed the file,
-//   - a WebM/Opus voice message (what Chrome's MediaRecorder produces, and what
-//     no Apple product could play in an <audio> element before iOS 17.4) comes
-//     out as AAC/MP4 in ONE channel with moov before mdat, published even though
-//     it is the BIGGER file, and served in a 206 to a range request,
-//   - a file the engine refuses is deleted, its row goes `infected`, the gate
-//     answers 410, and the message is re-broadcast as blocked.
+// What this replaced: an upload used to run through a scan -> compress -> scan
+// slot that held the bytes back (423, "Processing file") until an ffmpeg pass
+// and a second verdict had both finished. That stage is gone (owner request:
+// "remove the processing file stage for uploads entirely and just clamav scan
+// the files, and let the bucket compression sweep compress the files"). So:
+//
+//   - POST /api/upload answers `clean` and the bytes are fetchable at once; chat
+//     renders the real file, never a scanning card. The scanner still judges
+//     every byte — asserted by waiting for the row to settle and by reading what
+//     the daemon was actually sent;
+//   - a detection is still real: the bytes are deleted, the gate answers 410 and
+//     the message is re-broadcast as blocked;
+//   - the compatibility queue still repairs what a platform cannot open: a
+//     WebM/Opus voice message (what Chrome's MediaRecorder produces, and what no
+//     Apple product could play in an <audio> element before iOS 17.4) comes out
+//     as AAC/MP4 in ONE channel with moov before mdat, published even though it
+//     is the BIGGER file, and served in a 206 to a range request;
+//   - ORDINARY media is left alone by the upload path AND by that queue: a fresh
+//     JPEG stays byte-identical until the scheduled bucket sweep runs, which
+//     republishes the smaller bytes under a NEW key and leaves the old object for
+//     the orphan sweep (a byte swap behind a live URL is what that rule stops);
+//   - stories and profile media are covered by the same sweep;
+//   - with VIRUS_SCAN=0 nothing is judged at all and uploads still serve.
 //
 // Requirements: ffmpeg on PATH and Postgres reachable (docker compose up -d db).
 // Skips (exit 0) with a message when either is missing.
@@ -37,7 +43,7 @@ const ROOT = path.join(__dirname, '..');
 const TEST_DB = 'campfire_test';
 const PORT = parseInt(process.env.TEST_PORT || '3411', 10);
 const DAEMON_PORT = parseInt(process.env.TEST_CLAMAV_PORT || '3412', 10);
-const SCAN_DELAY_MS = 1500; // a slow stand-in keeps the upload pending long enough to observe
+const SCAN_DELAY_MS = 1500; // a slow stand-in leaves a window to prove the bytes are served during it
 const fake = require(path.join(__dirname, 'fake-clamd'));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -64,16 +70,11 @@ function readEnvFile() {
 
 // ---------- the stand-in daemon's log ----------
 // The daemon answers over a socket, so what it was ASKED is only visible through
-// what it wrote down. fake-clamd.js appends one JSON line per answered scan when
-// FAKE_CLAMAV_LOG is set ({"command","size","reply"}), which is how the
-// assertions below stay honest about *which bytes* reached the scanner: the
-// candidate's size is the tell, because a scan of the original bytes and a scan
-// of the compressor's output are different byte counts.
-// Declared at module scope because readEngineLog() runs outside main(), where
-// the path is decided — a `const` inside main() would leave the helper reading
-// a binding that is not in scope, and its catch would silently return [].
+// what it wrote down: fake-clamd.js appends one JSON line per answered scan when
+// FAKE_CLAMAV_LOG is set ({"command","size","reply"}). That is how the
+// assertions below stay honest about *which bytes* reached the scanner — the
+// size is the tell.
 let engineLog = '';
-
 function readEngineLog() {
   try {
     return fs.readFileSync(engineLog, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -159,6 +160,13 @@ function ffmpeg(args) {
   return r && r.status === 0;
 }
 
+// Every message-updated for this message that points somewhere OTHER than where
+// the upload landed: the compressor republishing under a new key.
+const republished = (events, mid, upUrl) => events.filter((e) => e.t === 'message-updated'
+  && e.message && e.message.id === mid
+  && (e.message.attachments || [])[0]
+  && String(e.message.attachments[0].url).split('?')[0] !== String(upUrl).split('?')[0]);
+
 // ---------- main ----------
 
 async function main() {
@@ -180,9 +188,6 @@ async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-pipe-'));
   const uploads = path.join(tmp, 'uploads');
   fs.mkdirSync(uploads, { recursive: true });
-  // The stand-in engine writes one JSON line per answered scan here. It has to
-  // exist and be readable before the server boots, and it is outside the
-  // uploads tree so it can never be mistaken for media.
   engineLog = path.join(tmp, 'engine.jsonl');
   fs.writeFileSync(engineLog, '');
 
@@ -190,8 +195,7 @@ async function main() {
     wav: path.join(tmp, 'tone.wav'),
     voice: path.join(tmp, 'voice-note.webm'), // exactly what Chrome's MediaRecorder gives a voice message
     jpg: path.join(tmp, 'noise.jpg'),
-    small: path.join(tmp, 'thumb.png'), // tiny, but still a candidate: there is no size floor
-    txt: path.join(tmp, 'notes.txt'), // not media at all — the compressor must never gate it
+    txt: path.join(tmp, 'notes.txt'), // not media at all — nothing may touch it
     bad: path.join(tmp, 'payload.txt'), // what the stand-in daemon refuses (see fake-clamd.js)
   };
   fs.writeFileSync(media.txt, 'not media, just a text file\n');
@@ -200,8 +204,7 @@ async function main() {
   fs.writeFileSync(media.bad, 'holiday photo attachment\n' + fake.MARKER + '\nmore harmless-looking text\n');
   if (!ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=20,volume=0.4', '-ac', '1', '-c:a', 'pcm_s16le', media.wav])
     || !ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=20', '-ac', '1', '-c:a', 'libopus', '-b:a', '24k', media.voice])
-    || !ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'nullsrc=s=2048x2048,geq=random(1)*255:128:128', '-frames:v', '1', '-q:v', '1', media.jpg])
-    || !ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x334155:s=64x64', '-frames:v', '1', media.small])) {
+    || !ffmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'nullsrc=s=2048x2048,geq=random(1)*255:128:128', '-frames:v', '1', '-q:v', '1', media.jpg])) {
     return skip('ffmpeg could not generate test media');
   }
   // Opus-in-WebM is the fixture that matters most here (a voice message recorded
@@ -218,30 +221,30 @@ async function main() {
     await admin.query(`CREATE DATABASE ${TEST_DB}`);
     await admin.end();
 
-    // The stand-in daemon the app streams uploads to: it speaks the real clamd
-    // protocol in-process, so this test needs no ClamAV and no container, and
-    // behaves the same on Windows, macOS and Linux.
     process.env.FAKE_CLAMAV_DELAY_MS = String(SCAN_DELAY_MS);
     process.env.FAKE_CLAMAV_LOG = engineLog;
-    const daemonHandle = await fake.start({ port: DAEMON_PORT });
-    daemon = daemonHandle;
+    daemon = await fake.start({ port: DAEMON_PORT });
     const baseEnv = {
       ...process.env,
       PORT: String(PORT),
       PGHOST: pg.host, PGPORT: String(pg.port), PGUSER: pg.user, PGPASSWORD: pg.password, PGDATABASE: TEST_DB,
-      JWT_SECRET: 'test-single-pass-secret',
+      JWT_SECRET: 'test-no-processing-stage-secret',
       UPLOAD_DIR: uploads,
       VIRUS_SCAN: '1',
       CLAMAV_HOST: '127.0.0.1',
-      CLAMAV_PORT: String(daemonHandle.port),
+      CLAMAV_PORT: String(daemon.port),
       MEDIA_COMPRESS_ACTIVE_MS: '250',
       MEDIA_COMPRESS_EVERY_MS: '5000',
-      ORPHAN_SWEEP: '1', // exercised below (dry run + real sweep on a planted orphan)
+      // The scheduled sweep is parked far beyond this run — the passes below are
+      // driven explicitly through the admin route — and its age floor is zeroed,
+      // because the test plants fixtures now and expects them adopted.
+      MEDIA_SWEEP_FIRST_MS: '900000',
+      MEDIA_SWEEP_EVERY_MS: '900000',
+      MEDIA_SWEEP_MIN_AGE_MS: '0',
+      ORPHAN_SWEEP: '1',
       UNFURL: '0',
-      DRAIN_WAIT_MS: '0', // the compression-only phase restarts the server
+      DRAIN_WAIT_MS: '0',
     };
-    // Boot/stop helpers: the second phase runs the SAME database with scanning
-    // off entirely, which is the shape a box that cannot afford scanning uses.
     function startServer(extra) {
       serverLog = '';
       const c = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
@@ -266,8 +269,6 @@ async function main() {
 
     if (!(await waitForHttp('/api/config', 30000))) return fail('server did not come up');
 
-    // The composer's own cap comes from here (public/js/messages.js) so client
-    // and server can't disagree about MAX_FILE_MB.
     const bootCfg = await api('GET', '/api/config');
     check('server advertises the upload cap', bootCfg.maxUploadMb === (parseInt(process.env.MAX_FILE_MB || '200', 10) || 200), 'maxUploadMb=' + bootCfg.maxUploadMb);
 
@@ -280,10 +281,13 @@ async function main() {
     db.on('error', (e) => console.log('[test] db client error:', (e && e.message) || e));
     await db.connect();
     const rowFor = async (key) => (await db.query('SELECT url, mime, size, kind, compressed FROM attachments WHERE split_part(url,\'?\',1) = $1', ['/uploads/' + key])).rows;
-    const scanRow = async (key) => (await db.query('SELECT status, attempts, error FROM file_scans WHERE key = $1', [key])).rows[0] || null;
+    const scanRow = async (key) => (await db.query('SELECT status, attempts, error, engine FROM file_scans WHERE key = $1', [key])).rows[0] || null;
+    const asAdmin = async () => { await db.query('UPDATE users SET is_admin = 1 WHERE id = $1', [reg.user.id]); };
+    const asUser = async () => { await db.query('UPDATE users SET is_admin = 0 WHERE id = $1', [reg.user.id]); };
 
-    // Runs one upload through the live pipeline and returns what clients saw.
-    async function roundTrip(filePath, name, mime) {
+    // Upload + post + hand back what the socket saw. `settle` is how long the
+    // caller wants to watch for a republish it does NOT expect.
+    async function roundTrip(filePath, name, mime, settleMs) {
       const conn = await connectWs(token);
       await waitFor(() => conn.events.some((e) => e.t === 'hello'), 5000);
       const up = await uploadFile(filePath, name, mime, token);
@@ -291,68 +295,99 @@ async function main() {
       const created = await waitFor(() => conn.events.find((e) => e.t === 'message-new'), 8000);
       if (!created) fail('message-new never arrived for ' + name);
       const mid = created.message.id;
-      const upd = await waitFor(() => conn.events.find((e) => e.t === 'message-updated' && e.message.id === mid && e.message.attachments[0].scan === 'clean'), 30000);
-      await sleep(1500); // a second (splitting) update would land in this window
-      conn.close();
-      return {
-        up, mid,
-        created,
-        updates: conn.events.filter((e) => e.t === 'message-updated' && e.message.id === mid),
-        final: upd || null,
-      };
+      if (settleMs) await sleep(settleMs);
+      return { up, mid, created, events: conn.events, conn };
     }
 
-    console.log('\n-- audio: wav upload -> inline compression (format change) --');
-    const a = await roundTrip(media.wav, 'tone.wav', 'audio/wav');
-    check('upload answered as scanned/pending', a.up.scan === 'pending', 'scan=' + a.up.scan);
-    check('message first rendered as pending', a.created.message.attachments[0].scan === 'pending');
-    check('exactly ONE message update (no swap under a player)', a.updates.length === 1, 'updates=' + a.updates.length);
-    const aAtt = a.final && a.final.message.attachments[0];
-    check('final attachment is clean + compressed', !!aAtt && aAtt.scan === 'clean' && aAtt.mime === 'audio/mpeg', aAtt && (aAtt.mime + ' ' + aAtt.scan));
-    check('final url is a fresh mp3 key', !!aAtt && aAtt.url.split('?')[0].endsWith('.mp3') && aAtt.url.split('?')[0] !== a.up.url.split('?')[0], aAtt && aAtt.url);
-    const aKey = aAtt && aAtt.url.split('?')[0].replace('/uploads/', '');
-    const aOldKey = a.up.url.split('?')[0].replace('/uploads/', '');
-    check('final bytes are smaller', !!aAtt && aAtt.size > 0 && aAtt.size < a.up.size, aAtt && (aAtt.size + ' < ' + a.up.size));
-    check('old bytes deleted', !fs.existsSync(path.join(uploads, aOldKey)));
-    check('old scan row dropped', (await scanRow(aOldKey)) === null);
-    check('scan verdict follows the new key', !!aKey && (await scanRow(aKey) || {}).status === 'clean');
-    const aRows = await rowFor(aKey);
-    check('attachment row points at the new key + compressed=1', aRows.length === 1 && Number(aRows[0].compressed) === 1);
-    const served = await fetch(`http://127.0.0.1:${PORT}${aAtt ? aAtt.url : ''}`);
-    const servedBytes = Buffer.from(await served.arrayBuffer());
-    check('compressed file is served through the scan gate', served.status === 200 && servedBytes.length === aAtt.size, 'status=' + served.status + ' bytes=' + servedBytes.length);
-    const aScans = readEngineLog();
-    check('candidate output was scanned too (the daemon saw the mp3)',
-      aScans.some((s) => Number(s.size) === aAtt.size), 'daemon saw sizes ' + aScans.map((s) => s.size).join(','));
+    // ================= the scan posture =================
+    console.log('\n-- an upload is scanned in the background and served immediately --');
+    const a = await roundTrip(media.wav, 'tone.wav', 'audio/wav', 0);
+    const aKey = a.up.url.split('?')[0].replace('/uploads/', '');
+    check('the upload answers clean (there is no card to wait behind)', a.up.scan === 'clean', 'scan=' + a.up.scan);
+    check('the message renders the real file, not a scanning card', a.created.message.attachments[0].scan === 'clean', a.created.message.attachments[0].scan);
+    const aNow = await fetch(`http://127.0.0.1:${PORT}${a.up.url}`);
+    check('and its bytes are fetchable while the verdict is still in flight', aNow.status === 200, 'status=' + aNow.status);
+    const aPending = await scanRow(aKey);
+    check('...which the scanner is genuinely still working on', !!aPending && aPending.status === 'pending', JSON.stringify(aPending));
+    const aSettled = await waitForAsync(async () => {
+      const r = await scanRow(aKey);
+      return r && r.status === 'clean' ? r : null;
+    }, 30000);
+    check('the verdict lands behind the reader', !!aSettled, JSON.stringify(await scanRow(aKey)));
+    check('...marked with the engine generation that judged it',
+      !!aSettled && /^clamav\//.test(aSettled.engine || ''), aSettled && aSettled.engine);
+    check('the daemon was handed this file\'s own bytes', readEngineLog().some((s) => Number(s.size) === a.up.size),
+      'daemon saw sizes ' + readEngineLog().map((s) => s.size).join(','));
 
-    // The Apple case, end to end: what a voice message IS when Chrome records
-    // it is Opus in WebM, and no iPhone or iPad before iOS 17.4 (and no Apple
-    // product ever, in Ogg) can put that in an <audio> element. The pi
-    // publishes AAC/MP4 instead — even though it is the BIGGER file, which is
-    // the whole point: the 8% rule must not be allowed to keep the WebM.
+    // A wav is not a compatibility type (WAV is playable everywhere), so the
+    // upload path AND the queue both leave it exactly as it is: only the
+    // scheduled sweep may rewrite it (proved in the next phase).
+    await sleep(3000);
+    check('ordinary media is not rewritten seconds after it was posted', republished(a.events, a.mid, a.up.url).length === 0,
+      JSON.stringify(republished(a.events, a.mid, a.up.url).map((e) => e.message.attachments[0].url)));
+    const aRows = await rowFor(aKey);
+    check('...and its row still points at the bytes that were uploaded', aRows.length === 1 && Number(aRows[0].compressed) === 0,
+      JSON.stringify(aRows[0]));
+    a.conn.close();
+
+    // ================= the verdict is still a verdict =================
+    console.log('\n-- a flagged upload is deleted, refused and re-broadcast --');
+    const badConn = await connectWs(token);
+    await waitFor(() => badConn.events.some((e) => e.t === 'hello'), 5000);
+    const badUp = await uploadFile(media.bad, 'holiday-photo-2019.txt', 'text/plain', token);
+    check('the flagged upload is served like any other (the verdict is what removes it)', badUp.scan === 'clean', 'scan=' + badUp.scan);
+    const badKey = badUp.url.split('?')[0].replace('/uploads/', '');
+    const badServedEarly = await fetch(`http://127.0.0.1:${PORT}${badUp.url}`);
+    const badSettling = await scanRow(badKey);
+    check('and its bytes really are there while the engine is still judging',
+      badServedEarly.status === 200 && !!badSettling && badSettling.status === 'pending',
+      JSON.stringify({ http: badServedEarly.status, row: badSettling && badSettling.status }));
+    badConn.send({
+      t: 'message', serverId: srv.server.id, channelId, content: '',
+      attachments: [{ url: badUp.url, name: badUp.name, mime: badUp.mime, size: badUp.size, kind: badUp.kind }],
+    });
+    const badNew = await waitFor(() => badConn.events.find((e) => e.t === 'message-new'), 8000);
+    if (!badNew) fail('the detection fixture message never arrived');
+    const badMid = badNew.message.id;
+    const badDone = await waitFor(() => badConn.events.find((e) => e.t === 'message-updated' && e.message.id === badMid
+      && e.message.attachments[0].scan === 'infected'), 30000);
+    badConn.close();
+    check('the message is re-broadcast as blocked', !!badDone, badDone ? '' : 'no infected update within 30s');
+    const badRow = await scanRow(badKey);
+    check('the verdict names the engine and the signature that matched',
+      !!badRow && /^ClamAV: .+/.test(badRow.error || ''), badRow && badRow.error);
+    check('the infected bytes were deleted', !fs.existsSync(path.join(uploads, badKey)));
+    check('the scan row is kept so the chat can still explain itself', !!badRow && badRow.status === 'infected');
+    const badServed = await fetch(`http://127.0.0.1:${PORT}${badUp.url}`);
+    check('the gate refuses the deleted bytes (410)', badServed.status === 410, 'status=' + badServed.status);
+
+    // ================= the compatibility queue =================
+    // The one thing that still runs promptly, because a voice note an iPhone
+    // cannot play for six hours is not a compression policy, it is a bug.
     if (voiceOk) {
-      console.log('\n-- voice message: WebM/Opus upload -> AAC/MP4 (the only format every Apple product plays) --');
+      console.log('\n-- a voice message: WebM/Opus -> AAC/MP4 (the only format every Apple product plays) --');
       const vsz = fs.statSync(media.voice).size;
-      const v = await roundTrip(media.voice, 'voice-message.webm', 'audio/webm');
-      check('upload answered as scanned/pending', v.up.scan === 'pending', 'scan=' + v.up.scan);
-      check('upload was filed as audio', v.up.kind === 'audio', 'kind=' + v.up.kind);
-      check('message first rendered as pending', v.created.message.attachments[0].scan === 'pending');
-      check('exactly ONE message update (no swap under a player)', v.updates.length === 1, 'updates=' + v.updates.length);
-      const vAtt = v.final && v.final.message.attachments[0];
-      check('final attachment is clean + audio/mp4', !!vAtt && vAtt.scan === 'clean' && vAtt.mime === 'audio/mp4', vAtt && (vAtt.mime + ' ' + vAtt.scan));
-      check('final url is a fresh m4a key', !!vAtt && vAtt.url.split('?')[0].endsWith('.m4a') && vAtt.url.split('?')[0] !== v.up.url.split('?')[0], vAtt && vAtt.url);
-      check('the download name follows the bytes (voice-message.m4a)',
+      const v = await roundTrip(media.voice, 'voice-message.webm', 'audio/webm', 0);
+      check('upload answered clean and filed as audio', v.up.scan === 'clean' && v.up.kind === 'audio', v.up.scan + '/' + v.up.kind);
+      check('the message first shows the bytes that were uploaded (served at once)', v.created.message.attachments[0].scan === 'clean');
+      const vDone = await waitFor(() => republished(v.events, v.mid, v.up.url).pop(), 30000);
+      const vAtt = vDone && vDone.message.attachments[0];
+      check('the compatibility queue republishes it under a new key', !!vAtt, 'no republish within 30s');
+      check('...as audio/mp4', !!vAtt && vAtt.mime === 'audio/mp4', vAtt && vAtt.mime);
+      check('...with a .m4a key', !!vAtt && vAtt.url.split('?')[0].endsWith('.m4a'), vAtt && vAtt.url);
+      check('...and the download name follows the bytes (voice-message.m4a)',
         !!vAtt && vAtt.name === 'voice-message.m4a', vAtt && vAtt.name);
-      check('published even though AAC is BIGGER than the Opus original', !!vAtt && vAtt.size > vsz, vAtt && (vAtt.size + ' > ' + vsz));
+      check('...published even though AAC is BIGGER than the Opus original', !!vAtt && vAtt.size > vsz, vAtt && (vAtt.size + ' > ' + vsz));
       const vKey = vAtt && vAtt.url.split('?')[0].replace('/uploads/', '');
       const vOldKey = v.up.url.split('?')[0].replace('/uploads/', '');
-      check('the WebM original is deleted', !fs.existsSync(path.join(uploads, vOldKey)));
-      check('scan verdict follows the new key', !!vKey && (await scanRow(vKey) || {}).status === 'clean');
+      check('the WebM original is left for the orphan sweep (never swapped in place)',
+        fs.existsSync(path.join(uploads, vOldKey)));
+      check('nothing references the old key any more', (await rowFor(vOldKey)).length === 0);
       const vRows = await rowFor(vKey);
-      check('attachment row points at the new key + compressed=1', vRows.length === 1 && Number(vRows[0].compressed) === 1);
+      check('the row follows the new key + compressed=1', vRows.length === 1 && Number(vRows[0].compressed) === 1, JSON.stringify(vRows[0]));
       const vServed = await fetch(`http://127.0.0.1:${PORT}${vAtt ? vAtt.url : ''}`);
       const vServedBytes = Buffer.from(await vServed.arrayBuffer());
-      check('the m4a is served through the scan gate', vServed.status === 200 && vServedBytes.length === vAtt.size, 'status=' + vServed.status + ' bytes=' + vServedBytes.length);
+      check('the m4a is served', vServed.status === 200 && vServedBytes.length === vAtt.size, 'status=' + vServed.status + ' bytes=' + vServedBytes.length);
       // What the reader actually receives, judged by ffprobe rather than by the
       // row: AAC in an MP4, with the index (moov) before the audio data.
       const vFile = path.join(tmp, 'served.m4a');
@@ -372,125 +407,209 @@ async function main() {
       check('...with moov before mdat (+faststart — iOS will not start a progressive read without it)',
         vHead.includes('moov') && (!vHead.includes('mdat') || vHead.indexOf('moov') < vHead.indexOf('mdat')),
         JSON.stringify({ moov: vHead.indexOf('moov'), mdat: vHead.indexOf('mdat') }));
-      check('candidate output was scanned too (the daemon saw the m4a)',
-        readEngineLog().some((s) => Number(s.size) === vAtt.size));
+      check('the conversion was judged by the scanner too', readEngineLog().some((s) => Number(s.size) === vAtt.size));
       // Range requests: the one transport detail separate from the codec. Safari
       // plays audio by reading ranges out of it, so a 206 has to come back.
       const ranged = await fetch(`http://127.0.0.1:${PORT}${vAtt.url}`, { headers: { Range: 'bytes=0-1' } });
       check('a bytes=0-1 range is answered 206 with the right length (how Safari reads audio)',
         ranged.status === 206 && (await ranged.arrayBuffer()).byteLength === 2, 'status=' + ranged.status);
+      v.conn.close();
     }
 
-    console.log('\n-- image: jpeg upload -> inline compression (same key) --');
-    const b = await roundTrip(media.jpg, 'noise.jpg', 'image/jpeg');
-    check('message first rendered as pending', b.created.message.attachments[0].scan === 'pending');
-    check('exactly ONE message update', b.updates.length === 1, 'updates=' + b.updates.length);
-    const bAtt = b.final && b.final.message.attachments[0];
-    check('final attachment is clean + same key', !!bAtt && bAtt.scan === 'clean' && bAtt.url.split('?')[0] === b.up.url.split('?')[0], bAtt && bAtt.url);
-    check('cache-buster rotated', !!bAtt && bAtt.url !== b.up.url);
-    check('final bytes are smaller', !!bAtt && bAtt.size < b.up.size, bAtt && (bAtt.size + ' < ' + b.up.size));
-    check('rewritten bytes scanned before publishing',
-      readEngineLog().some((s) => Number(s.size) === bAtt.size), 'daemon saw sizes ' + readEngineLog().map((s) => s.size).join(','));
-    const bKey = bAtt.url.split('?')[0].replace('/uploads/', '');
-    check('scan verdict clean for the key', (await scanRow(bKey) || {}).status === 'clean');
-    const bOnDisk = fs.statSync(path.join(uploads, bKey)).size;
-    check('served/on-disk bytes match the published size', bOnDisk === bAtt.size, bOnDisk + ' vs ' + bAtt.size);
+    // ================= the bucket sweep owns ordinary media =================
+    console.log('\n-- an ordinary upload is left alone until the bucket sweep runs --');
+    const b = await roundTrip(media.jpg, 'noise.jpg', 'image/jpeg', 3000);
+    const bKey = b.up.url.split('?')[0].replace('/uploads/', '');
+    const bPath = path.join(uploads, bKey);
+    const bHash = sha256Of(bPath);
+    check('a fresh JPEG is served immediately', (await fetch(`http://127.0.0.1:${PORT}${b.up.url}`)).status === 200);
+    check('the compatibility queue never touches it (it is playable everywhere)',
+      republished(b.events, b.mid, b.up.url).length === 0
+      && Number((await rowFor(bKey))[0].compressed) === 0,
+      JSON.stringify(republished(b.events, b.mid, b.up.url).map((e) => e.message.attachments[0].url)));
 
-    console.log('\n-- DM attachment: same single pass --');
+    await asAdmin();
+    const dry1 = await api('POST', '/api/admin/media/scan?dry=1', undefined, token);
+    check('a dry sweep reports it as a candidate without touching it',
+      (dry1.result.candidates || 0) >= 1 && sha256Of(bPath) === bHash, JSON.stringify(dry1.result));
+    await api('POST', '/api/admin/media/scan', undefined, token);
+    const bDone = await waitFor(() => republished(b.events, b.mid, b.up.url).pop(), 90000);
+    const bAtt = bDone && bDone.message.attachments[0];
+    check('the sweep republishes it smaller under a NEW key', !!bAtt && bAtt.size > 0 && bAtt.size < b.up.size, bAtt && (bAtt.size + ' < ' + b.up.size));
+    check('the original object is left for the orphan sweep (never swapped in place)',
+      fs.existsSync(bPath) && sha256Of(bPath) === bHash);
+    if (bAtt) {
+      const bNewKey = bAtt.url.split('?')[0].replace('/uploads/', '');
+      check('the new object exists', fs.existsSync(path.join(uploads, bNewKey)));
+      check('the row follows the new key + compressed=1',
+        (await rowFor(bKey)).length === 0 && Number((await rowFor(bNewKey))[0].compressed) === 1);
+      const led = await db.query('SELECT COUNT(*) c FROM media_compress_keys WHERE key = ANY($1)', [[bKey, bNewKey]]);
+      check('both keys are settled in the ledger', Number(led.rows[0].c) === 2, 'ledger rows=' + led.rows[0].c);
+      check('the re-published file is servable', (await fetch(`http://127.0.0.1:${PORT}${bAtt.url}`)).status === 200);
+      const bRescan = await scanRow(bNewKey);
+      check('the new bytes carry a verdict of their own', !!bRescan && bRescan.status === 'clean', JSON.stringify(bRescan));
+    }
+    b.conn.close();
+
+    // ================= DM attachments =================
+    console.log('\n-- DM attachments: same posture, same sweep --');
     const reg2 = await api('POST', '/api/register', { username: 'pipetest2', password: 'test1234', displayName: 'Pipe Two' });
     const dm = await api('POST', '/api/dms', { userId: reg2.user.id }, token);
     const dmConn = await connectWs(token);
     await waitFor(() => dmConn.events.some((e) => e.t === 'hello'), 5000);
     const dmUp = await uploadFile(media.wav, 'dm-tone.wav', 'audio/wav', token);
+    check('a DM upload is served immediately too', dmUp.scan === 'clean'
+      && (await fetch(`http://127.0.0.1:${PORT}${dmUp.url}`)).status === 200, 'scan=' + dmUp.scan);
     dmConn.send({ t: 'dm', threadId: dm.thread.id, content: '', attachments: [{ url: dmUp.url, name: dmUp.name, mime: dmUp.mime, size: dmUp.size, kind: dmUp.kind }] });
     const dmNew = await waitFor(() => dmConn.events.find((e) => e.t === 'dm-new'), 8000);
     if (!dmNew) fail('dm-new never arrived');
-    const dmUpdates = () => dmConn.events.filter((e) => e.t === 'dm-updated' && e.message.id === dmNew.message.id);
-    const dmFinal = await waitFor(() => dmUpdates().find((e) => e.message.attachments[0].scan === 'clean' && e.message.attachments[0].url.split('?')[0].endsWith('.mp3')), 30000);
-    await sleep(1200);
+    check('the DM message shows the real file', dmNew.message.attachments[0].scan === 'clean');
+    await api('POST', '/api/admin/media/scan', undefined, token);
+    const dmDone = await waitFor(() => dmConn.events.filter((e) => e.t === 'dm-updated' && e.message.id === dmNew.message.id)
+      .find((e) => e.message.attachments[0].url.split('?')[0] !== dmUp.url.split('?')[0]), 90000);
     dmConn.close();
-    check('dm message first rendered as pending', dmNew.message.attachments[0].scan === 'pending');
-    check('exactly ONE dm update', dmUpdates().length === 1, 'updates=' + dmUpdates().length);
-    const dmAtt = dmFinal && dmFinal.message.attachments[0];
-    check('dm attachment compressed + verified', !!dmAtt && dmAtt.scan === 'clean' && dmAtt.mime === 'audio/mpeg', dmAtt && dmAtt.mime);
+    const dmAtt = dmDone && dmDone.message.attachments[0];
+    check('the sweep compressed the DM attachment and the DM message was told', !!dmAtt, 'no dm-updated within 90s');
     if (dmAtt) {
       const dmKey = dmAtt.url.split('?')[0].replace('/uploads/', '');
       const dmRow = (await db.query("SELECT compressed FROM dm_attachments WHERE split_part(url,'?',1) = $1", ['/uploads/' + dmKey])).rows[0];
-      check('dm attachment row marked compressed', !!dmRow && Number(dmRow.compressed) === 1);
-      check('dm original bytes deleted', !fs.existsSync(path.join(uploads, dmUp.url.split('?')[0].replace('/uploads/', ''))));
+      check('the DM row follows the new key + compressed=1', !!dmRow && Number(dmRow.compressed) === 1, JSON.stringify(dmRow));
+      check('no DM row points at the superseded upload any more',
+        (await db.query("SELECT COUNT(*) c FROM dm_attachments WHERE split_part(url,'?',1) = $1", [dmUp.url.split('?')[0]])).rows[0].c === '0');
     }
 
-    console.log('\n-- detection: a flagged upload is deleted, gated and re-broadcast --');
-    // The stand-in daemon refuses this one on CONTENT (see fake-clamd.js), and
-    // the file is named like an innocent holiday photo on purpose: the point of
-    // content scanning is that a renamed extension buys an attacker nothing.
-    const badConn = await connectWs(token);
-    await waitFor(() => badConn.events.some((e) => e.t === 'hello'), 5000);
-    const badUp = await uploadFile(media.bad, 'holiday-photo-2019.txt', 'text/plain', token);
-    check('the flagged upload is gated as pending', badUp.scan === 'pending', 'scan=' + badUp.scan);
-    badConn.send({
-      t: 'message', serverId: srv.server.id, channelId, content: '',
-      attachments: [{ url: badUp.url, name: badUp.name, mime: badUp.mime, size: badUp.size, kind: badUp.kind }],
-    });
-    const badNew = await waitFor(() => badConn.events.find((e) => e.t === 'message-new'), 8000);
-    if (!badNew) fail('the detection fixture message never arrived');
-    const badMid = badNew.message.id;
-    const badDone = await waitFor(() => badConn.events.find((e) => e.t === 'message-updated' && e.message.id === badMid
-      && e.message.attachments[0].scan === 'infected'), 30000);
-    badConn.close();
-    check('the message is re-broadcast as blocked', !!badDone, badDone ? '' : 'no infected update within 30s');
-    const badKey = badUp.url.split('?')[0].replace('/uploads/', '');
-    const badRow = await scanRow(badKey);
-    check('the verdict names the engine and the signature that matched',
-      !!badRow && /^ClamAV: .+/.test(badRow.error || ''), badRow && badRow.error);
-    check('...and records the engine generation that judged it',
-      !!badRow && /^clamav\//.test((await db.query('SELECT engine FROM file_scans WHERE key = $1', [badKey])).rows[0]?.engine || ''),
-      JSON.stringify((await db.query('SELECT engine, verdict, evidence FROM file_scans WHERE key = $1', [badKey])).rows[0] || null));
-    check('the infected bytes were deleted', !fs.existsSync(path.join(uploads, badKey)));
-    check('the scan row is kept so the chat can still explain itself',
-      !!badRow && badRow.status === 'infected');
-    const badServed = await fetch(`http://127.0.0.1:${PORT}${badUp.url}`);
-    check('the gate refuses the deleted bytes (410)', badServed.status === 410, 'status=' + badServed.status);
-
-    console.log('\n-- sweeper fallback: a file the pipeline never saw --');
-    // Bytes + a clean verdict but compressed = 0: exactly the state a
-    // pre-existing upload (or one from a scanner-less period) is in. Only the
-    // media sweeper can pick this up now, and it still must.
-    const sweptKey = 'files/' + crypto.randomBytes(16).toString('hex') + '.wav';
-    fs.copyFileSync(media.wav, path.join(uploads, sweptKey));
-    await db.query("INSERT INTO file_scans (key,status,attempts,error,created_at,scanned_at) VALUES ($1,'clean',1,'',$2,$2)", [sweptKey, Date.now()]);
-    const swept = await connectWs(token);
-    await waitFor(() => swept.events.some((e) => e.t === 'hello'), 5000);
-    swept.send({
-      t: 'message', serverId: srv.server.id, channelId, content: '', attachments: [{
-        url: '/uploads/' + sweptKey + '?v=' + Date.now().toString(36),
-        name: 'old-tone.wav', mime: 'audio/wav', size: fs.statSync(media.wav).size, kind: 'audio',
-      }],
-    });
-    const sweptCreated = await waitFor(() => swept.events.find((e) => e.t === 'message-new'), 8000);
-    if (!sweptCreated) fail('sweeper fixture message never arrived');
-    const sweptMid = sweptCreated.message.id;
-    const sweptDone = await waitFor(() => swept.events.find((e) => e.t === 'message-updated' && e.message.id === sweptMid && e.message.attachments[0].scan === 'clean' && e.message.attachments[0].url.split('?')[0].endsWith('.mp3')), 30000);
-    swept.close();
-    const sweptAtt = sweptDone && sweptDone.message.attachments[0];
-    if (!sweptAtt) {
-      console.log('[test] sweeper events: ' + JSON.stringify(swept.events.map((e) => ({ t: e.t, err: e.error, att: e.message && e.message.attachments && e.message.attachments[0] && { scan: e.message.attachments[0].scan, url: e.message.attachments[0].url, size: e.message.attachments[0].size } }))));
-      console.log('[test] server log tail: ' + serverLog.split('\n').slice(-12).join('\n'));
+    // ================= stories =================
+    console.log('\n-- stories: story media is compression media too --');
+    const stUp = await uploadFile(media.jpg, 'story-photo.jpg', 'image/jpeg', token);
+    const stRes = await api('POST', '/api/stories', {
+      url: stUp.url, mime: stUp.mime, kind: 'image', caption: 'pipeline test', audience: 'friends', durationMs: 5000,
+    }, token);
+    const storyId = stRes.story && stRes.story.id;
+    check('story posted', !!storyId, JSON.stringify(stRes).slice(0, 200));
+    await api('POST', '/api/admin/media/scan', undefined, token);
+    const stRow = await waitForAsync(async () => {
+      if (!storyId) return null;
+      const r = await db.query('SELECT compressed, size, url, mime FROM stories WHERE id = $1', [storyId]);
+      const row = r.rows[0];
+      return row && Number(row.compressed) === 1 ? row : null;
+    }, 90000);
+    check('story media compressed without anyone posting a message', !!stRow, 'the story row never settled');
+    if (stRow) {
+      const storyKey = stRow.url.split('?')[0].replace('/uploads/', '');
+      check('the story points at bytes under a new key, and they are smaller',
+        storyKey !== stUp.url.split('?')[0].replace('/uploads/', '')
+        && fs.existsSync(path.join(uploads, storyKey))
+        && Number(stRow.size) > 0 && Number(stRow.size) < fs.statSync(media.jpg).size,
+        storyKey + ' ' + stRow.size + ' vs ' + fs.statSync(media.jpg).size);
+      check('the story url carries a fresh cache key', /\?v=/.test(stRow.url), stRow.url);
+      check('the story key is in the ledger', ((await db.query("SELECT status FROM media_compress_keys WHERE key = $1", [storyKey])).rows[0] || {}).status === 'compressed');
+      check('the compressed story bytes are what is served', (await fetch(`http://127.0.0.1:${PORT}${stRow.url}`)).status === 200);
     }
-    check('sweeper compressed + re-verified the missed file', !!sweptAtt, sweptDone ? '' : 'no compressed update within 30s');
-    // The sweeper only ever sees files clients can already fetch, so it publishes
-    // the compressed bytes under a NEW key and leaves the old object alone: a
-    // byte swap behind a live URL is what this rule exists to prevent. The old
-    // key stops being referenced, and the orphan sweep reaps it after its grace.
-    check('original bytes are left for the orphan sweep (never swapped in place)', fs.existsSync(path.join(uploads, sweptKey)));
-    const sweptOldRows = await db.query("SELECT COUNT(*) c FROM attachments WHERE split_part(url,'?',1) = $1", ['/uploads/' + sweptKey]);
-    check('nothing references the old key any more', Number(sweptOldRows.rows[0].c) === 0, 'rows=' + sweptOldRows.rows[0].c);
-    if (sweptAtt) {
-      const newKey = sweptAtt.url.split('?')[0].replace('/uploads/', '');
-      check('new key exists on disk', fs.existsSync(path.join(uploads, newKey)));
-      check('rescan verdict clean', (await scanRow(newKey) || {}).status === 'clean');
-      const sweptRow = (await db.query("SELECT compressed FROM attachments WHERE split_part(url,'?',1) = $1", ['/uploads/' + newKey])).rows[0];
-      check('attachment row marked compressed', !!sweptRow && Number(sweptRow.compressed) === 1);
+
+    // A story posted before the size column existed carries size = 0. Reading
+    // that as "a tiny file" skipped exactly the big ones, so the unknown size has
+    // to be resolved from the object itself.
+    console.log('\n-- a story row with no recorded size is not mistaken for a small file --');
+    const legacyKey = 'files/' + crypto.randomBytes(16).toString('hex') + '.jpg';
+    const legacyId = 'story-legacy-' + crypto.randomBytes(4).toString('hex');
+    fs.copyFileSync(media.jpg, path.join(uploads, legacyKey));
+    await db.query("INSERT INTO stories (id,user_id,audience,url,mime,kind,caption,duration_ms,created_at,expires_at,overlays,size,compressed) VALUES ($1,$2,'friends',$3,'image/jpeg','image','legacy',5000,$4,$5,'[]',0,0)",
+      [legacyId, reg.user.id, '/uploads/' + legacyKey, Date.now(), Date.now() + 3600000]);
+    await api('POST', '/api/admin/media/scan', undefined, token);
+    const legacyRow = await waitForAsync(async () => {
+      const r = await db.query('SELECT compressed, size, url FROM stories WHERE id = $1', [legacyId]);
+      const row = r.rows[0];
+      return row && Number(row.compressed) === 1 ? row : null;
+    }, 90000);
+    check('a story with no size was still compressed', !!legacyRow, 'the sweep skipped it as below the floor');
+    if (legacyRow) {
+      const legacyNew = legacyRow.url.split('?')[0].replace('/uploads/', '');
+      check('...and the object size is now recorded on the row', Number(legacyRow.size) > 0, 'size=' + legacyRow.size);
+      check('...on a fresh key, with the old bytes left alone', legacyNew !== legacyKey && fs.existsSync(path.join(uploads, legacyKey)) && fs.existsSync(path.join(uploads, legacyNew)));
+    }
+
+    // ================= profile media + the ledger =================
+    console.log('\n-- the sweep adopts profile media, and never re-encodes what it settled --');
+    const avKey = 'avatars/' + crypto.randomBytes(16).toString('hex') + '.jpg';
+    const avPath = path.join(uploads, avKey);
+    fs.mkdirSync(path.dirname(avPath), { recursive: true }); // disk mode creates this on a real avatar upload
+    fs.copyFileSync(media.jpg, avPath);
+    const avOld = '/uploads/' + avKey + '?v=old';
+    await db.query('UPDATE users SET avatar_url = $1 WHERE id = $2', [avOld, reg.user.id]);
+    // (a) an object nothing references: the orphan sweep owns those bytes
+    const orphan2 = 'files/' + crypto.randomBytes(16).toString('hex') + '.jpg';
+    fs.copyFileSync(media.jpg, path.join(uploads, orphan2));
+    const orphan2Hash = sha256Of(path.join(uploads, orphan2));
+    // (b) an object only message TEXT mentions: a pasted link must keep working,
+    //     so it is never repointed (and never compressed into a new key)
+    const textKey = 'files/' + crypto.randomBytes(16).toString('hex') + '.jpg';
+    fs.copyFileSync(media.jpg, path.join(uploads, textKey));
+    const textHash = sha256Of(path.join(uploads, textKey));
+    await db.query('INSERT INTO messages (id,server_id,channel_id,user_id,content,created_at) VALUES ($1,$2,$3,$4,$5,$6)',
+      ['msg-' + crypto.randomBytes(8).toString('hex'), srv.server.id, channelId, reg.user.id, 'pasted /uploads/' + textKey, Date.now()]);
+
+    const dry2 = await api('POST', '/api/admin/media/scan?dry=1', undefined, token);
+    check('a dry pass reports the avatar as a candidate', (dry2.result.candidates || 0) >= 1, JSON.stringify(dry2.result));
+    check('...and nothing was compressed by it', fs.statSync(avPath).size === fs.statSync(media.jpg).size);
+    check('the unreferenced object is reported, not queued', (dry2.result.skippedOrphan || 0) >= 1, 'skippedOrphan=' + dry2.result.skippedOrphan);
+    check('the pasted-link object is reported separately', (dry2.result.skippedText || 0) >= 1, 'skippedText=' + dry2.result.skippedText);
+
+    await api('POST', '/api/admin/media/scan', undefined, token);
+    const avNew = await waitForAsync(async () => {
+      const r = await db.query('SELECT avatar_url FROM users WHERE id = $1', [reg.user.id]);
+      const url = r.rows[0] && r.rows[0].avatar_url;
+      return url && url !== avOld ? url : null;
+    }, 90000);
+    check('the sweep repointed the avatar to a new key', !!avNew && avNew.split('?')[0] !== '/uploads/' + avKey, avNew);
+    if (avNew) {
+      const avNewKey = avNew.split('?')[0].replace('/uploads/', '');
+      check('the new avatar object exists and is smaller', fs.existsSync(path.join(uploads, avNewKey)) && fs.statSync(path.join(uploads, avNewKey)).size < fs.statSync(media.jpg).size);
+      check('the old avatar object is left for the orphan sweep', fs.existsSync(avPath));
+      check('the avatar is servable at its new key', (await fetch(`http://127.0.0.1:${PORT}${avNew}`)).status === 200);
+      const led = await db.query('SELECT COUNT(*) c FROM media_compress_keys WHERE key = ANY($1)', [[avKey, avNewKey]]);
+      check('both avatar keys are in the ledger', Number(led.rows[0].c) === 2, 'ledger rows=' + led.rows[0].c);
+    }
+    check('the unreferenced object was left exactly as it was', sha256Of(path.join(uploads, orphan2)) === orphan2Hash);
+    check('the pasted-link object was left exactly as it was', sha256Of(path.join(uploads, textKey)) === textHash);
+
+    const dry3 = await api('POST', '/api/admin/media/scan?dry=1', undefined, token);
+    const dry3res = (dry3 && dry3.result) || {};
+    check('the ledger stops a second pass re-encoding anything', (dry3res.candidates || 0) === 0,
+      JSON.stringify({ candidates: dry3res.candidates, ledger: dry3res.ledger, objects: dry3res.objects }));
+    const adm = await api('GET', '/api/admin/media', undefined, token);
+    check('the admin payload carries the bucket-sweep state',
+      !!(adm.bucketScan && adm.bucketScan.enabled && adm.bucketScan.lastResult && Number(adm.bucketScan.lastResult.compressed) >= 1),
+      JSON.stringify(adm.bucketScan && { enabled: adm.bucketScan.enabled, last: adm.bucketScan.lastResult }));
+    check('...and the scanner reports itself as a background judge',
+      !!adm.scan && adm.scan.scanning === true && adm.scan.mode === undefined, JSON.stringify(adm.scan && { scanning: adm.scan.scanning, mode: adm.scan.mode }));
+    await asUser();
+
+    // ================= without a scanner =================
+    // VIRUS_SCAN=0 is a different posture, not a different pipeline: nothing is
+    // judged at all (no row, no verdict), the bytes serve at once, and the
+    // compatibility queue still repairs what a platform cannot open.
+    console.log('\n-- VIRUS_SCAN=0: nothing is judged, uploads still serve --');
+    await stopServer();
+    child = startServer({ VIRUS_SCAN: '0' });
+    if (!(await waitForHttp('/api/config', 30000))) return fail('server did not come back up without a scanner');
+    const scansBefore = readEngineLog().length; // the file is shared across both servers
+
+    const txtUp = await uploadFile(media.txt, 'notes.txt', 'text/plain', token);
+    check('a non-media upload is clean and servable immediately',
+      txtUp.scan === 'clean' && (await fetch(`http://127.0.0.1:${PORT}${txtUp.url}`)).status === 200, 'scan=' + txtUp.scan);
+    const txtKey = txtUp.url.split('?')[0].replace('/uploads/', '');
+    check('and no scan row was created for it at all', (await scanRow(txtKey)) === null);
+
+    if (voiceOk) {
+      const v2 = await roundTrip(media.voice, 'voice-two.webm', 'audio/webm', 0);
+      check('the upload is served immediately with no scanner', v2.up.scan === 'clean'
+        && (await fetch(`http://127.0.0.1:${PORT}${v2.up.url}`)).status === 200);
+      const v2Done = await waitFor(() => republished(v2.events, v2.mid, v2.up.url).pop(), 30000);
+      const v2Att = v2Done && v2Done.message.attachments[0];
+      check('the compatibility queue still repairs the Opus voice note', !!v2Att && v2Att.mime === 'audio/mp4', v2Att && v2Att.mime);
+      check('...and the engine was not asked anything in this phase',
+        readEngineLog().length === scansBefore, 'extra scans=' + (readEngineLog().length - scansBefore));
+      v2.conn.close();
     }
 
     console.log('');
@@ -504,7 +623,7 @@ async function main() {
     check('too-short username rejected', short.available === false && short.reason === 'too_short', JSON.stringify(short));
 
     console.log('-- admin storage stats + orphan sweep --');
-    await db.query('UPDATE users SET is_admin = 1 WHERE id = $1', [reg.user.id]);
+    await asAdmin();
     const st = await api('GET', '/api/admin/media/storage', undefined, token);
     check('storage stats: local mode, backup-aware shape', !!st.usage && st.usage.mode === 'local' && typeof st.usage.backups.bytes === 'number', JSON.stringify(st.usage && st.usage.total));
     check('prefixes aggregate the upload tree', (st.usage.prefixes || []).some((p) => p.prefix === 'files/'), JSON.stringify((st.usage.prefixes || []).map((p) => p.prefix)));
@@ -524,289 +643,7 @@ async function main() {
     check('sweep dry-run lists the orphan and deletes nothing', !!dry.result && dry.result.dry === true && (dry.result.victims || []).some((v) => v.key === orphanKey) && fs.existsSync(orphanPath), JSON.stringify(dry.result && dry.result.victims));
     const real = await api('POST', '/api/admin/sweep/run', undefined, token);
     check('real sweep deletes it', !!real.result && !fs.existsSync(orphanPath), JSON.stringify(real.result && { deleted: real.result.deleted, scanned: real.result.scanned }));
-    await db.query('UPDATE users SET is_admin = 0 WHERE id = $1', [reg.user.id]);
-
-    // ---------- compression-only slot (no scanner) ----------
-    // A box that cannot afford a scanner runs VIRUS_SCAN=0. The slot must still
-    // settle every upload's bytes BEFORE they are served, or a client gets the
-    // uncompressed file and then a swap. And what the sweeper does touch is
-    // already visible, so it must publish under a NEW key instead of rewriting
-    // the bytes behind a URL someone may be streaming.
-    console.log('\n-- compression-only slot: VIRUS_SCAN=0, MEDIA_COMPRESS=1 --');
-    const scansBefore = readEngineLog().length;
-    await stopServer();
-    // The bucket scan is driven explicitly below (POST /api/admin/media/scan), so
-    // the scheduled pass is parked well beyond this run — but the age floor is
-    // zeroed, because a test plants its fixtures now and expects them adopted.
-    child = startServer({
-      VIRUS_SCAN: '0',
-      VIRUS_SCAN_CONCURRENCY: '4',
-      MEDIA_COMPRESS_CONCURRENCY: '4', MEDIA_COMPRESS_BATCH: '8',
-      MEDIA_SWEEP_FIRST_MS: '900000', MEDIA_SWEEP_EVERY_MS: '900000', MEDIA_SWEEP_MIN_AGE_MS: '0',
-    });
-    if (!(await waitForHttp('/api/config', 30000))) return fail('server did not come back up without a scanner');
-
-    await db.query('UPDATE users SET is_admin = 1 WHERE id = $1', [reg.user.id]);
-    const noScanAdmin = await api('GET', '/api/admin/media', undefined, token);
-    check('the admin panel is told the slot runs with no scanner',
-      !!noScanAdmin.scan && noScanAdmin.scan.mode === 'compress' && noScanAdmin.scan.scanning === false && noScanAdmin.scan.compressing === true,
-      JSON.stringify(noScanAdmin.scan && { mode: noScanAdmin.scan.mode, engine: noScanAdmin.scan.engine }));
-    await db.query('UPDATE users SET is_admin = 0 WHERE id = $1', [reg.user.id]);
-
-    const pUp = await uploadFile(media.wav, 'plain-tone.wav', 'audio/wav', token);
-    check('a candidate upload is gated while its encode is pending', pUp.scan === 'pending', 'scan=' + pUp.scan);
-    const gatedRes = await fetch(`http://127.0.0.1:${PORT}${pUp.url}`);
-    check('the gate refuses the bytes until the slot publishes', gatedRes.status === 423, 'status=' + gatedRes.status);
-
-    // The message is posted immediately after the upload on purpose: this whole
-    // phase is about the slot settling an upload while its attachment row is
-    // still being written, so nothing may sit between the two (the checks for
-    // the other sizes/types below come after it).
-    const pConn = await connectWs(token);
-    await waitFor(() => pConn.events.some((e) => e.t === 'hello'), 5000);
-    pConn.send({
-      t: 'message', serverId: srv.server.id, channelId, content: '',
-      attachments: [{ url: pUp.url, name: pUp.name, mime: pUp.mime, size: pUp.size, kind: pUp.kind }],
-    });
-    const pNew = await waitFor(() => pConn.events.find((e) => e.t === 'message-new'), 8000);
-    if (!pNew) fail('message-new never arrived in compression-only mode');
-    check('message first rendered as pending', pNew.message.attachments[0].scan === 'pending');
-    const pMid = pNew.message.id;
-    const pDone = await waitFor(() => pConn.events.find((e) => e.t === 'message-updated' && e.message.id === pMid && e.message.attachments[0].scan === 'clean'), 30000);
-    await sleep(1500);
-    pConn.close();
-    const pUpdates = pConn.events.filter((e) => e.t === 'message-updated' && e.message.id === pMid);
-    check('exactly ONE transition, no engine involved', pUpdates.length === 1 && !!pDone, 'updates=' + pUpdates.length);
-    const pAtt = pDone && pDone.message.attachments[0];
-    check('final bytes are compressed + clean', !!pAtt && pAtt.mime === 'audio/mpeg' && pAtt.size < pUp.size, pAtt && (pAtt.mime + ' ' + pAtt.size + ' < ' + pUp.size));
-    check('the engine was not asked anything at all',
-      readEngineLog().length === scansBefore, 'extra scans=' + (readEngineLog().length - scansBefore));    const pServed = await fetch(`http://127.0.0.1:${PORT}${pAtt ? pAtt.url : ''}`);
-    check('the published file is servable through the gate', pServed.status === 200, 'status=' + pServed.status);
-    check('old scan row dropped, new key carries the verdict', (await scanRow(pUp.url.split('?')[0].replace('/uploads/', ''))) === null && !!(await scanRow(pAtt && pAtt.url.split('?')[0].replace('/uploads/', ''))));
-
-    // Size and type decide nothing on their own any more. There is no size
-    // floor: a 174-byte image is attempted like anything else, so it waits for
-    // the slot — and it still has to be published afterwards, including when the
-    // encoder looks at it and declines to rewrite it (`no_saving` keeps the
-    // original bytes, and the gate still lifts).
-    const smallUp = await uploadFile(media.small, 'thumb.png', 'image/png', token);
-    check('a tiny image is a candidate (gated like any other)', smallUp.scan === 'pending', 'scan=' + smallUp.scan);
-    const smallSettled = await waitForAsync(async () => {
-      const r = await fetch(`http://127.0.0.1:${PORT}${smallUp.url}`);
-      return r.status === 200 ? r.status : null;
-    }, 30000);
-    check('...and the slot publishes it, rewritten or not', smallSettled === 200, 'status=' + smallSettled);
-
-    // ...and once it is posted, the panel's feed has to show what happened to
-    // it — "the compressor examined it and left it alone" and "nothing ever
-    // looked at my upload" must not look the same from the admin panel. (A bare
-    // upload with no message behind it is an orphan; the compressor correctly
-    // does nothing with it and the orphan sweep owns those bytes.)
-    const keptMsg = 'msg-' + crypto.randomBytes(8).toString('hex');
-    await db.query('INSERT INTO messages (id,server_id,channel_id,user_id,content,created_at) VALUES ($1,$2,$3,$4,$5,$6)',
-      [keptMsg, srv.server.id, channelId, reg.user.id, 'tiny', Date.now()]);
-    await db.query("INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,compressed,created_at) VALUES ($1,$2,$3,'thumb.png','image/png',$4,'image',0,$5)",
-      ['att-' + crypto.randomBytes(8).toString('hex'), keptMsg, smallUp.url.split('?')[0], fs.statSync(media.small).size, Date.now()]);
-    const tinySettled = await waitForAsync(async () => {
-      const r = await db.query('SELECT compressed FROM attachments WHERE message_id = $1', [keptMsg]);
-      return Number(r.rows[0] && r.rows[0].compressed) === 1 ? true : null;
-    }, 30000);
-    check('the posted tiny image settled', tinySettled === true, 'never settled');
-    await db.query('UPDATE users SET is_admin = 1 WHERE id = $1', [reg.user.id]);
-    const feed = await api('GET', '/api/admin/media/recent?limit=50', undefined, token);
-    await db.query('UPDATE users SET is_admin = 0 WHERE id = $1', [reg.user.id]);
-    const smallKey = smallUp.url.split('?')[0];
-    // A converted PNG lands on a NEW key (png -> webp), so match the row by
-    // either the key it was uploaded under or the name it was posted with.
-    const smallRow = (feed.jobs || []).find((j) => (j.url || '').split('?')[0] === smallKey || j.filename === 'thumb.png');
-    check('a tiny image shows up in the panel feed, kept or compressed',
-      !!smallRow && (smallRow.result === 'kept' || smallRow.result === 'compressed'), JSON.stringify(smallRow || null));
-    check('...and a kept row carries the reason it was left alone',
-      !smallRow || smallRow.result !== 'kept' || !!smallRow.error, JSON.stringify(smallRow || null));
-
-    // What the gate is actually for: a file no compressor would touch must not
-    // pay the wait — it is served the moment it lands.
-    const txtUp = await uploadFile(media.txt, 'notes.txt', 'text/plain', token);
-    check('a non-media file is NOT gated', txtUp.scan === 'clean', 'scan=' + txtUp.scan);
-    check('...and is servable immediately', (await fetch(`http://127.0.0.1:${PORT}${txtUp.url}`)).status === 200);
-
-    // How many files at once: MEDIA_COMPRESS_CONCURRENCY, process-wide, over
-    // every path. Four rows land together, so one queue tick feeds all four and
-    // the worker's own high-water mark says whether they really overlapped.
-    console.log('\n-- concurrency: a burst is encoded in parallel, up to the limit --');
-    const burstMsg = 'msg-' + crypto.randomBytes(8).toString('hex');
-    await db.query('INSERT INTO messages (id,server_id,channel_id,user_id,content,created_at) VALUES ($1,$2,$3,$4,$5,$6)',
-      [burstMsg, srv.server.id, channelId, reg.user.id, 'burst', Date.now()]);
-    const burstKeys = [];
-    for (let i = 0; i < 4; i++) {
-      const k = 'files/' + crypto.randomBytes(16).toString('hex') + '.jpg';
-      fs.copyFileSync(media.jpg, path.join(uploads, k));
-      burstKeys.push(k);
-      await db.query("INSERT INTO attachments (id,message_id,url,filename,mime,size,kind,compressed,created_at) VALUES ($1,$2,$3,'burst.jpg','image/jpeg',$4,'image',0,$5)",
-        ['att-' + crypto.randomBytes(8).toString('hex'), burstMsg, '/uploads/' + k, fs.statSync(path.join(uploads, k)).size, Date.now() + i]);
-    }
-    const bursted = await waitForAsync(async () => {
-      const r = await db.query('SELECT COUNT(*) c FROM attachments WHERE message_id = $1 AND compressed = 1', [burstMsg]);
-      return Number(r.rows[0].c) === 4 ? true : null;
-    }, 60000);
-    check('all four settled', bursted === true, 'the burst never drained');
-    await db.query('UPDATE users SET is_admin = 1 WHERE id = $1', [reg.user.id]);
-    const workerNow = (await api('GET', '/api/admin/media', undefined, token)).worker || {};
-    await db.query('UPDATE users SET is_admin = 0 WHERE id = $1', [reg.user.id]);
-    check('the worker reports the configured concurrency', Number(workerNow.concurrency) === 4, 'concurrency=' + workerNow.concurrency);
-    check('...and a burst really did encode more than one file at once', Number(workerNow.peak) >= 2, 'peak=' + workerNow.peak);
-    check('...never more than the limit', Number(workerNow.peak) <= 4, 'peak=' + workerNow.peak);
-
-    console.log('\n-- sweeper: an already-visible file is republished on a NEW key --');
-    // Bytes + a clean verdict + compressed = 0: exactly the state of a file
-    // uploaded while the compressor was off. Only the sweeper can pick it up,
-    // and it may not rewrite the bytes the URL already points at.
-    const oldKey = 'files/' + crypto.randomBytes(16).toString('hex') + '.jpg';
-    const oldPath = path.join(uploads, oldKey);
-    fs.copyFileSync(media.jpg, oldPath);
-    const oldSize = fs.statSync(oldPath).size;
-    const oldHash = crypto.createHash('sha256').update(fs.readFileSync(oldPath)).digest('hex');
-    await db.query("INSERT INTO file_scans (key,status,attempts,error,created_at,scanned_at) VALUES ($1,'clean',1,'',$2,$2)", [oldKey, Date.now()]);
-    const swConn = await connectWs(token);
-    await waitFor(() => swConn.events.some((e) => e.t === 'hello'), 5000);
-    swConn.send({
-      t: 'message', serverId: srv.server.id, channelId, content: '',
-      attachments: [{ url: '/uploads/' + oldKey + '?v=' + Date.now().toString(36), name: 'old-photo.jpg', mime: 'image/jpeg', size: oldSize, kind: 'image' }],
-    });
-    const swNew = await waitFor(() => swConn.events.find((e) => e.t === 'message-new'), 8000);
-    if (!swNew) fail('sweeper fixture message never arrived');
-    const swMid = swNew.message.id;
-    const swDone = await waitFor(() => swConn.events.find((e) => e.t === 'message-updated' && e.message.id === swMid
-      && e.message.attachments[0].url.split('?')[0] !== '/uploads/' + oldKey), 40000);
-    swConn.close();
-    const swAtt = swDone && swDone.message.attachments[0];
-    const newKey = swAtt && swAtt.url.split('?')[0].replace('/uploads/', '');
-    check('the sweeper compressed the already-visible file', !!swAtt && swAtt.size > 0 && swAtt.size < oldSize, swAtt && (swAtt.size + ' < ' + oldSize));
-    check('compressed bytes landed on a NEW key', !!newKey && newKey !== oldKey, newKey);
-    check('the published URL was never rewritten in place', fs.existsSync(oldPath)
-      && crypto.createHash('sha256').update(fs.readFileSync(oldPath)).digest('hex') === oldHash);
-    const oldRows = await rowFor(oldKey);
-    const newRows = await rowFor(newKey);
-    check('the row follows the new key (the old one is left for the orphan sweep)',
-      oldRows.length === 0 && newRows.length === 1 && Number(newRows[0].compressed) === 1,
-      JSON.stringify({ old: oldRows.length, now: newRows.length }));
-    const newServed = await fetch(`http://127.0.0.1:${PORT}${swAtt ? swAtt.url : ''}`);
-    check('the re-published file is servable', newServed.status === 200, 'status=' + newServed.status);
-
-    // ---------- stories ----------
-    // Story media is uploaded through the same /api/upload path as chat, but its
-    // only "row" is the story itself — so without stories in the queue a story
-    // photo or video sits at full size forever.
-    console.log('\n-- stories: story media is compression media too --');
-    const stUp = await uploadFile(media.jpg, 'story-photo.jpg', 'image/jpeg', token);
-    const stRes = await api('POST', '/api/stories', {
-      url: stUp.url, mime: stUp.mime, kind: 'image', caption: 'pipeline test', audience: 'friends', durationMs: 5000,
-    }, token);
-    const storyId = stRes.story && stRes.story.id;
-    check('story posted', !!storyId, JSON.stringify(stRes).slice(0, 200));
-    const stRow = await waitForAsync(async () => {
-      if (!storyId) return null;
-      const r = await db.query('SELECT compressed, size, url, mime FROM stories WHERE id = $1', [storyId]);
-      const row = r.rows[0];
-      return row && Number(row.compressed) === 1 ? row : null;
-    }, 40000);
-    check('story media compressed without anyone posting a message', !!stRow, 'the story row never settled');
-    if (stRow) {
-      const oldKey = stUp.url.split('?')[0].replace('/uploads/', '');
-      const storyKey = stRow.url.split('?')[0].replace('/uploads/', '');
-      // Either path is correct: the slot may have compressed it before the story
-      // row existed (same key, nothing was servable yet), or the queue picked the
-      // new row up seconds later (a fresh key, the old bytes left for the sweep).
-      check('the story points at the compressed bytes', fs.existsSync(path.join(uploads, storyKey))
-        && fs.statSync(path.join(uploads, storyKey)).size === Number(stRow.size)
-        && Number(stRow.size) < fs.statSync(media.jpg).size, storyKey + ' ' + stRow.size + ' vs ' + fs.statSync(media.jpg).size);
-      check('the story url carries a fresh cache key', /\?v=/.test(stRow.url), stRow.url);
-      check('the story key is in the ledger', ((await db.query("SELECT status FROM media_compress_keys WHERE key = $1", [storyKey])).rows[0] || {}).status === 'compressed');
-      if (storyKey !== oldKey) check('the superseded upload is left for the orphan sweep', fs.existsSync(path.join(uploads, oldKey)));
-      check('the compressed story bytes are what is served', (await fetch(`http://127.0.0.1:${PORT}${stRow.url}`)).status === 200);
-    }
-
-    // A story posted before the size column existed carries size = 0. Reading
-    // that as "a tiny file" skipped exactly the big ones, so the unknown size has
-    // to be resolved from the object itself.
-    console.log('\n-- a story row with no recorded size is not mistaken for a small file --');
-    const legacyKey = 'files/' + crypto.randomBytes(16).toString('hex') + '.jpg';
-    const legacyId = 'story-legacy-' + crypto.randomBytes(4).toString('hex');
-    fs.copyFileSync(media.jpg, path.join(uploads, legacyKey));
-    await db.query("INSERT INTO stories (id,user_id,audience,url,mime,kind,caption,duration_ms,created_at,expires_at,overlays,size,compressed) VALUES ($1,$2,'friends',$3,'image/jpeg','image','legacy',5000,$4,$5,'[]',0,0)",
-      [legacyId, reg.user.id, '/uploads/' + legacyKey, Date.now(), Date.now() + 3600000]);
-    const legacyRow = await waitForAsync(async () => {
-      const r = await db.query('SELECT compressed, size, url FROM stories WHERE id = $1', [legacyId]);
-      const row = r.rows[0];
-      return row && Number(row.compressed) === 1 ? row : null;
-    }, 40000);
-    check('a story with no size was still compressed', !!legacyRow, 'the queue skipped it as below the floor');
-    if (legacyRow) {
-      const legacyNew = legacyRow.url.split('?')[0].replace('/uploads/', '');
-      check('...and the object size is now recorded on the row', Number(legacyRow.size) > 0, 'size=' + legacyRow.size);
-      check('...on a fresh key, with the old bytes left alone', legacyNew !== legacyKey && fs.existsSync(path.join(uploads, legacyKey)) && fs.existsSync(path.join(uploads, legacyNew)));
-    }
-
-    // ---------- the scheduled bucket reconciliation ----------
-    // The queue is flag-driven, so a flagless table (profile media), an object
-    // only a pasted link mentions, and anything an older build left behind are
-    // all invisible to it. The bucket scan is the answer to those, and the key
-    // ledger is what keeps it from re-encoding what it already handled.
-    console.log('\n-- bucket scan: profile media, the ledger, and what it must not touch --');
-    await db.query('UPDATE users SET is_admin = 1 WHERE id = $1', [reg.user.id]);
-    const avKey = 'avatars/' + crypto.randomBytes(16).toString('hex') + '.jpg';
-    const avPath = path.join(uploads, avKey);
-    fs.mkdirSync(path.dirname(avPath), { recursive: true }); // disk mode creates this on a real avatar upload
-    fs.copyFileSync(media.jpg, avPath);
-    const avOld = '/uploads/' + avKey + '?v=old';
-    await db.query('UPDATE users SET avatar_url = $1 WHERE id = $2', [avOld, reg.user.id]);
-    // (a) an object nothing references: the orphan sweep owns those bytes
-    const orphan2 = 'files/' + crypto.randomBytes(16).toString('hex') + '.jpg';
-    fs.copyFileSync(media.jpg, path.join(uploads, orphan2));
-    const orphan2Hash = sha256Of(path.join(uploads, orphan2));
-    // (b) an object only message TEXT mentions: a pasted link must keep working,
-    //     so it is never repointed (and never compressed into a new key)
-    const textKey = 'files/' + crypto.randomBytes(16).toString('hex') + '.jpg';
-    fs.copyFileSync(media.jpg, path.join(uploads, textKey));
-    const textHash = sha256Of(path.join(uploads, textKey));
-    await db.query('INSERT INTO messages (id,server_id,channel_id,user_id,content,created_at) VALUES ($1,$2,$3,$4,$5,$6)',
-      ['msg-' + crypto.randomBytes(8).toString('hex'), srv.server.id, channelId, reg.user.id, 'pasted /uploads/' + textKey, Date.now()]);
-
-    const dry1 = await api('POST', '/api/admin/media/scan?dry=1', undefined, token);
-    check('a dry pass reports the avatar as a candidate', (dry1.result.candidates || 0) >= 1, JSON.stringify(dry1.result));
-    check('...and nothing was compressed by it', fs.statSync(avPath).size === fs.statSync(media.jpg).size);
-    check('the unreferenced object is reported, not queued', (dry1.result.skippedOrphan || 0) >= 1, 'skippedOrphan=' + dry1.result.skippedOrphan);
-    check('the pasted-link object is reported separately', (dry1.result.skippedText || 0) >= 1, 'skippedText=' + dry1.result.skippedText);
-
-    await api('POST', '/api/admin/media/scan', undefined, token);
-    const avNew = await waitForAsync(async () => {
-      const r = await db.query('SELECT avatar_url FROM users WHERE id = $1', [reg.user.id]);
-      const url = r.rows[0] && r.rows[0].avatar_url;
-      return url && url !== avOld ? url : null;
-    }, 90000);
-    check('the scan repointed the avatar to a new key', !!avNew && avNew.split('?')[0] !== '/uploads/' + avKey, avNew);
-    if (avNew) {
-      const avNewKey = avNew.split('?')[0].replace('/uploads/', '');
-      check('the new avatar object exists and is smaller', fs.existsSync(path.join(uploads, avNewKey)) && fs.statSync(path.join(uploads, avNewKey)).size < fs.statSync(media.jpg).size);
-      check('the old avatar object is left for the orphan sweep', fs.existsSync(avPath));
-      check('the avatar is servable at its new key', (await fetch(`http://127.0.0.1:${PORT}${avNew}`)).status === 200);
-      const led = await db.query('SELECT COUNT(*) c FROM media_compress_keys WHERE key = ANY($1)', [[avKey, avNewKey]]);
-      check('both avatar keys are in the ledger', Number(led.rows[0].c) === 2, 'ledger rows=' + led.rows[0].c);
-    }
-    check('the unreferenced object was left exactly as it was', sha256Of(path.join(uploads, orphan2)) === orphan2Hash);
-    check('the pasted-link object was left exactly as it was', sha256Of(path.join(uploads, textKey)) === textHash);
-
-    const dry2 = await api('POST', '/api/admin/media/scan?dry=1', undefined, token);
-    // `result: null` is the route saying a pass was already running — report it
-    // rather than crashing on the property read.
-    const dry2res = (dry2 && dry2.result) || {};
-    check('the ledger stops a second pass re-encoding anything', (dry2res.candidates || 0) === 0,
-      JSON.stringify({ candidates: dry2res.candidates, ledger: dry2res.ledger, objects: dry2res.objects, result: dry2 && dry2.result }));
-    const adm = await api('GET', '/api/admin/media', undefined, token);
-    check('the admin payload carries the bucket-scan state',
-      !!(adm.bucketScan && adm.bucketScan.enabled && adm.bucketScan.lastResult && Number(adm.bucketScan.lastResult.compressed) >= 1),
-      JSON.stringify(adm.bucketScan && { enabled: adm.bucketScan.enabled, last: adm.bucketScan.lastResult }));
-    await db.query('UPDATE users SET is_admin = 0 WHERE id = $1', [reg.user.id]);
+    await asUser();
 
     await db.end();
   } catch (e) {

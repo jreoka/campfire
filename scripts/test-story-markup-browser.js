@@ -581,10 +581,11 @@ async function main() {
       const items = (d.mine && d.mine.items) || [];
       const it = items.find((i) => (i.overlays || []).some((o) => o.t === 'text' && o.text === 'purple vibes'));
       if (!it) return { error: 'no_text_only_story', seen: items.map((i) => (i.overlays || []).map((o) => o.text)) };
-      // A story posted seconds ago may still be unservable: the /uploads gate
-      // answers 423 until the scan verdict lands, which an <img> reads as an
-      // error. That is exactly what the thumbnail retry is for, so note what
-      // the first request saw and give the retry time to come back.
+      // A story post is servable as it lands (there is no scan gate on an upload
+      // any more — see virus-scan.js), so the first request is normally a 200.
+      // `storyThumbRetry` is still the belt-and-braces for a rendering that races
+      // the row, so note what the first request saw and give the retry time to
+      // come back.
       const firstStatus = await (await fetch(it.url)).status;
       const host = document.createElement('div');
       host.style.cssText = 'position:fixed;left:4px;top:4px;width:58px;height:58px;z-index:9999';

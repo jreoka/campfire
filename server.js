@@ -149,7 +149,10 @@ function safeInterval(fn, ms) {
   return t;
 }
 // Wake the media compressor after new attachment rows land (fire-and-forget;
-// the worker pulls its next tick forward instead of waiting for idle poll).
+// the worker pulls its next tick forward instead of waiting for idle poll). It
+// only ever has the compatibility queue to act on — a voice note that needs to
+// become AAC for an iPhone, a HEIC that needs to become a JPEG — because
+// ordinary shrinking is the bucket sweep's job (see media-compress.js).
 function kickMedia() { try { require('./media-compress').kickMediaCompress(); } catch {} }
 
 // ---------- uploads ----------
@@ -301,19 +304,20 @@ app.get(['/', '/index.html'], (req, res, next) => {
   });
 });
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
-// Virus-scan gate: chat uploads stay unservable until the scanner marks
-// them clean (423 while the verdict is pending, 410 once infected bytes
-// are deleted). Chat renders scanning/infected cards instead of the file,
-// so browsers never even request gated bytes in normal flow — this is the
-// backstop for direct links, embeds, and renamed-extension tricks.
+// Virus-scan gate: the ONE thing it refuses is a key whose bytes were deleted
+// because ClamAV matched a signature (410) — a direct link, an embed, or a
+// renamed-extension trick cannot get at bytes that are gone. It deliberately
+// does NOT hold a pending file back: a verdict is a background judgement (see
+// virus-scan.js), the upload is served the moment it lands, and chat renders
+// the real file rather than a scanning card.
 async function scanGate(req, res, next) {
   try {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next();
     let key = storage.s3KeyFromUrl('/uploads' + req.path);
     if (!key) return next();
     // A derived preview answers for the upload it was made from, so the gate has
-    // to read through it: a preview of a pending or infected file is the same
-    // bytes, and serving one would be the exact bypass this gate exists to stop.
+    // to read through it: a preview of an infected file is the same bytes, and
+    // serving one would be the exact bypass this gate exists to stop.
     try {
       const src = require('./media-compress').thumbSourceKey(key);
       if (src) key = src;
@@ -321,12 +325,7 @@ async function scanGate(req, res, next) {
     const vs = require('./virus-scan');
     if (!vs.scanGating()) return next();
     if (!key.startsWith('files/')) return next();
-    const st = await vs.scanStatus(key);
-    if (st === 'pending') {
-      res.setHeader('Retry-After', '5');
-      return res.status(423).json({ error: 'scan_pending' });
-    }
-    if (st === 'infected') return res.status(410).json({ error: 'file_removed_virus' });
+    if ((await vs.scanStatus(key)) === 'infected') return res.status(410).json({ error: 'file_removed_virus' });
     return next();
   } catch { return next(); }
 }
@@ -2750,16 +2749,15 @@ app.post('/api/upload', authRequired, (req, res, next) => {
   }
   const kind = mt.startsWith('image/') ? 'image' : mt.startsWith('video/') ? 'video' : mt.startsWith('audio/') ? 'audio' : 'file';
   // Every upload is virus-scanned by content (extensions lie — see
-  // virus-scan.js); with no scanner the same slot compresses the file before
-  // anyone can fetch it. Either way the file posts to chat immediately but
-  // stays unservable until the verdict lands — and when there is no scanner,
-  // only a file the compressor would actually rewrite waits for it (see
-  // media-compress.isCandidate): the rest is servable the moment it lands.
-  let scan = 'clean';
+  // virus-scan.js), and the scan is a BACKGROUND verdict: the file posts to chat
+  // and is served the moment it lands, so a reader never waits on it and no
+  // "Processing file" card exists any more. Only a detection changes anything —
+  // the bytes are deleted and the card turns into the warning. Compression is
+  // not the upload path's business at all (media-compress.js settles it out of
+  // band, on its own schedule).
   const fileKey = 'files/' + req.file.filename;
-  let candidate = false;
-  try { candidate = require('./media-compress').isCandidate(mt, fileKey, req.file.size); } catch {}
-  try { scan = await require('./virus-scan').queueFileScan(fileKey, { compress: candidate }); } catch {}
+  let scan = 'clean';
+  try { scan = await require('./virus-scan').queueFileScan(fileKey); } catch {}
   res.json({ url: uploadUrl('files', req.file), name: attName(req.file.originalname), mime: mt, size: req.file.size, kind, scan, ...(await uploadDims(req.file, kind)) });
 });
 
@@ -2787,9 +2785,10 @@ function imgSingle(up) {
     catch { return res.status(500).json({ error: 'storage_failed' }); }
     const ikey = up._sub + '/' + req.file.filename;
     try { require('./virus-scan').queueFileScan(ikey); } catch {}
-    // Profile media is served ungated, so the compressor cannot hold it back the
-    // way it holds a chat upload: it is settled just after the row that points
-    // at it is written (the route handler runs next), under a new key.
+    // Profile media is served the moment it lands, and the compressor settles it
+    // from the other end. A compatibility type (a HEIC avatar from an iPhone, a
+    // WebM clip for a banner) is settled within a second; an ordinary one waits
+    // for the scheduled bucket sweep, like every other ordinary file.
     try { require('./media-compress').kickProfileMedia(ikey); } catch {}
     next();
   });
@@ -8085,9 +8084,11 @@ async function boot() {
   // Chat-upload compressor (images/GIFs/video/audio): one file at a time,
   // niced + single-threaded, so the VPS never feels it.
   try { require('./media-compress').startMediaCompress(); } catch (e) { console.error('[media] scheduler failed to start:', (e && e.message) || e); }
-  // Virus scanner (ClamAV): every upload scanned by content, files gated
-  // until clean. Orphan sweep: unreferenced bytes deleted daily (backups/
-  // never listed).
+  // Virus scanner (ClamAV): every upload judged by content, as a BACKGROUND
+  // verdict — the file is served as it lands and only a detection changes
+  // anything (the bytes are deleted, the card becomes the warning). Compression
+  // is not on this path at all; see media-compress.js. Orphan sweep:
+  // unreferenced bytes deleted daily (backups/ never listed).
   try {
     const vs = require('./virus-scan');
     vs.setScanHooks({ onScanChange: notifyScanChange });

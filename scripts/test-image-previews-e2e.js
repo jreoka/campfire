@@ -156,13 +156,14 @@ async function main() {
         PGHOST: pg.host, PGPORT: String(pg.port), PGUSER: pg.user, PGPASSWORD: pg.password, PGDATABASE: TEST_DB,
         JWT_SECRET: 'test-image-previews-secret',
         UPLOAD_DIR: uploads,
-        // The no-scanner shape: VIRUS_SCAN off, compression on, so the upload is
-        // gated only until the compressor publishes it.
+        // The no-scanner shape: nothing is judged (VIRUS_SCAN=0), the bytes are
+        // served as they land, and the compatibility queue has nothing to do with
+        // a JPEG — so what this test measures is purely the preview path.
         VIRUS_SCAN: '0',
         MEDIA_COMPRESS: '1',
         MEDIA_COMPRESS_ACTIVE_MS: '250',
         MEDIA_COMPRESS_EVERY_MS: '5000',
-        // The bucket scan would queue the preview backfill; leave it out of this
+        // The bucket sweep would queue the preview backfill; leave it out of this
         // run so the on-request path is what is measured.
         MEDIA_BUCKET_SWEEP: '0',
         // Grace 0 so a DRY sweep lists everything eligible (nothing is deleted).
@@ -185,7 +186,9 @@ async function main() {
     db = new Client({ ...pg, database: TEST_DB });
     await db.connect();
 
-    // Upload + post + wait for the compression slot to publish the final bytes.
+    // Upload + post. The upload is final the moment it lands (no scan gate, no
+    // compression stage — see virus-scan.js), so the message's own attachment is
+    // already the bytes a reader gets.
     conn = await connectWs(token);
     await waitFor(() => conn.events.some((e) => e.t === 'hello'), 5000);
     async function postImage(filePath, name, mime) {
@@ -193,13 +196,9 @@ async function main() {
       conn.send({ t: 'message', serverId: srv.server.id, channelId, content: '', attachments: [{ url: up.url, name: up.name, mime: up.mime, size: up.size, kind: up.kind }] });
       const created = await waitFor(() => conn.events.find((e) => e.t === 'message-new' && e.message.attachments[0].url === up.url), 8000);
       if (!created) fail('message-new never arrived for ' + name);
-      const mid = created.message.id;
-      const done = await waitFor(() => {
-        const u = conn.events.filter((e) => e.t === 'message-updated' && e.message.id === mid).pop();
-        return u && u.message.attachments[0] && u.message.attachments[0].scan === 'clean' ? u.message : null;
-      }, 60000);
-      if (!done) fail('the upload never settled for ' + name);
-      return { mid, att: done.attachments[0], up };
+      const att = created.message.attachments[0];
+      check('the upload is final as it lands (' + name + ')', att.scan === 'clean', att.scan);
+      return { mid: created.message.id, att, up };
     }
 
     console.log('\n[1] a preview is minted on the first request and served from then on');

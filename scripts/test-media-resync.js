@@ -1,14 +1,14 @@
 // Cards that say "Processing" after a missed verdict push (see AGENTS.md
 // verification conventions).
 //
-// A scan verdict reaches the reader as a LIVE push (message-updated /
-// dm-updated). The push is gone forever if the socket was down when it fired —
-// a deploy restarts the app, a phone loses signal, a laptop sleeps — and the
-// reader is left staring at "Processing file" for a file the server finished
-// long ago, with no way out but a reload. That is the second half of the
-// reported "if the server reboots while a file is processing sometimes it can
-// say processing forever"; the first half (a claim stranded by the dead pod) is
-// fixed server-side in virus-scan.js.
+// A verdict reaches the reader as a LIVE push (message-updated / dm-updated).
+// The push is gone forever if the socket was down when it fired — a deploy
+// restarts the app, a phone loses signal, a laptop sleeps — and the page's own
+// cached copy is left holding a card the server has long since settled. (Since
+// uploads are served as they land and a verdict is a background judgement, the
+// card can only come from a copy that never heard the push — which is why the
+// browser half of this test manufactures exactly that state rather than waiting
+// for a slow scanner to produce one.)
 //
 // The client's answer is a TARGETED resync on the two moments pushes were
 // missed: a socket reconnect (socket.js) and a foregrounded tab (final.js). It
@@ -19,11 +19,10 @@
 // [1] the route it asks with — GET /api/dms/messages/:mid, the DM twin of the
 //     server-message route that already existed — including that it will not
 //     answer a stranger (404, like its neighbours, so ids cannot be probed).
-// [2] the whole thing in a real browser: a real upload held pending by a slow
-//     stand-in clamd, rendered as a scanning card, the socket CLOSED (so the
-//     verdict's push is genuinely missed), the verdict landing server-side while
-//     the card still says Processing — and then ONE reconnect flipping it, with
-//     no reload and no refetch of the conversation.
+// [2] the whole thing in a real browser: a real upload posted over the page's own
+//     socket, its cached copy rolled back to the stale scanning state, the socket
+//     CLOSED (so the repair cannot be pushed either) — and then ONE reconnect
+//     flipping it, with no reload and no refetch of the conversation.
 //
 // Needs Postgres (docker compose up -d db) and Chrome/Edge; skips (exit 0)
 // without either.
@@ -297,15 +296,28 @@ async function main() {
       })`);
       return fail('boots signed in: ' + JSON.stringify(diag) + ' exceptions=' + JSON.stringify(pageErrors.slice(0, 3)));
     }
-    await evaluate(`(async () => { await refreshDms(); await openHome(); await selectDmThread(${JSON.stringify(dm.id)}); return 1; })()`);
-    const opened = await waitForPage(`S.dmThreadId === ${JSON.stringify(dm.id)}`);
-    check(!!opened, 'the conversation is the one on screen', await evaluate(`S.dmThreadId`));
+    // Open the DM. The app's own boot restore is still settling when a scripted
+    // open runs this soon after `booted` (it lands on Home with no conversation
+    // and closes one that was opened first), so re-open until it sticks rather
+    // than racing it — this is a harness race, not something a reader can hit.
+    let opened = null;
+    for (let i = 0; i < 20 && !opened; i++) {
+      await evaluate(`(async () => { await refreshDms(); await openHome(); await selectDmThread(${JSON.stringify(dm.id)}); return 1; })()`);
+      opened = await waitForPage(`S.dmThreadId === ${JSON.stringify(dm.id)}`, 1200);
+    }
+    check(!!opened, 'the conversation is the one on screen',
+      await evaluate(`({ thread: S.dmThreadId, view: S.view, dms: (S.dms || []).length, ids: (S.dms || []).map((d) => d.id).slice(0, 4) })`));
     check(await waitForPage(`!!document.querySelector('#messages .msg[data-mid="' + ${JSON.stringify(mid)} + '"]')`),
       'the settled conversation is on screen, its first upload rendered as the real file',
       await evaluate(`({ dom: document.querySelectorAll('#messages .msg').length, scanning: document.querySelectorAll('#messages .scan-block.scanning').length })`));
 
     // The second upload: posted over the PAGE's own socket, so this is the app's
-    // real path, then rendered as a scanning card.
+    // real path. It is final the moment it lands (there is no scanning card on
+    // the upload path any more — see virus-scan.js), so the STALE card this test
+    // is about is manufactured where it actually comes from in the wild: the
+    // page's own cached copy of a message whose verdict push it never heard. That
+    // is the state a dropped socket, a sleeping laptop or a deploy leaves behind,
+    // and it is exactly what the resync has to repair.
     const up2 = await uploadFile(note2, 'second-upload.txt', 'text/plain', a.token);
     const key2 = up2.url.split('?')[0].replace('/uploads/', '');
     const att2 = { url: up2.url, name: up2.name, mime: up2.mime, size: up2.size, kind: up2.kind };
@@ -323,7 +335,20 @@ async function main() {
     check(!!sent, 'the second upload is posted and cached', sent && sent.id);
     const mid2 = sent && sent.id;
     const att2Id = sent && sent.attachments && sent.attachments[0] && sent.attachments[0].id;
+    check(await waitForPage(`!!document.querySelector('#messages .att-slot[data-att-slot="' + ${JSON.stringify(att2Id)} + '"]')`),
+      'it renders as the real file the moment it lands');
     const card = `document.querySelector('#messages .scan-block.scanning[data-att-id="' + ${JSON.stringify(att2Id)} + '"]')`;
+
+    // Roll the page's copy back to the stale state, and re-render: what a reader
+    // is left looking at when the verdict's push never arrived.
+    const staled = await evaluate(`(() => {
+      const m = (S.dmMessages.get(${JSON.stringify(dm.id)}) || []).find((x) => x.id === ${JSON.stringify(mid2)});
+      if (!m || !m.attachments || !m.attachments[0]) return false;
+      m.attachments[0].scan = 'pending';
+      renderDmMessages();
+      return true;
+    })()`);
+    check(staled === true, 'the page is left holding a stale scanning card');
     check(await waitForPage(`!!${card}`), 'it renders as a "Processing file" card', att2Id);
 
     // Now the missed push: close the socket and stop it reconnecting, exactly
@@ -332,8 +357,9 @@ async function main() {
     const down = await waitForPage(`!S.ws || S.ws.readyState !== 1`);
     check(!!down, 'the socket is down (so nothing can be pushed to this page)');
 
-    const verdict = await waitFor(async () => { const r2 = await scanRow(key2); return r2 && r2.status === 'clean'; }, 40000);
-    check(!!verdict, 'the verdict lands while the page is disconnected');
+    const serverNow = await api('GET', `/api/dms/messages/${mid2}`, undefined, a.token);
+    const serverAtt = serverNow.data && serverNow.data.message && serverNow.data.message.attachments[0];
+    check(!!serverAtt && serverAtt.scan === 'clean', 'the server holds the verdict the page never heard', serverAtt && serverAtt.scan);
     check(await evaluate(`!!${card}`), 'and the card is STILL saying Processing — the push it needed is gone');
     check(await evaluate(`S.dmMessages.get(${JSON.stringify(dm.id)}).find((m) => m.id === ${JSON.stringify(mid2)}).attachments[0].scan === 'pending'`),
       'the page\'s own copy of the message is stale too');

@@ -53,16 +53,17 @@ campfire/
   clamav.js           # the ClamAV daemon client: the clamd wire protocol over TCP
                      # (VERSION/PING/INSTREAM), streaming scans, and the startup
                      # probe (engine identity + EICAR detection)
-  virus-scan.js      # ClamAV-backed scanning + gated serving, the engine
-                     # GENERATION every verdict is recorded against, and the
-                     # scan -> compress -> scan slot (+ inline media compression)
+  virus-scan.js      # ClamAV-backed scanning, the engine GENERATION every verdict
+                     # is recorded against, and the serving rule: a verdict is a
+                     # BACKGROUND judgement (uploads are served as they land), so
+                     # a scan can only ever REMOVE malware
   bucket-scan.js     # whole-bucket malware sweep: adopts stored objects the
                      # engine generation running now has not judged and feeds
-                     # them to the scan queue (ungated, so it can only ever
-                     # remove malware)
-  media-compress.js  # ffmpeg re-encode of over-large media: single-pass in the scan slot,
-                     # the flag-driven queue (chat/DM/stories), the bucket reconciler
-                     # (profile media + anything the flags never saw), and the key ledger
+                     # them to the scan queue
+  media-compress.js  # ffmpeg re-encode, entirely out of band: the compatibility
+                     # queue (bytes a platform cannot open), the scheduled bucket
+                     # sweep (ordinary shrinking, profile media + anything the
+                     # flags never saw), and the key ledger
   image-size.js      # intrinsic size from an image's own header (JPEG/PNG/GIF/WebP/BMP)
   att-dims.js        # backfill measuring media posted before the shape record existed
                      # (newest-first, bounded per tick, leader-locked)
@@ -391,10 +392,16 @@ open instead of being served unscanned. Memory is the constraint on this host: a
 loaded clamd holds **~1.0 GiB resident** (measured; the database files are only
 ~170 MB) and a 50 MB stream scan moves that by ~10 MB, which is why the scanner's
 compose limit is 1500m and the app's own came down from 2g to 1500m.
-The slot is still a real **scan -> compress -> scan** pipeline and only the last
-clean verdict is published — clients still see exactly one `pending -> final`
-transition, and a file a running player already holds is never swapped
-underneath it. Prove the daemon rather than assuming it:
+**An upload is served the moment it lands, and the scan is a background
+verdict** (owner request: "remove the processing file stage for uploads entirely
+and just clamav scan the files"). There is no upload-path encode and no gate: the
+bytes are fetchable at once, the chat card is the real file, and the verdict that
+comes back can only ever REMOVE it — `infected` deletes the bytes, keeps the row
+so the card can explain itself, re-broadcasts the message as the warning, and the
+`/uploads` gate then answers 410. A `pending` row reads as `clean` everywhere
+(`effectiveStatus`), so no reader ever waits on a scan, and nothing blinks back to
+"Processing". Compression is not on this path at all — see the compressor below.
+Prove the daemon rather than assuming it:
 `node scripts/verify-clamav.js` (run it in the app container) checks that it
 answers and names its ClamAV version, how old the signature database is, that
 **EICAR is detected** — a daemon whose database failed to load answers OK to
@@ -422,12 +429,12 @@ bytes are gone and the row is the record the chat card reads); a row in `error` 
 retried, but only while the engine is answering, so a broken engine cannot turn
 every pass into the same pile of failures — and a pass with **no** generation to
 compare against is skipped outright rather than adopting the whole bucket on a
-guess. Adopted keys are queued **ungated** (`gated = 0`), which is the
-load-bearing part: `effectiveStatus` reports a pending ungated row as `clean`, so
-a background verdict can only ever REMOVE malware — it can never 421/423 a file a
-reader can already fetch, or blink a chat card back to "Processing". An upload's
-own row keeps `gated = 1`, because that promise is about bytes nobody has been
-handed yet. Leader-locked, `BUCKET_SCAN_*` env, `backups/` and `thumbs/` never
+guess. **Every** key is queued ungated (`gated = 0`, written explicitly, and a
+legacy row from an older build is not held back either): `effectiveStatus` reports
+a pending row as `clean`, so a verdict can only ever REMOVE malware — it can never
+421/423 a file a reader can already fetch, or blink a chat card back to
+"Processing". That is the whole posture, not a special case for adopted objects.
+Leader-locked, `BUCKET_SCAN_*` env, `backups/` and `thumbs/` never
 listed, admin routes `POST /api/admin/scan/run[?dry=1]` and the Media tab's two
 buttons. A signature UPDATE deliberately does not change the generation: a daily
 database bump re-scanning the whole bucket would be an unbounded job for no
@@ -445,13 +452,26 @@ hidden because it is the ledger mark: a verdict from an older generation says so
 which is exactly what the background sweep is about to re-judge. The panel's
 `.hb-*` class names are retained from its predecessor (they are generic panel
 styling — do not rename them to "scan" in the stylesheet without a reason).
-Coverage is the whole media tree: chat/DM attachments and **stories**
-through the flag-driven queue, and **profile media** (avatars, banners, sidebar
-banners, server icons, custom emoji, webhook avatars, the profile picker's
-history) through the same compressor, which lists the bucket hourly
-(`MEDIA_SWEEP_EVERY_MS`) and settles a fresh profile upload within a second of
-it landing. A per-key ledger (`media_compress_keys`) is what keeps any of that
-from being re-encoded twice. It attempts **any size, any type the image's
+**Compression is entirely out of band, and it is split in two by WHAT the
+encode is for** (owner directive: "let the bucket compression sweep compress the
+files every few hours or whatevers in the bucket"). The **compatibility queue**
+runs seconds after an upload lands, but only for bytes a reader's platform cannot
+open AT ALL — `COMPATIBILITY_EXTS`/`needsCompatibility` mirror `planFor`'s
+`normalize` cases: Opus/Vorbis audio and every non-MP4/MOV video container
+(no Apple product plays them, and an owner requirement says voice notes must be
+heard on Mac/iPhone/iPad), plus HEIC/HEIF stills (no Windows browser can display
+one). Those are repairs, not size policies. Everything else — the ordinary
+shrinking of playable media, chat/DM attachments and **stories** whose rows carry
+the `compressed` flag, and **profile media** (avatars, banners, sidebar banners,
+server icons, custom emoji, webhook avatars, the profile picker's history) which
+has no flag at all — belongs to the **scheduled bucket reconciliation**, which
+lists the tree every `MEDIA_SWEEP_EVERY_MS` (6h), skips anything younger than
+`MEDIA_SWEEP_MIN_AGE_MS` (10min) so a file the reader was just handed is never
+rewritten underneath them, and republishes each result under a NEW key with every
+row that points at it repointed (the old object stays for the orphan sweep, and
+the readers are told through the same re-broadcast the queue uses). A per-key
+ledger (`media_compress_keys`) is what keeps either path from re-encoding bytes
+it already settled. It attempts **any size, any type the image's
 ffmpeg can decode** (no floor; `MEDIA_COMPRESS_MIN_KB` restores one).
 **Playability outranks size for the formats Apple cannot open** (owner request:
 "audio messages must be heard on Mac/iPhone/iPad"). A voice message is Opus in
@@ -486,7 +506,8 @@ Duration and channel count are facts. The switch is also a
 one-time `oncePolicy('apple-playable')` migration: it re-queues the stored rows
 whose extension is in that set (`compressed = 0`) and drops their ledger
 verdicts, so media uploaded before the rule is converted too — the objects
-themselves are only replaced when the queue republishes them under a new key.
+themselves are only replaced when the compatibility queue or the bucket sweep
+republishes them under a new key.
 `MAX_FILE_MB=50`, because S3 mode buffers every
 upload in RAM, and `VIRUS_SCAN_CONCURRENCY=4` + `MEDIA_COMPRESS_CONCURRENCY=2`
 let a burst of uploads compress in parallel (one niced single-threaded ffmpeg
@@ -1425,9 +1446,9 @@ needs vertical padding or the selected swatch's highlight ring is sliced off.
 Ring thumbnails carry the post's markup (`storyThumbWithMarkup` composites the
 same overlay list over the media, fitted with `cover` because that is how the
 ring crops) — without it a text-only story previews as a bare gradient. A story
-posted seconds ago is not servable yet (the /uploads gate answers 423 until the
-scan verdict lands), which an `<img>` reads as an error: `storyThumbRetry` gives
-it two tries before falling back to the avatar.
+post is servable as it lands (an upload is no longer held behind its scan — see
+virus-scan.js), so `storyThumbRetry` is the belt-and-braces for a thumbnail that
+races the row: two tries before falling back to the avatar.
 Story audiences are friends / whole servers / specific friends only. The
 instance-wide `everyone` target was removed on the owner's request: the composer
 has no row for it, `normStoryAudiences` (server.js) no longer produces it, and a
@@ -1450,18 +1471,23 @@ NEXT: iterate per owner feedback on the live site.
 - **Upload pipeline E2E:** `node scripts/test-upload-pipeline.js` (needs ffmpeg
   + the dev Postgres, skips otherwise) boots a real server against a throwaway
   database with a slow STAND-IN clamd (`scripts/fake-clamd.js`, handed to the
-  app as `CLAMAV_HOST`/`CLAMAV_PORT`) and asserts the single-transition compression flow
-  for the scan-integrated path plus the detection path (a flagged upload is
+  app as `CLAMAV_HOST`/`CLAMAV_PORT`) and asserts the posture the owner asked for:
+  an upload answers `clean` and its bytes are fetchable WHILE the verdict is still
+  pending, the message renders the real file (no scanning card), and the verdict
+  that lands behind the reader is still real (a flagged upload's bytes are
   deleted, its row goes `infected`, the gate answers 410, and the message is
-  re-broadcast as blocked), then **restarts it with `VIRUS_SCAN=0`** to
-  assert the compression-only shape (gated candidate -> one
-  transition with no engine, immediate serving for non-candidates, and a
-  sweeper rewrite landing on a fresh key with the old bytes untouched), and
-  finally covers **story media** and the **bucket reconciliation** (a dry pass
-  lists candidates and changes nothing; a real pass repoints a flagless
-  avatar to a smaller object; an unreferenced object and a pasted-link-only
-  object come back byte-identical; a second pass finds nothing left, which is
-  the ledger doing its job). Re-run it after touching `virus-scan.js`,
+  re-broadcast as blocked). It then covers the **compatibility queue** (a
+  WebM/Opus voice message is republished as AAC/MP4 in one channel with `moov`
+  before `mdat`, `+faststart`, served in a 206 to a range request) and the
+  opposite rule for ordinary media (a fresh JPEG is NOT rewritten, then the
+  **bucket sweep** republishes it under a new key with the old bytes left for the
+  orphan sweep). Finally **story media**, a story row with no recorded size, and
+  **profile media** through the sweep (a dry pass lists candidates and changes
+  nothing; an unreferenced object and a pasted-link-only object come back
+  byte-identical; a second pass finds nothing left, which is the ledger doing its
+  job). It ends by **restarting with `VIRUS_SCAN=0`** to assert that nothing is
+  judged at all (no scan row, bytes served at once) while the compatibility queue
+  still repairs an Opus note. Re-run it after touching `virus-scan.js`,
   `clamav.js`, `media-compress.js`, `storage-sweep.js`, or the upload routes.
   What the scanner was ASKED is read from the stand-in's own log
   (`FAKE_CLAMAV_LOG`) — the candidate's byte count is the tell, since the
@@ -1507,25 +1533,27 @@ are load-bearing:
   never served, never swept). `storage.storageStats()` powers the admin Media
   tab's Storage card (`/api/admin/media/storage`, 10-min cache, `?refresh=1` to
   force); the sweep has a `?dry=1` mode that reports victims without deleting.
-- **Compression is scan -> compress -> scan, and only the last verdict gets
-  published.** On a clean verdict the `virus-scan` slot compresses the file
-  itself (`processMedia` -> `media-compress.processUpload`), hands the candidate
-  output to the scanner (streamed in from the compressor's own temp file — the
-  daemon takes a stream, so the candidate is never published to disk first), and
-  only commits it once that verdict is clean. So
-  clients see exactly one `pending -> final` transition and a playing file is
-  never swapped out from under a running player. Never hand unscanned bytes to
-  ffmpeg or publish unscanned output.
-- **The slot is not only a scan slot.** `virus-scan`'s worker runs whenever
-  scanning **or** compression is on (`slotOn()`), and the serving gate
-  (`scanGating`) is tied to the same predicate. With `VIRUS_SCAN=0` it becomes a
-  compress-and-publish slot: `processRow` never touches the engine, calls
-  `processMedia(key, null)` (no candidate scan to ask for) and marks the row
-  clean, which is what lifts the 423. Which uploads wait for it is the upload
-  route's call — `queueFileScan(key, {compress: media-compress.isCandidate(...)})`
-  — so a file the compressor would never rewrite (a zip, a PDF, an SVG) is
-  `clean` immediately, exactly as it is with compression off. Keep those two
-  halves in step: gating a file the slot would never settle parks it at 423.
+- **The upload path never compresses, and nothing about an upload waits for an
+  encode.** `virus-scan`'s worker judges bytes and nothing else: `processMedia`,
+  `scanCandidate` and the old compress-and-publish slot are gone, and with
+  `VIRUS_SCAN=0` the worker does not even start (nothing is judged, nothing is
+  queued). The verdict is a background one, so the rule that matters is the
+  reverse of the old one: a scan can only ever REMOVE bytes, never withhold them.
+  Never hand unscanned bytes to ffmpeg or publish unscanned output — the
+  compressor's own output is NEW bytes, so it gets a verdict of its own before
+  the readers are told about it.
+- **Which encode runs when is a policy choice, and it is split in two.**
+  `fetchCandidates` offers only the COMPATIBILITY set — `COMPATIBILITY_EXTS` /
+  `needsCompatibility`, derived from the same extension sets `planFor` reads and
+  mirroring its `normalize` cases: Opus/Vorbis audio and every non-MP4/MOV video
+  container (no Apple product can play them), and HEIC/HEIF stills (no Windows
+  browser can show one). Those are repairs, so they are worth doing seconds after
+  an upload lands; that is the only reason the queue still exists. Everything
+  playable is deliberately NOT offered here — it belongs to the scheduled bucket
+  sweep, so a file the reader was just handed is never rewritten underneath them.
+  The two must stay in step with `planFor`: a type that becomes `normalize` there
+  has to be in `COMPATIBILITY_EXTS`, or it waits hours for the conversion that
+  makes it usable.
   There is **no size floor**: any size is attempted (the 8% rule is what stops a
   pointless rewrite), so the non-candidates are non-media, not small media.
   `MEDIA_COMPRESS_MIN_KB` restores a flat floor. Coverage is every type the box
@@ -1567,29 +1595,27 @@ are load-bearing:
   `oncePolicy(name, fn)` (migration-time, remembered in `media_compress_meta`)
   is how that is done; the PNG one deletes `kept/no_saving` verdicts on `.png`
   keys. Add a new `oncePolicy` call rather than a bare DELETE in `ensureColumns`.
-- **What the sweeper touches is already visible, so it republishes on a NEW
-  key.** The queue's `processRow` passes `{visible: true}`, and
-  `compressLocked` then mints a fresh key for every commit (`freshKey = !sameFormat
-  || visible`): the row (attachment, DM, or story) gets the new url, the client
-  repaints from the emitted `message-updated`, and the old key is left for the
-  orphan sweep. Nothing is ever rewritten behind a URL someone may be streaming.
-  Only the slot keeps the key, because it compresses before anything can fetch
-  the bytes. That is also the safety net for the one race the slot cannot close —
-  the slot can settle an upload before the message insert creates its
-  attachment row (then the file is served uncompressed and upgraded seconds
-  later, under a new key, instead of being swapped).
-- **The queue is flag-driven, so a scheduled pass lists the bucket.**
-  `compressed = 0` on `attachments`/`dm_attachments`/`stories` is the whole
-  queue: a table nobody gave a flag to (profile media — avatars, banners,
-  sidebar banners, server icons, custom emoji, webhook avatars, the picker's
-  `media_history`), an object only a pasted link mentions, and anything an older
-  build left behind are all invisible to it. `reconcileBucket()`
-  (`MEDIA_SWEEP_EVERY_MS`, hourly on the cluster, leader-locked) lists the
-  bucket, and for every object that is referenced, past
-  `MEDIA_SWEEP_MIN_AGE_MS`, and **absent from the key ledger** it either runs the
-  row path (a flag table points at it) or `compressStandalone` (repoint the
-  referencing columns). A profile upload also kicks its own key
-  (`kickProfileMedia`), so a new avatar settles in about a second. Two things it
+- **Everything the compressor touches is already visible, so it ALWAYS
+  republishes on a NEW key.** `compressLocked` mints a fresh name for every
+  commit: the row (attachment, DM, or story) gets the new url, the client
+  repaints from the emitted `message-updated` (the compatibility queue emits it
+  directly; the bucket sweep queues a verdict on the new key and that verdict is
+  what carries the re-broadcast), and the old object is left for the orphan
+  sweep. Nothing is ever rewritten behind a URL someone may be streaming — there
+  is no pre-publication mode left to be the exception.
+- **The scheduled sweep is what compresses ordinary media.**
+  `reconcileBucket()` (`MEDIA_SWEEP_EVERY_MS`, 6h, leader-locked) lists the
+  bucket and compresses everything referenced, past `MEDIA_SWEEP_MIN_AGE_MS`, and
+  **absent from the key ledger** — which is every fresh upload, because the
+  upload path does not compress and the compatibility queue only takes its own
+  types. For each candidate it either runs the row path (a flag table —
+  `attachments`/`dm_attachments`/`stories`, whose `compressed` column now just
+  means "the compressor settled this") or `compressStandalone`, which is the only
+  path that can see profile media (avatars, banners, sidebar banners, server
+  icons, custom emoji, webhook avatars, the picker's `media_history`) at all. A
+  profile upload of a COMPATIBILITY type also kicks its own key
+  (`kickProfileMedia`), so a HEIC avatar becomes viewable in about a second while
+  an ordinary one waits for the pass like everything else. Two things it
   deliberately does NOT do: compress an unreferenced object (the orphan sweep
   owns those bytes), or repoint an object whose only reference is message text —
   that object is reported as `skippedText` and left byte-for-byte alone, because
@@ -1605,9 +1631,9 @@ are load-bearing:
   re-encode the whole chat history. A transient failure is deliberately NOT
   recorded, so a later pass can retry the object.
 - **`MEDIA_COMPRESS_CONCURRENCY` encodes at a time, process-wide (default 1).**
-  The sweeper, the scan pipeline and the bucket scan all share
-  `withCompressLock` (a semaphore, once a plain mutex) and the `inflight` key
-  set; the cluster runs 2. Nothing else may spin up an encode of its own —
+  The compatibility queue, the bucket sweep and the profile-media kick all
+  share `withCompressLock` (a semaphore, once a plain mutex) and the `inflight`
+  key set; the cluster runs 2. Nothing else may spin up an encode of its own —
   adding a path that does would break the one accounting that the memory guard
   and the CPU promise both rest on. `MEDIA_COMPRESS_SLOT_MB` (default 192) makes
   every encode past the first wait until the cgroup actually has that much free,
@@ -1623,9 +1649,9 @@ are load-bearing:
   the same bytes; a row that throws is caught per row, not per tick.
 - **One ffmpeg per file, `-threads 1`, nice 19.** The trick: parallel work
   across files (concurrency), never inside one encode — the box has 1 vCPU, so
-  thread count is what keeps the app responsive. `virus-scan`'s
-  `reapStuckClaims` leaves a claim alone while `media-compress.isCompressing(key)`
-  is true (a slot parked in a long encode is not a stuck slot).
+  thread count is what keeps the app responsive. A scan slot only ever streams
+  bytes into clamd, so `virus-scan`'s `reapStuckClaims` can treat a claim older
+  than the lease as genuinely stuck — compression no longer runs inside it.
 - Scan keys are the storage key (`files/<hex>.png`), derived from the URL — NOT
   the `attachments.id` uid. They are not interchangeable.
 - The virus serving gate only covers `files/` (chat attachments); profile media
