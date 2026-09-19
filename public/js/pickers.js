@@ -1231,6 +1231,18 @@ function closeThread(silent) {
 }
 // Active threads panel: threads you're part of with a message in the last
 // 4 days (header Threads button). Rows jump straight into the thread.
+//
+// It is a SERVER control. Threads live in server text channels only — a DM has
+// no thread column at all — so the button is hidden on Home, both on the blank
+// feed and with a DM/group open, and the list it opens is scoped to the server
+// on screen. paintThreadsBtn() is the ONE writer of that visibility, and the
+// phone's ⋯ sheet follows it for free (ui.js skips every control carrying
+// .hidden), so the row disappears from the sheet with the button.
+function paintThreadsBtn() {
+  const b = $('#btn-threads');
+  if (!b) return;
+  b.classList.toggle('hidden', !(S.view === 'server' && !!S.serverId));
+}
 function threadAgo(ts) {
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
   if (s < 60) return 'just now';
@@ -1242,7 +1254,16 @@ function threadAgo(ts) {
 }
 let threadsSearchT = null, threadsSearchSeq = 0;
 async function openActiveThreads() {
-  openModal('Active threads', '<input id="m-threads-search" placeholder="Search threads" autocomplete="off" /><div id="m-threads-list"><p class="muted" style="text-align:center;padding:1rem">Loading…</p></div>', 'Close', null, { wide: true });
+  // A server control: opened from anywhere else there is nothing to scope it to,
+  // and the button is not on screen there anyway.
+  if (!(S.view === 'server' && S.serverId)) return;
+  const serverId = S.serverId;
+  // The scope rides on the OPEN PANEL (data-server-id), not a module-level
+  // variable, so a reopened panel can never inherit the previous one's server.
+  const serverName = (S.serverDetail && S.serverDetail.name) || '';
+  openModal('Active threads' + (serverName ? ' · ' + serverName : ''),
+    `<input id="m-threads-search" placeholder="Search threads" autocomplete="off" /><div id="m-threads-list" data-server-id="${esc(serverId)}"><p class="muted" style="text-align:center;padding:1rem">Loading…</p></div>`,
+    'Close', null, { wide: true });
   const input = $('#m-threads-search');
   if (!$('#m-threads-list')) return;
   await loadThreadsList('');
@@ -1251,27 +1272,36 @@ async function openActiveThreads() {
     threadsSearchT = setTimeout(() => loadThreadsList(input.value.trim()), 300);
   });
 }
-function threadsEmptyHTML(q) {
+function threadsEmptyHTML(q, scoped) {
   return q
     ? `<p class="muted" style="text-align:center;padding:1rem">No threads match “${esc(q)}”.</p>`
-    : '<p class="muted" style="text-align:center;padding:1rem">Nothing active — threads you start or reply to stay here for 4 days after the last message.</p>';
+    : `<p class="muted" style="text-align:center;padding:1rem">Nothing active${scoped ? ' in this server' : ''} — threads you start or reply to stay here for 4 days after the last message.</p>`;
 }
 async function loadThreadsList(q) {
   const list = $('#m-threads-list');
   if (!list) return;
   const my = ++threadsSearchSeq;
+  const serverId = list.dataset.serverId || '';
+  const params = [];
+  if (serverId) params.push('serverId=' + encodeURIComponent(serverId));
+  if (q) params.push('q=' + encodeURIComponent(q));
   list.innerHTML = '<p class="muted" style="text-align:center;padding:1rem">Loading…</p>';
   let threads = [];
-  try { ({ threads } = await api('/api/threads/active' + (q ? '?q=' + encodeURIComponent(q) : ''))); }
+  try { ({ threads } = await api('/api/threads/active' + (params.length ? '?' + params.join('&') : ''))); }
   catch { if (my === threadsSearchSeq && document.contains(list)) list.innerHTML = '<p class="error" style="text-align:center;padding:1rem">Could not load threads.</p>'; return; }
   if (my !== threadsSearchSeq || !document.contains(list)) return; // stale response
-  if (!threads || !threads.length) { list.innerHTML = threadsEmptyHTML(q); return; }
+  if (!threads || !threads.length) { list.innerHTML = threadsEmptyHTML(q, !!serverId); return; }
   list.innerHTML = '';
   for (const t of threads) {
     const b = document.createElement('div');
     b.className = 'thread-item';
     b.tabIndex = 0;
-    b.innerHTML = `<span class="t-main"><span class="t-ctx">${esc(t.serverName || '')} <span class="t-hash">#</span>${esc(t.channelName || '')} · ${esc(threadAgo(t.lastActivity))}</span><span class="t-root"><b>${esc((t.root && t.root.author) || '?')}</b> ${esc((t.root && t.root.snippet) || '')}</span><span class="t-meta"><span class="t-count">${t.replyCount} ${t.replyCount === 1 ? 'reply' : 'replies'}</span>${t.last ? `<span class="t-last">last by <b>${esc(t.last.author || '?')}</b> — ${esc(t.last.snippet || '')}</span>` : ''}</span></span><span class="t-avs"></span>`;
+    // Scoped to one server, the server name on every row would be the same word
+    // 50 times, so the row leads with the channel instead.
+    const where = serverId
+      ? `<span class="t-hash">#</span>${esc(t.channelName || '')}`
+      : `${esc(t.serverName || '')} <span class="t-hash">#</span>${esc(t.channelName || '')}`;
+    b.innerHTML = `<span class="t-main"><span class="t-ctx">${where} · ${esc(threadAgo(t.lastActivity))}</span><span class="t-root"><b>${esc((t.root && t.root.author) || '?')}</b> ${esc((t.root && t.root.snippet) || '')}</span><span class="t-meta"><span class="t-count">${t.replyCount} ${t.replyCount === 1 ? 'reply' : 'replies'}</span>${t.last ? `<span class="t-last">last by <b>${esc(t.last.author || '?')}</b> — ${esc(t.last.snippet || '')}</span>` : ''}</span></span><span class="t-avs"></span>`;
     const avBox = b.querySelector('.t-avs');
     for (const p of (t.participants || []).slice(0, 4)) {
       const s = document.createElement('span');
@@ -1288,7 +1318,7 @@ async function loadThreadsList(q) {
       b.remove();
       toast('Thread unfollowed — reply to rejoin it');
       const qv = $('#m-threads-search') ? $('#m-threads-search').value.trim() : '';
-      if (list && !list.children.length) list.innerHTML = threadsEmptyHTML(qv);
+      if (list && !list.children.length) list.innerHTML = threadsEmptyHTML(qv, !!serverId);
     };
     const go = () => openActiveThread(t);
     b.onclick = go;

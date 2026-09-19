@@ -582,6 +582,7 @@ async function selectDmThread(id, opts = {}) {
   paintSlowmodeHint();
   paintDmHead(t);
   paintDmCallButtons();
+  paintThreadsBtn(); // a DM has no threads: the button leaves the header with the server
   try { clearTyping(); } catch {}
   applyComposerDraft(); // this DM's own unfinished text, if any
   S.replyTo = null; S.editing = null;
@@ -666,6 +667,7 @@ function renderDmBlank() {
   paintHeaderGroupEdit(false); // Home's own feed is nobody's settings — no pencil
   try { clearTyping(); } catch {}
   paintDmCallButtons();
+  paintThreadsBtn(); // Home's feed is nobody's server, so no Active threads button
   renderTopic();
   renderActiveNow();
 }

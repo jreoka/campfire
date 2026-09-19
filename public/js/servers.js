@@ -195,6 +195,11 @@ async function selectServer(id) {
   openServerView();
   S.serverId = id;
   S.channelId = null;
+  // Paint the Threads button HERE, not in openServerView (which runs one line
+  // above and so still sees the OUTGOING server): a server is on screen from
+  // the moment its id is set, and a server with no text channel never reaches
+  // selectChannel — the button must not depend on that.
+  paintThreadsBtn();
   rememberView();
   renderServerList();
   try {
@@ -602,6 +607,7 @@ async function selectChannel(id, opts = {}) {
   $('#chan-name').textContent = ch ? ch.name : '—';
   paintHeaderNameTap(false); // a channel name is not a person's card button
   paintHeaderGroupEdit(false); // …and a channel has no group settings behind it either
+  paintThreadsBtn(); // threads are a server thing — on a server, the button is available again
   try { clearTyping(); } catch {}
   // NSFW gate: unconfirmed members get the age check instead of the feed.
   if (ch && ch.nsfw && !S.me?.nsfw_ok) {

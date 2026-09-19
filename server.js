@@ -5204,14 +5204,30 @@ app.get('/api/servers/:id/channels/:chId/threads/:rootId', authRequired, async (
 
 // Active threads: threads the caller is part of (wrote the root or a reply)
 // with reply activity in the last 4 days — quieter threads drop off.
-// Powers the header Threads panel. Capped at 50, newest activity first.
+// Powers the header Threads panel, which is a SERVER control: threads exist in
+// server text channels only (there is no thread column on a DM), so the panel
+// lives on a server and `?serverId=` narrows the list to the one on screen.
+// A server the caller is not in answers nothing rather than erroring: the
+// membership join already bounds the query, and the explicit check keeps that
+// true if the join is ever reshaped. No serverId still means every server you
+// are in (the endpoint's original shape). Capped at 50, newest activity first.
 app.get('/api/threads/active', authRequired, async (req, res) => {
   const me = req.user.id;
   const cutoff = now() - 4 * 86400 * 1000;
+  const serverId = String(req.query.serverId || '').trim();
+  if (serverId && !(await isMember(serverId, me))) return res.json({ threads: [] });
   const q = String(req.query.q || '').trim().slice(0, 80);
   const pat = '%' + q.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
   let nsfwOk = 0;
   try { nsfwOk = (await db.prepare('SELECT nsfw_ok FROM users WHERE id = ?').get(me))?.nsfw_ok ? 1 : 0; } catch {}
+  // Placeholder order is the SQL's own: the membership join's user, then the
+  // WHERE clause left to right (server scope, participation, unfollows, search),
+  // then the HAVING cutoff.
+  const args = [me];
+  if (serverId) args.push(serverId);
+  args.push(me, me, me);
+  if (q) args.push(pat, pat, pat, pat);
+  args.push(cutoff);
   let rows = [];
   try {
     rows = await db.prepare(`
@@ -5222,6 +5238,7 @@ app.get('/api/threads/active', authRequired, async (req, res) => {
       JOIN channels ch ON ch.id = r.channel_id
       JOIN servers s ON s.id = r.server_id
       WHERE r.thread_root_id IS NULL
+        ${serverId ? 'AND r.server_id = ?' : ''}
         AND (r.user_id = ? OR EXISTS (SELECT 1 FROM messages m2 WHERE m2.thread_root_id = r.id AND m2.user_id = ?))
         AND NOT EXISTS (SELECT 1 FROM thread_unfollows u WHERE u.thread_root_id = r.id AND u.user_id = ?)
         ${q ? `AND (r.content LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM messages m3 WHERE m3.thread_root_id = r.id AND m3.content LIKE ? ESCAPE '\\') OR ch.name LIKE ? ESCAPE '\\' OR s.name LIKE ? ESCAPE '\\')` : ''}
@@ -5229,7 +5246,7 @@ app.get('/api/threads/active', authRequired, async (req, res) => {
       HAVING MAX(a.created_at) >= ?
       ORDER BY last_activity DESC
       LIMIT 50
-    `).all(...(q ? [me, me, me, me, pat, pat, pat, pat, cutoff] : [me, me, me, me, cutoff]));
+    `).all(...args);
   } catch { rows = []; }
   const snip = (m) => {
     const t = String(m?.content || '').trim();
