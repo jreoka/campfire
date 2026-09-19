@@ -44,7 +44,6 @@ function openSettings(tab) {
     if (rem.c && $('#set-cardcolor').value === '#aac7ff') $('#set-cardcolor').value = rem.c;
     if (rem.g && $('#set-cardgrad').value === '#aac7ff') $('#set-cardgrad').value = rem.g;
   };
-  $('#set-statustext').value = S.me.status_text || '';
   updatePresenceNote();
   // Server-tag picker: every joined server that has a tag set, plus None.
   // S.servers carries full rows (SELECT s.*) so tags ride along for free.
@@ -505,7 +504,6 @@ $('#set-profile-save').onclick = async () => {
     if ($('#set-cardcustom').checked) { try { localStorage.setItem('cf_cardcolors', JSON.stringify({ c: $('#set-cardcolor').value, g: $('#set-cardgrad').value })); } catch {} }
     const body = {
       displayName: $('#set-display').value.trim(),
-      statusText: $('#set-statustext').value.trim(),
       bio: $('#set-bio').value,
       nameColor: $('#set-namecustom').checked ? $('#set-namecolor').value : '',
       nameGradient: $('#set-namecustom').checked ? $('#set-namegrad').value : '',

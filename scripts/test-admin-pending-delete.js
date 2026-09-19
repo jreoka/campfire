@@ -11,8 +11,9 @@
 // Browser half (skips without Chrome/Edge): the pending row carries the
 // countdown badge, the requester line, data-pending and a Restore button
 // INSTEAD of Delete; a normal row keeps Delete; the protected owner row never
-// shows the pending state; and the countdown switches units as the deadline
-// approaches rather than printing a negative number.
+// shows the pending state; the countdown switches units as the deadline
+// approaches rather than printing a negative number; and every row says how much
+// the account has uploaded.
 //
 // Usage: node scripts/test-admin-pending-delete.js
 'use strict';
@@ -62,28 +63,35 @@ check(/data-act="u-restore"/.test(adminJs) && /"u-restore"/.test(adminJs), 'the 
 check(/api\(`\/api\/admin\/users\/\$\{urow\.dataset\.uid\}\/restore`, \{ method: 'POST' \}\)/.test(adminJs), 'which POSTs the restore route');
 check(/The scheduled deletion is cancelled and the account works again/.test(adminJs), 'and says what restoring does');
 check(/deleted for good in \$\{days\} days/.test(adminJs), 'the delete dialog warns that the purge is delayed');
+check(/uploadBytesByUser/.test(serverSrc) && /uploadCount: up\.files, uploadBytes: up\.bytes/.test(serverSrc),
+  'the server sums every account\'s chat + DM attachment bytes for the console');
 
 // ---------- the row itself, in a real browser ----------
 function browserHalf() {
   const chrome = findChrome();
   if (!chrome) { skip('no Chrome/Edge found (set CHROME_PATH)'); }
   const escSrc = slice(coreJs, 'function esc(', 'function popupBox(');
+  const sizeSrc = slice(coreJs, 'function fmtSize(b) {', 'function memberByUsername(');
   const styleSrc = slice(serversJs, 'const HEXC = /^#[0-9a-fA-F]{6}$/;', '// Card background:');
   const fmtSrc = slice(adminJs, 'function fmtDate(ts) {', 'function isSiteAdmin()');
+  const uploadsSrc = slice(adminJs, 'function admUploadsText(u) {', 'function admUserRow(u) {');
   const rowSrc = slice(adminJs, 'function admUserRow(u) {', 'async function loadAdminUsers() {');
 
   const html = `<!doctype html><html><head><meta charset="utf-8"></head><body>
 <script>
 window.S = { me: { id: 'me', username: 'boss' }, view: 'dm', deleteGraceDays: 7 };
 ${escSrc}
+${sizeSrc}
 ${styleSrc}
 ${fmtSrc}
+${uploadsSrc}
 ${rowSrc}
 (async () => {
   const out = {};
   const DAY = 86400000;
   const now = Date.now();
-  const base = { avatar_color: '#5865f2', name_color: '', name_gradient: '', serverCount: 1, messageCount: 4, dmCount: 2, created_at: now - 30 * DAY, has2fa: false };
+  const base = { avatar_color: '#5865f2', name_color: '', name_gradient: '', serverCount: 1, messageCount: 4, dmCount: 2, created_at: now - 30 * DAY, has2fa: false,
+    uploadCount: 3, uploadBytes: 2 * 1048576 };
   const pendingSelf = { ...base, id: 'u1', username: 'dana', display_name: 'Dana', disabled: true,
     deletion_scheduled_at: now + 7 * DAY, deletion_requested_at: now, deletion_requested_by: 'self' };
   const pendingAdmin = { ...base, id: 'u2', username: 'erin', display_name: 'Erin', disabled: true,
@@ -102,6 +110,7 @@ ${rowSrc}
       badge: del ? del.textContent.trim() : null,
       title: del ? del.getAttribute('title') : null,
       acts: [...r.querySelectorAll('[data-act]')].map((b) => b.dataset.act),
+      meta: (r.querySelectorAll('.adm-main > .muted.small')[0] || {}).textContent || '',
       line: (r.querySelectorAll('.adm-main > .muted.small')[1] || {}).textContent || '',
       disabledBtns: [...r.querySelectorAll('button')].filter((b) => b.disabled).length,
       buttons: [...r.querySelectorAll('button')].map((b) => b.textContent),
@@ -144,6 +153,9 @@ ${rowSrc}
     check(out.units.week === 'in 7d' && out.units.days === 'in 2d', 'the countdown reads in days while there is time', out.units);
     check(out.units.hours === 'in 5h' && out.units.minutes === 'in 20m', 'switches to hours and minutes as it runs out', out.units);
     check(out.units.lapsed === 'any moment now', 'and never prints a negative number once the deadline passes', out.units);
+    console.log('\n[3] the row says how much the account has uploaded');
+    check(/3 uploads · 2\.0 MB/.test(out.plain.meta), 'the meta line carries the upload count and total, in KB/MB/GB', out.plain.meta);
+    check(/3 uploads · 2\.0 MB/.test(out.self.meta), 'and every row (pending or not) carries it', out.self.meta);
   } finally {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }

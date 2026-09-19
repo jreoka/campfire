@@ -739,6 +739,16 @@ async function adminSweepCheck() {
   } catch (e) { if (out) out.textContent = prettyError(e.message); }
 }
 
+// What an account has uploaded, as the console's own numbers read: chat
+// attachments + DM attachments (view-once media is a DM attachment too). Profile
+// media — avatars, banners, custom emoji — records no size anywhere, so it is
+// deliberately not in this figure; the Media tab's storage listing is the view
+// that counts actual bytes on the bucket.
+function admUploadsText(u) {
+  const n = Number(u.uploadCount) || 0;
+  if (!n) return 'no uploads';
+  return `${n} upload${n === 1 ? '' : 's'} · ${fmtSize(Number(u.uploadBytes) || 0)}`;
+}
 function admUserRow(u) {
   // The instance owner's account is locked for every admin — including the
   // owner's own session here, so the row reads the same to everyone. The
@@ -765,7 +775,7 @@ function admUserRow(u) {
     <span class="avatar adm-av"></span>
     <div class="adm-main">
       <div class="adm-name" style="${nameStyleFor(u)}">${esc(u.display_name)}</div>
-      <div class="muted small">@${esc(u.username)} · ${u.serverCount} server${u.serverCount === 1 ? '' : 's'} · ${u.messageCount + u.dmCount} msgs · joined ${fmtDate(u.created_at)}</div>
+      <div class="muted small">@${esc(u.username)} · ${u.serverCount} server${u.serverCount === 1 ? '' : 's'} · ${u.messageCount + u.dmCount} msgs · ${admUploadsText(u)} · joined ${fmtDate(u.created_at)}</div>
       <div class="adm-badges">${badges}</div>
       ${pendingLine}
       <div class="adm-actions">
@@ -904,6 +914,7 @@ async function adminClick(e) {
       if (!u) return toast('User not found');
       openModal(`Edit @${u.username}`, `
         <label>Display name<input id="m-adm-display" maxlength="32" value="${esc(u.display_name)}" /></label>
+        <p class="muted small" style="margin:.45rem 0 0">Storage used: ${esc(admUploadsText(u))} — chat and DM uploads. Profile media (avatars, banners, emoji) is not counted here.</p>
         <label style="margin-top:.6rem">Bio${emojiFieldHTML('<textarea id="m-adm-bio" maxlength="300" rows="3">' + esc(u.bio || '') + '</textarea>', { area: true })}</label>
         <div class="pf-sec-label">Avatar</div>
         <div class="row" style="gap:.6rem"><span class="avatar adm-av" id="m-adm-avatar"></span>

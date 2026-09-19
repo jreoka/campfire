@@ -1,8 +1,9 @@
 // The emoji picker button inside a profile field (custom status, bio).
 //
-// The request: every place a custom status can be typed — the settings profile
-// pane and the "Custom status" dialog your own card opens — should carry an
-// emoji button INSIDE the input box, and so should the bio box.
+// The request: the "Custom status" dialog your own card opens should carry an
+// emoji button INSIDE the input box, and so should the bio box in Settings →
+// Profile. (Settings → Profile has no status field of its own — the status is
+// set from your own user card, and its dialog is where the status is typed.)
 //
 // What that costs, and what this pins:
 //
@@ -26,9 +27,9 @@
 //      keeps up.
 //
 // Offline checks always run; the geometry/hit-test half drives the REAL
-// styles.css, the REAL pickers.js, the REAL #picker block out of index.html and
-// the REAL status/bio fields out of index.html in headless Chrome over CDP,
-// skipping when Chrome/Edge is missing.
+// styles.css, the REAL pickers.js, the REAL #picker block and the REAL bio box
+// out of index.html in headless Chrome over CDP, skipping when Chrome/Edge is
+// missing.
 //
 // Usage: node scripts/test-emoji-field.js
 'use strict';
@@ -101,7 +102,7 @@ function modalMarkup(index) {
 }
 
 // ---------- the page: a minimal shell around the real pieces ----------
-function pageHtml(statusBlock, bioBlock, pickerBlock, modalBlock) {
+function pageHtml(bioBlock, pickerBlock, modalBlock) {
   const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
   const pickers = fs.readFileSync(path.join(ROOT, 'public/js/pickers.js'), 'utf8');
   return `<!doctype html><html><head><meta charset="utf-8">
@@ -126,7 +127,7 @@ function pageHtml(statusBlock, bioBlock, pickerBlock, modalBlock) {
   <button class="send-btn" type="submit">S</button></form>
 </main></div>
 <div id="settings-backdrop"><div class="settings"><div class="set-body">
-  <div class="set-pane" id="set-profile">${statusBlock}${bioBlock}</div>
+  <div class="set-pane" id="set-profile">${bioBlock}</div>
 </div></div></div>
 ${modalBlock}
 <div id="toast" class="hidden"></div>
@@ -235,7 +236,6 @@ window.__state = () => {
     })(),
     activeId: document.activeElement ? (document.activeElement.id || document.activeElement.tagName) : null,
     statusValue: (document.getElementById('m-status-text') || {}).value,
-    setStatusValue: (document.getElementById('set-statustext') || {}).value,
     bioValue: (document.getElementById('set-bio') || {}).value,
     bioInputs: window.__bioInputs,
     draftCalls: window.__draftCalls,
@@ -277,18 +277,19 @@ function staticChecks() {
   const admin = fs.readFileSync(path.join(ROOT, 'public/js/admin.js'), 'utf8');
   const final = fs.readFileSync(path.join(ROOT, 'public/js/final.js'), 'utf8');
   const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
-  const status = fieldBlock(index, 'set-statustext');
+  // Settings → Profile deliberately has NO status field: a status is typed in
+  // the card's own "Custom status" dialog (openStatusEditor), so the settings
+  // pane must not grow a second place to set one.
+  check(!fieldBlock(index, 'set-statustext'),
+    'Settings → Profile carries no custom-status field (the user card owns it)');
   const bio = fieldBlock(index, 'set-bio');
-  check(!!status && /class="emoji-field"/.test(status) && /class="emoji-field-btn"/.test(status),
-    'Settings → Custom status has the button inside the field', status);
-  check(!!status && /data-emoji-std="1"/.test(status), 'and it is marked standard-emoji-only (a status is escaped text)');
-  check(!!status && /<svg/.test(status) && !/[\u{1F300}-\u{1FAFF}]/u.test(status), 'the button is an inline SVG, never an emoji glyph');
   check(!!bio && /class="emoji-field area"/.test(bio) && /class="emoji-field-btn"/.test(bio),
     'Settings → Bio has the button inside the box, in the corner a textarea expects', bio);
   check(!bio || !/data-emoji-std/.test(bio), 'the bio takes custom emoji too (renderRich)', bio);
   // The status EDITOR (your own card's bubble opens it) and the admin user editor.
   check(/const field = `<input id="m-status-text"/.test(pickers) && /emojiFieldHTML\(field, \{ std: true \}\)/.test(pickers),
     'the Custom status dialog builds its field through the same helper');
+  check(/data-emoji-std="1"/.test(pickers), 'and marks it standard-emoji-only (a status is escaped text)');
   check(/emojiFieldHTML\('<textarea id="m-adm-bio"[\s\S]*?\{ area: true \}\)/.test(admin),
     'the admin user editor\'s bio box carries it too');
 
@@ -334,15 +335,14 @@ async function withChrome(fn) {
   const chromePath = findChrome();
   if (!chromePath) return skip('no Chrome/Edge found — set CHROME_PATH');
   const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
-  const status = fieldBlock(index, 'set-statustext');
   const bio = fieldBlock(index, 'set-bio');
   const picker = pickerMarkup(index);
   const modal = modalMarkup(index);
-  if (!status || !bio || !picker || !modal) return skip('could not lift the real status/bio/picker/modal markup out of index.html');
+  if (!bio || !picker || !modal) return skip('could not lift the real bio/picker/modal markup out of index.html');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-efield-'));
   const port = 9900 + Math.floor(Math.random() * 90);
   const htmlPath = path.join(tmp, 'field.html');
-  fs.writeFileSync(htmlPath, pageHtml(status, bio, picker, modal));
+  fs.writeFileSync(htmlPath, pageHtml(bio, picker, modal));
   const chrome = spawn(chromePath, ['--headless=new', `--remote-debugging-port=${port}`,
     `--user-data-dir=${path.join(tmp, 'prof')}`, '--no-first-run', '--no-default-browser-check',
     '--disable-gpu', '--disable-dev-shm-usage', '--window-size=1200,900', 'about:blank'], { stdio: 'ignore' });
@@ -480,9 +480,9 @@ async function desktopChecks() {
     check(bioPick.draftCalls === 0, 'and never reaches the draft store', { draftCalls: bioPick.draftCalls });
 
     console.log('\n[12] the settings backdrop is cleared too (it is a dialog as well)');
-    let st = await evaluate('__clickBtn("set-statustext")');
+    let st = await evaluate('__clickBtn("set-bio")');
     st = await evaluate('__state()');
-    check(st.open === true && st.mode === 'field', 'the settings status field opens the picker', st);
+    check(st.open === true && st.mode === 'field', 'the settings bio field opens the picker', st);
     check(st.hit === 'picker', 'and it is on top of the settings dialog', { hit: st.hit });
     await evaluate('__closeFieldPicker()');
 

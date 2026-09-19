@@ -4359,7 +4359,34 @@ app.put('/api/me/layout', authRequired, async (req, res) => {
 // ---------- site admin (is_admin users only) ----------
 // Full control over users and servers (guilds): stats, search/rename/disable,
 // password resets, forced logouts, deletes, moderation and broadcasts.
-async function adminUserView(u) {
+
+// How much a set of accounts has uploaded, as the DATABASE still records it:
+// chat attachments + DM attachments (view-once media is a dm_attachment too).
+// Profile media (avatars, banners, custom emoji) carries no recorded size, so it
+// is not in this number — the Media tab's storage listing is the view that
+// counts bytes on the bucket itself. One grouped query per table for the whole
+// page, never one per row: the console lists up to 200 accounts at a time.
+async function uploadBytesByUser(ids) {
+  const out = new Map(ids.map((id) => [id, { bytes: 0, files: 0 }]));
+  if (!ids.length) return out;
+  const ph = ids.map(() => '?').join(',');
+  const add = (uid, n, b) => {
+    const e = out.get(uid);
+    if (!e) return;
+    e.files += Number(n) || 0;
+    e.bytes += Number(b) || 0;
+  };
+  const sum = async (sql) => { try { return await db.prepare(sql).all(...ids); } catch { return []; } };
+  for (const r of await sum(`SELECT m.user_id uid, COUNT(*) n, COALESCE(SUM(a.size),0) b
+      FROM attachments a JOIN messages m ON m.id = a.message_id
+      WHERE m.user_id IN (${ph}) GROUP BY m.user_id`)) add(r.uid, r.n, r.b);
+  for (const r of await sum(`SELECT m.user_id uid, COUNT(*) n, COALESCE(SUM(a.size),0) b
+      FROM dm_attachments a JOIN dm_messages m ON m.id = a.message_id
+      WHERE m.user_id IN (${ph}) GROUP BY m.user_id`)) add(r.uid, r.n, r.b);
+  return out;
+}
+const EMPTY_UPLOADS = { bytes: 0, files: 0 };
+async function adminUserView(u, uploads) {
   const base = publicUser(u);
   let serverCount = 0, messageCount = 0, dmCount = 0;
   try {
@@ -4367,7 +4394,13 @@ async function adminUserView(u) {
     messageCount = (await db.prepare('SELECT COUNT(*) c FROM messages WHERE user_id = ?').get(u.id)).c;
     dmCount = (await db.prepare('SELECT COUNT(*) c FROM dm_messages WHERE user_id = ?').get(u.id)).c;
   } catch {}
-  return { ...base, is_admin: !!u.is_admin, disabled: !!u.disabled, has2fa: !!u.totp_enabled, serverCount, messageCount, dmCount, ownerAccount: isOwnerAccount(u), ...(u.role ? { role: u.role } : {}),
+  // A caller that already has the page's numbers hands them in; a single-user
+  // route (the edit modal, an action's response) reads just this account.
+  let up = uploads && typeof uploads.get === 'function' ? uploads.get(u.id) : null;
+  if (!up && !uploads) up = (await uploadBytesByUser([u.id])).get(u.id);
+  up = up || EMPTY_UPLOADS;
+  return { ...base, is_admin: !!u.is_admin, disabled: !!u.disabled, has2fa: !!u.totp_enabled, serverCount, messageCount, dmCount,
+    uploadCount: up.files, uploadBytes: up.bytes, ownerAccount: isOwnerAccount(u), ...(u.role ? { role: u.role } : {}),
     // A pending account is still here: the row is what a restore works on, and
     // the deadline is what the console counts down (see DELETE_GRACE_DAYS).
     deletion_scheduled_at: u.deletion_scheduled_at ? Number(u.deletion_scheduled_at) : null,
@@ -4646,7 +4679,8 @@ app.get('/api/admin/users', authRequired, requireSiteAdmin, async (req, res) => 
   const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
   const total = (await db.prepare(`SELECT COUNT(*) c FROM users ${where}`).get(...params)).c;
   const rows = await db.prepare(`SELECT * FROM users ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
-  res.json({ users: await Promise.all(rows.map(adminUserView)), total });
+  const uploads = await uploadBytesByUser(rows.map((r) => r.id));
+  res.json({ users: await Promise.all(rows.map((u) => adminUserView(u, uploads))), total });
 });
 app.get('/api/admin/users/:id', authRequired, requireSiteAdmin, async (req, res) => {
   const u = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
@@ -4922,7 +4956,8 @@ app.get('/api/admin/servers/:id/members', authRequired, requireSiteAdmin, async 
     FROM server_members m JOIN users u ON u.id = m.user_id JOIN servers s ON s.id = m.server_id
     WHERE m.server_id = ? ORDER BY lower(u.display_name) ASC
   `).all(s.id));
-  const members = await Promise.all(rows0.map(adminUserView));
+  const uploads0 = await uploadBytesByUser(rows0.map((r) => r.id));
+  const members = await Promise.all(rows0.map((u) => adminUserView(u, uploads0)));
   res.json({ members });
 });
 app.delete('/api/admin/servers/:id/members/:uid', authRequired, requireSiteAdmin, async (req, res) => {
