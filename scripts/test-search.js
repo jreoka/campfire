@@ -100,6 +100,10 @@ check(/'Deleted user'/.test(ui) && !/:\s*'Someone';/.test(ui), 'a deleted author
 check(/if \(query\.length >= 2 \|\| qFrom\)/.test(ui), 'an author-only search still runs');
 check(/SQL_FROM_LIST/.test('') === false && /function searchAuthors\(/.test(serverSrc), 'the server resolves from: to accounts');
 check(/AND \(dmm\.hidden IS NULL OR dmm\.hidden = 0\)/.test(serverSrc), 'the search excludes DMs the account dismissed');
+check(/m\.content ILIKE \? ESCAPE/.test(serverSrc), 'the text match is ILIKE — Postgres LIKE is case-sensitive, SQLite\'s was NOCASE');
+check(/\(username ILIKE \? OR display_name ILIKE \?\)/.test(serverSrc), 'the console\'s user search is too');
+check(/\(username ILIKE \? OR display_name ILIKE \?\) AND id != \?/.test(serverSrc), 'and so is the handle lookup');
+check(!/(content|username|display_name) LIKE \?/.test(serverSrc), 'no case-sensitive name/text LIKE is left anywhere in server.js');
 
 async function req(method, p, { token, body } = {}) {
   const r = await fetch(BASE + p, {
@@ -135,6 +139,7 @@ async function main() {
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-search-e2e-'));
   let child = null;
+  let bobClient = null;
   const sockets = [];
   try {
     await admin.query(`DROP DATABASE IF EXISTS ${TEST_DB} WITH (FORCE)`);
@@ -147,6 +152,9 @@ async function main() {
         PORT: String(PORT),
         PGHOST: pg.host, PGPORT: String(pg.port), PGUSER: pg.user, PGPASSWORD: pg.password, PGDATABASE: TEST_DB,
         JWT_SECRET: 'test-search-secret', UPLOAD_DIR: path.join(tmp, 'uploads'), VIRUS_SCAN: '0', MEDIA_COMPRESS: '0', UNFURL: '0',
+        // [8] needs a purge to actually land: seven days is the real grace
+        // period, so the deadline is backdated and the sweep is watched.
+        ACCOUNT_PURGE_EVERY_MS: '1000',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -204,6 +212,18 @@ async function main() {
     r = await search(carol.token, { q: 'needle' });
     check(r.results.length === 0, 'a non-member finds nothing from that server', r.results.map((x) => x.message && x.message.content));
 
+    console.log('\n[6b] the text match ignores case, the way the SQLite build did');
+    r = await search(alice.token, { q: 'NEEDLE ALICE' });
+    check(r.results.length === 1 && r.results[0].message.content === 'needle alice one',
+      'an upper-case query finds the lower-case message', r.results.map((x) => x.message && x.message.content));
+    r = await search(alice.token, { q: 'NeEdLe bOb' });
+    check(r.results.length === 1 && r.results[0].message.user && r.results[0].message.user.username === 'bob',
+      'and so does a mixed-case one', r.results.map((x) => x.message && x.message.content));
+    r = await search(bob.token, { q: 'NEEDLE DM' });
+    check(r.results.length === 1 && r.results[0].kind === 'dm', 'DM history matches case-insensitively too', r.results.map((x) => x.kind));
+    r = await search(alice.token, { q: 'NEEDLE', from: 'BOB' });
+    check(r.results.length === 1 && r.results[0].message.user.username === 'bob', 'and the case-insensitive author filter still composes with it', r.from);
+
     console.log('\n[7] from: narrows to one author');
     r = await search(alice.token, { q: 'needle', from: 'bob' });
     check(r.results.length === 1 && r.results[0].message.user.username === 'bob', 'text + handle keeps only that author', r.results.map((x) => x.message.content));
@@ -221,12 +241,25 @@ async function main() {
 
     console.log('\n[8] a deleted author is not renamed');
     await req('DELETE', `/api/admin/users/${bob.user.id}`, { token: boss.token });
+    // Deleting an account is a 7-DAY GRACE PERIOD now (test-account-close), so
+    // the row is only really gone once the purge sweep acts on the deadline:
+    // backdate it and wait, rather than asserting on an account that is merely
+    // closed but still there.
+    bobClient = new Client({ ...pg, database: TEST_DB, connectionTimeoutMillis: 4000 });
+    await bobClient.connect();
+    await bobClient.query('UPDATE users SET deletion_scheduled_at = $1 WHERE id = $2', [Date.now() - 1000, bob.user.id]);
+    for (let i = 0; i < 40; i++) {
+      const left = (await bobClient.query('SELECT 1 FROM users WHERE id = $1', [bob.user.id])).rowCount;
+      if (!left) break;
+      await sleep(250);
+    }
     r = await search(alice.token, { q: 'needle bob two' });
     check(r.results.length === 1, 'the message survives its author', r.results.map((x) => x.message.content));
     check(r.results[0] && r.results[0].message.user === null, 'and comes back with no user at all (the panel says "Deleted user")', r.results[0] && r.results[0].message.user);
     r = await search(alice.token, { from: 'bob' });
     check(r.results.length === 0 && r.from.users === 0, 'nobody answers to that handle any more', r.from);
   } finally {
+    try { bobClient && await bobClient.end(); } catch {}
     for (const w of sockets) { try { w.close(); } catch {} }
     try { child && child.kill(); } catch {}
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}

@@ -2055,7 +2055,11 @@ app.get('/api/search', authRequired, async (req, res) => {
   try { nsfwOk = (await db.prepare('SELECT nsfw_ok FROM users WHERE id = ?').get(me))?.nsfw_ok ? 1 : 0; } catch {}
   const authors = await searchAuthors(fromQ);
   if (fromQ && !authors.length) return res.json({ results: [], from: { query: fromQ, users: 0 } });
-  const textSql = q.length >= 2 ? " AND m.content LIKE ? ESCAPE '\\'" : '';
+  // ILIKE, not LIKE: Postgres's LIKE is case-sensitive (the SQLite this app grew
+  // up on was NOCASE), so "Needle" used to miss "needle" while its own author
+  // filter (`from:`, which lowercases both sides) still matched. The pattern is
+  // the text as typed.
+  const textSql = q.length >= 2 ? " AND m.content ILIKE ? ESCAPE '\\'" : '';
   const authorSql = authors.length ? ` AND m.user_id IN (${authors.map(() => '?').join(',')})` : '';
   const out = [];
   try {
@@ -4670,7 +4674,9 @@ app.get('/api/admin/users', authRequired, requireSiteAdmin, async (req, res) => 
   const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10) || 50, 1), 200);
   const offset = Math.max(parseInt(req.query.offset || '0', 10) || 0, 0);
   const conds = [], params = [];
-  if (q) { conds.push('(username LIKE ? OR display_name LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
+  // ILIKE: the box is a name search, and the stored case is whatever the person
+  // chose ("Dana" must answer to "dana").
+  if (q) { conds.push('(username ILIKE ? OR display_name ILIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
   if (filter === 'admins') conds.push('is_admin = 1');
   if (filter === 'disabled') conds.push('disabled = 1');
   // Accounts inside their deletion grace period: still here, still restorable,
@@ -5275,7 +5281,7 @@ app.get('/api/threads/active', authRequired, async (req, res) => {
         ${serverId ? 'AND r.server_id = ?' : ''}
         AND (r.user_id = ? OR EXISTS (SELECT 1 FROM messages m2 WHERE m2.thread_root_id = r.id AND m2.user_id = ?))
         AND NOT EXISTS (SELECT 1 FROM thread_unfollows u WHERE u.thread_root_id = r.id AND u.user_id = ?)
-        ${q ? `AND (r.content LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM messages m3 WHERE m3.thread_root_id = r.id AND m3.content LIKE ? ESCAPE '\\') OR ch.name LIKE ? ESCAPE '\\' OR s.name LIKE ? ESCAPE '\\')` : ''}
+        ${q ? `AND (r.content ILIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM messages m3 WHERE m3.thread_root_id = r.id AND m3.content ILIKE ? ESCAPE '\\') OR ch.name ILIKE ? ESCAPE '\\' OR s.name ILIKE ? ESCAPE '\\')` : ''}
       GROUP BY r.id
       HAVING MAX(a.created_at) >= ?
       ORDER BY last_activity DESC
@@ -5966,7 +5972,10 @@ async function deletePollsFor(kind, messageIds) {
 app.get('/api/users/search', authRequired, async (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase().replace(/[^a-z0-9_.]/g, '').slice(0, 24);
   if (q.length < 2) return res.json({ users: [] });
-  const rows = await db.prepare(`SELECT ${USER_COLS} FROM users WHERE (username LIKE ? OR display_name LIKE ?) AND id != ? LIMIT 8`).all(q + '%', q + '%', req.user.id);
+  // ILIKE, and on the display name as well as the handle: a half-typed "Dan"
+  // has to reach "Dana" (the handle is already lowercased by the line above,
+  // but the display name is whatever they typed it as).
+  const rows = await db.prepare(`SELECT ${USER_COLS} FROM users WHERE (username ILIKE ? OR display_name ILIKE ?) AND id != ? LIMIT 8`).all(q + '%', q + '%', req.user.id);
   res.json({ users: rows.map(publicUser) });
 });
 app.get('/api/friends', authRequired, async (req, res) => {

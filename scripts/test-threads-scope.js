@@ -245,6 +245,11 @@ function placeholderChecks() {
   const scoped = build('srv_1', '');
   check(/AND r\.server_id = \?/.test(scoped), 'the scoped branch really narrows on the server column');
   check(!/AND r\.server_id = \?/.test(build('', '')), 'and the unscoped branch is left exactly as it was');
+  const searched = build('', 'hello');
+  check((searched.match(/ILIKE \?/g) || []).length === 4,
+    'all four search columns match case-insensitively (root, reply, channel, server)',
+    (searched.match(/ILIKE \?/g) || []).length);
+  check(!/ LIKE \?/.test(searched), 'with no case-sensitive LIKE left in the filter');
 }
 
 async function main() {

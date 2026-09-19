@@ -211,9 +211,11 @@ async function apiHalf() {
       'dana reads 3 uploads totalling 8 MB (chat + DM attachments)', { bytes: u.uploadBytes, n: u.uploadCount });
     check(typeof u.uploadBytes === 'number', 'as a number the client can format', typeof u.uploadBytes);
 
-    // Queried by USERNAME: the list's search box is a case-sensitive LIKE (pre-
-    // existing), so 'boss' would not match the display name 'Boss'.
-    r = await req('GET', '/api/admin/users?q=jreoka&limit=50&offset=0', { token });
+    // Queried by DISPLAY NAME in the case it is stored in: the console's search
+    // box has to answer to "Boss" when the account is @jreoka, which is what the
+    // ILIKE fix was for.
+    r = await req('GET', '/api/admin/users?q=Boss&limit=50&offset=0', { token });
+    check(r.data.users.length === 1, 'the console search finds a display name by its stored case', (r.data.users || []).map((x) => x.display_name));
     const bossRow = (r.data.users || []).find((x) => x.id === owner.data.user.id) || {};
     check(bossRow.uploadBytes === 3 * MB && bossRow.uploadCount === 1,
       'the owner is credited with their own upload only, in the same channel', { bytes: bossRow.uploadBytes, n: bossRow.uploadCount });
