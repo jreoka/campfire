@@ -317,17 +317,38 @@ async function ensureColumns() {
   // not be spent on work that cannot run.
   if (checkFfmpeg()) {
     // A video whose encode USED to fail on libx264's even-dimension rule (see
-    // SCALE_VID) is sitting in the ledger as `kept/encode_failed`, which is a
-    // terminal verdict — without this it would never be attempted again and would
-    // stay at full size forever. Dropping just those verdicts hands the objects
-    // back to the bucket sweep (which ignores the `compressed` flag, so the rows
-    // need no touching). Video extensions only: nothing else can produce it.
-    await oncePolicy('even-dim-video', async () => {
+    // SCALE_VID) was left uncompressed AND recorded as settled: the failure path
+    // writes a terminal `kept/encode_failed` verdict, marks the row
+    // `compressed = 1`, and the ledger seed above then RE-ASSERTS it from that
+    // flag on the next boot. So this has to hand back the rows as well as the
+    // verdicts (dropping the verdict alone is undone by the very next restart —
+    // which is exactly what the first cut of this policy did, hence the new name:
+    // `oncePolicy` remembers by name, so a corrected policy needs one of its own).
+    //
+    // Videos only, and only the two verdicts this bug can have produced: a file
+    // the legacy pipeline genuinely settled (`compressed`/`legacy`) is included
+    // because the seed cannot tell it apart from a seeded failure — and
+    // re-attempting a video is harmless by construction, since an encode that
+    // cannot save 8% is simply kept again (`no_saving`). A handful of objects on
+    // the live bucket, once.
+    await oncePolicy('video-even-dim-requeue', async () => {
+      const VIDEO_RE = '\\.(mp4|m4v|mov|webm|mkv|avi|wmv|flv|3gp|3g2|mpg|mpeg|m2ts|mts|ogv|vob|rm|rmvb|asf|f4v)$';
+      let rows = [];
       try {
-        return Number((await db.prepare(
-          "DELETE FROM media_compress_keys WHERE status = 'kept' AND mode = 'encode_failed' AND lower(key) ~ '\\.(mp4|m4v|mov|webm|mkv|avi|wmv|flv|3gp|3g2|mpg|mpeg|m2ts|mts|ogv|vob|rm|rmvb|asf|f4v)$'"
-        ).run()).changes) || 0;
-      } catch (e) { warn('even-dimension hand-back skipped:', String((e && e.message) || e).slice(0, 120)); return 0; }
+        rows = await db.prepare(
+          `SELECT key FROM media_compress_keys WHERE lower(key) ~ '${VIDEO_RE}'
+             AND ((status = 'kept' AND mode = 'encode_failed') OR (status = 'compressed' AND mode = 'legacy'))`
+        ).all();
+      } catch (e) { warn('video requeue read skipped:', String((e && e.message) || e).slice(0, 120)); return 0; }
+      let handed = 0;
+      for (const r of rows) {
+        const like = '/uploads/' + r.key + '%';
+        for (const table of ['attachments', 'dm_attachments', 'stories']) {
+          try { await db.prepare(`UPDATE ${table} SET compressed = 0 WHERE url LIKE ?`).run(like); } catch {}
+        }
+        try { await db.prepare('DELETE FROM media_compress_keys WHERE key = ?').run(r.key); handed++; } catch {}
+      }
+      return handed;
     });
     await oncePolicy('apple-playable', async () => {
       // The exact set planFor now converts for compatibility: every audio
