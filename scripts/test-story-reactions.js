@@ -80,6 +80,11 @@ function staticChecks() {
   check(/prefers-reduced-motion/.test(css) && /sv-float-reduced/.test(css), 'reduced motion gets a fade instead of the long rise');
   check(/case 'story-reaction'/.test(socket) && /storyReactionPush\(m\)/.test(socket), 'the socket routes the live reaction push');
   check(/\.sv-viewer-rx/.test(css), 'a viewer row can carry the emoji they picked');
+  // The viewers panel's row is the click target (it opens that person's card),
+  // so its server tag is decorative — a clickable tag there would open the
+  // server mini-panel ON TOP of the card the row just opened.
+  const viewersRow = (/const html = `\$\{summary[^\n]*`/.exec(stories) || [])[0] || '';
+  check(/tagHTML\(u, true\)/.test(viewersRow), 'the story viewers row renders its tag as plain', viewersRow.slice(0, 120));
 }
 
 // ---------- API + WS ----------

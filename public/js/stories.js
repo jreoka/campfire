@@ -1610,7 +1610,11 @@ async function storyViewersModal(it) {
   const summary = [...tally.entries()].sort((a, b) => b[1] - a[1])
     .map(([e, n]) => `<span class="sv-rx-chip"><span>${esc(e)}</span><b>${n}</b></span>`).join('');
   const rxBadges = (u) => (u.reactions || []).map((r) => `<span class="sv-viewer-rx" title="${esc(u.display_name)} reacted ${esc(r.emoji)}">${esc(r.emoji)}${r.count > 1 ? `<b>${r.count}</b>` : ''}</span>`).join('');
-  const html = `${summary ? `<div class="sv-viewers-sum">${summary}</div>` : ''}<div class="gmem-list">${viewers.map((u) => `<div class="member sv-viewer" data-uid="${esc(u.id)}"><span class="avwrap"><span class="avatar"></span></span><span class="dmmain"><span class="mname-row"><span class="dmname">${esc(u.display_name)}</span>${tagHTML(u)}</span><span class="dmlast">@${esc(u.username)} · ${esc(storyAgo(u.viewed_at))}</span></span><span class="sv-viewer-rxs">${rxBadges(u)}</span></div>`).join('')}</div>`;
+  // The tag is DECORATIVE here, like the DM sidebar row's: the viewer row is
+  // the click target (it opens that person's card, `ownclick` below), so a tag
+  // that stole the tap into its own server mini-panel would put two cards up —
+  // and the server menu is not what a tap on a viewer means.
+  const html = `${summary ? `<div class="sv-viewers-sum">${summary}</div>` : ''}<div class="gmem-list">${viewers.map((u) => `<div class="member sv-viewer" data-uid="${esc(u.id)}"><span class="avwrap"><span class="avatar"></span></span><span class="dmmain"><span class="mname-row"><span class="dmname">${esc(u.display_name)}</span>${tagHTML(u, true)}</span><span class="dmlast">@${esc(u.username)} · ${esc(storyAgo(u.viewed_at))}</span></span><span class="sv-viewer-rxs">${rxBadges(u)}</span></div>`).join('')}</div>`;
   openModal(viewers.length === 1 ? '1 view' : viewers.length + ' views', html, 'Close', null, { wide: true });
   const box = $('#modal-body');
   viewers.forEach((u) => {
