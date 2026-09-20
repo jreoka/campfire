@@ -1,0 +1,17 @@
+Invite card: name the invitation, and stop caching a week-old photograph
+
+The owner pasted an invite link after the first deploy and still saw the old
+"Campfire — a simple chat and voice app" card. Two reasons, both fixed:
+
+- link_embeds had cached a preview of /invite/CODE for the 7-day OK_TTL, and
+  the row was taken from a shell served before the app restarted with the new
+  tags. unfurl.js gains forgetServerInvites(serverId) and server.js calls it
+  wherever the card's face can change: someone joins (the count), a link is
+  created or revoked, and the server is renamed, re-described, re-iconed or
+  re-bannered (owner routes and the admin console's). A preview of a page this
+  app owns is now re-read instead of remembered. The stale production row is
+  cleared separately.
+- The card and the tags now say what the thing IS: the in-app card's heading is
+  "Invite to <server>" as a caption over the server's name, and the page's
+  og:title is "You're invited to <server>" with "42 members on Campfire" under
+  it — so a paste into Discord reads as an invitation rather than a web page.

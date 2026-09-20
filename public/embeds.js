@@ -574,6 +574,14 @@ function inviteView(err) {
   return null;
 }
 function fmtMembers(n) { return n === 1 ? '1 member' : n + ' members'; }
+// What the card calls itself. The heading NAMES the invitation rather than just
+// the server ("Invite to Lisa's Basement"), which is the one line that tells a
+// reader who scrolled past what this box is for — the server's own name and
+// face are right underneath it. A card with no answer yet falls back to the
+// plain heading, because "Invite to undefined" is worse than saying nothing.
+function inviteHeading(d) {
+  return (d && d.name) ? 'Invite to ' + d.name : 'Campfire invite';
+}
 // The card's OUTER element and its INNER contents are built separately on
 // purpose. A repaint replaces the contents (`.iv-out`), never the element: the
 // link-card scan reads `.embed-invite[data-invite]`, so an element rebuilt from
@@ -593,6 +601,7 @@ function inviteBodyHTML(inv, hit) {
     // stays a Join offer to its own landing page.
     const open = !!(d.joined && inv.self);
     return '<span class="iv-icon">' + inner + '</span>'
+      + '<span class="iv-head">' + eh(inviteHeading(d)) + '</span>'
       + '<span class="iv-name">' + eh(d.name || 'Server') + '</span>'
       + '<span class="iv-meta">' + fmtMembers(Number(d.memberCount) || 0) + '</span>'
       + (d.description ? '<span class="iv-desc">' + eh(d.description) + '</span>' : '')
@@ -600,7 +609,7 @@ function inviteBodyHTML(inv, hit) {
       + (open ? ' data-invite-join="' + eh(d.serverId || '') + '"' : '')
       + '>' + (open ? 'Open server' : 'Join server') + '</a>';
   }
-  return '<span class="iv-name">' + (bad ? 'Invite unavailable' : 'Campfire invite') + '</span>'
+  return '<span class="iv-head">' + (bad ? 'Invite unavailable' : 'Campfire invite') + '</span>'
     + '<span class="iv-meta">' + (bad ? esc(inviteView(hit && hit.err).note) : 'Checking link…') + '</span>';
 }
 function inviteBodyFor(url) {

@@ -218,11 +218,16 @@ async function main() {
           label: document.querySelector('.embed-invite .emb-go').textContent,
           href: document.querySelector('.embed-invite .emb-go').getAttribute('href'),
           joinHook: document.querySelector('.embed-invite .emb-go').getAttribute('data-invite-join'),
+          head: document.querySelector('.embed-invite .iv-head') ? document.querySelector('.embed-invite .iv-head').textContent : null,
+          headCs: window.__cs('.embed-invite .iv-head', ['text-transform', 'font-size', 'font-weight', 'color']),
           vw: innerWidth,
         };
       })()`);
       check(r.exists && r.card && r.card.w > 200, 'the card renders at a real width', r.card);
       check(r.card.w <= r.vw && r.card.right <= r.vw, 'and fits its column', { card: r.card, vw: r.vw });
+      check(r.head === 'Invite to Game Night', 'the heading names the invitation, not just the server', r.head);
+      check(r.headCs && r.headCs['text-transform'] === 'uppercase' && parseFloat(r.headCs['font-size']) <= 11.5,
+        'and it reads as a caption over the server name', r.headCs);
       check(r.icon && Math.round(r.icon.w) === 56 && Math.round(r.icon.h) === 56, 'a 56px server icon', r.icon);
       check(parseFloat(r.iconCs['border-radius']) >= 12, 'rounded like the app\u2019s rail icons', r.iconCs);
       check(r.initial === 'G', 'without an icon it falls back to the server\u2019s initial', r.initial);

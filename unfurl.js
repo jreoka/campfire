@@ -543,6 +543,32 @@ async function prune() {
   }
 }
 
+// ---------- forget ----------
+// A cached preview is a photograph of a page at one moment. That is fine for a
+// news article and wrong for anything this app owns that can change: an invite
+// landing carries the server's name, description, icon and member count, and a
+// server that gets renamed, re-iconed or joined would otherwise keep showing the
+// old photograph for the whole OK_TTL (a week). So a change to a server's own
+// face — or to one of its invite links — throws those rows away and the next
+// paste re-reads the page. Only a `/invite/CODE` path is matched, and only under
+// this instance: the code alone is not enough (another deployment's invite is a
+// different page), and the host may be any name this app answers on (the tunnel
+// hostname, a LAN address, localhost), so the match is by path plus our own
+// invites' codes.
+async function forgetServerInvites(serverId) {
+  try {
+    const rows = await db.prepare('SELECT code FROM server_invites WHERE server_id = ?').all(serverId);
+    if (!rows || !rows.length) return 0;
+    const marks = rows.map(() => 'url LIKE ?').join(' OR ');
+    const params = rows.map((r) => '%/invite/' + r.code + '%');
+    const res = await db.prepare(`DELETE FROM link_embeds WHERE ${marks}`).run(...params);
+    return Number(res && res.changes) || 0;
+  } catch (e) {
+    console.error('[unfurl] forget failed:', (e && e.message) || e);
+    return 0;
+  }
+}
+
 // ---------- thumbnails ----------
 // Remote images come back through our origin: it fixes hotlink-protected and
 // http-on-https images, and keeps the viewer's IP off the linked site.
@@ -662,6 +688,7 @@ module.exports = {
   verifySig,
   fetchImage,
   prune,
+  forgetServerInvites,
   sign,
   proxyPath,
   // exported for tests

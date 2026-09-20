@@ -364,9 +364,14 @@ app.get('/invite/:code', async (req, res, next) => {
         const n = Number((await db.prepare('SELECT COUNT(*) c FROM server_members WHERE server_id = ?').get(s.id)).c) || 0;
         const base = req.protocol + '://' + req.get('host');
         const image = s.icon_url || s.banner_url || '/icons/icon-512.png';
+        // The title NAMES the invitation and the description opens with the
+        // member count, because this is what other apps show: "You've been
+        // invited to join the Game Night server" with "42 members" under it
+        // reads like an invitation, where a bare server name reads like a page.
         og = {
-          title: s.name + ' on Campfire',
-          description: (s.description ? s.description + ' — ' : '') + (n === 1 ? '1 member' : n + ' members'),
+          title: "You're invited to " + s.name,
+          description: (n === 1 ? '1 member' : n + ' members') + ' on Campfire'
+            + (s.description ? ' — ' + s.description : ''),
           image,
           imageAlt: s.name,
           url: base + '/invite/' + code,
@@ -1307,6 +1312,14 @@ async function mintInviteCode() {
   }
   return null;
 }
+// A cached link preview of an invite page is a photograph of that page, and this
+// app owns the page: the server's name, description and icon are on it, so a
+// rename (or a new member) must not keep showing a week-old card in Discord or
+// in our own unfurl. Dropping the rows is cheap and safe — the next paste just
+// re-reads the page. Never let a preview failure break the change itself.
+async function forgetInvitePreview(sid) {
+  try { await require('./unfurl').forgetServerInvites(sid); } catch (e) { console.error('[invite] preview forget failed:', (e && e.message) || e); }
+}
 app.get('/api/invite/:code', optionalAuth, async (req, res) => {
   const hit = await resolveInvite(req.params.code);
   if (!hit || !hit.server) return res.status(404).json({ error: 'bad_invite' });
@@ -1345,6 +1358,7 @@ app.post('/api/servers/join', authRequired, async (req, res) => {
     await postServerSys(s.id, `${displayOf(req.user)} joined the server`);
     // Live roster for everyone already here (the joiner refetches via refreshServers).
     broadcastToServer(s.id, { t: 'server-updated', server: await serverView(s.id) });
+    forgetInvitePreview(s.id);
   }
   res.json({ server: await serverView(s.id) });
 });
@@ -1825,6 +1839,7 @@ app.post('/api/servers/:id/invites', authRequired, async (req, res) => {
   const inv = { id: uid(), server_id: s.id, code, label, created_by: req.user.id, created_at: now(), expires_at: expiresAt, max_uses: maxUses, uses: 0 };
   await db.prepare('INSERT INTO server_invites (id,server_id,code,label,created_by,created_at,expires_at,max_uses,uses) VALUES (@id,@server_id,@code,@label,@created_by,@created_at,@expires_at,@max_uses,@uses)').run(inv);
   broadcastToServer(s.id, { t: 'invites-changed', serverId: s.id });
+  forgetInvitePreview(s.id);
   res.json({ invite: invitePublic(inv) });
 });
 app.patch('/api/servers/:id/invites/:iid', authRequired, async (req, res) => {
@@ -1846,6 +1861,7 @@ app.delete('/api/servers/:id/invites/:iid', authRequired, async (req, res) => {
   if (!inv) return res.status(404).json({ error: 'no_invite' });
   await db.prepare('DELETE FROM server_invites WHERE id = ?').run(inv.id);
   broadcastToServer(s.id, { t: 'invites-changed', serverId: s.id });
+  forgetInvitePreview(s.id);
   res.json({ ok: true });
 });
 
@@ -2073,6 +2089,7 @@ app.post('/api/servers/:id/banner', authRequired, imgSingle(upBanner), async (re
   deleteUploaded(s.banner_url);
   await db.prepare('UPDATE servers SET banner_url = ? WHERE id = ?').run(url, s.id);
   broadcastToServer(s.id, { t: 'server-updated', server: await serverView(s.id) });
+  forgetInvitePreview(s.id);
   res.json({ server: await serverView(s.id) });
 });
 app.delete('/api/servers/:id/banner', authRequired, async (req, res) => {
@@ -2082,6 +2099,7 @@ app.delete('/api/servers/:id/banner', authRequired, async (req, res) => {
   deleteUploaded(s.banner_url);
   await db.prepare('UPDATE servers SET banner_url = NULL WHERE id = ?').run(s.id);
   broadcastToServer(s.id, { t: 'server-updated', server: await serverView(s.id) });
+  forgetInvitePreview(s.id);
   res.json({ server: await serverView(s.id) });
 });
 
@@ -5111,6 +5129,7 @@ app.post('/api/admin/servers/:id/icon', authRequired, requireSiteAdmin, imgSingl
   deleteUploaded(s.icon_url);
   await db.prepare('UPDATE servers SET icon_url = ? WHERE id = ?').run(url, s.id);
   broadcastToServer(s.id, { t: 'server-updated', server: await serverView(s.id) });
+  forgetInvitePreview(s.id);
   res.json({ server: await adminServerById(s.id) });
 });
 app.delete('/api/admin/servers/:id/icon', authRequired, requireSiteAdmin, async (req, res) => {
@@ -5119,6 +5138,7 @@ app.delete('/api/admin/servers/:id/icon', authRequired, requireSiteAdmin, async 
   deleteUploaded(s.icon_url);
   await db.prepare('UPDATE servers SET icon_url = NULL WHERE id = ?').run(s.id);
   broadcastToServer(s.id, { t: 'server-updated', server: await serverView(s.id) });
+  forgetInvitePreview(s.id);
   res.json({ server: await adminServerById(s.id) });
 });
 app.post('/api/admin/servers/:id/banner', authRequired, requireSiteAdmin, imgSingle(upBanner), async (req, res) => {
@@ -5128,6 +5148,7 @@ app.post('/api/admin/servers/:id/banner', authRequired, requireSiteAdmin, imgSin
   deleteUploaded(s.banner_url);
   await db.prepare('UPDATE servers SET banner_url = ? WHERE id = ?').run(url, s.id);
   broadcastToServer(s.id, { t: 'server-updated', server: await serverView(s.id) });
+  forgetInvitePreview(s.id);
   res.json({ server: await adminServerById(s.id) });
 });
 app.delete('/api/admin/servers/:id/banner', authRequired, requireSiteAdmin, async (req, res) => {
@@ -5136,6 +5157,7 @@ app.delete('/api/admin/servers/:id/banner', authRequired, requireSiteAdmin, asyn
   deleteUploaded(s.banner_url);
   await db.prepare('UPDATE servers SET banner_url = NULL WHERE id = ?').run(s.id);
   broadcastToServer(s.id, { t: 'server-updated', server: await serverView(s.id) });
+  forgetInvitePreview(s.id);
   res.json({ server: await adminServerById(s.id) });
 });
 async function adminServerById(id) {
@@ -5247,6 +5269,7 @@ app.patch('/api/servers/:id', authRequired, async (req, res) => {
   params.push(s.id);
   await db.prepare(`UPDATE servers SET ${sets.join(', ')} WHERE id = ?`).run(...params);
   broadcastToServer(s.id, { t: 'server-updated', server: await serverView(s.id) });
+  forgetInvitePreview(s.id);
   res.json({ server: await serverView(s.id) });
 });
 app.post('/api/servers/:id/icon', authRequired, imgSingle(upIcon), async (req, res) => {
@@ -5257,6 +5280,7 @@ app.post('/api/servers/:id/icon', authRequired, imgSingle(upIcon), async (req, r
   deleteUploaded(s.icon_url);
   await db.prepare('UPDATE servers SET icon_url = ? WHERE id = ?').run(url, s.id);
   broadcastToServer(s.id, { t: 'server-updated', server: await serverView(s.id) });
+  forgetInvitePreview(s.id);
   res.json({ server: await serverView(s.id) });
 });
 app.delete('/api/servers/:id/icon', authRequired, async (req, res) => {
@@ -5266,6 +5290,7 @@ app.delete('/api/servers/:id/icon', authRequired, async (req, res) => {
   deleteUploaded(s.icon_url);
   await db.prepare('UPDATE servers SET icon_url = NULL WHERE id = ?').run(s.id);
   broadcastToServer(s.id, { t: 'server-updated', server: await serverView(s.id) });
+  forgetInvitePreview(s.id);
   res.json({ server: await serverView(s.id) });
 });
 

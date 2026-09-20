@@ -108,10 +108,11 @@ async function main() {
     check(!/data-invite-join/.test(html), 'a non-member gets no in-place join hook at all', null);
     check(!/\/api\/servers\/join/.test(html), 'nothing in the card can join silently', null);
     check(/Game Night/.test(html) && /42 members/.test(html) && /Friday crew/.test(html), 'the server\u2019s name, live member count and description are on it', null);
+    check(/class="iv-head">Invite to Game Night</.test(html),
+      'and the heading names the INVITATION, not just the server ("Invite to Game Night")', (/class="iv-head">[^<]*/.exec(html) || [])[0]);
     check(/class="iv-icon"/.test(html) && /cdn\.example\/i\.png/.test(html), 'with its icon', null);
     check(fetchCalls.length === 1 && fetchCalls[0].url === '/api/invite/aB3xK9qZ', 'resolved from this app\u2019s own invite API (no unfurl)', fetchCalls);
-  }
-  {
+  }  {
     reset();
     fetchImpl = async () => jsonRes(200, { serverId: 'srv1', joined: true, name: 'Game Night', memberCount: 42 });
     const html = await render(OWN);
@@ -240,7 +241,31 @@ async function main() {
       'the generic description is dropped when a page brings its own preview', null);
   }
 
-  section('[7] the tags another app reads when the link is pasted elsewhere');
+  section('[8] the preview is not a week-long photograph');
+  {
+    // THIS is the bug the owner hit: link_embeds caches a good preview for
+    // OK_TTL (7 days), so an invite link unfurled before a deploy kept showing
+    // the old un-named Campfire card long after the fix shipped. A preview of a
+    // page we own has to be thrown away when that page changes.
+    const UNFURL = fs.readFileSync(path.join(ROOT, 'unfurl.js'), 'utf8');
+    check(/async function forgetServerInvites/.test(UNFURL) && /^\s*forgetServerInvites,$/m.test(UNFURL),
+      'unfurl.js can forget a server\u2019s invite previews', null);
+    check(/url LIKE \?/.test(UNFURL) && /server_invites WHERE server_id/.test(UNFURL),
+      'and finds them by the invite codes that server actually has', null);
+    check(/DELETE FROM link_embeds WHERE \$\{marks\}/.test(UNFURL), 'by path, not by guessing this instance\u2019s hostname', null);
+    check(/async function forgetInvitePreview/.test(SERVER), 'server.js wraps it so a preview failure never breaks the change', null);
+    const sites = (SERVER.match(/^\s*forgetInvitePreview\(s\.id\);$/gm) || []).length;
+    check(sites >= 9, 'and calls it everywhere the card\u2019s face can change (join, create, revoke, rename, icon, banner)', sites);
+    // Each route that changes the server's own face must have one.
+    for (const [pat, label] of [
+      [/DELETE FROM server_invites WHERE id = \?[\s\S]{0,200}?forgetInvitePreview\(s\.id\);/, 'revoking a link'],
+      [/server_members \(server_id,user_id,joined_at,position\)[\s\S]{0,600}?forgetInvitePreview\(s\.id\);/, 'someone joining'],
+      [/UPDATE servers SET \$\{sets\.join/, 'a rename or description change'],
+      [/UPDATE servers SET icon_url = \? WHERE id = \?[\s\S]{0,220}?forgetInvitePreview\(s\.id\);/, 'a new icon'],
+      [/UPDATE servers SET banner_url = \? WHERE id = \?[\s\S]{0,220}?forgetInvitePreview\(s\.id\);/, 'a new banner'],
+    ]) check(pat.test(SERVER), 'invalidation is wired to ' + label, null);
+  }
+
   {
     // shellMetaTags is sliced out of server.js and run on its own: it is the one
     // piece of the preview a browser cannot show us (Discord/iMessage read it
