@@ -542,16 +542,18 @@ function renderTopic() {
     el.classList.add('hidden');
   }
 }
+// The description popout is READ-ONLY: there is nothing to confirm, so it wears
+// a ✕ in its corner instead of a Cancel/OK pair that both just dismiss it.
 $('#chan-topic').onclick = () => {
   if (S.view !== 'server') {
     const t = (S.dms || []).find((x) => x.id === S.dmThreadId);
     const desc = (t && t.isGroup && (t.description || '').trim()) || '';
-    if (desc) openModal(t.name || 'Group chat', `<p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(desc)}</p>`, 'Close', null);
+    if (desc) openModal(t.name || 'Group chat', `<p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(desc)}</p>`, null, null, { xClose: true });
     return;
   }
   const ch = (S.serverDetail?.channels || []).find((c) => c.id === S.channelId);
   const desc = (ch?.description || '').trim();
-  if (desc) openModal(`#${ch.name}`, `<p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(desc)}</p>`, 'Close', null);
+  if (desc) openModal(`#${ch.name}`, `<p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(desc)}</p>`, null, null, { xClose: true });
 };
 async function selectDmThread(id, opts = {}) {
   flushDrafts(); // file the previous conversation's text before its context changes

@@ -971,8 +971,18 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
    same two elements). 175: over #usercard (170) and #tagcard (171), still under
    #lightbox (200), the menus (400) and the toast (500). */
 #modal-backdrop.over-pop{z-index:175}
-.modal{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;padding:1.5rem;width:100%;max-width:410px}
+.modal{position:relative;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;padding:1.5rem;width:100%;max-width:410px}
 .modal.wide{max-width:580px}
+/* A read-only popout (openModal's opts.xClose — a channel's description) wears
+   ONE way out: the ✕ in the panel's corner, and no footer at all. Hidden by
+   default so every other dialog keeps its Cancel/OK row, and the rule lives
+   HERE rather than beside .mini (line ~481) on purpose — .mini is inline-flex,
+   so the display:none has to come later in the sheet to win. */
+.modal-x{display:none;position:absolute;top:.6rem;right:.6rem;padding:0;width:30px;height:30px;min-height:30px;flex-shrink:0}
+.modal.x-only .modal-x{display:inline-flex}
+/* the title keeps clear of it (the ✕ is 30px + its .6rem inset) */
+.modal.x-only h3{padding-right:2.1rem}
+.modal.x-only .row.end{display:none}
 .gif-grid{display:flex;flex-wrap:wrap;gap:6px;overflow-y:auto;max-height:52dvh;min-height:140px;margin-top:.6rem;align-content:flex-start}
 .gif-grid .pk-gif{width:calc(33.333% - 5px)}
 .gif-grid .pk-gif img{height:110px}

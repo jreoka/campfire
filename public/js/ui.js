@@ -16,12 +16,15 @@ function openModal(title, bodyHTML, okLabel, onOk, opts = {}) {
   ok.classList.toggle('danger', !!opts.danger);
   ok.classList.toggle('primary', !opts.danger);
   $('#modal-close').textContent = opts.cancelLabel || 'Cancel';
-  // A read-only panel has one way out, not two: the second button would be a
-  // second "Close" that does exactly the same nothing.
+  // A read-only popout has ONE way out. `hideCancel` is the older half of that
+  // rule (a lone "Close"); `xClose` is the whole thing — the footer goes away
+  // and a ✕ sits in the panel's corner, because a Cancel and a Close that both
+  // dismiss the panel are two buttons saying the same nothing.
   $('#modal-close').style.display = opts.hideCancel ? 'none' : '';
   modalOkFn = onOk || null;
   modalCancelFn = opts.onCancel || null;
   document.querySelector('#modal-backdrop .modal').classList.toggle('wide', !!opts.wide);
+  document.querySelector('#modal-backdrop .modal').classList.toggle('x-only', !!opts.xClose);
   // A dialog opened FROM an open person popover has to be painted ABOVE it, so
   // that one gets .over-pop (the rule is beside the layer contract in
   // styles.css). The static order keeps cards over the dialog layer because
@@ -45,6 +48,7 @@ function cancelModal() {
   if (fn) { try { fn(); } catch {} }
 }
 $('#modal-close').onclick = () => cancelModal();
+$('#modal-x').onclick = () => cancelModal();
 $('#modal-backdrop').addEventListener('click', (e) => {
   if (e.target.id !== 'modal-backdrop') return;
   // A person card floats ABOVE the dialog layer (see the layer contract in

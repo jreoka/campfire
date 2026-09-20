@@ -421,6 +421,9 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
 <!-- modals -->
 <div id="modal-backdrop" class="hidden">
   <div class="modal">
+    <!-- the corner ✕ a read-only popout wears INSTEAD of a footer (openModal's
+         opts.xClose: a channel's description, which has nothing to confirm) -->
+    <button type="button" id="modal-x" class="mini modal-x" title="Close" aria-label="Close"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <h3 id="modal-title">Create a server</h3>
     <div id="modal-body"></div>
     <div class="row end">
