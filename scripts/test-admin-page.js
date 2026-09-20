@@ -21,7 +21,11 @@
 //     the menu is one row per area with an icon and a label;
 //   - the phone layout is the SETTINGS shape (menu, then one section with back),
 //     not a rail squeezed into the header, and the return label shortens so the
-//     header cannot overflow a 360px screen.
+//     header cannot overflow a 360px screen;
+//   - the phone menu carries NO lit row (a list of sections, not a tab strip —
+//     the accent would claim a section is open while the pane behind it is
+//     hidden) and a phone SECTION shows ONE bar: the console header stands down
+//     and the detail header is it, with the queue chip riding along in there.
 //
 // Static checks run everywhere; the browser half drives the REAL shell markup
 // against the REAL stylesheet in headless Chrome and skips without it.
@@ -156,6 +160,15 @@ check(/\.adm-nav::after\{[\s\S]{0,220}border-right:2px solid var\(--faint\)/.tes
   'with the chevron that says "this opens something" (as .set-tab::after does)');
 check(/#admin-page\.adm-menu \.adm-head-reports\{display:none\}/.test(phone),
   'and the header chip stands down on the menu: the Reports row carries the count there');
+// One bar per phone screen: in a section the detail header IS the bar, and the
+// console header (mark + the way out of the console) is off the screen, since the
+// way out is one step back — the menu — and two bars over one screen is one too
+// many (owner request).
+check(/#admin-page\.adm-section #admin-head\{display:none\}/.test(phone),
+  'a section hides the console header: the detail header is the only bar');
+check(/#admin-page\.adm-menu \.adm-nav\.active\{background:var\(--panel\);color:var\(--text\)\}/.test(phone)
+  && !/#admin-page\.adm-menu \.adm-nav\.active\{background:var\(--accent-dim\)/.test(phone),
+  'and no menu row is lit: a list of sections, not a tab strip (the accent would claim a section is open)');
 check(/#admin-page #admin-panes\{[\s\S]{0,140}padding:\.5rem \.7rem 1rem/.test(phone),
   'the full-width overrides out-specify the desktop id rules (else the rail keeps its width)');check(/#admin-page\.adm-section #admin-panes\{padding-top:1\.2rem\}/.test(phone),
   'and an opened section starts below the detail header, not against it');
@@ -204,7 +217,12 @@ if (!chrome) return skip('no Chrome/Edge found — set CHROME_PATH');
 function pageHtml() {
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="file:///${ROOT.replace(/\\/g, '/')}/public/styles.css"></head><body>
+<link rel="stylesheet" href="file:///${ROOT.replace(/\\/g, '/')}/public/styles.css">
+<!-- No transitions: a view-class flip is MEASURED here (the menu's rows, the
+     section's bars), and headless Chrome's virtual time does not advance the
+     animation clock, so a transitioned background reads back as the value it is
+     leaving — the old one. Settling instantly is what makes the reading true. -->
+<style>*{animation:none!important;transition:none!important}</style></head><body>
 ${viewMain}
 <script>
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -283,6 +301,12 @@ ${viewSrc}
     dir: cs(q('#admin-menu')).flexDirection,
     nav: navs,
     navBg: cs(nav).backgroundColor,
+    // The row the markup ships lit (Overview) against an untouched sibling: on a
+    // phone they have to read the same, on the desktop rail they must not.
+    activeBg: cs(q('#admin-menu .adm-nav.active')).backgroundColor,
+    plainBg: cs(q('#admin-menu .adm-nav[data-atab="media"]')).backgroundColor,
+    activeIc: cs(q('#admin-menu .adm-nav.active .adm-nav-ic')).color,
+    plainIc: cs(q('#admin-menu .adm-nav[data-atab="media"] .adm-nav-ic')).color,
     chevron: getComputedStyle(nav, '::after').content !== 'none',
     ident: rt(q('.adm-nav-ic')), text: rt(q('.adm-nav-tx')),
     rrow: rt(rrow), rtext: rt(rrow.querySelector('.adm-nav-tx')), badge: rt(rbadge),
@@ -298,7 +322,11 @@ ${viewSrc}
     menu: cs(q('#admin-menu')).display, panes: cs(q('#admin-panes')).display,
     detailHead: cs(det).display, title: q('#admin-title').textContent.trim(),
     back: rt(q('#admin-back')), head: rt(det),
+    adminHead: cs(head).display,
     chip: cs(q('#adm-head-reports')).display,
+    chipParent: q('#adm-head-reports').parentElement.className,
+    chipRect: rt(q('#adm-head-reports')),
+    detailOverflow: Math.round(det.scrollWidth - det.clientWidth),
     headOverflow: Math.round(head.scrollWidth - head.clientWidth),
   };
   out.labels = ['overview', 'reports', 'media', 'users', 'servers', 'nope'].map(adminTabLabel);
@@ -376,6 +404,10 @@ else {
   check(desk.default.detailHead === 'none', 'and no phone detail header', desk.default);
   check(desk.menu.menu !== 'none' && desk.menu.panes !== 'none' && desk.menu.detailHead === 'none',
     'a phone view class changes nothing on a desktop (one set of rules, no second layout)', desk.menu);
+  check(desk.menu.activeBg !== desk.menu.plainBg && desk.menu.activeIc !== desk.menu.plainIc,
+    'and the desktop rail still lights the open row (the menu rule is the phone\'s alone)', desk.menu);
+  check(desk.section.adminHead !== 'none' && desk.section.chipParent === '',
+    'the console header stays up on a desktop section, with the chip still in it (#admin-head carries no class)', desk.section);
   check(desk.back.visible && desk.back.full && !desk.back.short && !desk.back.wraps, 'the full return label shows and does not wrap', desk.back);
   check(desk.head.overflow === 0 && desk.head.chipTx && desk.head.chipRight <= desk.viewport.w,
     'and the header fits with the queue chip spelled out', desk.head);
@@ -404,6 +436,9 @@ else {
   check(phoneOut.menu.label !== 'none', 'its "Console" group label survives, as the settings rail keeps its own heading', phoneOut.menu);
   check(phoneOut.menu.chip === 'none', 'the header chip stands down here (the Reports row carries the count)', phoneOut.menu);
   check(phoneOut.menu.dir === 'column', 'the rows stack in a column, not a horizontal rail', phoneOut.menu);
+  check(phoneOut.menu.activeBg === phoneOut.menu.plainBg && phoneOut.menu.activeIc === phoneOut.menu.plainIc,
+    'and no row is lit: the menu is a list of sections, not a tab strip (the last visit must not leave one looking open)',
+    { active: phoneOut.menu.activeBg, plain: phoneOut.menu.plainBg });
   check(phoneOut.menu.nav.x === 11 && Math.abs(phoneOut.menu.nav.w - (390 - 11 - 11)) <= 1,
     'a row spans the menu width with its own inset (the settings rail\'s .7rem)', { nav: phoneOut.menu.nav, vw: 390 });
   check(phoneOut.menu.nav.h >= 52, 'and is a 52px touch row, like a settings row', phoneOut.menu.nav);
@@ -426,9 +461,15 @@ else {
   check(phoneOut.section.detailHead === 'flex', 'under the phone detail header', phoneOut.section);
   check(phoneOut.section.title === 'Reports', 'which names the section the reader is looking at', phoneOut.section);
   check(phoneOut.section.back.x < phoneOut.section.head.w / 2, 'back on the left half, the step to the menu', phoneOut.section);
-  check(phoneOut.section.back.x + phoneOut.section.back.w <= phoneOut.section.head.w + 1 && phoneOut.section.headOverflow === 0,
+  check(phoneOut.section.back.x + phoneOut.section.back.w <= phoneOut.section.head.w + 1 && phoneOut.section.detailOverflow === 0,
     'and nothing spills off the 390px screen', phoneOut.section);
-  check(phoneOut.section.chip !== 'none', 'the section view keeps the header chip (the queue shortcut)', phoneOut.section);
+  check(phoneOut.section.adminHead === 'none',
+    'the console header stands down in a section: ONE bar, not two stacked over one screen', phoneOut.section);
+  check(phoneOut.section.chip !== 'none' && /adm-mhead/.test(phoneOut.section.chipParent),
+    'and the queue chip rides that one bar (the shortcut survives the bar it used to live in)', phoneOut.section);
+  check(phoneOut.section.chipRect.x + phoneOut.section.chipRect.w <= phoneOut.section.head.x + phoneOut.section.head.w + 1
+    && phoneOut.section.chipRect.x > phoneOut.section.back.x + phoneOut.section.back.w,
+    'on the trailing edge, past the section name', { chip: phoneOut.section.chipRect, head: phoneOut.section.head });
   check(phoneOut.labels.join(',') === 'Overview,Reports,Media,Users,Servers,Instance console',
     'every section has a phone name, and an unknown one falls back to the console', phoneOut.labels);
   check(phoneOut.backToMenu.menu !== 'none' && phoneOut.backToMenu.panes === 'none', 'back returns to the menu', phoneOut.backToMenu);

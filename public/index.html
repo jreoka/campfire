@@ -249,9 +249,13 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
         </header>
         <div id="admin-body">
           <!-- The mobile detail header: on a phone the menu below is the console's
-               front page and one section opens alone, exactly like Settings. The
-               back arrow is the section-to-menu step; the header's Return button
-               stays the way out of the console itself. Hidden on desktop. -->
+               front page and one section opens alone, exactly like Settings. In a
+               section it is the phone's ONLY bar — the console header (mark +
+               "Return to Campfire") stands down, because two bars over one screen
+               is one too many — and its arrow is the step back to the menu, which
+               is where the way out of the console lives. Hidden on desktop.
+               The open-report chip rides in here while a section is open
+               (setAdminView moves it; a desktop always reads it in the header). -->
           <div class="adm-mhead">
             <button type="button" id="admin-back" class="mini" title="Back to admin menu" aria-label="Back to admin menu"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
             <strong id="admin-title">Overview</strong>

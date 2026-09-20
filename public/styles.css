@@ -3021,7 +3021,10 @@ body.adm-page #find-panel{display:none!important}
    — the open row is already lit. */
 .adm-mhead{display:none;align-items:center;gap:.5rem;flex-shrink:0;padding:.5rem .55rem .5rem .75rem;background:var(--panel);border-bottom:1px solid var(--line-soft)}
 .adm-mhead .mini{width:34px;height:34px;min-height:34px;padding:0;flex-shrink:0}
-#admin-title{font-size:.95rem;font-weight:750;letter-spacing:-.01em;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The name takes the room the back arrow leaves, so the queue chip the section
+   header carries (admin.js moves it in there: on a phone the console header is
+   gone in a section) lands on the TRAILING edge, not against the title. */
+#admin-title{flex:1;font-size:.95rem;font-weight:750;letter-spacing:-.01em;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #admin-body{flex:1;min-height:0;display:flex}
 #admin-menu{width:236px;flex-shrink:0;display:flex;flex-direction:column;gap:.25rem;padding:.9rem .7rem;background:var(--panel);border-right:1px solid var(--line-soft);overflow-y:auto}
 .adm-menu-label{font-size:.68rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:.45rem .8rem .3rem}
@@ -3050,6 +3053,13 @@ body.adm-page #find-panel{display:none!important}
   #admin-page.adm-section #admin-menu{display:none}
   #admin-page.adm-menu #admin-panes{display:none}
   #admin-page.adm-section .adm-mhead{display:flex}
+  /* ONE bar per screen (owner request: "when I'm in a tab... remove that topmost
+     bar"). The section's own detail header already carries back + its name, so
+     the console header above it — the mark, "Return to Campfire" — was a second,
+     redundant bar over the same screen. It stays on the MENU, which is the
+     console's front page and therefore where the way out of the console belongs:
+     a section is one step back from it. */
+  #admin-page.adm-section #admin-head{display:none}
   /* The full-width overrides have to out-specify `#admin-menu`/`#admin-panes`
      above (one ID) or the id rules win and the menu keeps the desktop rail's
      width, padding and edge. */
@@ -3070,6 +3080,14 @@ body.adm-page #find-panel{display:none!important}
   .adm-nav.active{background:var(--accent-dim);color:var(--on-container)}
   .adm-nav-ic{color:var(--muted)}
   .adm-nav.active .adm-nav-ic{color:var(--on-container)}
+  /* A menu of SECTIONS, not a tab strip: the accent means "this is what you are
+     looking at", and while the menu is on screen nothing is — the pane behind it
+     is hidden. The row the last visit left lit reads exactly like its siblings,
+     so opening the console no longer greets the reader with a section already
+     chosen (reported: "one of the tabs is always highlighted by default"). The
+     section view never sees this: it shows one pane, not the rows. */
+  #admin-page.adm-menu .adm-nav.active{background:var(--panel);color:var(--text)}
+  #admin-page.adm-menu .adm-nav.active .adm-nav-ic{color:var(--muted)}
   .adm-nav::after{
     content:'';flex-shrink:0;width:8px;height:8px;margin-left:.35rem;
     border-right:2px solid var(--faint);border-bottom:2px solid var(--faint);
@@ -3982,6 +4000,14 @@ html.wrapper-app .msg .text,html.wrapper-app .msg .text *,html.wrapper-app input
   #settings-backdrop .set-tab.active{background:var(--accent-dim);color:var(--on-container)}
   #settings-backdrop .set-tab .set-tab-ic{display:flex;flex-shrink:0;color:var(--muted)}
   #settings-backdrop .set-tab.active .set-tab-ic{color:var(--on-container)}
+  /* …but NOT in the menu view, which is a list of destinations rather than a tab
+     strip: nothing is open while it is on screen (the section body is hidden), so
+     the row the last section left lit must not stay lit — opening the gear greets
+     the reader with a section already chosen otherwise ("one of the tabs is
+     always highlighted by default", reported, and the console menu had the same
+     bug). The accent is the section view's: it says "this is what you opened". */
+  #settings-backdrop .settings.menu .set-tab.active{background:var(--panel);color:var(--text)}
+  #settings-backdrop .settings.menu .set-tab.active .set-tab-ic{color:var(--muted)}
   #settings-backdrop .set-tab::after{
     content:'';flex-shrink:0;width:8px;height:8px;margin-left:auto;
     border-right:2px solid var(--faint);border-bottom:2px solid var(--faint);

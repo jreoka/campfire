@@ -77,6 +77,19 @@ function setAdminView(view) {
   if (!page) return;
   page.classList.toggle('adm-menu', view !== 'adm-section');
   page.classList.toggle('adm-section', view === 'adm-section');
+  // One bar per phone screen, and in a section that bar IS the detail header —
+  // the console header (mark + "Return to Campfire") is hidden under the
+  // breakpoint, see styles.css. The open-report chip is the queue shortcut, so on
+  // a phone it travels with the header it belongs to: into the detail header in a
+  // section, back into the console header everywhere else. On a desktop neither
+  // class means anything, so the chip stays in the header, where it is always
+  // read. Nothing happens when it is already home, so the button is never
+  // re-parented under the pointer.
+  const chip = $('#adm-head-reports');
+  const home = adminIsPhone() && view === 'adm-section'
+    ? page.querySelector('.adm-mhead')
+    : page.querySelector('#admin-head');
+  if (chip && home && chip.parentElement !== home) home.appendChild(chip);
 }
 // The console's own breakpoint, and it is WIDER than phoneLayout()'s 700px: a
 // modern phone is 390–430 CSS px and a two-column console in a 430px window is
@@ -1206,9 +1219,11 @@ async function adminClick(e) {
     if (b) setAdminTab(b.dataset.atab);
   });
   box.addEventListener('click', adminClick);
-  // The phone's detail header: the arrow steps back to the section MENU; the
-  // header's own "Return to Campfire" remains the way out of the console. Both
-  // exist because they are different steps — one section back, one console back.
+  // The phone's detail header: its arrow steps back to the section MENU, which
+  // is where the console header — and so "Return to Campfire" — lives. In a
+  // section this is the ONLY bar (the console header stands down under the
+  // breakpoint), so the two steps read as two screens rather than as two bars
+  // stacked over one.
   const sectionBack = $('#admin-back');
   if (sectionBack) sectionBack.onclick = () => setAdminView('adm-menu');
   const back = $('#admin-return');

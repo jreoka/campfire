@@ -121,6 +121,16 @@ const railClose = document.getElementById('settings-close');
 const menuClose = document.getElementById('settings-close-menu');
 out.servedClass = panel.className;
 out.menu = { rail: outer(rail).display, body: outer(body).display, detailHead: outer(detailHead).display, menuClose: outer(menuClose).display, railClose: outer(railClose).display };
+// Is a row LIT? The markup ships Profile with the active class, and the menu view
+// is a list of destinations with nothing open behind it, so on a phone the lit row
+// and an untouched sibling have to read the same; on a desktop the rail keeps its
+// accent (the override lives in the phone block), and it is the same measurement
+// that proves the two view classes are inert up there.
+const tabInk = () => ({
+  active: getComputedStyle(sb.querySelector('.set-tab.active')).backgroundColor,
+  plain: getComputedStyle(sb.querySelector('.set-tab[data-tab="themes"]')).backgroundColor,
+});
+out.menuTabs = tabInk();
 // The menu header is the surface a phone lands on, so its ✕ is measured too:
 // the rail's trailing spacer retires on mobile, and a descendant selector used
 // to take the header's spacer with it (the ✕ sat against the title).
@@ -138,6 +148,7 @@ out.titleGaps = {
 };
 setSettingsView('section');
 out.section = { rail: outer(rail).display, body: outer(body).display, detailHead: outer(detailHead).display };
+out.sectionTabs = tabInk();
 out.detailRect = { back: rect(back), close: rect(closeDetail), head: rect(detailHead) };
 setSettingsView('menu');
 out.backToMenu = { rail: outer(rail).display, body: outer(body).display };
@@ -176,6 +187,17 @@ function main() {
   check(settings.includes("setSettingsTab(b.dataset.tab);") && settings.includes("setSettingsView('section')"), 'a section row opens that section');
   check(settings.includes("if (settingsBack) settingsBack.onclick = () => setSettingsView('menu');"), 'the back button returns to the menu');
   check(settings.includes("['settings-close-menu', 'settings-close-detail']"), 'both mobile close buttons are wired');
+  // The menu is a list of DESTINATIONS: nothing is open while it is on screen, so
+  // the row the last section left lit must not stay lit (reported: "one of the
+  // tabs is always highlighted by default"). The accent belongs to the section
+  // view, which is also what keeps a DESKTOP rail lit — the desktop panel is in
+  // `.section`, so this rule cannot reach it.
+  check(/#settings-backdrop \.settings\.menu \.set-tab\.active\{background:var\(--panel\);color:var\(--text\)\}/.test(css),
+    'the phone menu does not light a row (the accent is the section view\'s)');
+  check(/#settings-backdrop \.settings\.section \.set-tabs\{display:none\}/.test(css)
+    && /#settings-backdrop \.settings\.menu \.set-tab\.active/.test(css)
+    && !/#settings-backdrop \.settings\.section \.set-tab\.active\{background:var\(--panel\)/.test(css),
+    'and the override is scoped to the menu, never to the section view a desktop keeps');
   check(/function openSettings\(tab\) \{[\s\S]{0,90}const explicit = tab !== undefined;/.test(settings), 'openSettings knows whether a tab was asked for');
   check(/setSettingsView\(settingsIsPhone\(\) && !explicit \? 'menu' : 'section'\)/.test(settings), 'the gear opens the menu on a phone, a caller-named tab opens straight to it');
   check(/#usercard\.sheet\{[^}]*translateY|@keyframes cf-sheet-up\{from\{transform:translateY\(100%\)/.test(css), 'the sheet animates up from below (.css)');
@@ -212,6 +234,11 @@ function main() {
     check(phone.menu.rail !== 'none', 'the menu lists the section rows', phone.menu.rail);
     check(phone.menu.body === 'none' && phone.menu.detailHead === 'none', 'with the section body and its header hidden', phone.menu);
     check(phone.menu.menuClose !== 'none' && phone.menu.railClose === 'none', 'the menu header owns the close button', phone.menu);
+    check(phone.menuTabs.active === phone.menuTabs.plain,
+      'and no row is lit on it: nothing is open while the menu is the screen (the gear opens a list, not a section already chosen)',
+      phone.menuTabs);
+    check(phone.sectionTabs.active !== phone.sectionTabs.plain,
+      'while the accent survives in the section view it belongs to', phone.sectionTabs);
     check(phone.menuHeadRect.close.x > phone.menuHeadRect.head.x + phone.menuHeadRect.head.w / 2, 'and the menu ✕ sits in the right half of the upper bar', phone.menuHeadRect);
     check(phone.menuHeadRect.close.x + phone.menuHeadRect.close.w <= phone.menuHeadRect.head.x + phone.menuHeadRect.head.w + 1, 'fully on screen (no clipped ✕)', phone.menuHeadRect);
     check(phone.titleGaps.panelTop <= 1, 'the menu header starts at the panel top edge (no rail padding above it)', phone.titleGaps);
@@ -234,6 +261,8 @@ function main() {
     check(desk.menu.detailHead === 'none', 'no mobile detail header on desktop', desk.menu.detailHead);
     check(desk.menu.rail !== 'none' && desk.menu.body !== 'none', 'the rail and the body show together', desk.menu);
     check(desk.menu.railClose !== 'none', 'with the rail close button', desk.menu.railClose);
+    check(desk.menuTabs.active !== desk.menuTabs.plain && desk.sectionTabs.active !== desk.sectionTabs.plain,
+      'and the lit row stays lit whatever the view class says (both classes are inert up here)', { menu: desk.menuTabs, section: desk.sectionTabs });
     check(desk.section.rail !== 'none' && desk.section.detailHead === 'none', 'the view classes are inert on desktop', desk.section);
   }
 

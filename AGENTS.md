@@ -712,12 +712,23 @@ because a 390–430px phone is exactly where the two-column console breaks, and 
 is the same condition its stylesheet block uses so JS and CSS can never disagree
 — and it is called from `setAdminTab`, so a deep link (`?admin=reports`), a report
 notification and the header's queue chip all land IN that section while a bare
-open (the rail shield) lands on the menu, like the settings gear. The header
-keeps "Return to Campfire" in both views (one step out of the console; the arrow
-is one step back to the menu), the report chip stands down on the menu because
-the Reports row carries the badge there, and `ADMIN_SECTION_LABELS` is the
-phone header's name table. `scripts/test-admin-page.js` measures the menu rows,
-the two views and the desktop inertness in a real 390px frame.
+open (the rail shield) lands on the menu, like the settings gear. **A phone screen
+carries ONE bar** (owner request: two bars stacked over one screen — the console's
+"Return to Campfire" plus the section's own back arrow — is one too many):
+`.adm-section` hides `#admin-head`, so an opened section is the detail header
+alone, and "Return to Campfire" lives on the MENU, which is one step back from
+every section. The open-report chip therefore rides whichever header is on
+screen (`setAdminView` moves that button between `#admin-head` and `.adm-mhead`,
+and only on a phone — on a desktop both classes mean nothing, so the chip stays
+in the header where it is always read), and the menu never lights a row: it is a
+list of sections, not a tab strip, so the accent can only claim a section is open
+while the pane behind it is hidden (`.adm-menu .adm-nav.active` wears the plain
+row's ink; the SETTINGS rail's menu view does the same — the accent belongs to
+the section view, which is the class a desktop keeps, so its rail stays lit).
+`ADMIN_SECTION_LABELS` is the phone header's name table.
+`scripts/test-admin-page.js` measures the menu rows, the two views, the single
+section bar and the desktop inertness in a real 390px frame, and
+`scripts/test-mobile-settings-sheet.js` measures the same for Settings.
 Message reports: right-click / long-press → **Report message** (red,
 last item; never your own) files it with a snapshot of the text, media
 references and where it happened, pushes every site admin live, drops an inbox
