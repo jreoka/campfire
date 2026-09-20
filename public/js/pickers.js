@@ -2103,6 +2103,29 @@ function refreshUserCardGame(u) {
     paintGameBadge(c.querySelector('.uc-statustext.ugame .gbadge'));
   } catch {}
 }
+// The profile screen's version of the same one-row swap: it stays open behind
+// the card and shows the same "Playing X" line, so a game starting or stopping
+// while somebody reads it has to land there too. Called from socket.js.
+function refreshProfileGame(u) {
+  try {
+    const bd = $('#profile-backdrop');
+    if (!bd || !u || bd.classList.contains('hidden') || String(bd.dataset.uid) !== String(u.id)) return;
+    const body = $('#pf-body');
+    if (!body) return;
+    // The streaming row is `.pf-playing.ustream` and sits directly above the
+    // game row, so it is never the one to swap.
+    const cur = body.querySelector('.pf-playing:not(.ustream)');
+    const html = profileGameRowHTML(u);
+    if (!html) { if (cur) cur.remove(); return; }
+    if (cur) {
+      cur.outerHTML = html;
+    } else {
+      const anchor = body.querySelector('.pf-playing.ustream') || body.querySelector('.pf-status');
+      if (!anchor) return;
+      anchor.insertAdjacentHTML('afterend', html);
+    }
+  } catch {}
+}
 // ---------- server tag mini-panel ----------
 function closeTagCard() { $('#tagcard').classList.add('hidden'); }
 async function tagServerInfo(sid) {
@@ -2568,6 +2591,9 @@ function openProfileScreen(uid, fallback) {
   const u = memberById(uid) || (fallback && fallback.id === uid ? fallback : null);
   if (!u) return;
   const bd = $('#profile-backdrop');
+  // Who this screen is showing, so a live frame (a game starting, a rename) can
+  // be matched to it without a second lookup — see refreshProfileGame.
+  bd.dataset.uid = uid;
   const isMe = uid === S.me.id;
   const st = statusOf(uid);
   const pstreaming = !isOff(st) && (u.streaming_game || null);
@@ -2586,7 +2612,7 @@ function openProfileScreen(uid, fallback) {
     ${isSysAdmin(u) || isEarlyUser(u) ? `<div class="pf-badges">${isSysAdmin(u) ? '<span class="sysadmin-badge">System admin</span>' : ''}${isEarlyUser(u) ? '<span class="early-badge">Early user</span>' : ''}</div>` : ''}
     <div class="pf-status"><span class="status-dot ${dotOf(st, pstreaming)}"></span><span>${stLabel}</span>${u.status_text ? `<span class="pf-statustext">${esc(u.status_text)}</span>` : ''}</div>
     ${pstreaming ? `<div class="pf-playing ustream">Streaming ${esc(pstreaming)}</div>` : ''}
-    ${u.playing_game ? `<div class="pf-playing">Playing ${esc(u.playing_game)}</div>` : ''}
+    ${profileGameRowHTML(u)}
     ${u.bio ? `<div class="pf-bio">${renderRich(u.bio)}</div>` : ''}
     ${u.created_at ? `<div class="pf-since">Member since ${fmtJoined(u.created_at)}</div>` : ''}
     <div id="pf-gaming" class="pf-gaming hidden"></div>

@@ -104,7 +104,7 @@ function inkPageHtml() {
     <div class="uc-tabs"><button type="button" class="uc-tab"><span>Message</span></button></div>
     <div class="uc-badges"><span class="early-badge">Early user</span><span class="sysadmin-badge">System admin</span></div>
     <div class="uc-statustext ustream"><span class="vlive">LIVE</span><span>Streaming</span></div>
-    <div class="uc-statustext ugame"><span class="gbadge"></span><span class="uc-game-name">Playing Chess</span><span class="uc-game-timer" data-gtimer="1700000000000" title="Time in this session">1:05</span></div>
+    <div class="uc-statustext ugame"><span class="gbadge"></span><span class="uc-game-name">Playing Chess</span><span class="game-clock" data-gtimer="1700000000000" title="Time in this session">1:05</span></div>
     <div class="uc-roles"><button type="button" class="role-pill" data-role-toggle="r1" data-has="0">+ Usagi</button><span class="role-pill on" style="border-color:#b06ef0;color:#b06ef0;">Sempai</span><button type="button" class="role-pill on" data-role-toggle="r2" data-has="1">✓ Admin</button></div>
     <div class="uc-head"><span class="avatar big"></span><div class="uc-bubble-wrap"><div class="uc-bubble">a status</div></div></div>
     <div class="uc-presence"><button type="button" class="prow"><span class="plabel">Online</span></button></div>
@@ -140,7 +140,7 @@ const snap = () => ({
   game: { color: color('.uc-statustext.ugame'), bg: bg('.uc-statustext.ugame') },
   // The session clock inside that box: it reads the BOX's ink (the box is its
   // own backdrop), dimmed — it is a readout, not a second label.
-  gameTimer: { color: color('.uc-statustext.ugame .uc-game-timer'), opacity: opacity('.uc-statustext.ugame .uc-game-timer') },
+  gameTimer: { color: color('.uc-statustext.ugame .game-clock'), opacity: opacity('.uc-statustext.ugame .game-clock') },
   gameBadge: { color: color('.gbadge'), bg: bg('.gbadge') },
   pill: { color: color('.role-pill'), bg: bg('.role-pill'), border: border('.role-pill') },
   pillOn: { color: color('.role-pill.on'), bg: bg('.role-pill.on'), border: border('.role-pill.on') },

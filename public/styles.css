@@ -1866,9 +1866,10 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
    pushed to the RIGHT edge. It wears the box's own ink (currentColor, dimmed)
    rather than a --uc-* tone: the box is its own backdrop — the card's ink rules
    end at its edge — and the #usercard.uc-ink-* overrides above already decide
-   what that ink is. */
+   what that ink is. The profile screen's "Playing X" line (.pf-playing, below)
+   is the same row on a plain surface and shares the .game-clock span. */
 .uc-statustext.ugame .uc-game-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.uc-statustext.ugame .uc-game-timer{margin-left:auto;flex-shrink:0;font-size:.95em;font-variant-numeric:tabular-nums;color:inherit;opacity:.72}
+.uc-statustext.ugame .game-clock{margin-left:auto;flex-shrink:0;font-size:.95em;font-variant-numeric:tabular-nums;color:inherit;opacity:.72}
 .uc-sec-label{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin:.55rem 0 .3rem}
 /* Custom status: a thought bubble beside the avatar. The avatar straddles the
    banner (margin-top:-33px), so the bubble wrap hangs itself -14px to sit on
@@ -1947,7 +1948,13 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .pf-body{padding:.75rem 1rem 1.1rem;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:.75rem;overscroll-behavior:contain}
 .pf-status{display:flex;align-items:center;gap:.45rem;font-size:.85rem;font-weight:600;color:var(--muted)}
 .pf-statustext{color:var(--text);font-weight:500}
-.pf-playing{font-size:.86rem;color:var(--accent-hover);font-weight:650}
+/* "Playing X" on the profile screen: same row as the user card's game box, on a
+   plain surface — the name holds the left and gives way (it ellipsises), the
+   session clock (.game-clock) is pushed to the right edge. The clock keeps the
+   line's own accent ink, dimmed, the same way the card's box does. */
+.pf-playing{font-size:.86rem;color:var(--accent-hover);font-weight:650;display:flex;align-items:center;gap:.4rem}
+.pf-playing-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pf-playing .game-clock{margin-left:auto;flex-shrink:0;font-variant-numeric:tabular-nums;color:inherit;opacity:.72}
 .pf-bio{font-size:.9rem;color:var(--text);overflow-wrap:anywhere}
 .pf-since{font-size:.8rem;color:var(--faint)}
 .pf-gaming{display:block}

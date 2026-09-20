@@ -771,8 +771,9 @@ function onWS(m) {
       // A game beacon hits this path every ~15s per gaming user, so the card
       // itself is NOT repainted (see the snapshot above) — but its "Playing X"
       // box is the one row that should follow a game starting or stopping while
-      // somebody is looking at it.
+      // somebody is looking at it, and the profile screen shows the same row.
       try { refreshUserCardGame(u); } catch {}
+      try { refreshProfileGame(u); } catch {}
       if (S.view === 'home') {
         renderDmMembers();
         // The open DM's header wears this person's face + light, so a rename, a

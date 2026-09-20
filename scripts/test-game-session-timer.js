@@ -74,21 +74,35 @@ const fmtElapsed = eval(slice(servers, 'function fmtElapsed(ms) {', '\n}') + '\n
 // (`fmt` — the ticker — is deliberately NOT eval'd here: it registers a real
 // interval, and this file only wants the row builder. The Chrome fixture runs
 // the real ticker.)
-const built = eval(svg + '\n' + rows + '\n;({ gameBadgeHTML, gameRowHTML })');
-const { gameRowHTML } = built;
+const built = eval(svg + '\n' + rows + '\n;({ gameBadgeHTML, gameRowHTML, gameClockHTML, profileGameRowHTML })');
+const { gameRowHTML, gameClockHTML, profileGameRowHTML } = built;
 
-console.log('\n[1] the row: badge · name · clock, and the clock only when the server knows the start');
+console.log('\n[1] the card row: badge · name · clock, and the clock only when the server knows the start');
 const NOW = Date.now();
 const live = gameRowHTML({ playing_game: 'Chess', playing_since: NOW - 65000 });
 check(live.includes('class="uc-statustext ugame"'), 'it is the card\'s game box', live);
 check(live.includes('class="uc-game-name"') && live.includes('Playing Chess'), 'the name is its own span (it has to be the thing that ellipsises)', live);
-check(live.includes('class="uc-game-timer"') && live.includes('data-gtimer="' + (NOW - 65000) + '"'),
+check(live.includes('class="game-clock"') && live.includes('data-gtimer="' + (NOW - 65000) + '"'),
   'the clock carries the server\'s session start, not a locally guessed one', live);
 check(live.includes('>1:05<'), 'and paints the elapsed time already (no empty frame until the first tick)', live);
-check(!gameRowHTML({ playing_game: 'Chess' }).includes('uc-game-timer'),
+check(!gameRowHTML({ playing_game: 'Chess' }).includes('game-clock'),
   'a game with no recorded start shows no clock rather than a wrong one', gameRowHTML({ playing_game: 'Chess' }));
 check(gameRowHTML({}) === '' && gameRowHTML(null) === '', 'and no game at all renders no box');
 check(/esc\(u\.playing_game\)/.test(rows), 'the name is escaped, as every user-supplied string on the card is');
+
+console.log('\n[1b] the profile screen\'s "Playing X" line is the same clock');
+const pf = profileGameRowHTML({ playing_game: 'Chess', playing_since: NOW - 65000 });
+check(pf.includes('class="pf-playing"') && pf.includes('class="pf-playing-name"') && pf.includes('Playing Chess'),
+  'the profile line is its own row, with the name as the span that gives way', pf);
+check(pf.includes('class="game-clock"') && pf.includes('data-gtimer="' + (NOW - 65000) + '"') && pf.includes('>1:05<'),
+  'and the SAME clock span, so the two surfaces cannot drift apart', pf);
+check(profileGameRowHTML({ playing_game: 'Chess' }) === '<div class="pf-playing"><span class="pf-playing-name">Playing Chess</span></div>',
+  'a session with no recorded start shows the line and no clock', profileGameRowHTML({ playing_game: 'Chess' }));
+check(profileGameRowHTML({}) === '' && profileGameRowHTML(null) === '', 'and no game renders no line');
+check(gameClockHTML({}) === '' && gameClockHTML({ playing_since: 0 }) === '' && gameClockHTML(null) === '',
+  'the clock helper itself renders nothing without a start', [gameClockHTML({}), gameClockHTML({ playing_since: 0 })]);
+check(/esc\(u\.playing_game\)/.test(rows) && !/class="pf-playing"/.test(slice(servers, 'function gameRowHTML(u) {', 'function gameClockHTML')),
+  'the card row stays a card row — the two builders are separate, only the clock is shared', 'servers.js');
 
 console.log('\n[2] the formatter: one shape for a voice room and a game session');
 check(fmt.includes('data-gtimer') && fmt.includes('[data-vtimer]'),
@@ -125,17 +139,26 @@ for (const i of clears) {
 }
 check(!orphan, 'and EVERY one of them clears the clock with the game (a finished session must not leave a timer running)', orphan);
 
-console.log('\n[4] the card uses it, and follows a game starting or stopping while it is open');
+console.log('\n[4] both surfaces use it, and follow a game starting or stopping while they are open');
 check(pickers.includes('${u.playing_game ? gameRowHTML(u) : \'\'}'), 'openUserCard builds the box from the row helper', 'openUserCard');
 check(/function refreshUserCardGame\(u\)/.test(pickers) && /cur\.outerHTML = html/.test(pickers),
   'the open card can swap that one row in place', 'pickers.js');
-check(/try \{ refreshUserCardGame\(u\); \} catch \{\}/.test(socket),
-  'and socket.js calls it on user-updated — a friend launching a game must appear without reopening the card', 'socket.js');
-check(/\.uc-statustext\.ugame \.uc-game-name\{[^}]*text-overflow:ellipsis/.test(css), 'the name ellipsises in the stylesheet', 'styles.css');
-check(/\.uc-statustext\.ugame \.uc-game-timer\{[^}]*margin-left:auto/.test(css), 'and the clock is pushed to the box\'s right edge by CSS', 'styles.css');
-check(/\.uc-statustext\.ugame \.uc-game-timer\{[^}]*color:inherit/.test(css),
+check(pickers.includes('${profileGameRowHTML(u)}'), 'so does openProfileScreen, from the profile row helper', 'openProfileScreen');
+check(/function refreshProfileGame\(u\)/.test(pickers) && /String\(bd\.dataset\.uid\) !== String\(u\.id\)/.test(pickers)
+  && /const cur = body\.querySelector\('\.pf-playing:not\(\.ustream\)'\)/.test(pickers),
+  'and the open profile screen swaps the same row (matched to the person it is showing, never the streaming row)', 'pickers.js');
+check(/bd\.dataset\.uid = uid/.test(pickers), 'which is why the screen records who it is showing', 'pickers.js');
+check(/try \{ refreshUserCardGame\(u\); \} catch \{\}\n\s*try \{ refreshProfileGame\(u\); \} catch \{\}/.test(socket),
+  'socket.js calls both on user-updated — a friend launching a game must land on whichever surface is open', 'socket.js');
+check(/\.uc-statustext\.ugame \.uc-game-name\{[^}]*text-overflow:ellipsis/.test(css), 'the card name ellipsises in the stylesheet', 'styles.css');
+check(/\.uc-statustext\.ugame \.game-clock\{[^}]*margin-left:auto/.test(css), 'and the clock is pushed to the box\'s right edge by CSS', 'styles.css');
+check(/\.uc-statustext\.ugame \.game-clock\{[^}]*color:inherit/.test(css),
   'the clock wears the box\'s OWN ink — the box is its own backdrop, so the card\'s --uc-* tones stop at its edge', 'styles.css');
-check(/\.uc-statustext\.ugame \.uc-game-timer\{[^}]*tabular-nums/.test(css), 'with tabular figures, so the clock does not jitter as the digits change', 'styles.css');
+check(/\.uc-statustext\.ugame \.game-clock\{[^}]*tabular-nums/.test(css), 'with tabular figures, so the clock does not jitter as the digits change', 'styles.css');
+check(/\.pf-playing\{[^}]*display:flex/.test(css) && /\.pf-playing-name\{[^}]*text-overflow:ellipsis/.test(css),
+  'the profile line is a flex row too, and its name is what gives way', 'styles.css');
+check(/\.pf-playing \.game-clock\{[^}]*margin-left:auto/.test(css) && /\.pf-playing \.game-clock\{[^}]*color:inherit/.test(css),
+  'with the same clock on its right edge, in the line\'s own ink', 'styles.css');
 
 console.log('\n[5] the real stylesheet, in a real browser');
 const chrome = findChrome();
@@ -154,18 +177,22 @@ else {
     else {
       const out = JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
       const near = (a, b, tol) => Math.abs(a - b) <= tol;
-      check(/^\d+:\d\d$/.test(out.short.text), 'the short row\'s clock is running (M:SS from the shared ticker)', out.short);
-      check(/^\d+:\d\d$/.test(out.long.text), 'and so is the long row\'s', out.long);
-      check(near(out.short.timerRight, out.short.contentRight, 1.5),
-        'the clock sits at the box\'s right content edge', { timer: out.short.timerRight, edge: out.short.contentRight });
-      check(near(out.long.timerRight, out.short.timerRight, 1.5),
-        'and a name far too long for the card does NOT push it out of the box', { long: out.long.timerRight, short: out.short.timerRight });
-      check(out.long.timerLeft > out.long.nameLeft && out.long.nameRight <= out.long.timerLeft + 1,
-        'the name holds the left, the clock the right, in that order', out.long);
-      check(out.long.ellipsised, 'the long name ellipsises instead (it is what gives way)', out.long);
-      check(!out.short.ellipsised, 'while a name that fits is left alone', out.short);
+      // Both surfaces, same three claims: the clock is running, it sits on the
+      // row's right content edge, and a name too long gives way instead of
+      // shoving the clock off the row.
+      for (const [surface, s, l] of [['the card box', out.short, out.long], ['the profile line', out.pfShort, out.pfLong]]) {
+        check(/^\d+:\d\d$/.test(s.text) && /^\d+:\d\d$/.test(l.text),
+          surface + '\'s clock is running (M:SS, painted by the shared ticker)', [s.text, l.text]);
+        check(near(s.timerRight, s.contentRight, 1.5), surface + '\'s clock sits at its right content edge', { timer: s.timerRight, edge: s.contentRight });
+        check(near(l.timerRight, s.timerRight, 1.5),
+          'and a name far too long does NOT push it out — measured on ' + surface, { long: l.timerRight, short: s.timerRight });
+        check(l.timerLeft > l.nameLeft && l.nameRight <= l.timerLeft + 1,
+          surface + ' keeps the name left and the clock right, in that order', l);
+        check(l.ellipsised && !s.ellipsised, surface + '\'s long name ellipsises while a name that fits is left alone', { long: l.ellipsised, short: s.ellipsised });
+      }
       check(out.gone === null, 'a clock element with no start is removed by the ticker', out.gone);
-      check(out.since > 0 && out.painted >= 1, 'and the ticker really repainted the value it was handed', { since: out.since, painted: out.painted });
+      check(out.since > 0 && out.painted >= 1 && out.pfPainted >= 1,
+        'and the ticker really repainted the value it was handed, on both surfaces', { since: out.since, painted: out.painted, pf: out.pfPainted });
     }
   } finally {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
@@ -181,35 +208,47 @@ if (failures.length) {
 console.log(`All ${passed} checks passed.`);
 
 // The measuring page: the real stylesheet, the real ticker (extracted from
-// servers.js, so what runs here is what ships), and three game boxes — a short
-// name, one far too long for the card, and one with no start at all.
+// servers.js, so what runs here is what ships), and the row on BOTH surfaces —
+// a short name, one far too long, and (on the card) one with no start at all.
 function pageHtml(tickerSrc) {
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
 <link rel="stylesheet" href="file:///${ROOT.replace(/\\/g, '/')}/public/styles.css">
 <style>*{transition:none!important;animation:none!important}
 #usercard{width:260px;background:var(--panel-2)}
-.uc-body{padding:10px}</style></head><body>
+.uc-body{padding:10px}
+#profile{width:360px;background:var(--panel-2)}
+.pf-body{padding:10px}</style></head><body>
 <div id="usercard"><div class="uc-body">
   <div class="uc-sub">@jordan</div>
   <div class="uc-status"><span>Online</span></div>
-  <div class="uc-statustext ugame" id="short"><span class="gbadge"></span><span class="uc-game-name">Playing Chess</span><span class="uc-game-timer" data-gtimer="__SINCE__" title="Time in this session"></span></div>
-  <div class="uc-statustext ugame" id="long"><span class="gbadge"></span><span class="uc-game-name">Playing The Legend of Zelda: Breath of the Wild</span><span class="uc-game-timer" data-gtimer="__SINCE__" title="Time in this session"></span></div>
-  <div class="uc-statustext ugame" id="nostart"><span class="gbadge"></span><span class="uc-game-name">Playing Chess</span><span class="uc-game-timer" data-gtimer=""></span></div>
+  <div class="uc-statustext ugame" id="short"><span class="gbadge"></span><span class="uc-game-name">Playing Chess</span><span class="game-clock" data-gtimer="__SINCE__" title="Time in this session"></span></div>
+  <div class="uc-statustext ugame" id="long"><span class="gbadge"></span><span class="uc-game-name">Playing Sid Meier's Civilization VI: Gathering Storm</span><span class="game-clock" data-gtimer="__SINCE__" title="Time in this session"></span></div>
+  <div class="uc-statustext ugame" id="nostart"><span class="gbadge"></span><span class="uc-game-name">Playing Chess</span><span class="game-clock" data-gtimer=""></span></div>
+</div></div>
+<div id="profile"><div class="pf-body">
+  <div class="pf-status"><span>Online</span></div>
+  <div class="pf-playing" id="pfshort"><span class="pf-playing-name">Playing Chess</span><span class="game-clock" data-gtimer="__SINCE__" title="Time in this session"></span></div>
+  <div class="pf-playing" id="pflong"><span class="pf-playing-name">Playing Sid Meier's Civilization VI: Gathering Storm</span><span class="game-clock" data-gtimer="__SINCE__" title="Time in this session"></span></div>
 </div></div>
 <script>
 window.S = { voiceSince: new Map() };
 window.__painted = 0;
+window.__pfPainted = 0;
 eval(${JSON.stringify(tickerSrc)});
-// Count the ticker's writes to this page's clock, so "the real interval ran"
+// Count the ticker's writes to each surface's clock, so "the real interval ran"
 // is measured and not assumed.
-const clock = document.querySelector('#long .uc-game-timer');
-new MutationObserver(() => { window.__painted++; }).observe(clock, { childList: true, characterData: true, subtree: true });
+const count = (sel, key) => {
+  const el = document.querySelector(sel);
+  new MutationObserver(() => { window[key]++; }).observe(el, { childList: true, characterData: true, subtree: true });
+};
+count('#long .game-clock', '__painted');
+count('#pflong .game-clock', '__pfPainted');
 const rect = (el) => el.getBoundingClientRect();
-const measure = (sel) => {
-  const box = document.querySelector(sel);
+const measure = (boxSel, nameSel) => {
+  const box = document.querySelector(boxSel);
   const cs = getComputedStyle(box);
-  const t = box.querySelector('.uc-game-timer');
-  const n = box.querySelector('.uc-game-name');
+  const t = box.querySelector('.game-clock');
+  const n = box.querySelector(nameSel);
   return {
     text: t ? t.textContent : null,
     timerRight: t ? rect(t).right : null,
@@ -223,10 +262,16 @@ const measure = (sel) => {
 // AFTER the ticker has had a few seconds of virtual time: measuring at parse
 // time would read the pre-tick DOM and prove nothing about the clock.
 setTimeout(() => {
-  const out = { short: measure('#short'), long: measure('#long') };
-  out.gone = document.querySelector('#nostart .uc-game-timer') ? 'present' : null;
-  out.since = Number(document.querySelector('#long .uc-game-timer').dataset.gtimer);
+  const out = {
+    short: measure('#short', '.uc-game-name'),
+    long: measure('#long', '.uc-game-name'),
+    pfShort: measure('#pfshort', '.pf-playing-name'),
+    pfLong: measure('#pflong', '.pf-playing-name'),
+  };
+  out.gone = document.querySelector('#nostart .game-clock') ? 'present' : null;
+  out.since = Number(document.querySelector('#long .game-clock').dataset.gtimer);
   out.painted = window.__painted;
+  out.pfPainted = window.__pfPainted;
   document.title = JSON.stringify(out);
 }, 2500);
 </script></body></html>`.replace(/__SINCE__/g, String(Date.now() - 65000));

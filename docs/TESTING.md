@@ -198,23 +198,26 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   chip mean "you have this", in both the manager's toggle and a viewer's plain
   span. The game row it measures now includes the session clock, which must read
   the box's own ink (not a card tone) at one fixed dimming on either ink.
-  `node scripts/test-game-session-timer.js` covers the clock in the user card's
-  "Playing <game>" box — how long the CURRENT session has run, on the right of
-  the box (offline, plus a headless-Chrome section that skips without Chrome).
-  It runs the real `fmtElapsed`/`gameRowHTML` out of `servers.js` (the real
-  ticker too, extracted and driven in the page): M:SS then H:MM:SS, hours never
-  wrapping, a clock only when the server knows the start, and the row carrying
-  that start (`users.playing_since`) rather than anything a client guessed. It
-  then scans `server.js` for the invariant behind it — a beacon stamps the start
-  ONCE per game (a later beacon of the same game must not restart it, a game
-  that changed or a stored one predating the column gets one, and every single
-  `playing_game = NULL` path clears the clock with it) — and measures the
-  rendered row in Chrome at a card width: the clock sits on the box's right
-  content edge whether the game name is short or far too long, because the name
-  is what ellipsises. Re-run it after touching `gameRowHTML`, the shared
-  `data-vtimer`/`data-gtimer` ticker, `users.playing_since`, the watcher beacon
-  routes, or the card's game row; `node scripts/test-games-manager.js` covers the
-  same clock end to end against a throwaway database.
+  `node scripts/test-game-session-timer.js` covers the clock on the "Playing
+  <game>" line — how long the CURRENT session has run, at the right edge of the
+  row, on BOTH surfaces that say it: the user card's box and the profile screen's
+  line (offline, plus a headless-Chrome section that skips without Chrome).
+  It runs the real `fmtElapsed`/`gameRowHTML`/`gameClockHTML`/`profileGameRowHTML`
+  out of `servers.js` (the real ticker too, extracted and driven in the page):
+  M:SS then H:MM:SS, hours never wrapping, a clock only when the server knows the
+  start, the two rows sharing that one clock span, and each carrying
+  `data-gtimer` (the server's `users.playing_since`) rather than anything a client
+  guessed. It then scans `server.js` for the invariant behind it — a beacon stamps
+  the start ONCE per game (a later beacon of the same game must not restart it, a
+  game that changed or a stored one predating the column gets one, and every
+  single `playing_game = NULL` path clears the clock with it) — and measures both
+  rendered rows in Chrome at a card and a profile width: the clock sits on the
+  row's right content edge whether the game name is short or far too long,
+  because the name is what ellipsises. Re-run it after touching `gameRowHTML`/
+  `profileGameRowHTML`/`gameClockHTML`, the shared `data-vtimer`/`data-gtimer`
+  ticker, `users.playing_since`, the profile screen's game line, the watcher
+  beacon routes, or the card's game row; `node scripts/test-games-manager.js`
+  covers the same clock end to end against a throwaway database.
   `node scripts/test-presence-widget.js` covers the presence switcher that now
   lives on your own user card as a vertical menu (offline; it runs the real
   `presenceWidgetHTML`, `statusLineHTML`, `presenceDurationSel`, `choosePresence`
