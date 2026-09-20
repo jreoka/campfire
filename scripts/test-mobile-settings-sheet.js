@@ -126,6 +126,16 @@ out.menu = { rail: outer(rail).display, body: outer(body).display, detailHead: o
 // to take the header's spacer with it (the ✕ sat against the title).
 const menuHead = sb.querySelector('.set-mhead');
 out.menuHeadRect = { title: rect(sb.querySelector('.set-mhead-title')), close: rect(menuClose), head: rect(menuHead) };
+// A title has to clear the PANEL's top edge by the same amount the header's
+// divider clears it below — that is what the eye compares. The rail's own top
+// padding used to sit ABOVE the header (the rail's first child), which is what
+// made the row read lopsided on a phone.
+const panelTop = Math.round(panel.getBoundingClientRect().y);
+out.titleGaps = {
+  above: Math.round(sb.querySelector('.set-mhead-title').getBoundingClientRect().y) - panelTop,
+  below: out.menuHeadRect.head.y + out.menuHeadRect.head.h - 1 - (out.menuHeadRect.title.y + out.menuHeadRect.title.h),
+  panelTop: out.menuHeadRect.head.y - panelTop,
+};
 setSettingsView('section');
 out.section = { rail: outer(rail).display, body: outer(body).display, detailHead: outer(detailHead).display };
 out.detailRect = { back: rect(back), close: rect(closeDetail), head: rect(detailHead) };
@@ -162,6 +172,7 @@ function main() {
   // The rail's own trailing spacer is a DIRECT child of .set-tabs; the menu
   // header's spacer sits deeper and is what holds the ✕ at the right edge.
   check(/#settings-backdrop \.set-tabs>\.spacer\{display:none\}/.test(css), 'only the rail spacer retires on mobile (not the menu header\'s)');
+  check(/#settings-backdrop \.set-tabs\{gap:\.25rem;padding:0 \.7rem 1rem\}/.test(css), 'the mobile rail adds no padding above its own header');
   check(settings.includes("setSettingsTab(b.dataset.tab);") && settings.includes("setSettingsView('section')"), 'a section row opens that section');
   check(settings.includes("if (settingsBack) settingsBack.onclick = () => setSettingsView('menu');"), 'the back button returns to the menu');
   check(settings.includes("['settings-close-menu', 'settings-close-detail']"), 'both mobile close buttons are wired');
@@ -203,6 +214,8 @@ function main() {
     check(phone.menu.menuClose !== 'none' && phone.menu.railClose === 'none', 'the menu header owns the close button', phone.menu);
     check(phone.menuHeadRect.close.x > phone.menuHeadRect.head.x + phone.menuHeadRect.head.w / 2, 'and the menu ✕ sits in the right half of the upper bar', phone.menuHeadRect);
     check(phone.menuHeadRect.close.x + phone.menuHeadRect.close.w <= phone.menuHeadRect.head.x + phone.menuHeadRect.head.w + 1, 'fully on screen (no clipped ✕)', phone.menuHeadRect);
+    check(phone.titleGaps.panelTop <= 1, 'the menu header starts at the panel top edge (no rail padding above it)', phone.titleGaps);
+    check(Math.abs(phone.titleGaps.above - phone.titleGaps.below) <= 2, 'and the title is spaced the same above as below', phone.titleGaps);
     check(phone.section.rail === 'none' && phone.section.body !== 'none' && phone.section.detailHead !== 'none', 'picking a section shows it alone', phone.section);
     check(phone.detailRect.back.x < phone.detailRect.head.w / 2 && phone.detailRect.close.x > phone.detailRect.head.w / 2, 'back on the left half, close on the right half', phone.detailRect);
     check(phone.detailRect.close.x + phone.detailRect.close.w <= phone.detailRect.head.w + 1, 'and the header fits the viewport (no clipped close)', phone.detailRect);

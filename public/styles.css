@@ -3899,7 +3899,14 @@ html.wrapper-app .msg .text,html.wrapper-app .msg .text *,html.wrapper-app input
    page it is a menu, so it gets menu rows: a surface, an icon, and a chevron
    that says "this opens something". */
 @media (max-width:700px),(max-height:560px) and (pointer:coarse){
-  #settings-backdrop .set-tabs{gap:.25rem;padding:.55rem .7rem 1rem}
+  /* No top padding: the mobile header (`.set-mhead`) is the FIRST child of this
+     rail, so a top padding here is padding ABOVE the header, on top of the
+     header's own symmetric .5rem — the "Settings" title ended up with ~9px more
+     space above it than below it (measured off a phone screenshot: 24 vs 14).
+     The header carries its own spacing, exactly like the section view's
+     `.set-mhead-detail`, which is a direct child of the panel and never had
+     this padding. */
+  #settings-backdrop .set-tabs{gap:.25rem;padding:0 .7rem 1rem}
   #settings-backdrop .set-tab{
     display:flex;align-items:center;gap:.85rem;min-height:52px;padding:.7rem .9rem;
     background:var(--panel);border-radius:12px;font-size:.95rem;font-weight:650;color:var(--text);
