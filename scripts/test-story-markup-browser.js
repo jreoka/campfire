@@ -401,6 +401,10 @@ async function main() {
     console.log('\n[8] post it, and the markup survives the server');
     const posted = await evaluate(`(async () => {
       document.querySelector('#sc-next').click();
+      // The send screen opens with nothing picked, so aim it at friends first
+      // (the gate itself is pinned in test-story-audience).
+      sc.audFriends = true;
+      renderStoryAudience();
       const post = document.querySelector('#sc-post');
       post.click();
       const t0 = performance.now();
@@ -566,6 +570,9 @@ async function main() {
     await sleep(3400);
     const textOnlyPosted = await evaluate(`(async () => {
       document.querySelector('#sc-next').click();
+      // Nothing is picked by default any more — this one goes to friends.
+      sc.audFriends = true;
+      renderStoryAudience();
       document.querySelector('#sc-post').click();
       const t0 = performance.now();
       let sawLabel = '';
@@ -583,7 +590,7 @@ async function main() {
       if (!it) return { error: 'no_text_only_story', seen: items.map((i) => (i.overlays || []).map((o) => o.text)) };
       // A story post is servable as it lands (there is no scan gate on an upload
       // any more — see virus-scan.js), so the first request is normally a 200.
-      // `storyThumbRetry` is still the belt-and-braces for a rendering that races
+      // storyThumbRetry is still the belt-and-braces for a rendering that races
       // the row, so note what the first request saw and give the retry time to
       // come back.
       const firstStatus = await (await fetch(it.url)).status;
@@ -620,8 +627,15 @@ async function main() {
     check(ringShot.wrapper && ringShot.loaded, 'a story with markup gets the composited ring thumbnail', ringShot);
     check(ringShot.text === 'purple vibes', 'the ring shows the text, not just the background', ringShot);
     check(ringShot.items === 1 && ringShot.textPx >= 3 && ringShot.thumbPx > 40, 'sized to the ring', ringShot);
-    check(ringShot.covers && ringShot.overflows && ringShot.centred,
+    check(ringShot.covers && ringShot.centred,
       'laid over the background the way the ring crops it (cover, centred)', ringShot);
+    // …but the layer can no longer HANG OFF it. ovFitLayer clamps the fitted
+    // box to the media's own layout rect (the ovLayoutRect intersection added
+    // for the story center's hero banner, after this check was written), and in
+    // the ring that rect IS the wrap — so a square ring over a portrait
+    // background gets a flush layer, and `overflows` is structurally false
+    // here. Asserting the overhang was the stale half of this check.
+    check(!ringShot.overflows, 'and the markup stays inside the circle rather than off its edge', ringShot);
 
     console.log('\n[12] a story sent privately keeps its markup in the one-shot player');
     const vonce = await evaluate(`(async () => {

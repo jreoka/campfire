@@ -1845,12 +1845,22 @@ async function openStoryComposer(opts = {}) {
     // audiences: friends / servers (multi-select). Instance-wide "everyone"
     // was removed on the owner's request; the read side still serves rows an
     // old client posted so those finish their 24h instead of vanishing.
-    audFriends: true, audServers: [], audUsers: [],
+    // The send screen opens with NOTHING picked (owner request): a story
+    // started from the + menu — or the rail's ＋, or the story center — has to
+    // be aimed at somebody, so `#sc-post` sits disabled until at least one
+    // destination is on. The single exception is a view-once started from a
+    // 1:1 DM: that person IS the post, and arrives picked (viewOncePrePick →
+    // voIds, below).
+    audFriends: false, audServers: [], audUsers: [],
     // view-once mode: pick friends instead of audiences, sends one DM each
     vo: !!opts.viewOnce, voIds: [],
     micCtx: null, micGain: null, micAnalyser: null, micTimer: null, micSource: null, micRaw: null,
   };
-  if (opts.serverId) { sc.audServers = [opts.serverId]; sc.audFriends = true; }
+  // `opts.serverId` still says WHERE the post was started from (a server
+  // channel, a server's stories sheet), but it deliberately does not pre-pick
+  // that server any more: the send screen opens empty for every entry, and the
+  // picker lists every server the account is in anyway. The view-once peer
+  // below is the only pick the composer makes on the reader's behalf.
   if (opts.viewOnce) {
     try { await ensureFriends(); } catch {}
     // Opened from a DM, that person is who the view-once was aimed at: the
@@ -3436,6 +3446,11 @@ async function storyPostNow() {
   if (!sc || sc.busy) return;
   const st = sc;
   const btn = $('#sc-post');
+  // At least one destination, always (owner request). The send screen opens
+  // with an empty picker and #sc-post is disabled while nothing is on, so this
+  // is the same rule stated where the upload starts rather than the only place
+  // it is enforced — a story with no audience has nowhere to go.
+  if (storyAudCount() === 0) { storySetStep('audience'); return; }
   // The shot's JPEG may still be encoding (see storyJpegBlob): Next no longer
   // waits for it, so this is where the wait belongs — at the last tap, with the
   // frozen frame still on screen. "Saving…" is honest about what is happening.

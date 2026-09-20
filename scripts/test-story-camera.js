@@ -222,7 +222,9 @@ async function main() {
       && want.height.ideal === 1080 && want.height.min === 720
       && want.frameRate && want.frameRate.ideal === 30,
       'the camera is asked for 1080p with a 720p floor (never a silent 640x480 default)', want);
-    const retries = (opened.seen || []).slice(1);
+    // Only the CAMERA asks are retries — the composer warms the mic in the same
+    // breath (storyEnsureMic), and an audio-only request has no `video` at all.
+    const retries = (opened.seen || []).slice(1).filter((c) => c.video);
     check(retries.length <= 1 && retries.every((c) => !(c.video.width || {}).min),
       'a camera that cannot meet the floor falls back to a plain 720p ideal request, not to nothing',
       (opened.seen || []).map((c) => c.video));
@@ -359,6 +361,10 @@ async function main() {
       if (!(await wait(() => sc && sc.camReady, 12000))) return { camReady: false };
       document.querySelector('#sc-shutter').click();
       const raced = { blobYet: !!sc.blob, step: sc.step, nextLabel: document.querySelector('#sc-next').textContent };
+      // The send screen starts with nothing picked (see test-story-audience),
+      // so aim this one at friends before posting.
+      sc.audFriends = true;
+      renderStoryAudience();
       storySetStep('audience');                    // the reader moves on at once
       const p = storyPostNow();                    // …and posts while encoding
       const during = { label: document.querySelector('#sc-post').textContent };

@@ -15,6 +15,12 @@
 // (skips without Chrome): the menu lists friends, servers and specific friends
 // and does not contain an "Everyone" row at all.
 //
+// The send screen also opens EMPTY now (owner ask): a story started from the
+// + menu arrives with nothing picked, Post stays disabled until at least one
+// destination is on, and the only pick the composer ever makes for the reader
+// is the view-once DM's own peer. Both halves are pinned here and in
+// test-viewonce-pick.js.
+//
 // Usage: node scripts/test-story-audience.js
 
 'use strict';
@@ -72,23 +78,30 @@ if (!/function renderStoryAudience/.test(menuSrc)) {
 const svgSrc = slice(stories, 'const svSvg = {', '};') + '};';
 const countSrc = slice(stories, 'function storyAudCount() {', 'function renderStoryAudience() {');
 
-function pageHtml() {
+function pageHtml(seed) {
   const pick = (/<div class="sc-pick hidden" id="sc-pick">[\s\S]*?<div id="sc-pick-list" class="sc-pick-list"><\/div>/.exec(index) || [''])[0];
+  const bar2 = (/<div class="sc-bar hidden" id="sc-bar2">[\s\S]*?<\/div>/.exec(index) || [''])[0];
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
 <link rel="stylesheet" href="file:///${ROOT.replace(/\\/g, '/')}/public/styles.css"></head><body>
 ${pick}
+${bar2}
 <script>
 window.$ = (s) => document.querySelector(s);
 window.paintAvatar = () => {};
 window.S = { friends: { friends: [{ id: 'f1', display_name: 'Ada', username: 'ada' }, { id: 'f2', display_name: 'Bo', username: 'bo' }] },
   servers: [{ id: 's1', name: 'Studio' }, { id: 's2', name: 'Treehouse' }] };
-window.sc = { audFriends: true, audServers: ['s1'], audUsers: ['f2'], vo: false, voIds: [] };
+window.sc = ${JSON.stringify(seed || { audFriends: true, audServers: ['s1'], audUsers: ['f2'], vo: false, voIds: [] })};
 ${svgSrc}
 ${countSrc}
 ${menuSrc}
 try {
 const out = {};
+const postState = () => {
+  const b = document.getElementById('sc-post');
+  return { label: b ? b.textContent : '', disabled: !!(b && b.disabled), count: (document.getElementById('sc-pick-count') || {}).textContent || '' };
+};
 renderStoryAudience(); // the composer paints the menu when the step opens
+out.start = postState();
 out.rows = [...document.querySelectorAll('#sc-pick-list .sc-pick-row')].map((b) => ({
   name: (b.querySelector('.sc-pick-name') || {}).textContent || '',
   sub: (b.querySelector('.sc-pick-sub') || {}).textContent || '',
@@ -105,8 +118,10 @@ out.afterToggle = {
   audFriends: window.sc.audFriends,
   rows: [...document.querySelectorAll('#sc-pick-list .sc-pick-row')].map((b) => b.classList.contains('on')),
 };
+out.afterPick = postState();
 allFriends.click();
 out.restored = window.sc.audFriends;
+out.afterUnpick = postState();
 // Discarding "All friends" + both servers leaves only the private friend → the
 // post is a view-once DM, never an instance-wide broadcast.
 window.sc.audFriends = false; window.sc.audServers = []; window.sc.audUsers = ['f2'];
@@ -158,27 +173,37 @@ function main() {
   check(/if \(a\.kind === 'everyone'\) return true; \/\/ legacy instance-wide row/.test(server), 'visibility still understands the kind');
   check(/shared\.everyone\) bits\.push\('Everyone'\)/.test(stories), 'an old post still says who could see it');
 
+  console.log('\n[5] the send screen opens with nothing picked');
+  const seed = (/audFriends: false, audServers: \[\], audUsers: \[\]/.exec(stories) || [''])[0];
+  check(!!seed, 'the composer seeds an empty audience (no default selection)', seed || 'the seed line moved');
+  check(!/if \(opts\.serverId\) \{ sc\.audServers/.test(stories), 'starting from a server channel no longer pre-picks that server');
+  check(!/sc\.audUsers = \[opts|sc\.audUsers = \[S\./.test(stories), 'and nothing else pre-picks a private friend');
+  check(/sc\.voIds = viewOncePrePick\(opts\.viewOnceUser/.test(stories), 'the view-once DM peer is the ONE pick the composer makes for the reader');
+  check(/post\.disabled = !n \|\| !!sc\.busy;/.test(stories), 'Post is disabled while no destination is picked');
+  check(/if \(storyAudCount\(\) === 0\) \{ storySetStep\('audience'\); return; \}/.test(stories), 'and the post path itself refuses an empty audience');
+
   const chrome = findChrome();
   if (!chrome) {
     console.log('\n[test] SKIP browser half: no Chrome/Edge found (set CHROME_PATH)');
   } else {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-story-aud-'));
     try {
-      const htmlPath = path.join(dir, 'page.html');
-      fs.writeFileSync(htmlPath, pageHtml());
-      const r = spawnSync(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
-        '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof'), '--window-size=420,760',
-        '--virtual-time-budget=2500', '--dump-dom', 'file:///' + htmlPath.replace(/\\/g, '/')],
-        { encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 });
-      const m = /<title>([\s\S]*?)<\/title>/.exec(r.stdout || '');
-      if (!m) {
-        check(false, 'the audience-menu harness ran', { status: r.status });
+      const run = (seed, tag) => {
+        const htmlPath = path.join(dir, tag + '.html');
+        fs.writeFileSync(htmlPath, pageHtml(seed));
+        const r = spawnSync(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+          '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof-' + tag), '--window-size=420,760',
+          '--virtual-time-budget=2500', '--dump-dom', 'file:///' + htmlPath.replace(/\\/g, '/')],
+          { encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 });
+        const m = /<title>([\s\S]*?)<\/title>/.exec(r.stdout || '');
+        if (!m) return { harness: { status: r.status } };
+        return JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
+      };
+      const out = run(null, 'picked');
+      if (out.harness || out.error) {
+        check(false, 'the audience-menu harness ran', out.harness || out.error);
       } else {
-        const out = JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
-        console.log('\n[5] the menu itself (headless Chrome)');
-        if (out.error) {
-          check(false, 'the audience-menu harness ran', out.error);
-        } else {
+        console.log('\n[6] the menu itself (headless Chrome)');
         check(out.sections.join('|') === 'AUDIENCE|SERVERS|SEND PRIVATELY', 'the sections are audience / servers / private friends', out.sections);
         check(out.rows.map((x) => x.name).join('|') === 'All friends|Studio|Treehouse|Ada|Bo', 'and the rows are exactly friends, the servers, and the friends list', out.rows.map((x) => x.name));
         check(!out.rows.some((r) => r.name === 'Everyone' || /Any account on this Campfire/.test(r.sub)), 'no row offers the instance-wide audience', out.rows);
@@ -187,7 +212,19 @@ function main() {
         check(out.afterToggle.audFriends === false && out.afterToggle.rows[0] === false && out.afterToggle.rows[1] === true, 'tapping All friends turns just that row off', out.afterToggle);
         check(out.restored === true, 'and tapping it again turns it back on');
         check(/'Everyone in this server'|'Any account/.test(stories) && /'Everyone in this server'/.test(stories), 'the server rows still read "Everyone in this server" (room scope, not a broadcast)');
-        }
+      }
+      // A composer opened the way every entry opens one now: nothing picked.
+      const empty = run({ audFriends: false, audServers: [], audUsers: [], vo: false, voIds: [] }, 'empty');
+      if (empty.harness || empty.error) {
+        check(false, 'the empty-send-screen harness ran', empty.harness || empty.error);
+      } else {
+        console.log('\n[7] an untouched send screen (headless Chrome)');
+        check(empty.rows.every((r) => !r.on && r.pressed === 'false'), 'every row arrives off', empty.rows.map((x) => x.on));
+        check(empty.start.count === 'None selected', 'the count says so', empty.start.count);
+        check(empty.start.disabled && empty.start.label === 'Post story', 'and Post story is disabled — nothing can be posted yet', empty.start);
+        check(empty.afterToggle.audFriends === true && empty.afterToggle.rows[0] === true, 'picking a destination turns it on', empty.afterToggle);
+        check(!empty.afterPick.disabled && empty.afterPick.count === '1 selected', 'which enables the post', empty.afterPick);
+        check(empty.afterUnpick.disabled && empty.afterUnpick.count === 'None selected', 'and un-picking the last one closes the gate again', empty.afterUnpick);
       }
     } finally {
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
