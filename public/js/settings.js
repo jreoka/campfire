@@ -361,9 +361,12 @@ $('#srv-settings-close').onclick = () => closeServerSettings();
 $('#srv-settings-backdrop').addEventListener('click', (e) => { if (e.target.id === 'srv-settings-backdrop') closeServerSettings(); });
 $('#chan-settings-close').onclick = () => closeChannelSettings();
 $('#chan-settings-backdrop').addEventListener('click', (e) => { if (e.target.id === 'chan-settings-backdrop') closeChannelSettings(); });
-async function uploadImage(url, file) {
+// `fields` are extra multipart parts beside the file, which is how the crop
+// stage posts the rectangle it framed (public/js/crop.js).
+async function uploadImage(url, file, fields) {
   const fd = new FormData();
   fd.append('file', file);
+  for (const k of Object.keys(fields || {})) fd.append(k, String(fields[k]));
   const res = await fetch(url, { method: 'POST', headers: store.token ? { Authorization: 'Bearer ' + store.token } : {}, body: fd });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'upload_failed');
@@ -371,6 +374,31 @@ async function uploadImage(url, file) {
 }
 $('#set-avatar-btn').onclick = () => $('#set-avatar-file').click();
 $('#set-banner-btn').onclick = () => $('#set-banner-file').click();
+// ---------- avatar / banner / sidebar banner: the crop stage ----------
+// All three pictures are FRAMED before they are stored, whichever way they
+// arrive — the Upload buttons, a click on the preview, and the "Use GIF" button
+// all land in openCropStage (public/js/crop.js), which is also the only place
+// that knows the shape each surface really has. The bytes are cropped by the
+// server (ffmpeg, image-crop.js) because an animated GIF has to stay animated.
+const PROFILE_LABEL = { avatar: 'Avatar', banner: 'Banner', sidebar: 'Sidebar banner' };
+// Repaint everything that shows the picture that was just set (or removed).
+function profileMediaApplied(kind, user, quiet) {
+  S.me = { ...S.me, ...user };
+  paintMe(); renderMembers();
+  if (kind === 'avatar') { paintAvatar($('#set-avatar-prev'), S.me); loadMediaHist(); }
+  else if (kind === 'banner') { $('#set-banner-prev').style.backgroundImage = S.me.banner_url ? `url('${S.me.banner_url}')` : ''; loadMediaHist(); }
+  else $('#set-sidebar-prev').style.backgroundImage = S.me.sidebar_banner_url ? `url('${S.me.sidebar_banner_url}')` : '';
+  if (!quiet) toast(PROFILE_LABEL[kind] + ' updated');
+}
+function cropProfileMedia(kind, source) {
+  openCropStage({
+    kind,
+    file: source && source.file,
+    url: source && source.url,
+    endpoint: `/api/me/${kind}/crop`,
+    onDone: (data) => { if (data && data.user) profileMediaApplied(kind, data.user); },
+  });
+}
 // dedicated centered GIF chooser for profile media (avatar / banner / sidebar)
 async function openProfileGifPicker(kind) {
   const title = kind === 'avatar' ? 'Choose an avatar GIF' : kind === 'banner' ? 'Choose a banner GIF' : 'Choose a sidebar GIF';
@@ -390,7 +418,10 @@ async function openProfileGifPicker(kind) {
       b.onclick = async () => {
         $('#modal-backdrop').classList.add('hidden');
         const url = g.gif || g.mp4;
-        if (url) await applyProfileUrl(kind, url);
+        // Picking a GIF no longer sets it on the spot: it opens the crop stage
+        // with the GIF in it, so an animated picture is framed the same way an
+        // upload is (and keeps animating while you frame it).
+        if (url) cropProfileMedia(kind, { url });
       };
       grid.appendChild(b);
     }
@@ -415,45 +446,36 @@ $('#set-banner-gif').onclick = () => openProfileGifPicker('banner');
 $('#set-sidebar-btn').onclick = () => $('#set-sidebar-file').click();
 $('#set-sidebar-gif').onclick = () => openProfileGifPicker('sidebar');
 $('#set-sidebar-prev').onclick = () => $('#set-sidebar-file').click();
-$('#set-sidebar-file').addEventListener('change', async (e) => {
+$('#set-sidebar-file').addEventListener('change', (e) => {
   const f = e.target.files[0]; e.target.value = '';
-  if (!f) return;
-  try {
-    const { user } = await uploadImage('/api/me/sidebar-banner', f);
-    S.me = { ...S.me, ...user };
-    paintMe(); renderMembers();
-    $('#set-sidebar-prev').style.backgroundImage = S.me.sidebar_banner_url ? `url('${S.me.sidebar_banner_url}')` : '';
-    toast('Sidebar banner updated');
-  } catch (err) { toast('Upload failed: ' + prettyError(err.message)); }
+  if (f) cropProfileMedia('sidebar', { file: f });
 });
 $('#set-sidebar-rm').onclick = async () => {
   try {
     const { user } = await api('/api/me/sidebar-banner', { method: 'DELETE' });
-    S.me = { ...S.me, ...user };
-    paintMe(); renderMembers();
-    $('#set-sidebar-prev').style.backgroundImage = '';
+    profileMediaApplied('sidebar', user, true);
   } catch { toast('Remove failed'); }
 };
 $('#set-avatar-prev').onclick = () => $('#set-avatar-file').click();
 $('#set-banner-prev').onclick = () => $('#set-banner-file').click();
-$('#set-avatar-file').addEventListener('change', async (e) => {
+$('#set-avatar-file').addEventListener('change', (e) => {
   const f = e.target.files[0]; e.target.value = '';
-  if (!f) return;
-  try { const { user } = await uploadImage('/api/me/avatar', f); S.me = { ...S.me, ...user }; paintMe(); paintAvatar($('#set-avatar-prev'), S.me); loadMediaHist(); toast('Avatar updated'); }
-  catch (err) { toast('Avatar failed: ' + prettyError(err.message)); }
+  if (f) cropProfileMedia('avatar', { file: f });
 });
-$('#set-banner-file').addEventListener('change', async (e) => {
+$('#set-banner-file').addEventListener('change', (e) => {
   const f = e.target.files[0]; e.target.value = '';
-  if (!f) return;
-  try { const { user } = await uploadImage('/api/me/banner', f); S.me = { ...S.me, ...user }; $('#set-banner-prev').style.backgroundImage = `url('${S.me.banner_url}')`; loadMediaHist(); toast('Banner updated'); }
-  catch (err) { toast('Banner failed: ' + prettyError(err.message)); }
+  if (f) cropProfileMedia('banner', { file: f });
 });
+// Removing repaints exactly what setting does (profileMediaApplied), minus the
+// toast — the sidebar banner already did this, and the other two now agree with
+// it: the member list is a second copy of these pictures and has to hear about
+// a removal as well as a change.
 $('#set-avatar-rm').onclick = async () => {
-  try { const { user } = await api('/api/me/avatar', { method: 'DELETE' }); S.me = { ...S.me, ...user }; paintMe(); paintAvatar($('#set-avatar-prev'), S.me); }
+  try { const { user } = await api('/api/me/avatar', { method: 'DELETE' }); profileMediaApplied('avatar', user, true); }
   catch { toast('Remove failed'); }
 };
 $('#set-banner-rm').onclick = async () => {
-  try { const { user } = await api('/api/me/banner', { method: 'DELETE' }); S.me = { ...S.me, ...user }; $('#set-banner-prev').style.backgroundImage = ''; }
+  try { const { user } = await api('/api/me/banner', { method: 'DELETE' }); profileMediaApplied('banner', user, true); }
   catch { toast('Remove failed'); }
 };
 function rememberedNameColors() { try { return JSON.parse(localStorage.getItem('cf_namecolors') || 'null') || {}; } catch { return {}; } }

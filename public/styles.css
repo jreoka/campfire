@@ -976,6 +976,52 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 #toast{position:fixed;left:50%;bottom:calc(1.2rem + var(--safe-b));transform:translateX(-50%);background:#e8eaf0;color:#141414;padding:.7rem 1.15rem;border-radius:10px;z-index:500;font-size:.86rem;font-weight:650;max-width:90vw;display:flex;align-items:center;gap:.6rem}
 #toast .btn.small.primary{background:#141414;border-color:transparent;color:#e8eaf0}
 
+/* ---------- profile-media crop stage (public/js/crop.js) ----------
+   The three profile pictures are framed here before their bytes are stored: the
+   render sites crop with `cover` (and a circle for an avatar), so the only place
+   the framing can be CHOSEN is this window.
+
+   The stage IS the result: #crop-stage is the window, and the picture inside it
+   is a background layer whose size/position the module rewrites, so what you see
+   in the box is exactly the rectangle that gets cropped — and a GIF keeps
+   animating while you frame it (a canvas or a frozen first frame would not).
+   190 puts this above the dialog layer (160, or 175 for a dialog over a person
+   card) because it is opened FROM settings and FROM the GIF picker, and below
+   #lightbox (200), the menus (400) and the toast (500). */
+#crop-backdrop{position:fixed;inset:0;top:var(--vv-top,0px);bottom:var(--kb,0px);background:rgba(4,6,11,.78);display:flex;align-items:center;align-items:safe center;justify-content:center;z-index:190;padding:1rem;overflow-y:auto}
+.crop-panel{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:14px;padding:1.05rem 1.25rem 1.15rem;width:100%;max-width:560px}
+.crop-head{display:flex;align-items:center;gap:.55rem;margin-bottom:.8rem}
+.crop-head strong{font-size:1.05rem;font-weight:800;letter-spacing:-.01em}
+/* touch-action:none is what makes a one-finger drag PAN the picture instead of
+   scrolling the panel; the module reads pointer events, never touch events.
+   The hairline ring is an INSET OUTLINE rather than a border on purpose: a
+   border is inside the box (box-sizing:border-box) while a background paints in
+   the padding box, so a 1px border would make the window the module measured 2px
+   bigger than the window the picture is actually drawn in — the cover fit and
+   the crop rectangle would both be off by that much. An outline takes no space,
+   so measured width === painted width. */
+.crop-stage{margin:0 auto;outline:1px solid var(--line-soft);outline-offset:-1px;border-radius:12px;background-color:var(--inset);background-repeat:no-repeat;overflow:hidden;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.crop-stage.grabbing{cursor:grabbing}
+.crop-zoombar{display:flex;align-items:center;gap:.6rem;margin:.8rem 0 0}
+.crop-zicon{display:flex;color:var(--faint)}
+#crop-zoom{flex:1;height:1.1rem;accent-color:var(--accent);cursor:pointer}
+.crop-foot{display:flex;gap:1.1rem;align-items:flex-end;margin-top:.95rem}
+.crop-prevwrap{flex:1;min-width:0}
+/* The preview carries the SAME transform as the window, scaled to its own box,
+   so it is the crop rather than a second look at the original. Outline, not
+   border, for the same measured-box reason as .crop-stage. */
+.crop-preview{margin-top:.4rem;outline:1px solid var(--line-soft);outline-offset:-1px;border-radius:10px;background-color:var(--inset);background-repeat:no-repeat;overflow:hidden}
+.crop-preview.k-avatar{border-radius:50%}
+.crop-actions{display:flex;gap:.5rem;flex:0 0 auto}
+#crop-prevlabel{margin:0}
+#crop-hint{margin:.75rem 0 0}
+@media (max-width:520px){
+  #crop-backdrop{padding:.6rem}
+  .crop-panel{max-width:none}
+  .crop-foot{flex-direction:column;align-items:stretch;gap:.85rem}
+  .crop-actions{justify-content:flex-end}
+}
+
 /* ---------- update banner ----------
    The deploy notice: a strip across the top of the shell, in the accent, with a
    button that applies the update. It replaced a forced reload (toast -> 30s

@@ -181,10 +181,13 @@ function extForUpload(file) {
   const e = path.extname(String(file.originalname || '')).toLowerCase().slice(1);
   return /^[a-z0-9]{1,10}$/.test(e) ? '.' + e : '.bin';
 }
-function uploader(sub, mimes, maxBytes, allowCodeExt = false) {
+function uploader(sub, mimes, maxBytes, allowCodeExt = false, opts = {}) {
   // S3 mode buffers in memory and uploads to the bucket in persistUpload()
   // (same filename scheme, same URL shape); otherwise files land on disk.
-  const store = storage.s3Enabled()
+  // `opts.memory` is for a handler that consumes the bytes itself and never
+  // persists them as an upload of their own — the profile crop stage's SOURCE
+  // (see the crop routes): disk storage there would leave one orphan per crop.
+  const store = (opts.memory || storage.s3Enabled())
     ? multer.memoryStorage()
     : multer.diskStorage({
       destination: (req, file, cb) => {
@@ -4179,6 +4182,98 @@ app.delete('/api/me/sidebar-banner', authRequired, async (req, res) => {
   res.json({ user: u });
 });
 app.post('/api/me/sidebar-banner/url', authRequired, async (req, res) => await setProfileUrl(req, res, 'sidebar_banner_url', 'sidebar', false));
+
+// ---------- the crop stage (avatar / banner / member list banner) ----------
+// Setting one of the three profile pictures goes through a crop step
+// (public/js/crop.js), because the render sites pick the framing themselves —
+// `background-size: cover`, a circle for an avatar — so a photo whose subject is
+// off-centre, or a Klipy GIF whose subject is in one corner, can only be framed
+// before the bytes are stored.
+//
+// The encode is image-crop.js: ffmpeg rather than a canvas, because a crop is a
+// re-encode and a browser canvas would flatten an animated GIF to its first
+// frame — and "Use GIF" is half of what these three fields are for. It runs in
+// the compressor's own encode slot and is bounded by CROP_TIMEOUT_MS, and the
+// result is stored exactly like an upload (same sub-directory, same /uploads
+// URL shape, same scan + compress kicks), so nothing downstream can tell a
+// cropped picture from an uploaded one.
+const imageCrop = require('./image-crop');
+const { CROP_KINDS } = imageCrop;
+// A crop SOURCE is bytes we consume, never an upload of its own: memory storage,
+// so a failed crop cannot leave an orphan behind in avatars/.
+const upCrop = uploader('avatars', IMG_MIMES, MAX_IMG_BYTES, false, { memory: true });
+// One crop per account at a time. An 8 MB animated GIF is a real encode on a
+// 2-vCPU box, and nothing stops a script from posting a hundred of them.
+const CROP_BUSY = new Set();
+
+// Bytes this process MADE (rather than received as a multer file): the same key
+// and URL shape as an upload, so every reader, the scanner and the compressor all
+// treat it identically.
+async function storeGeneratedImage(sub, buffer, ext, mime) {
+  const filename = crypto.randomBytes(16).toString('hex') + ext;
+  const key = `${sub}/${filename}`;
+  if (storage.s3Enabled()) {
+    await storage.s3Put(key, buffer, mime);
+  } else {
+    const dir = path.join(UPLOAD_DIR, sub);
+    fs.mkdirSync(dir, { recursive: true });
+    await fs.promises.writeFile(path.join(dir, filename), buffer);
+  }
+  try { require('./virus-scan').queueFileScan(key); } catch {}
+  try { require('./media-compress').kickProfileMedia(key); } catch {}
+  return uploadUrl(sub, { filename });
+}
+
+// The source picture: an uploaded file's buffered bytes, or a remote image the
+// Klipy picker handed us. The remote half goes through unfurl's SSRF-guarded
+// fetch (public DNS only, capped body, magic-number-sniffed as an image) — this
+// endpoint stores what it downloads, so "fetch anything the user names" is
+// exactly the thing it must never do.
+async function cropSourceBytes(req) {
+  const f = req.file;
+  if (f && f.buffer && f.buffer.length) return { buf: f.buffer, mime: f.mimetype };
+  const url = String((req.body && req.body.url) || '').trim();
+  if (!/^https:\/\//i.test(url)) return null;
+  try {
+    const img = await require('./unfurl').fetchImage(url);
+    return img && img.buf && img.buf.length ? { buf: img.buf, mime: img.type } : null;
+  } catch { return null; }
+}
+
+// Crop one picture onto `target` and repoint their column at it. Answers
+// { url, out } or { status, error }; it never writes a response itself.
+async function applyProfileCrop(req, target, spec) {
+  const source = await cropSourceBytes(req);
+  if (!source) return { status: 400, error: 'bad_source (a file or an https image url)' };
+  let out = null;
+  try {
+    out = await imageCrop.cropImage({ buf: source.buf, mime: source.mime, rect: req.body || {}, cap: spec.cap });
+  } catch { out = null; }
+  if (!out) return { status: 422, error: 'crop_failed (png, jpg, gif or webp)' };
+  const url = await storeGeneratedImage(spec.sub, out.buffer, out.ext, out.mime);
+  const prev = target[spec.col];
+  // Repoint FIRST, then drop the bytes it used to name: a failure between the two
+  // then leaves an orphan (the sweep's business) rather than a profile pointing
+  // at a file that is already gone.
+  await db.prepare(`UPDATE users SET ${spec.col} = ? WHERE id = ?`).run(url, target.id);
+  deleteUploaded(prev);
+  if (spec.hist) await recordMedia(target.id, spec.hist, url);
+  await broadcastUserUpdate(await freshUser(target.id));
+  return { url, out };
+}
+
+app.post('/api/me/:kind/crop', authRequired, upCrop.single('file'), async (req, res) => {
+  const spec = CROP_KINDS[String(req.params.kind || '')];
+  if (!spec) return res.status(404).json({ error: 'no_kind' });
+  if (CROP_BUSY.has(req.user.id)) return res.status(429).json({ error: 'crop_in_progress' });
+  CROP_BUSY.add(req.user.id);
+  try {
+    const r = await applyProfileCrop(req, req.user, spec);
+    if (r.error) return res.status(r.status).json({ error: r.error });
+    res.json({ user: await freshUser(req.user.id) });
+  } finally { CROP_BUSY.delete(req.user.id); }
+});
+
 app.get('/api/me/media-history', authRequired, async (req, res) => {
   res.json({ avatar: await mediaHist(req.user.id, 'avatar'), banner: await mediaHist(req.user.id, 'banner') });
 });
@@ -4873,6 +4968,23 @@ app.delete('/api/admin/users/:id/avatar', authRequired, requireSiteAdmin, async 
 app.post('/api/admin/users/:id/banner', authRequired, requireSiteAdmin, imgSingle(upBanner), async (req, res) => await adminSetUserMedia(req, res, 'banner_url', 'banners', 'banner'));
 app.delete('/api/admin/users/:id/banner', authRequired, requireSiteAdmin, async (req, res) => await adminClearUserMedia(req, res, 'banner_url'));
 app.post('/api/admin/users/:id/sidebar-banner', authRequired, requireSiteAdmin, imgSingle(upSidebar), async (req, res) => await adminSetUserMedia(req, res, 'sidebar_banner_url', 'sidebar', null));
+// The admin console's three profile pictures go through the SAME crop stage and
+// the same encoder as your own (see the crop routes by /api/me) — one behaviour,
+// one place to fix, and the person being edited does not get a differently
+// framed avatar depending on who set it.
+app.post('/api/admin/users/:id/:kind/crop', authRequired, requireSiteAdmin, upCrop.single('file'), async (req, res) => {
+  const spec = CROP_KINDS[String(req.params.kind || '')];
+  if (!spec) return res.status(404).json({ error: 'no_kind' });
+  const u = await adminTargetUser(req, res);
+  if (!u) return;
+  if (CROP_BUSY.has(req.user.id)) return res.status(429).json({ error: 'crop_in_progress' });
+  CROP_BUSY.add(req.user.id);
+  try {
+    const r = await applyProfileCrop(req, u, spec);
+    if (r.error) return res.status(r.status).json({ error: r.error });
+    res.json({ user: await adminUserView(await db.prepare('SELECT * FROM users WHERE id = ?').get(u.id)) });
+  } finally { CROP_BUSY.delete(req.user.id); }
+});
 app.delete('/api/admin/users/:id/sidebar-banner', authRequired, requireSiteAdmin, async (req, res) => await adminClearUserMedia(req, res, 'sidebar_banner_url'));
 // Site admin: set/remove any server's icon and banner. Mirrors the
 // per-server handlers, minus membership.

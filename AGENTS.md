@@ -65,6 +65,10 @@ campfire/
                      # sweep (ordinary shrinking, profile media + anything the
                      # flags never saw), and the key ledger
   image-size.js      # intrinsic size from an image's own header (JPEG/PNG/GIF/WebP/BMP)
+  image-crop.js      # the profile crop: ffmpeg, ANIMATION-PRESERVING (an animated
+                     # GIF comes back an animated GIF), animation detected from the
+                     # bytes, the rectangle clamped to the picture, the shared
+                     # encode slot (media-compress withCompressLock)
   att-dims.js        # backfill measuring media posted before the shape record existed
                      # (newest-first, bounded per tick, leader-locked)
   package.json       # deps (express, ws, jsonwebtoken, bcryptjs, cookie-parser)
@@ -661,7 +665,36 @@ the views button each viewer row carries the emoji they sent (×N). The author
 sees the per-viewer detail; everyone else only ever gets aggregate counts, and
 the live `story-reaction` push carries the full tally (idempotent to apply) plus
 the view count. Reactions are user content, so the emoji here are intentional
-(the rail's own chrome is text/SVG). Message reports: right-click / long-press → **Report message** (red,
+(the rail's own chrome is text/SVG). **Avatar, banner and member-list banner are
+FRAMED before they are stored** (owner request: "add a crop image stage", for
+GIFs from the Use GIF button and uploaded GIFs alike). Every render site crops
+these pictures on its own — `background-size: cover` in a 300x88 card, a circle
+for an avatar, a right-anchored strip for a sidebar row — so the only place the
+framing can be *chosen* is before the bytes land, which is what
+`public/js/crop.js` does: a window the SHAPE of the surface (avatar 1:1, banner
+3:1, sidebar 6:1, the row it really shows in), the picture cover-fitted inside it
+as a **background layer** so a GIF keeps ANIMATING while you frame it, drag /
+pinch / wheel / a zoom slider to move it, and a preview underneath wearing the
+same transform (it is the crop, not a second look at the original). The bytes are
+cropped by the SERVER (`image-crop.js`, ffmpeg) rather than by a canvas, because
+a canvas returns an animated GIF's first frame — the encode detects animation
+from the source's own bytes (GIF block stream, WebP ANIM/VP8X, PNG acTL) and
+comes back animated-GIF-in/animated-GIF-out, with stills going to WebP (the same
+thing the derived chat previews are served as; PNG if a build lacks libwebp),
+`normalizeRect` clamping the client's rectangle into the picture's measured size,
+and the long side capped per surface (512/1200/1080, never enlarged). It runs in
+the compressor's own encode slot (`withCompressLock`) with a 60s ceiling of its
+own, one crop per account at a time (429), from `POST /api/me/:kind/crop` — a
+multipart file, or `{url}` JSON where the remote half goes through unfurl's
+SSRF-guarded `fetchImage` and the client could not have read the bytes back out
+anyway — and `POST /api/admin/users/:id/:kind/crop` for the console, which frames
+other people's pictures the same way. `scripts/test-image-crop.js` (the
+transform, the encoder on real bytes, the wiring),
+`scripts/test-image-crop-browser.js` (the stage: cover fit, drag/zoom, the
+post sent, and two screenshots proving a GIF is still moving) and
+`scripts/test-profile-crop-e2e.js` (the whole path: real server + browser +
+Settings → Profile → Save, then the stored bytes read back).
+Message reports: right-click / long-press → **Report message** (red,
 last item; never your own) files it with a snapshot of the text, media
 references and where it happened, pushes every site admin live, drops an inbox
 entry, and puts a badge on the console's Reports menu row, its header chip and the

@@ -940,14 +940,20 @@ async function adminClick(e) {
         $('#m-adm-side').style.backgroundImage = usr.sidebar_banner_url ? `url('${usr.sidebar_banner_url}')` : '';
       };
       paintUMedia(u);
-      const upUMedia = (kind, label) => pickFile(async (f) => {
-        try {
-          const data = await uploadImage(`/api/admin/users/${u.id}/${kind}`, f);
+      // The console sets the same three pictures the settings pane does, so it
+      // goes through the same crop stage (public/js/crop.js) against the admin
+      // route — one behaviour, whoever is doing the setting.
+      const upUMedia = (kind, label) => pickFile((f) => openCropStage({
+        kind: kind === 'sidebar-banner' ? 'sidebar' : kind,
+        file: f,
+        endpoint: `/api/admin/users/${u.id}/${kind === 'sidebar-banner' ? 'sidebar' : kind}/crop`,
+        onDone: (data) => {
+          if (!data || !data.user) return;
           u = data.user; paintUMedia(u);
           toast(label + ' updated');
           loadAdminUsers();
-        } catch (err) { toast('Upload failed: ' + prettyError(err.message)); }
-      });
+        },
+      }));
       const rmUMedia = (kind, label) => (async () => {
         try {
           const data = await api(`/api/admin/users/${u.id}/${kind}`, { method: 'DELETE' });

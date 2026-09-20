@@ -968,14 +968,18 @@ function shouldPublish(plan, inSize, outSize) {
 // a KILLED one never reaches this test (see encodeCandidate's `killed`).
 const UNDECODABLE = /invalid data|not found|unsupported|unknown decoder|no decoder|could not find codec|moov atom|end of file|decoder .* not|heif_decode/i;
 
-function runFfmpeg(args) {
+// `opts.timeoutMs` is for a caller that is WAITING on the encode (the profile
+// crop stage, image-crop.js): the compressor's own 15 minutes is sized for a
+// video nobody is standing behind, not for a click that needs an answer.
+function runFfmpeg(args, opts) {
+  const timeout = Math.max(1000, Number((opts && opts.timeoutMs) || 0) || JOB_TIMEOUT_MS);
   return new Promise((resolve) => {
     const useNice = checkNice();
     const cmd = useNice ? 'nice' : 'ffmpeg';
     const cmdArgs = useNice ? ['-n', '19', 'ffmpeg', ...args] : args;
     let child;
     try {
-      child = spawn(cmd, cmdArgs, { stdio: ['ignore', 'ignore', 'pipe'], timeout: JOB_TIMEOUT_MS });
+      child = spawn(cmd, cmdArgs, { stdio: ['ignore', 'ignore', 'pipe'], timeout });
     } catch (e) {
       resolve({ ok: false, error: String((e && e.message) || e) });
       return;
@@ -2051,4 +2055,9 @@ module.exports = {
   kickProfileMedia, kickBucketScan, reconcileBucket, getBucketScanStats, refsForKey, compressStandalone, keySize,
   // derived chat-image previews (thumbs/)
   thumbKeyFor, thumbSourceKey, ensureThumb,
+  // the shared ffmpeg runner and its pod-wide encode slot, for image-crop.js:
+  // the profile crop stage is a deliberate, bounded encode the reader is
+  // waiting on, and it takes the SAME slot as the sweeper so it can never be a
+  // second, unbudgeted encoder on a small host.
+  runFfmpeg, checkFfmpeg, withCompressLock,
 };

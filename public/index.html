@@ -418,6 +418,40 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
   </div>
 </div>
 
+<!-- the profile-media crop stage (public/js/crop.js). Its own layer ABOVE the
+     dialog layer (190, see the layer contract in styles.css): it is opened from
+     settings AND from the GIF picker's dialog, and it must cover whichever one
+     asked for it. #crop-stage is the window the result is taken from — the
+     picture inside it is a background-image, so a GIF keeps ANIMATING while the
+     reader frames it, and the preview below uses the same transform. -->
+<div id="crop-backdrop" class="hidden">
+  <div class="crop-panel" role="dialog" aria-modal="true" aria-labelledby="crop-title">
+    <div class="crop-head">
+      <strong id="crop-title">Crop</strong>
+      <span class="spacer"></span>
+      <button type="button" id="crop-x" class="mini" title="Cancel" aria-label="Cancel"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="crop-body">
+      <div id="crop-stage" class="crop-stage"></div>
+      <div class="crop-zoombar">
+        <span class="crop-zicon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg></span>
+        <input id="crop-zoom" type="range" min="1" max="4" step="0.01" value="1" aria-label="Zoom" />
+      </div>
+      <div class="crop-foot">
+        <div class="crop-prevwrap">
+          <span class="pf-sec-label" id="crop-prevlabel">Preview</span>
+          <div id="crop-preview" class="crop-preview"></div>
+        </div>
+        <div class="crop-actions">
+          <button type="button" id="crop-cancel" class="btn">Cancel</button>
+          <button type="button" id="crop-save" class="btn primary">Save</button>
+        </div>
+      </div>
+      <p class="muted small" id="crop-hint"></p>
+    </div>
+  </div>
+</div>
+
 <!-- create-story chooser: a desktop asks how a post should start, instead of
      opening the camera (and its permission prompt) at everyone -->
 <div id="story-new" class="hidden">
@@ -805,6 +839,7 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
 <script src="/js/stories.js"></script>
 <script src="/js/viewonce.js"></script>
 <script src="/js/pickers.js"></script>
+<script src="/js/crop.js"></script>
 <script src="/js/settings.js"></script>
 <script src="/js/admin.js"></script>
 <script src="/js/security.js"></script>

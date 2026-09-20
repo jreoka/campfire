@@ -520,6 +520,7 @@ document.addEventListener('keydown', (e) => {
 // and does not exist — the status menu lives inside the user card now — so the
 // whole list after it was dead code.)
 const ESCAPE_LAYERS = [
+  () => closeCropStage(),
   () => closePicker(false),
   () => closeUserCard(),
   () => closeTagCard(),
