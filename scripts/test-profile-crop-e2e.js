@@ -306,7 +306,31 @@ async function main() {
     check(dims && Math.abs(dims.w / dims.h - 6) < 0.1, 'with the 6:1 shape of a member row', dims);
     check(r4.urls.split('|')[0] === gifUrl, 'and the avatar was left alone', r4.urls);
 
-    console.log('\n[5] the guards');
+    console.log('\n[5] a history dot re-frames what it re-uses');
+    // The dots under the avatar are "set this one again", and setting one of
+    // these pictures means framing it — including an entry stored before the
+    // stage existed. It hands over a /uploads url, which the crop route will not
+    // fetch itself (https only), so the page reads the bytes back first: this is
+    // the half that would silently 400 if that were forgotten.
+    const avatarBefore = await evaluate(`(async () => { openSettings(); await new Promise((r) => setTimeout(r, 400)); return S.me.avatar_url || ''; })()`);
+    const dots = await evaluate(`document.querySelectorAll('#set-avatar-hist .hist-dot').length`);
+    check(dots > 0, 'the avatar has history to re-use', { dots });
+    await evaluate(`document.querySelector('#set-avatar-hist .hist-dot').click()`);
+    const dotOpen = await waitFor(`!document.querySelector('#crop-backdrop').classList.contains('hidden')
+      && !document.querySelector('#crop-save').disabled`, 15000);
+    check(!!dotOpen, 'clicking a dot opens the crop stage');
+    const dotFramed = await evaluate('cropViewRect(cropState.view)');
+    await evaluate(`document.querySelector('#crop-save').click()`);
+    const avatarAfter = await waitFor(`S.me && S.me.avatar_url && S.me.avatar_url !== ${JSON.stringify(avatarBefore)}
+      ? S.me.avatar_url : null`, 20000);
+    check(!!avatarAfter, 'and saving frames it into a new file', avatarAfter);
+    got = await fetchBytes(avatarAfter);
+    dims = dimsFromBuffer(got.buf);
+    check(got.status === 200, 'the re-framed picture is served', got.status);
+    check(dims && Math.abs(dims.w - dotFramed.w) <= 2 && Math.abs(dims.h - dotFramed.h) <= 2,
+      'at the frame the stage showed', { stored: dims, framed: dotFramed });
+
+    console.log('\n[6] the guards');
     // A rectangle of nonsense is a 400, not a 500 and not a stored picture.
     const bad = await evaluate(`(async () => {
       const fd = new FormData();

@@ -1256,7 +1256,12 @@ function renderHistRow(box, items, kind, wide) {
     b.className = 'hist-dot' + (wide ? ' wide' : '');
     b.style.backgroundImage = `url("${it.url}")`;
     b.title = 'Use this ' + kind;
-    b.onclick = () => applyProfileUrl(kind, it.url);
+    // A history dot SETS the picture, and setting one of the three now means
+    // framing it first (public/js/crop.js) — otherwise an entry saved before
+    // the stage existed would quietly land uncropped, which is the whole thing
+    // the stage is for. cropProfileMedia reads a /uploads url back into bytes
+    // for the crop route, which only fetches https itself.
+    b.onclick = () => cropProfileMedia(kind, { url: it.url });
     const x = document.createElement('span');
     x.className = 'hist-x'; x.textContent = '✕'; x.title = 'Forget';
     x.onclick = async (e) => {

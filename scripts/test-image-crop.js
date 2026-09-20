@@ -42,6 +42,7 @@ const cropJs = fs.readFileSync(path.join(ROOT, 'public/js/crop.js'), 'utf8');
 const server = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
 const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
 const settings = fs.readFileSync(path.join(ROOT, 'public/js/settings.js'), 'utf8');
+const pickers = fs.readFileSync(path.join(ROOT, 'public/js/pickers.js'), 'utf8');
 const admin = fs.readFileSync(path.join(ROOT, 'public/js/admin.js'), 'utf8');
 const finalJs = fs.readFileSync(path.join(ROOT, 'public/js/final.js'), 'utf8');
 const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
@@ -278,11 +279,14 @@ function wiring() {
     (settings.match(/cropProfileMedia\('(avatar|banner|sidebar)', \{ file: f \}\)/g) || []).length === 3);
   check('the Use GIF picker does too, by URL', /cropProfileMedia\(kind, \{ url \}\)/.test(settings));
   check('the GIF picker no longer sets a picture on the spot', !/if \(url\) await applyProfileUrl\(kind, url\)/.test(settings));
+  check('a history dot re-frames what it re-uses', /b\.onclick = \(\) => cropProfileMedia\(kind, \{ url: it\.url \}\)/.test(pickers));
+  check('and a /uploads history entry is read back into bytes for the route (which only fetches https)',
+    /if \(!file && \/\^\\\/uploads\\\/\/\.test\(url\)\)/.test(settings));
   check('the admin uploads go through it as well', /pickFile\(\(f\) => openCropStage\(/.test(admin));
   check('and hit the admin route', /\/api\/admin\/users\/\$\{u\.id\}\/\$\{kind === 'sidebar-banner' \? 'sidebar' : kind\}\/crop/.test(admin));
   check('Escape peels the stage like every other layer', /\(\) => closeCropStage\(\)/.test(finalJs));
   check('the shell cache was bumped and carries the new module',
-    /CACHE = 'campfire-v584'/.test(sw) && /'\/js\/crop\.js'/.test(sw));
+    /CACHE = 'campfire-v585'/.test(sw) && /'\/js\/crop\.js'/.test(sw));
   check('the compressor lends its runner and its encode slot',
     /runFfmpeg, checkFfmpeg, withCompressLock,/.test(mc) && /function runFfmpeg\(args, opts\)/.test(mc));
   check('the crop takes that slot', /withCompressLock\(\(\) => runFfmpeg\(args, \{ timeoutMs: CROP_TIMEOUT_MS \}\)\)/.test(

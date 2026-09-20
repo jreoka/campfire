@@ -390,11 +390,27 @@ function profileMediaApplied(kind, user, quiet) {
   else $('#set-sidebar-prev').style.backgroundImage = S.me.sidebar_banner_url ? `url('${S.me.sidebar_banner_url}')` : '';
   if (!quiet) toast(PROFILE_LABEL[kind] + ' updated');
 }
-function cropProfileMedia(kind, source) {
+// Frame one of the three pictures, from bytes we already have or from a URL.
+// The history dots hand over a URL, and it may be one of OURS (/uploads/…,
+// which the crop route will not fetch — it takes https or bytes) or somebody
+// else's CDN (a Klipy GIF, which the SERVER fetches, because a canvas could not
+// read a cross-origin GIF back out and cropping it would flatten the
+// animation). A local one is read back into bytes here, in the page.
+async function cropProfileMedia(kind, source) {
+  let file = (source && source.file) || null;
+  const url = (source && source.url) || '';
+  if (!file && /^\/uploads\//.test(url)) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('not_found');
+      const type = r.headers.get('content-type') || 'image/webp';
+      file = new File([await r.blob()], 'profile', { type: type.split(';')[0] });
+    } catch { toast('Could not load that picture'); return; }
+  }
   openCropStage({
     kind,
-    file: source && source.file,
-    url: source && source.url,
+    file,
+    url: file ? '' : url,
     endpoint: `/api/me/${kind}/crop`,
     onDone: (data) => { if (data && data.user) profileMediaApplied(kind, data.user); },
   });
