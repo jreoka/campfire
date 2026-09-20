@@ -84,6 +84,15 @@ check(/async function openUserCard\(uid, x, y, fallback, opts = \{\}\)/.test(pic
 check(/openProfileScreen\(uid, u\)/.test(pickers), 'and the card\'s Profile tab carries it on');
 check(/if \(memberEl\?\.dataset\.uid && !memberEl\.dataset\.ownclick\) \{ openMemberCard/.test(pickers),
   'a member row that owns its click is left alone by the delegate');
+// The profile PAGE is the wholesale case: its backdrop wears the uid it is
+// showing as a marker for refreshProfileGame, so without the opt-out the
+// delegate read that marker as a person chip and opened the card of the person
+// whose page was already open — from any click anywhere on the page.
+check(/<div id="profile-backdrop" class="hidden" data-ownclick="1">/.test(index),
+  'and the profile page opts its whole surface out of that delegate',
+  /<div id="profile-backdrop"[^>]*>/.exec(index)?.[0]);
+check(pickers.includes('bd.dataset.uid = uid'),
+  'while still recording who it is showing, which is what that marker is for', 'openProfileScreen');
 check(/row\.dataset\.ownclick = '1';\n    row\.onclick = \(e\) => \{ openUserCard\(u\.id, e\.clientX, e\.clientY, u\); \};/.test(stories.replace(/\r\n/g, '\n')),
   'the story viewers rows open the card at the tap with the viewer object', /row\.onclick = [^\n]*/.exec(stories));
 check(/if \(floating\) return;\n  cancelModal\(\);/.test(ui.replace(/\r\n/g, '\n')) || /&& popoverOpen\(\)\) return;\n  cancelModal\(\);/.test(ui.replace(/\r\n/g, '\n')),
@@ -143,6 +152,9 @@ if (!chromePath) {
 // Real modal markup + wiring, real stylesheet, the real layers stacked the way
 // the viewers panel leaves them.
 const modalMarkup = index.slice(index.indexOf('<div id="modal-backdrop"'), index.indexOf('<!-- create-story chooser'));
+// The profile page's real markup and the delegate's real decision ([3c]).
+const profileMarkup = index.slice(index.indexOf('<div id="profile-backdrop"'), index.indexOf('<!-- photo lightbox'));
+const uidFnSrc = slice(pickers, 'function uidClickTarget(e) {', '\n// ---------- threads ----------');
 const modalSrc = slice(ui, 'let modalOkFn = null;', '// Promise-based confirm dialog.');
 // The card's real outside-click predicate + the over-pop stand-down, run
 // verbatim against the card this page opens.
@@ -151,6 +163,7 @@ function pageHtml() {
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
 <style>${css}</style></head><body>
 ${modalMarkup}
+${profileMarkup}
 <div id="usercard" class="hidden"><div class="uc-body">card</div></div>
 <div id="tagcard" class="hidden"><div class="tc-body">tag</div></div>
 <div id="ctx-menu" class="hidden"></div>
@@ -233,6 +246,29 @@ out.cardAfterBackdrop = !document.querySelector('#usercard').classList.contains(
 // closes it.
 document.body.click();
 out.cardAfterOutsideClick = !document.querySelector('#usercard').classList.contains('hidden');
+// [3c] The profile PAGE, clicked for real with the shipping decision function.
+// openProfileScreen records the person it is showing on the backdrop (and it is
+// the marker refreshProfileGame matches a live frame against), so a click
+// anywhere on the page resolves up to that marker — which the delegate used to
+// read as a person chip and answer by opening the card of the person whose page
+// was already open.
+${uidFnSrc}
+const bd = box('#profile-backdrop');
+bd.dataset.uid = 'u1'; // what openProfileScreen does on the way in
+let seen = 'unset';
+document.addEventListener('click', (e) => { seen = uidClickTarget(e); });
+out.profileBodyUid = (document.querySelector('#pf-body').click(), seen);
+out.profileCloseUid = (document.querySelector('#profile-close').click(), seen);
+out.profileBackdropUid = (bd.click(), seen);
+out.cardClickUid = (document.querySelector('#usercard').click(), seen);
+const chip = document.createElement('div');
+chip.dataset.uid = 'u9'; chip.textContent = 'chip';
+document.body.appendChild(chip);
+out.chipClickUid = (chip.click(), seen);
+const own = document.createElement('div');
+own.dataset.uid = 'u10'; own.dataset.ownclick = '1'; own.textContent = 'own';
+document.body.appendChild(own);
+out.ownClickUid = (own.click(), seen);
 document.title = JSON.stringify(out);
 </script></body></html>`;
 }
@@ -275,6 +311,14 @@ try {
     check(out.cardAfterDialogClick === true, 'and typing in the dialog does not shut the card it came from', out);
     check(out.dialogAfterBackdrop === true && out.cardAfterBackdrop === true, 'a backdrop click dismisses the dialog and leaves the card', out);
     check(out.cardAfterOutsideClick === false, 'while any other click still closes the card', out);
+  }
+  for (const [label, out] of [['desktop', desktop], ['phone', phone]]) {
+    console.log(`\n[3c] the profile page and the card delegate — ${label}`);
+    check(out.profileBodyUid === null, 'a click on the profile page opens NO card for the person it is showing', out.profileBodyUid);
+    check(out.profileCloseUid === null && out.profileBackdropUid === null, 'nor does its Close button or the backdrop around it', { close: out.profileCloseUid, backdrop: out.profileBackdropUid });
+    check(out.cardClickUid === null, 'a click inside the open card still does not rebuild it', out.cardClickUid);
+    check(out.chipClickUid === 'u9', 'while an ordinary person chip still opens that person', out.chipClickUid);
+    check(out.ownClickUid === null, 'and a row that owns its click is still left alone', out.ownClickUid);
   }
   // The phone pass is the reported one: the card really was the full-height
   // sheet the dialog used to hide behind.

@@ -3993,7 +3993,12 @@ async function gamingFor(userId) {
   if (now_playing && exclusions.has(now_playing)) now_playing = null;
   const top = out.slice(0, 10);
   await withGameIcons(top);
-  return { total_ms, level: levelForMs(total_ms), streak: s.streak, best_streak: s.best, now_playing, games: top };
+  // The session's own start rides the payload beside the live game name, the
+  // same fact publicUser carries — the profile's Gaming widget paints its
+  // session clock from here, so it never has to guess (or reach for the
+  // roster, which may not hold the person at all).
+  const playing_since = now_playing ? (u.playing_since || null) : null;
+  return { total_ms, level: levelForMs(total_ms), streak: s.streak, best_streak: s.best, now_playing, playing_since, games: top };
 }
 // Everything Settings → Games renders, in one response: totals, one row per
 // tracked game (level + streak), and the ignore list — including ignored

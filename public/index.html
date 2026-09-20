@@ -515,8 +515,13 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
 <!-- server tag card -->
 <div id="tagcard" class="hidden"></div>
 
-<!-- user profile screen -->
-<div id="profile-backdrop" class="hidden">
+<!-- user profile screen. `data-ownclick` keeps the global [data-uid] delegate
+     (pickers.js) off the WHOLE surface: the backdrop carries the uid it is
+     showing so a live frame can be matched to it (refreshProfileGame), and the
+     delegate cannot tell that marker apart from a person chip — which is what
+     used to spawn the card of the very person whose page you had opened, from
+     any click anywhere on it. The page is the destination, not a chip. -->
+<div id="profile-backdrop" class="hidden" data-ownclick="1">
   <div class="profile">
     <div class="pf-banner" id="pf-banner"></div>
     <div class="pf-head">

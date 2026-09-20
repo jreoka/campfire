@@ -844,21 +844,15 @@ function gameRowHTML(u) {
   if (!u || !u.playing_game) return '';
   return `<div class="uc-statustext ugame">${gameBadgeHTML(u.playing_game)}<span class="uc-game-name">Playing ${esc(u.playing_game)}</span>${gameClockHTML(u)}</div>`;
 }
-// The session clock itself — ONE span, shared by the card's box and the profile
-// screen's line, because it is one fact about one session and the two surfaces
-// must not drift apart. Nothing here styles it: each surface puts it where that
-// surface wants it.
+// The session clock itself — ONE span, because it is one fact about one session
+// and no two surfaces may drift apart. It sits on the user card's game box and
+// on the profile's Gaming widget (the widget's "Currently playing X" line); the
+// profile screen has no standalone "Playing X" line of its own. Nothing here
+// styles it: each surface puts it where that surface wants it.
 function gameClockHTML(u) {
   const since = Number(u && u.playing_since) || 0;
   if (!since) return '';
   return `<span class="game-clock" data-gtimer="${since}" title="Time in this session">${fmtElapsed(Date.now() - since)}</span>`;
-}
-// The profile screen's version of the same line: no badge and no box — the
-// profile is a wide plain-text surface, so the clock is just the right edge of
-// the row (see .pf-playing in the stylesheet).
-function profileGameRowHTML(u) {
-  if (!u || !u.playing_game) return '';
-  return `<div class="pf-playing"><span class="pf-playing-name">Playing ${esc(u.playing_game)}</span>${gameClockHTML(u)}</div>`;
 }
 function paintGameBadge(el) {
   if (!el) return;

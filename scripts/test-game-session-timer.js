@@ -1,4 +1,5 @@
-// The session clock in the user card's "Playing <game>" box.
+// The session clock in the user card's "Playing <game>" box and on the profile
+// screen's Gaming widget.
 //
 // The ask: when someone is playing a game, the box that says "Playing X" should
 // carry, on its right side, how long THAT session has been going. Two things
@@ -16,6 +17,13 @@
 //     pushing a long game name out or being pushed out by it. That is a claim
 //     about layout, so it is measured off the pixels in headless Chrome (a
 //     short name and a name far too long for the card's width).
+//
+// The profile screen's own "Playing X" line was REMOVED (owner request: the
+// profile said it twice). Its clock did not go with it — it rides the Gaming
+// widget's "Currently playing X" line, which is the same row on the same
+// surface, so [1b] pins that the standalone row is gone, that the clock there
+// is the shared span fed by the same server fact, and the browser half measures
+// the widget's line where it used to measure the row.
 //
 // Static half: always runs (source wiring + the formatter, driven by the real
 // extracted code). Chrome half: skips without Chrome.
@@ -74,8 +82,8 @@ const fmtElapsed = eval(slice(servers, 'function fmtElapsed(ms) {', '\n}') + '\n
 // (`fmt` — the ticker — is deliberately NOT eval'd here: it registers a real
 // interval, and this file only wants the row builder. The Chrome fixture runs
 // the real ticker.)
-const built = eval(svg + '\n' + rows + '\n;({ gameBadgeHTML, gameRowHTML, gameClockHTML, profileGameRowHTML })');
-const { gameRowHTML, gameClockHTML, profileGameRowHTML } = built;
+const built = eval(svg + '\n' + rows + '\n;({ gameBadgeHTML, gameRowHTML, gameClockHTML })');
+const { gameRowHTML, gameClockHTML } = built;
 
 console.log('\n[1] the card row: badge · name · clock, and the clock only when the server knows the start');
 const NOW = Date.now();
@@ -90,15 +98,17 @@ check(!gameRowHTML({ playing_game: 'Chess' }).includes('game-clock'),
 check(gameRowHTML({}) === '' && gameRowHTML(null) === '', 'and no game at all renders no box');
 check(/esc\(u\.playing_game\)/.test(rows), 'the name is escaped, as every user-supplied string on the card is');
 
-console.log('\n[1b] the profile screen\'s "Playing X" line is the same clock');
-const pf = profileGameRowHTML({ playing_game: 'Chess', playing_since: NOW - 65000 });
-check(pf.includes('class="pf-playing"') && pf.includes('class="pf-playing-name"') && pf.includes('Playing Chess'),
-  'the profile line is its own row, with the name as the span that gives way', pf);
-check(pf.includes('class="game-clock"') && pf.includes('data-gtimer="' + (NOW - 65000) + '"') && pf.includes('>1:05<'),
-  'and the SAME clock span, so the two surfaces cannot drift apart', pf);
-check(profileGameRowHTML({ playing_game: 'Chess' }) === '<div class="pf-playing"><span class="pf-playing-name">Playing Chess</span></div>',
-  'a session with no recorded start shows the line and no clock', profileGameRowHTML({ playing_game: 'Chess' }));
-check(profileGameRowHTML({}) === '' && profileGameRowHTML(null) === '', 'and no game renders no line');
+console.log('\n[1b] the profile screen has ONE live line, in its Gaming widget, and the clock rides it');
+check(!/profileGameRowHTML/.test(servers) && !/profileGameRowHTML/.test(pickers),
+  'the profile\'s standalone "Playing X" row builder is gone (the crossed-out line)', 'servers.js/pickers.js');
+check(!/\$\{profileGameRowHTML\(u\)\}/.test(pickers) && !/class="pf-playing-name"/.test(css),
+  'openProfileScreen does not paint it, and no dead rule for its name is left in the sheet', 'openProfileScreen');
+check(/class="pf-gaming-now"><span class="pf-gaming-now-name">Currently playing <b>\$\{esc\(nowPlaying\.game\)\}<\/b><\/span>\$\{gameClockHTML\(/.test(pickers),
+  'the widget\'s "Currently playing X" line carries the SAME clock span, so no two surfaces can drift apart', 'pickers.js');
+check(/const liveSince = \(g && g\.playing_since\) \|\| \(mu && mu\.playing_since\) \|\| 0;/.test(pickers),
+  'and it is fed the server\'s session start (the gaming payload, with the roster as the frame-lag fallback)', 'pickers.js');
+check(/const playing_since = now_playing \? \(u\.playing_since \|\| null\) : null;/.test(server) && /now_playing, playing_since, games: top/.test(server),
+  'which is why gamingFor returns it beside the live game name — and only while one is running', 'gamingFor');
 check(gameClockHTML({}) === '' && gameClockHTML({ playing_since: 0 }) === '' && gameClockHTML(null) === '',
   'the clock helper itself renders nothing without a start', [gameClockHTML({}), gameClockHTML({ playing_since: 0 })]);
 check(/esc\(u\.playing_game\)/.test(rows) && !/class="pf-playing"/.test(slice(servers, 'function gameRowHTML(u) {', 'function gameClockHTML')),
@@ -143,10 +153,14 @@ console.log('\n[4] both surfaces use it, and follow a game starting or stopping 
 check(pickers.includes('${u.playing_game ? gameRowHTML(u) : \'\'}'), 'openUserCard builds the box from the row helper', 'openUserCard');
 check(/function refreshUserCardGame\(u\)/.test(pickers) && /cur\.outerHTML = html/.test(pickers),
   'the open card can swap that one row in place', 'pickers.js');
-check(pickers.includes('${profileGameRowHTML(u)}'), 'so does openProfileScreen, from the profile row helper', 'openProfileScreen');
-check(/function refreshProfileGame\(u\)/.test(pickers) && /String\(bd\.dataset\.uid\) !== String\(u\.id\)/.test(pickers)
-  && /const cur = body\.querySelector\('\.pf-playing:not\(\.ustream\)'\)/.test(pickers),
-  'and the open profile screen swaps the same row (matched to the person it is showing, never the streaming row)', 'pickers.js');
+check(/function refreshProfileGame\(u\)/.test(pickers) && /String\(bd\.dataset\.uid\) !== String\(u\.id\)/.test(pickers),
+  'the open profile screen answers a live frame too — matched to the person it is showing', 'pickers.js');
+check(/const box = \$\('#pf-gaming'\);/.test(pickers) && /box\.dataset\.live = live \|\| ''/.test(pickers)
+  && /if \(String\(box\.dataset\.live \|\| ''\) === String\(live\)\) return;/.test(pickers)
+  && /loadUserGaming\(box, u\.username, \{ canDelete: String\(u\.id\) === String\(S\.me\.id\) \}\)/.test(pickers),
+  'by re-reading the Gaming WIDGET, and only when the live game actually changed (a user-updated frame also carries presence churn)', 'pickers.js');
+check(!/const cur = body\.querySelector\('\.pf-playing:not\(\.ustream\)'\)/.test(pickers),
+  'the old one-row swap is gone with the row it swapped', 'refreshProfileGame');
 check(/bd\.dataset\.uid = uid/.test(pickers), 'which is why the screen records who it is showing', 'pickers.js');
 check(/try \{ refreshUserCardGame\(u\); \} catch \{\}\n\s*try \{ refreshProfileGame\(u\); \} catch \{\}/.test(socket),
   'socket.js calls both on user-updated — a friend launching a game must land on whichever surface is open', 'socket.js');
@@ -155,10 +169,12 @@ check(/\.uc-statustext\.ugame \.game-clock\{[^}]*margin-left:auto/.test(css), 'a
 check(/\.uc-statustext\.ugame \.game-clock\{[^}]*color:inherit/.test(css),
   'the clock wears the box\'s OWN ink — the box is its own backdrop, so the card\'s --uc-* tones stop at its edge', 'styles.css');
 check(/\.uc-statustext\.ugame \.game-clock\{[^}]*tabular-nums/.test(css), 'with tabular figures, so the clock does not jitter as the digits change', 'styles.css');
-check(/\.pf-playing\{[^}]*display:flex/.test(css) && /\.pf-playing-name\{[^}]*text-overflow:ellipsis/.test(css),
-  'the profile line is a flex row too, and its name is what gives way', 'styles.css');
-check(/\.pf-playing \.game-clock\{[^}]*margin-left:auto/.test(css) && /\.pf-playing \.game-clock\{[^}]*color:inherit/.test(css),
+check(/\.pf-gaming-now\{[^}]*display:flex/.test(css) && /\.pf-gaming-now-name\{[^}]*text-overflow:ellipsis/.test(css),
+  'the widget\'s live line is a flex row too, and its name is what gives way', 'styles.css');
+check(/\.pf-gaming-now \.game-clock\{[^}]*margin-left:auto/.test(css) && /\.pf-gaming-now \.game-clock\{[^}]*color:inherit/.test(css),
   'with the same clock on its right edge, in the line\'s own ink', 'styles.css');
+check(/\.pf-playing\{[^}]*display:flex/.test(css) && !/\.pf-playing \.game-clock/.test(css),
+  'and the streaming row (the only .pf-playing left) carries no clock of its own', 'styles.css');
 
 console.log('\n[5] the real stylesheet, in a real browser');
 const chrome = findChrome();
@@ -180,7 +196,7 @@ else {
       // Both surfaces, same three claims: the clock is running, it sits on the
       // row's right content edge, and a name too long gives way instead of
       // shoving the clock off the row.
-      for (const [surface, s, l] of [['the card box', out.short, out.long], ['the profile line', out.pfShort, out.pfLong]]) {
+      for (const [surface, s, l] of [['the card box', out.short, out.long], ['the widget line', out.pfShort, out.pfLong]]) {
         check(/^\d+:\d\d$/.test(s.text) && /^\d+:\d\d$/.test(l.text),
           surface + '\'s clock is running (M:SS, painted by the shared ticker)', [s.text, l.text]);
         check(near(s.timerRight, s.contentRight, 1.5), surface + '\'s clock sits at its right content edge', { timer: s.timerRight, edge: s.contentRight });
@@ -208,8 +224,9 @@ if (failures.length) {
 console.log(`All ${passed} checks passed.`);
 
 // The measuring page: the real stylesheet, the real ticker (extracted from
-// servers.js, so what runs here is what ships), and the row on BOTH surfaces —
-// a short name, one far too long, and (on the card) one with no start at all.
+// servers.js, so what runs here is what ships), and the live line on BOTH
+// surfaces — the card's game box and the profile's Gaming widget — with a short
+// name, one far too long, and (on the card) one with no start at all.
 function pageHtml(tickerSrc) {
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
 <link rel="stylesheet" href="file:///${ROOT.replace(/\\/g, '/')}/public/styles.css">
@@ -227,8 +244,11 @@ function pageHtml(tickerSrc) {
 </div></div>
 <div id="profile"><div class="pf-body">
   <div class="pf-status"><span>Online</span></div>
-  <div class="pf-playing" id="pfshort"><span class="pf-playing-name">Playing Chess</span><span class="game-clock" data-gtimer="__SINCE__" title="Time in this session"></span></div>
-  <div class="pf-playing" id="pflong"><span class="pf-playing-name">Playing Sid Meier's Civilization VI: Gathering Storm</span><span class="game-clock" data-gtimer="__SINCE__" title="Time in this session"></span></div>
+  <div class="pf-gaming">
+    <div class="pf-gaming-head"><span class="pf-gaming-title">Gaming</span><span class="pf-gaming-total">Lv 3 · 12h</span></div>
+    <div class="pf-gaming-now" id="pfshort"><span class="pf-gaming-now-name">Currently playing <b>Chess</b></span><span class="game-clock" data-gtimer="__SINCE__" title="Time in this session"></span></div>
+    <div class="pf-gaming-now" id="pflong"><span class="pf-gaming-now-name">Currently playing <b>Sid Meier's Civilization VI: Gathering Storm</b></span><span class="game-clock" data-gtimer="__SINCE__" title="Time in this session"></span></div>
+  </div>
 </div></div>
 <script>
 window.S = { voiceSince: new Map() };
@@ -265,8 +285,8 @@ setTimeout(() => {
   const out = {
     short: measure('#short', '.uc-game-name'),
     long: measure('#long', '.uc-game-name'),
-    pfShort: measure('#pfshort', '.pf-playing-name'),
-    pfLong: measure('#pflong', '.pf-playing-name'),
+    pfShort: measure('#pfshort', '.pf-gaming-now-name'),
+    pfLong: measure('#pflong', '.pf-gaming-now-name'),
   };
   out.gone = document.querySelector('#nostart .game-clock') ? 'present' : null;
   out.since = Number(document.querySelector('#long .game-clock').dataset.gtimer);

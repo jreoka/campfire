@@ -250,6 +250,12 @@ async function main() {
     check(Math.abs(Date.now() - since1) < 60000, 'stamped by the server clock, so every device measures the same session', since1);
     let me = await api('GET', '/api/me', { token: tokA });
     check(Number(me.data.user.playing_since) === since1, '/api/me hands it to the client (the card reads its own user from there)', me.data.user.playing_since);
+    // The profile screen's Gaming widget paints its session clock from ITS own
+    // payload (loadUserGaming → /api/users/:username/gaming), because the
+    // standalone "Playing X" line that used to carry the clock is gone.
+    let pf = await api('GET', '/api/users/gamesa/gaming', { token: tokB });
+    check(pf.data.now_playing === 'Minecraft' && Number(pf.data.playing_since) === since1,
+      'the widget\'s own payload carries the live game AND that same session start', pf.data);
     r = await beacon('Minecraft');
     check(Number(r.data.playing_since) === since1 && Number(await sinceOf()) === since1,
       'a later beacon of the SAME game leaves it alone — the clock must not restart every 15s', { before: since1, after: r.data.playing_since });
@@ -268,6 +274,9 @@ async function main() {
       'the watcher\u2019s goodbye clears the game AND its clock — no timer left running on a finished session', { db: await sinceOf() });
     me = await api('GET', '/api/me', { token: tokA });
     check(me.data.user.playing_since === null, 'which is what the card sees: no game, no clock', me.data.user.playing_since);
+    pf = await api('GET', '/api/users/gamesa/gaming', { token: tokB });
+    check(pf.data.now_playing === null && pf.data.playing_since === null,
+      'and the widget is told there is no session to time once the game stops', pf.data);
     // Ignoring the game being played is the other way a session ends.
     await db.query('UPDATE users SET playing_game = $2, playing_since = $3 WHERE id = $1', [uid, 'Minecraft', Date.now() - 5000]);
     r = await api('POST', '/api/me/games/Minecraft/ignore', { token: tokA });

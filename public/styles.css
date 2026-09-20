@@ -1948,13 +1948,10 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .pf-body{padding:.75rem 1rem 1.1rem;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:.75rem;overscroll-behavior:contain}
 .pf-status{display:flex;align-items:center;gap:.45rem;font-size:.85rem;font-weight:600;color:var(--muted)}
 .pf-statustext{color:var(--text);font-weight:500}
-/* "Playing X" on the profile screen: same row as the user card's game box, on a
-   plain surface — the name holds the left and gives way (it ellipsises), the
-   session clock (.game-clock) is pushed to the right edge. The clock keeps the
-   line's own accent ink, dimmed, the same way the card's box does. */
+/* The profile screen's streaming row. It has no standalone "Playing X" twin any
+   more: the live game and its session clock live in the Gaming widget below
+   (.pf-gaming-now), so this class is down to the one streaming line. */
 .pf-playing{font-size:.86rem;color:var(--accent-hover);font-weight:650;display:flex;align-items:center;gap:.4rem}
-.pf-playing-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pf-playing .game-clock{margin-left:auto;flex-shrink:0;font-variant-numeric:tabular-nums;color:inherit;opacity:.72}
 .pf-bio{font-size:.9rem;color:var(--text);overflow-wrap:anywhere}
 .pf-since{font-size:.8rem;color:var(--faint)}
 .pf-gaming{display:block}
@@ -1968,7 +1965,13 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .pf-gaming-head{display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin-bottom:.6rem}
 .pf-gaming-title{font-size:.9rem;font-weight:750}
 .pf-gaming-total{font-size:.8rem;color:var(--muted)}
-.pf-gaming-now{font-size:.9rem;color:var(--accent-hover);font-weight:600;margin:-.2rem 0 .55rem}
+/* The Gaming widget's live line, and the profile's ONE session clock: the same
+   row the user card's game box is, on a plain surface — the name holds the left
+   and gives way (it ellipsises), the clock is pushed to the right edge and keeps
+   the line's own accent ink, dimmed, the way the card's box does. */
+.pf-gaming-now{display:flex;align-items:center;gap:.4rem;font-size:.9rem;color:var(--accent-hover);font-weight:600;margin:-.2rem 0 .55rem}
+.pf-gaming-now-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pf-gaming-now .game-clock{margin-left:auto;flex-shrink:0;font-variant-numeric:tabular-nums;color:inherit;opacity:.72}
 .pf-gaming-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:.6rem}
 .pf-game-card{background:var(--panel-3);border:1px solid var(--line-soft);border-radius:12px;padding:.85rem;display:flex;align-items:flex-start;gap:.8rem;position:relative;transition:background var(--t-fast)}
 .pf-game-card:hover{background:var(--panel-4)}

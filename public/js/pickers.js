@@ -1121,7 +1121,7 @@ document.addEventListener('keydown', (e) => {
 });
 // global delegation for message interactions
  document.addEventListener('click', (e) => {
-  const uidEl = e.target.closest('[data-uid]');
+  const cardUid = uidClickTarget(e);
   const actEl = e.target.closest('[data-act]');
   const jumpEl = e.target.closest('[data-jump]');
   const clEl = e.target.closest('[data-clink]');
@@ -1220,11 +1220,23 @@ document.addEventListener('keydown', (e) => {
   // carries the person it just rendered) keeps it — anchoring that card to the
   // member rail would be wrong anyway, since the row is not in the rail.
   if (memberEl?.dataset.uid && !memberEl.dataset.ownclick) { openMemberCard(memberEl.dataset.uid, memberEl); return; }
-  // data-ownclick rows (friends list, voice occupants) already handled the click
-  // themselves — opening the card here too would put it on top of the DM (or
-  // re-anchor it) the moment they clicked.
-  if (uidEl?.dataset.uid && uidEl.id !== 'usercard' && !uidEl.dataset.ownclick) { openUserCard(uidEl.dataset.uid, e.clientX, e.clientY); return; }
+  // The person a plain click stands for, if any — see uidClickTarget below.
+  if (cardUid) { openUserCard(cardUid, e.clientX, e.clientY); return; }
 });
+// Which person a plain click stands for, if any: the delegate's ONE card-opening
+// decision, split out so it can be RUN against real markup (the browser half of
+// scripts/test-user-card-layer.js) instead of only read. A `[data-uid]` ancestor
+// is a person chip — a member row, a DM row, a rail occupant — UNLESS it opts out
+// with `data-ownclick`: rows that already handled the click themselves (the
+// friends list, voice occupants, the story viewers), and the profile PAGE, whose
+// backdrop carries the uid it is showing as a marker for refreshProfileGame
+// rather than as a chip. Without that opt-out every click anywhere on the page
+// spawned the card of the very person whose page was already open.
+function uidClickTarget(e) {
+  const el = e.target && e.target.closest && e.target.closest('[data-uid]');
+  if (!el || !el.dataset.uid || el.id === 'usercard' || el.dataset.ownclick) return null;
+  return el.dataset.uid;
+}
 
 // ---------- threads ----------
 async function applyProfileUrl(kind, url) {
@@ -2103,27 +2115,24 @@ function refreshUserCardGame(u) {
     paintGameBadge(c.querySelector('.uc-statustext.ugame .gbadge'));
   } catch {}
 }
-// The profile screen's version of the same one-row swap: it stays open behind
-// the card and shows the same "Playing X" line, so a game starting or stopping
-// while somebody reads it has to land there too. Called from socket.js.
+// The profile screen's live game state lives in its Gaming widget now — the
+// standalone "Playing X" line is gone, and the session clock rides the widget's
+// "Currently playing X" line instead — so a game starting or stopping while
+// somebody reads the screen has to re-read that widget. Only a frame that
+// actually changed the live game does: user-updated also carries presence and
+// status churn, and re-fetching the whole widget on each of those would be a
+// request per heartbeat. `#pf-gaming`'s own `data-live` (written by
+// loadUserGaming, including on its early return) is what makes that comparison
+// possible. Called from socket.js.
 function refreshProfileGame(u) {
   try {
     const bd = $('#profile-backdrop');
     if (!bd || !u || bd.classList.contains('hidden') || String(bd.dataset.uid) !== String(u.id)) return;
-    const body = $('#pf-body');
-    if (!body) return;
-    // The streaming row is `.pf-playing.ustream` and sits directly above the
-    // game row, so it is never the one to swap.
-    const cur = body.querySelector('.pf-playing:not(.ustream)');
-    const html = profileGameRowHTML(u);
-    if (!html) { if (cur) cur.remove(); return; }
-    if (cur) {
-      cur.outerHTML = html;
-    } else {
-      const anchor = body.querySelector('.pf-playing.ustream') || body.querySelector('.pf-status');
-      if (!anchor) return;
-      anchor.insertAdjacentHTML('afterend', html);
-    }
+    const box = $('#pf-gaming');
+    if (!box) return;
+    const live = u.playing_game || '';
+    if (String(box.dataset.live || '') === String(live)) return;
+    loadUserGaming(box, u.username, { canDelete: String(u.id) === String(S.me.id) });
   } catch {}
 }
 // ---------- server tag mini-panel ----------
@@ -2228,12 +2237,24 @@ async function loadUserGaming(box, username, opts = {}) {
   box.classList.add('hidden');
   try {
     const g = await api('/api/users/' + encodeURIComponent(username) + '/gaming');
-    if (!g || !g.total_ms) return;
-    const { compact, canDelete } = opts;
+    const mu = (typeof memberByUsername === 'function' ? memberByUsername(username) : null) || null;
     // Authoritative "now playing": the live playing_game, not recency of
     // last_seen_ms (which stays fresh for minutes after quitting and made
-    // the card keep saying "Playing X" after the game closed).
-    const live = g.now_playing || (typeof memberByUsername === 'function' ? (memberByUsername(username) || {}).playing_game : null) || null;
+    // the card keep saying "Playing X" after the game closed). The roster is
+    // only the fallback for the frame that lands before the fetch does.
+    const live = (g && g.now_playing) || (mu && mu.playing_game) || null;
+    // What this widget is currently showing as live, recorded on the box itself
+    // so an open profile screen can tell a real game change from a presence
+    // heartbeat before it re-reads the widget (refreshProfileGame). Written
+    // before the early return below: a game with no recorded playtime still
+    // renders nothing here, and re-fetching it on every frame would be a loop.
+    box.dataset.live = live || '';
+    // The session's start comes from the same server fact the user card's clock
+    // reads (users.playing_since, through the gaming payload), with the roster
+    // as the fallback for the frame the payload has not caught up with.
+    const liveSince = (g && g.playing_since) || (mu && mu.playing_since) || 0;
+    if (!g || !g.total_ms) return;
+    const { compact, canDelete } = opts;
     const hit = live ? (g.games || []).find((x) => x.game === live) : null;
     const nowPlaying = hit || (live ? { game: live } : null);
     if (compact) {
@@ -2276,7 +2297,7 @@ async function loadUserGaming(box, username, opts = {}) {
           <span class="pf-gaming-title">Gaming</span>
           <span class="pf-gaming-total">Lv ${g.level} · ${fmtPlay(g.total_ms)}${g.streak ? ' · ' + g.streak + 'd streak' : ''}${g.best_streak ? ' · best ' + g.best_streak + 'd' : ''}</span>
         </div>
-        ${nowPlaying ? `<div class="pf-gaming-now">Currently playing <b>${esc(nowPlaying.game)}</b></div>` : ''}
+        ${nowPlaying ? `<div class="pf-gaming-now"><span class="pf-gaming-now-name">Currently playing <b>${esc(nowPlaying.game)}</b></span>${gameClockHTML({ playing_since: liveSince })}</div>` : ''}
         <div class="pf-gaming-grid">${cards}</div>
       `;
       if (canDelete) {
@@ -2612,7 +2633,6 @@ function openProfileScreen(uid, fallback) {
     ${isSysAdmin(u) || isEarlyUser(u) ? `<div class="pf-badges">${isSysAdmin(u) ? '<span class="sysadmin-badge">System admin</span>' : ''}${isEarlyUser(u) ? '<span class="early-badge">Early user</span>' : ''}</div>` : ''}
     <div class="pf-status"><span class="status-dot ${dotOf(st, pstreaming)}"></span><span>${stLabel}</span>${u.status_text ? `<span class="pf-statustext">${esc(u.status_text)}</span>` : ''}</div>
     ${pstreaming ? `<div class="pf-playing ustream">Streaming ${esc(pstreaming)}</div>` : ''}
-    ${profileGameRowHTML(u)}
     ${u.bio ? `<div class="pf-bio">${renderRich(u.bio)}</div>` : ''}
     ${u.created_at ? `<div class="pf-since">Member since ${fmtJoined(u.created_at)}</div>` : ''}
     <div id="pf-gaming" class="pf-gaming hidden"></div>
