@@ -283,8 +283,26 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
    in button sat below the 393px viewport with nothing able to scroll to it.
    A real height plus safe centring keeps the card centred when it fits and
    top-aligned (and scrollable) when it does not; the plain `center` declared
-   first is the fallback for engines without `safe`. */
-#view-auth{height:100vh;height:100dvh;display:flex;align-items:center;align-items:safe center;justify-content:center;justify-content:safe center;padding:1.5rem;background:var(--bg);overflow-y:auto;overscroll-behavior:contain}
+   first is the fallback for engines without `safe`.
+
+   AND THAT HEIGHT IS THE VISIBLE STRIP, not the layout box — this view was the
+   last full-screen surface still sized `100dvh` alone, and on iOS the keys
+   shrink only the VISUAL viewport, so `dvh` stayed the full screen height.
+   Reported: "with the keyboard open there's a blank space that appears and
+   allows you to scroll and it covers some of the UI." Two failures in one box.
+   The card fitted the 844px the view still claimed, so nothing could scroll
+   (`scrollH === clientH`) while the Sign up button sat 116px below the keys;
+   and because no scroller could reveal the field being typed in, iOS panned the
+   visual viewport instead — sliding the top of the form under the status bar
+   and dragging the empty page background under the (--vvh-sized) shell into
+   view as that blank band. So the box IS the strip, exactly like
+   #modal-backdrop: fixed (a fixed box cannot be panned away from the strip),
+   hung off `--vv-top` (a visual-only engine pans instead of resizing), and as
+   tall as `--vvh` — which also ends it on the keyboard's top edge. The card
+   then overflows that box and the SHORT side scrolls: safe centring top-aligns
+   it, everything in the form is reachable with the keys up, and there is no
+   band under the box to scroll into. */
+#view-auth{position:fixed;left:0;right:0;top:var(--vv-top,0px);height:100vh;height:100dvh;height:var(--vvh,100dvh);display:flex;align-items:center;align-items:safe center;justify-content:center;justify-content:safe center;padding:1.5rem;background:var(--bg);overflow-y:auto;overscroll-behavior:contain}
 .auth-card{width:100%;max-width:420px;background:var(--panel);border:1px solid var(--line-soft);border-radius:var(--r-xl);padding:2rem;text-align:left}
 .auth-card .logo{display:flex;justify-content:flex-start;margin-bottom:.9rem}
 .auth-card h1{margin:.25rem 0 .3rem;font-size:1.55rem;font-weight:800}

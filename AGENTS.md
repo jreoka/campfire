@@ -1221,6 +1221,22 @@ brace. `scripts/test-members-collapse.js` owns all of it.
 `#server-ui` is the sidebar's one scroll region (`#home-ui` already was): its
 list scrolls under a sticky `#server-header` so a server with more channels than
 fit never pushes the me bar off the bottom.
+**The on-screen keyboard is a VIEWPORT, never room under the app.** On iOS the
+keys shrink only the *visual* viewport, so `dvh` and the layout box stay full
+height and a surface sized to them is laid out for a screen that is not there;
+a visual-only engine also PANS the page instead of resizing it. The visual
+viewport is the only height that is right in both models, so `voice.js`
+publishes `--vvh` (the visible height) and `pickers.js` publishes `--kb` (how
+much of the layout box the keys cover at the BOTTOM) and `--vv-top` (how far the
+visible strip sits below the layout box's top). A surface that must BE the strip
+is `position:fixed` (a fixed box cannot be panned away from it) with
+`top:var(--vv-top,0px)` and `height:var(--vvh,100dvh)` — `#modal-backdrop`,
+`#usercard.sheet`, `#view-auth`; a surface that fills the shell is `height:100%`
+of `#app` (itself `--vvh`) — `#view-main`. Sizing one to `dvh` alone is what
+left the sign-up reader a blank band under the shell to scroll into with the
+form's own buttons behind the keys. `scripts/test-mobile-landscape.js` [8]
+measures it for the dialog layer, `scripts/test-auth-keyboard.js` for the auth
+screen.
 Home's main panel shows one of two no-conversation pages — the Friends feed or
 the story center — and they are switched in exactly one place,
 `paintHomePanel()` (pins.js): `S.homePanel` is the state, `renderDmBlank()`

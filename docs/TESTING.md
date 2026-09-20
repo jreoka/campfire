@@ -578,6 +578,28 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   block and the ⋯ sheet stands in, so the header checks assert that ⋯ is offered
   and the members drawer is still reachable (button or sheet), never that five
   icons are on screen. Skips without Chrome.
+  `node scripts/test-auth-keyboard.js` covers the sign-up form with the
+  on-screen keyboard up — the one full-screen surface that was still sized on
+  `100dvh` alone, which on iOS is the LAYOUT height (the keys shrink only the
+  visual viewport), so the reported screen was: the card fitted a box that was
+  not there (`scrollH === clientH`, nothing could scroll) while its Sign up
+  button sat under the keys, and iOS panned the visual viewport instead —
+  dragging the empty page background under the (--vvh-sized) shell into view as
+  a blank band and sliding the top of the form under the status bar. Offline
+  static checks pin the fix's contract in styles.css (#view-auth is
+  `position:fixed`, `top:var(--vv-top,0px)`, `height:var(--vvh,100dvh)`, still
+  `overflow-y:auto` with safe centring) and that no full-screen surface is left
+  on dvh alone; headless Chrome over CDP then measures the REAL index.html +
+  stylesheet with the keyboard MODELLED the way the app models it (--vvh/--kb/
+  --vv-top, the resize model and the visual-only one that PANS): the auth view
+  IS the visible strip, the tall sign-up card overflows it and scrolls inside
+  with the field being typed in, the Sign up button and the passkey button all
+  reachable within it, the scroller's whole range is the card's own overflow (no
+  blank tail), nothing under the keys is scrollable, and with the keyboard down
+  the card is still centred in the full screen (and still scrolls on a short
+  landscape viewport). Re-run it after touching `#view-auth`, the auth card's
+  markup, or anything that publishes `--vvh`/`--kb`/`--vv-top`. Skips without
+  Chrome.
   `node scripts/test-viewonce.js` covers view-once messages against the same
 dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   one-replay lifecycle, and that unopened items never expire. The replay is on a
