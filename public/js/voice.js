@@ -261,13 +261,13 @@ function updateCallHead() {
   if (S.voice.kind === 'dm') {
     $('#stage-name').textContent = voiceLabel();
     const t0 = S.voiceSince.get(myVoiceKey());
-    $('#stage-sub').innerHTML = `${occ.length} in call${t0 ? ` · <span class="vtime" data-vtimer="${myVoiceKey()}">${fmtVoiceTime(Date.now() - t0)}</span>` : ''}`;
+    $('#stage-sub').innerHTML = `${occ.length} in call${t0 ? ` · <span class="vtime" data-vtimer="${myVoiceKey()}">${fmtElapsed(Date.now() - t0)}</span>` : ''}`;
     return;
   }
   const srv = (S.servers || []).find((s) => s.id === S.voice.serverId);
   $('#stage-name').textContent = (S.serverDetail?.channels.find((c) => c.id === S.voice.channelId) || {}).name || 'voice';
   const t0 = S.voice.channelId && S.voiceSince.get(S.voice.channelId);
-  $('#stage-sub').innerHTML = `${esc(srv ? srv.name + ' · ' : '')}${occ.length} in call${t0 ? ` · <span class="vtime" data-vtimer="${S.voice.channelId}">${fmtVoiceTime(Date.now() - t0)}</span>` : ''}`;
+  $('#stage-sub').innerHTML = `${esc(srv ? srv.name + ' · ' : '')}${occ.length} in call${t0 ? ` · <span class="vtime" data-vtimer="${S.voice.channelId}">${fmtElapsed(Date.now() - t0)}</span>` : ''}`;
 }
 async function acquireMic() {
   const mp = mediaPrefs();

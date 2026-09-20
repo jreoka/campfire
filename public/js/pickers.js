@@ -1971,7 +1971,7 @@ async function openUserCard(uid, x, y, fallback, opts = {}) {
         ? presenceWidgetHTML()
         : `<div class="uc-status" id="uc-statusline">${statusLineHTML(uid, u)}</div>`}
       ${streaming ? `<div class="uc-statustext ustream"><span class="vlive">LIVE</span><span>Streaming ${esc(streaming)}</span></div>` : ''}
-      ${u.playing_game ? `<div class="uc-statustext ugame">${gameBadgeHTML(u.playing_game)}<span>Playing ${esc(u.playing_game)}</span></div>` : ''}
+      ${u.playing_game ? gameRowHTML(u) : ''}
       ${u.bio ? `<div class="uc-bio">${renderRich(u.bio)}</div>` : ''}
       ${u.created_at ? `<div class="uc-since">Member since ${fmtJoined(u.created_at)}</div>` : ''}
       <div id="uc-gaming" class="uc-gaming hidden"></div>
@@ -2077,6 +2077,30 @@ function refreshUserCardVolumes(uid) {
     if (!c || c.classList.contains('hidden') || c.dataset.uid !== uid) return;
     const show = peerStreamAudio(uid);
     for (const el of c.querySelectorAll('.uc-vol-stream, .uc-vol-stream-label')) el.classList.toggle('hidden', !show);
+  } catch {}
+}
+// A game STARTING or STOPPING while the card is open is exactly what the card's
+// "Playing X" box is about, so that one row is swapped in place instead of
+// waiting for the card to be reopened (a full card repaint on every presence
+// frame would fight the reader's pointer, which is why the socket's user-update
+// path deliberately leaves the card alone). Called from socket.js.
+function refreshUserCardGame(u) {
+  try {
+    const c = $('#usercard');
+    if (!c || !u || c.classList.contains('hidden') || c.dataset.uid !== u.id) return;
+    const cur = c.querySelector('.uc-statustext.ugame');
+    const html = u.playing_game ? gameRowHTML(u) : '';
+    if (!html) { if (cur) cur.remove(); return; }
+    if (cur) {
+      cur.outerHTML = html;
+    } else {
+      // Same slot openUserCard paints it into: under the status row (or the
+      // streaming one, which sits directly above it). No anchor → leave it be.
+      const anchor = c.querySelector('.uc-statustext.ustream') || c.querySelector('.uc-status') || c.querySelector('.uc-sub');
+      if (!anchor) return;
+      anchor.insertAdjacentHTML('afterend', html);
+    }
+    paintGameBadge(c.querySelector('.uc-statustext.ugame .gbadge'));
   } catch {}
 }
 // ---------- server tag mini-panel ----------

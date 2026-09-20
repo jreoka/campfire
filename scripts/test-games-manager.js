@@ -132,12 +132,13 @@ async function main() {
     await db.connect();
     const uid = (await db.query("SELECT id FROM users WHERE username = 'gamesa'")).rows[0].id;
     // Cached "no artwork" rows keep the tab's Steam lookups off the network.
-    await db.query(`INSERT INTO game_icons (game, url, updated_at) VALUES ('apex legends', NULL, $1), ('not a real game', NULL, $1)
+    await db.query(`INSERT INTO game_icons (game, url, updated_at) VALUES ('apex legends', NULL, $1), ('not a real game', NULL, $1), ('chess', NULL, $1)
       ON CONFLICT(game) DO UPDATE SET url = NULL, updated_at = excluded.updated_at`, [Date.now()]);
     const now = Date.now();
     await db.query('INSERT INTO user_games (user_id, game, total_ms, first_seen_ms, last_seen_ms) VALUES ($1, $2, $3, $4, $4)', [uid, 'Minecraft', 7200000, now]);
     await db.query('INSERT INTO game_days (user_id, game, day, ms) VALUES ($1, $2, $3, 3600000), ($1, $2, $4, 3600000)', [uid, 'Minecraft', dayAgo(0), dayAgo(1)]);
-    await db.query("UPDATE users SET playing_game = 'Minecraft' WHERE id = $1", [uid]);
+    // The game is running AND the session began an hour ago — the card's clock.
+    await db.query('UPDATE users SET playing_game = $2, playing_since = $3 WHERE id = $1', [uid, 'Minecraft', now - 3600000]);
 
     console.log('\n[2] the manager payload (Settings → Games renders this)');
     let r = await api('GET', '/api/me/games', { token: tokA });
@@ -233,6 +234,45 @@ async function main() {
     check(r.data.games[0] && r.data.games[0].streak === 2 && r.data.games[0].best_streak === 2, 'and the per-game card too', r.data.games[0]);
     r = await api('GET', '/api/users/gamesa/gaming', { token: tokB });
     check(r.data.games[0] && r.data.games[0].streak === 2, 'reading someone else\u2019s profile agrees', r.data.games[0]);
+
+    console.log('\n[11] the session clock behind the card\u2019s "Playing X" box');
+    // The box shows how long THIS session has run. A client cannot know that
+    // (beacons refresh the badge's timestamp every 10-30s), so the start is
+    // server state next to the game and has to behave: stamped once, carried on
+    // every payload, never restarted by a later beacon, and never left behind
+    // when the game stops — a finished session with a running clock is the bug
+    // this section exists to make impossible.
+    const sinceOf = async () => (await db.query('SELECT playing_since FROM users WHERE id = $1', [uid])).rows[0].playing_since;
+    const beacon = (game, ts) => api('POST', '/api/watcher/status', { token: tokA, body: { game, ts: ts || Date.now(), tz: 0 } });
+    r = await beacon('Minecraft');
+    check(r.status === 200 && (await sinceOf()) !== null, 'a running game carries a session start', await sinceOf());
+    const since1 = Number(await sinceOf());
+    check(Math.abs(Date.now() - since1) < 60000, 'stamped by the server clock, so every device measures the same session', since1);
+    let me = await api('GET', '/api/me', { token: tokA });
+    check(Number(me.data.user.playing_since) === since1, '/api/me hands it to the client (the card reads its own user from there)', me.data.user.playing_since);
+    r = await beacon('Minecraft');
+    check(Number(r.data.playing_since) === since1 && Number(await sinceOf()) === since1,
+      'a later beacon of the SAME game leaves it alone — the clock must not restart every 15s', { before: since1, after: r.data.playing_since });
+    // A row from before the column existed (game stored, no start) heals on the
+    // next beacon instead of showing no clock forever.
+    await db.query('UPDATE users SET playing_since = NULL WHERE id = $1', [uid]);
+    r = await beacon('Minecraft');
+    check(Number(r.data.playing_since) > since1 - 1, 'a stored game with no start gets one on the next beacon', r.data.playing_since);
+    const since2 = Number(await sinceOf());
+    r = await beacon('Chess');
+    check(r.data.playing_game === 'Chess' && Math.abs(Date.now() - Number(r.data.playing_since)) < 5000,
+      'switching games starts a NEW session (the old stamp is not carried over)', { game: r.data.playing_game, since: r.data.playing_since, was: since2 });
+    check((await beacon('Chess')).data.playing_since === r.data.playing_since, 'and that second session then runs the same way');
+    r = await api('DELETE', '/api/watcher/status', { token: tokA });
+    check(r.data.playing_game === null && (await sinceOf()) === null,
+      'the watcher\u2019s goodbye clears the game AND its clock — no timer left running on a finished session', { db: await sinceOf() });
+    me = await api('GET', '/api/me', { token: tokA });
+    check(me.data.user.playing_since === null, 'which is what the card sees: no game, no clock', me.data.user.playing_since);
+    // Ignoring the game being played is the other way a session ends.
+    await db.query('UPDATE users SET playing_game = $2, playing_since = $3 WHERE id = $1', [uid, 'Minecraft', Date.now() - 5000]);
+    r = await api('POST', '/api/me/games/Minecraft/ignore', { token: tokA });
+    check(r.data.now_playing === null && (await sinceOf()) === null, 'ignoring the running game clears the clock too', { since: await sinceOf() });
+    await api('POST', '/api/me/games/Minecraft/track', { token: tokA });
 
     console.log('\n' + (failures.length ? failures.length + ' FAILED, ' + passed + ' passed' : 'all ' + passed + ' checks passed'));
     try { await db.end(); } catch {}

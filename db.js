@@ -645,6 +645,12 @@ CREATE TABLE IF NOT EXISTS game_days (
 CREATE INDEX IF NOT EXISTS idx_game_days_user ON game_days(user_id, day);
 `);
   await addColumn('users', 'playing_game', 'TEXT');
+  // When the CURRENT game session began (ms epoch; NULL with no game running).
+  // playing_game alone answers "what", never "since when" — and the user card's
+  // Playing box wants the elapsed time, which has to survive a reconnect and
+  // read the same on every machine, so it is server state beside the game name
+  // rather than something a client stamps when it happens to see the badge.
+  await addColumn('users', 'playing_since', 'BIGINT');
   await addColumn('users', 'game_enabled', 'BIGINT NOT NULL DEFAULT 1');
   await addColumn('users', 'game_exclusions', "TEXT NOT NULL DEFAULT '[]'");
   // The picture (or video) a notification was about, so the inbox row can show

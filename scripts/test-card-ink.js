@@ -104,7 +104,7 @@ function inkPageHtml() {
     <div class="uc-tabs"><button type="button" class="uc-tab"><span>Message</span></button></div>
     <div class="uc-badges"><span class="early-badge">Early user</span><span class="sysadmin-badge">System admin</span></div>
     <div class="uc-statustext ustream"><span class="vlive">LIVE</span><span>Streaming</span></div>
-    <div class="uc-statustext ugame"><span class="gbadge"></span><span>Playing Chess</span></div>
+    <div class="uc-statustext ugame"><span class="gbadge"></span><span class="uc-game-name">Playing Chess</span><span class="uc-game-timer" data-gtimer="1700000000000" title="Time in this session">1:05</span></div>
     <div class="uc-roles"><button type="button" class="role-pill" data-role-toggle="r1" data-has="0">+ Usagi</button><span class="role-pill on" style="border-color:#b06ef0;color:#b06ef0;">Sempai</span><button type="button" class="role-pill on" data-role-toggle="r2" data-has="1">✓ Admin</button></div>
     <div class="uc-head"><span class="avatar big"></span><div class="uc-bubble-wrap"><div class="uc-bubble">a status</div></div></div>
     <div class="uc-presence"><button type="button" class="prow"><span class="plabel">Online</span></button></div>
@@ -114,6 +114,7 @@ function inkPageHtml() {
 const card = document.getElementById('usercard');
 const out = {};
 const color = (sel) => { const el = card.querySelector(sel); return el ? getComputedStyle(el).color : null; };
+const opacity = (sel) => { const el = card.querySelector(sel); return el ? getComputedStyle(el).opacity : null; };
 const bg = (sel) => { const el = card.querySelector(sel); return el ? getComputedStyle(el).backgroundColor : null; };
 const border = (sel) => { const el = card.querySelector(sel); return el ? getComputedStyle(el).borderTopColor : null; };
 const snap = () => ({
@@ -137,6 +138,9 @@ const snap = () => ({
   stream: { color: color('.uc-statustext.ustream'), bg: bg('.uc-statustext.ustream') },
   streamLive: color('.uc-statustext.ustream .vlive'),
   game: { color: color('.uc-statustext.ugame'), bg: bg('.uc-statustext.ugame') },
+  // The session clock inside that box: it reads the BOX's ink (the box is its
+  // own backdrop), dimmed — it is a readout, not a second label.
+  gameTimer: { color: color('.uc-statustext.ugame .uc-game-timer'), opacity: opacity('.uc-statustext.ugame .uc-game-timer') },
   gameBadge: { color: color('.gbadge'), bg: bg('.gbadge') },
   pill: { color: color('.role-pill'), bg: bg('.role-pill'), border: border('.role-pill') },
   pillOn: { color: color('.role-pill.on'), bg: bg('.role-pill.on'), border: border('.role-pill.on') },
@@ -320,6 +324,10 @@ async function main() {
             '[' + theme + '] the LIVE chip keeps its own white on green either way', { light: l.streamLive, dark: d.streamLive });
           check(l.gameBadge.color === WHITE && /^rgba\(255, 255, 255, 0\.\d+\)$/.test(l.gameBadge.bg || '') && d.gameBadge.color === DARK,
             '[' + theme + '] and the game badge goes tonal with the row it rides in', { light: l.gameBadge, dark: d.gameBadge });
+          check(l.gameTimer.color === l.game.color && d.gameTimer.color === d.game.color,
+            '[' + theme + '] the session clock in that box reads the box\'s own ink, not a card tone', { light: l.gameTimer, dark: d.gameTimer });
+          check(Number(l.gameTimer.opacity) > 0 && Number(l.gameTimer.opacity) < 1 && l.gameTimer.opacity === d.gameTimer.opacity,
+            '[' + theme + '] dimmed to a readout, the same amount on either ink', { light: l.gameTimer.opacity, dark: d.gameTimer.opacity });
           check(l.pill.color === l.sub && d.pill.color === d.sub && l.pill.border !== d.pill.border,
             '[' + theme + '] and the role pills take the ink and a matching hairline', { light: l.pill, dark: d.pill });
           // A rank that is NOT held is a toggle, not a rank: it stays the tonal

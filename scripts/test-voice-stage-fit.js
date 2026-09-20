@@ -138,7 +138,7 @@ function tagHTML() { return ''; }
 function paintAvatar(el) { el.textContent = 'C'; }
 function liveVideoTracks(ms) { return (ms && ms.getVideoTracks ? ms.getVideoTracks() : []) || []; }
 function mediaPrefs() { return { ec: true, agc: true, micId: null, quality: '720p', fps: 30 }; }
-function fmtVoiceTime(ms) { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+function fmtElapsed(ms) { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
 function toast() {}
 function renderChannels() {} function renderDmLists() {} function renderDmMembers() {} function renderDmBlank() {}
 function renderComposerMeta() {} function paintDmCallButtons() {} function paintUpdateBanner() {}

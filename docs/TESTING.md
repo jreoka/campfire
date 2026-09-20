@@ -196,7 +196,25 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   and every saturated role colour the picker can produce still clears 3.5:1 on
   it — while an UNHELD rank keeps the transparent tonal outline that makes the
   chip mean "you have this", in both the manager's toggle and a viewer's plain
-  span.
+  span. The game row it measures now includes the session clock, which must read
+  the box's own ink (not a card tone) at one fixed dimming on either ink.
+  `node scripts/test-game-session-timer.js` covers the clock in the user card's
+  "Playing <game>" box — how long the CURRENT session has run, on the right of
+  the box (offline, plus a headless-Chrome section that skips without Chrome).
+  It runs the real `fmtElapsed`/`gameRowHTML` out of `servers.js` (the real
+  ticker too, extracted and driven in the page): M:SS then H:MM:SS, hours never
+  wrapping, a clock only when the server knows the start, and the row carrying
+  that start (`users.playing_since`) rather than anything a client guessed. It
+  then scans `server.js` for the invariant behind it — a beacon stamps the start
+  ONCE per game (a later beacon of the same game must not restart it, a game
+  that changed or a stored one predating the column gets one, and every single
+  `playing_game = NULL` path clears the clock with it) — and measures the
+  rendered row in Chrome at a card width: the clock sits on the box's right
+  content edge whether the game name is short or far too long, because the name
+  is what ellipsises. Re-run it after touching `gameRowHTML`, the shared
+  `data-vtimer`/`data-gtimer` ticker, `users.playing_since`, the watcher beacon
+  routes, or the card's game row; `node scripts/test-games-manager.js` covers the
+  same clock end to end against a throwaway database.
   `node scripts/test-presence-widget.js` covers the presence switcher that now
   lives on your own user card as a vertical menu (offline; it runs the real
   `presenceWidgetHTML`, `statusLineHTML`, `presenceDurationSel`, `choosePresence`
@@ -468,7 +486,12 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   has no stats staying listed and being recoverable, removing playtime leaving
   detection and the ignore list alone, a watcher beacon re-tracking a game whose
   record was wiped, "remove all playtime" keeping the ignore list, "track all
-  again" clearing it, and name validation + auth on every route.
+  again" clearing it, and name validation + auth on every route. Its last section
+  is the session clock the user card shows: a running game carries a server-stamped
+  start, `/api/me` hands it over, a later beacon of the same game does not restart
+  it, a stored game with no start heals on the next beacon, switching games starts
+  a new session, and both ways a session ends (the watcher's goodbye and ignoring
+  the running game) clear the clock with the game.
   `node scripts/test-games-tab-browser.js` drives the real tab in headless
   Chrome (same harness as `test-drafts-browser.js`) and proves the UI offers
   those controls: the summary/chips/rows render, the row menu toggles

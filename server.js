@@ -605,7 +605,7 @@ async function serverView(serverId) {
   const channels = await db.prepare("SELECT * FROM channels WHERE server_id = ? ORDER BY type DESC, position ASC, created_at ASC").all(serverId);
   const members = await db.prepare(`
     SELECT u.id, u.username, u.display_name, u.avatar_color, u.avatar_url, u.banner_url, u.sidebar_banner_url,
-           u.status, u.status_text, u.status_expires_at, u.playing_game, u.streaming_game, u.bio, u.name_color, u.name_gradient,
+           u.status, u.status_text, u.status_expires_at, u.playing_game, u.playing_since, u.streaming_game, u.bio, u.name_color, u.name_gradient,
            u.card_color, u.card_gradient, u.avatar_decoration,
            u.created_at, u.is_admin, u.active_tag, u.active_tag_server_id,
            CASE WHEN u.id = s.owner_id THEN 'owner' ELSE 'member' END as role
@@ -692,7 +692,7 @@ function publicUser(u) {
     id: u.id, username: u.username, display_name: u.display_name, avatar_color: u.avatar_color || '#5865f2',
     avatar_url: u.avatar_url || null, banner_url: u.banner_url || null,
     sidebar_banner_url: u.sidebar_banner_url || null,
-    status: u.status || 'online', status_text: statusTextVisible(u), status_expires_at: statusExpiryVisible(u), presence_expires_at: presenceExpiryVisible(u), presence_auto: u.presence_auto ? 1 : 0, playing_game: u.playing_game || null, streaming_game: u.streaming_game || null, bio: u.bio || '',
+    status: u.status || 'online', status_text: statusTextVisible(u), status_expires_at: statusExpiryVisible(u), presence_expires_at: presenceExpiryVisible(u), presence_auto: u.presence_auto ? 1 : 0, playing_game: u.playing_game || null, playing_since: u.playing_game ? (u.playing_since || null) : null, streaming_game: u.streaming_game || null, bio: u.bio || '',
     name_color: u.name_color || '', name_gradient: u.name_gradient || '',
     card_color: u.card_color || '', card_gradient: u.card_gradient || '',
     avatar_decoration: AVATAR_DECOS.includes(u.avatar_decoration) ? u.avatar_decoration : '',
@@ -728,7 +728,7 @@ function blockedByOwnerLock(req, res, target) {
 }
 // Avatar decorations (settings → profile). IDs must match AVATAR_DECOS in public/js/core.js.
 const AVATAR_DECOS = ['ember', 'fireflies', 'aurora', 'neon', 'tide', 'stardust'];
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, presence_auto, playing_game, streaming_game, bio, name_color, name_gradient, card_color, card_gradient, avatar_decoration, active_tag_server_id, active_tag, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, deletion_scheduled_at, tz_offset, nsfw_ok, theme';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, presence_auto, playing_game, playing_since, streaming_game, bio, name_color, name_gradient, card_color, card_gradient, avatar_decoration, active_tag_server_id, active_tag, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, deletion_scheduled_at, tz_offset, nsfw_ok, theme';
 
 // ---------- shared rate limiting ----------
 // Every limiter lives in the rate_limits table rather than in process memory,
@@ -3781,7 +3781,7 @@ app.patch('/api/me', authRequired, async (req, res) => {
     if (cur?.playing_game) {
       let excluded = false;
       try { excluded = new Set(JSON.parse(cur.game_exclusions || '[]')).has(cur.playing_game); } catch {}
-      if (cur.game_enabled === 0 || excluded) await db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(req.user.id);
+      if (cur.game_enabled === 0 || excluded) await db.prepare('UPDATE users SET playing_game = NULL, playing_since = NULL WHERE id = ?').run(req.user.id);
     }
   } catch {}
   const u = await freshUser(req.user.id);
@@ -4058,26 +4058,35 @@ app.post('/api/watcher/status', authRequired, async (req, res) => {
   const exclusions = new Set(JSON.parse(u.game_exclusions || '[]'));
   const enabled = u.game_enabled !== 0;
   const game = (enabled && rawGame && !exclusions.has(rawGame)) ? rawGame : null;
-  const prev = (await freshUser(u.id)).playing_game;
+  const prevRow = await freshUser(u.id);
+  const prev = prevRow.playing_game;
   const last = await lastBeacon(u.id);
   if (last && last.game === game) {
     if (game) await creditPlay(u.id, game, Math.min(ts - last.ts, BEACON_CAP_MS), ts, tz);
   } else if (last && last.game) {
     await creditPlay(u.id, last.game, Math.min(now - last.ts, BEACON_CAP_MS), last.ts, tz);
   }
-  if (game && prev !== game) {
-    await db.prepare('UPDATE users SET playing_game = ? WHERE id = ?').run(game, u.id);
+  if (game && (prev !== game || !prevRow.playing_since)) {
+    // The session's start is stamped ONCE, by the SERVER clock (so every client
+    // measures against the same reference), on the first beacon of this game.
+    // A later beacon of the same game leaves it alone — the elapsed timer on the
+    // user card must not restart itself every 15 seconds — and a game already
+    // stored with no start (a row that predates the column) heals here.
+    const since = (prev === game && prevRow.playing_since) ? prevRow.playing_since : now;
+    await db.prepare('UPDATE users SET playing_game = ?, playing_since = ? WHERE id = ?').run(game, since, u.id);
   } else if (!game && prev) {
-    await db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(u.id);
+    await db.prepare('UPDATE users SET playing_game = NULL, playing_since = NULL WHERE id = ?').run(u.id);
   }
   await setBeacon(u.id, ts, game);
   const u2 = await freshUser(u.id);
   await broadcastUserUpdate(u2);
-  res.json({ ok: true, playing_game: u2.playing_game });
+  // playing_since rides the answer so the caller can see the session clock it
+  // just started (and so the beacon is testable without a second read).
+  res.json({ ok: true, playing_game: u2.playing_game, playing_since: u2.playing_since });
 });
 app.delete('/api/watcher/status', authRequired, async (req, res) => {
   await setBeacon(req.user.id, Date.now(), null);
-  await db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(req.user.id);
+  await db.prepare('UPDATE users SET playing_game = NULL, playing_since = NULL WHERE id = ?').run(req.user.id);
   const u2 = await freshUser(req.user.id);
   await broadcastUserUpdate(u2);
   res.json({ ok: true, playing_game: null });
@@ -4103,7 +4112,7 @@ async function setGameExclusion(req, res, on) {
   await db.prepare('UPDATE users SET game_exclusions = ? WHERE id = ?').run(JSON.stringify(clean), req.user.id);
   let u = await freshUser(req.user.id);
   if (on && u.playing_game === game) {
-    await db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(req.user.id);
+    await db.prepare('UPDATE users SET playing_game = NULL, playing_since = NULL WHERE id = ?').run(req.user.id);
     u = await freshUser(req.user.id);
   }
   await broadcastUserUpdate(u);
@@ -4147,7 +4156,7 @@ app.delete('/api/me/games/:game', authRequired, async (req, res) => {
   if ((await freshUser(req.user.id)).playing_game === game) {
     // Cleared, and back within one watcher heartbeat if the game is genuinely
     // still running (it re-beacons every ~30s while the process is up).
-    await db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(req.user.id);
+    await db.prepare('UPDATE users SET playing_game = NULL, playing_since = NULL WHERE id = ?').run(req.user.id);
     await broadcastUserUpdate(await freshUser(req.user.id));
   }
   res.json(await gamesPayload(req.user.id));
@@ -8219,7 +8228,7 @@ async function boot() {
       return;
     }
     // Clear stale playing_game on startup (watchers will re-beacon within 30s)
-    await db.prepare('UPDATE users SET playing_game = NULL WHERE playing_game IS NOT NULL').run();
+    await db.prepare('UPDATE users SET playing_game = NULL, playing_since = NULL WHERE playing_game IS NOT NULL').run();
     // ...and forget the beacon memory with it. These rows are SHARED, so unlike
     // the old per-process Map they survive a restart: leaving game='X' behind
     // would make the next beacon for that user look like a continuation and
@@ -8337,7 +8346,7 @@ safeLockedInterval('beacon', db.LOCKS.beaconSweep, async () => {
     'SELECT user_id FROM watcher_beacons WHERE last_seen < ? AND game IS NOT NULL'
   ).all(stale);
   for (const row of rows) {
-    await db.prepare('UPDATE users SET playing_game = NULL WHERE id = ?').run(row.user_id);
+    await db.prepare('UPDATE users SET playing_game = NULL, playing_since = NULL WHERE id = ?').run(row.user_id);
     // Stamp it fresh so the row is not re-judged until the next window; the
     // game is forgotten, the beacon's age is not replayed.
     await db.prepare('UPDATE watcher_beacons SET last_seen = ?, game = NULL WHERE user_id = ?').run(Date.now(), row.user_id);

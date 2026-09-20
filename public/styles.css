@@ -1862,6 +1862,13 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .gbadge svg{width:12px;height:12px;display:block}
 .gbadge img{width:100%;height:100%;object-fit:contain;display:block}
 .uc-statustext.ugame{display:flex;align-items:center;gap:.35rem}
+/* The "Playing X" box lays out as badge · name · session clock, with the clock
+   pushed to the RIGHT edge. It wears the box's own ink (currentColor, dimmed)
+   rather than a --uc-* tone: the box is its own backdrop — the card's ink rules
+   end at its edge — and the #usercard.uc-ink-* overrides above already decide
+   what that ink is. */
+.uc-statustext.ugame .uc-game-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.uc-statustext.ugame .uc-game-timer{margin-left:auto;flex-shrink:0;font-size:.95em;font-variant-numeric:tabular-nums;color:inherit;opacity:.72}
 .uc-sec-label{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin:.55rem 0 .3rem}
 /* Custom status: a thought bubble beside the avatar. The avatar straddles the
    banner (margin-top:-33px), so the bubble wrap hangs itself -14px to sit on

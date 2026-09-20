@@ -240,17 +240,30 @@ async function selectServer(id) {
     await refreshServers();
   }
 }
-function fmtVoiceTime(ms) {
+// Elapsed time for a live session — a voice room, or a game the watcher is
+// reporting. ONE shape, so the two timers read alike: M:SS, then H:MM:SS past
+// the hour, with hours never wrapping (a game left running overnight reads
+// 26:03:11 rather than 2:03:11).
+function fmtElapsed(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
   return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(ss).padStart(2, '0');
 }
+// One ticker paints both: a voice room's `data-vtimer` (keyed into S.voiceSince)
+// and a game session's `data-gtimer` (the server's own session start, carried on
+// the element), so a running clock costs one textContent per element per second
+// and never a re-render.
 setInterval(() => {
   const now = Date.now();
   document.querySelectorAll('[data-vtimer]').forEach((el) => {
     const t0 = S.voiceSince.get(el.dataset.vtimer);
     if (!t0) { el.remove(); return; }
-    el.textContent = fmtVoiceTime(now - t0);
+    el.textContent = fmtElapsed(now - t0);
+  });
+  document.querySelectorAll('[data-gtimer]').forEach((el) => {
+    const t0 = Number(el.dataset.gtimer);
+    if (!t0) { el.remove(); return; }
+    el.textContent = fmtElapsed(now - t0);
   });
 }, 1000);
 // ---------- unread channels ----------
@@ -491,7 +504,7 @@ function renderChannels() {
     const wrap = document.createElement('div');
     const b = document.createElement('button');
     b.className = 'chan' + (S.voice && S.voice.channelId === c.id ? ' active' : '');
-    b.innerHTML = `<span class="vicon"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M14.5 9.5a4 4 0 0 1 0 5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M17 7a8 8 0 0 1 0 10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M19.5 4.5a12 12 0 0 1 0 15" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></span><span>${esc(c.name)}</span>${c.nsfw ? '<span class="nsfw-badge">18+</span>' : ''}${occ.length ? `<span class="count">${occ.length}</span>` : ''}${occ.length && S.voiceSince.get(c.id) ? `<span class="vtime" data-vtimer="${c.id}">${fmtVoiceTime(Date.now() - S.voiceSince.get(c.id))}</span>` : ''}`;
+    b.innerHTML = `<span class="vicon"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M14.5 9.5a4 4 0 0 1 0 5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M17 7a8 8 0 0 1 0 10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M19.5 4.5a12 12 0 0 1 0 15" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></span><span>${esc(c.name)}</span>${c.nsfw ? '<span class="nsfw-badge">18+</span>' : ''}${occ.length ? `<span class="count">${occ.length}</span>` : ''}${occ.length && S.voiceSince.get(c.id) ? `<span class="vtime" data-vtimer="${c.id}">${fmtElapsed(Date.now() - S.voiceSince.get(c.id))}</span>` : ''}`;
     b.title = occ.length ? occ.map((p) => p.display_name).join(', ') : 'Join voice';
     b.onclick = () => openVoiceChannel(S.serverId, c.id);
     b.dataset.cid = c.id; b.dataset.ctype = 'voice';
@@ -820,6 +833,19 @@ function gameArt(name) {
 }
 function gameBadgeHTML(game) {
   return `<span class="gbadge" data-game="${esc(game)}">${CONTROLLER_SVG}</span>`;
+}
+// "Playing X" as the user card wears it: the badge, the name, and — when the
+// server knows when this session began — the elapsed time at the right edge
+// (the CSS pushes it there). The number is painted by the ticker above from
+// `data-gtimer`, so the clock runs without re-rendering anything, and
+// `playing_since` is stored server-side (users.playing_since) so the same
+// session reads the same length on every device and across a reload.
+function gameRowHTML(u) {
+  if (!u || !u.playing_game) return '';
+  const since = Number(u.playing_since) || 0;
+  return `<div class="uc-statustext ugame">${gameBadgeHTML(u.playing_game)}<span class="uc-game-name">Playing ${esc(u.playing_game)}</span>`
+    + (since ? `<span class="uc-game-timer" data-gtimer="${since}" title="Time in this session">${fmtElapsed(Date.now() - since)}</span>` : '')
+    + '</div>';
 }
 function paintGameBadge(el) {
   if (!el) return;
