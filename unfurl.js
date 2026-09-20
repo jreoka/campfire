@@ -304,7 +304,11 @@ function parseHtml(html, base) {
   const imageW = parseInt(get('og:image:width', 'twitter:image:width'), 10) || 0;
   const imageH = parseInt(get('og:image:height', 'twitter:image:height'), 10) || 0;
   const site = tidy(get('og:site_name', 'application-name', 'twitter:site'), 80).replace(/^@/, '');
-  return { title, description, image, imageW, imageH, site, icon, oembed };
+  // `og:site_name` is a DECLARED name, not a scraped one. It is what tells the
+  // caller that "Campfire" on campfire.dill.moe is the product's name and not a
+  // bare domain label (see the site-vs-host rule in unfurlUrl).
+  const appName = !!meta.get('og:site_name');
+  return { title, description, image, imageW, imageH, site, icon, oembed, appName };
 }
 
 // JSON-LD is the last-resort source for sites with no OG tags at all
@@ -384,6 +388,19 @@ function directOembed(href) {
 }
 
 // ---------- the unfurl itself ----------
+// "huggingface" as a site name reads worse than "huggingface.co": when a page's
+// declared name is just its domain's first label, the domain is the honest
+// label. A name the page DECLARES as the app's (`og:site_name`) is the
+// exception — "Campfire" on campfire.dill.moe is the product's name, not a
+// truncated domain, and it is the name our own pages ask to be shown by.
+function siteName(host, site, declared) {
+  const name = String(site || '').trim();
+  if (!name) return host;
+  const label = String(host || '').split('.')[0];
+  const squash = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!declared && squash(name) === squash(label)) return host;
+  return name;
+}
 async function unfurlUrl(rawUrl) {
   const target = parseTarget(rawUrl);
   if (!target) return null;
@@ -449,15 +466,10 @@ async function unfurlUrl(rawUrl) {
   }
   if (!meta.title || USELESS_TITLE.test(meta.title)) return null;
   const host = res.finalUrl.hostname.replace(/^www\./, '');
-  // "huggingface" as a site name reads worse than "huggingface.co"; when the
-  // declared name is just the domain's first label, show the domain instead.
-  let site = tidy(meta.site, 80);
-  const label = host.split('.')[0];
-  if (site && site.toLowerCase().replace(/[^a-z0-9]/g, '') === label.toLowerCase().replace(/[^a-z0-9]/g, '')) site = host;
   return {
     url: finalUrl,
     host,
-    site: site || host,
+    site: siteName(host, tidy(meta.site, 80), meta.appName),
     title: tidy(meta.title, 200),
     description: tidy(meta.description, 400),
     image: meta.image || '',
@@ -558,10 +570,14 @@ async function prune() {
 async function forgetServerInvites(serverId) {
   try {
     const rows = await db.prepare('SELECT code FROM server_invites WHERE server_id = ?').all(serverId);
-    if (!rows || !rows.length) return 0;
-    const marks = rows.map(() => 'url LIKE ?').join(' OR ');
-    const params = rows.map((r) => '%/invite/' + r.code + '%');
-    const res = await db.prepare(`DELETE FROM link_embeds WHERE ${marks}`).run(...params);
+    const marks = ['url LIKE ?'];
+    // Every invite LANDING PAGE, not just this server's codes: the page an old
+    // cached card was taken from is the thing that changed, and a deployment may
+    // answer on more than one hostname, so matching the path is what actually
+    // covers the rows. (The codes narrow it to this server's invites.)
+    const params = ['%/invite/%'];
+    for (const r of rows || []) { marks.push('url LIKE ?'); params.push('%/invite/' + r.code + '%'); }
+    const res = await db.prepare(`DELETE FROM link_embeds WHERE ${marks.join(' OR ')}`).run(...params);
     return Number(res && res.changes) || 0;
   } catch (e) {
     console.error('[unfurl] forget failed:', (e && e.message) || e);
@@ -692,5 +708,5 @@ module.exports = {
   sign,
   proxyPath,
   // exported for tests
-  _internals: { ipIsBlocked, parseHtml, parseTarget, sniffImage, decodeEntities, tidy, unfurlUrl, safeRequest, directOembed, fetchOembed },
+  _internals: { ipIsBlocked, parseHtml, parseTarget, sniffImage, decodeEntities, tidy, siteName, unfurlUrl, safeRequest, directOembed, fetchOembed },
 };

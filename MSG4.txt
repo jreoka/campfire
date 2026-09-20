@@ -1,0 +1,12 @@
+unfurl: keep a DECLARED site name (our own "Campfire" is not a domain label)
+
+The generic card prints the site above the title, and its rule — "a name equal to
+the host's first label IS the truncated domain, show the domain" — was turning
+our own og:site_name into "campfire.dill.moe" on the one page that matters most.
+parseHtml now reports whether the name was DECLARED (og:site_name) and the rule
+lives in a small, exported-for-tests siteName() that exempts a declared name.
+The scraped case keeps the old behaviour (huggingface -> huggingface.co).
+
+Also widens forgetServerInvites to match any /invite/ path, not just this
+server's codes: the page that changed is the invite landing, and this app may
+answer on more than one hostname.

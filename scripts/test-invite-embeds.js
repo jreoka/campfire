@@ -30,6 +30,7 @@ const ROOT = path.join(__dirname, '..');
 const EMBEDS = fs.readFileSync(path.join(ROOT, 'public', 'embeds.js'), 'utf8');
 const CSS = fs.readFileSync(path.join(ROOT, 'public', 'styles.css'), 'utf8');
 const SERVER = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+const UNFURL = fs.readFileSync(path.join(ROOT, 'unfurl.js'), 'utf8');
 const UI = fs.readFileSync(path.join(ROOT, 'public', 'js', 'ui.js'), 'utf8');
 
 let passed = 0;
@@ -247,12 +248,12 @@ async function main() {
     // OK_TTL (7 days), so an invite link unfurled before a deploy kept showing
     // the old un-named Campfire card long after the fix shipped. A preview of a
     // page we own has to be thrown away when that page changes.
-    const UNFURL = fs.readFileSync(path.join(ROOT, 'unfurl.js'), 'utf8');
     check(/async function forgetServerInvites/.test(UNFURL) && /^\s*forgetServerInvites,$/m.test(UNFURL),
       'unfurl.js can forget a server\u2019s invite previews', null);
     check(/url LIKE \?/.test(UNFURL) && /server_invites WHERE server_id/.test(UNFURL),
       'and finds them by the invite codes that server actually has', null);
-    check(/DELETE FROM link_embeds WHERE \$\{marks\}/.test(UNFURL), 'by path, not by guessing this instance\u2019s hostname', null);
+    check(/DELETE FROM link_embeds WHERE \$\{marks\.join\(' OR '\)\}/.test(UNFURL) && /'%\/invite\/%'/.test(UNFURL),
+      'by the /invite/ path (so any hostname this app answers on is covered), narrowed by the codes', null);
     check(/async function forgetInvitePreview/.test(SERVER), 'server.js wraps it so a preview failure never breaks the change', null);
     const sites = (SERVER.match(/^\s*forgetInvitePreview\(s\.id\);$/gm) || []).length;
     check(sites >= 9, 'and calls it everywhere the card\u2019s face can change (join, create, revoke, rename, icon, banner)', sites);
@@ -266,6 +267,30 @@ async function main() {
     ]) check(pat.test(SERVER), 'invalidation is wired to ' + label, null);
   }
 
+  section('[9] our own name is not a truncated domain');
+  {
+    // The unfurl prints `site` above the title on every generic card. Its rule
+    // ("a name equal to the domain's first label IS the domain") would turn our
+    // declared `og:site_name: Campfire` into "campfire.dill.moe" on the one page
+    // we care most about, so a DECLARED name is exempt.
+    const a = UNFURL.indexOf('function siteName(host, site, declared)');
+    const b = UNFURL.indexOf('async function unfurlUrl');
+    check(a > -1 && b > a, 'the site-name rule is present and sliceable', { a, b });
+    const src = UNFURL.slice(a, b).replace(/^function siteName/, 'var siteName = function siteName');
+    const siteName = new Function(src + '; return siteName;')();
+    check(siteName('campfire.dill.moe', 'Campfire', true) === 'Campfire',
+      'a declared name the page asks to be shown by is kept ("Campfire")', siteName('campfire.dill.moe', 'Campfire', true));
+    check(siteName('campfire.dill.moe', 'Campfire', false) === 'campfire.dill.moe',
+      'the same word scraped, not declared, is still read as a domain label', siteName('campfire.dill.moe', 'Campfire', false));
+    check(siteName('huggingface.co', 'huggingface', false) === 'huggingface.co', 'the rule still does its original job', null);
+    check(siteName('example.com', 'Example Docs', false) === 'Example Docs', 'and keeps a real name', null);
+    check(siteName('example.com', '', false) === 'example.com', 'with the host as the fallback', null);
+    check(/const appName = !!meta\.get\('og:site_name'\)/.test(UNFURL)
+      && /site: siteName\(host, tidy\(meta\.site, 80\), meta\.appName\)/.test(UNFURL),
+      'and the declared flag comes from og:site_name, the one name a page states on purpose', null);
+  }
+
+  section('[7] the tags another app reads when the link is pasted elsewhere');
   {
     // shellMetaTags is sliced out of server.js and run on its own: it is the one
     // piece of the preview a browser cannot show us (Discord/iMessage read it
