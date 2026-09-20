@@ -1,0 +1,6 @@
+Invite preview: drop the shell's generic description tag when a page brings its own
+
+The shell ships a hand-written <meta name="description">. The /invite/:code
+route injected an OG set that also carries one, so the page went out with two
+(the static one first, describing Campfire in general). Strip the generic tag
+whenever a per-request preview is injected — pinned by test-invite-embeds.js.

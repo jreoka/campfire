@@ -327,7 +327,12 @@ function sendShell(res, next, og) {
     // The shell carries per-deploy asset pins: never let it go stale.
     res.setHeader('Cache-Control', 'no-store');
     html = html.replace(/(src|href)="(\/(?:js\/[a-z0-9_-]+\.js|embeds\.js|styles\.css))"/g, `$1="$2?v=${APP_VERSION}"`);
-    if (og && og.title) html = html.replace('</head>', shellMetaTags(og) + '\n</head>');
+    // The shell's own hand-written description is the generic one; a page with a
+    // preview of its own replaces it rather than leaving two description tags.
+    if (og && og.title) {
+      html = html.replace(/<meta name="description"[^>]*>\s*/, '');
+      html = html.replace('</head>', shellMetaTags(og) + '\n</head>');
+    }
     res.send(html);
   });
 }

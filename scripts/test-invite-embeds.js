@@ -233,6 +233,11 @@ async function main() {
       'the stylesheet carries the card, its icon and its button', null);
     check(/data-invite-join/.test(EMBEDS) && /inviteCardClick/.test(EMBEDS), 'the card\u2019s Open-server click is delegated', null);
     check(!/\.server-icon/.test(CSS), 'no leftover span class from an earlier cut', null);
+    // The shell has its own generic hand-written description; a page carrying a
+    // preview of its own must not end up with two of them.
+    const sendAt = SERVER.indexOf('function sendShell(');
+    check(/replace\(\/<meta name="description"\[\^>\]\*>\\s\*\/, ''\)/.test(SERVER.slice(sendAt, sendAt + 900)),
+      'the generic description is dropped when a page brings its own preview', null);
   }
 
   section('[7] the tags another app reads when the link is pasted elsewhere');
