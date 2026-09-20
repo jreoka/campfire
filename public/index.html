@@ -248,6 +248,14 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
           <button type="button" id="adm-head-reports" class="adm-head-reports hidden" title="Open the moderation queue" aria-label="Open the moderation queue"><b id="adm-head-reports-n">0</b><span class="adm-head-reports-tx"> open report<span id="adm-head-reports-s">s</span></span></button>
         </header>
         <div id="admin-body">
+          <!-- The mobile detail header: on a phone the menu below is the console's
+               front page and one section opens alone, exactly like Settings. The
+               back arrow is the section-to-menu step; the header's Return button
+               stays the way out of the console itself. Hidden on desktop. -->
+          <div class="adm-mhead">
+            <button type="button" id="admin-back" class="mini" title="Back to admin menu" aria-label="Back to admin menu"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+            <strong id="admin-title">Overview</strong>
+          </div>
           <nav id="admin-menu" aria-label="Admin sections">
             <div class="adm-menu-label">Console</div>
             <button type="button" class="adm-nav active" data-atab="overview"><span class="adm-nav-ic" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20V10M12 20V4M19 20v-6"/></svg></span><span class="adm-nav-tx">Overview</span></button>

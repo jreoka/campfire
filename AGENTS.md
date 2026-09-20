@@ -694,6 +694,30 @@ transform, the encoder on real bytes, the wiring),
 post sent, and two screenshots proving a GIF is still moving) and
 `scripts/test-profile-crop-e2e.js` (the whole path: real server + browser +
 Settings → Profile → Save, then the stored bytes read back).
+**The site admin console is the same menu/detail pair as Settings on a phone**
+(owner request: "make the admin panel on mobile have the same tab menu with sub
+categorie menus like the current user settings menu"). `#admin-page` carries
+`adm-menu` or `adm-section` (setAdminView, admin.js) and the 820px/shallow-touch
+block in styles.css reacts to them with two NEGATIVE rules — `.adm-section` hides
+`#admin-menu`, `.adm-menu` hides `#admin-panes`, and `.adm-section` shows the
+phone's own header — so an untouched desktop open keeps exactly the rules above
+its media block (giving an unclassed element a display value there would have
+grown a detail header on a desktop). The menu is the console's front page as a
+list of `.adm-nav` rows (52px, panel surface, icon, chevron pseudo-element —
+the `.set-tab` shape), the opened section is one pane under a back arrow and
+`#admin-title`, and only the trailing edge moves when the rail becomes a
+full-width row. `matchAdminView()` derives the view from `ADMIN_PHONE_MQ` — the
+console's OWN 820px condition, deliberately wider than `phoneLayout()`'s 700px
+because a 390–430px phone is exactly where the two-column console breaks, and it
+is the same condition its stylesheet block uses so JS and CSS can never disagree
+— and it is called from `setAdminTab`, so a deep link (`?admin=reports`), a report
+notification and the header's queue chip all land IN that section while a bare
+open (the rail shield) lands on the menu, like the settings gear. The header
+keeps "Return to Campfire" in both views (one step out of the console; the arrow
+is one step back to the menu), the report chip stands down on the menu because
+the Reports row carries the badge there, and `ADMIN_SECTION_LABELS` is the
+phone header's name table. `scripts/test-admin-page.js` measures the menu rows,
+the two views and the desktop inertness in a real 390px frame.
 Message reports: right-click / long-press → **Report message** (red,
 last item; never your own) files it with a snapshot of the text, media
 references and where it happened, pushes every site admin live, drops an inbox

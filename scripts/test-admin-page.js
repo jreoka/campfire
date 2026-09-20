@@ -19,8 +19,9 @@
 //     overlays (menus/pickers/modals), because the console keeps using them;
 //   - the header's way out, the queue shortcut and the menu wiring exist, and
 //     the menu is one row per area with an icon and a label;
-//   - the phone layout turns the menu into a horizontal rail and shortens the
-//     return label, so the header cannot overflow a 360px screen.
+//   - the phone layout is the SETTINGS shape (menu, then one section with back),
+//     not a rail squeezed into the header, and the return label shortens so the
+//     header cannot overflow a 360px screen.
 //
 // Static checks run everywhere; the browser half drives the REAL shell markup
 // against the REAL stylesheet in headless Chrome and skips without it.
@@ -66,6 +67,11 @@ const chatMarkup = index.slice(index.indexOf('<main id="chat">'), index.indexOf(
 // The real shell, for the browser half: the whole #view-main section (rail,
 // sidebar, chat column, members) — everything the page has to stand down.
 const viewMain = index.slice(index.indexOf('<section id="view-main"'), index.indexOf('<!-- invite landing -->'));
+// The phone view helpers, run for real in the browser half (the same slice
+// trick test-mobile-settings-sheet.js uses for the settings pair). The section
+// name table comes with them: paintAdminTitle has nothing to read without it.
+const viewSrc = adminJs.slice(adminJs.indexOf('function setAdminView(view) {'), adminJs.indexOf('// Opening is two class flips'));
+const labelsSrc = adminJs.slice(adminJs.indexOf('const ADMIN_SECTION_LABELS'), adminJs.indexOf('const ADMIN_PAGE'));
 
 console.log('\n[1] the console is a page inside #chat, not a dialog over it');
 check(adminMarkup.length > 0, 'the console markup block is present');
@@ -127,9 +133,38 @@ check(/ADMIN_SECTIONS/.test(adminJs) && /adm-head-sub/.test(adminMarkup) && /sub
 check(/cfShown\('#admin-page'\)/.test(nativeJs), 'the Android/browser back button peels the page (native.js)');
 check(/visibilitychange/.test(adminJs) && /adminConsoleOpen\(\)/.test(adminJs), 'the Overview poll still resumes with the tab');
 
-console.log('\n[6] the phone layout: menu across the top, shorter way out');
-const phone = /@media \(max-width:820px\),\(max-height:560px\) and \(pointer:coarse\)\{\s*\/\* The menu becomes[\s\S]{0,700}?flex-direction:row/.exec(css);
-check(!!phone, 'under 820px the menu turns into a horizontal rail above the panes');
+console.log('\n[6] the phone layout: the settings menu shape, and a shorter way out');
+// The console's OWN block, found by a rule that only it carries: the same media
+// query appears elsewhere in the stylesheet (the update banner's padding), and
+// taking the first match would test the wrong block.
+const phoneStart = css.indexOf('@media (max-width:820px),(max-height:560px) and (pointer:coarse){', css.indexOf('.adm-mhead'));
+const phone = phoneStart < 0 ? '' : css.slice(phoneStart, css.indexOf('@media (max-width:600px)', phoneStart));
+check(phone.length > 0, 'the console\'s phone media block exists');
+check(/#admin-body\{flex-direction:column\}/.test(phone),
+  'under 820px the menu and the panes stack in one column');
+check(/#admin-page\.adm-section #admin-menu\{display:none\}/.test(phone),
+  'and the view classes show the menu OR the section, never both (the settings master/detail)');
+check(/#admin-page\.adm-menu #admin-panes\{display:none\}/.test(phone),
+  'the phone pane column is hidden by the menu class alone');
+check(!/^\s*\.adm-mhead\{/m.test(phone),
+  'and the phone block never styles an unclassed .adm-mhead (a desktop open must not grow a detail header)');
+check(/\.adm-mhead\{display:flex\}/.test(phone) || /#admin-page\.adm-section \.adm-mhead\{display:flex\}/.test(phone),
+  'the phone detail header appears with them');
+check(/\.adm-nav\{[^}]*min-height:52px[^}]*background:var\(--panel\)/.test(phone),
+  'a menu row is a settings-shaped row: a surface, an icon, a label');
+check(/\.adm-nav::after\{[\s\S]{0,220}border-right:2px solid var\(--faint\)/.test(phone),
+  'with the chevron that says "this opens something" (as .set-tab::after does)');
+check(/#admin-page\.adm-menu \.adm-head-reports\{display:none\}/.test(phone),
+  'and the header chip stands down on the menu: the Reports row carries the count there');
+check(/#admin-page #admin-panes\{[\s\S]{0,140}padding:\.5rem \.7rem 1rem/.test(phone),
+  'the full-width overrides out-specify the desktop id rules (else the rail keeps its width)');check(/#admin-page\.adm-section #admin-panes\{padding-top:1\.2rem\}/.test(phone),
+  'and an opened section starts below the detail header, not against it');
+// The desktop rail must NOT be redrawn by the phone block: the row rules live
+// under the media query only (an unscoped .adm-nav override would restyle the
+// desktop rail too).
+const navBase = /(^|\n)\.adm-nav\{([^}]*)\}/.exec(css);
+check(!!navBase && /background:transparent/.test(navBase[2]) && /min-height:52px/.test(phone),
+  'the desktop rail keeps its transparent row (the surface is the phone row\'s)', navBase && navBase[2]);
 const narrow = /@media \(max-width:600px\)\{([\s\S]*?)\n\}/.exec(css);
 check(!!narrow && /\.adm-back-t\{display:none\}/.test(narrow[1]) && /\.adm-back-s\{display:inline\}/.test(narrow[1]),
   'and under 600px the return button swaps to its short label', narrow && narrow[1]);
@@ -139,6 +174,29 @@ check(!!narrow && /\.adm-filter\{flex-wrap:wrap\}/.test(narrow[1]) && /\.adm-fil
   'and a search row gives its field a full line', narrow && narrow[1]);
 check((adminJs.match(/class="row adm-filter"/g) || []).length === 3,
   'the three search rows (users, reports, servers) carry that class');
+
+console.log('\n[7] the phone view is one class flip, and it is wired by name');
+check(/const ADMIN_SECTION_LABELS = \{[\s\S]{0,240}overview: 'Overview'[\s\S]{0,200}servers: 'Servers'/.test(adminJs),
+  'every section has its own name for the phone header (the row that was tapped is gone)');
+check(/const ADMIN_PHONE_MQ = '\(max-width:820px\), \(max-height:560px\) and \(pointer:coarse\)';/.test(adminJs),
+  'the console\'s phone breakpoint is the SAME condition its stylesheet block uses (no JS/CSS drift)');
+check(/function adminIsPhone\(\) \{ return !!window\.matchMedia && matchMedia\(ADMIN_PHONE_MQ\)\.matches; \}/.test(adminJs),
+  'and the phone test reads it (not phoneLayout(), whose 700px is narrower than the console\'s block)');
+check(/function matchAdminView\(\) \{ setAdminView\(adminIsPhone\(\) \? 'adm-section' : 'menu'\); \}/.test(adminJs),
+  'the view follows the layout (inert on desktop: both classes are meaningless there)');
+check(/paintAdminTitle\(t\);/.test(adminJs) && /function setAdminTab\(t\) \{/.test(adminJs),
+  'opening a section paints its name into the header');
+check(/if \(!tab && adminIsPhone\(\)\) setAdminView\('adm-menu'\);/.test(adminJs),
+  'a bare open (the shield) lands on the phone MENU, like the settings gear');
+check(/sectionBack\.onclick = \(\) => setAdminView\('adm-menu'\)/.test(adminJs),
+  'and the detail header\'s arrow steps back to the menu');
+check(/back\.onclick = closeAdminConsole/.test(adminJs),
+  'while Return to Campfire still leaves the console entirely');
+check(/mq\.addEventListener\('change', onPhoneChange\)/.test(adminJs) && /mq\.addListener\(onPhoneChange\)/.test(adminJs),
+  'a breakpoint change re-derives the view (a window dragged narrow, or a rotation)');
+check(/id="admin-back"/.test(adminMarkup) && /id="admin-title"/.test(adminMarkup),
+  'the detail header exists in the markup with its way back and its name');
+check(/class="adm-mhead"/.test(adminMarkup), 'as the mobile header row (.adm-mhead, desktop-hidden)');
 
 const chrome = findChrome();
 if (!chrome) return skip('no Chrome/Edge found — set CHROME_PATH');
@@ -151,9 +209,16 @@ ${viewMain}
 <script>
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const cs = (el) => getComputedStyle(el);
+const rt = (el) => { const r = el.getBoundingClientRect(); return { x: Math.round(r.x), w: Math.round(r.width), y: Math.round(r.y), h: Math.round(r.height) }; };
+${labelsSrc}
+${viewSrc}
 (async () => {
   const out = {};
-  const q = (s) => document.querySelector(s);
+  // The console's own helpers reach for the $ selector (core.js's global in the
+  // real app), so the harness has to provide it: without it paintAdminTitle
+  // throws inside the promise and the page title never lands.
+  window.$ = window.q = (s) => document.querySelector(s);
+  const q = window.q;
   // A hidden parent does not change a child's OWN computed display, so the
   // stand-down is measured as a zero-width box as well as the flag itself.
   const wide = (s) => Math.round(q(s).getBoundingClientRect().width);
@@ -192,8 +257,53 @@ const cs = (el) => getComputedStyle(el);
     chipTx: cs(q('.adm-head-reports-tx')).display !== 'none',
   };
   out.nav = [...document.querySelectorAll('#admin-menu .adm-nav')].map((b) => b.dataset.atab);
-  out.navDir = cs(q('#admin-menu')).flexDirection;
   out.panes = { scroll: cs(q('#admin-panes')).overflowY, hidden: [...document.querySelectorAll('#admin-panes .set-pane')].filter((p) => p.classList.contains('hidden')).length };
+  // No class set yet: this is what a browser that opened the console and never
+  // touched a row would draw, and it is how the DESKTOP is meant to look.
+  out.default = { detailHead: cs(q('.adm-mhead')).display, menu: cs(q('#admin-menu')).display, panes: cs(q('#admin-panes')).display };
+  // The phone menu, for real: the helpers under test are the real ones, calling
+  // the real stylesheet.
+  setAdminView('adm-menu');
+  paintAdminTitle('overview');
+  await wait(60);
+  const nav = q('#admin-menu .adm-nav');
+  const navs = rt(nav);
+  // The Reports row's count badge is hidden until a count lands; show it while
+  // the row is measured, because that badge is what the label must make room for.
+  const rbadge = q('#adm-reports-badge');
+  rbadge.classList.remove('hidden');
+  rbadge.textContent = '4';
+  const rrow = q('#admin-menu .adm-nav[data-atab="reports"]');
+  out.menu = {
+    page: page.className,
+    menu: cs(q('#admin-menu')).display, panes: cs(q('#admin-panes')).display,
+    detailHead: cs(q('.adm-mhead')).display,
+    label: cs(q('.adm-menu-label')).display,
+    chip: cs(q('#adm-head-reports')).display,
+    dir: cs(q('#admin-menu')).flexDirection,
+    nav: navs,
+    navBg: cs(nav).backgroundColor,
+    chevron: getComputedStyle(nav, '::after').content !== 'none',
+    ident: rt(q('.adm-nav-ic')), text: rt(q('.adm-nav-tx')),
+    rrow: rt(rrow), rtext: rt(rrow.querySelector('.adm-nav-tx')), badge: rt(rbadge),
+    headOverflow: Math.round(head.scrollWidth - head.clientWidth),
+  };
+  // The section view: one section alone, the detail header up, back on the left.
+  setAdminView('adm-section');
+  paintAdminTitle('reports');
+  await wait(60);
+  const det = q('.adm-mhead');
+  out.section = {
+    page: page.className,
+    menu: cs(q('#admin-menu')).display, panes: cs(q('#admin-panes')).display,
+    detailHead: cs(det).display, title: q('#admin-title').textContent.trim(),
+    back: rt(q('#admin-back')), head: rt(det),
+    chip: cs(q('#adm-head-reports')).display,
+    headOverflow: Math.round(head.scrollWidth - head.clientWidth),
+  };
+  out.labels = ['overview', 'reports', 'media', 'users', 'servers', 'nope'].map(adminTabLabel);
+  setAdminView('menu');
+  out.backToMenu = { menu: cs(q('#admin-menu')).display, panes: cs(q('#admin-panes')).display };
 
   document.body.classList.remove('adm-page');
   await wait(60);
@@ -234,13 +344,17 @@ function run(chrome, files, main, win) {
       { encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 });
     const m = /<title>([\s\S]*?)<\/title>/.exec(r.stdout || '');
     if (!m) return { err: 'no title, status ' + r.status + ' ' + (r.stderr || '').slice(-300) };
-    return JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
+    try {
+      return JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
+    } catch (e) {
+      return { err: 'bad title (' + e.message + '): ' + m[1].slice(0, 200) + ' :: ' + (r.stderr || '').slice(-300) };
+    }
   } finally {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }
 }
 
-console.log('\n[7] the real page against the real shell (headless Chrome, desktop)');
+console.log('\n[8] the real page against the real shell (headless Chrome, desktop)');
 const desk = run(chrome, { 'page.html': pageHtml() }, 'page.html', '1280,800');
 if (desk.err) { check(false, 'the desktop harness ran', desk.err); }
 else {
@@ -254,15 +368,23 @@ else {
   check(desk.chat.messages !== 'none' && desk.chat.composer !== 'none' && desk.chat.header !== 'none',
     'while the chat surfaces stay in flow underneath (covered, never torn down)', desk.chat);
   check(desk.nav.join(',') === 'overview,reports,media,users,servers', 'the menu renders one row per area', desk.nav);
-  check(desk.navDir === 'column', 'as a side column on a desktop', desk.navDir);
+  check(desk.menu.dir === 'column', 'as a side column on a desktop', desk.menu.dir);
   check(desk.panes.scroll === 'auto' && desk.panes.hidden === 4, 'the panes scroll, with Overview the only one showing', desk.panes);
+  // The mobile pair is INERT here: no detail header, menu and panes together —
+  // even with a view class set, which is the whole point of the classes.
+  check(desk.default.menu !== 'none' && desk.default.panes !== 'none', 'the menu and the panes show together by default', desk.default);
+  check(desk.default.detailHead === 'none', 'and no phone detail header', desk.default);
+  check(desk.menu.menu !== 'none' && desk.menu.panes !== 'none' && desk.menu.detailHead === 'none',
+    'a phone view class changes nothing on a desktop (one set of rules, no second layout)', desk.menu);
   check(desk.back.visible && desk.back.full && !desk.back.short && !desk.back.wraps, 'the full return label shows and does not wrap', desk.back);
   check(desk.head.overflow === 0 && desk.head.chipTx && desk.head.chipRight <= desk.viewport.w,
     'and the header fits with the queue chip spelled out', desk.head);
+  check(desk.labels.join(',') === 'Overview,Reports,Media,Users,Servers,Instance console',
+    'the phone header takes its name off the section table', desk.labels);
   check(desk.restored.left !== 'none' && desk.restored.rail > 0 && desk.restored.members !== 'none', 'clearing the flag puts the shell back', desk.restored);
 }
 
-console.log('\n[8] the same page in a real 390px viewport (headless Chrome, iframe)');
+console.log('\n[9] the same page in a real 390px viewport (headless Chrome, iframe)');
 const phoneOut = run(chrome, { 'page.html': pageHtml(), 'narrow.html': pageHtml(), 'frame.html': frameHtml() }, 'frame.html', '1280,800');
 if (phoneOut.err) { check(false, 'the phone harness ran', phoneOut.err); }
 else {
@@ -270,11 +392,46 @@ else {
   check(phoneOut.page.w === 390 && phoneOut.page.h === 700, 'the page owns that screen too', { page: phoneOut.page });
   check(phoneOut.shell.left === 'none' && phoneOut.shell.members === 'none',
     'the fixed member drawer (z-index 45) stands down with the rest', phoneOut.shell);
-  check(phoneOut.navDir === 'row', 'the menu is a horizontal rail on a phone', phoneOut.navDir);
   check(phoneOut.back.visible && !phoneOut.back.full && phoneOut.back.short, 'and the return button shows its short label', phoneOut.back);
   check(!phoneOut.back.wraps, 'so the header does not wrap at 390px', phoneOut.back);
   check(phoneOut.head.overflow === 0 && !phoneOut.head.chipTx && phoneOut.head.chipRight <= 390,
     'and the queue chip keeps its count inside the screen (its wording stands down)', phoneOut.head);
+
+  console.log('\n[9a] and the phone menu is the settings menu: a list of section rows');
+  check(phoneOut.menu.page.includes('adm-menu') && !phoneOut.menu.page.includes('adm-section'), 'the menu view is the class the stylesheet reads', phoneOut.menu.page);
+  check(phoneOut.menu.menu !== 'none' && phoneOut.menu.panes === 'none', 'the menu takes the whole body, the panes step aside', phoneOut.menu);
+  check(phoneOut.menu.detailHead === 'none', 'and the menu carries no detail header (it IS the front page)', phoneOut.menu);
+  check(phoneOut.menu.label !== 'none', 'its "Console" group label survives, as the settings rail keeps its own heading', phoneOut.menu);
+  check(phoneOut.menu.chip === 'none', 'the header chip stands down here (the Reports row carries the count)', phoneOut.menu);
+  check(phoneOut.menu.dir === 'column', 'the rows stack in a column, not a horizontal rail', phoneOut.menu);
+  check(phoneOut.menu.nav.x === 11 && Math.abs(phoneOut.menu.nav.w - (390 - 11 - 11)) <= 1,
+    'a row spans the menu width with its own inset (the settings rail\'s .7rem)', { nav: phoneOut.menu.nav, vw: 390 });
+  check(phoneOut.menu.nav.h >= 52, 'and is a 52px touch row, like a settings row', phoneOut.menu.nav);
+  check(phoneOut.menu.chevron, 'with the chevron pseudo-element the settings rows use');
+  check(phoneOut.menu.ident.x >= phoneOut.menu.nav.x + 13 && phoneOut.menu.text.x > phoneOut.menu.ident.x + phoneOut.menu.ident.w,
+    'icon first, then the label — the icon keeps the row inset', { ident: phoneOut.menu.ident, text: phoneOut.menu.text, nav: phoneOut.menu.nav });
+  // The count badge has to sit where the trailing edge leaves room for it: after
+  // the label and before the chevron. The label is what grows (an auto margin on
+  // an inline-block badge does nothing in a flex row), or the badge lands against
+  // the label's ellipsis end and never reaches the trailing edge.
+  check(phoneOut.menu.badge.x > phoneOut.menu.rtext.x + phoneOut.menu.rtext.w - 1
+    && phoneOut.menu.badge.x + phoneOut.menu.badge.w <= phoneOut.menu.rrow.x + phoneOut.menu.rrow.w - 12,
+    'the report count rides the trailing edge, between the label and the chevron',
+    { badge: phoneOut.menu.badge, text: phoneOut.menu.rtext, row: phoneOut.menu.rrow });
+  check(phoneOut.menu.headOverflow === 0, 'and the header still fits at 390px on the menu', phoneOut.menu);
+
+  console.log('\n[9b] a section opens alone, with back on the left');
+  check(phoneOut.section.page.includes('adm-section'), 'the section view is the other class', phoneOut.section.page);
+  check(phoneOut.section.menu === 'none' && phoneOut.section.panes !== 'none', 'the menu steps aside and the section shows alone', phoneOut.section);
+  check(phoneOut.section.detailHead === 'flex', 'under the phone detail header', phoneOut.section);
+  check(phoneOut.section.title === 'Reports', 'which names the section the reader is looking at', phoneOut.section);
+  check(phoneOut.section.back.x < phoneOut.section.head.w / 2, 'back on the left half, the step to the menu', phoneOut.section);
+  check(phoneOut.section.back.x + phoneOut.section.back.w <= phoneOut.section.head.w + 1 && phoneOut.section.headOverflow === 0,
+    'and nothing spills off the 390px screen', phoneOut.section);
+  check(phoneOut.section.chip !== 'none', 'the section view keeps the header chip (the queue shortcut)', phoneOut.section);
+  check(phoneOut.labels.join(',') === 'Overview,Reports,Media,Users,Servers,Instance console',
+    'every section has a phone name, and an unknown one falls back to the console', phoneOut.labels);
+  check(phoneOut.backToMenu.menu !== 'none' && phoneOut.backToMenu.panes === 'none', 'back returns to the menu', phoneOut.backToMenu);
 }
 
 console.log('');

@@ -3015,6 +3015,13 @@ body.adm-page #find-panel{display:none!important}
 .adm-brand-tx span{font-size:.76rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .adm-head-reports{flex-shrink:0;border:0;background:var(--danger-bg);color:var(--danger-tx);border-radius:999px;padding:.42rem .85rem;font-size:.78rem;font-weight:700;cursor:pointer}
 .adm-head-reports b{font-weight:800}
+/* The phone's detail header (the settings menu's `.set-mhead-detail` in this
+   console's clothes): back on the left, the section's name beside it. Hidden on
+   desktop, where the menu and the panes show together and the name is redundant
+   — the open row is already lit. */
+.adm-mhead{display:none;align-items:center;gap:.5rem;flex-shrink:0;padding:.5rem .55rem .5rem .75rem;background:var(--panel);border-bottom:1px solid var(--line-soft)}
+.adm-mhead .mini{width:34px;height:34px;min-height:34px;padding:0;flex-shrink:0}
+#admin-title{font-size:.95rem;font-weight:750;letter-spacing:-.01em;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #admin-body{flex:1;min-height:0;display:flex}
 #admin-menu{width:236px;flex-shrink:0;display:flex;flex-direction:column;gap:.25rem;padding:.9rem .7rem;background:var(--panel);border-right:1px solid var(--line-soft);overflow-y:auto}
 .adm-menu-label{font-size:.68rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:.45rem .8rem .3rem}
@@ -3030,15 +3037,57 @@ body.adm-page #find-panel{display:none!important}
 #admin-panes{flex:1;min-width:0;overflow-y:auto;overflow-anchor:none;padding:1.35rem 1.45rem 2.5rem}
 #admin-panes .set-pane{max-width:900px;margin:0 auto}
 @media (max-width:820px),(max-height:560px) and (pointer:coarse){
-  /* The menu becomes a horizontal rail above the panes: a phone has no column
-     to spare, and every section stays one tap away. */
+  /* The console turns into the phone's menu/detail pair (the same shape the
+     settings panel has): the section menu IS the screen and one section opens
+     alone with a back arrow, instead of a menu rail squeezed into the header of
+     a pane it shares the screen with. The classes are set from admin.js and mean
+     nothing above this breakpoint. */
   #admin-body{flex-direction:column}
-  #admin-menu{width:auto;flex-direction:row;gap:.3rem;padding:.5rem .6rem;border-right:0;border-bottom:1px solid var(--line-soft);overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
-  #admin-menu::-webkit-scrollbar{display:none}
-  .adm-menu-label{display:none}
-  .adm-nav{width:auto;flex:0 0 auto;white-space:nowrap;padding:.52rem .85rem;font-size:.85rem}
-  .adm-nav-tx{flex:0 0 auto}
-  #admin-panes{padding:1rem .9rem 2rem}
+  /* The view switch, as two NEGATIVE rules: each one hides what the view is not
+     showing. Nothing is given a display value here, so the untouched markup (a
+     desktop open) keeps exactly what the rules above give it — and the classes
+     stay inert above this breakpoint, where neither rule can match. */
+  #admin-page.adm-section #admin-menu{display:none}
+  #admin-page.adm-menu #admin-panes{display:none}
+  #admin-page.adm-section .adm-mhead{display:flex}
+  /* The full-width overrides have to out-specify `#admin-menu`/`#admin-panes`
+     above (one ID) or the id rules win and the menu keeps the desktop rail's
+     width, padding and edge. */
+  #admin-page #admin-menu,
+  #admin-page #admin-panes{
+    width:auto;flex:1;min-height:0;flex-direction:column;gap:.25rem;
+    padding:.5rem .7rem 1rem;background:none;border-right:0;border-bottom:0;
+  }
+  .adm-menu-label{padding:.55rem .3rem .35rem}
+  /* One row per section, like a settings row: a surface, an icon and a chevron
+     saying "this opens something". Only the TRAILING edge moves when it becomes
+     a full-width row — the icon keeps the label's own inset. */
+  .adm-nav{
+    min-height:52px;padding:.7rem .9rem;gap:.85rem;background:var(--panel);
+    border-radius:12px;font-size:.95rem;color:var(--text);
+  }
+  .adm-nav:hover{background:var(--panel-2)}
+  .adm-nav.active{background:var(--accent-dim);color:var(--on-container)}
+  .adm-nav-ic{color:var(--muted)}
+  .adm-nav.active .adm-nav-ic{color:var(--on-container)}
+  .adm-nav::after{
+    content:'';flex-shrink:0;width:8px;height:8px;margin-left:.35rem;
+    border-right:2px solid var(--faint);border-bottom:2px solid var(--faint);
+    transform:rotate(-45deg) translateY(-1px);
+  }
+  /* The open report count stays on the row, so the detail is no longer the only
+     place the queue announces itself. The LABEL is what grows (the badge is an
+     inline-block inside the button, so an auto margin on it would do nothing and
+     it would sit against the label's ellipsis end), which pushes the badge and
+     then the chevron to the trailing edge. */
+  .adm-nav-tx{flex:1 1 auto}
+  #adm-reports-badge{margin-left:.45rem}
+  /* The header chip belongs to the section view: on the menu the Reports row IS
+     the count, and at 390px the chip plus the row's own badge is the same news
+     twice in one screenful. */
+  #admin-page.adm-menu .adm-head-reports{display:none}
+  #admin-page.adm-section{padding-top:0}
+  #admin-page.adm-section #admin-panes{padding-top:1.2rem}
 }
 @media (max-width:600px){
   .adm-brand-tx{display:none}

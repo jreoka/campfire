@@ -25,6 +25,16 @@ const ADMIN_SECTIONS = {
   users: 'Accounts, roles and sign-ins',
   servers: 'Every server and its members',
 };
+// The section's own name, for the phone's detail header (the row the reader
+// tapped is gone once it opens, so the header has to carry the word — the same
+// contract as the settings menu's title, settings.js).
+const ADMIN_SECTION_LABELS = {
+  overview: 'Overview',
+  reports: 'Reports',
+  media: 'Media',
+  users: 'Users',
+  servers: 'Servers',
+};
 const ADMIN_PAGE = 25;
 // Recent-files card in Admin → Media: fetch this many, scroll inside the card.
 const ADMIN_MEDIA_RECENT = 12;
@@ -56,6 +66,37 @@ function isSiteAdmin() { return !!(S.me && S.me.is_admin); }
 function adminConsoleOpen() { return !!($('#admin-page') && !$('#admin-page').classList.contains('hidden')); }
 function adminTabIs(t) { return Admin.tab === t; }
 
+// ---------- phone view: a menu of sections, then one section alone ----------
+// Same master/detail the settings panel has (settings.js): on a phone `adm menu`
+// IS the console's front page — a list of section rows — and `adm section` is
+// one section with back. Desktop ignores both classes; the menu is the rail and
+// the panes sit beside it. A phone and a desktop are therefore the same markup
+// with one class flipped, never two layouts to keep in sync.
+function setAdminView(view) {
+  const page = $('#admin-page');
+  if (!page) return;
+  page.classList.toggle('adm-menu', view !== 'adm-section');
+  page.classList.toggle('adm-section', view === 'adm-section');
+}
+// The console's own breakpoint, and it is WIDER than phoneLayout()'s 700px: a
+// modern phone is 390–430 CSS px and a two-column console in a 430px window is
+// just as wrong as one at 390. The stylesheet's admin block uses exactly this
+// condition, so JS and CSS agree about which layout is being drawn.
+const ADMIN_PHONE_MQ = '(max-width:820px), (max-height:560px) and (pointer:coarse)';
+function adminIsPhone() { return !!window.matchMedia && matchMedia(ADMIN_PHONE_MQ).matches; }
+// Every section is reached from a menu row, so a section always FOLLOWS a tap:
+// the view is derived from whichever section is on screen rather than passed
+// around. That keeps a deep link (?admin=reports, auth.js), a push notification
+// and the header's queue chip landing in the section itself, not on the menu.
+function matchAdminView() { setAdminView(adminIsPhone() ? 'adm-section' : 'menu'); }
+function adminTabLabel(t) {
+  return ADMIN_SECTION_LABELS[t] || 'Instance console';
+}
+function paintAdminTitle(t) {
+  const el = $('#admin-title');
+  if (el) el.textContent = adminTabLabel(t);
+}
+
 // Opening is two class flips: the page, and the body flag the stylesheet uses to
 // stand the rest of the shell down. Nothing is hidden by hand and nothing is
 // unmounted, so there is no state to rebuild on the way out — the conversation
@@ -69,6 +110,10 @@ function openAdminConsole(tab) {
   box.classList.remove('hidden');
   try { $('#btn-admin')?.classList.add('active'); } catch {}
   setAdminTab(tab || Admin.tab || 'overview');
+  // Naming a section — a deep link, a report notification, the header chip —
+  // opens THAT section; a bare open (the rail shield) is the phone's MENU,
+  // exactly like the settings gear opens Settings' menu (openSettings).
+  if (!tab && adminIsPhone()) setAdminView('adm-menu');
 }
 function closeAdminConsole() {
   try { $('#admin-page')?.classList.add('hidden'); } catch {}
@@ -85,6 +130,10 @@ function setAdminTab(t) {
   document.querySelectorAll('#admin-menu .adm-nav').forEach((b) => b.classList.toggle('active', b.dataset.atab === t));
   const sub = $('#adm-head-sub');
   if (sub) sub.textContent = ADMIN_SECTIONS[t] || 'Instance console';
+  paintAdminTitle(t);
+  // The section is on screen, so the phone shows it alone — the menu row has
+  // done its job (matchAdminView; inert on desktop).
+  matchAdminView();
   let pane = null;
   for (const key of ['overview', 'reports', 'media', 'users', 'servers']) {
     const p = document.getElementById('adm-' + key);
@@ -1157,8 +1206,23 @@ async function adminClick(e) {
     if (b) setAdminTab(b.dataset.atab);
   });
   box.addEventListener('click', adminClick);
+  // The phone's detail header: the arrow steps back to the section MENU; the
+  // header's own "Return to Campfire" remains the way out of the console. Both
+  // exist because they are different steps — one section back, one console back.
+  const sectionBack = $('#admin-back');
+  if (sectionBack) sectionBack.onclick = () => setAdminView('adm-menu');
   const back = $('#admin-return');
   if (back) back.onclick = closeAdminConsole;
+  // The console's own view classes are the mobile menu/section switch, and the
+  // breakpoint is measured at load — a desktop window dragged narrow (or a phone
+  // rotated across it) would otherwise keep the layout it opened with. Re-derive
+  // on the breakpoint change, never on every resize.
+  try {
+    const mq = matchMedia(ADMIN_PHONE_MQ);
+    const onPhoneChange = () => matchAdminView();
+    if (mq.addEventListener) mq.addEventListener('change', onPhoneChange);
+    else if (mq.addListener) mq.addListener(onPhoneChange);
+  } catch {}
   const chip = $('#adm-head-reports');
   if (chip) chip.onclick = () => setAdminTab('reports');
   const rail = $('#btn-admin');
