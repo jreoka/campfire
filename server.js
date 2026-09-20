@@ -3974,7 +3974,7 @@ async function withGameIcons(games) {
   return games;
 }
 async function gamingFor(userId) {
-  const u = await db.prepare('SELECT game_enabled, game_exclusions, playing_game, tz_offset FROM users WHERE id = ?').get(userId);
+  const u = await db.prepare('SELECT game_enabled, game_exclusions, playing_game, playing_since, tz_offset FROM users WHERE id = ?').get(userId);
   const tz = userTz(u);
   const exclusions = new Set(JSON.parse(u?.game_exclusions || '[]'));
   const games = await db.prepare('SELECT game, total_ms, first_seen_ms, last_seen_ms FROM user_games WHERE user_id = ? ORDER BY total_ms DESC').all(userId);
