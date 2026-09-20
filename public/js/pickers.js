@@ -2398,6 +2398,13 @@ function fmtUntil(ts) {
 // Custom status shown as a thought bubble beside the avatar (Discord-style).
 // Other people only get a bubble when they set something; my own card always
 // shows one so "set a status" lives up by the picture, not in the card body.
+// My own SET bubble carries both controls in one oval chip over its top-right
+// corner: a pencil that reopens the status in the editor, then the × that clears
+// it (owner request: "add an edit pencil to the left of the x in the same box
+// like make the circle more of an oval with 2 buttons"). The bubble itself stays
+// a button that opens the same editor — the pencil is the visible affordance, the
+// bubble's own box the big target.
+const STATUS_PENCIL = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
 function statusBubbleHTML(u) {
   const mine = !!(S.me && u && u.id === S.me.id);
   const cur = ((u && u.status_text) || '').trim();
@@ -2407,14 +2414,20 @@ function statusBubbleHTML(u) {
   const bubble = mine
     ? `<button type="button" class="uc-bubble edit${cur ? '' : ' empty'}" id="uc-status-edit" aria-label="${cur ? 'Edit custom status' : 'Set a custom status'}">${cur ? esc(cur) : 'Set a status'}</button>`
     : `<div class="uc-bubble">${esc(cur)}</div>`;
-  const clear = (mine && cur)
-    ? '<button type="button" class="uc-bubble-x" id="uc-status-clear" aria-label="Clear custom status" title="Clear status">×</button>'
+  const acts = (mine && cur)
+    ? '<span class="uc-bubble-acts">'
+      + `<button type="button" class="uc-bubble-act" id="uc-status-editpen" aria-label="Edit custom status" title="Edit status">${STATUS_PENCIL}</button>`
+      + '<span class="uc-bub-sep" aria-hidden="true"></span>'
+      + '<button type="button" class="uc-bubble-act danger" id="uc-status-clear" aria-label="Clear custom status" title="Clear status">×</button>'
+      + '</span>'
     : '';
-  return `<div class="uc-bubble-wrap"><div class="uc-bubble-fit">${bubble}${clear}</div>${expNote}</div>`;
+  return `<div class="uc-bubble-wrap"><div class="uc-bubble-fit">${bubble}${acts}</div>${expNote}</div>`;
 }
 function wireStatusBubble(card) {
   const se = card && card.querySelector('#uc-status-edit');
   if (se) se.onclick = () => openStatusEditor();
+  const pen = card && card.querySelector('#uc-status-editpen');
+  if (pen) pen.onclick = () => openStatusEditor();
   const sc = card && card.querySelector('#uc-status-clear');
   if (sc) sc.onclick = () => clearMyStatus();
 }

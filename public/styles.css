@@ -1896,13 +1896,22 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .uc-bubble::before,.uc-bubble::after{content:'';position:absolute;border-radius:50%;background:var(--panel-3)}
 .uc-bubble::before{left:-7px;bottom:6px;width:7px;height:7px}
 .uc-bubble::after{left:-13px;bottom:0;width:4px;height:4px}
-.uc-bubble.edit{cursor:pointer;padding-right:1.5rem;transition:background var(--t-fast)}
+.uc-bubble.edit{cursor:pointer;padding-right:2.75rem;transition:background var(--t-fast)}
 .uc-bubble.edit:hover{background:var(--panel-4)}
 .uc-bubble.empty{padding-right:.62rem;background:var(--panel-3);border:1px dashed var(--line);color:var(--muted)}
 .uc-bubble.empty::before,.uc-bubble.empty::after{display:none}
 .uc-bubble.empty:hover{background:var(--panel-4);border-color:var(--accent);color:var(--text)}
-.uc-bubble-x{position:absolute;top:-.4rem;right:-.3rem;width:20px;height:20px;padding:0;border:0;border-radius:50%;background:var(--panel-4);color:var(--muted);font:inherit;font-size:.9rem;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
-.uc-bubble-x:hover{background:var(--danger-bg);color:var(--danger-tx)}
+/* The bubble's two controls ride in ONE oval chip over its top-right corner:
+   the pencil reopens the status in the editor, the × clears it (owner request —
+   the single round × became this oval). It keeps the thought bubble's own panel
+   tone (--panel-4 over --panel-3), so it stays a theme panel on a user-coloured
+   card, and `.uc-bubble.edit`'s right padding is what reserves its width, so a
+   long status wraps clear of the chip instead of running underneath it. */
+.uc-bubble-acts{position:absolute;top:-.4rem;right:-.3rem;display:flex;align-items:center;padding:1px;background:var(--panel-4);border-radius:999px}
+.uc-bubble-acts .uc-bub-sep{flex:0 0 1px;width:1px;height:10px;background:var(--line)}
+.uc-bubble-act{width:20px;height:20px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--muted);font:inherit;font-size:.9rem;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
+.uc-bubble-act:hover{background:var(--accent-dim);color:var(--accent-hover)}
+.uc-bubble-act.danger:hover{background:var(--danger-bg);color:var(--danger-tx)}
 .uc-bubble-exp{font-size:.7rem;color:var(--faint);margin-top:.2rem}
 /* Presence switcher on your own card: a vertical menu that starts as just your
    current status and cascades (states → that state's timer). The collapsed row

@@ -95,14 +95,24 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   the composer skips the camera for `opts.file`/`opts.text` (with a refused file
   falling back to it). Writes `campfire-story-new-menu.png` to the temp dir.
   `node scripts/test-status-bubble.js` covers the custom status as a
-  thought bubble beside the avatar (offline; it runs the real
-  `statusBubbleHTML` pulled out of `pickers.js`): other people only get a bubble
-  once they set something (whitespace-only counts as unset), my own card always
-  keeps one ("Set a status" placeholder that opens the editor, plus a clear
-  button once set), the expiry note only ever shows on my card and never for a
-  lapsed timer, the text is escaped, and the old body section
-  (`statusEditHTML`/`uc-statusbox`) is gone while the bubble still renders in the
-  avatar row.
+  thought bubble beside the avatar (offline, plus a headless-Chrome measurement
+  that skips without Chrome; it runs the real `statusBubbleHTML` pulled out of
+  `pickers.js`): other people only get a bubble once they set something
+  (whitespace-only counts as unset), my own card always keeps one ("Set a status"
+  placeholder that opens the editor, plus an oval chip once set), the expiry note
+  only ever shows on my card and never for a lapsed timer, the text is escaped,
+  and the old body section (`statusEditHTML`/`uc-statusbox`) is gone while the
+  bubble still renders in the avatar row. The chip itself (owner request: "add an
+  edit pencil to the left of the x in the same box like make the circle more of
+  an oval with 2 buttons") is pinned both in the markup — two buttons in ONE
+  container, pencil first, inline SVG never an emoji, wired to the same
+  `openStatusEditor` the bubble uses — and on the rendered pixels of the real
+  card under the real `styles.css`: a `border-radius:999px` pill wider than it is
+  tall, the pencil's box left of the ×'s, both inside the chip, an opaque theme
+  panel, still riding the bubble's top-right corner, never off the card, and — on
+  a short status and on one that wraps — the text painting clear of it, because
+  `.uc-bubble.edit` reserves the chip's width. Re-run it after touching
+  `statusBubbleHTML`/`wireStatusBubble` or the `.uc-bubble*` rules.
   `node scripts/test-emoji-field.js` covers the emoji button that rides inside a
   profile field — both custom-status inputs (the settings profile pane and the
   "Custom status" dialog your own card opens) and the bio box (settings, plus the
