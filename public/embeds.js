@@ -18,6 +18,7 @@
 
 const EMBED_MAX = 3;
 const CARD_MAX = 3;     // generic link cards per message (first is full-size, rest compact)
+const INVITE_MAX = 3;   // invite cards per message — each carries a live fetch
 const EMBED_TOTAL = 5;  // players + cards combined
 const YT_ID = /^[A-Za-z0-9_-]{6,20}$/;
 
@@ -252,14 +253,22 @@ function linkEmbedsHTML(text) {
   const src = stripEmbedIgnored(text);
   const re = /https?:\/\/[^\s<>"'`]+/g;
   const seen = new Set();
+  const invites = [];
   const out = [];
   let players = 0;
   let cards = 0;
   let m;
-  while (out.length < EMBED_TOTAL && (m = re.exec(src))) {
+  // A Campfire invite is not a link to preview — it is a server, and the card
+  // below is the invitation itself. It is resolved from this app's own API
+  // rather than unfurled (no external fetch, no cache TTL on somebody else's
+  // HTML, and the member count and icon are the live ones), it goes FIRST, and
+  // it is not beaten to the front by the players and generic cards sharing the
+  // same message.
+  while ((m = re.exec(src))) {
     const url = cleanEmbedUrl(m[0]);
     if (!url || seen.has(url)) continue;
     seen.add(url);
+    if (inviteFromUrl(url)) { if (invites.length < INVITE_MAX) invites.push(inviteCardHTML(url)); continue; }
     let html = null;
     try { html = embedForUrl(url); } catch { html = null; }
     if (html) {
@@ -272,7 +281,8 @@ function linkEmbedsHTML(text) {
       if (card) out.push(card);
     }
   }
-  return out.length ? '<div class="embeds">' + out.join('') + '</div>' : '';
+  const all = invites.concat(out);
+  return all.length ? '<div class="embeds">' + all.join('') + '</div>' : '';
 }
 
 // ---------- plain-prose surfaces: story captions, story markup text ----------
@@ -342,6 +352,10 @@ function storyLinkEmbedsHTML(text) {
   while ((m = re.exec(src))) {
     const url = cleanEmbedUrl(m[0]);
     if (!url) continue;
+    // An invite link stays a plain link on a story: the chat invite card is a
+    // call to action, and the compact unfurl card underneath it is the same
+    // link twice. (The story surfaces are pinned by scripts/test-story-links.js.)
+    if (inviteFromUrl(url)) continue;
     // Nothing known for this URL (or the server had nothing): try the next one.
     const card = linkCardHTML(url, true, true);
     if (card) return '<div class="embeds">' + card + '</div>';
@@ -492,7 +506,7 @@ function installLinkCards() {
   let scheduled = false;
   const flush = () => {
     scheduled = false;
-    for (const n of seen) scanLinkCards(n);
+    for (const n of seen) { scanLinkCards(n); scanInviteCards(n); }
     seen.clear();
   };
   let mo = null;
@@ -507,12 +521,179 @@ function installLinkCards() {
   } catch { mo = null; }
   const start = () => {
     scanLinkCards(document.body);
+    scanInviteCards(document.body);
+    document.addEventListener('click', inviteCardClick);
     try { if (mo) mo.observe(document.body, { childList: true, subtree: true }); } catch {}
   };
   if (document.body) start();
   else document.addEventListener('DOMContentLoaded', start);
 }
+// ---------- server invite cards ----------
+// A Campfire invite link in a message is a SERVER, not a link to read: Discord's
+// invite embed is the model, and the difference from every other card here is
+// where the data comes from. This app's own /api/invite/:code already knows the
+// server's name, description, icon and live member count, so the card asks it
+// instead of unfurling — no external fetch, no week-long cache row describing a
+// server that has since been renamed or emptied, and the one question a reader
+// actually has ("am I already in there?") is answered by the same response.
+//
+// What the card does NOT do is join anybody. Someone already in the server gets
+// "Open server" (it navigates straight there); someone who is not gets a Join
+// button that opens the invite landing page, where the join still has to be
+// accepted — a paste in chat must never silently put somebody in a server.
+const INVITE_TTL_MS = 5 * 60e3;   // member counts move; a tab re-asks eventually
+const inviteCache = new Map();    // "origin|code" -> { data, err, at }
+const INVITE_PATH = /^\/invite\/([A-Za-z0-9_-]{1,64})\/?$/;
+
+// Only a link that leads to an invite LANDING PAGE is treated as one. Our own
+// origin always counts; another host has to look like the same app (the
+// /invite/CODE page this app serves), which is what lets a second Campfire
+// instance's invites still render here — the shape check is the whole test,
+// because a false positive is only a card, never a fetch of anything private.
+function inviteFromUrl(raw) {
+  let p;
+  try { p = new URL(raw); } catch { return null; }
+  if (p.protocol !== 'http:' && p.protocol !== 'https:') return null;
+  if (p.username || p.password) return null;
+  const m = INVITE_PATH.exec(p.pathname);
+  if (!m) return null;
+  const self = (typeof location !== 'undefined' && location.host) ? location.host === p.host : false;
+  return { code: m[1], origin: p.origin, self, url: p.href };
+}
+function inviteCacheKey(inv) { return inv.origin + '|' + inv.code; }
+function inviteEndpoint(inv) {
+  if (inv.self) return '/api/invite/' + encodeURIComponent(inv.code);
+  return inv.origin + '/api/invite/' + encodeURIComponent(inv.code);
+}
+// Card state -> the words on it. `err` is what is KNOWN rather than what was
+// hoped: a revoked link says so instead of pretending it is still an invitation.
+function inviteView(err) {
+  if (err === 'invite_expired') return { bad: 1, note: 'This invite has expired' };
+  if (err === 'invite_exhausted') return { bad: 1, note: 'This invite has reached its use limit' };
+  if (err) return { bad: 1, note: 'This invite is no longer valid' };
+  return null;
+}
+function fmtMembers(n) { return n === 1 ? '1 member' : n + ' members'; }
+// The card's OUTER element and its INNER contents are built separately on
+// purpose. A repaint replaces the contents (`.iv-out`), never the element: the
+// link-card scan reads `.embed-invite[data-invite]`, so an element rebuilt from
+// the outside would be picked up again by the observer that is watching the very
+// mutation it just caused — and the card would nest inside itself, one copy per
+// pass. (scripts/test-invite-embeds-browser.js pins the single copy.)
+function inviteBodyHTML(inv, hit) {
+  const d = hit && hit.data;
+  const bad = hit && hit.err;
+  if (d) {
+    const initial = esc((d.name || 'S').trim().charAt(0).toUpperCase());
+    const inner = d.icon_url
+      ? '<img src="' + eh(d.icon_url) + '" alt="" loading="lazy" decoding="async" onerror="this.remove()" />'
+      : initial;
+    // "Open server" is only ever true for THIS deployment: another instance's
+    // invite cannot be opened in this app however that instance answers, so it
+    // stays a Join offer to its own landing page.
+    const open = !!(d.joined && inv.self);
+    return '<span class="iv-icon">' + inner + '</span>'
+      + '<span class="iv-name">' + eh(d.name || 'Server') + '</span>'
+      + '<span class="iv-meta">' + fmtMembers(Number(d.memberCount) || 0) + '</span>'
+      + (d.description ? '<span class="iv-desc">' + eh(d.description) + '</span>' : '')
+      + '<a class="btn primary small emb-go" href="' + eh(inv.url) + '"' + (inv.self ? '' : ' target="_blank" rel="noopener nofollow ugc"')
+      + (open ? ' data-invite-join="' + eh(d.serverId || '') + '"' : '')
+      + '>' + (open ? 'Open server' : 'Join server') + '</a>';
+  }
+  return '<span class="iv-name">' + (bad ? 'Invite unavailable' : 'Campfire invite') + '</span>'
+    + '<span class="iv-meta">' + (bad ? esc(inviteView(hit && hit.err).note) : 'Checking link…') + '</span>';
+}
+function inviteBodyFor(url) {
+  const inv = inviteFromUrl(url);
+  if (!inv) return null;
+  return { inv, hit: inviteCache.get(inviteCacheKey(inv)) || null };
+}
+function inviteCardHTML(url) {
+  const f = inviteBodyFor(url);
+  if (!f) return '';
+  // No `href` on the card itself: a click anywhere but the button must not
+  // navigate away from a half-read channel (the URL is already in the message).
+  return '<div class="embed embed-invite' + (f.hit && f.hit.err ? ' bad' : '') + '" data-invite="' + eh(f.inv.url) + '">'
+    + '<span class="iv-out">' + inviteBodyHTML(f.inv, f.hit) + '</span></div>';
+}
+// Repaint a card in place from whatever is known now (a live answer, a verdict
+// about the link, or still nothing): the CONTENTS move, the element does not.
+function paintInviteCard(el, hit, inv) {
+  el.classList.toggle('bad', !!(hit && hit.err));
+  el.innerHTML = '<span class="iv-out">' + inviteBodyHTML(inv, hit) + '</span>';
+  el.dataset.invited = '1';
+}
+// An answer that is already known and young enough is reused outright; anything
+// else goes to the network EVERY time. There is deliberately no in-flight
+// dedupe: message lists are rebuilt wholesale on every update, so a promise left
+// over from the render before this one would answer for an element that is no
+// longer on screen — and the reader would keep a stale "Join server" on a server
+// they just joined. The window is small and this endpoint is local and cached
+// server-side.
+async function fetchInvite(inv) {
+  const key = inviteCacheKey(inv);
+  const hit = inviteCache.get(key);
+  if (hit && Date.now() - hit.at < INVITE_TTL_MS) return hit;
+  let next;
+  try {
+    const res = await fetch(inviteEndpoint(inv), {
+      // A cross-origin invite is somebody else's deployment: it may not ask
+      // for our token, and `joined` there could only ever be about our own
+      // servers, so it is left out of the request entirely.
+      headers: (inv.self && typeof cardAuthHeader === 'function') ? cardAuthHeader() : {},
+      credentials: inv.self ? 'same-origin' : 'omit',
+    });
+    if (res.ok) next = { data: await res.json(), at: Date.now() };
+    // 404/410 are verdicts about the LINK and are remembered as such; a 5xx or
+    // a dead network is not (the next render asks again).
+    else if (res.status === 404 || res.status === 410) {
+      const j = await res.json().catch(() => null);
+      next = { err: (j && j.error) || 'bad_invite', at: Date.now() };
+    } else next = { at: 0 };
+  } catch { next = { at: 0 }; }
+  inviteCache.set(key, next);
+  return next;
+}
+async function fillInvite(el) {
+  const inv = inviteFromUrl(el.dataset.invite);
+  if (!inv) return;
+  const hit = await fetchInvite(inv);
+  if (!el.isConnected || !el.dataset.invite) return;
+  // A verdict about the link (revoked, expired) is painted; a network hiccup is
+  // not — the headerless stub the message rendered is left alone rather than
+  // mislabelled "unavailable", and the next render asks again.
+  if (hit && (hit.data || hit.err)) paintInviteCard(el, hit, inv);
+}
+// The card's one action, delegated on the document: "Open server" switches to a
+// server this account is already in. Anything else (not signed in, not a
+// member) is an ordinary anchor to the landing page, where joining is confirmed.
+function inviteCardClick(ev) {
+  const el = ev.target && ev.target.closest ? ev.target.closest('[data-invite-join]') : null;
+  if (!el) return;
+  const sid = el.getAttribute('data-invite-join');
+  if (!sid || typeof selectServer !== 'function') return;
+  ev.preventDefault();
+  selectServer(sid).catch(() => { try { location.assign(el.getAttribute('href') || '/'); } catch {} });
+}
+// One MutationObserver already watches the whole list for link cards; invites
+// ride the same scan rather than opening a second observer on the same tree.
+function scanInviteCards(root) {
+  if (!root || root.nodeType !== 1) return;
+  let nodes;
+  try {
+    nodes = (root.matches && root.matches('.embed-invite[data-invite]'))
+      ? [root] : Array.from(root.querySelectorAll('.embed-invite[data-invite]'));
+  } catch { return; }
+  for (const el of nodes) {
+    if (el.dataset.invited) continue;
+    el.dataset.invited = '1';
+    // A card the message rendered from the cache is already complete; this is
+    // the cold path (first paint, or the cache has aged out).
+    fillInvite(el);
+  }
+}
+
 if (typeof document !== 'undefined') installLinkCards();
 
 // Node test hook (browsers ignore: `module` is undefined there).
-try { if (typeof module !== 'undefined') module.exports = { linkEmbedsHTML, linkifyHTML, storyTextHTML, storyLinkEmbedsHTML, embedForUrl, cleanEmbedUrl, stripEmbedIgnored, cardBodyHTML, linkCardHTML, setLinkPreviews, __cardCache: cardCache }; } catch {}
+try { if (typeof module !== 'undefined') module.exports = { linkEmbedsHTML, linkifyHTML, storyTextHTML, storyLinkEmbedsHTML, embedForUrl, cleanEmbedUrl, stripEmbedIgnored, cardBodyHTML, linkCardHTML, setLinkPreviews, inviteFromUrl, inviteCardHTML, fillInvite, fmtMembers, __cardCache: cardCache, __inviteCache: inviteCache }; } catch {}

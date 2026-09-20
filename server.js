@@ -295,16 +295,85 @@ app.use((req, res, next) => {
   res.setHeader('Service-Worker-Allowed', '/');
   next();
 });
-// Pin shell asset URLs to the code fingerprint: a freshly loaded page can never
-// mix with stale cached JS/CSS from a previous deploy (different query = different key).
-app.get(['/', '/index.html'], (req, res, next) => {
+// ---------- the SPA shell (and the link previews it hands other apps) ----------
+// One reader for index.html, because a shell served straight off disk is a shell
+// with nothing to say about itself: the page carries no OpenGraph tags, so every
+// invite link pasted into Discord, iMessage or Slack — and into Campfire's own
+// unfurl — came back as a bare hostname. The tag set is injected per request
+// (the /invite/:code route below) and the entry point is what puts it in.
+function shellMetaTags(og) {
+  if (!og || !og.title) return '';
+  const esc2 = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const img = og.image ? (/^https?:\/\//i.test(og.image) ? og.image : (og.base || '') + og.image) : '';
+  let out = '\n<!-- link preview (built per request; see shellMetaTags in server.js) -->'
+    + '\n<meta name="description" content="' + esc2(og.description || og.title) + '" />'
+    + '\n<meta property="og:type" content="website" />'
+    + '\n<meta property="og:title" content="' + esc2(og.title) + '" />';
+  if (og.description) out += '\n<meta property="og:description" content="' + esc2(og.description) + '" />';
+  if (img) out += '\n<meta property="og:image" content="' + esc2(img) + '" />'
+    + '\n<meta property="og:image:alt" content="' + esc2(og.imageAlt || og.title) + '" />';
+  if (og.url) out += '\n<meta property="og:url" content="' + esc2(og.url) + '" />';
+  out += '\n<meta property="og:site_name" content="' + esc2(og.site || 'Campfire') + '" />'
+    + '\n<meta name="twitter:card" content="' + (img ? 'summary_large_image' : 'summary') + '" />';
+  return out;
+}
+// Shared shell send: per-deploy asset pins so a freshly loaded page can never mix
+// with stale cached JS/CSS (different query = different key), plus the preview.
+function sendShell(res, next, og) {
   fs.readFile(path.join(__dirname, 'public', 'index.html'), 'utf8', (err, html) => {
     if (err) return next();
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     // The shell carries per-deploy asset pins: never let it go stale.
     res.setHeader('Cache-Control', 'no-store');
-    res.send(html.replace(/(src|href)="(\/(?:js\/[a-z0-9_-]+\.js|embeds\.js|styles\.css))"/g, `$1="$2?v=${APP_VERSION}"`));
+    html = html.replace(/(src|href)="(\/(?:js\/[a-z0-9_-]+\.js|embeds\.js|styles\.css))"/g, `$1="$2?v=${APP_VERSION}"`);
+    if (og && og.title) html = html.replace('</head>', shellMetaTags(og) + '\n</head>');
+    res.send(html);
   });
+}
+app.get(['/', '/index.html'], (req, res, next) => {
+  sendShell(res, next, {
+    title: 'Campfire',
+    description: 'A simple, self-hosted chat and voice app. Create servers, chat in text channels, and hop into voice rooms.',
+    image: '/icons/icon-512.png',
+    base: req.protocol + '://' + req.get('host'),
+    site: 'Campfire',
+  });
+});
+// The invite landing, served with the SERVER's own face on it: this is the page
+// every "join my server" link points at, and the one that gets pasted into other
+// apps (and into Campfire's own unfurl), so the preview is the invitation —
+// server name, description and icon. Resolution is deliberately cheap: a shape
+// check first (so a junk path never reaches the database), then one lookup, and
+// a dead link still renders the landing page's own "Invite failed" toast.
+app.get('/invite/:code', async (req, res, next) => {
+  const code = String(req.params.code || '').trim();
+  if (!/^[\w-]{1,64}$/.test(code)) return sendShell(res, next, null);
+  let og = null;
+  try {
+    const hit = await resolveInvite(code);
+    if (hit && hit.server) {
+      const s = hit.server;
+      const pub = invitePublic(hit.invite);
+      if (!pub.expired && !pub.exhausted) {
+        const n = Number((await db.prepare('SELECT COUNT(*) c FROM server_members WHERE server_id = ?').get(s.id)).c) || 0;
+        const base = req.protocol + '://' + req.get('host');
+        const image = s.icon_url || s.banner_url || '/icons/icon-512.png';
+        og = {
+          title: s.name + ' on Campfire',
+          description: (s.description ? s.description + ' — ' : '') + (n === 1 ? '1 member' : n + ' members'),
+          image,
+          imageAlt: s.name,
+          url: base + '/invite/' + code,
+          base,
+          site: 'Campfire',
+        };
+      }
+    }
+  } catch (e) {
+    console.error('[invite] preview lookup failed:', (e && e.message) || e);
+  }
+  sendShell(res, next, og);
 });
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 // Virus-scan gate: the ONE thing it refuses is a key whose bytes were deleted
@@ -583,6 +652,25 @@ async function authRequired(req, res, next) {
   } catch {
     return res.status(401).json({ error: 'bad_token' });
   }
+}
+// A signed-in caller is lucky, a stranger is still served: the invite preview
+// reads the same token to answer "are you already in this server?" (the card's
+// button is "Open server" or "Join"), and a bad token is simply ignored here
+// rather than 401ing a link that works fine for everyone else.
+async function optionalAuth(req, _res, next) {
+  const token = getTokenFromReq(req);
+  if (token) {
+    try {
+      const p = jwt.verify(token, JWT_SECRET);
+      const user = await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(p.sub);
+      if (user && !user.disabled && !user.deletion_scheduled_at
+        && (p.iat || 0) * 1000 >= (user.token_valid_after || 0) - 2000) {
+        req.user = user;
+        req.sessionId = p.sid || null;
+      }
+    } catch { /* stale or bogus token: treated as anonymous */ }
+  }
+  next();
 }
 async function isMember(serverId, userId) {
   return !!(await db.prepare('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?').get(serverId, userId));
@@ -1214,7 +1302,7 @@ async function mintInviteCode() {
   }
   return null;
 }
-app.get('/api/invite/:code', async (req, res) => {
+app.get('/api/invite/:code', optionalAuth, async (req, res) => {
   const hit = await resolveInvite(req.params.code);
   if (!hit || !hit.server) return res.status(404).json({ error: 'bad_invite' });
   const pub = invitePublic(hit.invite);
@@ -1222,7 +1310,16 @@ app.get('/api/invite/:code', async (req, res) => {
   if (pub.exhausted) return res.status(410).json({ error: 'invite_exhausted' });
   const s = hit.server;
   const memberCount = (await db.prepare('SELECT COUNT(*) c FROM server_members WHERE server_id = ?').get(s.id)).c;
-  res.json({ name: s.name, description: s.description || '', banner_url: s.banner_url || null, icon_url: s.icon_url || null, memberCount });
+  // `serverId` + `joined` are what let a chat invite CARD be the invitation: a
+  // reader who is already in the server gets an "Open server" button instead of
+  // the join path, and one who is not is sent to the landing page to accept —
+  // the card never joins anybody on its own.
+  let joined = false;
+  if (req.user) { try { joined = await isMember(s.id, req.user.id); } catch { joined = false; } }
+  res.json({
+    serverId: s.id, joined, name: s.name, description: s.description || '',
+    banner_url: s.banner_url || null, icon_url: s.icon_url || null, memberCount,
+  });
 });
 app.post('/api/servers/join', authRequired, async (req, res) => {
   const code = String(req.body?.inviteCode || req.body?.code || '').trim();

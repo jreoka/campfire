@@ -118,6 +118,17 @@ async function showInviteLanding(code) {
     if (!r.ok) throw new Error(info.error || 'bad_invite');
   } catch (err) { toast('Invite failed: ' + prettyError(err.message || 'bad_invite')); return; }
   $('#inv-name').textContent = info.name || 'Server';
+  // The tab title is the one piece of the preview a browser can still get wrong:
+  // /invite/:code is served with the server's name in its OpenGraph tags, and a
+  // client-side route change (or a crawler that runs JS) repaints them here, so
+  // the preview and the page always name the same thing.
+  try {
+    const nm = info.name || 'Server';
+    document.title = nm + ' · Campfire';
+    let ogi = document.querySelector('meta[property="og:image"]');
+    if (!ogi) { ogi = document.createElement('meta'); ogi.setAttribute('property', 'og:image'); document.head.appendChild(ogi); }
+    if (info.icon_url || info.banner_url) ogi.setAttribute('content', info.icon_url || info.banner_url);
+  } catch {}
   $('#inv-banner').style.backgroundImage = info.banner_url ? `url('${info.banner_url}')` : '';
   const icon = $('#inv-icon');
   if (info.icon_url) icon.innerHTML = `<img src="${esc(info.icon_url)}" alt="" />`;

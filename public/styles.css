@@ -1469,6 +1469,20 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 .embed-link.compact .el-media{order:2;flex:none;margin:0}
 .embed-link.compact .el-img{width:72px;height:72px;border-radius:8px}
 @media (max-width:700px),(max-height:560px) and (pointer:coarse){.embeds{max-width:100%}}
+/* Server invite cards. The accent hairline on the left is the one thing that
+   says "this is an invitation, not an article" — the same device Discord uses —
+   and the whole card is tinted with it rather than just its border. */
+.embed-invite{padding:.8rem .85rem;background:linear-gradient(var(--accent-dim),var(--accent-dim)),var(--panel-2);border-color:transparent;border-left:3px solid var(--accent)}
+.embed-invite.bad{border-left-color:var(--line);background:var(--panel-2)}
+.embed-invite .iv-out{display:flex;flex-direction:column;align-items:center;gap:.3rem;text-align:center}
+.embed-invite .iv-icon{width:56px;height:56px;border-radius:16px;overflow:hidden;flex:none;display:flex;align-items:center;justify-content:center;background:var(--accent);color:#fff;font-size:1.45rem;font-weight:800;margin-bottom:.2rem}
+.embed-invite .iv-icon img{width:100%;height:100%;object-fit:cover;display:block}
+.embed-invite .iv-name{font-size:1rem;font-weight:700;line-height:1.3;overflow-wrap:anywhere}
+.embed-invite .iv-meta{font-size:.76rem;color:var(--muted)}
+.embed-invite .iv-desc{font-size:.82rem;line-height:1.45;color:var(--muted);margin-top:.15rem;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.embed-invite .emb-go{margin-top:.55rem;text-decoration:none}
+.embed-invite.bad .iv-name{color:var(--muted)}
+@media (max-width:700px),(max-height:560px) and (pointer:coarse){.embed-invite .emb-go{width:100%}}
 .file-card{display:flex;align-items:center;gap:.65rem;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:.65rem .85rem;max-width:330px;text-decoration:none;color:var(--text);transition:background var(--t-fast)}
 .file-card:hover{background:var(--panel-3)}
 .file-card .fname{font-size:.85rem;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
