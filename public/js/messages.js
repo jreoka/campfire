@@ -1315,7 +1315,9 @@ function reactionsHTML(m) {
     const label = r.emoji.startsWith(':') && r.emoji.endsWith(':') && em
       ? `<img class="cemoi" src="${em.url}" alt="${esc(r.emoji)}" data-fb-emoji="${esc(r.emoji)}">`
       : esc(r.emoji);
-    return `<button class="reaction${r.me ? ' me' : ''}" data-act="react" data-emoji="${esc(r.emoji)}" title="${esc(reactionTitle(r))}" aria-label="${esc(reactionTitle(r))}">${label} <span class="rcount">${r.count}</span></button>`;
+    // The glyph is its own element so the stylesheet can give it a line box the
+    // count beside it can be matched to (see `.reaction .rx-e`).
+    return `<button class="reaction${r.me ? ' me' : ''}" data-act="react" data-emoji="${esc(r.emoji)}" title="${esc(reactionTitle(r))}" aria-label="${esc(reactionTitle(r))}"><span class="rx-e">${label}</span> <span class="rcount">${r.count}</span></button>`;
   }).join('') + '</div>';
 }
 // What a rolling value is SHOWING. While the two copies are stacked the
