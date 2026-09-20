@@ -101,7 +101,7 @@ check(!!actsRule, 'the chip has its own rule');
 check(/border-radius:999px/.test(actsRule[1]), 'and is a pill — a circle grown into an oval by its second button', actsRule[1]);
 check(/background:var\(--panel-4\)/.test(actsRule[1]), 'it keeps the thought bubble\'s own panel tone (a theme panel on a user-coloured card)', actsRule[1]);
 const editRule = /\.uc-bubble\.edit\{([^}]*)\}/.exec(css);
-check(!!editRule && /padding-right:2\.\d+rem/.test(editRule[1]), 'and the bubble reserves the chip\'s width, so text wraps clear of it', editRule && editRule[1]);
+check(!!editRule && /padding-right:3\.\d+rem/.test(editRule[1]), 'and the bubble reserves the chip\'s column, so text never runs under it', editRule && editRule[1]);
 
 console.log('\n[3] the expiry note rides under the bubble');
 const withExp = statusBubbleHTML(me({ status_text: 'Back later', status_expires_at: NOW + 3600e3 }));
@@ -199,7 +199,19 @@ else {
     check(short.buttons.every((b) => b.l >= short.acts.l - 0.6 && b.r <= short.acts.r + 0.6 && b.t >= short.acts.t - 0.6 && b.b <= short.acts.b + 0.6),
       'each button sits inside the chip box', short.acts);
     check(short.buttons[0].svg && !short.buttons[1].svg, 'the pencil is the inline SVG, the × a glyph');
-    check(short.contentRight <= short.acts.l, 'the bubble reserves the chip\'s width (nothing can run under it)',
+    // The complaint the first cut earned: "kinda looks weird with a short
+    // status" — the chip sat on the bubble's top-right CORNER, so over a
+    // two-word bubble it hung out over the card behind it. It has to be inside
+    // the bubble's own box, on its vertical centre, at any status length.
+    const inside = (m) => m.acts.l >= m.bubble.l - 0.6 && m.acts.r <= m.bubble.r + 0.6 && m.acts.t >= m.bubble.t - 0.6 && m.acts.b <= m.bubble.b + 0.6;
+    check(inside(short), 'the chip sits INSIDE the bubble, not over its corner — short status',
+      { chip: short.acts, bubble: short.bubble });
+    check(inside(long), 'and stays inside for one that wraps', { chip: long.acts, bubble: long.bubble });
+    const centred = (m) => Math.abs((m.acts.t + m.acts.b) / 2 - (m.bubble.t + m.bubble.b) / 2) <= 1.5;
+    check(centred(short) && centred(long), 'centred on the bubble\'s height, like a trailing control',
+      { short: short.acts.t, long: long.acts.t });
+    check(short.acts.h < short.bubble.h - 2, 'it is a control row, not the whole bubble', { chip: short.acts.h, bubble: short.bubble.h });
+    check(short.contentRight <= short.acts.l, 'the bubble reserves the chip\'s column (nothing can run under it)',
       { contentRight: short.contentRight, chipLeft: short.acts.l });
     check(short.text.r <= short.acts.l, 'so a short status paints clear of the chip', { text: short.text.r, chip: short.acts.l });
     check(long.text.r <= long.acts.l, 'and one that wraps does too — every line, not just the first',
@@ -207,8 +219,10 @@ else {
     check(short.acts.r <= short.card.r - 8 && long.acts.r <= long.card.r - 8, 'the chip never hangs off the card',
       { short: short.acts.r, long: long.acts.r, card: short.card.r });
     check(/^rgb\(/.test(short.bg || ''), 'it is an opaque theme panel (it sits on a user-coloured card)', short.bg);
-    check(short.acts.t < short.bubble.t + 2 && short.acts.b < short.bubble.b, 'it rides the bubble\'s top-right corner, as the single × did',
-      { chip: short.acts, bubble: short.bubble });
+    // The chip is its own panel (--panel-4), so the bubble's hover has to be a
+    // step the other way or the chip disappears into the bubble on hover.
+    check(/\.uc-bubble\.edit:hover\{background:var\(--panel-2\)\}/.test(css) && !/\.uc-bubble\.edit:hover\{background:var\(--panel-4\)\}/.test(css),
+      'and the bubble\'s hover is a different tone, so the chip stays visible on it');
   }
 }
 

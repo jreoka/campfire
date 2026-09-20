@@ -2398,11 +2398,13 @@ function fmtUntil(ts) {
 // Custom status shown as a thought bubble beside the avatar (Discord-style).
 // Other people only get a bubble when they set something; my own card always
 // shows one so "set a status" lives up by the picture, not in the card body.
-// My own SET bubble carries both controls in one oval chip over its top-right
-// corner: a pencil that reopens the status in the editor, then the × that clears
-// it (owner request: "add an edit pencil to the left of the x in the same box
-// like make the circle more of an oval with 2 buttons"). The bubble itself stays
-// a button that opens the same editor — the pencil is the visible affordance, the
+// My own SET bubble carries both controls in one oval chip INSIDE it, pinned to
+// the bubble's trailing edge: a pencil that reopens the status in the editor,
+// then the × that clears it (owner request: "add an edit pencil to the left of
+// the x in the same box like make the circle more of an oval with 2 buttons").
+// Inside rather than on the corner, because a chip hanging over a short bubble
+// read as a stray control on the card behind it. The bubble itself stays a
+// button that opens the same editor — the pencil is the visible affordance, the
 // bubble's own box the big target.
 const STATUS_PENCIL = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
 function statusBubbleHTML(u) {

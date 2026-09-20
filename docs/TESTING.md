@@ -109,10 +109,15 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   `openStatusEditor` the bubble uses — and on the rendered pixels of the real
   card under the real `styles.css`: a `border-radius:999px` pill wider than it is
   tall, the pencil's box left of the ×'s, both inside the chip, an opaque theme
-  panel, still riding the bubble's top-right corner, never off the card, and — on
-  a short status and on one that wraps — the text painting clear of it, because
-  `.uc-bubble.edit` reserves the chip's width. Re-run it after touching
-  `statusBubbleHTML`/`wireStatusBubble` or the `.uc-bubble*` rules.
+  panel, and the text painting clear of it on a short status and on one that
+  wraps, because `.uc-bubble.edit` reserves the chip's column. It also pins WHERE
+  the chip is, which is the part the first cut got wrong ("kinda looks weird with
+  a short status": it sat on the bubble's top-right CORNER and hung over a
+  two-word bubble): inside the bubble's own box, centred on its height, shorter
+  than it, never off the card, with the bubble's hover a tone the chip is not
+  (`--panel-2`, since the bubble lights up at `--panel-4` where the chip lives).
+  Re-run it after touching `statusBubbleHTML`/`wireStatusBubble` or the
+  `.uc-bubble*` rules.
   `node scripts/test-emoji-field.js` covers the emoji button that rides inside a
   profile field — both custom-status inputs (the settings profile pane and the
   "Custom status" dialog your own card opens) and the bio box (settings, plus the
