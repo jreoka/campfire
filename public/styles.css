@@ -1516,6 +1516,20 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 .embed-frame.yt-player{aspect-ratio:16/9;height:auto}
 .yt-facade{position:relative;display:block;width:100%;aspect-ratio:16/9;border:0;padding:0;background:#000;cursor:pointer}
 .yt-facade img{width:100%;height:100%;object-fit:cover;display:block}
+/* A YouTube SHORT is shot vertical, so its facade is a vertical rectangle — the
+   16:9 box showed it as a pillarboxed strip (reported). Two pieces: the tile takes
+   the 9:16 shape, and the CARD narrows to hug it, because a full-width card around
+   a narrow tile reads as a mistake. The width is what is chosen (the height then
+   follows from the ratio): 260px is 462px tall, and a phone steps it down so one
+   Short never owns the screen. object-fit:cover on the poster is what makes the
+   shape work with hqdefault's pillarboxed 4:3 frame — it crops the bars, not the
+   picture. The played player inherits the same shape. */
+.embed-vertical{width:min(260px,100%)}
+.yt-facade.vertical{aspect-ratio:9/16}
+.embed-vertical .embed-frame.yt-player{aspect-ratio:9/16;height:auto}
+@media (max-width:700px),(max-height:560px) and (pointer:coarse){
+  .embed-vertical{width:min(220px,100%)}
+}
 .yt-play{position:absolute;inset:0;margin:auto;width:64px;height:64px;border-radius:50%;background:rgba(0,0,0,.72);color:#fff;display:flex;align-items:center;justify-content:center;transition:background .15s,transform .15s}
 .yt-facade:hover .yt-play{background:#c00;transform:scale(1.06)}
 .embed-media{background:transparent}

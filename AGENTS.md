@@ -679,6 +679,16 @@ the title, channel and thumbnail in one small JSON response), and the client
 seeds the poster frame from `i.ytimg.com` in `linkCardHTML` so the video card
 looks like a video card *before* any unfurl lands (the same CDN URL chat's
 facade already loads, and it survives `UNFURL=0`, where a card needs no fetch).
+**A Short is the one YouTube link whose shape is knowable, and it is vertical**
+(`ytFromUrl` returns `{id, shorts}`, embeds.js): `/shorts/<id>` gets a 9:16 facade
+and the card narrows to hug it (`embed-vertical`, 260px → 462px tall, 220px on a
+phone), while `/watch`, `/live`, `/embed` and a bare youtu.be keep the 16:9 box —
+those URLs cannot say whether the video is portrait, and neither can the oEmbed
+answer. The poster stays `hqdefault.jpg`: YouTube pillarboxes a portrait frame
+into that 4:3 thumbnail, and `.yt-facade img{object-fit:cover}` crops exactly
+those bars back off, which is why `cover` there is load-bearing. The played
+player (the class the delegated handler in `pickers.js` builds) inherits the
+shape. `scripts/test-yt-shorts.js` measures all of it in headless Chrome.
 Three traps found doing it, all about absolutely positioned boxes:
 `.ov-item` and `.sv-cap`/`.vo-cap` set `left` with `right:auto`, so each was laid
 out in the space to its RIGHT — a sticker at x:0.5 and a 200-character caption on

@@ -46,24 +46,36 @@ function cleanEmbedUrl(raw) {
   return u;
 }
 
-function ytIdFromUrl(u) {
+// A YouTube URL carries two things the facade needs: the video's id, and whether
+// it is a SHORT. A Short is shot vertical, so it renders as a vertical rectangle
+// (9:16) — the 16:9 facade showed it as a pillarboxed strip with black bars down
+// both sides, which is a landscape box holding a portrait picture (reported).
+// Only the URL can say this: a Short opened through /watch?v= or a bare youtu.be
+// link is indistinguishable from a normal video, and the oEmbed answer does not
+// carry a shape either.
+function ytFromUrl(u) {
   let p;
   try { p = new URL(u); } catch { return null; }
   const host = p.hostname.toLowerCase();
   if (host === 'youtu.be') {
     const id = p.pathname.slice(1).split('/')[0];
-    return YT_ID.test(id) ? id : null;
+    return YT_ID.test(id) ? { id: id, shorts: false } : null;
   }
   const bare = host.replace(/^(www\.|m\.|music\.)/, '');
   if (bare === 'youtube.com' || bare === 'youtube-nocookie.com') {
     if (p.pathname === '/watch') {
       const id = p.searchParams.get('v');
-      return id && YT_ID.test(id) ? id : null;
+      return id && YT_ID.test(id) ? { id: id, shorts: false } : null;
     }
     const m = p.pathname.match(/^\/(shorts|live|embed|v)\/([A-Za-z0-9_-]{6,20})/);
-    if (m) return m[2];
+    if (m) return { id: m[2], shorts: m[1] === 'shorts' };
   }
   return null;
+}
+
+function ytIdFromUrl(u) {
+  const yt = ytFromUrl(u);
+  return yt ? yt.id : null;
 }
 
 function spotifyFromUrl(u) {
@@ -155,13 +167,21 @@ function embedShell(provider, inner) {
   return '<div class="embed"><span class="embed-src">' + esc(provider) + '</span>' + inner + '</div>';
 }
 
-function ytEmbedHTML(url, id) {
+function ytEmbedHTML(url, yt) {
   let provider = 'YouTube';
   try { if (new URL(url).hostname.toLowerCase().includes('music.')) provider = 'YouTube Music'; } catch {}
-  const thumb = 'https://i.ytimg.com/vi/' + id + '/hqdefault.jpg';
-  const play = 'https://www.youtube-nocookie.com/embed/' + id + '?autoplay=1&rel=0';
-  return '<div class="embed"><span class="embed-src">' + esc(provider) + '</span>'
-    + '<button type="button" class="yt-facade" data-yt-play="' + esc(play) + '" aria-label="Play video">'
+  // A Short gets a 9:16 tile and its card HUGS that tile (styles.css): a
+  // full-width card wrapped around a narrow vertical box reads as a mistake. The
+  // poster stays hqdefault — YouTube pillarboxes a vertical frame into that 4:3
+  // thumbnail, and `.yt-facade img{object-fit:cover}` crops exactly those bars
+  // back off, so the picture fills the tile edge to edge at full height. The
+  // label says SHORT because the shape is otherwise unexplained.
+  const vertical = !!yt.shorts;
+  const thumb = 'https://i.ytimg.com/vi/' + yt.id + '/hqdefault.jpg';
+  const play = 'https://www.youtube-nocookie.com/embed/' + yt.id + '?autoplay=1&rel=0';
+  return '<div class="embed' + (vertical ? ' embed-vertical' : '') + '">'
+    + '<span class="embed-src">' + esc(provider) + (vertical ? ' Short' : '') + '</span>'
+    + '<button type="button" class="yt-facade' + (vertical ? ' vertical' : '') + '" data-yt-play="' + esc(play) + '" aria-label="Play video">'
     + '<img src="' + esc(thumb) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'" />'
     + '<span class="yt-play"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span>'
     + '</button></div>';
@@ -237,7 +257,7 @@ function directMediaEmbedHTML(url) {
 
 function embedForUrl(url) {
   let v;
-  if ((v = ytIdFromUrl(url))) return ytEmbedHTML(url, v);
+  if ((v = ytFromUrl(url))) return ytEmbedHTML(url, v);
   if ((v = spotifyFromUrl(url))) return spotifyEmbedHTML(url, v);
   if ((v = tweetIdFromUrl(url))) return tweetEmbedHTML(url, v);
   if ((v = tiktokIdFromUrl(url))) return tiktokEmbedHTML(url, v);
