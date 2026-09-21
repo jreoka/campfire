@@ -3,6 +3,46 @@
 Read this file at the start of every session. It contains everything needed
 to work on this project without prior conversation history.
 
+## Deploy every change — KEEP THIS SECTION AT THE TOP (owner directive)
+<!-- LEAVE THIS AT THE TOP. This file is ~137 KB and a session only receives the
+     first ~64 KB, so anything below that cut is invisible when work starts. This
+     section is the one thing that must never fall below it: it used to live at
+     line 916, and a whole task shipped its edits, tests and docs and stopped
+     with nothing deployed because of it. If it ever drifts down the file, move
+     it back up — and keep the other hard directives above the cut too. -->
+
+**Every change must be deployed to the live production instance** — never stop
+at local edits. Finish each task end-to-end: edit → verify → commit → push →
+deploy → confirm the live site serves the change. **You always have standing
+permission to commit, push, and deploy to production — never ask for it first,
+and never pause to confirm a deploy.** The owner granted that up front, for
+every task, in this file.
+- Local repo commits to `origin/main` (`https://github.com/jreoka/campfire`):
+  `git add -A`, commit, `git push origin main`. Tests and docs ship in the same
+  commit as the fix they describe.
+- Production is **one OVHcloud VPS** (`40.160.90.108`), running Docker Compose
+  from `/opt/campfire/app`: `ssh root@40.160.90.108`, then
+  `cd /opt/campfire/app && git pull && docker compose -f docker-compose.yml
+  -f deploy/ovh/docker-compose.ovh.yml up -d --build`. The overlay
+  (`docker-compose.ovh.yml`, cloudflared + coturn) is provider-agnostic and is
+  what a fresh host of any vendor uses. Full runbook:
+  **`deploy/ovh/README.md`**. Production builds its OWN image from its own
+  checkout — the repo publishes no container image, so `up -d --build` on the
+  host is the only build that matters.
+- **Confirm the deploy, don't assume it**: `curl https://campfire.dill.moe/api/version`
+  (the fingerprint changes) and `docker compose ps` → everything Up, `db`
+  healthy. Then look at the change itself on the live site. On the first deploy
+  that brings the scanner up, `clamav` sits **unhealthy for a few minutes** while
+  it downloads ~300 MB of signatures into the `clamdb` volume — expected, the app
+  runs and fails open meanwhile; confirm the engine with
+  `docker compose exec campfire node scripts/verify-clamav.js`.
+- Env-only changes need **no rebuild**: edit `/opt/campfire/app/.env` (mode 600)
+  and `up -d --force-recreate campfire`.
+- Postgres is the `pgdata` Docker volume on that host. **Never delete it and
+  never `docker compose down -v`** — that destroys the database.
+- Host hardening, the self-updating scanner and the R2 backup rules are reference
+  material and live in **§Deployment details** below.
+
 ## What this is
 
 **Campfire** — a simple, single-container, self-hosted chat + voice app
@@ -329,7 +369,8 @@ with coturn on the host network for TURN and **ClamAV in its own `clamav`
 container for upload scanning** (signatures in the `clamdb` volume; the app is a
 TCP client of it — see below). Media lives in
 **OVHcloud object storage**; the doomsday backups are still in Cloudflare R2.
-Runbook: **`deploy/ovh/README.md`**. See **Deployment** below for how to ship.
+Runbook: **`deploy/ovh/README.md`**. See the **top of this file** (§Deploy every
+change) for how to ship.
 
 **Migrated off Hetzner on 2026-09-14** (cost; the OVH box is smaller — 2 vCPU /
 4 GB vs CX33's 4 vCPU / 8 GB — and the stack's own limits are `1.5g` app +
@@ -911,24 +952,12 @@ through every write, because boot still has to read it (`?dm=`, `?story=`).
 Server side the SPA fallback serves every path through `sendShell`, so a deep
 link carries the per-deploy asset pins like `/` does. `scripts/test-url-routes.js`.
 
-## Deployment (owner directive)
+## Deployment details (reference)
 
-**Every change must be deployed to the live production instance** — never stop
-at local edits. Finish each task end-to-end: edit → verify → commit → push →
-deploy → confirm the live site serves the change. **You always have standing
-permission to commit, push, and deploy to production — never ask for it first,
-and never pause to confirm a deploy.** The owner granted that up front, for
-every task, in this file.
-- Local repo commits to `origin/main` (`https://github.com/jreoka/campfire`).
-- Production is **one OVHcloud VPS** (`40.160.90.108`), running Docker
-  Compose from `/opt/campfire/app`:
-  `ssh root@40.160.90.108`, then `cd /opt/campfire/app && git pull && docker
-  compose -f docker-compose.yml -f deploy/ovh/docker-compose.ovh.yml up
-  -d --build`. Full runbook: **`deploy/ovh/README.md`** (renamed from
-  `deploy/hetzner/` on 2026-09-14, and the overlay from
-  `docker-compose.hetzner.yml` to `docker-compose.ovh.yml`, so the names describe
-  the provider that is actually running). The overlay is provider-agnostic —
-  cloudflared + coturn — and is what a fresh host of any vendor would use.
+The mandate and the deploy/confirm recipe are at the **TOP of this file**
+(§Deploy every change) so they can never fall below a session's context cut.
+What follows is the host-specific reference material behind them.
+
 - **SSH on that host is key-only.** `PasswordAuthentication no` lives in the MAIN
   `/etc/ssh/sshd_config`, not in a drop-in: on Ubuntu 26.04 / OpenSSH 10.2p1 the
   first value OpenSSH obtains wins, and `sshd_config.d/50-cloud-init.conf` ships
@@ -951,8 +980,8 @@ every task, in this file.
   (nothing ever pulled it, and a private package nothing consumes is just a
   second, staler copy of the app to keep track of). `docker compose up -d
   --build` on the host is the only build that matters.
-- Env-only changes need **no rebuild**: edit `/opt/campfire/app/.env` (mode 600)
-  and `up -d --force-recreate campfire`.
+- Env-only changes need **no rebuild** (see the top section): edit
+  `/opt/campfire/app/.env` (mode 600) and `up -d --force-recreate campfire`.
 - **The scanner updates itself** — the one image on this host that is not the
   app's own build. `campfire-images.timer` (units in `deploy/ovh/systemd/`,
   installed by `provision.sh`; script `deploy/ovh/update-images.sh`) pulls
