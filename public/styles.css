@@ -1506,7 +1506,10 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 /* ---------- link embeds (YouTube, X, Spotify, Twitch, TikTok, ...) ---------- */
 .embeds{display:flex;flex-direction:column;gap:.55rem;margin-top:.45rem;max-width:520px}
 .embed{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;overflow:hidden;max-width:100%}
-.embed-src{display:block;font-size:.68rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);padding:.55rem .8rem .35rem}
+/* The provider name is a HEADER, not a caption floating over the player: it owns
+   a hairline rule, so the player starts at a real edge instead of at a strip of
+   half-empty card. (The YouTube facade is the exception — see `.embed-yt`.) */
+.embed-src{display:block;font-size:.68rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);padding:.5rem .8rem;border-bottom:1px solid var(--line-soft)}
 .embed-frame{display:block;width:100%;border:0;background:#000}
 .embed-169{aspect-ratio:16/9}
 .embed-169 .embed-frame{width:100%;height:100%}
@@ -1514,7 +1517,17 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 .embed-frame.tiktok{max-width:325px;height:620px}
 .embed-frame.ig{max-width:400px;height:560px}
 .embed-frame.yt-player{aspect-ratio:16/9;height:auto}
+/* A click-to-play video IS the card: the tile is the whole box and the provider
+   label rides ON it as a small chip, because a label row above a video is 24px of
+   dead space over something the poster and the play button already introduce. The
+   inset hairline (::after, above the poster) is what keeps a dark tile's edge
+   readable against the chat background now that there is no border box — and it
+   disappears on a bright poster, which is exactly when it is not needed. */
+.embed-yt{position:relative;background:transparent;border:0}
+.embed-yt .embed-src{position:absolute;left:.6rem;top:.6rem;z-index:2;padding:.22rem .5rem;border:0;border-radius:999px;background:rgba(8,11,20,.62);color:#fff;font-size:.62rem;letter-spacing:.06em;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.embed-yt .yt-facade{border-radius:12px;overflow:hidden}
 .yt-facade{position:relative;display:block;width:100%;aspect-ratio:16/9;border:0;padding:0;background:#000;cursor:pointer}
+.yt-facade::after{content:'';position:absolute;inset:0;border-radius:inherit;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);pointer-events:none}
 .yt-facade img{width:100%;height:100%;object-fit:cover;display:block}
 /* A YouTube SHORT is shot vertical, so its facade is a vertical rectangle — the
    16:9 box showed it as a pillarboxed strip (reported). Two pieces: the tile takes
@@ -1530,8 +1543,15 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 @media (max-width:700px),(max-height:560px) and (pointer:coarse){
   .embed-vertical{width:min(220px,100%)}
 }
-.yt-play{position:absolute;inset:0;margin:auto;width:64px;height:64px;border-radius:50%;background:rgba(0,0,0,.72);color:#fff;display:flex;align-items:center;justify-content:center;transition:background .15s,transform .15s}
-.yt-facade:hover .yt-play{background:#c00;transform:scale(1.06)}
+/* The play affordance: a rounded square (the app's own button shape, see
+   .send-btn) rather than a circle, blurred at the edges so it sits on any poster,
+   and it takes YouTube's red under the pointer — the one brand colour in the
+   design, on user content, where it belongs. */
+.yt-play{position:absolute;inset:0;margin:auto;width:62px;height:62px;border-radius:16px;background:rgba(8,11,20,.7);color:#fff;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);box-shadow:0 0 0 1px rgba(255,255,255,.14);transition:background .15s,transform .15s}
+.yt-facade:hover .yt-play{background:#f00;transform:scale(1.05)}
+/* Inline media that carries its own shape: the picture (or the clip) IS the card,
+   so the card's surface and hairline step aside — one boundary, not two. */
+.embed-plain{background:transparent;border:0}
 .embed-media{background:transparent}
 .embed-img{max-width:100%;max-height:320px;border-radius:12px;cursor:zoom-in;display:block;object-fit:contain;background:#000}
 .embed-vid{max-width:100%;max-height:320px;border-radius:12px;background:#000;display:block}

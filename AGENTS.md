@@ -688,7 +688,22 @@ answer. The poster stays `hqdefault.jpg`: YouTube pillarboxes a portrait frame
 into that 4:3 thumbnail, and `.yt-facade img{object-fit:cover}` crops exactly
 those bars back off, which is why `cover` there is load-bearing. The played
 player (the class the delegated handler in `pickers.js` builds) inherits the
-shape. `scripts/test-yt-shorts.js` measures all of it in headless Chrome.
+shape. The label stays the plain provider name on both shapes — "Short" is a URL
+form, not a different site. `scripts/test-yt-shorts.js` measures all of it in
+headless Chrome.
+**The embed boxes have two anatomies** (a look pass, styles.css): a click-to-play
+VIDEO is the card — `.embed-yt` drops the surface and hairline, the provider name
+rides ON the tile as a blurred chip (`.embed-yt .embed-src` absolute, top-left)
+instead of owning a 24px row above the video, and a `::after` inset hairline keeps
+a dark tile's edge readable now that no border box does; the play affordance is a
+62px rounded SQUARE (the app's own button shape, see `.send-btn`) with a hairline
+ring, taking YouTube's red under the pointer. An IFRAME player keeps the card but
+its label becomes a real header (`border-bottom:var(--line-soft)`), so the player
+starts at an edge. Direct media that has a shape of its own (`.embed-plain` for
+images and clips) drops the card chrome — one boundary, not a hairline box one
+pixel outside a rounded picture; audio keeps the card, because a bare `<audio>`
+element has no shape of its own. Generic unfurl cards and invite cards were
+already the refined pair and are unchanged.
 Three traps found doing it, all about absolutely positioned boxes:
 `.ov-item` and `.sv-cap`/`.vo-cap` set `left` with `right:auto`, so each was laid
 out in the space to its RIGHT — a sticker at x:0.5 and a 200-character caption on

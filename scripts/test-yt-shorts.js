@@ -113,8 +113,13 @@ const PROBE = `(() => {
   const media = card.querySelector('.yt-facade, .embed-frame.yt-player');
   const img = card.querySelector('.yt-facade img');
   const label = card.querySelector('.embed-src');
+  const play = card.querySelector('.yt-play');
   const cb = card.getBoundingClientRect();
   const mb = media ? media.getBoundingClientRect() : null;
+  const lb = label ? label.getBoundingClientRect() : null;
+  const pb = play ? play.getBoundingClientRect() : null;
+  const cs = media ? getComputedStyle(media) : null;
+  const ls = label ? getComputedStyle(label) : null;
   return {
     cards: document.querySelectorAll('#slot .embed').length,
     tag: media ? media.tagName : null,
@@ -126,23 +131,33 @@ const PROBE = `(() => {
     vertical: card.classList.contains('embed-vertical'),
     fit: img ? getComputedStyle(img).objectFit : null,
     bg: media ? getComputedStyle(media).backgroundColor : null,
+    // The redesign: the label rides ON the tile and the card is exactly the tile.
+    labelPos: ls ? ls.position : null,
+    labelRadius: ls ? ls.borderTopLeftRadius : null,
+    labelInside: !!(lb && mb && lb.top >= mb.top - 1 && lb.bottom <= mb.bottom + 1 && lb.left >= mb.left - 1),
+    playRadius: play ? getComputedStyle(play).borderTopLeftRadius : null,
+    playW: pb ? Math.round(pb.width) : 0,
+    cardIsTile: Math.abs(cb.height - (mb ? mb.height : 0)) <= 2,
+    border: cs ? cs.borderTopWidth : null,
   };
 })()`;
 
 async function main() {
   console.log('\n[A] a /shorts/ link is a Short, and nothing else is');
   const short = embeds.embedForUrl(SHORT);
-  check(/<div class="embed embed-vertical">/.test(short), 'the Short\'s card is the vertical one', short.slice(0, 60));
+  check(/<div class="embed embed-yt embed-vertical">/.test(short), 'the Short\'s card is the vertical one', short.slice(0, 60));
   check(/class="yt-facade vertical"/.test(short), 'and its facade wears the vertical shape');
-  check(short.includes('YouTube Short'), 'the label says SHORT (the shape is otherwise unexplained)');
+  check(short.includes('<span class="embed-src">YouTube</span>'),
+    'the label is the provider name alone — a Short is a URL form, not a different site', short.match(/embed-src">[^<]+/));
   check(short.includes('i.ytimg.com/vi/' + SHORT_ID + '/hqdefault.jpg'),
     'the poster is still hqdefault — it is the fallback for every id', short.match(/i\.ytimg[^"]+/));
   check(short.includes('youtube-nocookie.com/embed/' + SHORT_ID + '?autoplay=1'), 'and the play url is unchanged');
 
   const watch = embeds.embedForUrl(WATCH);
-  check(/<div class="embed">/.test(watch) && /class="yt-facade"/.test(watch),
-    'an ordinary /watch video keeps the plain 16:9 facade', watch.slice(0, 60));
-  check(!/vertical|Short/.test(watch), 'and is never labelled a Short', watch.slice(0, 90));
+  check(/<div class="embed embed-yt">/.test(watch) && /class="yt-facade"/.test(watch),
+    'an ordinary /watch video keeps the plain facade', watch.slice(0, 60));
+  check(!/vertical/.test(watch) && watch.includes('<span class="embed-src">YouTube</span>'),
+    'and is never labelled a Short either', watch.slice(0, 90));
 
   // The URL is the only signal there is: these must NOT be treated as Shorts.
   for (const u of ['https://youtu.be/' + SHORT_ID, 'https://www.youtube.com/live/' + SHORT_ID,
@@ -159,8 +174,8 @@ async function main() {
     check(!!out && /embed-vertical/.test(out) && /yt-facade vertical/.test(out), u + ' is a Short', out && out.slice(0, 50));
   }
   const music = embeds.embedForUrl('https://music.youtube.com/shorts/' + SHORT_ID);
-  check(/embed-vertical/.test(music) && music.includes('YouTube Music Short'),
-    'YouTube Music keeps its provider name and still says Short', music.match(/embed-src">[^<]+/));
+  check(/embed-vertical/.test(music) && music.includes('<span class="embed-src">YouTube Music</span>'),
+    'YouTube Music keeps its own name, and no shape suffix either', music.match(/embed-src">[^<]+/));
   check(embeds.embedForUrl('https://example.com/shorts/' + SHORT_ID) === null,
     'a /shorts/ path on somebody else\'s domain is not a YouTube Short (it gets no facade at all)');
 
@@ -179,6 +194,30 @@ async function main() {
     'a phone steps the width down, so one Short never owns the screen');
   check(/f\.className = 'embed-frame yt-player'/.test(pickers),
     'the click handler builds the player with the class the vertical rule keys on');
+
+  console.log('\n[A3] the box around it: a facade is the tile, a player gets a header');
+  check(/\.embed-yt\{position:relative;background:transparent;border:0\}/.test(styles),
+    'a facade card carries no chrome of its own — the tile IS the card');
+  check(/\.embed-yt \.embed-src\{position:absolute;left:\.6rem;top:\.6rem[^}]*border-radius:999px/.test(styles),
+    'so the provider label rides ON the tile as a chip, not in a 24px row above it');
+  check(/\.yt-facade::after\{content:'';position:absolute;inset:0;border-radius:inherit;box-shadow:inset 0 0 0 1px rgba\(255,255,255,\.07\);pointer-events:none\}/.test(styles),
+    'with an inset hairline keeping a dark tile\'s edge readable without a border box');
+  check(/\.yt-play\{[^}]*border-radius:16px[^}]*box-shadow:0 0 0 1px rgba\(255,255,255,\.14\)/.test(styles),
+    'the play affordance is a rounded square with a hairline ring (the app\'s own button shape), not a bare circle');
+  check(/\.yt-facade:hover \.yt-play\{background:#f00/.test(styles),
+    'and it takes YouTube red under the pointer — brand colour on user content, where it belongs');
+  check(/\.embed-src\{display:block;font-size:\.68rem;font-weight:800;letter-spacing:\.07em;text-transform:uppercase;color:var\(--faint\);padding:\.5rem \.8rem;border-bottom:1px solid var\(--line-soft\)\}/.test(styles),
+    'an iframe player\'s label is a header with a hairline under it, so the player starts at a real edge');
+  check(/function embedShell\(provider, inner\) \{\s*return '<div class="embed"><span class="embed-src">'/.test(embedsSrc),
+    'every iframe shell still goes through that one header (no shell left with the old caption padding)', null);
+  const pic = embeds.embedForUrl('https://cdn.example.com/pic.png');
+  check(/class="embed embed-media embed-plain"/.test(pic),
+    'an inline picture is the card — one boundary, not a hairline box around a rounded picture', pic);
+  check(/class="embed embed-media embed-plain"/.test(embeds.embedForUrl('https://cdn.example.com/clip.mp4') || ''),
+    'and so is a clip');
+  const song = embeds.embedForUrl('https://cdn.example.com/song.mp3') || '';
+  check(/class="embed embed-media"/.test(song) && !/embed-plain/.test(song),
+    'audio keeps the card — a bare <audio> element has no shape of its own', song.slice(0, 50));
 
   const chromePath = findChrome();
   if (!chromePath) return skip('no Chrome/Edge found (set CHROME_PATH)');
@@ -237,9 +276,14 @@ async function main() {
     let m = await ev(PROBE);
     check(Math.abs(m.ratio - TALL) < 0.04, 'its tile is TALLER than it is wide (9:16)', { ratio: m.ratio, w: m.mediaW, h: m.mediaH });
     check(m.mediaH > m.mediaW && m.mediaW <= 260, 'the vertical rectangle is capped at the 260px card width', m);
-    check(m.vertical === true && m.label === 'YouTube Short', 'the card is the vertical one and says SHORT', { vertical: m.vertical, label: m.label });
+    check(m.vertical === true && m.label === 'YouTube', 'the card is the vertical one and says plain YOUTUBE', { vertical: m.vertical, label: m.label });
     check(m.cardW - m.mediaW <= 2 && m.cardW <= 262,
       'the card hugs the tile — it does not stay full width around a narrow box', { card: m.cardW, tile: m.mediaW });
+    check(m.cardIsTile === true && m.labelPos === 'absolute' && m.labelInside === true && m.labelRadius === '999px',
+      'the provider chip rides ON the tile and the card IS the tile (no label row above it)',
+      { cardIsTile: m.cardIsTile, labelPos: m.labelPos, inTile: m.labelInside, radius: m.labelRadius });
+    check(m.playRadius === '16px' && m.playW >= 56,
+      'and the play affordance is a rounded square, not a bare circle', { radius: m.playRadius, w: m.playW });
     check(m.fit === 'cover' && m.bg === 'rgb(0, 0, 0)',
       'the poster is cover-cropped (hqdefault\'s pillarbox bars come off, not the picture)', { fit: m.fit, bg: m.bg });
 
@@ -253,7 +297,7 @@ async function main() {
     m = await ev(PROBE);
     check(Math.abs(m.ratio - WIDE) < 0.04, 'an ordinary video is still the 16:9 box', { ratio: m.ratio, w: m.mediaW, h: m.mediaH });
     check(m.vertical === false && m.label === 'YouTube', 'with the plain card and the plain label', { vertical: m.vertical, label: m.label });
-    check(m.cardW > 400, 'and the full-width card it always had', { card: m.cardW });
+    check(m.cardW > 400 && m.cardIsTile === true, 'and the full-width 16:9 tile it always had', { card: m.cardW, isTile: m.cardIsTile });
 
     console.log('\n[B2] the phone width, 390x780');
     await sess('Emulation.setDeviceMetricsOverride', { width: PHONE.w, height: PHONE.h, deviceScaleFactor: 1, mobile: true });

@@ -175,12 +175,17 @@ function ytEmbedHTML(url, yt) {
   // poster stays hqdefault — YouTube pillarboxes a vertical frame into that 4:3
   // thumbnail, and `.yt-facade img{object-fit:cover}` crops exactly those bars
   // back off, so the picture fills the tile edge to edge at full height. The
-  // label says SHORT because the shape is otherwise unexplained.
+  // provider name is the plain one on both shapes: "Short" is a URL form, not a
+  // different site, and the vertical tile already says what it is.
   const vertical = !!yt.shorts;
   const thumb = 'https://i.ytimg.com/vi/' + yt.id + '/hqdefault.jpg';
   const play = 'https://www.youtube-nocookie.com/embed/' + yt.id + '?autoplay=1&rel=0';
-  return '<div class="embed' + (vertical ? ' embed-vertical' : '') + '">'
-    + '<span class="embed-src">' + esc(provider) + (vertical ? ' Short' : '') + '</span>'
+  // `embed-yt` is the facade's own anatomy (styles.css): no card chrome, and the
+  // provider label rides ON the tile as a small chip instead of owning a row above
+  // it — the row was 24px of dead space over a video that is already labelled by
+  // the poster and the play button.
+  return '<div class="embed embed-yt' + (vertical ? ' embed-vertical' : '') + '">'
+    + '<span class="embed-src">' + esc(provider) + '</span>'
     + '<button type="button" class="yt-facade' + (vertical ? ' vertical' : '') + '" data-yt-play="' + esc(play) + '" aria-label="Play video">'
     + '<img src="' + esc(thumb) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'" />'
     + '<span class="yt-play"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span>'
@@ -243,11 +248,15 @@ function soundcloudEmbedHTML(url, info) {
 function directMediaEmbedHTML(url) {
   let path = '';
   try { path = new URL(url).pathname.toLowerCase(); } catch { return null; }
+  // A picture or a clip IS the card (`.embed-plain`, styles.css): the card's own
+  // surface and hairline around a picture that already has rounded corners drew a
+  // second boundary one pixel outside the first. Audio keeps the card — a bare
+  // <audio> element on the chat background has no shape of its own.
   if (/\.(png|jpe?g|gif|webp|avif|bmp|svg)$/.test(path)) {
-    return '<div class="embed embed-media"><img class="embed-img" draggable="false" src="' + esc(url) + '" alt="" loading="lazy" /></div>';
+    return '<div class="embed embed-media embed-plain"><img class="embed-img" draggable="false" src="' + esc(url) + '" alt="" loading="lazy" /></div>';
   }
   if (/\.(mp4|webm|mov|m4v)$/.test(path)) {
-    return '<div class="embed embed-media"><video class="embed-vid" draggable="false" src="' + esc(url) + '" controls preload="metadata" playsinline></video></div>';
+    return '<div class="embed embed-media embed-plain"><video class="embed-vid" draggable="false" src="' + esc(url) + '" controls preload="metadata" playsinline></video></div>';
   }
   if (/\.(mp3|ogg|oga|wav|flac|m4a|opus)$/.test(path)) {
     return '<div class="embed embed-media"><audio src="' + esc(url) + '" controls preload="metadata"></audio></div>';
