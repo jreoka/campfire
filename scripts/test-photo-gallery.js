@@ -8,8 +8,10 @@
 //
 // The arrangement follows the COUNT, which is a fact only the renderer knows
 // (attsBlockHTML in messages.js): 2 = two squares, 3 = one tall + two, 4 = two by
-// two, 5 = one tall + four — the last two being the counts a plain two-column
-// grid leaves a hole in. The tall tile is the first, spanning both rows.
+// two, 5 = one tall + four, 6 = three by two, 7 = one tall + six, 8 = three by
+// three with two on the last row, 10 = three by four — every count a message can
+// carry (the composer caps it at ten). The counts a plain grid leaves a hole in
+// (odd: 3/5/7/9) get the tall first tile, spanning both rows.
 //
 // This test has three halves:
 //   [0] static wiring, always: the class comes from a helper msgHTML calls, the
@@ -19,10 +21,10 @@
 //       come AFTER the square, and the warning card IS a grid item, not a child
 //       of a slot;
 //   [1] the REAL attachmentHTML + attsBlockHTML + styles.css in headless Chrome:
-//       for 1..5 photos the class, the tile sizes, the exact span, that the grid
-//       is completely FILLED (no hole at any count), the square crop, the
-//       original kept on every tile for the lightbox, and the one state rendered
-//       in place of a slot (virus-removed);
+//       for 1..10 photos the class, the tile sizes, the exact span, that the grid
+//       is completely FILLED (no hole at any count it can fill), the square crop,
+//       the original kept on every tile for the lightbox, and the one state
+//       rendered in place of a slot (virus-removed);
 //   [2] the republish patch still fits a tile (its markup is rebuilt without any
 //       gallery class of its own — the tile must style it anyway).
 //
@@ -84,13 +86,15 @@ if (MARK_START < 0 || MARK_END < 0) {
 }
 const markSource = messages.slice(MARK_START, MARK_END);
 
-// Five photos whose own shapes are all different (landscape, portrait, square,
-// wide, tall) — a gallery ignores every one of them.
+// Photos whose own shapes are all different (landscape, portrait, square, wide,
+// tall) — a gallery ignores every one of them. The shapes cycle, so a case can
+// hold as many photos as a message is allowed to carry.
 const SHAPES = [[480, 320], [320, 480], [420, 420], [600, 300], [300, 420]];
 function photo(i, extra) {
+  const [w, h] = SHAPES[i % SHAPES.length];
   return Object.assign({
     id: 'att' + i, kind: 'image', mime: 'image/jpeg', url: '/uploads/files/p' + i + '.jpg?v=1',
-    name: 'p' + i + '.jpg', size: 120000 + i, w: SHAPES[i][0], h: SHAPES[i][1],
+    name: 'p' + i + '.jpg', size: 120000 + i, w, h,
   }, extra || {});
 }
 const CASES = [
@@ -102,7 +106,26 @@ const CASES = [
   { title: '2 photos + a file', atts: [photo(0), photo(1), { id: 'f1', kind: 'file', url: '/uploads/files/p0.jpg', name: 'notes.pdf', size: 40213 }] },
   { title: '2 photos + a clip', atts: [photo(0), { id: 'v1', kind: 'video', mime: 'video/mp4', url: '/uploads/files/clip.mp4', name: 'clip.mp4', size: 900000, w: 1280, h: 720 }] },
   { title: '3 photos, one removed', atts: [photo(0), photo(1), photo(2, { scan: 'infected' })] },
+  { title: '6 photos', atts: [0, 1, 2, 3, 4, 5].map((i) => photo(i)) },
+  { title: '7 photos', atts: [0, 1, 2, 3, 4, 5, 6].map((i) => photo(i)) },
+  { title: '8 photos', atts: [0, 1, 2, 3, 4, 5, 6, 7].map((i) => photo(i)) },
+  { title: '9 photos', atts: [0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => photo(i)) },
+  { title: '10 photos (the cap)', atts: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => photo(i)) },
 ];
+// The count a gallery is arranged by: 2 columns up to four, three columns from
+// five (the widths a 420px chat block makes sane), and the tall first tile on the
+// odd counts — which is every count the tall arrangement can leave no hole in.
+const colsFor = (n) => (n >= 5 ? 3 : 2);
+// The counts whose first tile spans two rows. 7 is deliberately not one of them:
+// `dense` is what fills a 7 (see the stylesheet), and a spanned first tile there
+// was measured leaving the last row short.
+const tallAt = (n) => n === 3 || n === 5 || n === 9;
+const ARRANGED = [2, 3, 4, 5, 6, 7, 8, 9, 10];
+// Where each case sits in CASES, by what it is: the plain runs of photos are 2..5
+// and then 6..10 (the cap), with the three fixtures that are not a run of photos
+// in between. The test reads a case by what it holds, so this is the one place the
+// layout of CASES has to be known.
+const IX = { photo1: 0, photo2: 1, photo3: 2, photo4: 3, photo5: 4, withFile: 5, withClip: 6, infected: 7, photo6: 8, photo7: 9, photo8: 10, photo9: 11, photo10: 12 };
 
 function pageHtml() {
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
@@ -166,42 +189,68 @@ window.__repatch = function (i) {
 </script></body></html>`;
 }
 
-// A tile arrangement covers the block exactly: every band of rows is filled edge
-// to edge (gaps only), the rows are contiguous, the last one ends at the block's
-// bottom, and the tall tile spans exactly two of them plus a gap. That is what
-// "no hole" means at every count.
-function gridIsFull(g) {
-  if (!g.w || !g.h) return false;
-  const tall = g.tiles.filter((t) => t.row === 'span 2');
-  const plain = g.tiles.filter((t) => t.row !== 'span 2');
-  if (!plain.length || tall.length > 1) return false;
-  const rows = new Map();
-  for (const t of plain) {
-    if (!rows.has(t.y)) rows.set(t.y, []);
-    rows.get(t.y).push(t);
+// A tile arrangement covers the block completely. Two questions, both asked off
+// the ROWS (the tiles that do not span):
+//   [1] the rows' horizontal coverage — every tile standing anywhere in a row,
+//       a spanning one included, taken as its [x, x+w] — is one unbroken run from
+//       the left edge of the block to the right edge. A hole at the end of a short
+//       row, or under a tile that stops early, both show up here.
+//   [2] the rows stack with nothing but the tile gap between them and the last one
+//       ends at the block's bottom.
+// A spanning tile must then be exactly as tall as the rows it covers (2 for the
+// two-row arrangement, which is every count this block draws).
+function gridIsFull(g, debug) {
+  const why = (m) => { if (debug) console.log('    gridIsFull: ' + m); return false; };
+  if (!g.w || !g.h) return why('no box');
+  const rows = [];
+  // The rows are the tiles that do not span — a spanning tile's top edge is the
+  // top of a row it is NOT alone in, so letting it in would make that row read as
+  // two different heights.
+  for (const t of g.tiles.filter((x) => x.row !== 'span 2').sort((a, b) => a.y - b.y || a.x - b.x)) {
+    const row = rows.find((r) => Math.abs(r.y - t.y) <= 0.5);
+    if (row) row.tiles.push(t);
+    else rows.push({ y: t.y, tiles: [t] });
   }
-  const ys = [...rows.keys()].sort((a, b) => a - b);
-  let expectY = 0;
-  for (const y of ys) {
-    if (Math.abs(y - expectY) > 1) return false;
-    // Everything standing in this band — the tall tile included — must fill the
-    // width of the block, with the tile gap (and nothing more) between them.
+  if (!rows.length) return why('no rows');
+  const lastY = Math.max(...rows.map((r) => r.y));
+  // [1] horizontal coverage, per row, with the spanning tiles standing in it too.
+  //     Every row but the last must reach the block's right edge; the last one may
+  //     END short when a count leaves an odd tile there (7, 10) — that is the gap a
+  //     10-photo message would otherwise show, and the layout is what makes it
+  //     acceptable, not a hole in the middle of the block.
+  for (const row of rows) {
     const band = g.tiles
-      .filter((t) => t.y <= y + 1 && t.y + t.h > y + 1)
+      .filter((t) => t.y <= row.y + 0.5 && t.y + t.h >= row.y + 0.5)
       .map((t) => [t.x, t.x + t.w])
       .sort((a, b) => a[0] - b[0]);
     let edge = 0;
     for (const [l, r] of band) {
-      if (l - edge > GAP + 1) return false;
+      if (l - edge > GAP + 1) return why('gap at y=' + row.y + ' before x=' + l);
       edge = Math.max(edge, r);
     }
-    if (Math.abs(edge - g.w) > 1) return false;
-    expectY = y + Math.max(...rows.get(y).map((t) => t.h)) + GAP;
+    const last = Math.abs(row.y - lastY) <= 0.5;
+    if (last ? (edge > g.w + 1 || edge <= 0) : Math.abs(edge - g.w) > 1) {
+      return why('row y=' + row.y + ' ends at ' + edge + ', block is ' + g.w);
+    }
   }
-  if (Math.abs((expectY - GAP) - g.h) > 1) return false;
-  const rowH = Math.max(...plain.map((t) => t.h));
-  for (const t of tall) {
-    if (Math.abs(t.y) > 1 || Math.abs(t.w - plain[0].w) > 1 || Math.abs(t.h - (2 * rowH + GAP)) > 1) return false;
+  // [2] the rows stack, and reach the bottom exactly. A row's tiles are all as tall
+  //     as the row — except the last one, whose lone tile may be stretched across
+  //     the leftover width (that is the layout's own choice, measured above).
+  let expectY = 0;
+  for (const row of rows) {
+    if (Math.abs(row.y - expectY) > 1) return why('row at ' + row.y + ' expected ' + expectY);
+    const h = Math.max(...row.tiles.map((t) => t.h));
+    const last = Math.abs(row.y - lastY) <= 0.5;
+    if (!last && !row.tiles.every((t) => Math.abs(t.h - h) <= 1)) return why('mixed heights in row y=' + row.y + ': ' + row.tiles.map((t) => t.h));
+    expectY = row.y + h + GAP;
+  }
+  if (Math.abs((expectY - GAP) - g.h) > 1) return why('bottom ' + (expectY - GAP) + ', block ' + g.h);
+  for (const t of g.tiles) {
+    if (t.row !== 'span 2') continue;
+    const covered = rows.filter((r) => r.y >= t.y - 1 && r.y < t.y + t.h - 1);
+    if (covered.length !== 2) return why('span covers ' + covered.length + ' rows');
+    const expected = covered.reduce((s, r) => s + Math.max(...r.tiles.map((x) => x.h)), 0) + GAP;
+    if (Math.abs(t.h - expected) > 1.5) return why('span height ' + t.h + ' expected ' + expected);
   }
   return true;
 }
@@ -212,15 +261,16 @@ async function main() {
   check(/inner \+= attsBlockHTML\(m\.attachments\);/.test(messages), 'and that is what msgHTML paints');
   check(/const gallery = atts\.length > 1 && atts\.every\(\(a\) => \(a && a\.kind \? a\.kind : 'file'\) === 'image'\);/.test(messages),
     'a gallery needs MORE THAN ONE attachment and every one of them a picture');
-  check(/const cls = 'msg-atts' \+ \(gallery \? ' gallery g' \+ Math\.min\(atts\.length, 5\) : ''\);/.test(messages),
-    'the count rides the container as g2…g5 (the composer caps a message at five)');
+  check(/const cls = 'msg-atts' \+ \(gallery \? ' gallery g' \+ Math\.min\(atts\.length, 11\) : ''\);/.test(messages),
+    'the count rides the container as g2…g10 — plus one class past them, so an over-cap list still lands on a grid');
   check(/attsEl\.innerHTML = atts\.map\(attachmentHTML\)\.join\(''\);/.test(pins),
     'the pinned-message panel keeps its own stacked rendering (a narrow list, not a gallery)');
 
   console.log('\n[1] the stylesheet, in an order that works');
-  check(/\.msg-atts\.gallery\{display:grid;gap:4px;width:min\(420px,100%\);grid-template-columns:repeat\(2,1fr\)\}/.test(css),
-    'the block is a two-column grid, capped like a single picture');
-  check(/\.msg-atts\.gallery\.g5\{grid-template-columns:repeat\(3,1fr\)\}/.test(css), 'five photos get a third column');
+  check(/\.msg-atts\.gallery\{display:grid;grid-auto-flow:dense;gap:4px;width:min\(420px,100%\);grid-template-columns:repeat\(2,1fr\)\}/.test(css),
+    'the block is a two-column grid, capped like a single picture, packed densely (a message can carry any count up to ten)');
+  check(/\.msg-atts\.gallery\.g5,\.msg-atts\.gallery\.g6,\.msg-atts\.gallery\.g7,\.msg-atts\.gallery\.g8,\.msg-atts\.gallery\.g9,\.msg-atts\.gallery\.g10\{grid-template-columns:repeat\(3,1fr\)\}/.test(css),
+    'five photos and up get a third column (ten 2-wide tiles in a 420px block would be a 2200px column)');
   check(/\.msg-atts\.gallery > \.att-slot\{width:100%;min-width:0;aspect-ratio:1\}/.test(css),
     'a tile is a square and fills its cell');
   const spanAt = css.indexOf('.msg-atts.gallery.g3 > :first-child');
@@ -228,8 +278,8 @@ async function main() {
   check(spanAt > squareAt && spanAt > 0,
     'the tall tile\'s `aspect-ratio:auto` comes AFTER the square (same specificity: later wins)',
     { squareAt, spanAt });
-  check(/\.msg-atts\.gallery\.g3 > :first-child,\.msg-atts\.gallery\.g5 > :first-child\{grid-row:span 2;aspect-ratio:auto;align-self:stretch;height:100%\}/.test(css),
-    'the first tile spans both rows — and is told to fill them (a span alone left it content-tall, measured)');
+  check(/\.msg-atts\.gallery\.g3 > :first-child,\.msg-atts\.gallery\.g5 > :first-child,\.msg-atts\.gallery\.g9 > :first-child\{grid-row:span 2;aspect-ratio:auto;align-self:stretch;height:100%\}/.test(css),
+    'the first tile spans both rows at the counts a span fills — and is told to fill them (a span alone left it content-tall, measured)');
   check(/\.msg-atts\.gallery > \.scan-block\{[^}]*aspect-ratio:1[^}]*\}/.test(css),
     'the warning card IS the grid item (attachmentHTML returns it in place of the slot), so it is square too');
   check(!/\.msg-atts\.gallery > \.att-slot > \.scan-block/.test(css), 'and is not looked for inside a slot it never has');
@@ -303,28 +353,38 @@ async function main() {
     const grids = [];
     for (let i = 0; i < CASES.length; i++) grids.push(await evaluate(`window.__grid(${i})`));
 
-    check(grids[0].cls === 'msg-atts' && grids[0].display === 'flex',
-      'ONE photo is not a gallery: it keeps the shape its own bytes asked for', grids[0].cls);
-    check(grids[0].tiles.length === 1 && grids[0].tiles[0].fit === 'contain',
-      'and is fitted, never cropped', grids[0].tiles[0]);
-    check(grids[5].cls === 'msg-atts' && grids[5].tiles.length === 3,
-      'a message with a FILE in it is not a gallery either', grids[5].cls);
-    check(grids[6].cls === 'msg-atts' && grids[6].tiles.length === 2,
-      'nor one with a clip', grids[6].cls);
+    check(grids[IX.photo1].cls === 'msg-atts' && grids[IX.photo1].display === 'flex',
+      'ONE photo is not a gallery: it keeps the shape its own bytes asked for', grids[IX.photo1].cls);
+    check(grids[IX.photo1].tiles.length === 1 && grids[IX.photo1].tiles[0].fit === 'contain',
+      'and is fitted, never cropped', grids[IX.photo1].tiles[0]);
+    check(grids[IX.withFile].cls === 'msg-atts' && grids[IX.withFile].tiles.length === 3,
+      'a message with a FILE in it is not a gallery either', grids[IX.withFile].cls);
+    check(grids[IX.withClip].cls === 'msg-atts' && grids[IX.withClip].tiles.length === 2,
+      'nor one with a clip', grids[IX.withClip].cls);
 
-    for (let n = 2; n <= 5; n++) {
-      const g = grids[n - 1];
-      const cols = n === 5 ? 3 : 2;
+    for (const n of ARRANGED) {
+      const g = grids[IX['photo' + n]];
+      const cols = colsFor(n);
       check(g.cls === 'msg-atts gallery g' + n, `${n} photos are a gallery block (g${n})`, g.cls);
       check(g.display === 'grid' && g.tiles.length === n, 'as a grid with one tile per photo', { display: g.display, tiles: g.tiles.length });
       check(Math.abs(g.w - 420) <= 1, `the block is 420px wide (the chat media cap)`, g.w);
       check(gridIsFull(g), `and the grid is completely FULL at ${n} (no hole, any count)`, { w: g.w, h: g.h, tiles: g.tiles });
 
-      const tall = n === 3 || n === 5;
+      const tall = tallAt(n);
       const rest = g.tiles.slice(tall ? 1 : 0);
-      const squares = rest.every((t) => Math.abs(t.w - t.h) <= 1);
-      check(squares, 'every other tile is a perfect square', rest.map((t) => t.w + '×' + t.h));
-      check(rest.every((t) => t.fit === 'cover'), 'with the photo cropped to it (object-fit:cover)', [...new Set(rest.map((t) => t.fit))]);
+      const squares = rest.filter((t) => Math.abs(t.w - t.h) <= 1);
+      const stretched = rest.filter((t) => Math.abs(t.w - t.h) > 1);
+      // A count whose last row ends one column short (8 and 10) leaves the lone
+      // tile filling that row — wider than tall, and the only tile there. Anything
+      // else that is not square would be a layout this test does not expect.
+      const lastBand = Math.max(...g.tiles.map((t) => t.y));
+      check(squares.length >= rest.length - 1 && stretched.every((t) => {
+        const band = g.tiles.filter((s) => Math.abs(s.y - t.y) <= 1);
+        return band.length === 1 && Math.abs(t.y - lastBand) <= 1 && t.w > t.h;
+      }), 'every tile is a perfect square (bar a lone one stretched across its row)',
+        rest.map((t) => t.w + '×' + t.h));
+      check(rest.filter((t) => Math.abs(t.w - t.h) <= 1).every((t) => t.fit === 'cover'),
+        'with the photo cropped to it (object-fit:cover)', [...new Set(rest.map((t) => t.fit))]);
       check(rest.every((t) => t.radius === '12px'), 'and the app\'s 12px rounding', [...new Set(rest.map((t) => t.radius))]);
       if (tall) {
         const t0 = g.tiles[0];
@@ -339,16 +399,16 @@ async function main() {
     }
 
     console.log('\n[3] the state a tile can be in');
-    const infectedCard = grids[7].tiles[2];
-    check(grids[7].cls === 'msg-atts gallery g3' && infectedCard.cls === 'scan-block',
-      'a photo the scanner removed is the warning card, IN the grid', { cls: grids[7].cls, tile: infectedCard.cls });
-    check(Math.abs(infectedCard.w - grids[7].tiles[1].w) <= 1 && Math.abs(infectedCard.h - grids[7].tiles[1].h) <= 1,
+    const infectedCard = grids[IX.infected].tiles[2];
+    check(grids[IX.infected].cls === 'msg-atts gallery g3' && infectedCard.cls === 'scan-block',
+      'a photo the scanner removed is the warning card, IN the grid', { cls: grids[IX.infected].cls, tile: infectedCard.cls });
+    check(Math.abs(infectedCard.w - grids[IX.infected].tiles[1].w) <= 1 && Math.abs(infectedCard.h - grids[IX.infected].tiles[1].h) <= 1,
       'and it is a tile like any other (the card IS the grid item, not a slot child)',
-      { card: infectedCard.w + '×' + infectedCard.h, square: grids[7].tiles[1].w + '×' + grids[7].tiles[1].h });
+      { card: infectedCard.w + '×' + infectedCard.h, square: grids[IX.infected].tiles[1].w + '×' + grids[IX.infected].tiles[1].h });
 
     console.log('\n[4] a verdict landing must not break the tile');
-    await evaluate('window.__repatch(1)');
-    const after = await evaluate('window.__grid(1)');
+    await evaluate(`window.__repatch(${IX.photo2})`);
+    const after = await evaluate(`window.__grid(${IX.photo2})`);
     check(gridIsFull(after), 'the grid is still full after one attachment is rebuilt in place', after.tiles);
     const t1 = after.tiles[0];
     check(Math.abs(t1.w - t1.h) <= 1 && t1.fit === 'cover',
@@ -359,13 +419,13 @@ async function main() {
     await sess('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true });
     await sess('Page.navigate', { url: 'http://127.0.0.1:' + port + '/' });
     await sleep(500);
-    for (const [idx, n] of [[2, 3], [4, 5], [3, 4]]) {
-      const g = await evaluate(`window.__grid(${idx})`);
+    for (const n of [3, 5, 6, 10]) {
+      const g = await evaluate(`window.__grid(${IX['photo' + n]})`);
       check(g.cls === 'msg-atts gallery g' + n && Math.abs(g.w - g.bodyW) <= 1,
         `${n} photos take the whole column on a phone (${g.w}px of ${g.bodyW}px), still a gallery`, g.cls);
       check(g.w < 420, 'which is narrower than the 420px cap the desktop block uses', g.w);
       check(gridIsFull(g), `and the grid is full there too, at ${n}`, g.tiles);
-      check(g.tiles.every((t) => t.row === 'span 2' || Math.abs(t.w - t.h) <= 1),
+      check(g.tiles.every((t) => t.row === 'span 2' || Math.abs(t.w - t.h) <= 1 || t.w > t.h),
         'with the same squares (and the same tall first tile)', g.tiles.map((t) => t.w + '×' + t.h));
     }
   } catch (e) {

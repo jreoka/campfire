@@ -66,6 +66,8 @@ const servers = fs.readFileSync(path.join(ROOT, 'public/js/servers.js'), 'utf8')
 const pins = fs.readFileSync(path.join(ROOT, 'public/js/pins.js'), 'utf8');
 const auth = fs.readFileSync(path.join(ROOT, 'public/js/auth.js'), 'utf8');
 const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
+const core = fs.readFileSync(path.join(ROOT, 'public/js/core.js'), 'utf8');
+const serverSrc = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
 
 // The real block: the per-conversation attachment store through removeUpload.
 const UP_START = messages.indexOf('// ---------- attachments belong to a conversation ----------');
@@ -121,6 +123,10 @@ function $(sel) { return document.querySelector(sel); }
 window.__metaRenders = 0;
 // The composer "has a conversation" whenever the page says so.
 function composerTargetReady() { return !!window.__ready; }
+// The per-message attachment cap is the SERVER's number, read back from
+// /api/config (maxAttsFor in core.js); the app's version lives there, so the stub
+// only has to answer the same question.
+function maxAttsFor() { return window.__maxAtts || 10; }
 // renderComposerMeta's own helpers (the app's versions live in servers.js /
 // core.js); nothing here changes what the meta block itself does.
 function msgAuthor() { return { display_name: 'someone' }; }
@@ -259,7 +265,25 @@ async function main() {
   check(/const home = u\.attHere \? S\.pendingAtts : attsListFor\(u\.ctx\)/.test(upSource),
     'a finished upload is filed where it was started, not where the reader is now');
   check(/activeUploadCount\(ctx\)/.test(upSource) && /activeUploadCount\(target\)/.test(upSource),
-    'the 5-per-message cap counts that conversation\'s uploads');
+    'the per-message cap counts that conversation\'s uploads');
+  check(/>= maxAttsFor\(\)\) \{ toast\(maxAttsToast\(\)\)/.test(upSource),
+    'and the number it counts against is the server\'s (maxAttsFor, read back from /api/config), never a literal');
+
+  console.log('\n[0b] one number owns the per-message cap, and it is ten');
+  check(/const MAX_ATTACHMENTS = Math\.max\(1, parseInt\(process\.env\.MAX_ATTACHMENTS \|\| '10', 10\) \|\| 10\);/.test(serverSrc),
+    'the server owns it (MAX_ATTACHMENTS, 10 by default, env-tunable)');
+  check((serverSrc.match(/slice\(0, MAX_ATTACHMENTS\)/g) || []).length === 5,
+    'and every send path truncates to it (channel message, DM, both attachment-drop routes, the webhook)',
+    (serverSrc.match(/slice\(0, MAX_ATTACHMENTS\)/g) || []).length);
+  check(/maxAttachments: MAX_ATTACHMENTS/.test(serverSrc) && /maxAttachments: 10/.test(core),
+    'the client carries the same number as its default and takes the server\'s at boot');
+  check((auth.match(/if \(cfg\??\.maxAttachments\)/g) || []).length === 2,
+    'both boot paths take it (the pre-login config fetch and the one after)');
+  check(/function maxAttsFor\(\)/.test(core) && /function maxAttsToast\(\)/.test(core) &&
+    /'Max ' \+ maxAttsFor\(\) \+ ' attachments per message'/.test(core),
+    'and one helper answers "how many" and one writes the toast, so no message can state a different number');
+  check(!/attachments\.slice\(0, 5\)|>= 5\) \{ toast\('Max 5/.test(serverSrc + messages),
+    'nothing is left hard-coded at the old five');
   check(/if \(!composerTargetReady\(\)\) \{ toast\('Pick a chat first, then attach'\); return; \}/.test(upSource),
     'an attachment with no conversation to belong to is refused up front');
   check(/typeof pendingByCtx !== 'undefined' \? pendingByCtx\.values\(\) : \[\]/.test(messages),

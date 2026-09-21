@@ -703,14 +703,14 @@ function composerHasDraft(bar = 'main') {
   return !!((inp && inp.value.trim()) || (S.pendingAtts || []).length);
 }
 // Stage the GIF as a chip on the composer it was picked for. False when the
-// message is already at the 5-attachment cap a pick / drop / paste obeys.
+// message is already at the per-message attachment cap a pick / drop / paste obeys.
 function stageGif(att, bar = 'main') {
   const isThread = bar === 'thread';
   const ctx = isThread ? threadAttCtx() : (syncPendingAttsCtx(), attsCtxNow());
   if (!ctx) return false;
   const list = isThread ? threadAtts() : (S.pendingAtts = S.pendingAtts || []);
-  if (list.length + activeUploadCount(ctx) >= 5) {
-    toast('Max 5 attachments per message');
+  if (list.length + activeUploadCount(ctx) >= maxAttsFor()) {
+    toast(maxAttsToast());
     return false;
   }
   // The chip's tile is the Klipy THUMB: the gif behind it can be megabytes, and

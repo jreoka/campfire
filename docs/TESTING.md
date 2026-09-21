@@ -1152,7 +1152,7 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   card only paints in the chat it was started in, a file that finishes after the
   reader moved on is PARKED for that conversation (and taken back when it is
   opened again) instead of becoming a chip in the wrong composer, two chats can
-  upload at once without mixing, the 5-per-message cap counts one conversation,
+  upload at once without mixing, the per-message cap counts one conversation,
   and an attach with no conversation is refused rather than orphaned. For the
   stuck card: the bar goes indeterminate and reads "Finishing…" once the browser
   has handed the whole body to the socket (a frozen 99% is what read as a hang),
@@ -1179,7 +1179,13 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   new file uploads, the file answers
   with the green card asserted `done` and still listed while NO second chip
   appears, and only after the ~650ms exit does its chip arrive with the toggle on
-  both. Re-run it after
+  both. Its static half also owns the per-message attachment CAP, which is one
+  number with one home: the server's `MAX_ATTACHMENTS` (10 by default,
+  `MAX_ATTACHMENTS=` env-tunable), sliced by all five send paths and published on
+  `/api/config` as `maxAttachments`, with the client carrying the same default and
+  taking the server's on both boot paths — so no toast and no stored message can
+  state a different number than the one the server enforces, and nothing may go
+  back to a literal 5. Re-run it after
   touching `messages.js`'s upload block, `renderComposerMeta`, `removeUpload`,
   the conversation switchers, or the paths that leave a conversation. Anything
   that changes
@@ -1230,18 +1236,19 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   file picker (headless Chrome, skipping without Chrome; it slices the REAL
   `#btn-attach` click + `#in-attach` change/cancel handlers out of `messages.js`
   and drives them with a real multi-file `FileList`, with `uploadAndAttach` /
-  `toast` / `activeUploadCount` stubbed). The complaint was "right now you can
-  only select one", and the input is the easy half: the handler is where a
-  12-file selection would toast the 5-per-message cap twelve times, or start
+  `toast` / `activeUploadCount` / `maxAttsFor` stubbed). The complaint was "right
+  now you can only select one", and the input is the easy half: the handler is
+  where a 12-file selection would toast the per-message cap twelve times, or start
   uploads the send would then drop. Locked in: the input carries `multiple` and
   the single-purpose pickers (avatar / banner / story camera) do NOT; a
   three-file pick starts three uploads in order with no toast, clears the input
   (so the same file can be picked again) and hands focus back to the composer;
-  an eight-file pick starts five and explains the cap ONCE; with four staged and
+  a twelve-file pick starts ten and explains the cap ONCE; with eight staged and
   one in flight, one of three starts and the toast says "1 of 3"; an already-full
-  message starts none and says why; and with no conversation open it is one
-  "Pick a chat first" toast, not one per file. Re-run it after touching the
-  attach button, the `#in-attach` input in `index.html`, or the attachment cap.
+  message starts none and says why; the cap follows the SERVER's number (stubbed
+  to 3, only three start and the toast names three); and with no conversation open
+  it is one "Pick a chat first" toast, not one per file. Re-run it after touching
+  the attach button, the `#in-attach` input in `index.html`, or the attachment cap.
   `node scripts/test-code-card.js` covers the text/code attachment box — every
   text-ish file embedding as a code card that expands and collapses IN PLACE,
   with Copy and Download on it (headless Chrome, skipping without Chrome; it
@@ -1265,6 +1272,28 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   faded (it used to dim the last line and lie). Re-run it after touching
   `textFileHTML` / `expandTextFile` / `copyTextFile` / `textPreviewable`, the
   `.txtfile` block in `styles.css`, or the `data-act` router in `pickers.js`.
+  `node scripts/test-photo-gallery.js` covers the picture grid a message with
+  several photos renders (`attsBlockHTML`; headless Chrome, skipping without
+  Chrome — it runs the real `attachmentHTML`/`attsBlockHTML` against the real
+  `styles.css` and measures every tile). The count is a FACT only the renderer
+  knows, so it rides the container as a class (`g2…g10`, plus `g11` past the cap)
+  and the layouts are 2 columns up to four, 3 columns from five, with the first
+  tile spanning two rows at 3, 5 and 9 (the counts that fills) and
+  `grid-auto-flow:dense` filling a 7 — the count that plain row-major order
+  leaves a hole in — while 8 and 10 end on a last row stretched across the
+  leftover width. Locked in for every count from 1 to 10 at desktop and phone
+  widths: the class, the tile count, that the grid is completely FULL (rows
+  contiguous, each filled edge to edge with nothing but the 4px gap, and no hole
+  under a short tile), that every tile is a perfect square cropped with
+  `object-fit:cover` at the app's 12px radius, the tall tile's exact height, and
+  that every tile keeps the ORIGINAL url so a tap opens the whole picture. It
+  also pins that ONE photo or a message carrying a clip or a file is NOT a
+  gallery, that the scanner-removed card IS the grid item (square, like any
+  other tile), that a verdict landing mid-view must not break the tile it
+  rebuilds, and that the pinned-message panel keeps its own stacked rendering.
+  Re-run it after touching `attsBlockHTML` / `attachmentHTML`, the
+  `.msg-atts.gallery` block in `styles.css`, or the per-message attachment cap
+  (the gallery's counts are the cap's).
   `node scripts/test-attachment-gap.js` covers the distance between the composer
   and the attachment cards above it (headless Chrome, skipping without Chrome;
   it builds the real chat column from `index.html`'s markup + the real

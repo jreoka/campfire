@@ -1397,8 +1397,13 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
    The count rides the container (`g3`…) because only the renderer knows it (see
    attsBlockHTML in messages.js) — and the inline `width` an attachment carries
    (its own shape's reservation) is the one thing here that has to be overridden. */
-.msg-atts.gallery{display:grid;gap:4px;width:min(420px,100%);grid-template-columns:repeat(2,1fr)}
-.msg-atts.gallery.g5{grid-template-columns:repeat(3,1fr)}
+/* `dense` because a message can carry any count up to ten and the packing has to
+   fill the block at EVERY one: 7 is the case that needs it (six tiles plus the
+   tall one leaves the third column of the last row empty in plain row-major
+   order), and 8/10 need the last row stretched, which is what a lone item in a
+   dense row does — it is the row's only occupant, so it fills it. */
+.msg-atts.gallery{display:grid;grid-auto-flow:dense;gap:4px;width:min(420px,100%);grid-template-columns:repeat(2,1fr)}
+.msg-atts.gallery.g5,.msg-atts.gallery.g6,.msg-atts.gallery.g7,.msg-atts.gallery.g8,.msg-atts.gallery.g9,.msg-atts.gallery.g10{grid-template-columns:repeat(3,1fr)}
 /* A tile is a square and it fills its cell. The slot is the grid item; for a file
    still behind the gate it is the scanning card instead (attachmentHTML returns
    that in place of the slot — see messages.js), and the card's row layout (icon
@@ -1412,14 +1417,17 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 .msg-atts.gallery > .scan-block .scan-tx>span{font-size:.68rem}
 /* The odd count's tall tile is the first, spanning both rows: 3 = 2x2 cells with
    it filling column one, 5 = 3x2 with the four left over filling columns two and
-   three. Either way the grid is FULL — which is what "looks good with an odd
-   number of pics" means — and the span is what makes that tile taller than it is
-   wide, so it must NOT carry the square: that is why this rule comes after the
-   tiles above (same specificity, later wins). It has to be stretched explicitly
-   too: the block inherits `align-items:flex-start` from `.msg-atts`, so a span on
-   its own left the tile as tall as its own content (measured: 138.7px in a 420px
-   area) instead of filling the two rows. */
-.msg-atts.gallery.g3 > :first-child,.msg-atts.gallery.g5 > :first-child{grid-row:span 2;aspect-ratio:auto;align-self:stretch;height:100%}
+   three, 9 = 3x4 with the six left over filling the rest. Those are precisely the
+   odd counts a grid FILLS with one tile spanning two rows (7 is the exception: the
+   span is NOT what fills it — `dense` above is — and a spanned tile there was
+   measured leaving the row short instead). Either way the grid is FULL — which is
+   what "looks good with an odd number of pics" means — and the span is what makes
+   that tile taller than it is wide, so it must NOT carry the square: that is why
+   this rule comes after the tiles above (same specificity, later wins). It has to
+   be stretched explicitly too: the block inherits `align-items:flex-start` from
+   `.msg-atts`, so a span on its own left the tile as tall as its own content
+   (measured: 138.7px in a 420px area) instead of filling the two rows. */
+.msg-atts.gallery.g3 > :first-child,.msg-atts.gallery.g5 > :first-child,.msg-atts.gallery.g9 > :first-child{grid-row:span 2;aspect-ratio:auto;align-self:stretch;height:100%}
 .msg-atts.gallery .att-wrap{display:block;width:100%!important;height:100%;max-width:100%;overflow:hidden;border-radius:12px;aspect-ratio:auto}
 .msg-atts.gallery .att-wrap.ar{aspect-ratio:auto}
 .msg-atts.gallery img.att-img{width:100%;height:100%;max-width:100%;max-height:none;object-fit:cover}

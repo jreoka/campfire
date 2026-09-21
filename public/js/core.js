@@ -187,6 +187,7 @@ const S = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
   maxUploadMb: 200, // attachment cap, refreshed from /api/config at boot (server-owned)
   maxReactions: 20, // DIFFERENT emoji one message may carry, ditto (server-owned, see REACTION_KINDS_MAX)
+  maxAttachments: 10, // files ONE message may carry, ditto (server-owned, see MAX_ATTACHMENTS)
   deleteGraceDays: 7, // how long a closed account can still be restored, refreshed from /api/config at boot
   voice: null, // {serverId, channelId, stream, pcs:Map, muted, analysers}
   ws: null,
@@ -199,6 +200,19 @@ const S = {
   threadTypingNames: new Map(),
   lastThreadTypingSent: 0,
 };
+
+// How many files ONE message may carry, and the one toast that says so. The
+// number is the SERVER's (MAX_ATTACHMENTS in server.js, read back through
+// /api/config at boot) because every send path truncates to it: the fallback is
+// only what the composer obeys in the moment before config lands, and the two
+// numbers are kept equal deliberately.
+function maxAttsFor() {
+  const n = Number(S.maxAttachments);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 10;
+}
+function maxAttsToast() {
+  return 'Max ' + maxAttsFor() + ' attachments per message';
+}
 
 // ---------- tiny helpers ----------
 function toast(msg, ms = 2500) {

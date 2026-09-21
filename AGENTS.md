@@ -1149,8 +1149,12 @@ attachment whose own card is still standing waits. Anything that reads
 `S.pendingAtts` for the composer must go through `renderComposerMeta`'s
 combined view (it appends the `attHere` held ones) or a chip will be missing.
 **The composer's file picker takes several files at once** (`#in-attach` is
-`multiple`): the change handler applies the same 5-per-message cap a drop or
-paste does, off one `room` calculation, so an over-full pick is one toast.
+`multiple`): the change handler applies the same per-message cap a drop or
+paste does, off one `room` calculation, so an over-full pick is one toast. That
+cap is the SERVER's — `MAX_ATTACHMENTS` (server.js, 10 by default, env-tunable),
+sliced by every send path and read back by the client from `/api/config` into
+`S.maxAttachments`, which `maxAttsFor()`/`maxAttsToast()` (core.js) are the only
+readers of (never a literal, so the number has one home).
 And a text-ish attachment — source, script, config, markup, log — embeds as a
 **code box** (`textFileHTML`), not a plain file card: detection is mime, then
 whole file name, then extension (so `Dockerfile`, `.env` and `.ps1` all land in

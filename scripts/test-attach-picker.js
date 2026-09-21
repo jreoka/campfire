@@ -2,12 +2,13 @@
 //
 // The complaint was simply "right now you can only select one". The input is
 // the easy half; the half worth pinning is what the change handler does with a
-// multi-file selection, because the whole composer is built around a cap of 5
-// attachments per message and a naive `files.forEach(uploadAndAttach)` would
-// toast the cap once per extra file (or, worse, start uploads the send would
-// then drop). So this drives the REAL handler sliced out of
-// public/js/messages.js in headless Chrome with a real multi-file FileList and
-// checks the arithmetic, the toast, and the focus handover.
+// multi-file selection, because the whole composer is built around a cap on the
+// attachments one message may carry (ten, server-owned — see maxAttsFor) and a
+// naive `files.forEach(uploadAndAttach)` would toast the cap once per extra file
+// (or, worse, start uploads the send would then drop). So this drives the REAL
+// handler sliced out of public/js/messages.js in headless Chrome with a real
+// multi-file FileList and checks the arithmetic, the toast, and the focus
+// handover.
 //
 // Skips (exit 0) when Chrome is unavailable.
 //
@@ -80,6 +81,11 @@ function $(sel) { return document.querySelector(sel); }
 function toast(msg) { calls.toasts.push(msg); }
 function composerTargetReady() { return window.__ready !== false; }
 function activeUploadCount() { return window.__running; }
+// The cap the handler obeys is the server's (maxAttsFor in core.js), so the page
+// stubs the question — and the harness can move the number to prove the handler
+// follows it rather than a literal.
+function maxAttsFor() { return window.__maxAtts || 10; }
+function maxAttsToast() { return 'Max ' + maxAttsFor() + ' attachments per message'; }
 function attsCtxNow() { return 'ctx'; }
 // The thread bar's own staging: its context, its list (the real ones key on the
 // open thread — see threadAttCtx/threadAtts in messages.js).
@@ -203,16 +209,16 @@ async function main() {
       check(r.focus === 1, 'the composer takes focus back for Enter-to-send', r);
     }
 
-    console.log('\n[3] the 5-per-message cap is applied once, not once per file');
+    console.log('\n[3] the per-message cap is applied once, not once per file');
     {
       const r = await evaluate(`(() => {
         window.__reset();
-        const out = window.__pick(['1', '2', '3', '4', '5', '6', '7', '8']);
+        const out = window.__pick(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12']);
         return { out, attach: window.__calls.attach.slice(), toasts: window.__calls.toasts.slice() };
       })()`);
-      check(r.attach.length === 5, 'only the first five start', r);
+      check(r.attach.length === 10, 'only the first ten start', r);
       check(r.toasts.length === 1, 'the cap is explained exactly once', r);
-      check(/max 5 attachments per message/i.test(r.toasts[0] || ''), 'and the toast names the cap', r);
+      check(/max 10 attachments per message/i.test(r.toasts[0] || ''), 'and the toast names the cap', r);
     }
     {
       const r = await evaluate(`(() => {
@@ -222,18 +228,43 @@ async function main() {
         const out = window.__pick(['x.txt', 'y.txt', 'z.txt']);
         return { out, attach: window.__calls.attach.slice(), toasts: window.__calls.toasts.slice() };
       })()`);
+      check(r.attach.length === 3 && r.attach.join(',') === 'x.txt,y.txt,z.txt',
+        'with room for all three, all three start', r);
+      check(r.toasts.length === 0, 'and nothing is toasted', r);
+    }
+    {
+      const r = await evaluate(`(() => {
+        window.__reset();
+        window.S.pendingAtts = [{}, {}, {}, {}, {}, {}, {}, {}]; // eight chips staged
+        window.__running = 1;                                     // one more in flight: one slot left
+        const out = window.__pick(['x.txt', 'y.txt', 'z.txt']);
+        return { out, attach: window.__calls.attach.slice(), toasts: window.__calls.toasts.slice() };
+      })()`);
       check(r.attach.length === 1 && r.attach[0] === 'x.txt', 'with room for one, one starts (not three)', r);
       check(r.toasts.length === 1 && /1 of 3/.test(r.toasts[0] || ''), 'and the toast says how many made it', r);
     }
     {
       const r = await evaluate(`(() => {
         window.__reset();
-        window.S.pendingAtts = [{}, {}, {}, {}, {}]; // already full
+        window.S.pendingAtts = [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}]; // already full
         const out = window.__pick(['late.txt']);
         return { out, attach: window.__calls.attach.slice(), toasts: window.__calls.toasts.slice() };
       })()`);
       check(r.attach.length === 0, 'with the message already full, nothing starts', r);
-      check(r.toasts.length === 1 && /max 5/i.test(r.toasts[0] || ''), 'and the reader is told why', r);
+      check(r.toasts.length === 1 && /max 10/i.test(r.toasts[0] || ''), 'and the reader is told why', r);
+    }
+    {
+      // Nothing may hard-code the ten: the server owns it (/api/config), and the
+      // handler has to move with it.
+      const r = await evaluate(`(() => {
+        window.__reset();
+        window.__maxAtts = 3;
+        const out = window.__pick(['1', '2', '3', '4']);
+        window.__maxAtts = 10;
+        return { out, attach: window.__calls.attach.slice(), toasts: window.__calls.toasts.slice() };
+      })()`);
+      check(r.attach.length === 3, 'a server that allows three gets three', r);
+      check(/max 3 attachments/i.test(r.toasts[0] || ''), 'and the toast names ITS number', r);
     }
 
     console.log('\n[4] no conversation open: one toast, no uploads');

@@ -161,6 +161,11 @@ function kickMedia() { try { require('./media-compress').kickMediaCompress(); } 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'data', 'uploads');
 const MAX_FILE_BYTES = parseInt(process.env.MAX_FILE_MB || '200', 10) * 1024 * 1024;
 const MAX_IMG_BYTES = 8 * 1024 * 1024;
+// How many files ONE message may carry. The server owns the number (every send
+// path truncates its list to it below) and the client reads it back from
+// /api/config so the composer's count can never disagree with what will be
+// stored — exactly the maxUploadMb / maxReactions pattern.
+const MAX_ATTACHMENTS = Math.max(1, parseInt(process.env.MAX_ATTACHMENTS || '10', 10) || 10);
 const IMG_MIMES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 // General chat uploads accept ANY file type (images, audio incl. flac, video,
 // docs, archives, executables, ...). Only avatar/emoji/banner/icon uploaders
@@ -910,7 +915,7 @@ app.get('/api/config', (req, res) => {
       credential: process.env.TURN_PASS || undefined,
     });
   }
-  res.json({ iceServers, origin: ORIGIN, turnstileSiteKey: process.env.TURNSTILE_SITEKEY || null, linkPreviews: String(process.env.UNFURL === undefined ? '1' : process.env.UNFURL) !== '0', maxUploadMb: Math.round(MAX_FILE_BYTES / 1048576), maxReactions: REACTION_KINDS_MAX,
+  res.json({ iceServers, origin: ORIGIN, turnstileSiteKey: process.env.TURNSTILE_SITEKEY || null, linkPreviews: String(process.env.UNFURL === undefined ? '1' : process.env.UNFURL) !== '0', maxUploadMb: Math.round(MAX_FILE_BYTES / 1048576), maxReactions: REACTION_KINDS_MAX, maxAttachments: MAX_ATTACHMENTS,
     // How long a closed account can still be restored (see DELETE_GRACE_DAYS).
     // The copy that promises the window is written from this, so the number the
     // person is shown is the number the server actually waits.
@@ -1688,7 +1693,7 @@ app.post('/api/webhooks/:wid/:token', async (req, res) => {
   if (!ch) return res.status(404).json({ error: 'no_channel' });
   if (!(await webhookRateOk(w.id))) return res.status(429).json({ error: 'slow_down' });
   const content = squashBreaks(String(req.body?.content || '')).trim().slice(0, 5000);
-  const atts = Array.isArray(req.body?.attachments) ? req.body.attachments.slice(0, 5) : [];
+  const atts = Array.isArray(req.body?.attachments) ? req.body.attachments.slice(0, MAX_ATTACHMENTS) : [];
   // Per-message overrides (fall back to the webhook's own name/avatar).
   const name = cleanWebhookName(req.body?.username, w.name);
   let avatar = w.avatar_url || null;
@@ -5452,7 +5457,7 @@ app.patch('/api/messages/:mid', authRequired, async (req, res) => {
   if (!content) return res.status(400).json({ error: 'empty_message' });
   await db.prepare('UPDATE messages SET content = ?, edited_at = ? WHERE id = ?').run(content, now(), m.id);
   // Editing can also drop attachments (ids verified against this message).
-  const drop = Array.isArray(req.body?.removeAttachments) ? req.body.removeAttachments.map(String).filter(Boolean).slice(0, 5) : [];
+  const drop = Array.isArray(req.body?.removeAttachments) ? req.body.removeAttachments.map(String).filter(Boolean).slice(0, MAX_ATTACHMENTS) : [];
   if (drop.length) {
     await db.prepare(`DELETE FROM attachments WHERE message_id = ? AND id IN (${drop.map(() => '?').join(',')})`).run(m.id, ...drop);
   }
@@ -6121,7 +6126,7 @@ const GIF_FAV_SLUG_RE = /^[a-z0-9_-]{1,80}$/i;
 const isHttpUrl = (u) => /^https?:\/\//i.test(String(u || ''));
 function cleanAttachments(atts) {
   const out = [];
-  for (const a of (Array.isArray(atts) ? atts.slice(0, 5) : [])) {
+  for (const a of (Array.isArray(atts) ? atts.slice(0, MAX_ATTACHMENTS) : [])) {
     const url = String(a?.url || '');
     const isLocal = url.startsWith('/uploads/files/');
     const isRemoteImg = a?.kind === 'image' && /^https:\/\//.test(url);
@@ -6566,7 +6571,7 @@ app.patch('/api/dms/messages/:mid', authRequired, async (req, res) => {
   const content = squashBreaks(String(req.body?.content || '')).trim().slice(0, 5000);
   if (!content) return res.status(400).json({ error: 'empty_message' });
   await db.prepare('UPDATE dm_messages SET content = ?, edited_at = ? WHERE id = ?').run(content, now(), m.id);
-  const drop = Array.isArray(req.body?.removeAttachments) ? req.body.removeAttachments.map(String).filter(Boolean).slice(0, 5) : [];
+  const drop = Array.isArray(req.body?.removeAttachments) ? req.body.removeAttachments.map(String).filter(Boolean).slice(0, MAX_ATTACHMENTS) : [];
   if (drop.length) {
     await db.prepare(`DELETE FROM dm_attachments WHERE message_id = ? AND id IN (${drop.map(() => '?').join(',')})`).run(m.id, ...drop);
   }
@@ -7851,7 +7856,7 @@ wss.on('connection', async (ws, req) => {
       const content = squashBreaks(String(msg.content || '')).trim().slice(0, 5000);
       const replyTo = String(msg.replyTo || '') || null;
       let threadRoot = String(msg.threadRoot || '') || null;
-      const atts = Array.isArray(msg.attachments) ? msg.attachments.slice(0, 5) : [];
+      const atts = Array.isArray(msg.attachments) ? msg.attachments.slice(0, MAX_ATTACHMENTS) : [];
       const pollOpts = normalizePollOptions(msg.poll);
       if ((!content && !atts.length && !pollOpts) || !serverId || !channelId) return;
       if (!me.servers.has(serverId) || !(await isMember(serverId, me.userId))) return;

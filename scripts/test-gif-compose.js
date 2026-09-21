@@ -89,6 +89,7 @@ function makeWorld({ text = '', pending = [], view = 'server', ready = true, bar
     'S', '$', 'closePicker', 'applyProfileUrl', 'sendChat', 'sendDm', 'renderComposerMeta',
     'renderThreadComposerMeta', 'toast', 'haptic', 'setAttPreview', 'syncPendingAttsCtx',
     'attsCtxNow', 'activeUploadCount', 'draftCtx', 'pickerBar', 'threadAtts', 'threadAttCtx',
+    'maxAttsFor', 'maxAttsToast',
     gifSource + '\nreturn { gifAttachment, gifComposerReady, composerHasDraft, stageGif, sendGif };'
   );
   world.api = run(
@@ -109,7 +110,9 @@ function makeWorld({ text = '', pending = [], view = 'server', ready = true, bar
     () => 's:s1:c1',
     () => world.threadBar,              // pickerBar: which bar opened the picker
     () => world.threadList,             // threadAtts: the reply's own staged files
-    () => (S.thread && S.thread.rootId ? 't:' + S.thread.rootId : null)
+    () => (S.thread && S.thread.rootId ? 't:' + S.thread.rootId : null),
+    () => world.maxAtts || 10,          // maxAttsFor: the server's number (core.js)
+    () => 'Max ' + (world.maxAtts || 10) + ' attachments per message' // maxAttsToast
   );
   return world;
 }
@@ -162,16 +165,16 @@ function main() {
       `a drafted one stages it instead`, drafted.S.pendingAtts);
   }
 
-  console.log('\n[A5] the 5-attachment cap holds');
+  console.log('\n[A5] the per-message attachment cap holds');
   {
-    const full = makeWorld({ text: 'hi', pending: [1, 2, 3, 4, 5].map((i) => ({ url: '/u/' + i + '.png' })) });
+    const full = makeWorld({ text: 'hi', pending: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((i) => ({ url: '/u/' + i + '.png' })) });
     full.api.sendGif(GIF);
-    check(full.S.pendingAtts.length === 5 && full.sent.length === 0,
+    check(full.S.pendingAtts.length === 10 && full.sent.length === 0,
       'nothing is added and nothing is posted', full.S.pendingAtts.length);
-    check(full.toasts.includes('Max 5 attachments per message'), 'the reader is told why', full.toasts);
-    const room = makeWorld({ text: 'hi', pending: [1, 2, 3, 4].map((i) => ({ url: '/u/' + i + '.png' })) });
+    check(full.toasts.includes('Max 10 attachments per message'), 'the reader is told why', full.toasts);
+    const room = makeWorld({ text: 'hi', pending: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => ({ url: '/u/' + i + '.png' })) });
     room.api.sendGif(GIF);
-    check(room.S.pendingAtts.length === 5 && room.toasts.length === 0, 'and the fifth one fits', room.S.pendingAtts.length);
+    check(room.S.pendingAtts.length === 10 && room.toasts.length === 0, 'and the tenth one fits', room.S.pendingAtts.length);
   }
 
   console.log('\n[A6] no conversation open: nothing is sent, nothing is staged');

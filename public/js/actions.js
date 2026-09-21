@@ -913,7 +913,7 @@ function sendForward() {
   content = content.slice(0, 5000);
   // A forwarded GIF stays starrable in its new home, so the picker identity
   // (and the measured shape) rides along with the bytes.
-  const atts = (src.attachments || []).slice(0, 5).map((a) => ({
+  const atts = (src.attachments || []).slice(0, maxAttsFor()).map((a) => ({
     url: a.url, name: a.name, mime: a.mime, size: a.size, kind: a.kind, spoiler: !!a.spoiler,
     gifSlug: a.gif_slug || '', gifThumb: a.gif_thumb || '', gifMp4: a.gif_mp4 || '', w: a.w || 0, h: a.h || 0,
   }));

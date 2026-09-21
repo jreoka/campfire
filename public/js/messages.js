@@ -438,13 +438,13 @@ function attFileCardHTML(a) {
 //
 // Only when EVERY attachment is a picture: a clip, a voice note or a file keeps
 // the full-width rendering it needs, and a tile grid holding one of those would
-// either squeeze it or leave the hole this exists to avoid. A message carries at
-// most five attachments (the composer's own cap, and the server slices the same
-// way), so the layouts are the five below and nothing else.
+// either squeeze it or leave the hole this exists to avoid. The count rides the
+// container as a class (g2…g10, and g11 for anything past the cap — the class
+// picks the column count, it is not a promise about how many tiles there are).
 function attsBlockHTML(list) {
   const atts = Array.isArray(list) ? list : [];
   const gallery = atts.length > 1 && atts.every((a) => (a && a.kind ? a.kind : 'file') === 'image');
-  const cls = 'msg-atts' + (gallery ? ' gallery g' + Math.min(atts.length, 5) : '');
+  const cls = 'msg-atts' + (gallery ? ' gallery g' + Math.min(atts.length, 11) : '');
   return '<div class="' + cls + '">' + atts.map(attachmentHTML).join('') + '</div>';
 }
 // ---------- the handover: a republished file, patched in place ----------
@@ -2942,7 +2942,7 @@ function syncPendingAttsCtx() {
   renderUploads();
   return true;
 }
-// In-flight uploads for one conversation: the 5-per-message cap is per message,
+// In-flight uploads for one conversation: the per-message cap is per message,
 // and a message belongs to a conversation.
 function activeUploadCount(ctx) {
   const k = ctx === undefined ? pendingCtxKey : ctx;
@@ -2964,11 +2964,11 @@ function uploadCardEl(id) {
 // answered stays in the list in its green `done` state for a 650ms exit (and a
 // failed one stays until it is dismissed), and a chip must not grow its Spoiler
 // toggle under a card that is still the thing the reader is looking at. The
-// question is per-ATTACHMENT and never about the list as a whole: five photos
-// are five independent handovers, so asking "is any card up there?" made the
-// first finished photo wait for the last one's green bar (reported). Counted
-// from the DOM — exactly the element the reader sees — so the toggle arrives the
-// moment that card is gone, whichever way it left.
+// question is per-ATTACHMENT and never about the list as a whole: a message of
+// many photos is many independent handovers, so asking "is any card up there?"
+// made the first finished photo wait for the last one's green bar (reported).
+// Counted from the DOM — exactly the element the reader sees — so the toggle
+// arrives the moment that card is gone, whichever way it left.
 function uploadHeldOnStage(att) {
   return (S.uploads || []).some((u) => u.att === att && u.attHere && uploadCardEl(u.id));
 }
@@ -3087,7 +3087,7 @@ function uploadAndAttach(file, ctx) {
   const list = target === pendingCtxKey ? (S.pendingAtts || []) : attsListFor(target);
   const maxBytes = maxUploadBytes();
   if (file.size > maxBytes) { toast('File too big (max ' + Math.round(maxBytes / 1048576) + 'MB)'); return; }
-  if (list.length + activeUploadCount(target) >= 5) { toast('Max 5 attachments per message'); return; }
+  if (list.length + activeUploadCount(target) >= maxAttsFor()) { toast(maxAttsToast()); return; }
   S.uploads = S.uploads || [];
   const entry = {
     id: ++uploadSeq, file, name: file.name || 'file',
@@ -3313,11 +3313,11 @@ $('#in-attach').addEventListener('change', (e) => {
   if (files.length) {
     if (!composerTargetReady()) toast('Pick a chat first, then attach');
     else {
-      const room = Math.max(0, 5 - ((S.pendingAtts || []).length + activeUploadCount(attsCtxNow())));
+      const room = Math.max(0, maxAttsFor() - ((S.pendingAtts || []).length + activeUploadCount(attsCtxNow())));
       if (files.length > room) {
         toast(room > 0
-          ? 'Added ' + room + ' of ' + files.length + ' — max 5 attachments per message'
-          : 'Max 5 attachments per message');
+          ? 'Added ' + room + ' of ' + files.length + ' — max ' + maxAttsFor() + ' attachments per message'
+          : maxAttsToast());
       }
       files.slice(0, room).forEach((f) => uploadAndAttach(f));
     }
@@ -3340,12 +3340,12 @@ $('#in-thread-attach').addEventListener('change', (e) => {
   const ctx = threadAttCtx();
   if (files.length && !ctx) toast('That thread is closed');
   else if (files.length) {
-    // Same 5-per-message cap and the same one-toast accounting as the chat bar.
-    const room = Math.max(0, 5 - (threadAtts().length + activeUploadCount(ctx)));
+    // Same per-message cap and the same one-toast accounting as the chat bar.
+    const room = Math.max(0, maxAttsFor() - (threadAtts().length + activeUploadCount(ctx)));
     if (files.length > room) {
       toast(room > 0
-        ? 'Added ' + room + ' of ' + files.length + ' — max 5 attachments per message'
-        : 'Max 5 attachments per message');
+        ? 'Added ' + room + ' of ' + files.length + ' — max ' + maxAttsFor() + ' attachments per message'
+        : maxAttsToast());
     }
     files.slice(0, room).forEach((f) => uploadAndAttach(f, ctx));
   }
@@ -3365,7 +3365,7 @@ document.addEventListener('paste', (e) => {
     // screenshots / images / video pasted anywhere go straight to the composer
     e.preventDefault();
     if (!composerTargetReady()) { toast('Pick a chat first, then paste'); return; }
-    files.slice(0, 5).forEach((f) => uploadAndAttach(f));
+    files.slice(0, maxAttsFor()).forEach((f) => uploadAndAttach(f));
     $('#in-message').focus();
     return;
   }
@@ -3430,7 +3430,7 @@ document.addEventListener('drop', (e) => {
   dropReset();
   if (!files.length) return;
   if (!composerTargetReady()) { toast('Pick a chat first, then drop'); return; }
-  files.slice(0, 5).forEach((f) => uploadAndAttach(f));
+  files.slice(0, maxAttsFor()).forEach((f) => uploadAndAttach(f));
   $('#in-message').focus();
 });
 $('#composer').addEventListener('submit', (e) => {

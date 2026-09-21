@@ -59,6 +59,7 @@ async function initTurnstile() {
     if (!cfg) return;
     if (cfg.maxUploadMb) S.maxUploadMb = Number(cfg.maxUploadMb) || S.maxUploadMb;
     if (cfg.maxReactions) S.maxReactions = Number(cfg.maxReactions) || S.maxReactions;
+    if (cfg.maxAttachments) S.maxAttachments = Number(cfg.maxAttachments) || S.maxAttachments;
     if (!cfg.turnstileSiteKey) return;
     S.turnstileKey = cfg.turnstileSiteKey;
   } catch {}
@@ -329,6 +330,7 @@ async function boot() {
     if (cfg?.iceServers?.length) S.iceServers = cfg.iceServers;
     if (cfg?.maxUploadMb) S.maxUploadMb = Number(cfg.maxUploadMb) || S.maxUploadMb;
     if (cfg?.maxReactions) S.maxReactions = Number(cfg.maxReactions) || S.maxReactions;
+    if (cfg?.maxAttachments) S.maxAttachments = Number(cfg.maxAttachments) || S.maxAttachments;
     if (cfg?.deleteGraceDays) S.deleteGraceDays = Number(cfg.deleteGraceDays) || S.deleteGraceDays;
     // Link previews are a server-side fetch (UNFURL=0 disables them fleet-wide).
     if (cfg && cfg.linkPreviews === false && typeof setLinkPreviews === 'function') setLinkPreviews(false);
