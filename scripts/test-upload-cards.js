@@ -395,6 +395,8 @@ async function main() {
     'but a failure always pulls the rows back open (a Retry nobody can see is not an affordance)');
   check(/const size = u\.total \|\| u\.size \|\| 0;/.test(upSource) && /got \/ tot/.test(upSource),
     'the batch % is byte-weighted, not per-file (ten photos of different sizes are not ten equal steps)');
+  check(/meta\.textContent = busy\s*\?\s*\(failed \? failed \+ ' failed · ' : ''\) \+/.test(upSource),
+    'the overall % carries NO leading separator dot (reported) — the dot only ever sits BETWEEN two facts');
 
   const chromePath = findChrome();
   if (!chromePath) return skip('no Chrome/Edge found (set CHROME_PATH)');
@@ -671,7 +673,7 @@ async function main() {
     check(b.count === '10 files' && b.verb === 'Uploading ',
       'the summary says how many and that they are going up', { count: b.count, verb: b.verb });
     check(b.verbShown === false, 'with "Uploading " dropped on a phone — the spinner, the % and the bar already say it', b.verbShown);
-    check(b.meta === '· 0%' && b.cancelShown === true, 'and carries the overall % and Cancel all', { meta: b.meta, cancel: b.cancelShown });
+    check(b.meta === '0%' && b.cancelShown === true, 'and carries the overall % and Cancel all', { meta: b.meta, cancel: b.cancelShown });
     check(b.hrowScrollW <= b.hrowW + 1 && b.labelCut === false,
       'the whole summary fits 390px: nothing pushed out, no truncated label', { row: [b.hrowW, b.hrowScrollW], cut: b.labelCut });
     check(b.ariaExpanded === 'true', 'the fold starts expanded', b.ariaExpanded);
@@ -679,7 +681,7 @@ async function main() {
     for (let i = 0; i < 5; i++) await ev(`window.__progressNamed('photo-${i}.jpg', ${1000 + i * 100}, ${1000 + i * 100})`);
     await sleep(40);
     b = await ev(BATCH);
-    check(b.meta === '· 41%', 'five of ten photos done reads 41%, not 50% — the batch % is BYTES', b.meta);
+    check(b.meta === '41%', 'five of ten photos done reads 41%, not 50% — the batch % is BYTES', b.meta);
     check(b.fillW === '41%', 'and the batch bar sits at the same place', b.fillW);
 
     await ev("document.querySelector('#upload-list .up-fold').click()");
@@ -688,7 +690,7 @@ async function main() {
     check(b.folded === true && b.rowsDisplay === 'none' && b.stageH <= b.headH + 20,
       'the fold collapses the whole batch to its summary alone (the stage keeps only its own padding around it)',
       { folded: b.folded, stage: b.stageH, head: b.headH, rows: b.rowsDisplay });
-    check(b.count === '10 files' && b.meta === '· 41%' && b.ariaExpanded === 'false',
+    check(b.count === '10 files' && b.meta === '41%' && b.ariaExpanded === 'false',
       'which keeps saying how many and how far', { count: b.count, meta: b.meta, aria: b.ariaExpanded });
 
     await ev("document.querySelector('#upload-list .up-fold').click()");
@@ -734,7 +736,7 @@ async function main() {
     await sleep(50);
     b = await ev(BATCH);
     check(b.folded === false && b.rowsDisplay !== 'none', 'a failure pulls the rows back open', { folded: b.folded });
-    check(b.meta === '· 1 failed · 0%' && b.metaBad === true, 'the summary names it in red', { meta: b.meta, bad: b.metaBad });
+    check(b.meta === '1 failed · 0%' && b.metaBad === true, 'the summary names it in red', { meta: b.meta, bad: b.metaBad });
     check(b.cancelShown === true, 'Cancel all stays for the two still going', b.cancelShown);
     check((await ev("!document.querySelector('#upload-list .up-card.failed .up-retry').classList.contains('hidden')")) === true,
       'and the failed card\'s Retry is really visible (which is why the fold gave way)');

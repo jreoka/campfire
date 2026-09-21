@@ -3121,9 +3121,13 @@ function paintUploadHead(box, mine) {
   head.querySelector('.up-hcount').textContent = n + (n === 1 ? ' file' : ' files');
   const meta = head.querySelector('.up-hmeta');
   meta.classList.toggle('bad', failed > 0);
+  // No leading separator (reported: a stray dot sat to the left of the overall
+  // %). The label and the % are already far apart — the label takes the row's
+  // slack — so a mark between them says nothing; the dot is kept only BETWEEN two
+  // facts (a failure count and the %), where it really is separating something.
   meta.textContent = busy
-    ? (failed ? '· ' + failed + ' failed · ' : '· ') + (meter.pct === null ? 'Finishing…' : meter.pct + '%')
-    : (failed ? '· ' + failed + ' failed' : '· Uploaded');
+    ? (failed ? failed + ' failed · ' : '') + (meter.pct === null ? 'Finishing…' : meter.pct + '%')
+    : (failed ? failed + ' failed' : 'Uploaded');
   const indet = busy > 0 && meter.pct === null;
   const fill = head.querySelector('.up-fill');
   fill.classList.toggle('indet', indet);
