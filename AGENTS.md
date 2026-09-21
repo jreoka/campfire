@@ -89,11 +89,13 @@ campfire/
     index.html       # SPA shell (auth view + main view + modals)
     styles.css       # flat professional dark UI (see design rules below)
     embeds.js        # link embeds: known providers client-side, generic link cards via /api/unfurl
-    js/              # SPA modules (ordered classic scripts): core, auth, noise,
-                     # servers, messages, socket, ui, voice, actions, rail, home,
-                     # pins, compose, story-edit, stories, viewonce, pickers,
+    js/              # SPA modules (ordered classic scripts): core, router, auth,
+                     # noise, servers, messages, socket, ui, voice, actions, rail,
+                     # home, pins, compose, story-edit, stories, viewonce, pickers,
                      # settings, security, final, native (the native shell: back
-                     # navigation, edge-swipe, press feedback — see below)
+                     # navigation, edge-swipe, press feedback — see below).
+                     # router = the address bar: /login, /signup, /home, /stories,
+                     # /dm/<thread>, /c/<server>[/<channel>] — see below
     vendor/rnnoise/  # RNNoise wasm + worklet (mic noise suppression) vendored
     manifest.webmanifest
     service-worker.js   # bump CACHE ('campfire-vN') on every frontend change
@@ -888,6 +890,26 @@ one-shot) or an upgrade would light up all history. `paintAppBadge()`
 `navigator.setAppBadge`/`clearAppBadge` (installed PWA, dock badges in
 Chrome/Edge) and Tauri `set_unread_count` (desktop tray/taskbar/dock).
 Detail per change lives in `git log` — don't duplicate it here.
+
+**Every place in the app has a URL path** (`public/js/router.js`): `/login`,
+`/signup`, `/home`, `/stories`, `/dm/<thread>`, `/c/<server>[/<channel>]`
+(`/friends` and `/channels/…` are accepted aliases, canonicalized on arrival).
+The path is DERIVED from the state on screen and painted from the ONE funnel
+every navigation already goes through (`rememberView()` → `cfSyncUrl`), so no
+call site has to remember to write it; `boot()` resolves the path BEFORE the
+per-account last-view memory, so a pasted link opens what it names — including
+on a device that has never seen it — and a signed-out visitor is sent to
+`/login` with the target kept aside in sessionStorage to land on after signing
+in. Four rules keep it safe: it is `replaceState`, never `pushState` (native.js
+owns the single back-sentinel history entry, and `cfSetPath` hands
+`history.state` straight back so `{cfNav:1}` survives a navigation); a URL
+another account left in the tab does not speak for the next one (the
+per-account memory is the authority then, and sign-out names `/login` before it
+reloads); `/invite/:code` and `/share` are NEVER renamed, because their own
+modules read the pathname at the end of boot; and the query string is preserved
+through every write, because boot still has to read it (`?dm=`, `?story=`).
+Server side the SPA fallback serves every path through `sendShell`, so a deep
+link carries the per-deploy asset pins like `/` does. `scripts/test-url-routes.js`.
 
 ## Deployment (owner directive)
 

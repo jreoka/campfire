@@ -109,7 +109,12 @@ let cfArmed = false;
 function cfArm() {
   if (cfArmed || !cfBackWanted()) return;
   try {
-    history.pushState({ cfNav: 1 }, '', location.href);
+    // The sentinel is pushed at the CURRENT view's own path, not at whatever
+    // location.href happens to hold: a back press pops onto the entry underneath
+    // (the page as it was loaded), and the router would otherwise be dragged back
+    // to a path the view on screen no longer has — /login in the bar of a channel.
+    const url = (typeof cfArmUrl === 'function') ? cfArmUrl() : location.href;
+    history.pushState({ cfNav: 1 }, '', url);
     cfArmed = true;
   } catch {}
 }
@@ -159,6 +164,10 @@ window.addEventListener('popstate', () => {
   if (!cfArmed) return;
   cfArmed = false;
   if (cfBack()) cfArm();
+  // The entry a back press lands on carries whatever URL the page had when it
+  // was created (the auth screen, the app root). The view did not change, so
+  // put the bar back on the path of what is actually on screen.
+  try { cfSyncUrl(); } catch {}
 });
 
 // Arm once the shell is signed in. The sentinel is (re)armed on the first sign

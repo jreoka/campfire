@@ -648,6 +648,10 @@ function rememberView() {
     th: S.view === 'server' && S.thread && S.thread.channelId === S.channelId ? S.thread.rootId : null,
   };
   try { localStorage.setItem('cf_view_' + S.me.id, JSON.stringify(v)); } catch {}
+  // …and the address bar, from the same state: every navigation in the app
+  // already comes through here, so this is the one place the URL has to be
+  // painted (router.js — the same funnel the memory above rides).
+  try { cfSyncUrl(); } catch {}
 }
 /* ---------- the Home tab you were last on ----------
  * Home is a place you leave and come back to — a server, a call, another

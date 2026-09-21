@@ -157,6 +157,11 @@ function setMode(m) {
   $('#form-auth').classList.toggle('reg', m === 'register'); // signup-only username status line
   $('#auth-error').classList.add('hidden');
   scheduleUnameCheck(); // switching tabs re-answers for whatever is in the field
+  // The two tabs are two pages, so they are two paths — but only while the auth
+  // screen is actually the one on screen: setMode('login') also runs at parse
+  // time (final.js), and renaming the URL there would throw away the path boot
+  // has not read yet.
+  try { if (!$('#view-auth').classList.contains('hidden')) cfSetPath(m === 'register' ? '/signup' : '/login'); } catch {}
 }
 $('#tab-login').onclick = () => setMode('login');
 $('#tab-register').onclick = () => setMode('register');
@@ -253,6 +258,11 @@ async function doLogout() {
   try { await api('/api/logout', { method: 'POST' }); } catch {}
   try { leaveVoice(true); } catch {}
   try { S.ws?.close(); } catch {}
+  // Signing out is not "come back here later": the address bar goes back to the
+  // sign-in page before the reload, so the conversation this account was looking
+  // at cannot follow the next account in, and the path is forgotten (router.js).
+  try { cfForgetPendingRoute(); } catch {}
+  try { cfSetPath('/login'); } catch {}
   store.token = '';
   store.sid = '';
   location.reload();
@@ -382,19 +392,35 @@ async function boot() {
   // GIF in chat has to know what is already starred before the first message
   // paints it. One indexed read; the picker's own open is the retry if it fails.
   try { ensureGifFavs(); } catch {}
+  // Where the ADDRESS BAR points wins over the local last-view memory: a link
+  // someone pasted names a place, and it has to open wherever it is opened —
+  // including on a device that has never seen that conversation. A target the
+  // auth screen kept aside is the same promise one sign-in later (router.js).
+  const route = cfBootRoute();
   // Persistent per-user last-view (localStorage, survives browser restarts),
   // so a reload reopens the conversation you were in; the composer text for
   // that conversation comes from the per-account draft store (see core.js).
+  // It is the fallback: it only speaks when the path does not.
   const mem = readMemView();
-  if (mem && mem.s) S.serverId = mem.s;
+  const memHome = !!(mem && mem.view === 'home');
+  const routeHome = !!(route && route.kind !== 'server');
+  // The server the shell should land on BEFORE the route is applied. Naming
+  // Home, Stories or a DM in the path must not auto-select the first server:
+  // its rail button would light up under a Home that is about to open over it.
+  const launch = routeHome ? null
+    : route && route.kind === 'server' ? route.serverId
+    : (mem && mem.s) || null;
+  if (launch) S.serverId = launch;
   await warmStdEmoji().catch(() => {});
   await refreshAllEmojis().catch(() => {});
   // Only auto-open a server when restoring a server view; a remembered Home
   // view must stay on Home (no implicit jump to the first server).
-  await refreshServers(mem && mem.view === 'server' ? mem.s : null, !(mem && mem.view === 'home'));
-  // Reopen exactly where the user left off: a DM/group thread under Home,
-  // or a server + channel. Missing ids fall back gracefully.
-  if (mem && mem.view === 'home') {
+  await refreshServers(launch, !(routeHome || memHome));
+  // Reopen exactly what the path names, else where the user left off: a
+  // DM/group thread under Home, or a server + channel. Missing ids fall back
+  // gracefully.
+  if (route) await cfOpenRoute(route);
+  else if (memHome) {
     // The remembered Home tab supplies the panel, so a reload taken on the
     // Stories page comes back to it instead of the Friends feed. The DM is
     // selected below (the last-view memory is the authority on that).
@@ -471,6 +497,9 @@ function showAuth() {
   $('#boot-splash')?.classList.add('hidden');
   $('#view-auth').classList.remove('hidden');
   $('#view-main').classList.add('hidden');
+  // Name the screen in the address bar (/login or /signup) and keep a deeper
+  // target aside for after sign-in (router.js).
+  try { cfAuthScreenEnter(); } catch {}
 }
 function showMain() {
   $('#boot-splash')?.classList.add('hidden');

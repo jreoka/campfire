@@ -1670,3 +1670,35 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   the phone block. The RENDERED half (the same order read back off the pixels at
   desktop width, which is what catches a `row-reverse` container) lives in
   `scripts/test-mobile-landscape.js` [6]; the offline test can only see source.
+  `node scripts/test-url-routes.js` covers the address bar (`public/js/router.js`).
+  The offline half always runs: it executes the REAL router in a `vm` against a
+  fake `location`/`history`/`sessionStorage` and pins the route table
+  (`/login`, `/signup` + `/register` + a trailing slash, `/home` + `/friends`,
+  `/stories`, `/dm/<thread>`, `/c/<server>[/<channel>]` + the `/channels/…`
+  alias), that `/`, `/c`, `/c/s1//c2`, `/c/s1/c2/c3`, an escape-shaped segment and
+  `/invite/:code` / `/share` are all left alone, that a path is DERIVED from
+  `S.view`/`S.serverId`/`S.channelId`/`S.dmThreadId`/`S.homePanel` rather than
+  accumulated, that a write preserves the query string boot still has to read and
+  hands `history.state` back (so native.js's `{cfNav:1}` sentinel survives a
+  navigation), that the path is never renamed while `/invite/:code` or `/share` is
+  on screen, and the ownership rule — a URL this tab wrote for ANOTHER account is
+  ignored at boot and never stashed across sign-in, while a path the tab did not
+  write (a pasted link) always is. It also reads the wiring out of
+  `index.html`/`service-worker.js`/`auth.js`/`core.js`/`native.js`/`server.js`:
+  `rememberView()` is the one writer, boot resolves the path before the last-view
+  memory, `showAuth()` names the auth screen and the two tabs are two paths, sign
+  out forgets the target, and the server's SPA fallback serves deep paths through
+  `sendShell` (asset pins) while `/uploads` still 404s. The Chrome half drives
+  the real app against a throwaway database: a signed-out visitor lands on
+  `/login` (and the Create-account tab on `/signup`), a channel link signed out
+  waits on `/login` and LANDS ON THE CHANNEL after sign-in, `/c/<server>/<channel>`
+  `/home` `/stories` `/dm/<thread>` each boot into what they name (the
+  `/channels` alias canonicalizes to `/c/…`), junk heals into a real path,
+  switching channel / opening Home / opening a DM rewrite the bar, and — the
+  reason the router must never pushState — arming the phone's back sentinel,
+  navigating under it and pressing back closes exactly one thing, pushes no
+  history entry, and leaves the bar on the view on screen instead of the entry
+  underneath. Skips the Chrome half without Postgres or Chrome. Re-run after
+  touching `router.js`'s route table/writers, `boot()`/`showAuth()`/`setMode()`/
+  `doLogout()` in `auth.js`, `rememberView()` in `core.js`, `cfArm` in
+  `native.js`, the SPA fallback in `server.js`, or the shell's script list.

@@ -146,7 +146,10 @@ check(/if \(S\.dmThreadId && !S\.dms\.some\(\(t\) => t\.id === S\.dmThreadId\)\)
   'a thread that vanished on another device is forgotten too');
 check(/case 'removed-from-dm':\r?\n\s*if \(S\.dmThreadId === m\.threadId\) \{ S\.dmThreadId = null; renderDmBlank\(\); rememberView\(\); rememberHomeTab\(\); \}/.test(socket),
   'being removed from a group clears it as well');
-check(/if \(mem && mem\.view === 'home'\) \{[\s\S]{0,400}?await openHome\(\{ panel: readHomeTab\(\)\.panel, dm: null \}\);/.test(auth),
+// The path in the address bar is resolved FIRST (router.js cfBootRoute), and the
+// remembered Home tab is what answers when it does not name a place — which is
+// the whole point of the branch below.
+check(/if \(route\) await cfOpenRoute\(route\);[\s\S]{0,40}?else if \(memHome\) \{[\s\S]{0,400}?await openHome\(\{ panel: readHomeTab\(\)\.panel, dm: null \}\);/.test(auth),
   'a reload taken on the Stories tab comes back to Stories (the panel memory is read at boot)');
 
 // ---------- the real app, desktop viewport ----------

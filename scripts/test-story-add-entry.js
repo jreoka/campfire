@@ -82,6 +82,14 @@ function deepLinkBlock() {
   if (a < 0 || b < 0) { console.error('[test] could not find the boot deep-link block in auth.js'); process.exit(1); }
   return auth.slice(a, b).replace(/\}\s*catch\s*\{\}\s*$/, '');
 }
+// The router that block hands its params to — the same slice trick, because the
+// block is only the boot half of the pair.
+function deepLinkFn() {
+  const a = auth.indexOf('async function handleDeepLinkQuery(qs) {');
+  const b = auth.indexOf('// ---------- boot ----------', a);
+  if (a < 0 || b < 0) { console.error('[test] could not find handleDeepLinkQuery in auth.js'); process.exit(1); }
+  return auth.slice(a, b);
+}
 
 const rowBlock = markupFor('btn-stories', 'button');
 const friendsBlock = markupFor('btn-friends', 'button');
@@ -138,7 +146,7 @@ check(!!addSc && /add/i.test((addSc.name || '') + ' ' + (addSc.short_name || '')
 check(!!addSc && addSc.url.charAt(0) === '/', 'its url is inside the app scope (a cross-scope shortcut never appears)', addSc && addSc.url);
 check(!!addSc && (addSc.icons || []).some((i) => i && fs.existsSync(path.join(ROOT, 'public', String(i.src).replace(/^\//, '')))),
   'and it carries an icon the server actually serves', addSc && addSc.icons);
-check(/qs\.get\('story'\)/.test(auth) && /if \(qdm \|\| qserv \|\| qfriends \|\| qadmin \|\| qstory\)/.test(auth),
+check(/qs\.get\('story'\)/.test(auth) && /if \(qs\.get\('dm'\) \|\| qs\.get\('server'\) \|\| qs\.get\('friends'\) \|\| qs\.get\('admin'\) \|\| qs\.get\('story'\)\) history\.replaceState/.test(auth),
   'boot reads the story param and cleans it out of the URL (a refresh must not reopen the camera)');
 check(/else if \(qstory\) \{[\s\S]*?await openStoryComposer\(\{\}\)/.test(auth), 'and lands in the story camera');
 check(/else if \(qfriends\) \{[\s\S]*?\} else if \(qstory\) \{/.test(auth),
@@ -151,6 +159,7 @@ check(/else if \(qfriends\) \{[\s\S]*?\} else if \(qstory\) \{/.test(auth),
 const createSrc = slice(stories, 'let snOpts = null;', 'async function openStoryComposer(opts = {}) {');
 function pageHtml() {
   const deep = deepLinkBlock();
+  const deepFn = deepLinkFn();
   const wire = slice(stories, "$('#btn-stories').onclick", "$('#sp-post').onclick");
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -208,6 +217,10 @@ async function api() { throw new Error('offline'); }
 async function refreshDms() {}
 const realRS = history.replaceState.bind(history);
 history.replaceState = function (a, b, c) { calls.rs.push(c); try { realRS(a, b, c); } catch (e) {} };
+// The router the extracted boot block calls (auth.js, one function). Without it
+// the call threw a ReferenceError that the block's own try/catch swallowed, so
+// every case below "ran without error" while doing nothing at all.
+eval(${JSON.stringify(deepFn)});
 const DEEP_SRC = ${JSON.stringify(deep)};
 async function runDeep(q) {
   CASE_PARAMS = Object.fromEntries(new URLSearchParams(q));

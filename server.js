@@ -7728,8 +7728,14 @@ wss.on('connection', async (ws, req) => {
   // links beat the queries). Attaching the real handler later silently dropped
   // them — including the client's very first 'subscribe', which left that
   // session with an empty presence roster. Queue instead, flush after auth.
+  //
+  // The readiness signal is the HANDLER, not `ws.meta`: meta is written several
+  // awaits before onMessage exists, and a frame landing in that window called a
+  // binding still in its temporal dead zone — an uncaught ReferenceError that
+  // took the whole process down, every session on it with it.
   const earlyFrames = [];
-  ws.on('message', (raw) => { if (!ws.meta) { earlyFrames.push(raw); return; } onMessage(raw); });
+  let onMessage = null;
+  ws.on('message', (raw) => { if (!onMessage) { earlyFrames.push(raw); return; } onMessage(raw); });
   const auth = await socketAuth(ws, req);
   if (!auth) return;
   const p = auth.p;
@@ -7773,7 +7779,7 @@ wss.on('connection', async (ws, req) => {
   safeSend(ws, { t: 'hello', user: publicUser(u), version: APP_VERSION, gen: APP_GEN });
   await pushAdminPresence();
 
-  const onMessage = async raw => {
+  onMessage = async raw => {
     try {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
@@ -8310,10 +8316,14 @@ app.get('/readyz', async (req, res) => {
   res.json({ ok: true, pod: bus.POD_ID, bus: bus.stats() });
 });
 
-// SPA fallback (after API + static)
+// SPA fallback (after API + static). Every client path the router knows
+// (/login, /signup, /home, /stories, /c/:server[/:channel], /dm/:thread) is the
+// same shell, and it goes out through sendShell so a deep path carries the
+// per-deploy asset pins "/" does — a shell served straight off disk would let a
+// fresh page load stale cached JS.
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/') || req.path.startsWith('/ws')) return next();
-  res.sendFile(path.join(__dirname, 'public', 'index.html'), { headers: { 'Cache-Control': 'no-store' } });
+  sendShell(res, next, null);
 });
 
 async function boot() {
