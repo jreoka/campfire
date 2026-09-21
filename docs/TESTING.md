@@ -1341,6 +1341,33 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   placeholder test's own artifact. Re-run it after touching the lightbox block,
   `#lightbox`'s markup, the `.lb-*` rules, or the attachment block in
   `messages.js`.
+  `node scripts/test-chat-scrollbar.js` covers the scrollbar every conversation
+  now shows (owner request: "pls add a scrollbar to all types of chats"). A
+  server channel, a 1:1 DM and a group chat all render into `#messages`
+  (`renderMessages`, `renderDmMessages`) and a thread's replies into
+  `#thread-replies` (`renderThread`), so those two ids ARE every type of chat —
+  and both come off the inner-scrollbar opt-out list in `styles.css` (BOTH of its
+  rules: `scrollbar-width:none` AND `::-webkit-scrollbar{display:none}`, since an
+  engine that honours only one of them would still hide the bar), while the
+  rails, the member list, the pins/inbox rows and the upload stages stay on it.
+  Its static half reads those renderers to pin the mapping (a fourth surface that
+  grew its own message list is what it would catch) plus both ids still being
+  `overflow-y:auto`, and that the bar they inherit is the app's own global 8px
+  themed one in both themes. The headless half renders four scrollers that all
+  really overflow — the two chats, `#member-list` (still opted out) and a plain
+  `#ctrl` with no gutter rule — and measures the gutter each takes (10px for the
+  chats, nothing for the member list, the UA's own for the control), that the
+  element keeps its whole column so only its content pays, that
+  `scrollbar-gutter:stable` makes a SHORT conversation exactly as wide as a long
+  one (the `auto` control grows back by its bar instead, which is what `stable`
+  bought), and the same at a 390px column. Its pixel half decodes a screenshot and
+  counts the app's thumb colour `#2b354d` inside each chat's gutter column (over
+  200px of it) and ZERO of it beside the opted-out list — a reserved gutter would
+  pass everything else while painting nothing, which is exactly the failure the
+  request was about. Nothing in the chat rules sets a colour: chat and the page
+  agree in both themes by construction. Re-run it after touching that opt-out
+  list or the global `::-webkit-scrollbar` rules in `styles.css`, `#messages` /
+  `#thread-replies`, or the renderers that pick a message list.
   `node scripts/test-chan-unread.js` covers unread channel dots and the rail's
   unread badges (offline; runs the real helpers sliced out of `servers.js`
   against a fake DOM + localStorage, then checks the render/menu/socket wiring

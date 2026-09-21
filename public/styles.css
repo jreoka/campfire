@@ -262,14 +262,18 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
    stage's two scrollers (`.up-rows`, the chip rows) are listed for the same
    reason as the rest: they are capped panels inside the composer, and what says
    "there is more here" is the summary row above them (count + fold) and the row
-   clipped at the edge, never a pill in the gutter beside Cancel all. */
-#server-list,#dm-rail,#server-ui,#home-ui,#messages,#member-list,#thread-replies,#friends-page,
+   clipped at the edge, never a pill in the gutter beside Cancel all.
+   AND, since the owner asked for one, the two CHAT scrollers — #messages and
+   #thread-replies — are not listed either: a conversation is the one region
+   here whose LENGTH the reader is actually asking about, so it gets the bar
+   back, declared on its own right below. */
+#server-list,#dm-rail,#server-ui,#home-ui,#member-list,#friends-page,
 #find-results,#story-view .pf-body,#set-tabs,#set-body,.rx-list,.pk-grid,.pk-rail,.share-targets,
 #m-inbox-list,#m-threads-list,.inbox-list,.sheet-rows,.pins-list,.sc-pick-list,#fwd-dests,.gmem-list,.story-sheet,
 .adm-scroll,.adm-rep-text,#stories-page,.sc-emoji-grid,.up-rows,#attach-preview,#thread-attach-preview{scrollbar-width:none}
 #server-list::-webkit-scrollbar,#dm-rail::-webkit-scrollbar,#server-ui::-webkit-scrollbar,
-#home-ui::-webkit-scrollbar,#messages::-webkit-scrollbar,#member-list::-webkit-scrollbar,
-#thread-replies::-webkit-scrollbar,#friends-page::-webkit-scrollbar,#find-results::-webkit-scrollbar,
+#home-ui::-webkit-scrollbar,#member-list::-webkit-scrollbar,
+#friends-page::-webkit-scrollbar,#find-results::-webkit-scrollbar,
 #story-view .pf-body::-webkit-scrollbar,#set-tabs::-webkit-scrollbar,#set-body::-webkit-scrollbar,
 .rx-list::-webkit-scrollbar,.pk-grid::-webkit-scrollbar,.pk-rail::-webkit-scrollbar,
 .share-targets::-webkit-scrollbar,#m-inbox-list::-webkit-scrollbar,#m-threads-list::-webkit-scrollbar,
@@ -278,6 +282,30 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .gmem-list::-webkit-scrollbar,.story-sheet::-webkit-scrollbar,.adm-scroll::-webkit-scrollbar,
 .adm-rep-text::-webkit-scrollbar,#stories-page::-webkit-scrollbar,.sc-emoji-grid::-webkit-scrollbar,
 .up-rows::-webkit-scrollbar,#attach-preview::-webkit-scrollbar,#thread-attach-preview::-webkit-scrollbar{display:none}
+
+/* A CHAT SHOWS ITS SCROLLBAR (owner request: "add a scrollbar to all types of
+   chats"). Both conversation surfaces are covered by these two ids, which is
+   every flavour the app has: a server channel, a 1:1 DM and a group chat all
+   render into `#messages`, and a thread's replies into `#thread-replies` — so a
+   channel, a DM, a group and a thread read the same way. This is deliberately
+   the ONE exception to the opt-out list above (whose reasoning is unchanged for
+   the rails, the member/thread/inbox/pins lists and the upload stages): those
+   are panels whose edge already says where they end, while a conversation is
+   the region a reader measures — "how much more is there, where am I" — and a
+   thumb is the only thing that answers it. The bar itself is the global one
+   (`::-webkit-scrollbar` 8px + `*{scrollbar-width:thin;scrollbar-color}`
+   above), so chat and the page agree in both themes instead of chat inventing a
+   second bar.
+   `scrollbar-gutter:stable` reserves that bar whether or not this conversation
+   currently overflows — 8px from the WebKit rule, the engine's own `thin` width
+   (10px on Windows Chrome) where `scrollbar-width` is honoured — so the messages
+   never jump sideways the moment a channel crosses the fold: short and long are
+   ONE layout, and a conversation you can scroll is not a bar narrower than one
+   you cannot. On an overlay-scrollbar platform
+   (iOS, Android, macOS "when scrolling") the engine paints its own thumb during
+   the gesture and reserves nothing, so the gutter is a no-op there — the bar
+   still exists, it just fades out from under the finger. */
+#messages,#thread-replies{scrollbar-gutter:stable}
 
 #app{height:100vh;height:100dvh;height:var(--vvh,100dvh)}
 

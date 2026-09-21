@@ -294,6 +294,21 @@ declared in the manifest); no tray/watcher on mobile — that Rust code is
   flex gap) lands right as well. The head's own box is deliberately NOT reshaped:
   its padding is also its hover pill. `scripts/test-msg-group-gap.js` measures
   both containers at both breakpoints.
+- **A chat shows its scrollbar** (owner request: "pls add a scrollbar to all
+  types of chats"). The inner-scrollbar opt-out list in `styles.css` still hides
+  the rails, the member list, the pins/inbox rows and the upload stages, but
+  `#messages` and `#thread-replies` are deliberately NOT on it: those two ids ARE
+  every conversation the app has (a server channel, a 1:1 DM and a group chat all
+  render into `#messages`; a thread's replies into `#thread-replies`), and a
+  conversation is the one region a reader measures — the thumb answers "how much
+  more is there, where am I" where a clipped row cannot. The bar is the app's own
+  global 8px one (both flavours of the property, both themes — chat never invents
+  a second look) and its gutter is RESERVED (`scrollbar-gutter:stable`), so a
+  channel you can scroll is not a bar narrower than one you cannot: the messages
+  never jump sideways at the fold. Overlay platforms (iOS/Android) paint their
+  own thumb during the gesture and reserve nothing, which is why the gutter is a
+  no-op there. `scripts/test-chat-scrollbar.js` pins the opt-out list, the gutter
+  arithmetic and the painted pixels.
 
 ## Data-safety contract (owner directive)
 
