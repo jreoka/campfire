@@ -20,6 +20,13 @@
 //      shrunk into a cover-cropped sliver next to a file icon. The frame now
 //      replaces the glyph, and the CSS takes it out of flow so no sibling can
 //      squeeze it. See [2c] + [9].
+//   4. "when uploading 10 photos on mobile they take up the whole screen and no
+//      way to scroll" — the stage was a flex column that could not shrink below
+//      its own content, so ten cards overflowed #chat: the message list went to
+//      nothing and the composer was pushed off the bottom edge with nothing able
+//      to scroll any of it. A batch is now ONE stage: capped, its rows scrolling
+//      inside it, under a summary row (count, byte-weighted %, Cancel all, fold).
+//      [10] measures all of that in a real 390x780 column.
 //
 // Runs the REAL upload block sliced out of public/js/messages.js in headless
 // Chrome against a fake XMLHttpRequest, and checks the wiring statically. Skips
@@ -100,10 +107,19 @@ const attachPreviewMarkup = (() => {
 })();
 
 function pageHtml() {
+  // The REAL column, in the shell's own order (index.html): #view-main is the
+  // flex row, #chat the flex column, and the two card stages are siblings of the
+  // typing strip and the composer — the geometry [10] measures is the geometry
+  // the reader gets, including the `:has()` rule that ties the composer's top
+  // padding to a stage being on screen.
   return `<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="/styles.css">
 <style>body{margin:0;font:14px system-ui}</style></head><body>
-<div id="composer">${attachPreviewMarkup}${uploadListMarkup}</div>
+<div id="view-main"><div id="chat"><div id="messages"></div>
+${attachPreviewMarkup}${uploadListMarkup}
+<div id="typing-bar"></div>
+<div id="composer"></div></div></div>
 <script>
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 window.__toasts = [];
@@ -218,6 +234,10 @@ window.__upload = (name, size, mime) => {
   return S.uploads.length;
 };
 window.__progress = (ctx, loaded, total) => { window.__entry(ctx).xhr.upload.onprogress({ lengthComputable: true, loaded, total }); };
+// By name, for a batch (every file shares the conversation, so __entry would
+// always answer the first one).
+window.__progressNamed = (name, loaded, total) => { window.__entryNamed(name).xhr.upload.onprogress({ lengthComputable: true, loaded, total }); };
+window.__failNamed = (name, why) => { failUpload(window.__entryNamed(name), why); };
 window.__attachStart = (name, size, mime) => {
   window.__ready = true;
   const n = window.__upload(name, size, mime);
@@ -339,6 +359,42 @@ async function main() {
     'and an already-painted frame is just re-pointed (one icon per card, always)');
   check(/\.up-ic img\{position:absolute;inset:0;width:100%;height:100%;object-fit:cover\}/.test(styles),
     'the frame is out of flow, so no sibling can squeeze it out of the tile');
+
+  console.log('\n[10a] a batch of files is ONE capped, scrolling stage');
+  // The rules the report asked for, on the two boxes that carry them.
+  check(/#upload-list,#attach-preview\{max-height:min\(36dvh,320px\)\}/.test(styles),
+    'both card stages are capped (the finished chips wrap one per row on a narrow screen: the same disease a stage later)');
+  check(/#thread-upload-list,#thread-attach-preview\{max-height:min\(36dvh,320px\)\}/.test(styles),
+    'and the thread panel\'s own two stages pay the same cap');
+  check(/\.up-rows\{display:flex;flex-direction:column;gap:\.45rem;min-height:0;overflow-y:auto;overscroll-behavior:contain\}/.test(styles),
+    'the rows are the one scroll region, with min-height:0 so the cap really reaches them');
+  check(/\.up-folded>\.up-rows\{display:none\}/.test(styles), 'and folding takes the region out of the layout entirely');
+  check(/@media \(max-width:700px\),\(max-height:560px\) and \(pointer:coarse\)\{[\s\S]{0,220}max-height:min\(32dvh,240px\)\}/.test(styles),
+    'a phone caps the stage harder and tightens every row (a batch of ten still leaves a conversation on screen)');
+  check(/\.up-rows,#attach-preview,#thread-attach-preview\{scrollbar-width:none\}/.test(styles)
+    && /\.up-rows::-webkit-scrollbar,#attach-preview::-webkit-scrollbar,#thread-attach-preview::-webkit-scrollbar\{display:none\}/.test(styles),
+    'the two new scrollers are on the inner-scrollbar list (never the global 8px bar)');
+  check(/#thread-upload-list \.up-hverb\{display:none\}/.test(styles),
+    'and the thread panel\'s 330px summary drops the verb too (Cancel all and the fold are on that row)');
+  check(/<div id="upload-list" class="hidden"><\/div>/.test(index) && /<div id="thread-upload-list" class="hidden"><\/div>/.test(index),
+    'the shell still hands each stage an EMPTY box — the whole stage is built by JS');
+  check(/const batch = mine\.length > 1;/.test(upSource), 'one file is not a batch: its own card is the whole story');
+  check(/function uploadFoldState\(box, mine\) \{[\s\S]{0,240}if \(mine\.length < 2 \|\| !st \|\| st\.ctx !== ctx\) upFold\[box\.id\] = \{ ctx: ctx, on: false \};/.test(upSource),
+    'a fold belongs to ONE batch — dropped when the list stops being one or starts showing another conversation (the chat bar\'s list is shared)');
+  check(/box\.insertBefore\(head, rows\)/.test(upSource),
+    'the summary is a sibling ABOVE the scroll region, so it cannot scroll away with the rows');
+  check(/let el = rows\.querySelector\('\[data-up=/.test(upSource) && /\[\.\.\.rows\.children\]\.forEach/.test(upSource),
+    'the cards live in the scroll region, not in the stage (the diff follows them there)');
+  check(/function patchUploadProgress\(u\) \{[\s\S]{0,600}paintUploadHead\(box, uploadEntriesIn\(box\)\)/.test(upSource),
+    'and a progress tick repaints the summary too (a % that only moves on full repaints is a stuck %)');
+  check(/function uploadEntriesIn\(box\) \{/.test(upSource) && /function cancelUploadsIn\(box\) \{\s*uploadEntriesIn\(box\)\.forEach/.test(upSource),
+    'Cancel all is wired to the files THAT stage is showing and still sending (never another conversation\'s)');
+  check(/const st = uploadFoldState\(box, uploadEntriesIn\(box\)\);\s*st\.on = !st\.on;/.test(upSource),
+    'the fold toggle re-derives the batch it is on (the header outlives a conversation switch)');
+  check(/box\.classList\.toggle\('up-folded', uploadFoldedNow\(box, mine\) && failed === 0\)/.test(upSource),
+    'but a failure always pulls the rows back open (a Retry nobody can see is not an affordance)');
+  check(/const size = u\.total \|\| u\.size \|\| 0;/.test(upSource) && /got \/ tot/.test(upSource),
+    'the batch % is byte-weighted, not per-file (ten photos of different sizes are not ten equal steps)');
 
   const chromePath = findChrome();
   if (!chromePath) return skip('no Chrome/Edge found (set CHROME_PATH)');
@@ -546,6 +602,166 @@ async function main() {
       'the frame REPLACES it — one icon in the tile, never the picture beside a file symbol', icon);
     check(!!icon && icon.imgW === icon.boxW && icon.imgH === icon.boxH && icon.boxW === 36,
       'and it fills the whole 36px tile instead of being shrunk to make room (the reported sliver)', icon);
+
+    console.log('\n[10b] the batch stage measured in a real column (reported: ten photos owned the screen)');
+    const PHONE = { w: 390, h: 780 };
+    const DESKTOP = { w: 1200, h: 800 };
+    const clearStage = () => ev('window.__S.uploads = []; window.__S.pendingAtts = []; renderUploads(); renderComposerMeta();');
+    // ONE expression: paint nothing, measure what the reader has.
+    const BATCH = `(() => {
+      const box = document.getElementById('upload-list');
+      const rows = box.querySelector(':scope > .up-rows');
+      const head = box.querySelector(':scope > .up-head');
+      const cards = [...rows.querySelectorAll('.up-card')];
+      const conv = document.getElementById('composer');
+      const msgs = document.getElementById('messages');
+      const cap = Math.round(parseFloat(getComputedStyle(box).maxHeight));
+      const bb = box.getBoundingClientRect();
+      const rb = rows.getBoundingClientRect();
+      const last = cards.length ? cards[cards.length - 1].getBoundingClientRect() : null;
+      const natural = Math.round(cards.reduce((s, c) => s + c.getBoundingClientRect().height, 0));
+      rows.scrollTop = rows.scrollHeight;
+      const after = cards.length ? cards[cards.length - 1].getBoundingClientRect() : null;
+      const verb = head ? head.querySelector('.up-hverb') : null;
+      const inView = (r) => !!r && r.bottom <= rb.bottom + 1 && r.top >= rb.top - 1;
+      return {
+        cards: cards.length,
+        stageH: Math.round(bb.height), cap: cap, natural: natural,
+        rowsH: Math.round(rb.height), rowsScrollH: rows.scrollHeight,
+        scrollable: rows.scrollHeight > rows.clientHeight + 1,
+        overflowY: getComputedStyle(rows).overflowY,
+        lastSeenBefore: last ? inView(last) : null,
+        lastSeenAfter: after ? inView(after) : null,
+        headH: head ? Math.round(head.getBoundingClientRect().height) : 0,
+        hrowW: head ? Math.round(head.querySelector('.up-hrow').getBoundingClientRect().width) : 0,
+        hrowScrollW: head ? head.querySelector('.up-hrow').scrollWidth : 0,
+        labelCut: (() => { const l = head && head.querySelector('.up-hlabel'); return l ? l.scrollWidth > l.clientWidth + 1 : null; })(),
+        count: head ? head.querySelector('.up-hcount').textContent : null,
+        verb: verb ? verb.textContent : null,
+        verbShown: verb ? getComputedStyle(verb).display !== 'none' : null,
+        meta: head ? head.querySelector('.up-hmeta').textContent : null,
+        metaBad: head ? head.querySelector('.up-hmeta').classList.contains('bad') : null,
+        fillW: head ? head.querySelector('.up-fill').style.width : null,
+        cancelShown: head ? !head.querySelector('.up-cancel-all').classList.contains('hidden') : null,
+        ariaExpanded: head ? head.querySelector('.up-fold').getAttribute('aria-expanded') : null,
+        folded: box.classList.contains('up-folded'),
+        batch: box.classList.contains('up-batch'),
+        rowsDisplay: getComputedStyle(rows).display,
+        convBottom: Math.round(conv.getBoundingClientRect().bottom),
+        viewportH: window.innerHeight,
+        msgsH: Math.round(msgs.getBoundingClientRect().height),
+      };
+    })()`;
+
+    await clearStage();
+    await sess('Emulation.setDeviceMetricsOverride', { width: PHONE.w, height: PHONE.h, deviceScaleFactor: 1, mobile: true });
+    await sleep(150);
+    await ev('window.__ready = true');
+    for (let i = 0; i < 10; i++) await ev(`window.__upload('photo-${i}.jpg', ${1000 + i * 100})`);
+    await sleep(60);
+    let b = await ev(BATCH);
+    check(b.cards === 10, 'ten photos are on the stage at once', b.cards);
+    check(b.cap > 0 && b.stageH <= b.cap + 1, 'the stage is capped, so a batch can never own the screen', { stageH: b.stageH, cap: b.cap });
+    check(b.natural > b.stageH + 150, 'and the cap really takes it down (ten cards stacked were far taller)', { natural: b.natural, stageH: b.stageH });
+    check(b.scrollable === true && b.overflowY === 'auto', 'the rows scroll inside it', { scrollable: b.scrollable, overflowY: b.overflowY, scrollH: b.rowsScrollH, h: b.rowsH });
+    check(b.lastSeenBefore === false && b.lastSeenAfter === true,
+      'so the tenth photo is actually reachable — out of sight until the rows are scrolled, then there', b);
+    check(b.convBottom <= b.viewportH, 'the composer is still on screen (it used to be pushed off the bottom edge)', { bottom: b.convBottom, viewport: b.viewportH });
+    check(b.msgsH > 120, 'and the conversation keeps real room above the stage (that list used to collapse to nothing)', { msgsH: b.msgsH });
+    check(b.count === '10 files' && b.verb === 'Uploading ',
+      'the summary says how many and that they are going up', { count: b.count, verb: b.verb });
+    check(b.verbShown === false, 'with "Uploading " dropped on a phone — the spinner, the % and the bar already say it', b.verbShown);
+    check(b.meta === '· 0%' && b.cancelShown === true, 'and carries the overall % and Cancel all', { meta: b.meta, cancel: b.cancelShown });
+    check(b.hrowScrollW <= b.hrowW + 1 && b.labelCut === false,
+      'the whole summary fits 390px: nothing pushed out, no truncated label', { row: [b.hrowW, b.hrowScrollW], cut: b.labelCut });
+    check(b.ariaExpanded === 'true', 'the fold starts expanded', b.ariaExpanded);
+
+    for (let i = 0; i < 5; i++) await ev(`window.__progressNamed('photo-${i}.jpg', ${1000 + i * 100}, ${1000 + i * 100})`);
+    await sleep(40);
+    b = await ev(BATCH);
+    check(b.meta === '· 41%', 'five of ten photos done reads 41%, not 50% — the batch % is BYTES', b.meta);
+    check(b.fillW === '41%', 'and the batch bar sits at the same place', b.fillW);
+
+    await ev("document.querySelector('#upload-list .up-fold').click()");
+    await sleep(40);
+    b = await ev(BATCH);
+    check(b.folded === true && b.rowsDisplay === 'none' && b.stageH <= b.headH + 20,
+      'the fold collapses the whole batch to its summary alone (the stage keeps only its own padding around it)',
+      { folded: b.folded, stage: b.stageH, head: b.headH, rows: b.rowsDisplay });
+    check(b.count === '10 files' && b.meta === '· 41%' && b.ariaExpanded === 'false',
+      'which keeps saying how many and how far', { count: b.count, meta: b.meta, aria: b.ariaExpanded });
+
+    await ev("document.querySelector('#upload-list .up-fold').click()");
+    await sleep(40);
+    b = await ev(BATCH);
+    check(b.folded === false && b.rowsDisplay !== 'none' && b.cards === 10, 'unfolding brings every row back', { folded: b.folded, cards: b.cards });
+
+    // The fold is the BATCH's, not the list's: the chat bar's list is shared by
+    // every conversation, so another chat's batch must not arrive folded.
+    await ev("document.querySelector('#upload-list .up-fold').click()");
+    await sleep(40);
+    check((await ev("document.querySelector('#upload-list').classList.contains('up-folded')")) === true, 'folded again for the next check');
+    await ev("window.__switchTo('s9', 'c9')");
+    await sleep(40);
+    await ev("window.__upload('other-a.jpg', 1000); window.__upload('other-b.jpg', 1000);");
+    await sleep(50);
+    check((await ev("document.querySelector('#upload-list').classList.contains('up-folded')")) === false,
+      'and a different conversation\'s batch arrives UNFOLDED (a fold belongs to its batch)');
+    check((await ev("document.querySelector('#upload-list .up-hcount').textContent")) === '2 files',
+      'with its own two files, not the ten it left behind');
+    await ev("window.__switchTo('s1', 'c1')");
+    await sleep(40);
+    check((await ev("document.querySelector('#upload-list .up-hcount').textContent")) === '10 files'
+      && (await ev("document.querySelector('#upload-list').classList.contains('up-folded')")) === false,
+      'coming back, this conversation\'s batch is intact and unfolded');
+    check((await ev("document.querySelector('#upload-list .up-rows .up-card').dataset.up")) !== undefined,
+      'and its cards are the ones on screen');
+
+    await ev("document.querySelector('#upload-list .up-cancel-all').click()");
+    await sleep(80);
+    check((await ev("window.__S.uploads.filter((u) => u.ctx === 's:s1:c1').length")) === 0,
+      'Cancel all cancels every file that stage was showing', await ev('window.__S.uploads.length'));
+    check((await ev('window.__S.uploads.length')) === 2,
+      'and leaves the other conversation\'s two alone (it is scoped to the stage, like the per-card ✕)');
+    check((await ev('window.__hidden()')) === true, 'and the stage goes with them');
+
+    await ev("window.__upload('a.jpg', 1000); window.__upload('b.jpg', 1000); window.__upload('c.jpg', 1000);");
+    await sleep(50);
+    await ev("document.querySelector('#upload-list .up-fold').click()");
+    await sleep(40);
+    check((await ev("document.querySelector('#upload-list').classList.contains('up-folded')")) === true, 'a batch of three folds like any other');
+    await ev("window.__failNamed('b.jpg', 'network_error')");
+    await sleep(50);
+    b = await ev(BATCH);
+    check(b.folded === false && b.rowsDisplay !== 'none', 'a failure pulls the rows back open', { folded: b.folded });
+    check(b.meta === '· 1 failed · 0%' && b.metaBad === true, 'the summary names it in red', { meta: b.meta, bad: b.metaBad });
+    check(b.cancelShown === true, 'Cancel all stays for the two still going', b.cancelShown);
+    check((await ev("!document.querySelector('#upload-list .up-card.failed .up-retry').classList.contains('hidden')")) === true,
+      'and the failed card\'s Retry is really visible (which is why the fold gave way)');
+
+    await clearStage();
+    await sess('Emulation.setDeviceMetricsOverride', { width: DESKTOP.w, height: DESKTOP.h, deviceScaleFactor: 1, mobile: false });
+    await sleep(150);
+    for (let i = 0; i < 10; i++) await ev(`window.__upload('desk-${i}.jpg', ${1000 + i * 100})`);
+    await sleep(60);
+    b = await ev(BATCH);
+    check(b.cap <= 320 && b.stageH <= b.cap + 1 && b.scrollable === true && b.verbShown === true,
+      'on a desktop the stage is capped and scrolls too, and keeps the whole "Uploading 10 files" line', b);
+    check(b.convBottom <= b.viewportH && b.msgsH > 120, 'with the conversation and the composer still in place', { bottom: b.convBottom, msgs: b.msgsH });
+
+    // One file is not a batch: no summary, no fold, nothing between the reader and
+    // the only card there is.
+    await clearStage();
+    await ev("window.__upload('solo.jpg', 2048)");
+    // Long enough for the card's own .18s entry animation to settle: a transform
+    // mid-flight is scrollable overflow, and this asserts a settled single card.
+    await sleep(300);
+    check((await ev("document.querySelectorAll('#upload-list .up-head').length")) === 0
+      && (await ev("document.querySelectorAll('#upload-list .up-rows .up-card').length")) === 1
+      && (await ev("document.querySelector('#upload-list').classList.contains('up-batch')")) === false,
+      'one file gets no summary row at all — its own card is the whole story');
+    b = await ev(BATCH);
+    check(b.stageH <= b.cap + 1 && b.scrollable === false, 'and its stage is nowhere near the cap', { stageH: b.stageH, cap: b.cap });
   } catch (e) {
     console.error('[test] ' + (e && e.stack || e));
     process.exit(1);

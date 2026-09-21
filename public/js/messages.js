@@ -2953,7 +2953,41 @@ function activeUploadCount(ctx) {
 // readout, spinner, and cancel. XHR (not fetch) so we get upload progress
 // events. Finished files move into S.pendingAtts; failures stay on the card
 // with a Retry button instead of vanishing into a toast.
+//
+// A BATCH of them is ONE stage, not ten cards stacked over the conversation.
+// Reported: picking ten photos on a phone filled the whole screen with progress
+// cards, pushed the composer off the bottom edge, and offered nothing to scroll
+// — the stage was a flex column that could not shrink below its own content and
+// the column simply overflowed. So the stage is CAPPED and the rows scroll
+// inside it (styles.css, `.up-rows`), and a batch of more than one file gets a
+// summary row: how many, how far along overall, Cancel all, and a fold that
+// leaves the summary alone on screen. The rows are the only scroll region, so
+// the summary and the composer stay where they are while a batch is scrolled.
 let uploadSeq = 0;
+// The fold, per LIST: `{ctx, on}` — the reader's own toggle, and only ever for
+// the batch it was set on. The chat bar's list is shared by every conversation
+// and the thread bar's by every thread, so a fold that outlived its batch would
+// arrive folded in the next one; it is dropped the moment that list stops being a
+// batch or starts showing another conversation's files.
+const upFold = {};
+function uploadFoldState(box, mine) {
+  const ctx = (mine[0] && mine[0].ctx) || '';
+  const st = upFold[box.id];
+  if (mine.length < 2 || !st || st.ctx !== ctx) upFold[box.id] = { ctx: ctx, on: false };
+  return upFold[box.id];
+}
+function uploadFoldedNow(box, mine) {
+  const st = upFold[box.id];
+  return !!(st && st.on && st.ctx === ((mine[0] && mine[0].ctx) || ''));
+}
+// The entries a list is showing, read back off its own cards. The summary, the
+// fold and Cancel all all have to agree with what is on screen, and the DOM is
+// the one place that is already true.
+function uploadEntriesIn(box) {
+  return [...box.querySelectorAll('.up-rows .up-card')]
+    .map((el) => (S.uploads || []).find((x) => String(x.id) === el.dataset.up))
+    .filter(Boolean);
+}
 // A card can be in either composer's list (the chat bar's or the thread bar's),
 // so the lookup is by id across both — an upload belongs to one of them and
 // every painter (progress, icon, the held-attachment test) has to find it.
@@ -2987,10 +3021,28 @@ function renderUploads() {
 function paintUploadList(box, mine) {
   if (!box) return;
   box.classList.toggle('hidden', !mine.length);
+  let rows = box.querySelector(':scope > .up-rows');
+  if (!rows) {
+    rows = document.createElement('div');
+    rows.className = 'up-rows';
+    box.appendChild(rows);
+  }
+  // A summary is for a BATCH: a lone card already says everything about itself,
+  // so one file never gets folded away behind a header.
+  const batch = mine.length > 1;
+  const failed = mine.filter((u) => u.state === 'failed').length;
+  uploadFoldState(box, mine);
+  box.classList.toggle('up-batch', batch);
+  // A failure pulls the rows back open: a Retry the reader cannot see is not an
+  // affordance, so the fold only ever holds while every card in the batch is
+  // healthy.
+  box.classList.toggle('up-folded', uploadFoldedNow(box, mine) && failed === 0);
+  if (batch) { uploadHeadEl(box, rows); paintUploadHead(box, mine); }
+  else { const head = box.querySelector(':scope > .up-head'); if (head) head.remove(); }
   const seen = new Set();
   mine.forEach((u) => {
     seen.add(String(u.id));
-    let el = box.querySelector('[data-up="' + u.id + '"]');
+    let el = rows.querySelector('[data-up="' + u.id + '"]');
     if (!el) {
       el = document.createElement('div');
       el.className = 'up-card';
@@ -3006,11 +3058,89 @@ function paintUploadList(box, mine) {
       el.querySelector('.up-name').textContent = u.name;
       el.querySelector('.up-x').onclick = () => cancelUpload(u.id);
       el.querySelector('.up-retry').onclick = () => retryUpload(u.id);
-      box.appendChild(el);
+      rows.appendChild(el);
     }
     paintUploadCard(el, u);
   });
-  [...box.children].forEach((el) => { if (!seen.has(el.dataset.up)) el.remove(); });
+  [...rows.children].forEach((el) => { if (!seen.has(el.dataset.up)) el.remove(); });
+}
+// The batch's own summary row, built once per batch and patched in place after
+// that: a progress tick must never rebuild the row it is painting, exactly like
+// the cards. It is a sibling ABOVE the scroll region, so it is the one thing that
+// stays put while the rows are scrolled or folded away.
+function uploadHeadEl(box, rows) {
+  let head = box.querySelector(':scope > .up-head');
+  if (head) return head;
+  head = document.createElement('div');
+  head.className = 'up-head';
+  head.innerHTML =
+    '<div class="up-hrow"><span class="up-hspin"></span>'
+    + '<span class="up-hlabel"><span class="up-hverb"></span><span class="up-hcount"></span></span>'
+    + '<span class="up-hmeta"></span>'
+    + '<button type="button" class="mini up-cancel-all">Cancel all</button>'
+    + '<button type="button" class="up-fold" aria-expanded="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg></button></div>'
+    + '<div class="up-track up-hbar"><div class="up-fill"></div></div>';
+  head.querySelector('.up-cancel-all').onclick = () => cancelUploadsIn(box);
+  head.querySelector('.up-fold').onclick = () => {
+    // The batch this list is showing RIGHT NOW: the header outlives a
+    // conversation switch, so the state is re-derived rather than captured.
+    const st = uploadFoldState(box, uploadEntriesIn(box));
+    st.on = !st.on;
+    renderUploads();
+  };
+  box.insertBefore(head, rows);
+  return head;
+}
+// The batch's progress is measured in BYTES, not files: ten photos of different
+// sizes are not ten equal steps. An answered file counts as complete even though
+// its card is still standing there in its green exit. `pct` is null when nothing
+// knows a size yet (an indeterminate upload), which is the same "Finishing…"
+// honest blank a card shows.
+function uploadBatchMeter(mine) {
+  let tot = 0, got = 0;
+  for (const u of mine) {
+    const size = u.total || u.size || 0;
+    tot += size;
+    got += u.state === 'done' ? size : Math.min(u.loaded || 0, size);
+  }
+  return { tot, got, pct: tot > 0 ? Math.max(0, Math.min(100, Math.round((got / tot) * 100))) : null };
+}
+function paintUploadHead(box, mine) {
+  const head = box.querySelector(':scope > .up-head');
+  if (!head) return;
+  const busy = mine.filter((u) => u.state === 'uploading').length;
+  const failed = mine.filter((u) => u.state === 'failed').length;
+  const meter = uploadBatchMeter(mine);
+  const n = mine.length;
+  head.classList.toggle('busy', busy > 0);
+  head.classList.toggle('all-done', busy === 0 && failed === 0);
+  head.classList.toggle('has-failed', failed > 0);
+  // "Uploading " is the first thing to go on a phone (styles.css), where the row
+  // also carries Cancel all and the fold: the spinner and the % already say it.
+  head.querySelector('.up-hverb').textContent = busy ? 'Uploading ' : '';
+  head.querySelector('.up-hcount').textContent = n + (n === 1 ? ' file' : ' files');
+  const meta = head.querySelector('.up-hmeta');
+  meta.classList.toggle('bad', failed > 0);
+  meta.textContent = busy
+    ? (failed ? '· ' + failed + ' failed · ' : '· ') + (meter.pct === null ? 'Finishing…' : meter.pct + '%')
+    : (failed ? '· ' + failed + ' failed' : '· Uploaded');
+  const indet = busy > 0 && meter.pct === null;
+  const fill = head.querySelector('.up-fill');
+  fill.classList.toggle('indet', indet);
+  if (!indet) fill.style.width = (busy > 0 ? meter.pct : 100) + '%';
+  head.querySelector('.up-cancel-all').classList.toggle('hidden', busy === 0);
+  const folded = uploadFoldedNow(box, mine) && failed === 0;
+  const fold = head.querySelector('.up-fold');
+  fold.setAttribute('aria-expanded', String(!folded));
+  fold.title = folded ? 'Show files' : 'Hide files';
+}
+// Cancel all: every file THIS stage is showing that is still sending. Read off
+// the DOM — the cards the reader is actually looking at — rather than off "the
+// batch", so a list whose files belong to another conversation can never be
+// touched, the same rule the per-card ✕ follows. Snapshot first: each cancel
+// repaints the list it is removing itself from.
+function cancelUploadsIn(box) {
+  uploadEntriesIn(box).forEach((u) => { if (u.state === 'uploading') cancelUpload(u.id); });
 }
 function paintUploadCard(el, u) {
   el.classList.toggle('done', u.state === 'done');
@@ -3042,7 +3172,16 @@ function paintUploadCard(el, u) {
     retry.classList.add('hidden'); x.classList.remove('hidden'); x.title = 'Cancel upload';
   }
 }
-function patchUploadProgress(u) { const el = uploadCardEl(u.id); if (el) paintUploadCard(el, u); }
+function patchUploadProgress(u) {
+  const el = uploadCardEl(u.id);
+  if (!el) return;
+  paintUploadCard(el, u);
+  // The batch summary above the rows reads the SAME entries, so a progress tick
+  // has to land on it too (read back off the cards in that list). Still no
+  // rebuild: one bar width and one percentage.
+  const box = el.closest('#upload-list, #thread-upload-list');
+  if (box && box.classList.contains('up-batch')) paintUploadHead(box, uploadEntriesIn(box));
+}
 // A card's icon is built once at creation; the poster for a video arrives
 // later, so patch it into the existing card instead of rebuilding the list.
 // The placeholder glyph the card was born with has to LEAVE with the frame:

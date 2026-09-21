@@ -1203,6 +1203,31 @@ trap, not the combinator, so key such a rule on the direction the DOM actually
 has — or, when the ordering could change, on descendants of a shared ancestor.
 `scripts/test-attachment-gap.js` measures the real gap
 on BOTH bars at both breakpoints.
+**A batch of uploads is ONE stage, capped and scrolling** (owner report: "when
+uploading 10 photos on mobile they take up the whole screen and no way to
+scroll"). The stage was a flex column with no scroll region, so its automatic
+minimum size was its own content: ten cards overflowed `#chat`, collapsed
+`#messages` to nothing and pushed the composer off the bottom edge with nothing
+able to scroll any of it. `paintUploadList` now builds each list as a summary row
+(`.up-head`, only while `mine.length > 1` — one file's own card is the whole
+story) over `.up-rows`, the single scroll region, and both stages are capped
+(`min(36dvh,320px)`, `min(32dvh,240px)` on a phone) — `#attach-preview` pays the
+same cap because chips wrap to one per row on a narrow screen, which is the same
+disease one stage later. The summary carries the count, a BYTE-weighted %
+(`uploadBatchMeter` — ten photos of different sizes are not ten equal steps), a
+**Cancel all** (`cancelUploadsIn` reads the cards off the DOM, so it can only
+ever cancel what that stage is showing and is still sending, never another
+conversation's) and the fold (`upFold` holds `{ctx, on}` per LIST — the chat
+bar's list is shared by every conversation, so a fold is dropped the moment the
+list stops being a batch or starts showing another chat's files, and it is forced
+open while any card has FAILED so a Retry is never hidden behind a summary).
+`patchUploadProgress` repaints the summary as
+well as the card — a % that only moves on full repaints is a stuck % — and the
+two new scrollers are on the inner-scrollbar list in styles.css. What says "there
+is more" is the row clipped at the edge plus that count, never a bar in the
+gutter. `scripts/test-upload-cards.js` [10] measures all of it in a real 390x780
+column (cap, scroll range, the tenth card reached by scrolling, composer still on
+screen, and `#messages` keeping real height).
 **A scrolled-up reader's line is held by the app, never left to the browser**
 (`armLineGuard`, messages.js): the last message whose top is still inside the
 viewport is the reference, and a layout change that moves it on screen is undone
