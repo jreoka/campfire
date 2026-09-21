@@ -17,9 +17,11 @@
 //
 // The send screen also opens EMPTY now (owner ask): a story started from the
 // + menu arrives with nothing picked, Post stays disabled until at least one
-// destination is on, and the only pick the composer ever makes for the reader
-// is the view-once DM's own peer. Both halves are pinned here and in
-// test-viewonce-pick.js.
+// destination is on, and the composer makes only two picks for the reader — the
+// view-once DM's own peer, and (a later owner ask) the server a post was STARTED
+// in, so the server sidebar's Stories ＋, that server's stories sheet and the
+// composer's ＋ inside one of its channels arrive with that server lit. Both
+// halves are pinned here and in test-viewonce-pick.js.
 //
 // Usage: node scripts/test-story-audience.js
 
@@ -68,6 +70,11 @@ const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
 const normCode = slice(server, 'function normStoryAudiences(body) {', '\nasync function storyShares(');
 // eslint-disable-next-line no-eval
 const { normStoryAudiences } = eval(normCode + '\n;({ normStoryAudiences })');
+
+// ---------- the real server pre-pick ----------
+const preSrc = slice(stories, 'function storyPrePickServer(serverId, servers) {', '\nfunction paintComposerViewOnce(');
+// eslint-disable-next-line no-eval
+const { storyPrePickServer } = eval(preSrc + '\n;({ storyPrePickServer })');
 
 // ---------- the real audience menu ----------
 const menuSrc = slice(stories, 'function renderStoryAudience() {', '\nfunction storyProgress(pct) {');
@@ -173,14 +180,30 @@ function main() {
   check(/if \(a\.kind === 'everyone'\) return true; \/\/ legacy instance-wide row/.test(server), 'visibility still understands the kind');
   check(/shared\.everyone\) bits\.push\('Everyone'\)/.test(stories), 'an old post still says who could see it');
 
-  console.log('\n[5] the send screen opens with nothing picked');
+  console.log('\n[5] the send screen opens with nothing picked — except from a server');
   const seed = (/audFriends: false, audServers: \[\], audUsers: \[\]/.exec(stories) || [''])[0];
   check(!!seed, 'the composer seeds an empty audience (no default selection)', seed || 'the seed line moved');
-  check(!/if \(opts\.serverId\) \{ sc\.audServers/.test(stories), 'starting from a server channel no longer pre-picks that server');
+  check(/sc\.audServers = storyPrePickServer\(opts\.serverId, S\.servers\);/.test(stories), 'a post started inside a server picks that server (owner ask)');
   check(!/sc\.audUsers = \[opts|sc\.audUsers = \[S\./.test(stories), 'and nothing else pre-picks a private friend');
-  check(/sc\.voIds = viewOncePrePick\(opts\.viewOnceUser/.test(stories), 'the view-once DM peer is the ONE pick the composer makes for the reader');
+  check(/sc\.voIds = viewOncePrePick\(opts\.viewOnceUser/.test(stories), 'the view-once DM peer is the other pick the composer makes for the reader');
+  check(/if \(sc && storyAudCount\(\)\) \{/.test(stories) && /\$\('#sc-pick-list \.sc-pick-row\.on'\)/.test(stories), 'and a pre-picked row is scrolled into view whichever kind it is');
   check(/post\.disabled = !n \|\| !!sc\.busy;/.test(stories), 'Post is disabled while no destination is picked');
   check(/if \(storyAudCount\(\) === 0\) \{ storySetStep\('audience'\); return; \}/.test(stories), 'and the post path itself refuses an empty audience');
+
+  // The real helper: which entries carry a serverId, and what it does with one.
+  const servers = [{ id: 7, name: 'Studio' }, { id: 's2', name: 'Treehouse' }];
+  check(JSON.stringify(storyPrePickServer('7', servers)) === '[7]', 'a serverId that names a server the account is in picks it (id types need not match)');
+  check(JSON.stringify(storyPrePickServer(7, servers)) === '[7]', 'and stores the server\'s OWN id, so the picker\'s row matches');
+  check(storyPrePickServer('s9', servers).length === 0, 'a server the account is not in → nothing picked');
+  check(storyPrePickServer('', servers).length === 0 && storyPrePickServer(null, servers).length === 0, 'no serverId (blank Home, the rail ＋, the story center) → nothing picked');
+  check(storyPrePickServer('s2', null).length === 0 && storyPrePickServer('s2', undefined).length === 0, 'no server list yet → nothing picked (no crash)');
+  const srvCallers = [
+    [/add\.onclick = \(e\) => \{ e\.stopPropagation\(\); createStory\(\{ serverId: S\.serverId \}\); \}/, 'the server sidebar Stories ＋'],
+    [/createStory\(\{ serverId: serverIdForPost \|\| null \}\)/, 'that server\'s stories sheet'],
+    [/createStory\(\{ serverId: S\.view === 'server' \? S\.serverId : null \}\)/, 'the composer ＋ menu inside a channel'],
+  ];
+  for (const [re, what] of srvCallers) check(re.test(stories), what + ' says which server the post started in');
+  check(/\$\('#stories-nav-add'\)\.onclick = \(\) => createStory\(\{\}\);/.test(stories) && /\$\('#sp-post'\)\.onclick = \(\) => createStory\(\{\}\);/.test(stories), 'while Home\'s rail ＋ and the story center pass no server (they open empty)');
 
   const chrome = findChrome();
   if (!chrome) {
@@ -225,6 +248,18 @@ function main() {
         check(empty.afterToggle.audFriends === true && empty.afterToggle.rows[0] === true, 'picking a destination turns it on', empty.afterToggle);
         check(!empty.afterPick.disabled && empty.afterPick.count === '1 selected', 'which enables the post', empty.afterPick);
         check(empty.afterUnpick.disabled && empty.afterUnpick.count === 'None selected', 'and un-picking the last one closes the gate again', empty.afterUnpick);
+      }
+      // A composer opened FROM a server: that server's row is the one lit, and
+      // Post story is live for it without the reader picking anything (owner ask).
+      const srv = run({ audFriends: false, audServers: ['s2'], audUsers: [], vo: false, voIds: [] }, 'server');
+      if (srv.harness || srv.error) {
+        check(false, 'the server-send-screen harness ran', srv.harness || srv.error);
+      } else {
+        console.log('\n[8] a post started inside a server (headless Chrome)');
+        check(srv.rows.length === 5 && srv.rows[2].on && srv.rows[2].pressed === 'true' && srv.rows.filter((r) => r.on).length === 1,
+          'that server — and only it — arrives lit', srv.rows.map((x) => `${x.name}:${x.on}`));
+        check(srv.start.count === '1 selected' && !srv.start.disabled && srv.start.label === 'Post story',
+          'so the count says one destination and Post story is live', srv.start);
       }
     } finally {
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}

@@ -421,7 +421,14 @@ session under a byte budget, and this catalogue is roughly 40 KB of it.
   normalise, a modern body with nothing selected never falls back to friends
   while the two legacy shapes still work, the route writes no `everyone` share
   row, the client sends no `everyone` key, and the menu's rows are exactly
-  friends + the servers + the friends list with no instance-wide row. The read
+  friends + the servers + the friends list with no instance-wide row. It also
+  pins the two picks the composer makes for the reader and only those two: the
+  send screen seeds EMPTY and Post stays disabled until a destination is on, the
+  view-once DM's own peer is pre-picked (`viewOncePrePick`), and a post STARTED
+  inside a server arrives with that server lit (`storyPrePickServer`, driven
+  offline against the real helper, plus a browser check that the server row is
+  the only one on, the count reads "1 selected" and Post story is live) — while
+  Home's rail ＋ and the story center pass no server at all. The read
   side is deliberately kept (the client's `storyData.everyone` merge, the
   server's tray query and visibility check) so a post from before the change
   finishes its 24h instead of vanishing early.
@@ -792,7 +799,9 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   is never pre-picked (the picker lists friends and the server drops everyone
   else, so the menu must stay honestly empty rather than read "1 selected" with
   no row), the row arrives lit and `aria-pressed` with the count and the Send
-  label agreeing, and a second friend still toggles on normally.
+  label agreeing, and a second friend still toggles on normally. It also pins
+  that a pre-picked row — of either kind, this peer or the server a post started
+  in — is scrolled into view when the picker opens.
   `node scripts/test-admin-stats.js` covers the site-admin Overview numbers
   against a throwaway database: distinct-user Online count vs sessions (two
   tabs are one person), invisible users excluded, and the live

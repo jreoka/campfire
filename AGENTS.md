@@ -1550,7 +1550,13 @@ Story audiences are friends / whole servers / specific friends only. The
 instance-wide `everyone` target was removed on the owner's request: the composer
 has no row for it, `normStoryAudiences` (server.js) no longer produces it, and a
 client that still asks for it gets a 400 `pick_audience` rather than being
-silently re-targeted at friends. The READ side stays on purpose —
+silently re-targeted at friends. The send screen opens EMPTY and `#sc-post` stays
+disabled until a destination is on; the composer makes exactly two picks for the
+reader — the view-once DM's own peer (`viewOncePrePick`), and the server a post
+was STARTED in (`storyPrePickServer`, owner request: the server sidebar's Stories
+＋, that server's stories sheet and the composer's ＋ inside one of its channels
+pass `serverId` and arrive with that server lit; Home's rail ＋ and the story
+center pass none). The READ side stays on purpose —
 `storyVisibleTo`, the tray query, `storyAudienceIds`, the notify fan-out and the
 client's `storyData.everyone` merge still understand the kind — so a row posted
 before the change keeps reaching its viewers until its 24h expires. Delete that

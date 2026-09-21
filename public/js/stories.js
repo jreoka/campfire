@@ -1771,6 +1771,21 @@ function viewOncePrePick(peerId, friends) {
   const f = (friends || []).find((u) => String(u.id) === p);
   return f ? [f.id] : [];
 }
+// …and a post started FROM a server arrives with that server picked, for the
+// same reason the view-once DM above does: the reader answered "where does this
+// go?" by starting it there. The server sidebar's Stories ＋, that server's
+// stories sheet and the composer's ＋ inside one of its channels all say so by
+// passing `serverId`, and the picker opens on that row lit. It is NOT a default
+// for every entry — Home's rail ＋, the story center and a blank Home composer
+// still open with nothing picked, because the reader has to aim those. Matched
+// against the account's own server list (ids need not match by type), so a stale
+// id picks nothing rather than lighting a row that is not in the menu.
+function storyPrePickServer(serverId, servers) {
+  const id = String(serverId || '');
+  if (!id) return [];
+  const srv = (servers || []).find((s) => s && String(s.id) === id);
+  return srv ? [srv.id] : [];
+}
 // The chat bar's + menu is ONE static list shared by every conversation, so the
 // view-once row has to be painted per context rather than sitting in it always.
 // View-once is "one person, one look", and only a 1:1 DM names that person: a
@@ -1852,19 +1867,22 @@ async function openStoryComposer(opts = {}) {
     // The send screen opens with NOTHING picked (owner request): a story
     // started from the + menu — or the rail's ＋, or the story center — has to
     // be aimed at somebody, so `#sc-post` sits disabled until at least one
-    // destination is on. The single exception is a view-once started from a
-    // 1:1 DM: that person IS the post, and arrives picked (viewOncePrePick →
-    // voIds, below).
+    // destination is on. Two entries make the pick for the reader, and only two:
+    // a post started INSIDE a server (that server, storyPrePickServer below) and
+    // a view-once started from a 1:1 DM (that person, viewOncePrePick → voIds).
     audFriends: false, audServers: [], audUsers: [],
     // view-once mode: pick friends instead of audiences, sends one DM each
     vo: !!opts.viewOnce, voIds: [],
     micCtx: null, micGain: null, micAnalyser: null, micTimer: null, micSource: null, micRaw: null,
   };
-  // `opts.serverId` still says WHERE the post was started from (a server
-  // channel, a server's stories sheet), but it deliberately does not pre-pick
-  // that server any more: the send screen opens empty for every entry, and the
-  // picker lists every server the account is in anyway. The view-once peer
-  // below is the only pick the composer makes on the reader's behalf.
+  // `opts.serverId` says WHERE the post was started from, and a post started
+  // inside a server arrives with that server already picked (storyPrePickServer,
+  // above) — the other pick the composer makes for the reader, beside the
+  // view-once peer below. Every entry that is not scoped to a server (the ＋ menu
+  // on blank Home, the rail's ＋, the story center) leaves the picker empty,
+  // because the picker lists every server the account is in anyway and those
+  // entries have not answered the question yet.
+  sc.audServers = storyPrePickServer(opts.serverId, S.servers);
   if (opts.viewOnce) {
     try { await ensureFriends(); } catch {}
     // Opened from a DM, that person is who the view-once was aimed at: the
@@ -1922,10 +1940,11 @@ function storySetStep(step) {
   storyRenderColors();
   if (pick) {
     renderStoryAudience();
-    // The pre-picked recipient (opened from their DM) can sit below the fold in
-    // a long friends list — bring their row into view so the menu opens on the
-    // answer instead of on an alphabetically-earlier stranger.
-    if (sc && (sc.voIds || []).length) {
+    // A pre-picked destination — the DM peer a view-once was opened from, or the
+    // server the post was started in — can sit below the fold (a long friends
+    // list, an account in a lot of servers): bring its row into view so the menu
+    // opens on the answer instead of on an earlier row.
+    if (sc && storyAudCount()) {
       const on = $('#sc-pick-list .sc-pick-row.on');
       if (on && on.scrollIntoView) { try { on.scrollIntoView({ block: 'nearest' }); } catch {} }
     }
