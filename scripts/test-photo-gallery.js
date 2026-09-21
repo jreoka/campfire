@@ -97,6 +97,14 @@ function photo(i, extra) {
     name: 'p' + i + '.jpg', size: 120000 + i, w, h,
   }, extra || {});
 }
+// A clip carries its own shape too (1280×720 here) and the gallery ignores it for
+// the same reason it ignores a photo's: the tile is the square.
+function clip(i, extra) {
+  return Object.assign({
+    id: 'vid' + i, kind: 'video', mime: 'video/mp4', url: '/uploads/files/v' + i + '.mp4?v=1',
+    name: 'v' + i + '.mp4', size: 900000 + i, w: 1280, h: 720,
+  }, extra || {});
+}
 const CASES = [
   { title: '1 photo', atts: [photo(0)] },
   { title: '2 photos', atts: [photo(0), photo(1)] },
@@ -104,13 +112,16 @@ const CASES = [
   { title: '4 photos', atts: [photo(0), photo(1), photo(2), photo(3)] },
   { title: '5 photos', atts: [photo(0), photo(1), photo(2), photo(3), photo(4)] },
   { title: '2 photos + a file', atts: [photo(0), photo(1), { id: 'f1', kind: 'file', url: '/uploads/files/p0.jpg', name: 'notes.pdf', size: 40213 }] },
-  { title: '2 photos + a clip', atts: [photo(0), { id: 'v1', kind: 'video', mime: 'video/mp4', url: '/uploads/files/clip.mp4', name: 'clip.mp4', size: 900000, w: 1280, h: 720 }] },
+  { title: '2 photos + a clip', atts: [photo(0), clip(0)] },
   { title: '3 photos, one removed', atts: [photo(0), photo(1), photo(2, { scan: 'infected' })] },
   { title: '6 photos', atts: [0, 1, 2, 3, 4, 5].map((i) => photo(i)) },
   { title: '7 photos', atts: [0, 1, 2, 3, 4, 5, 6].map((i) => photo(i)) },
   { title: '8 photos', atts: [0, 1, 2, 3, 4, 5, 6, 7].map((i) => photo(i)) },
   { title: '9 photos', atts: [0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => photo(i)) },
   { title: '10 photos (the cap)', atts: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => photo(i)) },
+  { title: '3 photos + 2 clips', atts: [photo(0), photo(1), photo(2), clip(0), clip(1)] },
+  { title: '2 photos + a voice note', atts: [photo(0), photo(1), { id: 'a1', kind: 'audio', mime: 'audio/mp4', url: '/uploads/files/note.m4a', name: 'Voice message', size: 21000 }] },
+  { title: '5 clips', atts: [0, 1, 2, 3, 4].map((i) => clip(i)) },
 ];
 // The count a gallery is arranged by: 2 columns up to four, three columns from
 // five (the widths a 420px chat block makes sane), and the tall first tile on the
@@ -122,10 +133,10 @@ const colsFor = (n) => (n >= 5 ? 3 : 2);
 const tallAt = (n) => n === 3 || n === 5 || n === 9;
 const ARRANGED = [2, 3, 4, 5, 6, 7, 8, 9, 10];
 // Where each case sits in CASES, by what it is: the plain runs of photos are 2..5
-// and then 6..10 (the cap), with the three fixtures that are not a run of photos
-// in between. The test reads a case by what it holds, so this is the one place the
-// layout of CASES has to be known.
-const IX = { photo1: 0, photo2: 1, photo3: 2, photo4: 3, photo5: 4, withFile: 5, withClip: 6, infected: 7, photo6: 8, photo7: 9, photo8: 10, photo9: 11, photo10: 12 };
+// and then 6..10 (the cap), with the fixtures that are not a run of photos in
+// between and the mixed-media ones after them. The test reads a case by what it
+// holds, so this is the one place the layout of CASES has to be known.
+const IX = { photo1: 0, photo2: 1, photo3: 2, photo4: 3, photo5: 4, withFile: 5, withClip: 6, infected: 7, photo6: 8, photo7: 9, photo8: 10, photo9: 11, photo10: 12, mixed5: 13, withVoice: 14, clips5: 15 };
 
 function pageHtml() {
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
@@ -150,8 +161,10 @@ function attFromEl() { return null; }
 ${markSource}
 document.getElementById('wrap').innerHTML = CASES.map((c) => '<div class="case"><div class="case-label">' + c.title + '</div><div class="msg"><span class="avatar ghost"></span><div class="body">' + attsBlockHTML(c.atts) + '</div></div></div>').join('');
 document.querySelectorAll('img.att-img').forEach((im) => wireAttImage(im));
+// The render path's own wiring for the clips (paintMessage does all three).
+document.querySelectorAll('video.att-vid').forEach((v) => wireVideoPlayState(v));
 // One case's grid, measured: the container, every tile, and what each tile says
-// about the picture it is standing in for.
+// about the picture (or the clip) it is standing in for.
 window.__grid = function (i) {
   const g = document.querySelectorAll('.case')[i].querySelector('.msg-atts');
   const r = g.getBoundingClientRect();
@@ -164,6 +177,9 @@ window.__grid = function (i) {
     tiles: [...g.children].map((t) => {
       const b = t.getBoundingClientRect();
       const img = t.querySelector('img.att-img');
+      const vid = t.querySelector('video.att-vid');
+      const wrap = t.querySelector('.att-wrap');
+      const vb = vid ? vid.getBoundingClientRect() : null;
       return {
         cls: t.className.split(' ')[0],
         x: +(b.left - r.left).toFixed(1), y: +(b.top - r.top).toFixed(1),
@@ -172,9 +188,32 @@ window.__grid = function (i) {
         fit: img ? getComputedStyle(img).objectFit : '',
         orig: img ? (img.dataset.fbUrl || '') : '',
         radius: getComputedStyle(t.querySelector('.att-wrap') || t).borderRadius,
+        // A clip's tile: does the player fill it, how is it fitted, is the tile
+        // marked as a clip, and is it playing? The mark is the ::after triangle,
+        // and it takes TWO readings, because a computed style keeps its specified
+        // values even when the pseudo is not rendered: content says whether the
+        // rule applies at all (a photo's wrap has none), display says whether it
+        // is drawn right now (none while the clip plays).
+        vid: !!vid,
+        vidFit: vid ? getComputedStyle(vid).objectFit : '',
+        vidW: vb ? +vb.width.toFixed(1) : 0,
+        vidH: vb ? +vb.height.toFixed(1) : 0,
+        badgeContent: wrap ? getComputedStyle(wrap, '::after').content : '',
+        badgeDisplay: wrap ? getComputedStyle(wrap, '::after').display : '',
+        badgeW: wrap ? getComputedStyle(wrap, '::after').borderLeftWidth : '',
+        wrapCls: wrap ? wrap.className : '',
       };
     }),
   };
+};
+// Press play on one tile's clip — the event a real player fires, which is exactly
+// what the wiring listens for (a headless page cannot actually play media).
+window.__play = function (i, t) {
+  const g = document.querySelectorAll('.case')[i].querySelector('.msg-atts');
+  const vid = g.children[t] && g.children[t].querySelector('video.att-vid');
+  if (!vid) return false;
+  vid.dispatchEvent(new Event('play'));
+  return true;
 };
 // What the pending -> final patch does to ONE attachment where it stands: the
 // renderer's own body markup, dropped into the tile it belongs to.
@@ -256,15 +295,18 @@ function gridIsFull(g, debug) {
 }
 
 async function main() {
-  console.log('\n[0] the wiring: one block per message, a gallery only of pictures');
+  console.log('\n[0] the wiring: one block per message, a gallery of pictures AND clips');
   check(/function attsBlockHTML\(list\)/.test(messages), 'the block is built in one place (attsBlockHTML)');
   check(/inner \+= attsBlockHTML\(m\.attachments\);/.test(messages), 'and that is what msgHTML paints');
-  check(/const gallery = atts\.length > 1 && atts\.every\(\(a\) => \(a && a\.kind \? a\.kind : 'file'\) === 'image'\);/.test(messages),
-    'a gallery needs MORE THAN ONE attachment and every one of them a picture');
-  check(/const cls = 'msg-atts' \+ \(gallery \? ' gallery g' \+ Math\.min\(atts\.length, 11\) : ''\);/.test(messages),
+  check(/function attsCollage\(atts\) \{\s*return atts\.length > 1 && atts\.every\(\(a\) => !!a && \(a\.kind === 'image' \|\| a\.kind === 'video'\)\);\s*\}/.test(messages),
+    'a gallery needs MORE THAN ONE attachment and every one a picture OR a clip (reported: one video dropped the whole collage)');
+  check(/const cls = 'msg-atts' \+ \(attsCollage\(atts\) \? ' gallery g' \+ Math\.min\(atts\.length, 11\) : ''\);/.test(messages),
     'the count rides the container as g2…g10 — plus one class past them, so an over-cap list still lands on a grid');
   check(/attsEl\.innerHTML = atts\.map\(attachmentHTML\)\.join\(''\);/.test(pins),
     'the pinned-message panel keeps its own stacked rendering (a narrow list, not a gallery)');
+  check(/wireVideoPlayState\(v\)/.test(messages) && /v\.addEventListener\('play', on\)/.test(messages)
+    && !/classList\.toggle\('vid-playing', !v\.paused\)/.test(messages),
+    'a clip marks its tile from the EVENTS a player fires — never by reading `paused`, which a test cannot drive');
 
   console.log('\n[1] the stylesheet, in an order that works');
   check(/\.msg-atts\.gallery\{display:grid;grid-auto-flow:dense;gap:4px;width:min\(420px,100%\);grid-template-columns:repeat\(2,1fr\)\}/.test(css),
@@ -287,6 +329,14 @@ async function main() {
     'the photo fills the tile (a contact sheet: the crop is the tile, the whole picture is the lightbox)');
   check(/\.msg-atts\.gallery \.att-wrap\{display:block;width:100%!important;height:100%;max-width:100%;overflow:hidden;border-radius:12px;aspect-ratio:auto\}/.test(css),
     'the wrap fills the tile, and overrides the width an attachment reserves for its own shape');
+  check(/\.msg-atts\.gallery video\.att-vid\{width:100%;height:100%;max-width:100%;max-height:none;object-fit:cover\}/.test(css),
+    'a CLIP fills its tile exactly as a photo does (a clip has a poster frame like any other media)');
+  check(/\.msg-atts\.gallery \.att-wrap:has\(video\.att-vid\)::after\{[^}]*border-left:14px solid/.test(css)
+    && /\.msg-atts\.gallery \.att-wrap:has\(video\.att-vid\)::before\{[^}]*background:rgba\(4,6,11,\.28\)/.test(css),
+    'and its tile says so — the veil + play triangle the inbox video tile uses (.inbox-thumb.video), drawn by the tile itself');
+  check(/\.msg-atts\.gallery \.att-wrap\.vid-playing video\.att-vid\{object-fit:contain\}/.test(css)
+    && /\.msg-atts\.gallery \.att-wrap\.vid-playing::before,\.msg-atts\.gallery \.att-wrap\.vid-playing::after\{display:none\}/.test(css),
+    'while playing it shows its WHOLE frame: the tile stays the square (the grid cannot reflow) and the crop goes');
 
   const chromePath = findChrome();
   if (!chromePath) {
@@ -358,9 +408,9 @@ async function main() {
     check(grids[IX.photo1].tiles.length === 1 && grids[IX.photo1].tiles[0].fit === 'contain',
       'and is fitted, never cropped', grids[IX.photo1].tiles[0]);
     check(grids[IX.withFile].cls === 'msg-atts' && grids[IX.withFile].tiles.length === 3,
-      'a message with a FILE in it is not a gallery either', grids[IX.withFile].cls);
-    check(grids[IX.withClip].cls === 'msg-atts' && grids[IX.withClip].tiles.length === 2,
-      'nor one with a clip', grids[IX.withClip].cls);
+      'a message with a FILE in it is not a gallery (a 120px square is not a document)', grids[IX.withFile].cls);
+    check(grids[IX.withVoice].cls === 'msg-atts',
+      'nor one with a voice note (nor a player in a tile)', grids[IX.withVoice].cls);
 
     for (const n of ARRANGED) {
       const g = grids[IX['photo' + n]];
@@ -398,7 +448,53 @@ async function main() {
         'every tile keeps the ORIGINAL url, so a tap opens the whole photo (not the crop)', g.tiles.map((t) => t.orig));
     }
 
-    console.log('\n[3] the state a tile can be in');
+    console.log('\n[3] a tile can also be a CLIP (reported: it dropped the whole collage)');
+    // 2 photos + a clip: the reported shape — one video in the set used to send
+    // every tile back to full-width stacking.
+    const pair = grids[IX.withClip];
+    check(pair.cls === 'msg-atts gallery g2' && pair.display === 'grid' && pair.tiles.length === 2,
+      'a photo and a clip together are still a gallery block', { cls: pair.cls, display: pair.display });
+    check(gridIsFull(pair), 'as a grid that fills the block, exactly like two photos', pair.tiles);
+    const clipTile = pair.tiles[1];
+    check(clipTile.vid === true && Math.abs(clipTile.w - clipTile.h) <= 1,
+      'the clip is a square tile like its neighbour (its own 1280×720 shape is ignored, as a photo\'s is)',
+      { w: clipTile.w, h: clipTile.h, vid: clipTile.vid });
+    check(clipTile.vidFit === 'cover' && Math.abs(clipTile.vidW - clipTile.w) <= 1 && Math.abs(clipTile.vidH - clipTile.h) <= 1,
+      'and the player fills it — the contact-sheet crop while it is a still',
+      { fit: clipTile.vidFit, vid: clipTile.vidW + '×' + clipTile.vidH, tile: clipTile.w + '×' + clipTile.h });
+    check(clipTile.badgeContent === '""' && clipTile.badgeDisplay !== 'none' && clipTile.badgeW === '14px'
+      && pair.tiles[0].badgeContent === 'none',
+      'the tile says it is a clip (veil + play triangle) and the photo beside it does not',
+      { clip: clipTile.badgeContent + '/' + clipTile.badgeDisplay + '/' + clipTile.badgeW, photo: pair.tiles[0].badgeContent });
+    check(!clipTile.wrapCls.includes('vid-playing'), 'nothing is playing yet', clipTile.wrapCls);
+    check((await evaluate(`window.__play(${IX.withClip}, 1)`)) === true, 'pressing play on the clip');
+    const played = (await evaluate(`window.__grid(${IX.withClip})`)).tiles[1];
+    check(played.wrapCls.includes('vid-playing') && played.vidFit === 'contain',
+      'shows its WHOLE frame inside the tile (contain, never a crop of a video you are watching)',
+      { cls: played.wrapCls, fit: played.vidFit });
+    check(played.badgeDisplay === 'none', 'with the veil and the badge gone', played.badgeDisplay);
+    check(Math.abs(played.w - clipTile.w) <= 1 && Math.abs(played.h - clipTile.h) <= 1,
+      'and the tile itself never changed shape — the grid cannot reflow under a reader who just pressed play',
+      { before: clipTile.w + '×' + clipTile.h, after: played.w + '×' + played.h });
+    check(gridIsFull(await evaluate(`window.__grid(${IX.withClip})`)), 'so the block is still full while a clip plays', null);
+
+    console.log('\n[3b] a whole mixed batch, tall tile and all');
+    const mixed = grids[IX.mixed5];
+    check(mixed.cls === 'msg-atts gallery g5' && mixed.display === 'grid' && mixed.tiles.length === 5,
+      'three photos + two clips are g5, the same class five photos would take', mixed.cls);
+    check(gridIsFull(mixed), 'and the same arrangement — including the tall first tile', mixed.tiles);
+    check(mixed.tiles[0].row === 'span 2' && Math.abs(mixed.tiles[0].h - (2 * mixed.tiles[0].w + GAP)) <= 1.5,
+      'the tall tile is the first attachment, whatever kind it is', { row: mixed.tiles[0].row, h: mixed.tiles[0].h });
+    check(mixed.tiles.filter((t) => t.vid).length === 2
+      && mixed.tiles.filter((t) => t.vid).every((t) => t.vidFit === 'cover' && t.badgeContent === '""'
+        && Math.abs(t.w - t.h) <= 1 && Math.abs(t.vidH - t.h) <= 1),
+      'and both clips are square, filled, marked tiles like the photos', mixed.tiles.map((t) => (t.vid ? 'clip' : 'photo') + ' ' + t.w + '×' + t.h));
+    const clipsOnly = grids[IX.clips5];
+    check(clipsOnly.cls === 'msg-atts gallery g5' && gridIsFull(clipsOnly)
+      && clipsOnly.tiles.every((t) => t.vid && t.vidFit === 'cover'),
+      'five clips alone take the identical arrangement (the collage does not care which media it holds)', clipsOnly.cls);
+
+    console.log('\n[3c] the state a tile can be in');
     const infectedCard = grids[IX.infected].tiles[2];
     check(grids[IX.infected].cls === 'msg-atts gallery g3' && infectedCard.cls === 'scan-block',
       'a photo the scanner removed is the warning card, IN the grid', { cls: grids[IX.infected].cls, tile: infectedCard.cls });

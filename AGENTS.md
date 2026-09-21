@@ -834,6 +834,23 @@ into) — the same order in the long-press handler, which opens `openMsgSheet(mi
 el)` for anything inside a message. `attFromEl` reads the identity and the
 same `a:not([data-att-id])` exemption in the contextmenu guard is what lets a file
 card through without taking the browser's own link menu away from ordinary links.
+**A message's media is ONE collage block** (`attsBlockHTML`/`attsCollage`, messages.js
+→ `.msg-atts.gallery`, styles.css): more than one picture OR clip — and nothing that
+is not media — becomes equal square tiles whose arrangement follows the COUNT (2 = two
+squares, 3/5/9 = a tall first tile spanning both rows, 10 = three by four …), and a
+CLIP is a tile like the pictures'. It did not used to be: one video in the set dropped
+the whole collage and sent five photos back to full-width stacking (reported). A clip
+has a poster frame like any other media, so its tile is cover-cropped while it is a
+still and says what it is with the veil + play triangle the inbox's own video tile uses
+(`.inbox-thumb.video`, drawn by the tile's pseudo-elements so no markup is added to a
+box that is already a `<video>`). The moment it PLAYS it lifts to `object-fit:contain`
+(`.vid-playing`, set from the play/pause/ended events in `wireVideoPlayState` — never by
+reading `paused`, so the state a reader sees and the state a test drives are one), so
+watching a clip is never watching a crop of it; the tile keeps its square either way,
+because the grid must not reflow under a reader who just pressed play. A voice note, a
+plain file or a text preview still takes the whole block back to the full-width
+rendering: a 120px square is not a player, a document or a code box.
+`scripts/test-photo-gallery.js`.
 **The lightbox walks a message's PICTURES** (Discord's behaviour, and the
 behaviour this viewer already had: a video plays where it sits, by its own
 controls — play/pause, scrub, fullscreen — so it is deliberately NOT in the set;
@@ -849,7 +866,10 @@ zoomed photo still pans instead). The set is `lbMediaOf` — read OFF THE DOM,
 it is exactly what the message renders (a `scan-block` is not a slot and a picture
 this browser cannot decode has already become a file card; neither is offered),
 and its `src` is the ORIGINAL the tile's `data-fb-url` names while the tile paints
-the derived preview. `lbGalleryAt` finds the tapped item by SLOT IDENTITY, not by
+the derived preview. A CLIP can share the block (it is a gallery tile like the
+pictures — see the collage note above) and is still not in the set, so the arrows
+step over it: the pictures a message carries are what the viewer walks, and a clip
+plays where it sits. `lbGalleryAt` finds the tapped item by SLOT IDENTITY, not by
 url, because one message can show the same picture twice. A single picture (an
 embed, a bookmark tile, a picture sharing its message with a clip) shows no
 arrows at all. `scripts/test-lightbox.js` pins the block, the arrows at both ends,

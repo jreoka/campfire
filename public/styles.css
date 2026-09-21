@@ -1503,6 +1503,22 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
    inside the tile — it has no shape of its own to fill the square, so centre it. */
 .msg-atts.gallery .att-wrap:has(.file-card){display:flex;align-items:center;justify-content:center}
 .msg-atts.gallery .att-wrap .file-card{width:100%;margin:0}
+/* A CLIP in the grid (see attsCollage in messages.js): its tile is a square like
+   the pictures', so a message of five photos, five clips or a mix of the two is ONE
+   contact sheet. The still is cover-cropped like a photo's — which is why the tile
+   says out loud that it is a clip, with the veil + play triangle the inbox's own
+   video tile uses (.inbox-thumb.video), drawn by the tile's pseudo-elements so no
+   markup is added to a box that is already a <video>. Both sit UNDER the loader
+   (`.att-vid-load` carries z-index:1), so a clip whose frame is still being
+   captured keeps its spinner instead of a play badge over a black square. */
+.msg-atts.gallery video.att-vid{width:100%;height:100%;max-width:100%;max-height:none;object-fit:cover}
+.msg-atts.gallery .att-wrap:has(video.att-vid)::before{content:'';position:absolute;inset:0;background:rgba(4,6,11,.28);pointer-events:none}
+.msg-atts.gallery .att-wrap:has(video.att-vid)::after{content:'';position:absolute;left:50%;top:50%;width:0;height:0;border-left:14px solid rgba(255,255,255,.92);border-top:9px solid transparent;border-bottom:9px solid transparent;transform:translate(-38%,-50%);pointer-events:none}
+/* Playing: the veil and the badge go, and the crop goes with them. `contain` —
+   never `cover` — is the point: the tile stays a square (the grid must not reflow
+   under a reader who just pressed play) while the clip shows its WHOLE frame. */
+.msg-atts.gallery .att-wrap.vid-playing::before,.msg-atts.gallery .att-wrap.vid-playing::after{display:none}
+.msg-atts.gallery .att-wrap.vid-playing video.att-vid{object-fit:contain}
 /* ---------- link embeds (YouTube, X, Spotify, Twitch, TikTok, ...) ---------- */
 .embeds{display:flex;flex-direction:column;gap:.55rem;margin-top:.45rem;max-width:520px}
 .embed{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;overflow:hidden;max-width:100%}

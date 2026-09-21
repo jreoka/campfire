@@ -410,6 +410,25 @@ function attPickedFrame(a) {
   const picked = hit ? String(hit.src || '') : '';
   return /^data:/.test(picked) ? picked : '';
 }
+// A clip marks its own box while it is playing. In a gallery tile that is what
+// lifts `object-fit` from the contact-sheet crop (cover) to the whole frame
+// (contain, styles.css): the tile keeps its square so the grid never reflows under
+// a reader who just pressed play, but the picture INSIDE it stops being a crop.
+// Driven by the events a player actually fires — never by reading `v.paused` — so
+// the state the reader sees and the state a test can drive are the same one (a
+// headless page cannot play media, and the poster capture is a separate concern).
+function wireVideoPlayState(v) {
+  if (!v || v.dataset.playWired) return;
+  const wrap = v.closest && v.closest('.att-wrap');
+  if (!wrap) return;
+  v.dataset.playWired = '1';
+  const on = () => { try { wrap.classList.add('vid-playing'); } catch {} };
+  const off = () => { try { wrap.classList.remove('vid-playing'); } catch {} };
+  v.addEventListener('play', on);
+  v.addEventListener('playing', on);
+  v.addEventListener('pause', off);
+  v.addEventListener('ended', off);
+}
 // The plain-file card, in ONE place. Two callers need it and they have to agree:
 // the markup above for a file that never claimed to be a picture, and the
 // document error handler (final.js) for a picture THIS browser cannot decode —
@@ -430,21 +449,31 @@ function attFileCardHTML(a) {
   return `<a class="file-card" href="${esc(att.url)}" target="_blank" rel="noopener"${attMeta(att, kind)}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span><span class="fname">${esc(att.name)}</span>${sizeLine}</span></a>`;
 }
 // ---------- one message's attachments, as ONE block ----------
-// More than one PICTURE in a message is a gallery (see .msg-atts.gallery in
-// styles.css): equal square tiles whose arrangement follows the count — 3 and 5
+// More than one PICTURE or CLIP in a message is a gallery (see .msg-atts.gallery
+// in styles.css): equal square tiles whose arrangement follows the count — 3 and 5
 // are the counts that used to leave a hole in a plain two-column grid, which is
 // the whole reason the count is a fact of the message and not a CSS guess (CSS
 // can style a tile, but "one tall picture and two stacked beside it" is markup).
 //
-// Only when EVERY attachment is a picture: a clip, a voice note or a file keeps
-// the full-width rendering it needs, and a tile grid holding one of those would
-// either squeeze it or leave the hole this exists to avoid. The count rides the
-// container as a class (g2…g10, and g11 for anything past the cap — the class
-// picks the column count, it is not a promise about how many tiles there are).
+// A CLIP belongs in there with the pictures (reported: five photos and a video
+// dropped the whole collage and went back to full-width stacking, because one tile
+// in the set was a player). A clip HAS a poster frame like any other media, so its
+// tile is a contact-sheet square too — cover-cropped while it is a still, and
+// lifted to the whole frame (`vid-playing`, styles.css) the moment it plays, so
+// watching a clip never means watching a crop of it while the grid holds its
+// shape. A voice note, a plain file or a text preview still takes the whole block
+// back to the full-width rendering: a 120px square is not a player, a document or
+// a code box.
+//
+// The count rides the container as a class (g2…g10, and g11 for anything past the
+// cap — the class picks the column count, it is not a promise about how many tiles
+// there are).
+function attsCollage(atts) {
+  return atts.length > 1 && atts.every((a) => !!a && (a.kind === 'image' || a.kind === 'video'));
+}
 function attsBlockHTML(list) {
   const atts = Array.isArray(list) ? list : [];
-  const gallery = atts.length > 1 && atts.every((a) => (a && a.kind ? a.kind : 'file') === 'image');
-  const cls = 'msg-atts' + (gallery ? ' gallery g' + Math.min(atts.length, 11) : '');
+  const cls = 'msg-atts' + (attsCollage(atts) ? ' gallery g' + Math.min(atts.length, 11) : '');
   return '<div class="' + cls + '">' + atts.map(attachmentHTML).join('') + '</div>';
 }
 // ---------- the handover: a republished file, patched in place ----------
@@ -1955,7 +1984,7 @@ function messageEl(m, opts = {}) {
   if (!grouped) paintAvatar(div.querySelector('.avatar'), au);
   if (m.threadLast) paintThreadCardAvatar(div.querySelector('.thread-link'), m);
   try {
-    div.querySelectorAll('video.att-vid').forEach((v) => { requestVideoPoster(v); observeStick(v); });
+    div.querySelectorAll('video.att-vid').forEach((v) => { requestVideoPoster(v); wireVideoPlayState(v); observeStick(v); });
     // Images grow 0 -> full height on load and shove bottom-pinned readers
     // upward; load/error listeners can miss instant (cached) loads, but the
     // resize itself is always observable — follow it while near the bottom.
