@@ -1489,10 +1489,12 @@ async function compressLocked(key, opts) {
 }
 
 // Compatibility queue: returns 'compressed' | 'skipped' (both mean: never look
-// at this row again). It picks up ONLY the types a reader's platform cannot open
+// at this row again). It picks up the types a reader's platform cannot open
 // (see COMPATIBILITY_EXTS) — a repair, worth doing seconds after the upload
-// lands. Ordinary shrinking of playable media is the scheduled bucket sweep's
-// job, so a file the reader was just handed is not rewritten underneath them.
+// lands — plus rows that point at a remote URL, which processRow settles on
+// sight (no local bytes to compress). Ordinary shrinking of playable media is
+// the scheduled bucket sweep's job, so a file the reader was just handed is
+// not rewritten underneath them.
 async function processRow(row) {
   const key = cleanKey(row.url);
   if (!key) { stats.skipped++; await markDone(row.tbl, row.id); return 'skipped'; } // remote GIF URL etc.
@@ -1522,16 +1524,22 @@ async function fetchCandidates(limit) {
   // Apple product can play, or a HEIC no Windows browser can display — because
   // those are broken for a reader rather than merely large. Everything else is
   // left to the scheduled bucket sweep.
+  //
+  // Rows that point at a remote URL (a hotlinked GIF, never stored in the
+  // bucket) are offered too, whatever their type: processRow settles them on
+  // sight — there are no local bytes to compress — so they stop lingering at
+  // compressed = 0 forever.
   const compat = (alias) => `(${compatWhere(alias)})`;
+  const remote = (alias) => `(split_part(${alias}.url, '?', 1) NOT LIKE '/uploads/files/%')`;
   return await db.prepare(`
     SELECT a.id, a.url, a.filename, a.mime, a.size, a.kind, a.created_at, 'att' AS tbl FROM attachments a
-    WHERE a.compressed = 0 AND a.kind IN ('image','video','audio') AND ${compat('a')}
+    WHERE a.compressed = 0 AND a.kind IN ('image','video','audio') AND (${compat('a')} OR ${remote('a')})
     UNION ALL
     SELECT d.id, d.url, d.filename, d.mime, d.size, d.kind, d.created_at, 'dm' AS tbl FROM dm_attachments d
-    WHERE d.compressed = 0 AND d.kind IN ('image','video','audio') AND ${compat('d')}
+    WHERE d.compressed = 0 AND d.kind IN ('image','video','audio') AND (${compat('d')} OR ${remote('d')})
     UNION ALL
     SELECT s.id, s.url, '' AS filename, s.mime, s.size, s.kind, s.created_at, 'story' AS tbl FROM stories s
-    WHERE s.compressed = 0 AND s.kind IN ('image','video') AND ${compat('s')}
+    WHERE s.compressed = 0 AND s.kind IN ('image','video') AND (${compat('s')} OR ${remote('s')})
     ORDER BY created_at ASC LIMIT ?`).all(limit);
 }
 
