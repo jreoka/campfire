@@ -843,6 +843,10 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
 </div>
 
 <script src="/embeds.js"></script>
+<!-- Twitter's embed widget: swaps each blockquote.twitter-tweet (rendered by
+     embeds.js for X links) for an iframe sized to the tweet itself. Loaded once,
+     async, so it never blocks the app shell. -->
+<script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
 <script src="/js/core.js"></script>
 <script src="/js/router.js"></script>
 <script src="/js/auth.js"></script>

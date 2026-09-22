@@ -203,9 +203,15 @@ function spotifyEmbedHTML(url, sp) {
 }
 
 function tweetEmbedHTML(url, id) {
-  const src = 'https://platform.twitter.com/embed/Tweet.html?id=' + id + '&dnt=true&theme=dark';
-  return embedShell('X', '<iframe class="embed-frame tweet" src="' + esc(src)
-    + '" title="Post on X" loading="lazy" allowfullscreen></iframe>');
+  // Twitter's own widget (blockquote + widgets.js, loaded once in index.html)
+  // swaps each quote for an iframe sized to THAT tweet. The old approach —
+  // iframing Tweet.html directly — needed a fixed 500px height, which left a
+  // tall dead zone under short tweets and read as "huge" (reported). dnt and
+  // the dark theme carry over as data attributes; if the widget script is
+  // ever blocked, the quote degrades to a plain link to the post.
+  const href = 'https://twitter.com/i/status/' + id;
+  return embedShell('X', '<blockquote class="twitter-tweet" data-dnt="true" data-theme="dark" data-width="480">'
+    + '<a href="' + esc(href) + '">Post on X</a></blockquote>');
 }
 
 function tiktokEmbedHTML(url, id) {

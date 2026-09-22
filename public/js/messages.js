@@ -1303,6 +1303,34 @@ function watchBottomState(box) {
   });
   armLineGuard(box); // hold a scrolled-up reader's place through layout changes
 }
+// X embeds: embeds.js renders each X link as <blockquote class="twitter-tweet">,
+// and Twitter's widget script (platform.twitter.com/widgets.js, loaded once in
+// index.html) swaps each one for an iframe sized to the tweet itself. The script
+// scans the document once when it finishes loading, so anything painted later —
+// a new arrival, a history page, a thread, pins — is handed to it here: one
+// observer on the body covers every surface that renders messages.
+function hydrateTweetEmbeds() {
+  try {
+    const t = window.twttr;
+    if (t && t.widgets && typeof t.widgets.load === 'function') t.widgets.load();
+  } catch {}
+}
+if (typeof document !== 'undefined' && typeof MutationObserver !== 'undefined') {
+  try {
+    new MutationObserver((muts) => {
+      for (const mu of muts) {
+        for (const n of mu.addedNodes || []) {
+          if (n && n.nodeType === 1 &&
+              (n.matches && n.matches('blockquote.twitter-tweet') ||
+               n.querySelector && n.querySelector('blockquote.twitter-tweet'))) {
+            hydrateTweetEmbeds();
+            break;
+          }
+        }
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+  } catch {}
+}
 function observeStick(el) {
   if (!el || el.dataset.stickOn) return;
   el.dataset.stickOn = '1';
