@@ -207,10 +207,11 @@ function tweetEmbedHTML(url, id) {
   // swaps each quote for an iframe sized to THAT tweet. The old approach —
   // iframing Tweet.html directly — needed a fixed 500px height, which left a
   // tall dead zone under short tweets and read as "huge" (reported). dnt and
-  // the dark theme carry over as data attributes; if the widget script is
-  // ever blocked, the quote degrades to a plain link to the post.
+  // the dark theme carry over as data attributes; data-width keeps the card
+  // narrower than the chat column so it doesn't fill the whole area. If the
+  // widget script is ever blocked, the quote degrades to a plain link.
   const href = 'https://twitter.com/i/status/' + id;
-  return embedShell('X', '<blockquote class="twitter-tweet" data-dnt="true" data-theme="dark" data-width="480">'
+  return embedShell('X', '<blockquote class="twitter-tweet" data-dnt="true" data-theme="dark" data-width="380">'
     + '<a href="' + esc(href) + '">Post on X</a></blockquote>');
 }
 
