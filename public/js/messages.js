@@ -390,13 +390,26 @@ function attachmentBodyHTML(a, opts) {
 // the tile's own veil + play badge is the affordance (styles.css). A press on it
 // opens the media viewer, which is where the clip actually plays (pickers.js).
 // Every other clip keeps its controls and plays where it sits.
+//
+// A TILE also carries a DOOR: a transparent full-tile button over the clip, so the
+// press belongs to the PAGE and never to the media element. A bare <video> is not a
+// reliable click target on a phone — the platform may take a press on a media
+// element for itself (reported: in the Android app, tapping a collage video left the
+// app and opened the clip in the browser instead of the media viewer), and a
+// collage tile is the one rendering that had nothing over its player, because
+// `wireVideoLoader` deliberately skips a gallery tile (its shell must not
+// reveal-and-play behind the viewer opening over it). This is the same HTML layer a
+// single clip waits behind until its poster lands (`.att-vid-load`, styles.css), so
+// the door sits above the player and the download chip and a spoiler's veil sit
+// above the door.
 function attVideoHTML(a, opts) {
   const d = attDimsFor(a);
   const ar = d ? (d.w / d.h) : 0;
   const style = ar ? ` style="--att-ar:${ar.toFixed(4)}"` : '';
   const poster = (!opts || opts.live !== false) ? attPickedFrame(a) : '';
   const tile = !!(opts && opts.tile);
-  return `<span class="att-wrap${poster ? '' : ' loading'}${a.spoiler ? ' spoiler' : ''}${ar ? ' ar' : ' no-ar'}"${style}${attMeta(a, 'video')}><video class="att-vid" draggable="false" src="${esc(a.url)}" data-fb-src="${esc(a.url)}"${tile ? '' : ' controls'} preload="metadata" playsinline${poster ? ` poster="${esc(poster)}"` : ''}></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+  const door = tile ? '<button type="button" class="att-tile-open" aria-label="Open video in the viewer"></button>' : '';
+  return `<span class="att-wrap${poster ? '' : ' loading'}${a.spoiler ? ' spoiler' : ''}${ar ? ' ar' : ' no-ar'}"${style}${attMeta(a, 'video')}><video class="att-vid" draggable="false" src="${esc(a.url)}" data-fb-src="${esc(a.url)}"${tile ? '' : ' controls'} preload="metadata" playsinline${poster ? ` poster="${esc(poster)}"` : ''}></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${door}${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
 }
 // The still FRAME this page already holds for a clip, as the poster to paint it
 // with — the upload path files the frame the upload card captured under the

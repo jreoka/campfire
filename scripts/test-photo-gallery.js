@@ -179,7 +179,10 @@ window.__grid = function (i) {
       const img = t.querySelector('img.att-img');
       const vid = t.querySelector('video.att-vid');
       const wrap = t.querySelector('.att-wrap');
+      const door = t.querySelector('.att-tile-open');
+      const dl = t.querySelector('.att-dl');
       const vb = vid ? vid.getBoundingClientRect() : null;
+      const db = door ? door.getBoundingClientRect() : null;
       return {
         cls: t.className.split(' ')[0],
         x: +(b.left - r.left).toFixed(1), y: +(b.top - r.top).toFixed(1),
@@ -188,6 +191,16 @@ window.__grid = function (i) {
         fit: img ? getComputedStyle(img).objectFit : '',
         orig: img ? (img.dataset.fbUrl || '') : '',
         radius: getComputedStyle(t.querySelector('.att-wrap') || t).borderRadius,
+        // The tile's DOOR (see attVideoHTML in messages.js): a transparent,
+        // full-tile layer over a collage clip, so the press is the page's and
+        // never the media element's. Measured, because "the tile is the viewer's
+        // door" is only true if the door is what a finger meets.
+        door: !!door,
+        doorCovers: !!(db && vb && Math.abs(db.left - vb.left) < 1.5 && Math.abs(db.top - vb.top) < 1.5
+          && Math.abs(db.width - vb.width) < 1.5 && Math.abs(db.height - vb.height) < 1.5),
+        doorBg: door ? getComputedStyle(door).backgroundColor : '',
+        doorTag: door ? door.tagName : '',
+        dl: !!dl,
         // A clip's tile: does the player fill it, how is it fitted, is the tile
         // marked as a clip, and is it playing? The mark is the ::after triangle,
         // and it takes TWO readings, because a computed style keeps its specified
@@ -209,6 +222,31 @@ window.__grid = function (i) {
         wrapCls: wrap ? wrap.className : '',
       };
     }),
+  };
+};
+// What a FINGER meets on one tile: the middle of the tile, and the corner
+// download chip. The cases are stacked down the page and elementFromPoint answers
+// null for a point outside the viewport, so the case is scrolled into view first.
+window.__hit = async function (i, t) {
+  const c = document.querySelectorAll('.case')[i];
+  c.scrollIntoView({ block: 'center' });
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const tile = c.querySelector('.msg-atts').children[t];
+  const door = tile.querySelector('.att-tile-open');
+  const dl = tile.querySelector('.att-dl');
+  const at = (el) => {
+    if (!el) return '';
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    if (!hit) return '';
+    if (hit.closest && hit.closest('.att-tile-open')) return 'door';
+    if (hit.closest && hit.closest('.att-dl')) return 'dl';
+    return hit.tagName.toLowerCase();
+  };
+  return {
+    tile: at(tile), door: at(door), dl: at(dl),
+    hasDoor: !!door,
+    bg: door ? getComputedStyle(door).backgroundColor : '',
   };
 };
 // Press play on one tile's clip — the event a real player fires, which is exactly
@@ -497,6 +535,22 @@ async function main() {
       'the tile says it is a clip (veil + play triangle) and the photo beside it does not',
       { clip: clipTile.badgeContent + '/' + clipTile.badgeDisplay + '/' + clipTile.badgeW, photo: pair.tiles[0].badgeContent });
     check(!clipTile.wrapCls.includes('vid-playing'), 'nothing is playing yet', clipTile.wrapCls);
+    // The tile's press must be the PAGE's (reported: on Android, tapping a collage
+    // video left the app and opened the clip in the browser instead of the media
+    // viewer). A bare <video> is not a reliable click target on a phone, so the tile
+    // carries its own door — a transparent full-tile button over the clip — and this
+    // measures that a finger in the middle of the tile meets the DOOR and never the
+    // player. The download chip is a control of its own and stays above it.
+    check(clipTile.door && clipTile.doorTag === 'BUTTON' && clipTile.doorCovers,
+      'a collage clip carries a full-tile door (a real button) covering the player exactly', clipTile);
+    const clipHit = await evaluate(`window.__hit(${IX.withClip}, 1)`);
+    check(clipHit.tile === 'door' && clipHit.bg === 'rgba(0, 0, 0, 0)',
+      'and a tap in the middle of the tile lands on the door, never on the <video> — so no WebView can take the press for the media element',
+      clipHit);
+    check(clipHit.dl === 'dl', 'while the corner download chip is still the thing above it', clipHit);
+    const photoHit = await evaluate(`window.__hit(${IX.withClip}, 0)`);
+    check(photoHit.hasDoor === false && photoHit.tile === 'img',
+      'and a PHOTO tile is untouched: no door over a picture, whose tap already opens the viewer', photoHit);
     // The tile is a door now, so this state is driven programmatically — the rule
     // itself is still the one that matters: a clip that IS playing is never shown
     // as a crop.

@@ -1547,6 +1547,17 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
    under a reader who just pressed play) while the clip shows its WHOLE frame. */
 .msg-atts.gallery .att-wrap.vid-playing::before,.msg-atts.gallery .att-wrap.vid-playing::after{display:none}
 .msg-atts.gallery .att-wrap.vid-playing video.att-vid{object-fit:contain}
+/* The tile's DOOR (see attVideoHTML in messages.js): a transparent full-tile button
+   over the clip, so the press is the PAGE's and never the media element's. A
+   platform may take a press on a bare <video> for itself — reported: in the Android
+   app, tapping a collage video left the app and opened the clip in the browser
+   instead of the media viewer — and a collage tile was the one rendering with
+   nothing over its player (a single clip waits behind `.att-vid-load`, and
+   `wireVideoLoader` deliberately skips a gallery tile so its shell never
+   reveal-and-plays behind the viewer opening over it). z-index 1 is UNDER the
+   download chip (2) and a spoiler's veil (3), which are controls of their own, and
+   the transparent door changes nothing about how the tile looks. */
+.msg-atts.gallery .att-tile-open{position:absolute;inset:0;z-index:1;display:block;width:100%;height:100%;border:0;padding:0;background:transparent;border-radius:12px;cursor:pointer;-webkit-tap-highlight-color:transparent}
 /* ---------- link embeds (YouTube, X, Spotify, Twitch, TikTok, ...) ---------- */
 .embeds{display:flex;flex-direction:column;gap:.55rem;margin-top:.45rem;max-width:520px}
 .embed{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;overflow:hidden;max-width:100%}

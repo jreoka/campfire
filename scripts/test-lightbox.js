@@ -347,8 +347,17 @@ function staticChecks() {
   console.log('\n[2b] a collage clip is a door into the viewer, and the viewer plays it');
   check(/id="lightbox-vid"/.test(index) && /#lightbox-vid\{max-width:100%;max-height:100%/.test(css),
     'the stage carries a player of its own');
-  check(/\.msg-atts\.gallery \.att-slot video\.att-vid, \.msg-atts\.gallery \.att-slot \.att-vid-load/.test(pickers),
-    'and a press on a COLLAGE clip — its poster frame, or the shell it waits behind — opens it');
+  check(/\.msg-atts\.gallery \.att-slot video\.att-vid, \.msg-atts\.gallery \.att-slot \.att-vid-load, \.msg-atts\.gallery \.att-slot \.att-tile-open/.test(pickers),
+    'and a press on a COLLAGE clip — its own full-tile door, the poster frame, or the shell it waits behind — opens it');
+  // The door is what makes that press reliable: a bare <video> is not a click
+  // target a phone can be trusted to hand the page (reported: on Android a tap on
+  // a collage video opened the clip in the browser instead of the viewer), so the
+  // tile carries a transparent button over its player, built with the tile and by
+  // the same one place that leaves the controls off it.
+  check(/const door = tile \? '<button type="button" class="att-tile-open"/.test(messages),
+    'the door is built with the TILE, so a standalone player (which plays where it sits, by its own controls) never gets one');
+  check(/\$\{door\}\$\{attDl\(a\)\}/.test(messages) && /\.msg-atts\.gallery \.att-tile-open\{position:absolute;inset:0;z-index:1/.test(css),
+    'and it lies OVER the clip — transparent, full-tile — with the download chip above it');
   check(/\$\{tile \? '' : ' controls'\}/.test(messages) && /const tile = !!\(opts && opts\.tile\);/.test(messages),
     'a collage tile is built without native controls: the 120px square is not a player (attVideoHTML)');
   check(/atts\.map\(\(a\) => attachmentHTML\(a, gallery \? \{ tile: true \} : undefined\)\)/.test(messages),

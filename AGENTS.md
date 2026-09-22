@@ -873,10 +873,19 @@ builds every tile with `{ tile: true }` and `attVideoHTML` leaves the native con
 off there (a 120px square full of browser chrome owns the tile, and pressing play in
 it would show a crop of the clip) — a press on the tile opens the LIGHTBOX, which is
 where a collage clip plays, full size (reported: "if a video is in a collage, can it
-open in a lightbox"). `wireVideoLoader` skips a gallery tile for the same reason (its
+open in a lightbox"). **That press is owned by a real element, not by the `<video>`**:
+a tile carries a transparent full-tile DOOR button (`.att-tile-open`, built by
+`attVideoHTML` with the tile, z-index 1 — under the download chip and a spoiler's
+veil) over its clip, because a bare `<video>` is not a click target a phone hands the
+page reliably (reported: on Android a tap on a collage video left the app and opened
+the clip in the browser instead of the viewer — the tile was the one rendering with
+nothing over its player). `wireVideoLoader` skips a gallery tile for the same reason (its
 spinner shell must not reveal-and-play in the tile while the viewer opens over it) and
 `patchVideoNode` reads the flag back off the element it replaces, so a republished
-clip comes back a tile rather than a player in a square. If a tile's clip IS ever
+clip comes back a tile rather than a player in a square. The door is measured in
+`scripts/test-photo-gallery.js` (a finger in the middle of the tile meets the door,
+never the player) and the handler that opens the viewer is pinned in
+`scripts/test-lightbox.js`. If a tile's clip IS ever
 playing the play state still lifts it to `object-fit:contain` (`.vid-playing`, set
 from the play/pause/ended events in `wireVideoPlayState` — never by reading `paused`,
 so the state a reader sees and the state a test drives are one) with the tile keeping

@@ -1169,12 +1169,14 @@ document.addEventListener('keydown', (e) => {
   }
   // A CLIP in a COLLAGE. The tile is the media viewer's door, not a player (see
   // attsBlockHTML/attVideoHTML in messages.js: a 120px square is not a player, so
-  // the tile carries no controls), and the whole tile is the target — the poster
+  // the tile carries no controls), and the whole tile is the target — the tile's own
+  // door button (`.att-tile-open`, the transparent layer that keeps the press the
+  // page's; a bare <video> is not a reliable click target on a phone), the poster
   // frame, and the spinner shell a clip waits behind until its frame is captured
   // (that shell is a button of its own, whose reveal-in-place wiring skips a
   // gallery tile for exactly this reason). A clip anywhere else keeps its own
   // controls and plays where it sits.
-  const tileVid = e.target.closest('.msg-atts.gallery .att-slot video.att-vid, .msg-atts.gallery .att-slot .att-vid-load');
+  const tileVid = e.target.closest('.msg-atts.gallery .att-slot video.att-vid, .msg-atts.gallery .att-slot .att-vid-load, .msg-atts.gallery .att-slot .att-tile-open');
   if (tileVid) {
     const slot = tileVid.closest('.att-slot');
     const sp = tileVid.closest('.att-wrap.spoiler:not(.shown)');
