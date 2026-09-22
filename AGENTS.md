@@ -714,7 +714,14 @@ a dark tile's edge readable now that no border box does; the play affordance is 
 62px rounded SQUARE (the app's own button shape, see `.send-btn`) with a hairline
 ring, taking YouTube's red under the pointer. An IFRAME player keeps the card but
 its label becomes a real header (`border-bottom:var(--line-soft)`), so the player
-starts at an edge. Direct media that has a shape of its own (`.embed-plain` for
+starts at an edge — and a PLAYED YouTube facade SWAPS to that anatomy as it is
+replaced: the delegated handler in `pickers.js` takes `embed-yt` off the card with
+`ytBtn.replaceWith(f)`, because the chip rode on the poster and over a playing
+video it sat on the picture and covered part of it (reported: "where it says
+youtube in the top corner that never goes away when you play the video"). The name
+still stands above the player in its own row, both shapes, and the card grows by
+that one row instead of the player losing its top-left corner. Direct media that
+has a shape of its own (`.embed-plain` for
 images and clips) drops the card chrome — one boundary, not a hairline box one
 pixel outside a rounded picture; audio keeps the card, because a bare `<audio>`
 element has no shape of its own. Generic unfurl cards and invite cards were

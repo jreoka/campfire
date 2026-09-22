@@ -96,9 +96,13 @@ window.__render = (url) => { document.getElementById('slot').innerHTML = linkEmb
 window.__play = () => {
   const tile = document.querySelector('#slot .yt-facade');
   if (!tile) return false;
+  const wrap = tile.closest('.embed');
   const f = document.createElement('iframe');
   f.className = 'embed-frame yt-player';
   tile.replaceWith(f);
+  // …and the card's anatomy changes with it: the chip comes off, so the label is
+  // the header row and nothing sits over the player (see the handler in pickers.js).
+  if (wrap) wrap.classList.remove('embed-yt');
   return true;
 };
 </script>
@@ -129,12 +133,17 @@ const PROBE = `(() => {
     ratio: mb ? +(mb.height / mb.width).toFixed(3) : 0,
     label: label ? label.textContent : null,
     vertical: card.classList.contains('embed-vertical'),
+    cardCls: card.className,
     fit: img ? getComputedStyle(img).objectFit : null,
     bg: media ? getComputedStyle(media).backgroundColor : null,
     // The redesign: the label rides ON the tile and the card is exactly the tile.
     labelPos: ls ? ls.position : null,
     labelRadius: ls ? ls.borderTopLeftRadius : null,
     labelInside: !!(lb && mb && lb.top >= mb.top - 1 && lb.bottom <= mb.bottom + 1 && lb.left >= mb.left - 1),
+    labelBorder: ls ? ls.borderBottomWidth : null,
+    // A played player: the label owns a row of its own ABOVE the video, so nothing
+    // is painted over the picture.
+    mediaBelowLabel: !!(mb && lb && mb.top >= lb.bottom - 1),
     playRadius: play ? getComputedStyle(play).borderTopLeftRadius : null,
     playW: pb ? Math.round(pb.width) : 0,
     cardIsTile: Math.abs(cb.height - (mb ? mb.height : 0)) <= 2,
@@ -194,6 +203,8 @@ async function main() {
     'a phone steps the width down, so one Short never owns the screen');
   check(/f\.className = 'embed-frame yt-player'/.test(pickers),
     'the click handler builds the player with the class the vertical rule keys on');
+  check(/ytBtn\.replaceWith\(f\);[\s\S]{0,900}?wrap\.classList\.remove\('embed-yt'\)/.test(pickers),
+    'and takes the TILE anatomy off the card as it does: a chip that rode on the poster would sit over the playing video (reported)');
 
   console.log('\n[A3] the box around it: a facade is the tile, a player gets a header');
   check(/\.embed-yt\{position:relative;background:transparent;border:0\}/.test(styles),
@@ -292,12 +303,27 @@ async function main() {
     check(m.isPlayer === true && m.tag === 'IFRAME', 'which is the real player iframe', m.tag);
     check(Math.abs(m.ratio - TALL) < 0.04 && m.cardW - m.mediaW <= 2,
       'and it keeps the vertical shape and the hugged card (no reflow back to 16:9)', { ratio: m.ratio, card: m.cardW, player: m.mediaW });
+    // The reported bug: the provider chip rode ON the poster and stayed there over
+    // the playing video, covering part of it.
+    check(m.label === 'YouTube' && m.labelPos === 'static' && m.mediaBelowLabel === true && m.labelInside === false,
+      'the chip becomes the header row every other player wears — nothing is painted over the video',
+      { label: m.label, pos: m.labelPos, below: m.mediaBelowLabel, inside: m.labelInside });
+    check(m.labelBorder !== '0px' && !/embed-yt/.test(m.cardCls),
+      'with the hairline that starts the player at an edge, the tile anatomy gone',
+      { border: m.labelBorder, cls: m.cardCls });
+    const shortLabel = m.cardH - m.mediaH;
+    check(shortLabel > 16 && shortLabel < 44, 'and that header costs the card one row, not the tile', { header: shortLabel });
 
     await ev('window.__render(' + JSON.stringify(WATCH) + ')');
     m = await ev(PROBE);
     check(Math.abs(m.ratio - WIDE) < 0.04, 'an ordinary video is still the 16:9 box', { ratio: m.ratio, w: m.mediaW, h: m.mediaH });
     check(m.vertical === false && m.label === 'YouTube', 'with the plain card and the plain label', { vertical: m.vertical, label: m.label });
     check(m.cardW > 400 && m.cardIsTile === true, 'and the full-width 16:9 tile it always had', { card: m.cardW, isTile: m.cardIsTile });
+    check((await ev('window.__play()')) === true, 'playing the wide one too');
+    m = await ev(PROBE);
+    check(m.isPlayer === true && m.labelPos === 'static' && m.mediaBelowLabel === true && !/embed-yt/.test(m.cardCls),
+      'puts its label in the header row as well — the same fix, both shapes',
+      { pos: m.labelPos, below: m.mediaBelowLabel, cls: m.cardCls });
 
     console.log('\n[B2] the phone width, 390x780');
     await sess('Emulation.setDeviceMetricsOverride', { width: PHONE.w, height: PHONE.h, deviceScaleFactor: 1, mobile: true });

@@ -1147,6 +1147,15 @@ document.addEventListener('keydown', (e) => {
       f.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
       f.allowFullscreen = true;
       ytBtn.replaceWith(f);
+      // The tile is a PLAYER now, so the card changes anatomy with it: the provider
+      // chip rides ON the poster (`.embed-yt .embed-src`, styles.css), and over a
+      // PLAYING video that chip sits on top of the picture and covers part of it
+      // (reported: "where it says youtube in the top corner that never goes away
+      // when you play the video"). Taking `embed-yt` off gives the card the
+      // provider-as-header anatomy every other iframe player wears (Spotify, X,
+      // TikTok): the name still stands above the player, in its own row, and the
+      // player starts at an edge with nothing over it.
+      wrap.classList.remove('embed-yt');
     }
     return;
   }
