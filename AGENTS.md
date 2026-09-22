@@ -706,22 +706,25 @@ player (the class the delegated handler in `pickers.js` builds) inherits the
 shape. The label stays the plain provider name on both shapes — "Short" is a URL
 form, not a different site. `scripts/test-yt-shorts.js` measures all of it in
 headless Chrome.
-**The embed boxes have two anatomies** (a look pass, styles.css): a click-to-play
-VIDEO is the card — `.embed-yt` drops the surface and hairline, the provider name
-rides ON the tile as a blurred chip (`.embed-yt .embed-src` absolute, top-left)
-instead of owning a 24px row above the video, and a `::after` inset hairline keeps
-a dark tile's edge readable now that no border box does; the play affordance is a
-62px rounded SQUARE (the app's own button shape, see `.send-btn`) with a hairline
-ring, taking YouTube's red under the pointer. An IFRAME player keeps the card but
-its label becomes a real header (`border-bottom:var(--line-soft)`), so the player
-starts at an edge — and a PLAYED YouTube facade SWAPS to that anatomy as it is
-replaced: the delegated handler in `pickers.js` takes `embed-yt` off the card with
-`ytBtn.replaceWith(f)`, because the chip rode on the poster and over a playing
-video it sat on the picture and covered part of it (reported: "where it says
-youtube in the top corner that never goes away when you play the video"). The name
-still stands above the player in its own row, both shapes, and the card grows by
-that one row instead of the player losing its top-left corner. Direct media that
-has a shape of its own (`.embed-plain` for
+**The embed boxes have ONE card anatomy** (a look pass, then an owner request):
+every provider's name is a header row along the top of the card
+(`.embed-src`, a hairline under it), and the video — the poster tile before it
+plays, the player after — sits under it, edge to edge. The YouTube card used to be
+the exception: `.embed-yt` dropped the surface and hairline and rode the name ON
+the poster as a blurred chip, on the argument that a label row was 24px of dead
+space over something the poster already introduced. That chip then had to be
+swapped for this header the moment the player replaced the facade (it sat over the
+playing video and covered part of it — reported), and the owner asked for the
+banner to be there BEFORE the video starts too ("can we keep the banner along the
+top of the embed the way it is before starting the video too"), so `.embed-yt` is
+gone: both states wear the same header, starting the video swaps the tile and
+nothing else moves, and the card keeps its chrome (surface, hairline, the 12px
+clip) in both. The yt-player iframe inherits the same shape
+(`.embed-vertical` for a Short); the play affordance is still a 62px rounded
+SQUARE (the app's own button shape, see `.send-btn`) with a hairline ring, taking
+YouTube's red under the pointer, and the video's own edge needs no extra hairline
+now that the card's border box is there. Direct media that has a shape of its own
+(`.embed-plain` for
 images and clips) drops the card chrome — one boundary, not a hairline box one
 pixel outside a rounded picture; audio keeps the card, because a bare `<audio>`
 element has no shape of its own. Generic unfurl cards and invite cards were

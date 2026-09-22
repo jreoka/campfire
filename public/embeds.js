@@ -180,11 +180,14 @@ function ytEmbedHTML(url, yt) {
   const vertical = !!yt.shorts;
   const thumb = 'https://i.ytimg.com/vi/' + yt.id + '/hqdefault.jpg';
   const play = 'https://www.youtube-nocookie.com/embed/' + yt.id + '?autoplay=1&rel=0';
-  // `embed-yt` is the facade's own anatomy (styles.css): no card chrome, and the
-  // provider label rides ON the tile as a small chip instead of owning a row above
-  // it — the row was 24px of dead space over a video that is already labelled by
-  // the poster and the play button.
-  return '<div class="embed embed-yt' + (vertical ? ' embed-vertical' : '') + '">'
+  // One card anatomy for every provider, YouTube included: the name is the header
+  // row above the video (styles.css `.embed-src`) and the facade sits under it,
+  // edge to edge. The label used to ride ON the poster as a blurred chip, which
+  // read as a different kind of card from Spotify/X/TikTok and then — once the
+  // player replaced the facade — had to be swapped for a header anyway; the owner
+  // asked for the banner to be there BEFORE the video starts too, so the card now
+  // wears it from the first paint.
+  return '<div class="embed' + (vertical ? ' embed-vertical' : '') + '">'
     + '<span class="embed-src">' + esc(provider) + '</span>'
     + '<button type="button" class="yt-facade' + (vertical ? ' vertical' : '') + '" data-yt-play="' + esc(play) + '" aria-label="Play video">'
     + '<img src="' + esc(thumb) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'" />'

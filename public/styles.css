@@ -1552,7 +1552,12 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 .embed{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;overflow:hidden;max-width:100%}
 /* The provider name is a HEADER, not a caption floating over the player: it owns
    a hairline rule, so the player starts at a real edge instead of at a strip of
-   half-empty card. (The YouTube facade is the exception — see `.embed-yt`.) */
+   half-empty card. Every provider wears it, the YouTube facade included — the
+   name used to ride ON the poster as a chip (`.embed-yt`, now gone), which made
+   the card a different animal from Spotify/X/TikTok and had to be swapped for
+   this header the moment the player replaced the facade (owner request: "can we
+   keep the banner along the top of the embed the way it is before starting the
+   video too"). */
 .embed-src{display:block;font-size:.68rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);padding:.5rem .8rem;border-bottom:1px solid var(--line-soft)}
 .embed-frame{display:block;width:100%;border:0;background:#000}
 .embed-169{aspect-ratio:16/9}
@@ -1561,17 +1566,10 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 .embed-frame.tiktok{max-width:325px;height:620px}
 .embed-frame.ig{max-width:400px;height:560px}
 .embed-frame.yt-player{aspect-ratio:16/9;height:auto}
-/* A click-to-play video IS the card: the tile is the whole box and the provider
-   label rides ON it as a small chip, because a label row above a video is 24px of
-   dead space over something the poster and the play button already introduce. The
-   inset hairline (::after, above the poster) is what keeps a dark tile's edge
-   readable against the chat background now that there is no border box — and it
-   disappears on a bright poster, which is exactly when it is not needed. */
-.embed-yt{position:relative;background:transparent;border:0}
-.embed-yt .embed-src{position:absolute;left:.6rem;top:.6rem;z-index:2;padding:.22rem .5rem;border:0;border-radius:999px;background:rgba(8,11,20,.62);color:#fff;font-size:.62rem;letter-spacing:.06em;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
-.embed-yt .yt-facade{border-radius:12px;overflow:hidden}
+/* The click-to-play tile, inside the card's own chrome and under its header row.
+   No inset hairline of its own any more: the card's border box is what draws that
+   edge now that the facade is no longer the whole card. */
 .yt-facade{position:relative;display:block;width:100%;aspect-ratio:16/9;border:0;padding:0;background:#000;cursor:pointer}
-.yt-facade::after{content:'';position:absolute;inset:0;border-radius:inherit;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);pointer-events:none}
 .yt-facade img{width:100%;height:100%;object-fit:cover;display:block}
 /* A YouTube SHORT is shot vertical, so its facade is a vertical rectangle — the
    16:9 box showed it as a pillarboxed strip (reported). Two pieces: the tile takes
