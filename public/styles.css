@@ -1581,6 +1581,11 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 .msg .text blockquote.twitter-tweet{border:0;margin:0;padding:0;color:inherit}
 .twitter-tweet{margin:0}
 .twitter-tweet-rendered{max-width:100%}
+/* The X widget renders at a fixed data-width narrower than the chat column,
+   so shrink-wrap the card to the widget — otherwise the wider column leaves
+   dead space to the card's right. Both the pre-render quote and the rendered
+   iframe carry .twitter-tweet, so one :has covers both states. */
+.embed:has(> .twitter-tweet){width:fit-content;max-width:100%}
 .embed-frame.tiktok{max-width:325px;height:620px}
 .embed-frame.ig{max-width:400px;height:560px}
 .embed-frame.yt-player{aspect-ratio:16/9;height:auto}
