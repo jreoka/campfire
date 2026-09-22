@@ -297,7 +297,12 @@ async function main() {
     // come near the viewport instead of starting one download per clip in a
     // channel's backlog (see test-image-previews.js for the image half of the
     // same slow-link problem).
-    check(/requestVideoPoster\(v\); observeStick\(v\)/.test(messages) && !/ensureVideoPoster\(v\); observeStick\(v\)/.test(messages),
+    // The chain after `requestVideoPoster` is the renderer's own business (it
+    // wires the play state and the sticky observer too), so this asks the one
+    // question that matters: the paint path DEFERS the capture and never reaches
+    // for the eager `ensureVideoPoster` on the whole backlog.
+    check(/div\.querySelectorAll\('video\.att-vid'\)\.forEach\(\(v\) => \{ requestVideoPoster\(v\);/.test(messages)
+      && !/video\.att-vid'\)\.forEach\(\(v\) => \{ ensureVideoPoster\(v\)/.test(messages),
       'the render path defers poster capture to visibility, not the whole backlog');
     check(/function requestVideoPoster[\s\S]{0,700}rootMargin: '320px 0px'/.test(postSource),
       'and captures once the clip is near the viewport');

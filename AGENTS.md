@@ -858,37 +858,61 @@ the whole collage and sent five photos back to full-width stacking (reported). A
 has a poster frame like any other media, so its tile is cover-cropped while it is a
 still and says what it is with the veil + play triangle the inbox's own video tile uses
 (`.inbox-thumb.video`, drawn by the tile's pseudo-elements so no markup is added to a
-box that is already a `<video>`). The moment it PLAYS it lifts to `object-fit:contain`
-(`.vid-playing`, set from the play/pause/ended events in `wireVideoPlayState` — never by
-reading `paused`, so the state a reader sees and the state a test drives are one), so
-watching a clip is never watching a crop of it; the tile keeps its square either way,
-because the grid must not reflow under a reader who just pressed play. A voice note, a
+box that is already a `<video>`). The tile is NOT a player, though: `attsBlockHTML`
+builds every tile with `{ tile: true }` and `attVideoHTML` leaves the native controls
+off there (a 120px square full of browser chrome owns the tile, and pressing play in
+it would show a crop of the clip) — a press on the tile opens the LIGHTBOX, which is
+where a collage clip plays, full size (reported: "if a video is in a collage, can it
+open in a lightbox"). `wireVideoLoader` skips a gallery tile for the same reason (its
+spinner shell must not reveal-and-play in the tile while the viewer opens over it) and
+`patchVideoNode` reads the flag back off the element it replaces, so a republished
+clip comes back a tile rather than a player in a square. If a tile's clip IS ever
+playing the play state still lifts it to `object-fit:contain` (`.vid-playing`, set
+from the play/pause/ended events in `wireVideoPlayState` — never by reading `paused`,
+so the state a reader sees and the state a test drives are one) with the tile keeping
+its square, because the grid must not reflow under the clip. A voice note, a
 plain file or a text preview still takes the whole block back to the full-width
 rendering: a 120px square is not a player, a document or a code box.
 `scripts/test-photo-gallery.js`.
-**The lightbox walks a message's PICTURES** (Discord's behaviour, and the
-behaviour this viewer already had: a video plays where it sits, by its own
-controls — play/pause, scrub, fullscreen — so it is deliberately NOT in the set;
-there is no video stage in the viewer, and no chip on a clip pretending to open
-one). A picture posted with others opens in `#lightbox` ON the tile that was
-tapped, with a back/next arrow on each side of the screen
-(`#lb-prev`/`#lb-next`, 44px, safe-area insets, vertically centred; the arrow at
-an end is `:disabled` rather than hidden — the set has a first and a last), plus
-the keyboard's ArrowLeft/ArrowRight and a sideways drag (`LB_SWIPE_PX`, which is
-what the old "sideways is not a dismissal" branch in `lbPointerMove` became; a
-zoomed photo still pans instead). The set is `lbMediaOf` — read OFF THE DOM,
-`.msg-atts` or `.pin-atts`, `:scope > .att-slot`, taking only `img.att-img` — so
-it is exactly what the message renders (a `scan-block` is not a slot and a picture
-this browser cannot decode has already become a file card; neither is offered),
-and its `src` is the ORIGINAL the tile's `data-fb-url` names while the tile paints
-the derived preview. A CLIP can share the block (it is a gallery tile like the
-pictures — see the collage note above) and is still not in the set, so the arrows
-step over it: the pictures a message carries are what the viewer walks, and a clip
-plays where it sits. `lbGalleryAt` finds the tapped item by SLOT IDENTITY, not by
-url, because one message can show the same picture twice. A single picture (an
-embed, a bookmark tile, a picture sharing its message with a clip) shows no
-arrows at all. `scripts/test-lightbox.js` pins the block, the arrows at both ends,
-and those two absences (no video stage, no chip).
+**The lightbox walks a message's MEDIA — its pictures and its clips** (a clip in a
+collage has no controls of its own, so the viewer is where it plays; a clip anywhere
+else keeps its player and still counts as an item of its message's set). It opens
+`#lightbox` ON the tile that was pressed, with a back/next arrow on each side of the
+screen (`#lb-prev`/`#lb-next`, 44px, safe-area insets, centred on the STAGE'S CONTENT
+BOX — `top:calc((var(--lb-pad-t) + 100% - var(--lb-pad-b) - var(--lb-strip-h)) / 2)`,
+so the strip takes the arrows with the media instead of leaving them floating below
+it; the arrow at an end is `:disabled` rather than hidden — the set has a first and a
+last), plus the keyboard's ArrowLeft/ArrowRight, a sideways drag (`LB_SWIPE_PX`, which
+is what the old "sideways is not a dismissal" branch in `lbPointerMove` became; a
+zoomed photo still pans instead) and a row of THUMBNAILS along the bottom
+(`#lb-strip`/`#lb-strip-track`, built once per open by `lbBuildStrip`, lit per step by
+`lbMarkStrip`; a press steps straight to that item). The strip exists under exactly
+the arrows' condition — more than one item — and its track is centred with
+`width:max-content;margin:0 auto` rather than `justify-content:center`, which would
+clip the first thumb off-screen once the row overflows. The stage reserves the strip's
+height (`--lb-strip-h`, 0 until `has-strip`), so it can never cover the bottom of a
+tall photo. Each thumb paints the item's own `thumb` — and a CLIP whose poster has
+not been captured yet (its frame is a real fetch of the clip, so a tile the reader
+never scrolled near has none) is built as the bare veil + play triangle and filled
+in by `lbFillThumb` when that frame lands, through the same one-frame-per-url
+`whenVideoPoster` cache the tile is waiting on. The set is `lbMediaOf` — read OFF
+THE DOM, `.msg-atts` or `.pin-atts`,
+`:scope > .att-slot`, taking `img.att-img` AND `video.att-vid` — so it is exactly what
+the message renders (a `scan-block` is not a slot and a picture this browser cannot
+decode has already become a file card; neither is offered); a picture's `src` is the
+ORIGINAL the tile's `data-fb-url` names while the tile paints the derived preview, a
+clip's is its own source, and each item's `thumb` is what its strip thumbnail paints
+(the tile's preview, or a clip's poster frame — never the clip's bytes).
+`lbGalleryAt` finds the pressed item by SLOT IDENTITY, not by url, because one message
+can show the same picture twice. A single item (an embed, a bookmark tile, a lone
+picture) shows no arrows and no strip. The player is a second element on the stage
+(`#lightbox-vid`, native controls, autoplayed from the press that opened the viewer
+when the engine allows it) and the photo gestures stand down while it is up
+(`lbIsVid` gates the tap-zoom, the pinch and the trackpad wheel), a tap on it — its
+controls included — is the player's rather than a close, and stepping away pauses and
+unloads it, so no sound plays behind the next picture. `scripts/test-lightbox.js`
+pins the block, the arrows at both ends, the strip, the clip on the stage and the
+absences (no arrows or strip for a single item).
 A file whose bytes were removed (`infected`) offers ONLY "Scan info", because
 there is nothing left to save. (There is no "not published yet" state any more:
 an upload is servable the moment it lands, so the warning card is the only thing

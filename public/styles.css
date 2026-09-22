@@ -1129,7 +1129,7 @@ body.ub-open #vo-view,
 body.ub-open #story-view,
 body.ub-open #story-compose,
 body.ub-open #sc-pick{padding-top:calc(.55rem + var(--safe-t) + var(--ub-h))}
-body.ub-open #lightbox #lb-stage{padding-top:calc(4.4rem + var(--safe-t) + var(--ub-h))}
+body.ub-open #lightbox{--lb-pad-t:calc(4.4rem + var(--safe-t) + var(--ub-h))}
 @keyframes cf-drop{from{opacity:0;transform:translateY(-100%)}to{opacity:1;transform:none}}
 @media (max-width:700px){
   #update-banner{gap:.55rem}
@@ -2293,9 +2293,22 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
    control bar hangs off its top-right with the safe-area inset added, so the
    Download / Close buttons stay reachable no matter how tall the photo is.
    touch-action:none hands every gesture to the pointer handlers below. */
-#lightbox{position:fixed;inset:0;background:rgba(3,5,10,.94);z-index:200;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;overscroll-behavior:contain}
-#lb-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:calc(4.4rem + var(--safe-t)) calc(1rem + var(--safe-r)) calc(1rem + var(--safe-b)) calc(1rem + var(--safe-l));cursor:zoom-out;touch-action:none}
+/* Two numbers drive the whole stage, and they are named because a THIRD reader
+   needs them: the media is centred in what is left after the control bar's
+   padding, and the side arrows have to sit on that same centre (see .lb-nav).
+   `--lb-strip-h` is the strip's own height, added to the bottom padding so the
+   strip can never cover the bottom of a tall photo — and it is 0 until the strip
+   is actually up, so a lone picture's stage is untouched. */
+#lightbox{position:fixed;inset:0;background:rgba(3,5,10,.94);z-index:200;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;overscroll-behavior:contain;--lb-pad-t:calc(4.4rem + var(--safe-t));--lb-pad-b:calc(1rem + var(--safe-b));--lb-strip-h:0px}
+#lightbox.has-strip{--lb-strip-h:calc(56px + .9rem)}
+#lb-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:var(--lb-pad-t) calc(1rem + var(--safe-r)) calc(var(--lb-pad-b) + var(--lb-strip-h)) calc(1rem + var(--safe-l));cursor:zoom-out;touch-action:none}
 #lightbox-img{max-width:100%;max-height:100%;width:auto;height:auto;border-radius:12px;transform-origin:center center;will-change:transform;cursor:zoom-in;-webkit-user-drag:none}
+/* The clip stage. A video is shown at its whole frame, never cropped, and it owns
+   its own controls (the same player the chat hands a standalone clip); the photo
+   viewer's zoom/pinch/pan gestures deliberately do not apply to it, so the stage
+   stops advertising them (see lbIsVid in pickers.js). */
+#lightbox-vid{max-width:100%;max-height:100%;width:auto;height:auto;border-radius:12px;background:#000;cursor:default}
+#lightbox.vid #lb-stage{cursor:default}
 #lightbox.zoomed #lb-stage{cursor:grab}
 #lightbox.zoomed #lightbox-img{cursor:grab}
 #lb-bar{position:absolute;top:calc(.6rem + var(--safe-t));right:calc(.6rem + var(--safe-r));display:flex;gap:.5rem;z-index:3}
@@ -2309,13 +2322,38 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
    screen HAS neighbours, and the one at the end of the set goes dark rather
    than vanishing — a set of pictures has a first and a last, and the control
    says which end it is standing on. */
-.lb-nav{position:absolute;top:50%;transform:translateY(-50%);display:flex;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:0;border-radius:999px;background:rgba(28,33,48,.82);color:#fff;cursor:pointer;z-index:3;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);transition:background var(--t-fast),opacity var(--t-fast)}
+/* The side arrows sit on the MEDIA's vertical centre — the stage's own content
+   box, top padding and bottom padding included — so the strip (which pushes the
+   media up by its own height) takes them with it instead of leaving them floating
+   below the picture they walk. */
+.lb-nav{position:absolute;top:calc((var(--lb-pad-t) + 100% - var(--lb-pad-b) - var(--lb-strip-h)) / 2);transform:translateY(-50%);display:flex;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:0;border-radius:999px;background:rgba(28,33,48,.82);color:#fff;cursor:pointer;z-index:3;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);transition:background var(--t-fast),opacity var(--t-fast)}
 .lb-nav:hover{background:rgba(52,59,80,.94)}
 .lb-nav:active{transform:translateY(-50%) scale(.94)}
 .lb-nav:disabled{opacity:.3;cursor:default}
 .lb-nav svg{display:block;flex-shrink:0}
 .lb-prev{left:calc(.6rem + var(--safe-l))}
 .lb-next{right:calc(.6rem + var(--safe-r))}
+/* The strip: the message's media as a row of thumbnails along the bottom, in the
+   order the arrows walk them, with the one on the stage lit and the rest dimmed
+   (see lbBuildStrip/lbMarkStrip in pickers.js). It exists exactly while the viewer
+   holds more than one item — a lone picture has nowhere to go and gets no strip —
+   and a long message scrolls sideways rather than shrinking its thumbs. */
+#lb-strip{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;height:calc(var(--lb-strip-h) + var(--safe-b));padding:.45rem calc(1rem + var(--safe-r)) calc(.45rem + var(--safe-b)) calc(1rem + var(--safe-l));overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;z-index:3;scrollbar-width:none}
+#lb-strip::-webkit-scrollbar{height:0}
+/* The track is what centres: a `justify-content:center` on the scroller itself
+   clips the first thumb off-screen the moment the row overflows, where auto
+   margins on a width:max-content child centre a short row and leave a long one
+   scrollable from its true first item. */
+#lb-strip-track{display:flex;align-items:center;gap:.5rem;flex:0 0 auto;width:max-content;margin:0 auto}
+.lb-thumb{position:relative;flex:0 0 auto;width:56px;height:56px;padding:0;border:2px solid transparent;border-radius:10px;background:rgba(12,16,32,.72);overflow:hidden;cursor:pointer;opacity:.55;transition:opacity var(--t-fast),border-color var(--t-fast),transform var(--t-fast)}
+.lb-thumb img{display:block;width:100%;height:100%;object-fit:cover}
+.lb-thumb:hover{opacity:.85}
+.lb-thumb.active{opacity:1;border-color:rgba(255,255,255,.94);transform:scale(1.14)}
+/* A clip's thumbnail says so, with the same veil + triangle the collage tile
+   uses: the frame the strip paints is a picture of a video, and a row of silent
+   pictures would not say which one is going to move. */
+.lb-thumb[data-kind="video"]::before{content:'';position:absolute;inset:0;background:rgba(4,6,11,.34);pointer-events:none}
+.lb-thumb[data-kind="video"]::after{content:'';position:absolute;left:50%;top:50%;width:0;height:0;border-left:11px solid rgba(255,255,255,.95);border-top:7px solid transparent;border-bottom:7px solid transparent;transform:translate(-32%,-50%);pointer-events:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))}
 /* The photo can be dragged down to dismiss (see closeLightbox) — the overlay
    itself follows the finger, so it gets inline transform/opacity. */
 #lightbox.dragging #lb-stage{cursor:grabbing}
@@ -4004,13 +4042,13 @@ body.story-open{overflow:hidden}
 .modal,.settings,.profile{animation:cf-rise .16s ease-out}
 #modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#profile-backdrop,#lightbox{animation:cf-fade .15s ease-out}
 #ctx-menu,#folder-menu,#picker,#usercard,#mention-pop,#emoji-pop,#chan-pop,#composer-more,#thread-composer-more{animation:cf-pop-in .13s ease-out}
-#lightbox img{animation:cf-pop-in .18s ease-out}
+#lightbox img,#lightbox-vid{animation:cf-pop-in .18s ease-out}
 #toast,#jump-present{animation:cf-rise-x .16s ease-out}
 .auth-card{animation:cf-rise .2s ease-out}
 #thread-panel,#find-panel{animation:cf-rise .16s ease-out}
 .folder-open{animation:cf-fade .14s ease-out}
 @media (prefers-reduced-motion:reduce){
-  .modal,.settings,.profile,#modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#profile-backdrop,#lightbox,#ctx-menu,#folder-menu,#picker,#usercard,#usercard.sheet,#mention-pop,#emoji-pop,#chan-pop,#composer-more,#thread-composer-more,#story-new,.sn-card,#lightbox img,#toast,#jump-present,#update-banner,.auth-card,#thread-panel,#find-panel,.folder-open{animation:none}
+  .modal,.settings,.profile,#modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#profile-backdrop,#lightbox,#ctx-menu,#folder-menu,#picker,#usercard,#usercard.sheet,#mention-pop,#emoji-pop,#chan-pop,#composer-more,#thread-composer-more,#story-new,.sn-card,#lightbox img,#lightbox-vid,#toast,#jump-present,#update-banner,.auth-card,#thread-panel,#find-panel,.folder-open{animation:none}
   .msg-actions,.reaction,.send-btn svg{transition:none}
   .rc-old,.rc-new{animation:none}
   .reaction:active,.dm-close:active{transform:none}

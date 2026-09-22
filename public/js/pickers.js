@@ -1165,6 +1165,26 @@ document.addEventListener('keydown', (e) => {
     const dl = imgEl.closest('.att-wrap')?.querySelector('.att-dl');
     openLightbox(imgEl.dataset.fbUrl || imgEl.src, dl?.getAttribute('download') || '', lbGalleryAt(imgEl)); return;
   }
+  // A CLIP in a COLLAGE. The tile is the media viewer's door, not a player (see
+  // attsBlockHTML/attVideoHTML in messages.js: a 120px square is not a player, so
+  // the tile carries no controls), and the whole tile is the target — the poster
+  // frame, and the spinner shell a clip waits behind until its frame is captured
+  // (that shell is a button of its own, whose reveal-in-place wiring skips a
+  // gallery tile for exactly this reason). A clip anywhere else keeps its own
+  // controls and plays where it sits.
+  const tileVid = e.target.closest('.msg-atts.gallery .att-slot video.att-vid, .msg-atts.gallery .att-slot .att-vid-load');
+  if (tileVid) {
+    const slot = tileVid.closest('.att-slot');
+    const sp = tileVid.closest('.att-wrap.spoiler:not(.shown)');
+    if (sp) { sp.classList.add('shown'); return; }
+    const clip = slot?.querySelector('video.att-vid');
+    const cdl = slot?.querySelector('.att-dl');
+    const csrc = (clip && (clip.dataset.fbSrc || clip.getAttribute('src'))) || '';
+    // The viewer walks the message's whole media set, this clip's place in it
+    // included (lbMediaOf), so the arrows and the strip come up around it.
+    if (csrc) openLightbox(csrc, cdl?.getAttribute('download') || '', lbGalleryAt(clip));
+    return;
+  }
   if (clEl) {
     const ch = (S.serverDetail?.channels || []).find((c) => c.id === clEl.dataset.clink);
     if (ch && S.view === 'server') {
@@ -1519,18 +1539,24 @@ $('#thread-composer').addEventListener('submit', (e) => {
 });
 
 // ---------- lightbox ----------
-// Full-screen PHOTO viewer. The Download / Close controls sit in #lb-bar, a
+// Full-screen MEDIA viewer. The Download / Close controls sit in #lb-bar, a
 // fixed safe-area bar, so a tall photo can never carry them off the top of the
 // screen. One pointer pans a zoomed photo, two pinch it, double-tap toggles
-// zoom, and dragging an unzoomed photo down dismisses the viewer (the whole
+// zoom, and dragging an unzoomed item down dismisses the viewer (the whole
 // overlay follows the finger, exactly like the story viewer).
 //
-// A picture posted with OTHERS opens on itself with an arrow on each side of the
-// screen: the arrows walk the message's PICTURES in the order the message shows
-// them (see lbMediaOf). A single picture — an embed, a bookmark's tile — has
-// nowhere to go and shows no arrows at all. A CLIP is not part of that set:
-// Discord does the same, and a video is played where it sits by its own controls
-// (play/pause, scrub, fullscreen) rather than being handed to a photo viewer.
+// A message with MORE THAN ONE media item opens on the one that was pressed, with
+// an arrow on each side of the screen AND a strip of thumbnails along the bottom;
+// both walk the same set in the order the message shows it (see lbMediaOf). A
+// single picture — an embed, a bookmark's tile — has nowhere to go: no arrows, no
+// strip.
+//
+// The set is the message's MEDIA: its pictures and its clips. A clip in a collage
+// is a tile with no controls of its own (attVideoHTML's `tile`), so THIS is where
+// it plays — full size, by its own controls, which is what "if a video is in a
+// collage, can it open in a lightbox" asked for. A clip that is NOT in a collage
+// keeps its player and plays where it sits; it is still part of a set its message
+// has one, because the strip and the arrows walk what the message shows.
 const LB_MIN = 1, LB_MAX = 6;
 // How far a sideways drag must travel before it is "the next one" rather than a
 // tap (the touch twin of the arrows).
@@ -1538,29 +1564,50 @@ const LB_SWIPE_PX = 40;
 const lb = { open: false, scale: 1, tx: 0, ty: 0, gen: 0, ptrs: new Map(), pinch: null, pan: null, swipe: null, lastTap: 0, tapX: 0, tapY: 0, items: null, index: 0 };
 function lbStage() { return $('#lb-stage'); }
 function lbImg() { return $('#lightbox-img'); }
-// The PICTURES the source message is showing, in the order it shows them. Read
-// off the DOM, so it is exactly what the message renders: a file still behind the
-// scan gate is a `.scan-block` rather than a slot, and a picture this browser
-// cannot decode has already become a file card — neither is offered, because
-// there is nothing to put on the stage. `el` is the slot it was read from, which
-// is how the tapped tile is found in the list (the url cannot do it: one message
-// can show the same picture twice). `src` is the ORIGINAL (data-fb-url), never
-// the derived preview the tile paints.
+function lbVid() { return $('#lightbox-vid'); }
+// Is the thing on the stage a CLIP right now? The zoom / pinch / pan gestures are
+// the photo's; a player has its own use for a drag and its own controls for a tap.
+function lbIsVid() { const v = lbVid(); return !!v && !v.classList.contains('hidden'); }
+// The MEDIA the source message is showing, in the order it shows it: its pictures
+// AND its clips. Read off the DOM, so it is exactly what the message renders — a
+// file the scanner removed is a `.scan-block` rather than a slot, and a picture
+// this browser cannot decode has already become a file card, so neither is offered
+// (there is nothing to put on the stage). `el` is the slot it was read from, which
+// is how the pressed tile is found in the list (the url cannot do it: one message
+// can show the same picture twice). `src` is the ORIGINAL (data-fb-url on a
+// picture, the player's own source on a clip), never the derived preview the tile
+// paints; `thumb` is the small frame the strip paints for that item — the tile's
+// own preview for a picture, a clip's poster frame for a clip (the FRAME, never
+// the clip's bytes).
 //
-// A CLIP is deliberately not in this list, which is Discord's behaviour and the
-// behaviour this viewer already had: a video is played where it sits, by its own
-// controls (play/pause, scrub, fullscreen), so there is nothing for a photo
-// viewer to walk to. The arrows are the message's picture set.
+// A clip is deliberately IN this list. A clip in a collage is a tile without
+// controls (attVideoHTML's `tile`), so the viewer is where it plays, and it is
+// something the arrows — and the strip — can walk to. A clip that is not in a
+// collage keeps its own player, and is still an item of its message's set: the
+// strip is a row of everything the message shows.
 function lbMediaOf(el) {
   const box = el && el.closest ? el.closest('.msg-atts, .pin-atts') : null;
   if (!box) return null;
   const items = [];
   for (const slot of box.querySelectorAll(':scope > .att-slot')) {
     const img = slot.querySelector('img.att-img');
-    if (!img) continue;
+    const vid = slot.querySelector('video.att-vid');
     const wrap = slot.querySelector('.att-wrap');
-    const src = img.dataset.fbUrl || img.dataset.fbOrig || img.getAttribute('src') || '';
-    if (src) items.push({ el: slot, src, name: img.dataset.fbName || (wrap && wrap.dataset.fbName) || '' });
+    const name = (img && img.dataset.fbName) || (vid && vid.dataset.fbName) || (wrap && wrap.dataset.fbName) || '';
+    if (img) {
+      const src = img.dataset.fbUrl || img.dataset.fbOrig || img.getAttribute('src') || '';
+      if (src) items.push({ el: slot, kind: 'image', src, name, thumb: img.getAttribute('src') || '' });
+      continue;
+    }
+    if (vid) {
+      const src = vid.dataset.fbSrc || vid.getAttribute('src') || (wrap && wrap.dataset.fbUrl) || '';
+      if (!src) continue;
+      // The poster the player already holds, or the frame this page captured for
+      // that url (a tile whose capture never ran because it was never near the
+      // viewport still gets a thumbnail).
+      const poster = vid.getAttribute('poster') || (typeof videoPosterFor === 'function' ? (videoPosterFor(src) || '') : '');
+      items.push({ el: slot, kind: 'video', src, name, poster, thumb: poster });
+    }
   }
   return items.length ? items : null;
 }
@@ -1603,13 +1650,78 @@ function lbReset() {
   if (root) { root.classList.remove('zoomed', 'dragging'); root.style.transform = ''; root.style.opacity = ''; root.style.transition = ''; }
 }
 // The arrows exist only while the item on screen HAS neighbours, and each one
-// goes dark at its end: a set of pictures has a first and a last, and an arrow
+// goes dark at its end: a set of media has a first and a last, and an arrow
 // that silently does nothing is worse than one that says it cannot.
 function lbPaintNav() {
   const n = lb.items ? lb.items.length : 0;
   const prev = $('#lb-prev'), next = $('#lb-next');
   if (prev) { prev.classList.toggle('hidden', n < 2); prev.disabled = lb.index - 1 < 0; }
   if (next) { next.classList.toggle('hidden', n < 2); next.disabled = lb.index + 1 > n - 1; }
+}
+// ---------- the strip ----------
+// The message's media as a row of thumbnails along the bottom of the screen: the
+// same set the arrows walk, in the same order, with the one on the stage lit and
+// the rest dimmed. A press steps straight to that item — the arrows' shortcut for
+// a message that shows ten — and the row scrolls sideways rather than shrinking
+// its thumbs. It is up exactly while the viewer holds MORE THAN ONE item, which is
+// the same condition the arrows have: a lone picture, an embed, a bookmark tile
+// has nowhere to go and gets neither.
+function lbStripTrack() { return $('#lb-strip-track'); }
+function lbThumbImg(src) {
+  const im = document.createElement('img');
+  im.src = src; im.alt = ''; im.draggable = false;
+  return im;
+}
+// One thumb's picture — and, for a CLIP, the frame that may not exist YET. A
+// poster is captured by fetching the clip's own bytes, so a tile the reader never
+// scrolled near (or one whose capture is still in flight) has no frame when the
+// viewer opens; the thumb is built as the bare veil + play triangle and filled in
+// when that frame lands, through the same one-frame-per-url cache the tile itself
+// is waiting on (`whenVideoPoster`, messages.js — this asks for the capture, it
+// never starts a second one). A picture always has its preview.
+function lbFillThumb(b, it) {
+  const src = it.thumb || it.poster || '';
+  if (src) { b.appendChild(lbThumbImg(src)); return; }
+  if (it.kind !== 'video' || typeof whenVideoPoster !== 'function') return;
+  whenVideoPoster(it.src, (shot) => {
+    if (!shot || !b.isConnected || b.querySelector('img')) return;
+    b.insertBefore(lbThumbImg(shot), b.firstChild);
+  });
+}
+function lbBuildStrip() {
+  const root = $('#lightbox'), strip = $('#lb-strip'), track = lbStripTrack();
+  if (!root || !strip || !track) return;
+  const list = lb.items || [];
+  const show = !!lb.open && list.length > 1;
+  strip.classList.toggle('hidden', !show);
+  root.classList.toggle('has-strip', show);
+  track.textContent = '';
+  if (!show) return;
+  list.forEach((it, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'lb-thumb';
+    b.dataset.lbI = String(i);
+    b.dataset.kind = it.kind === 'video' ? 'video' : 'image';
+    b.setAttribute('aria-label', (it.kind === 'video' ? 'Video' : 'Photo') + ' ' + (i + 1) + ' of ' + list.length);
+    lbFillThumb(b, it);
+    track.appendChild(b);
+  });
+}
+// Which thumb is the one on the stage — and keep it in view, so stepping through a
+// long message never walks the lit thumb off the end of the row. Called on every
+// lbShow, so the arrows, the keyboard and a press on the strip all move it.
+function lbMarkStrip() {
+  const track = lbStripTrack();
+  if (!track) return;
+  const on = track.children[lb.index];
+  for (const b of [...track.children]) {
+    const active = b === on;
+    b.classList.toggle('active', active);
+    if (active) b.setAttribute('aria-current', 'true');
+    else b.removeAttribute('aria-current');
+  }
+  if (on && on.scrollIntoView) { try { on.scrollIntoView({ block: 'nearest', inline: 'center' }); } catch {} }
 }
 // Step one item. The ends are the ends — no wrap-around, so "next" on the last
 // picture is the disabled arrow the reader can see.
@@ -1620,21 +1732,46 @@ function lbGo(delta) {
   lb.index = i;
   lbShow(lb.items[i]);
 }
-// Paint ONE picture: the stage, the corner download button (the attachment's own
-// name, so the file lands as the file it was posted as) and the arrows that say
-// where in the set this one is. Every change starts from a clean stage, so a zoom
-// can never carry over to the next picture.
+// Paint ONE item: a picture on the image, a CLIP on the player (its own controls,
+// so play/pause, scrub and fullscreen are the browser's — and it autoplays on the
+// press that opened the viewer, when the engine allows it), the corner download
+// button (the attachment's own name, so the file lands as the file it was posted
+// as), the arrows that say where in the set this one is, and the strip. Every
+// change starts from a clean stage, so a zoom can never carry over to the next
+// picture and a clip never keeps playing behind the picture that replaced it.
 function lbShow(item) {
   const it = item || {};
-  const img = lbImg();
+  const img = lbImg(), vid = lbVid();
   lbReset();
-  if (img) img.src = it.src || '';
+  const isVid = it.kind === 'video';
+  if (isVid) {
+    if (img) { img.classList.add('hidden'); img.removeAttribute('src'); }
+    if (vid) {
+      vid.classList.remove('hidden');
+      if ((vid.getAttribute('src') || '') !== (it.src || '')) vid.setAttribute('src', it.src || '');
+      try { vid.poster = it.poster || ''; } catch {}
+      // The press that opened the viewer is the gesture; an engine that still
+      // refuses (or a headless page) leaves the controls in charge, silently.
+      try { const p = vid.play(); if (p && p.catch) p.catch(() => {}); } catch {}
+    }
+  } else {
+    if (vid) {
+      try { vid.pause(); } catch {}
+      vid.classList.add('hidden');
+      vid.removeAttribute('src');
+      try { vid.load(); } catch {}
+    }
+    if (img) { img.classList.remove('hidden'); img.src = it.src || ''; }
+  }
+  const root = $('#lightbox');
+  if (root) root.classList.toggle('vid', isVid);
   const dl = $('#lightbox-dl');
   if (dl) {
     if (it.src && it.name) { dl.href = it.src; dl.setAttribute('download', it.name); dl.classList.remove('hidden'); }
     else { dl.removeAttribute('href'); dl.classList.add('hidden'); }
   }
   lbPaintNav();
+  lbMarkStrip();
 }
 function closeLightbox() {
   const root = $('#lightbox');
@@ -1644,16 +1781,27 @@ function closeLightbox() {
   root.classList.add('hidden');
   const img = lbImg();
   if (img) img.removeAttribute('src');
+  const vid = lbVid();
+  if (vid) {
+    // A clip that kept playing after the viewer closed would be sound with no
+    // picture attached to it.
+    try { vid.pause(); } catch {}
+    vid.classList.add('hidden');
+    vid.removeAttribute('src');
+    try { vid.load(); } catch {}
+  }
+  root.classList.remove('vid');
   $('#lightbox-dl')?.classList.add('hidden');
   lb.items = null; lb.index = 0;
   lbPaintNav();
+  lbBuildStrip();
   lbReset();
 }
-// `gallery` (optional) is what lbGalleryAt answered: the message's pictures in
-// order, and where in them the one that was tapped sits. With it, the viewer
-// opens on THAT picture and the side arrows walk the rest; with more than one
-// picture the arrows appear, and with a single one (or none: an embed, a bookmark
-// tile) there is exactly one thing to see and no arrows at all.
+// `gallery` (optional) is what lbGalleryAt answered: the message's media in order,
+// and where in them the one that was pressed sits. With it, the viewer opens on
+// THAT item and the side arrows (and the strip) walk the rest; with more than one
+// item they appear, and with a single one (or none: an embed, a bookmark tile)
+// there is exactly one thing to see and neither.
 function openLightbox(src, name, gallery) {
   const root = $('#lightbox');
   const img = lbImg();
@@ -1666,6 +1814,7 @@ function openLightbox(src, name, gallery) {
   lb.index = first;
   lb.open = true;
   root.classList.remove('hidden');
+  lbBuildStrip();
   lbShow(list ? list[first] : { src: src || '', name: name || '' });
 }
 // Zoom about a point given in stage-centre coordinates (the same convention as
@@ -1681,7 +1830,7 @@ function lbZoomAt(scale, mx, my) {
 }
 function lbToggleZoom(cx, cy) {
   const stage = lbStage();
-  if (!stage) return;
+  if (!stage || lbIsVid()) return;
   if (lb.scale > 1.001) { lb.scale = 1; lb.tx = 0; lb.ty = 0; lbApply(true); return; }
   const r = stage.getBoundingClientRect();
   const mx = cx - (r.left + r.width / 2), my = cy - (r.top + r.height / 2);
@@ -1700,14 +1849,20 @@ function lbSlideOut() {
 }
 $('#lightbox')?.addEventListener('pointerdown', (e) => {
   if (!lb.open) return;
-  if (e.target.closest('#lb-bar, .lb-nav')) return; // the buttons own their own clicks
+  // The bar, the arrows and the strip own their own presses: the gesture handlers
+  // (and the tap-the-backdrop-to-close rule) must never see them.
+  if (e.target.closest('#lb-bar, .lb-nav, #lb-strip')) return;
   lb.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (lb.ptrs.size === 2) {
+    lb.pan = null; lb.swipe = null;
+    // A playing clip is not pinched: the two-finger gesture is the player's own
+    // (iOS hands it to fullscreen), and a photo pinch over it would zoom a picture
+    // that is not on the stage.
+    if (lbIsVid()) return;
     const [a, b] = [...lb.ptrs.values()];
     const r = lbStage().getBoundingClientRect();
     const c = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     lb.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, scale: lb.scale, tx: lb.tx, ty: lb.ty, mx: c.x - (r.left + r.width / 2), my: c.y - (r.top + r.height / 2) };
-    lb.pan = null; lb.swipe = null;
   } else if (lb.ptrs.size === 1) {
     if (lb.scale > 1.001) lb.pan = { x: e.clientX, y: e.clientY, tx: lb.tx, ty: lb.ty, moved: false };
     else lb.swipe = { x: e.clientX, y: e.clientY, t0: Date.now(), dy: 0, moved: false };
@@ -1794,7 +1949,10 @@ function lbPointerUp(e) {
   if (swipe && Math.abs(swipe.dx || 0) > LB_SWIPE_PX) { lbGo(swipe.dx < 0 ? 1 : -1); return; }
   // A tap on the photo toggles the zoom. Mouse and pen get it on the first
   // click (click to zoom in, click again to zoom out); touch keeps double-tap
-  // so a stray single tap never jumps the zoom. A tap on the backdrop closes.
+  // so a stray single tap never jumps the zoom. A tap on the backdrop closes —
+  // but a tap on the PLAYER (or on its own controls, whose events the browser
+  // retargets at the element) is the player's, and closing the viewer out from
+  // under a pause button would be the worst possible answer to it.
   if (target === lbImg()) {
     if (e.pointerType === 'touch') {
       const now = Date.now();
@@ -1806,13 +1964,15 @@ function lbPointerUp(e) {
     }
     return;
   }
+  const vid = lbVid();
+  if (vid && !vid.classList.contains('hidden') && (target === vid || (vid.contains && vid.contains(target)))) return;
   closeLightbox();
 }
 window.addEventListener('pointerup', lbPointerUp);
 window.addEventListener('pointercancel', lbPointerUp);
-// Trackpad pinch arrives as ctrl+wheel on desktop.
+// Trackpad pinch arrives as ctrl+wheel on desktop (the photo's gesture only).
 $('#lightbox')?.addEventListener('wheel', (e) => {
-  if (!lb.open || !e.ctrlKey) return;
+  if (!lb.open || !e.ctrlKey || lbIsVid()) return;
   e.preventDefault();
   const r = lbStage().getBoundingClientRect();
   lbZoomAt(lb.scale * (1 - e.deltaY / 240), e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
@@ -1831,6 +1991,19 @@ $('#lightbox-dl')?.addEventListener('click', (e) => {
 // click that follows steps the gallery, without closing the viewer.
 $('#lb-prev')?.addEventListener('click', (e) => { e.stopPropagation(); lbGo(-1); });
 $('#lb-next')?.addEventListener('click', (e) => { e.stopPropagation(); lbGo(1); });
+// The strip's own thumbs, on the same terms: a press over them never reaches the
+// stage (see the pointerdown guard), and the click that follows steps straight to
+// that item. A press on the one already on the stage does nothing — there is
+// nowhere to go, and re-painting it would restart a clip.
+$('#lb-strip')?.addEventListener('click', (e) => {
+  const b = e.target && e.target.closest ? e.target.closest('.lb-thumb') : null;
+  if (!b || !lb.open || !lb.items) return;
+  e.stopPropagation();
+  const i = Number(b.dataset.lbI);
+  if (!(i >= 0) || i === lb.index || i > lb.items.length - 1) return;
+  lb.index = i;
+  lbShow(lb.items[i]);
+});
 // …and their desktop twin: the arrow keys, while the viewer is up. A field
 // keeps its own left/right (nothing opens one behind the lightbox, but the
 // rule costs nothing and a stray keypress must never jump the page).

@@ -196,6 +196,11 @@ window.__grid = function (i) {
         // is drawn right now (none while the clip plays).
         vid: !!vid,
         vidFit: vid ? getComputedStyle(vid).objectFit : '',
+        // A collage tile is the media viewer's door, not a player: attVideoHTML
+        // builds it WITHOUT native controls (see the lightbox test), because a
+        // control strip inside a 120px square owns most of the tile and pressing
+        // play there would show a crop of the clip.
+        controls: vid ? vid.hasAttribute('controls') : null,
         vidW: vb ? +vb.width.toFixed(1) : 0,
         vidH: vb ? +vb.height.toFixed(1) : 0,
         badgeContent: wrap ? getComputedStyle(wrap, '::after').content : '',
@@ -215,14 +220,27 @@ window.__play = function (i, t) {
   vid.dispatchEvent(new Event('play'));
   return true;
 };
-// What the pending -> final patch does to ONE attachment where it stands: the
-// renderer's own body markup, dropped into the tile it belongs to.
+// What the republish patch does to ONE attachment where it stands: the renderer's
+// own body markup, dropped into the tile it belongs to — with the SAME tile flag
+// the patch path reads off the element it is replacing (patchVideoNode).
 window.__repatch = function (i) {
   const g = document.querySelectorAll('.case')[i].querySelector('.msg-atts');
   const slot = g.querySelector('.att-slot');
   const a = CASES[i].atts[0];
-  slot.innerHTML = attachmentBodyHTML(a, { live: false });
+  const tile = !!slot.closest('.msg-atts.gallery');
+  slot.innerHTML = attachmentBodyHTML(a, tile ? { live: false, tile: true } : { live: false });
   slot.querySelectorAll('img.att-img').forEach((im) => wireAttImage(im));
+  return true;
+};
+// …and what it does to a CLIP tile: patchVideoNode rebuilds the WRAP with
+// attVideoHTML and the tile flag read off the element it is replacing.
+window.__repatchVid = function (i, t) {
+  const g = document.querySelectorAll('.case')[i].querySelector('.msg-atts');
+  const wrap = g.children[t].querySelector('.att-wrap');
+  const a = CASES[i].atts[t];
+  const box = document.createElement('span');
+  box.innerHTML = attVideoHTML(Object.assign({}, a, { scan: 'clean' }), { live: false, tile: !!wrap.closest('.msg-atts.gallery') });
+  wrap.replaceWith(box.firstElementChild);
   return true;
 };
 </script></body></html>`;
@@ -300,13 +318,22 @@ async function main() {
   check(/inner \+= attsBlockHTML\(m\.attachments\);/.test(messages), 'and that is what msgHTML paints');
   check(/function attsCollage\(atts\) \{\s*return atts\.length > 1 && atts\.every\(\(a\) => !!a && \(a\.kind === 'image' \|\| a\.kind === 'video'\)\);\s*\}/.test(messages),
     'a gallery needs MORE THAN ONE attachment and every one a picture OR a clip (reported: one video dropped the whole collage)');
-  check(/const cls = 'msg-atts' \+ \(attsCollage\(atts\) \? ' gallery g' \+ Math\.min\(atts\.length, 11\) : ''\);/.test(messages),
+  check(/const gallery = attsCollage\(atts\);\s*\n\s*const cls = 'msg-atts' \+ \(gallery \? ' gallery g' \+ Math\.min\(atts\.length, 11\) : ''\);/.test(messages),
     'the count rides the container as g2…g10 — plus one class past them, so an over-cap list still lands on a grid');
   check(/attsEl\.innerHTML = atts\.map\(attachmentHTML\)\.join\(''\);/.test(pins),
     'the pinned-message panel keeps its own stacked rendering (a narrow list, not a gallery)');
   check(/wireVideoPlayState\(v\)/.test(messages) && /v\.addEventListener\('play', on\)/.test(messages)
     && !/classList\.toggle\('vid-playing', !v\.paused\)/.test(messages),
     'a clip marks its tile from the EVENTS a player fires — never by reading `paused`, which a test cannot drive');
+  // A tile is the media viewer's DOOR (reported: "if a video is in a collage, can
+  // it open in a lightbox"): it carries no controls of its own, and it is built
+  // that way by the one place that knows it is a tile.
+  check(/\$\{tile \? '' : ' controls'\}/.test(messages) && /const tile = !!\(opts && opts\.tile\);/.test(messages),
+    'a collage tile is built WITHOUT native controls (attVideoHTML), so the tile is not a player');
+  check(/atts\.map\(\(a\) => attachmentHTML\(a, gallery \? \{ tile: true \} : undefined\)\)/.test(messages),
+    'every attachment of a collage block is built as a tile, and a block that is not a collage is not');
+  check(/tile: !!\(oldEl\.closest && oldEl\.closest\('\.msg-atts\.gallery'\)\)/.test(messages),
+    'and a clip republished in place is rebuilt as the same kind of clip it replaced');
 
   console.log('\n[1] the stylesheet, in an order that works');
   check(/\.msg-atts\.gallery\{display:grid;grid-auto-flow:dense;gap:4px;width:min\(420px,100%\);grid-template-columns:repeat\(2,1fr\)\}/.test(css),
@@ -462,11 +489,17 @@ async function main() {
     check(clipTile.vidFit === 'cover' && Math.abs(clipTile.vidW - clipTile.w) <= 1 && Math.abs(clipTile.vidH - clipTile.h) <= 1,
       'and the player fills it — the contact-sheet crop while it is a still',
       { fit: clipTile.vidFit, vid: clipTile.vidW + '×' + clipTile.vidH, tile: clipTile.w + '×' + clipTile.h });
+    check(clipTile.controls === false && pair.tiles[0].controls === null,
+      'the tile carries no native controls (it is the viewer\'s door) and the photo beside it has no player at all',
+      { clip: clipTile.controls, photo: pair.tiles[0].controls });
     check(clipTile.badgeContent === '""' && clipTile.badgeDisplay !== 'none' && clipTile.badgeW === '14px'
       && pair.tiles[0].badgeContent === 'none',
       'the tile says it is a clip (veil + play triangle) and the photo beside it does not',
       { clip: clipTile.badgeContent + '/' + clipTile.badgeDisplay + '/' + clipTile.badgeW, photo: pair.tiles[0].badgeContent });
     check(!clipTile.wrapCls.includes('vid-playing'), 'nothing is playing yet', clipTile.wrapCls);
+    // The tile is a door now, so this state is driven programmatically — the rule
+    // itself is still the one that matters: a clip that IS playing is never shown
+    // as a crop.
     check((await evaluate(`window.__play(${IX.withClip}, 1)`)) === true, 'pressing play on the clip');
     const played = (await evaluate(`window.__grid(${IX.withClip})`)).tiles[1];
     check(played.wrapCls.includes('vid-playing') && played.vidFit === 'contain',
@@ -510,6 +543,15 @@ async function main() {
     check(Math.abs(t1.w - t1.h) <= 1 && t1.fit === 'cover',
       'and the rebuilt tile is still the same square, with its photo still cropped to it',
       { w: t1.w, h: t1.h, fit: t1.fit });
+    // The same patch landing on a CLIP: the replacement must still be a tile (no
+    // controls, the square crop), not a full player dropped into a 120px cell.
+    await evaluate(`window.__repatchVid(${IX.withClip}, 1)`);
+    const afterVid = await evaluate(`window.__grid(${IX.withClip})`);
+    const rv = afterVid.tiles[1];
+    check(rv.vid === true && rv.controls === false && rv.vidFit === 'cover' && Math.abs(rv.w - rv.h) <= 1,
+      'and a republished clip comes back as a tile, never as a control strip in a square',
+      { controls: rv.controls, fit: rv.vidFit, tile: rv.w + '×' + rv.h });
+    check(gridIsFull(afterVid), 'with the block still full after the clip was replaced', afterVid.tiles);
 
     console.log('\n[5] a phone: the same arrangement, scaled to the column');
     await sess('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true });

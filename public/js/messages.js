@@ -320,7 +320,7 @@ function attMeta(a, kind) {
     + ` data-fb-name="${esc((a && a.name) || '')}" data-fb-kind="${esc(k)}" data-fb-size="${esc((a && a.size) || 0)}"`
     + ` data-fb-scan="${esc((a && a.scan) || 'clean')}"`;
 }
-function attachmentHTML(a) {
+function attachmentHTML(a, opts) {
   // One virus-scan state is rendered, and it is the only one the server can
   // report about a file that is still readable: an infected one, greyed out with
   // no preview and no download link anywhere. There is deliberately no
@@ -328,7 +328,7 @@ function attachmentHTML(a) {
   // virus-scan.js), a verdict is a background judgement that can only take bytes
   // away, and the client is never told about one in flight.
   if (a.scan === 'infected') return `<div class="scan-block infected"${attMeta(a)}><span class="scan-ic">${SCAN_SHIELD_SVG}</span><span class="scan-tx"><b>${esc(a.name)}</b><span>Virus detected — this file was removed and can't be downloaded.</span></span></div>`;
-  return `<span class="att-slot" data-att-slot="${esc(a.id || '')}">${attachmentBodyHTML(a)}</span>`;
+  return `<span class="att-slot" data-att-slot="${esc(a.id || '')}">${attachmentBodyHTML(a, opts)}</span>`;
 }
 // The attachment itself, whatever shape it takes. Split out so the suspicious
 // marker can precede every one of them without four copies of the call.
@@ -383,12 +383,20 @@ function attachmentBodyHTML(a, opts) {
 // yet (another device, a reload, the capture still in flight) is parked behind
 // the spinner shell until `requestVideoPoster` has one. data-fb-src is the
 // published source the element receives the moment the verdict lands.
+//
+// `opts.tile` is the COLLAGE case (see attsBlockHTML): a 120px square in a grid is
+// not a player — the browser's control strip would own most of it, and pressing
+// play there would show a crop of the clip — so the tile carries no controls and
+// the tile's own veil + play badge is the affordance (styles.css). A press on it
+// opens the media viewer, which is where the clip actually plays (pickers.js).
+// Every other clip keeps its controls and plays where it sits.
 function attVideoHTML(a, opts) {
   const d = attDimsFor(a);
   const ar = d ? (d.w / d.h) : 0;
   const style = ar ? ` style="--att-ar:${ar.toFixed(4)}"` : '';
   const poster = (!opts || opts.live !== false) ? attPickedFrame(a) : '';
-  return `<span class="att-wrap${poster ? '' : ' loading'}${a.spoiler ? ' spoiler' : ''}${ar ? ' ar' : ' no-ar'}"${style}${attMeta(a, 'video')}><video class="att-vid" draggable="false" src="${esc(a.url)}" data-fb-src="${esc(a.url)}" controls preload="metadata" playsinline${poster ? ` poster="${esc(poster)}"` : ''}></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+  const tile = !!(opts && opts.tile);
+  return `<span class="att-wrap${poster ? '' : ' loading'}${a.spoiler ? ' spoiler' : ''}${ar ? ' ar' : ' no-ar'}"${style}${attMeta(a, 'video')}><video class="att-vid" draggable="false" src="${esc(a.url)}" data-fb-src="${esc(a.url)}"${tile ? '' : ' controls'} preload="metadata" playsinline${poster ? ` poster="${esc(poster)}"` : ''}></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
 }
 // The still FRAME this page already holds for a clip, as the poster to paint it
 // with — the upload path files the frame the upload card captured under the
@@ -459,22 +467,29 @@ function attFileCardHTML(a) {
 // dropped the whole collage and went back to full-width stacking, because one tile
 // in the set was a player). A clip HAS a poster frame like any other media, so its
 // tile is a contact-sheet square too — cover-cropped while it is a still, and
-// lifted to the whole frame (`vid-playing`, styles.css) the moment it plays, so
-// watching a clip never means watching a crop of it while the grid holds its
-// shape. A voice note, a plain file or a text preview still takes the whole block
-// back to the full-width rendering: a 120px square is not a player, a document or
-// a code box.
+// lifted to the whole frame (`vid-playing`, styles.css) if it is ever playing, so
+// the grid holds its shape either way. It does NOT play in the tile, though: a tile
+// is the media viewer's door (reported: "if a video is in a collage, can it open in
+// a lightbox"), built with `{tile:true}` so it carries no native controls — the
+// viewer is where a collage clip plays, at full size, with the arrows and the
+// thumbnail strip around it. A voice note, a plain file or a text preview still
+// takes the whole block back to the full-width rendering: a 120px square is not a
+// player, a document or a code box.
 //
 // The count rides the container as a class (g2…g10, and g11 for anything past the
 // cap — the class picks the column count, it is not a promise about how many tiles
 // there are).
+//
+// Every tile is built with `{tile:true}`, and the one thing that changes is a
+// CLIP's own markup (see attVideoHTML): inside a collage a clip is not a player.
 function attsCollage(atts) {
   return atts.length > 1 && atts.every((a) => !!a && (a.kind === 'image' || a.kind === 'video'));
 }
 function attsBlockHTML(list) {
   const atts = Array.isArray(list) ? list : [];
-  const cls = 'msg-atts' + (attsCollage(atts) ? ' gallery g' + Math.min(atts.length, 11) : '');
-  return '<div class="' + cls + '">' + atts.map(attachmentHTML).join('') + '</div>';
+  const gallery = attsCollage(atts);
+  const cls = 'msg-atts' + (gallery ? ' gallery g' + Math.min(atts.length, 11) : '');
+  return '<div class="' + cls + '">' + atts.map((a) => attachmentHTML(a, gallery ? { tile: true } : undefined)).join('') + '</div>';
 }
 // ---------- the handover: a republished file, patched in place ----------
 // The compressor republishes a file it settles under a new key (see
@@ -757,7 +772,10 @@ function patchVideoNode(oldEl, a) {
     return true;
   }
   const box = document.createElement('span');
-  box.innerHTML = attVideoHTML(Object.assign({}, a, { scan: 'clean' }), { live: false });
+  // The replacement has to be the SAME KIND of clip it is replacing: a collage
+  // tile is built without controls (attVideoHTML's `tile`), and a republish that
+  // handed it a full player would grow a control strip inside a 120px square.
+  box.innerHTML = attVideoHTML(Object.assign({}, a, { scan: 'clean' }), { live: false, tile: !!(oldEl.closest && oldEl.closest('.msg-atts.gallery')) });
   const wrap = box.firstElementChild;
   const nextVid = wrap && wrap.querySelector('video.att-vid');
   if (!nextVid) return false;
@@ -905,6 +923,11 @@ function wireVideoLoader(v) {
   const load = wrap && wrap.querySelector('.att-vid-load');
   if (!load) return;
   v.dataset.loadWired = '1';
+  // A COLLAGE tile has no player to reveal: its shell is the viewer's door, and the
+  // press that would have revealed the element opens the media viewer instead (see
+  // the delegated click handler in pickers.js). Wiring the reveal here would play
+  // the clip inside the 120px tile behind the viewer opening over it.
+  if (v.closest && v.closest('.msg-atts.gallery')) return;
   load.addEventListener('click', (e) => {
     if (e && e.preventDefault) e.preventDefault();
     revealVideoShell(v);

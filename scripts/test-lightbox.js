@@ -1,4 +1,5 @@
-// Lightbox: reachable controls, zoom, swipe-down dismissal, gallery arrows.
+// Lightbox: reachable controls, zoom, swipe-down dismissal, gallery arrows,
+// clips and the thumbnail strip.
 //
 // The complaint: on a phone the photo viewer's Download/Close controls sat at
 // the very top of a tall photo and could end up off-screen ("way up past the
@@ -17,14 +18,17 @@
 //   - a tap on the backdrop (and the Close button) closes, a tap on the photo
 //     does not, and tapping Download does not;
 //   - closing and reopening resets the zoom;
-//   - a picture posted with others opens with a back and a next arrow on either
-//     side of the screen, the arrows (and the arrow keys, and a sideways swipe)
-//     walk the message's PICTURES in order, each end disables its arrow, and a
-//     lone picture shows no arrows at all;
-//   - a CLIP beside those pictures is not in that set, and there is no video
-//     stage in the viewer and no chip on a clip pretending to open one — the
-//     behaviour Discord has, where a video plays where it sits by its own
-//     controls.
+//   - a message with more than one MEDIA item opens with a back and a next arrow
+//     on either side of the screen — the arrows (and the arrow keys, and a
+//     sideways swipe) walk the message's media in order, each end disables its
+//     arrow, and a lone item shows no arrows at all;
+//   - the strip: one thumb per item along the bottom, the one on the stage lit,
+//     a clip's thumb marked as a clip, a press on a thumb stepping straight to
+//     that item — and no strip at all when there is only one item to see;
+//   - a CLIP is part of the set ("if a video is in a collage, can it open in a
+//     lightbox"): the collage tile is the door (no controls of its own) and the
+//     player on the stage is where it plays, with its own controls and the
+//     corner download button, while a photo keeps the zoom gestures.
 //
 // Usage: node scripts/test-lightbox.js
 
@@ -90,18 +94,34 @@ function toast() {}
 ${lbBlock}
 window.__open = openLightbox;
 window.__close = closeLightbox;
-window.__state = () => ({
-  hidden: document.getElementById('lightbox').classList.contains('hidden'),
-  scale: lb.scale, tx: lb.tx, ty: lb.ty,
-  img: document.getElementById('lightbox-img').getAttribute('src') || '',
-  dl: document.getElementById('lightbox-dl').getAttribute('href') || '',
-  dlName: document.getElementById('lightbox-dl').getAttribute('download') || '',
-  prevHidden: document.getElementById('lb-prev').classList.contains('hidden'),
-  nextHidden: document.getElementById('lb-next').classList.contains('hidden'),
-  prevOff: document.getElementById('lb-prev').disabled,
-  nextOff: document.getElementById('lb-next').disabled,
-  index: lb.index, n: lb.items ? lb.items.length : 0,
-});
+window.__state = () => {
+  const root = document.getElementById('lightbox');
+  const strip = document.getElementById('lb-strip');
+  const v = document.getElementById('lightbox-vid');
+  const thumbs = [...document.getElementById('lb-strip-track').children];
+  return {
+    hidden: root.classList.contains('hidden'),
+    scale: lb.scale, tx: lb.tx, ty: lb.ty,
+    img: document.getElementById('lightbox-img').getAttribute('src') || '',
+    imgHidden: document.getElementById('lightbox-img').classList.contains('hidden'),
+    vid: v.getAttribute('src') || '',
+    vidHidden: v.classList.contains('hidden'),
+    kind: lb.items && lb.items[lb.index] ? (lb.items[lb.index].kind || 'image') : (v.classList.contains('hidden') ? 'image' : 'video'),
+    dl: document.getElementById('lightbox-dl').getAttribute('href') || '',
+    dlName: document.getElementById('lightbox-dl').getAttribute('download') || '',
+    prevHidden: document.getElementById('lb-prev').classList.contains('hidden'),
+    nextHidden: document.getElementById('lb-next').classList.contains('hidden'),
+    prevOff: document.getElementById('lb-prev').disabled,
+    nextOff: document.getElementById('lb-next').disabled,
+    index: lb.index, n: lb.items ? lb.items.length : 0,
+    hasStrip: root.classList.contains('has-strip'),
+    stripHidden: strip.classList.contains('hidden'),
+    stripN: thumbs.length,
+    stripKinds: thumbs.map((b) => b.dataset.kind),
+    stripActive: thumbs.findIndex((b) => b.classList.contains('active')),
+    stripThumbs: thumbs.map((b) => { const im = b.querySelector('img'); return im ? (im.getAttribute('src') || '') : ''; }),
+  };
+};
 const pev = (type, id, x, y, target, pointerType) => {
   const el = target || document.elementFromPoint(x, y) || document.body;
   el.dispatchEvent(new PointerEvent(type, { pointerId: id, clientX: x, clientY: y, bubbles: true, cancelable: true, pointerType: pointerType || 'touch', isPrimary: true }));
@@ -131,9 +151,20 @@ window.__thumb = (i) => 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xm
 window.__picSlot = (i) => '<span class="att-slot"><span class="att-wrap" data-fb-name="p' + i + '.png" data-fb-url="' + __pic(i) + '">'
   + '<img class="att-img" src="' + __thumb(i) + '" data-fb-url="' + __pic(i) + '" data-fb-name="p' + i + '.png" />'
   + '<a class="att-dl" href="' + __pic(i) + '" download="p' + i + '.png"></a></span></span>';
-window.__clipSlot = () => '<span class="att-slot"><span class="att-wrap" data-fb-name="clip.mp4" data-fb-url="/clip.mp4">'
-  + '<video class="att-vid" src="/clip.mp4" data-fb-src="/clip.mp4"></video>'
+window.__clipSlot = (bare) => '<span class="att-slot"><span class="att-wrap" data-fb-name="clip.mp4" data-fb-url="/clip.mp4">'
+  + '<video class="att-vid" src="/clip.mp4" data-fb-src="/clip.mp4" data-fb-name="clip.mp4"' + (bare ? '' : ' poster="' + __thumb(9) + '"') + '></video>'
   + '<a class="att-dl" href="/clip.mp4" download="clip.mp4"></a></span></span>';
+// The page's one-frame-per-url cache, as messages.js serves it: the lightbox asks
+// for a clip's frame through this (lbFillThumb), and the answer can arrive after
+// the strip is already up.
+function whenVideoPoster(url, cb) { window.__posterWaiters.push([url, cb]); }
+window.__posterWaiters = [];
+window.__posterLand = (shot) => {
+  const w = window.__posterWaiters.shift();
+  if (!w) return false;
+  w[1](shot);
+  return true;
+};
 window.__gallery = (name, n) => {
   const box = document.createElement('div');
   box.className = 'msg-atts';
@@ -147,11 +178,11 @@ window.__gallery = (name, n) => {
 // A message of pictures AND a clip: the clip is not a picture, so the arrows walk
 // the pictures and never land on the player (Discord does the same — a video
 // plays where it sits, by its own controls).
-window.__galleryWithClip = (name, pics) => {
+window.__galleryWithClip = (name, pics, bareClip) => {
   const box = document.createElement('div');
   box.className = 'msg-atts';
   box.id = name;
-  let html = __picSlot(0) + __clipSlot();
+  let html = __picSlot(0) + __clipSlot(bareClip);
   for (let i = 1; i < pics; i++) html += __picSlot(i);
   box.innerHTML = html;
   document.body.appendChild(box);
@@ -168,6 +199,19 @@ window.__clickMedia = (el) => {
   openLightbox(el.dataset.fbUrl || el.src, dl?.getAttribute('download') || '', g);
   return true;
 };
+// …and the clip's entry point, which is the OTHER branch of that handler: the
+// whole tile is the target (the poster frame, and the shell a clip waits behind
+// until its frame has been captured), and the viewer walks the message's whole
+// media set with this clip's place in it.
+window.__clickClip = (el) => {
+  const slot = el && el.closest ? el.closest('.att-slot') : null;
+  const vid = slot && slot.querySelector('video.att-vid');
+  const src = (vid && (vid.dataset.fbSrc || vid.getAttribute('src'))) || '';
+  if (!src) return false;
+  const dl = slot.querySelector('.att-dl');
+  openLightbox(src, dl?.getAttribute('download') || '', lbGalleryAt(vid));
+  return true;
+};
 // Click the i-th thing matching sel inside the block called name.
 window.__slotIn = (name, sel, i) => {
   const box = document.getElementById(name);
@@ -175,6 +219,14 @@ window.__slotIn = (name, sel, i) => {
   return list[i || 0] || null;
 };
 window.__clickIn = (name, sel, i) => __clickMedia(__slotIn(name, sel, i));
+window.__clickClipIn = (name, i) => __clickClip(__slotIn(name, 'video.att-vid', i));
+// Press the i-th thumb of the strip, as a reader would.
+window.__stripPress = (i) => {
+  const b = document.querySelectorAll('#lb-strip-track .lb-thumb')[i];
+  if (!b) return false;
+  b.click();
+  return true;
+};
 window.__pinch = (x1, y1, x2, y2, spread) => {
   pev('pointerdown', 1, x1, y1); pev('pointerdown', 2, x2, y2);
   const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
@@ -195,12 +247,16 @@ window.__geo = () => {
     vw: innerWidth, vh: innerHeight,
     bar: __box('#lb-bar'), dl: __box('#lightbox-dl'), close: __box('#lightbox-close'), stage: __box('#lb-stage'),
     prev: __box('#lb-prev'), next: __box('#lb-next'),
+    strip: __box('#lb-strip'), thumb: __box('#lb-strip-track .lb-thumb'),
     img: { l:+rimg.left.toFixed(1), t:+rimg.top.toFixed(1), r:+rimg.right.toFixed(1), b:+rimg.bottom.toFixed(1) },
+    vid: (() => { const v = $('#lightbox-vid'); const r = v.getBoundingClientRect(); return { l:+r.left.toFixed(1), t:+r.top.toFixed(1), r:+r.right.toFixed(1), b:+r.bottom.toFixed(1), hidden: v.classList.contains('hidden') }; })(),
     lbTouch: getComputedStyle(l).touchAction, barTop: getComputedStyle($('#lb-bar')).top,
+    stripTrackMargin: getComputedStyle($('#lb-strip-track')).marginLeft,
     hitDl: hit('#lightbox-dl'),
     hitClose: hit('#lightbox-close'),
     hitPrev: hit('#lb-prev'),
     hitNext: hit('#lb-next'),
+    hitThumb: hit('#lb-strip-track .lb-thumb'),
     style: { transform: img.style.transform, rootTransform: l.style.transform, rootOpacity: l.style.opacity },
   };
 };
@@ -277,20 +333,60 @@ function staticChecks() {
   // safe-area inset.
   check(!/#lightbox-dl\{position:absolute;top:1rem;right:1rem/.test(css), 'the old unsafetied corner anchor is gone');
 
-  console.log('\n[2] a gallery of pictures gets an arrow on each side of the screen');
+  console.log('\n[2] media with neighbours gets an arrow on each side of the screen');
   check(/id="lb-prev"/.test(index) && /id="lb-next"/.test(index), 'the overlay carries a back and a next arrow');
-  check(/\.lb-nav\{position:absolute;top:50%;transform:translateY\(-50%\)/.test(css), 'each arrow is vertically centred on its side of the screen');
+  check(/\.lb-nav\{position:absolute;top:calc\(\(var\(--lb-pad-t\) \+ 100% - var\(--lb-pad-b\) - var\(--lb-strip-h\)\) \/ 2\);transform:translateY\(-50%\)/.test(css), 'each arrow is centred on the media\'s own line (the stage\'s content box, strip included)');
   check(/\.lb-prev\{left:calc\(\.6rem \+ var\(--safe-l\)\)\}/.test(css) && /\.lb-next\{right:calc\(\.6rem \+ var\(--safe-r\)\)\}/.test(css), 'and held inside the safe-area insets');
   check(/\.lb-nav:disabled\{opacity:\.3;cursor:default\}/.test(css), 'the arrow at the end of the set goes dark rather than vanishing');
-  check(/function lbMediaOf\(/.test(pickers) && /function lbGalleryAt\(/.test(pickers), 'the gallery is the message\'s own attachments, in order');
-  check(/openLightbox\(imgEl\.dataset\.fbUrl \|\| imgEl\.src, dl\?\.getAttribute\('download'\) \|\| '', lbGalleryAt\(imgEl\)\)/.test(pickers), 'a picture click hands the viewer that gallery');
-  // Discord's viewer is the PHOTO viewer and this one is too: a clip's own
-  // controls own a tap on it, it plays where it sits, and it is deliberately not
-  // in the set the arrows walk. Pinned as an absence so re-adding a video stage
-  // (or a chip that opens the viewer from a clip) has to be a decision.
-  check(!/lightbox-vid/.test(index) && !/lightbox-vid/.test(css) && !/lbVid/.test(pickers), 'there is no video stage in the photo viewer');
-  check(!/att-expand/.test(messages) && !/att-expand/.test(css) && !/att-expand/.test(pickers), 'and no chip on a clip pretending to open one');
-  check(/for \(const slot of box\.querySelectorAll\(':scope > \.att-slot'\)\) \{\s*\n\s*const img = slot\.querySelector\('img\.att-img'\);\s*\n\s*if \(!img\) continue;/.test(pickers), 'lbMediaOf takes the pictures and skips everything else');
+  check(/function lbMediaOf\(/.test(pickers) && /function lbGalleryAt\(/.test(pickers), 'the set is the message\'s own media, in order');
+  check(/openLightbox\(imgEl\.dataset\.fbUrl \|\| imgEl\.src, dl\?\.getAttribute\('download'\) \|\| '', lbGalleryAt\(imgEl\)\)/.test(pickers), 'a picture click hands the viewer that set');
+  check(/if \(img\) \{\s*\n\s*const src = img\.dataset\.fbUrl \|\| img\.dataset\.fbOrig \|\| img\.getAttribute\('src'\) \|\| '';\s*\n\s*if \(src\) items\.push\(\{ el: slot, kind: 'image'/.test(pickers)
+    && /if \(vid\) \{\s*\n\s*const src = vid\.dataset\.fbSrc \|\| vid\.getAttribute\('src'\)/.test(pickers),
+    'lbMediaOf takes the PICTURES and the CLIPS off the DOM — one item per .att-slot, in the order the message renders them');
+
+  console.log('\n[2b] a collage clip is a door into the viewer, and the viewer plays it');
+  check(/id="lightbox-vid"/.test(index) && /#lightbox-vid\{max-width:100%;max-height:100%/.test(css),
+    'the stage carries a player of its own');
+  check(/\.msg-atts\.gallery \.att-slot video\.att-vid, \.msg-atts\.gallery \.att-slot \.att-vid-load/.test(pickers),
+    'and a press on a COLLAGE clip — its poster frame, or the shell it waits behind — opens it');
+  check(/\$\{tile \? '' : ' controls'\}/.test(messages) && /const tile = !!\(opts && opts\.tile\);/.test(messages),
+    'a collage tile is built without native controls: the 120px square is not a player (attVideoHTML)');
+  check(/atts\.map\(\(a\) => attachmentHTML\(a, gallery \? \{ tile: true \} : undefined\)\)/.test(messages),
+    'and every tile of a collage is built that way');
+  check(/if \(v\.closest && v\.closest\('\.msg-atts\.gallery'\)\) return;/.test(messages),
+    'the tile shell does not reveal-and-play in place behind the viewer opening over it');
+  check(/tile: !!\(oldEl\.closest && oldEl\.closest\('\.msg-atts\.gallery'\)\)/.test(messages),
+    'and a republished clip is patched back as the SAME kind of clip');
+  check(/function lbIsVid\(\)/.test(pickers) && /if \(!stage \|\| lbIsVid\(\)\) return;/.test(pickers),
+    'the photo gestures (tap-zoom, trackpad pinch) stand down while a clip is on the stage');
+  check(/if \(vid && !vid\.classList\.contains\('hidden'\) && \(target === vid/.test(pickers),
+    'and a tap on the player (or its controls) is the player\'s, never a close');
+
+  console.log('\n[2c] the strip of the message\'s media');
+  check(/id="lb-strip"/.test(index) && /id="lb-strip-track"/.test(index), 'the overlay carries the strip and its track');
+  check(/#lb-strip\{position:absolute;left:0;right:0;bottom:0/.test(css), 'it lies along the bottom of the screen');
+  check(/#lb-strip-track\{display:flex;align-items:center;gap:\.5rem;flex:0 0 auto;width:max-content;margin:0 auto\}/.test(css),
+    'the track centres a short row and scrolls a long one from its true first thumb (margin:auto, not justify-content)');
+  check(/\.lb-thumb\.active\{opacity:1;border-color:rgba\(255,255,255,\.94\)/.test(css), 'the thumb on the stage is the lit one');
+  check(/\.lb-thumb\[data-kind="video"\]::after\{[^}]*border-left:11px solid/.test(css),
+    'and a clip\'s thumb says it is a clip (the play triangle)');
+  check(/function lbBuildStrip\(\)/.test(pickers) && /function lbMarkStrip\(\)/.test(pickers), 'the strip is built once per open and lit per step');
+  check(/const show = !!lb\.open && list\.length > 1;/.test(pickers), 'it exists exactly while there is more than one item to walk');
+  check(/\$\('#lb-strip'\)\?\.addEventListener\('click'/.test(pickers) && /lbShow\(lb\.items\[i\]\);/.test(pickers),
+    'a press on a thumb steps straight to that item');
+  check(/function lbFillThumb\(b, it\)/.test(pickers) && /whenVideoPoster\(it\.src, \(shot\) =>/.test(pickers),
+    'and a clip whose frame has not been captured yet fills its thumb in when it lands, instead of staying a broken picture');
+  check(/if \(e\.target\.closest\('#lb-bar, \.lb-nav, #lb-strip'\)\) return;/.test(pickers),
+    'and the strip owns its presses (the tap-to-close rule never sees one)');
+  check(/#lightbox\.has-strip\{--lb-strip-h:calc\(56px \+ \.9rem\)\}/.test(css)
+    && /padding:var\(--lb-pad-t\) calc\(1rem \+ var\(--safe-r\)\) calc\(var\(--lb-pad-b\) \+ var\(--lb-strip-h\)\)/.test(css),
+    'the stage reserves the strip\'s height, so it can never cover the bottom of a tall photo');
+  check(/body\.ub-open #lightbox\{--lb-pad-t:calc\(4\.4rem \+ var\(--safe-t\) \+ var\(--ub-h\)\)\}/.test(css),
+    'and the update banner moves the top of that one line, so the arrows follow it too');
+  check(/top:calc\(\(var\(--lb-pad-t\) \+ 100% - var\(--lb-pad-b\) - var\(--lb-strip-h\)\) \/ 2\)/.test(css),
+    'the arrows ride on the media\'s centre rather than the screen\'s');
+  check(!/att-expand/.test(messages) && !/att-expand/.test(css) && !/att-expand/.test(pickers),
+    'and still no chip on a clip pretending to open a viewer — the tile itself is the door');
 }
 
 async function main() {
@@ -412,7 +508,7 @@ async function main() {
     check(rs.hidden === false && rs.scale === 1 && rs.tx === 0 && rs.ty === 0, 'a reopened viewer starts unzoomed', rs);
     check((reopened.img.b - reopened.img.t) <= (reopened.stage.b - reopened.stage.t) + 1, 'the reopened photo fits the stage', reopened.img);
 
-    console.log('\n[7] a message of several pictures: arrows on both sides');
+    console.log('\n[7] a message of several pictures: arrows on both sides, and the strip');
     await device(390, 844, { touch: true });
     await evaluate("__gallery('g3', 3)");
     const opened = await evaluate("__clickIn('g3', '.att-img', 0)");
@@ -425,9 +521,20 @@ async function main() {
     check(s7.prevOff === true && s7.nextOff === false, 'the first picture has no way back, and a way on', s7);
     for (const [tag, box, hit] of [['back', g.prev, g.hitPrev], ['next', g.next, g.hitNext]]) {
       check(inside(box, g.vw, g.vh) && hit, `the ${tag} arrow is on screen and hit-testable`, box);
-      check(Math.abs((box.t + box.b) / 2 - g.vh / 2) < 3, `the ${tag} arrow is vertically centred on its side`);
+      // With the strip up the arrows ride on the MEDIA's centre, not the screen's:
+      // the stage gave the strip its room at the bottom.
+      check(Math.abs((box.t + box.b) / 2 - (g.img.t + g.img.b) / 2) < 3, `the ${tag} arrow sits level with the media it walks`);
     }
     check(g.prev.l < g.vw / 2 && g.next.r > g.vw / 2, 'one on the left, one on the right', { prev: g.prev, next: g.next });
+    // The strip: one thumb per item, along the bottom, the first one lit.
+    check(s7.stripN === 3 && !s7.stripHidden && s7.hasStrip, 'the strip carries one thumb per item', s7);
+    check(s7.stripActive === 0, 'with the item on the stage lit', s7.stripActive);
+    check(s7.stripKinds.join(',') === 'image,image,image', 'and every thumb a photo here', s7.stripKinds);
+    check(s7.stripThumbs[0] === await evaluate('__thumb(0)'), 'each thumb paints the tile\'s own preview (not the full picture)', s7.stripThumbs);
+    check(inside(g.strip, g.vw, g.vh) && g.strip.t > g.vh * 0.6, 'the strip lies along the bottom of the screen and inside it', g.strip);
+    check(g.strip.b <= g.img.b + 1 || g.strip.t >= g.img.b - 1, 'and the stage keeps the media clear of it', { strip: g.strip, img: g.img });
+    check(g.hitThumb, 'its thumbs are hit-testable (the stage is not over them)');
+    check(g.stripTrackMargin === 'auto' || parseFloat(g.stripTrackMargin) > 0, 'and the track is what centres the row', g.stripTrackMargin);
     // A visual artifact for eyeballing the arrows (temp dir), like the video
     // placeholder test's own.
     try {
@@ -442,17 +549,35 @@ async function main() {
     s7 = await state();
     check(s7.img === await evaluate('__pic(1)') && s7.index === 1, 'next steps to the second picture', s7.index);
     check(s7.prevOff === false && s7.nextOff === false, 'both ways are open in the middle');
+    check(s7.stripActive === 1, 'and the strip lights the second thumb', s7.stripActive);
     await evaluate("document.getElementById('lb-next').click()");
     await sleep(60);
     s7 = await state();
     check(s7.img === await evaluate('__pic(2)') && s7.nextOff === true, 'the last picture disables it: the end is the end');
+    // …and a press on a thumb is the arrows' shortcut: straight to that item.
+    check(await evaluate('__stripPress(0)') === true, 'a press on the first thumb');
+    await sleep(60);
+    s7 = await state();
+    check(s7.img === await evaluate('__pic(0)') && s7.index === 0 && s7.hidden === false,
+      'steps straight to the first picture, without closing the viewer', s7);
+    check(s7.stripActive === 0, 'and the strip follows', s7.stripActive);
+    await evaluate("document.getElementById('lb-next').click()");
+    await sleep(60);
+    await evaluate("document.getElementById('lb-next').click()");
+    await sleep(60);
+    check((await state()).img === await evaluate('__pic(2)'), 'back on the last picture');
     await evaluate("document.getElementById('lb-next').click()");
     await sleep(60);
     check((await state()).img === await evaluate('__pic(2)'), 'and clicking a disabled arrow goes nowhere');
+    check(await evaluate('__stripPress(2)') === true, 'a press on the thumb already on the stage');
+    await sleep(60);
+    s7 = await state();
+    check(s7.index === 2 && s7.img === await evaluate('__pic(2)') && s7.hidden === false, 'does nothing at all (there is nowhere to go)', s7);
     // The arrow keys are the desktop twin.
     await evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))");
     await sleep(60);
     check((await state()).img === await evaluate('__pic(1)'), 'ArrowLeft steps back');
+    check((await state()).stripActive === 1, 'and the strip follows the keyboard too');
     await evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))");
     await sleep(60);
     check((await state()).img === await evaluate('__pic(2)'), 'ArrowRight steps on');
@@ -473,8 +598,13 @@ async function main() {
     await evaluate(`__tap(${(g.next.l + g.next.r) / 2}, ${(g.next.t + g.next.b) / 2})`);
     await sleep(60);
     check((await state()).hidden === false, 'tapping an arrow keeps the viewer open');
+    // Nor must a tap on a thumb (which would close the viewer).
+    g = await evaluate('__geo()');
+    await evaluate(`__tap(${(g.thumb.l + g.thumb.r) / 2}, ${(g.thumb.t + g.thumb.b) / 2})`);
+    await sleep(60);
+    check((await state()).hidden === false, 'tapping the strip keeps the viewer open');
 
-    console.log('\n[8] nowhere to go, no arrows');
+    console.log('\n[8] nowhere to go, no arrows and no strip');
     await evaluate('__close()');
     await sleep(30);
     await evaluate("__gallery('g1', 1)");
@@ -483,11 +613,13 @@ async function main() {
     s7 = await state();
     check(s7.hidden === false && s7.img === await evaluate('__pic(0)'), 'a single-picture message still opens the viewer');
     check(s7.prevHidden && s7.nextHidden, 'with no arrows at all — there is nowhere to go', s7);
+    check(s7.stripHidden && !s7.hasStrip && s7.stripN === 0, 'and no strip either: a row of one is not a row', s7);
     await evaluate('__close()');
     await sleep(30);
     await open(800, 800);
     s7 = await state();
     check(s7.prevHidden && s7.nextHidden, 'and a picture with no message block around it (an embed) never grows arrows', s7);
+    check(s7.stripHidden, 'nor a strip', s7);
     // Desktop too: the arrows are not a phone-only control.
     await device(1280, 800, { touch: false });
     await evaluate('__close()');
@@ -498,25 +630,47 @@ async function main() {
     check(inside(g.prev, g.vw, g.vh) && g.hitPrev && inside(g.next, g.vw, g.vh) && g.hitNext, 'on a desktop both arrows are reachable too');
     check((await state()).n === 3, 'and the set is the same one');
 
-    console.log('\n[9] a clip in the message is not part of the picture set');
+    console.log('\n[9] a clip is part of the set, and the VIEWER is where it plays');
     await device(390, 844, { touch: true });
     await evaluate('__close()');
     await sleep(30);
-    // Two pictures and a clip between them: the arrows walk the two pictures, in
-    // their own order, and never land on the player.
+    // Two pictures with a clip between them: the set is all three, in the order
+    // the message renders them.
     await evaluate("__galleryWithClip('gm', 2)");
     await evaluate("__clickIn('gm', '.att-img', 0)");
     await sleep(120);
     let s9 = await state();
-    check(s9.n === 2 && !s9.prevHidden && !s9.nextHidden, 'two pictures beside a clip are a set of TWO', s9);
+    check(s9.n === 3 && !s9.prevHidden && !s9.nextHidden, 'two pictures beside a clip are a set of THREE', s9);
+    check(s9.kind === 'image' && s9.vidHidden && !s9.imgHidden, 'the picture is on the stage, and the player is not', s9);
     check(s9.prevOff === true && s9.nextOff === false, 'the first picture is the first of the set', s9);
+    check(s9.stripKinds.join(',') === 'image,video,image', 'and the strip marks the clip as one, in its place', s9.stripKinds);
     await evaluate("document.getElementById('lb-next').click()");
     await sleep(120);
     s9 = await state();
-    check(s9.img === await evaluate('__pic(1)'), 'next goes straight to the picture after the clip');
-    check(s9.nextOff === true, 'and that picture is the end of the set', s9);
-    check(s9.dl === await evaluate('__pic(1)') && s9.dlName === 'p1.png', 'the corner button still downloads the picture on the stage');
-    // A picture with a clip beside it and nothing else: one picture, no arrows.
+    check(s9.kind === 'video' && s9.vid === '/clip.mp4' && !s9.vidHidden && s9.imgHidden,
+      'next steps onto the CLIP — the player is on the stage, not a cropped tile', s9);
+    check(s9.dl === '/clip.mp4' && s9.dlName === 'clip.mp4', 'the corner button downloads the clip by its own name', s9);
+    check(s9.stripActive === 1, 'and the strip lights the clip', s9.stripActive);
+    check(s9.stripThumbs[1] === await evaluate('__thumb(9)'), 'whose thumb is the poster frame it holds', s9.stripThumbs);
+    check(s9.stripThumbs[0] === await evaluate('__thumb(0)'), 'next to the picture before it', s9.stripThumbs);
+    await evaluate("document.getElementById('lb-next').click()");
+    await sleep(120);
+    s9 = await state();
+    check(s9.kind === 'image' && s9.img === await evaluate('__pic(1)') && s9.vidHidden && s9.nextOff === true,
+      'and on to the picture after it — where the player stands down (no sound behind a photo)', s9);
+    check(s9.vid === '' && s9.imgHidden === false, 'the clip is unloaded, not left playing behind the picture', s9);
+    // A press on the CLIP TILE is the door: the viewer opens ON it, inside the set.
+    await evaluate('__close()');
+    await sleep(30);
+    await evaluate("__galleryWithClip('gm2', 2)");
+    check(await evaluate("__clickClipIn('gm2', 0)") === true, 'a press on a collage clip opens the viewer');
+    await sleep(120);
+    s9 = await state();
+    check(s9.hidden === false && s9.kind === 'video' && s9.index === 1 && s9.n === 3,
+      'ON that clip, with the message\'s whole set around it', s9);
+    check(s9.dlName === 'clip.mp4' && s9.stripActive === 1, 'and its own download name and strip thumb', s9);
+    // A picture sharing its message with a clip and nothing else: two items, so a
+    // set of two — the clip is somewhere the arrows can go now.
     await evaluate('__close()');
     await sleep(30);
     await evaluate("__galleryWithClip('gm1', 1)");
@@ -524,13 +678,35 @@ async function main() {
     await sleep(60);
     s9 = await state();
     check(s9.hidden === false && s9.img === await evaluate('__pic(0)'), 'a picture sharing its message with a clip still opens');
-    check(s9.prevHidden && s9.nextHidden, 'and grows no arrows: a clip is not somewhere the photo viewer can go', s9);
+    check(s9.n === 2 && !s9.prevHidden && !s9.nextHidden, 'and the clip beside it is the other item the arrows walk to', s9);
+    check(s9.stripN === 2 && s9.stripKinds.join(',') === 'image,video', 'with the strip showing both', s9);
     // Closing clears the set: the next single picture gets no arrows back.
     await evaluate('__close()');
     await sleep(30);
     await open(800, 800);
     s9 = await state();
     check(s9.hidden === false && s9.prevHidden && s9.nextHidden, 'a reopened single picture has no arrows left over', s9);
+    check(s9.stripHidden && s9.n === 0, 'and no strip left over either', s9);
+
+    console.log('\n[10] a clip whose frame has not been captured yet');
+    await evaluate('__close()');
+    await sleep(30);
+    // A tile the reader never scrolled near has no poster yet: the clip is on the
+    // stage playing, and its strip thumb is the bare veil + play triangle until
+    // the frame lands — then it fills in, without reopening the viewer.
+    await evaluate("__galleryWithClip('gm3', 1, true)");
+    await evaluate("__clickClipIn('gm3', 0)");
+    await sleep(120);
+    let s10 = await state();
+    check(s10.hidden === false && s10.kind === 'video' && s10.stripN === 2, 'the clip opens inside its set', s10);
+    check(s10.stripThumbs[1] === '' && s10.stripThumbs[0] !== '', 'with its thumb bare (no frame yet) beside the picture that has one', s10.stripThumbs);
+    check(await evaluate('__posterWaiters.length') > 0, 'and the viewer asked the page for that frame');
+    check(await evaluate('__posterLand(__thumb(9))') === true, 'the frame lands');
+    await sleep(60);
+    s10 = await state();
+    check(s10.stripThumbs[1] === await evaluate('__thumb(9)'), 'the thumb fills in where it stood', s10.stripThumbs);
+    check(s10.stripKinds[1] === 'video' && s10.stripActive === 1, 'still the clip, still the one on the stage', s10);
+    check(await evaluate('__posterLand(__thumb(9))') === false, 'and a second answer for the same clip is not asked for twice');
   });
 
   console.log('');

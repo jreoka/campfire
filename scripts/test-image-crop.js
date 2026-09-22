@@ -285,8 +285,13 @@ function wiring() {
   check('the admin uploads go through it as well', /pickFile\(\(f\) => openCropStage\(/.test(admin));
   check('and hit the admin route', /\/api\/admin\/users\/\$\{u\.id\}\/\$\{kind === 'sidebar-banner' \? 'sidebar' : kind\}\/crop/.test(admin));
   check('Escape peels the stage like every other layer', /\(\) => closeCropStage\(\)/.test(finalJs));
-  check('the shell cache was bumped and carries the new module',
-    /CACHE = 'campfire-v585'/.test(sw) && /'\/js\/crop\.js'/.test(sw));
+  // The shell cache must carry the module — and a LITERAL version here goes
+  // stale on the next unrelated bump (which is how this check sat red), so it
+  // asks the question that actually matters: at or past the release that added
+  // crop.js, and holding it.
+  const cacheV = Number(((sw.match(/CACHE = 'campfire-v(\d+)'/) || [])[1]) || 0);
+  check('the shell cache carries the crop module (at or past the version that added it, v585)',
+    cacheV >= 585 && /'\/js\/crop\.js'/.test(sw));
   check('the compressor lends its runner and its encode slot',
     /runFfmpeg, checkFfmpeg, withCompressLock,/.test(mc) && /function runFfmpeg\(args, opts\)/.test(mc));
   check('the crop takes that slot', /withCompressLock\(\(\) => runFfmpeg\(args, \{ timeoutMs: CROP_TIMEOUT_MS \}\)\)/.test(
