@@ -8,8 +8,11 @@
 // The direction is body.win-blurred's (final.js's syncWinBlurred() sets it
 // while the window is blurred or the tab hidden — blur/focus/visibilitychange;
 // styles.css hides every .msg-actions under it with !important, which beats
-// the .msg:hover rule no matter the specificity, and when the page is live
-// again the browser re-resolves :hover from the real pointer position).
+// the .msg:hover rule no matter the specificity), plus dropMsgFocus(): a
+// clicked link keeps :focus-within alive on its message indefinitely (blur
+// never clears document.activeElement), so without it the bar resurrects on
+// every return and only a click dismisses it. When the page is live again the
+// browser re-resolves :hover from the real pointer position.
 //
 // This drives the REAL wiring: it extracts the two window listeners out of
 // final.js and runs them against a stub, so a refactor that drops one fails
@@ -56,38 +59,53 @@ function main() {
     check(/!important/.test(body), 'so it wins the cascade over the :hover rule even when the bar is stuck open');
   }
 
-  console.log('\n[2] the wiring hides the bar while blurred or hidden');
-  const fnRe = /function syncWinBlurred\(\)\{ ([^}]*) \}/;
-  const stmt = (fnRe.exec(finalJs) || [])[1];
-  check(!!stmt, 'final.js defines syncWinBlurred()');
+  console.log('\n[2] the wiring hides the bar while blurred or hidden, and drops stale message focus');
+  const dropBody = (/function dropMsgFocus\(\)\{([\s\S]*?)\n\}/.exec(finalJs) || [])[1];
+  const syncStmt = (/function syncWinBlurred\(\)\{ ([^}]*) \}/.exec(finalJs) || [])[1];
+  check(!!dropBody, 'final.js defines dropMsgFocus()');
+  check(!!syncStmt && syncStmt.includes('dropMsgFocus()'), 'syncWinBlurred() calls dropMsgFocus()');
   for (const [t, tgt] of [['blur', 'window'], ['focus', 'window'], ['visibilitychange', 'document']]) {
     check(finalJs.includes(`${tgt}.addEventListener('${t}', syncWinBlurred)`),
       `${tgt} listens for ${t} with syncWinBlurred`);
   }
-  if (stmt) {
-    // Drive the REAL function against a stub DOM: a refactor that changes
-    // what it computes (rather than deleting it) fails here too.
+  if (dropBody && syncStmt) {
+    // Drive the REAL functions against a stub DOM: a refactor that changes
+    // what they compute (rather than deleting them) fails here too.
     const listeners = { window: {}, document: {} };
     const cls = new Set();
-    let hidden = false, focused = true;
+    let hidden = false, focused = true, activeElement = null;
     const classList = {
       add: (c) => cls.add(c), remove: (c) => cls.delete(c),
       toggle: (c, f) => { f ? cls.add(c) : cls.delete(c); },
       contains: (c) => cls.has(c),
     };
+    const bodyStub = { classList };
     const documentStub = {
       get hidden() { return hidden; },
+      get activeElement() { return activeElement; },
       hasFocus: () => focused,
-      body: { classList },
+      body: bodyStub,
       addEventListener: (t, cb) => { listeners.document[t] = cb; },
     };
     const windowStub = { addEventListener: (t, cb) => { listeners.window[t] = cb; } };
-    const syncWinBlurred = new Function('document', 'return function syncWinBlurred(){ ' + stmt + ' }')(documentStub);
-    // final.js registers the same function on all three events — replay that
+    const fns = new Function('document',
+      'function dropMsgFocus(){' + dropBody + '}\n' +
+      'function syncWinBlurred(){ ' + syncStmt + ' }\n' +
+      'return { dropMsgFocus, syncWinBlurred };')(documentStub);
+    // final.js registers syncWinBlurred on all three events — replay that
     // here against the stub so the checks below drive the real registration.
-    windowStub.addEventListener('blur', syncWinBlurred);
-    windowStub.addEventListener('focus', syncWinBlurred);
-    documentStub.addEventListener('visibilitychange', syncWinBlurred);
+    windowStub.addEventListener('blur', fns.syncWinBlurred);
+    windowStub.addEventListener('focus', fns.syncWinBlurred);
+    documentStub.addEventListener('visibilitychange', fns.syncWinBlurred);
+    // A stub focused element: tagName, closest(), and a blur() that records.
+    const stubEl = (tag, inMsg, inEditBox) => ({
+      tagName: tag, _blurred: false, blur() { this._blurred = true; },
+      closest: (sel) => {
+        if (sel === '.edit-box') return inEditBox ? {} : null;
+        if (sel === '.msg') return inMsg ? {} : null;
+        return null;
+      },
+    });
 
     // A link opened in a new tab: the window never blurs, the tab hides.
     hidden = true; focused = true; listeners.document.visibilitychange();
@@ -103,6 +121,29 @@ function main() {
     // Focus moving into an iframe keeps the document focused: no spurious hide.
     focused = true; hidden = false; listeners.window.blur();
     check(!cls.has('win-blurred'), 'a blur that keeps document focus does not hide the bar');
+
+    // The stuck case: a clicked link is still document.activeElement when the
+    // page comes back — :focus-within would resurrect the bar.
+    const link = stubEl('A', true, false);
+    activeElement = link; focused = false; hidden = false;
+    listeners.window.blur();
+    check(link._blurred, 'blurring the page drops focus from a link inside a message');
+    // …and again on return, in case the blur never fired on the way out.
+    const link2 = stubEl('A', true, false);
+    activeElement = link2; focused = true;
+    listeners.window.focus();
+    check(link2._blurred, 'returning focus drops it too, so :focus-within cannot resurrect the bar');
+    // But typing states are sacred: an edit textarea keeps its caret…
+    const editArea = stubEl('TEXTAREA', true, true);
+    activeElement = editArea; focused = false;
+    listeners.window.blur();
+    check(!editArea._blurred, 'a message being edited keeps focus across the round-trip');
+    // …and the composer was never inside a message at all.
+    const composer = stubEl('DIV', false, false);
+    activeElement = composer;
+    listeners.window.blur();
+    check(!composer._blurred, 'focus outside messages is untouched');
+    activeElement = null;
   }
 
   console.log('\n[3] the real stylesheet, in a real browser');

@@ -486,7 +486,21 @@ function clickInOverPopDialog(e) {
 // body.win-blurred (see styles.css); when the page is live again the browser
 // re-resolves :hover from the real pointer position, so a bar the pointer is
 // genuinely still over comes straight back.
-function syncWinBlurred(){ document.body.classList.toggle('win-blurred', document.hidden || !document.hasFocus()); }
+// A clicked link keeps :focus-within alive on its message indefinitely —
+// window blur does NOT clear document.activeElement — so the bar resurrected
+// on every return even with the pointer elsewhere, and only a click (which
+// moves focus) dismissed it. The bar is hover UI: stale message focus must
+// not bring it back. Drop focus from links and buttons inside messages
+// whenever the page stops being interactive or comes back. Never the
+// composer (it is not inside .msg) and never a message being edited (the
+// caret must survive an alt-tab).
+function dropMsgFocus(){
+  const ae = document.activeElement;
+  if (!ae || ae === document.body || !ae.closest) return;
+  if (ae.closest('.edit-box')) return;
+  if (ae.closest('.msg') && /^(A|BUTTON)$/.test(ae.tagName)) ae.blur();
+}
+function syncWinBlurred(){ document.body.classList.toggle('win-blurred', document.hidden || !document.hasFocus()); dropMsgFocus(); }
 window.addEventListener('blur', syncWinBlurred);
 window.addEventListener('focus', syncWinBlurred);
 document.addEventListener('visibilitychange', syncWinBlurred);
