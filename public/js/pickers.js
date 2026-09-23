@@ -37,7 +37,7 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null, i
     dbg.style.cssText = 'position:absolute;top:2px;right:36px;font-size:10px;color:#ff0;background:#000;padding:2px 6px;border-radius:3px;z-index:99;font-family:monospace;';
     pk.appendChild(dbg);
   }
-  dbg.textContent = `gen:${S.bootGen} GAP:2 SW:v648`;
+  dbg.textContent = `gen:${S.bootGen} GAP:2 SW:v649`;
   const phone = phoneLayout();
   // `field` (a status / bio box) carries the ELEMENT it is inserting into, not a
   // bar name, and that element lives in a dialog the picker has to sit over.
@@ -140,7 +140,10 @@ function sizePicker() {
     // rows get cut off. Anchoring to the stack's measured top keeps it parked
     // above the input in every case.
     stackTop = Infinity;
-    for (const sel of ['#attach-preview', '#upload-list', '#typing-bar', '#composer']) {
+    // Measure the visible bottom stack. Use #composer-tools (the buttons row)
+    // rather than #composer (which includes the textarea) so the picker sits
+    // close to the buttons where Cross wants it.
+    for (const sel of ['#attach-preview', '#upload-list', '#typing-bar', '#composer-tools']) {
       const el = document.querySelector(sel);
       if (el && el.offsetHeight > 0) stackTop = Math.min(stackTop, el.getBoundingClientRect().top);
     }
@@ -154,7 +157,7 @@ function sizePicker() {
     pk.style.bottom = bottomPx + 'px';
     // DEBUG: update badge with measured values
     const dbg2 = $('#pk-debug');
-    if (dbg2) dbg2.textContent = `gen:${S.bootGen} GAP:2 SW:v648 st:${Math.round(stackTop)} lh:${layoutH} b:${bottomPx}`;
+    if (dbg2) dbg2.textContent = `gen:${S.bootGen} GAP:2 SW:v649 st:${Math.round(stackTop)} lh:${layoutH} b:${bottomPx}`;
     // 480px keeps it a comfortable size on tall screens; stackTop is the room
     // above the stack, so this also keeps it off the viewport's top edge.
     max = Math.min(480, stackTop - GAP - 16);
