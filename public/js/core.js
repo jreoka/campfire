@@ -515,10 +515,11 @@ function renderRich(text, opts = {}) {
   }
   // ID-based mentions from autocomplete picks (<@id> for users, <@&id> for
   // roles) resolve unambiguously, even when a username collides with a role
-  // name. These run before the name-based matcher below. They run in plain
-  // mode too, so the composer's backdrop renders pills like Discord.
+  // name. These run before the name-based matcher below. In the composer
+  // backdrop (plain) they stay as raw text — a pill would be a different
+  // width than the <@id> token and throw the caret off.
   const d = S.serverDetail;
-  if (d && S.view === 'server') {
+  if (d && S.view === 'server' && !plain) {
     const membersById = new Map((d.members || []).map((m) => [m.id, m]));
     const rolesById = new Map((d.roles || []).map((r) => [r.id, r]));
     const me = (d.members || []).find((x) => x.id === S.me.id);
@@ -548,7 +549,11 @@ function renderRich(text, opts = {}) {
       if (!hit) return m;
       if (hit.kind === 'user') {
         const mem = hit.user;
-        return pre + '<span class="mention' + (mem.id === S.me.id ? ' me' : '') + '" data-uid="' + mem.id + '">@' + esc(mem.display_name) + '</span>';
+        // In the composer backdrop (plain), show exactly what was typed so
+        // the pill aligns with the textarea text and the caret stays put.
+        // `name` is already HTML-escaped (it came from the escaped `h`).
+        const label = plain ? '@' + name : '@' + esc(mem.display_name);
+        return pre + '<span class="mention' + (mem.id === S.me.id ? ' me' : '') + '" data-uid="' + mem.id + '">' + label + '</span>';
       }
       if (hit.kind === 'role') {
         const r = hit.role;
@@ -563,7 +568,8 @@ function renderRich(text, opts = {}) {
     h = h.replace(/(^|[\s(])@([A-Za-z0-9_.]{2,24})/g, (m, pre, un) => {
       const mem = memberByUsername(un);
       if (!mem) return m;
-      return pre + '<span class="mention' + (mem.id === S.me.id ? ' me' : '') + '" data-uid="' + mem.id + '">@' + esc(mem.display_name) + '</span>';
+      const label = plain ? '@' + un : '@' + esc(mem.display_name);
+      return pre + '<span class="mention' + (mem.id === S.me.id ? ' me' : '') + '" data-uid="' + mem.id + '">' + label + '</span>';
     });
   }
   // #channel links: only in server context, and only when the name matches a
