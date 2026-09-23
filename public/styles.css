@@ -3209,8 +3209,7 @@ body{touch-action:manipulation}
     max-height:clamp(220px,calc(100dvh - var(--composer-h) - var(--strip-h) - var(--safe-t) - 18vh),620px)}
   /* The keyboard is up, so the room above the composer is the point — there is no
      chat context left to protect by holding 18vh back for it. */
-  #picker.pk-kb{position:fixed;bottom:0;
-    max-height:clamp(200px,calc(var(--vvh,100dvh) - var(--composer-h) - var(--strip-h) - var(--safe-t) - 8px),620px)}
+  #picker.pk-kb{max-height:clamp(200px,calc(var(--vvh,100dvh) - var(--composer-h) - var(--strip-h) - var(--safe-t) - 8px),620px)}
   /* A drag owns the height while the finger is down (see pickerDragResize) —
      the cap has to stand aside or the sheet would snap back mid-gesture. */
   #picker.pk-resizing{max-height:none}

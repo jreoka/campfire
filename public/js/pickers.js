@@ -107,12 +107,19 @@ function sizePicker() {
   let max;
   let stackTop = Infinity, layoutH = 0; // desktop branch fills these; debug readout below needs them
   if (phoneLayout() && comp && comp.offsetHeight) {
-    pk.style.bottom = '';
     // With the keyboard up (the sheet is in its .pk-kb mode) the room above the
     // composer is the whole point, so the 18vh of chat kept visible while the
     // keyboard is DOWN no longer applies — it would push the sheet off the top.
     const forChat = pk.classList.contains('pk-kb') ? 8 : Math.round(vvh * 0.18);
     max = vvh - comp.offsetHeight - (strip ? strip.offsetHeight : 0) - forChat;
+    if (pk.classList.contains('pk-kb')) {
+      // Keyboard is open: explicitly park the sheet above the keyboard.
+      // Don't rely on CSS position:fixed (unreliable in some WebViews) —
+      // set the bottom offset directly from the measured keyboard height.
+      pk.style.bottom = keyboardOffset() + 'px';
+    } else {
+      pk.style.bottom = '';
+    }
   } else if (pk.classList.contains('anchored')) {
     // The reaction picker floats near its anchor button: openPicker sets its
     // top/left and the stylesheet keeps bottom:auto, so only the height is
@@ -274,6 +281,7 @@ function wirePickerViewport() {
     const root = document.documentElement.style;
     root.setProperty('--kb', keyboardOffset() + 'px');
     root.setProperty('--vv-top', Math.max(0, Math.round(vv.offsetTop)) + 'px');
+    root.setProperty('--vvh', Math.round(vv.height) + 'px');
     if (raf) return;
     raf = requestAnimationFrame(() => { raf = 0; try { sizePicker(); } catch {} });
   };
@@ -300,6 +308,30 @@ function paintPickerKeyboard() {
 }
 $('#pk-search').addEventListener('focus', paintPickerKeyboard);
 $('#pk-search').addEventListener('blur', paintPickerKeyboard);
+// More robust: focusin bubbles and fires even when focus doesn't, and window
+// resize fires when the keyboard opens/closes in WebViews where visualViewport
+// is unreliable. Both re-check the keyboard state.
+document.addEventListener('focusin', (e) => {
+  if (e.target && e.target.id === 'pk-search') paintPickerKeyboard();
+});
+document.addEventListener('focusout', (e) => {
+  if (e.target && e.target.id === 'pk-search') paintPickerKeyboard();
+});
+let _kbResizeT = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(_kbResizeT);
+  _kbResizeT = setTimeout(() => {
+    // Re-sync viewport vars and re-check keyboard state on window resize
+    // (keyboard open/close changes the window height in many WebViews).
+    const vv = window.visualViewport;
+    if (vv) {
+      const root = document.documentElement.style;
+      root.setProperty('--kb', keyboardOffset() + 'px');
+      root.setProperty('--vvh', Math.round(vv.height) + 'px');
+    }
+    paintPickerKeyboard();
+  }, 100);
+});
 // The close key the sheet's own chrome carries (phones have no Escape and the
 // chat behind the sheet is mostly covered, so outside-click is a thin target).
 $('#pk-close').onclick = (e) => { e.stopPropagation(); S.pickerReturnFocus = null; closePicker(false); };
