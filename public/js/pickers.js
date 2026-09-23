@@ -29,6 +29,15 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null, i
   S.picker = { mode, mid, input, ...(opts || {}) };
   const pk = $('#picker');
   pk.classList.remove('hidden');
+  // DEBUG: visible version badge so we can prove which code is running
+  let dbg = $('#pk-debug');
+  if (!dbg) {
+    dbg = document.createElement('div');
+    dbg.id = 'pk-debug';
+    dbg.style.cssText = 'position:absolute;top:2px;right:36px;font-size:10px;color:#ff0;background:#000;padding:2px 6px;border-radius:3px;z-index:99;font-family:monospace;';
+    pk.appendChild(dbg);
+  }
+  dbg.textContent = `gen:${S.bootGen} GAP:2 SW:v647`;
   const phone = phoneLayout();
   // `field` (a status / bio box) carries the ELEMENT it is inserting into, not a
   // bar name, and that element lives in a dialog the picker has to sit over.
