@@ -515,10 +515,11 @@ function renderRich(text, opts = {}) {
   }
   // ID-based mentions from autocomplete picks (<@id> for users, <@&id> for
   // roles) resolve unambiguously, even when a username collides with a role
-  // name. These run before the name-based matcher below. They run in plain
-  // mode too, so the composer's backdrop renders pills like Discord.
+  // name. These run before the name-based matcher below. In the composer
+  // backdrop (plain) they stay as raw text — the <@id> token is far wider
+  // than the pill it becomes, and the caret would drift into the gap.
   const d = S.serverDetail;
-  if (d && S.view === 'server') {
+  if (d && S.view === 'server' && !plain) {
     const membersById = new Map((d.members || []).map((m) => [m.id, m]));
     const rolesById = new Map((d.roles || []).map((r) => [r.id, r]));
     const me = (d.members || []).find((x) => x.id === S.me.id);
