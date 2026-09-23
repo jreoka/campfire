@@ -9,8 +9,8 @@
         android:shortcutId="add_story"
         android:enabled="true"
         android:icon="@mipmap/ic_launcher"
-        android:shortLabel="@string/shortcut_add_story"
-        android:longLabel="@string/shortcut_add_story_long">
+        android:shortcutShortLabel="@string/shortcut_add_story"
+        android:shortcutLongLabel="@string/shortcut_add_story_long">
         <intent
             android:action="android.intent.action.VIEW"
             android:targetPackage="moe.dill.campfire"
