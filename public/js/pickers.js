@@ -95,6 +95,7 @@ function sizePicker() {
   const comp = $('#composer');
   const strip = $('#typing-bar');
   let max;
+  let stackTop = Infinity, layoutH = 0; // desktop branch fills these; debug readout below needs them
   if (phoneLayout() && comp && comp.offsetHeight) {
     pk.style.bottom = '';
     // With the keyboard up (the sheet is in its .pk-kb mode) the room above the
@@ -119,7 +120,7 @@ function sizePicker() {
     // the sheet too low, it slides over the message input, and its own bottom
     // rows get cut off. Anchoring to the stack's measured top keeps it parked
     // above the input in every case.
-    let stackTop = Infinity;
+    stackTop = Infinity;
     for (const sel of ['#attach-preview', '#upload-list', '#typing-bar', '#composer']) {
       const el = document.querySelector(sel);
       if (el && el.offsetHeight > 0) stackTop = Math.min(stackTop, el.getBoundingClientRect().top);
@@ -128,7 +129,7 @@ function sizePicker() {
     // `bottom` resolves against the layout viewport while the rect is in
     // visual-viewport coords; the two share their top edge, so converting via
     // the layout height parks the sheet exactly GAP px above the stack.
-    const layoutH = document.documentElement.clientHeight || window.innerHeight;
+    layoutH = document.documentElement.clientHeight || window.innerHeight;
     const GAP = 8;
     pk.style.bottom = Math.max(0, Math.round(layoutH - stackTop + GAP)) + 'px';
     // 480px keeps it a comfortable size on tall screens; stackTop is the room
@@ -137,6 +138,22 @@ function sizePicker() {
   }
   if (!(max > 0)) { pk.style.maxHeight = ''; return; }
   pk.style.maxHeight = Math.max(180, Math.round(max)) + 'px';
+  // TEMP DEBUG: show the measurements in the picker so a screenshot reveals them.
+  try {
+    const dbg = document.getElementById('pk-debug');
+    if (dbg) {
+      const cr = pk.getBoundingClientRect();
+      dbg.style.display = 'block';
+      dbg.textContent =
+        'stackTop=' + Math.round(stackTop) +
+        ' layoutH=' + Math.round(layoutH) +
+        ' bottom=' + pk.style.bottom +
+        ' maxH=' + pk.style.maxHeight +
+        ' pkBottom=' + Math.round(cr.bottom) +
+        ' innerH=' + window.innerHeight +
+        ' vvh=' + Math.round(vvh);
+    }
+  } catch {}
 }
 
 // A phone's picker is the keyboard's stand-in, and the user sizes it the way
