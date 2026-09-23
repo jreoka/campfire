@@ -37,7 +37,7 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null, i
     dbg.style.cssText = 'position:absolute;top:2px;right:36px;font-size:10px;color:#ff0;background:#000;padding:2px 6px;border-radius:3px;z-index:99;font-family:monospace;';
     pk.appendChild(dbg);
   }
-  dbg.textContent = `gen:${S.bootGen} GAP:2 SW:v650`;
+  dbg.textContent = `gen:${S.bootGen} GAP:2 SW:v651`;
   const phone = phoneLayout();
   // `field` (a status / bio box) carries the ELEMENT it is inserting into, not a
   // bar name, and that element lives in a dialog the picker has to sit over.
@@ -146,10 +146,15 @@ function sizePicker() {
     // close to the buttons where Cross wants it.
     for (const sel of ['#attach-preview', '#upload-list', '#typing-bar', '#composer-tools']) {
       const el = document.querySelector(sel);
-      if (el && el.offsetHeight > 0) {
-        const t = el.getBoundingClientRect().top;
-        if (t < stackTop) { stackTop = t; stackSel = sel; }
+      if (!el || el.offsetHeight === 0) continue;
+      // The typing bar has a fixed height even when empty — only count it when
+      // someone is actually typing (the #typing span has text).
+      if (sel === '#typing-bar') {
+        const t = document.querySelector('#typing');
+        if (!t || !t.textContent.trim()) continue;
       }
+      const top = el.getBoundingClientRect().top;
+      if (top < stackTop) { stackTop = top; stackSel = sel; }
     }
     if (!isFinite(stackTop)) stackTop = vvh - 80; // shouldn't happen; assume an 80px composer
     // `bottom` resolves against the layout viewport while the rect is in
@@ -161,7 +166,7 @@ function sizePicker() {
     pk.style.bottom = bottomPx + 'px';
     // DEBUG: update badge with measured values
     const dbg2 = $('#pk-debug');
-    if (dbg2) dbg2.textContent = `gen:${S.bootGen} GAP:2 SW:v650 st:${Math.round(stackTop)}(${stackSel}) lh:${layoutH} b:${bottomPx}`;
+    if (dbg2) dbg2.textContent = `gen:${S.bootGen} GAP:2 SW:v651 st:${Math.round(stackTop)}(${stackSel}) lh:${layoutH} b:${bottomPx}`;
     // 480px keeps it a comfortable size on tall screens; stackTop is the room
     // above the stack, so this also keeps it off the viewport's top edge.
     max = Math.min(480, stackTop - GAP - 16);
