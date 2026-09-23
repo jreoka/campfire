@@ -140,7 +140,7 @@ function sizePicker() {
     // visual-viewport coords; the two share their top edge, so converting via
     // the layout height parks the sheet exactly GAP px above the stack.
     layoutH = document.documentElement.clientHeight || window.innerHeight;
-    const GAP = 8;
+    const GAP = 4;
     pk.style.bottom = Math.max(0, Math.round(layoutH - stackTop + GAP)) + 'px';
     // 480px keeps it a comfortable size on tall screens; stackTop is the room
     // above the stack, so this also keeps it off the viewport's top edge.
