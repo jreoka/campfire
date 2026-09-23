@@ -843,10 +843,10 @@ function admUserRow(u) {
       <div class="adm-actions">
         <button class="mini" data-act="u-edit"${dis}>Edit</button>
         <button class="mini" data-act="u-pw"${dis}>Password</button>
-        <button class="mini${u.disabled ? '' : ' danger'}" data-act="u-disable"${dis}>${u.disabled ? 'Enable' : 'Disable'}</button>
         <button class="mini" data-act="u-admin"${dis}>${u.is_admin ? 'Remove admin' : 'Make admin'}</button>
         <button class="mini" data-act="u-logout"${dis}>Log out</button>
         <button class="mini" data-act="u-2fa"${dis}${u.has2fa ? '' : ' disabled'}>Reset 2FA</button>
+        <button class="mini${u.disabled ? '' : ' danger'}" data-act="u-disable"${dis}>${u.disabled ? 'Enable' : 'Disable'}</button>
         ${pending
           ? `<button class="mini primary" data-act="u-restore">Restore</button>`
           : `<button class="mini danger" data-act="u-del"${dis}>Delete</button>`}
