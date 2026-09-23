@@ -358,7 +358,7 @@ function openFind() {
   // refresh in the background and repaint if the panel is still up.
   try { refreshDms().then(() => { if (findOpen() && !$('#find-input').value) renderFindResults(''); }); } catch {}
 }
-function closeFind() { $('#find-panel')?.classList.add('hidden'); }
+function closeFind() { $('#find-panel')?.classList.add('hidden'); hideFindSuggest(); }
 async function findGoChannel(sid, cid, type) {
   if (sid !== S.serverId) await selectServer(sid);
   if (type === 'voice') openVoiceChannel(sid, cid);
@@ -378,28 +378,45 @@ async function findGoMessage(r) {
     jumpToPin({ kind: 'server', id: m.channelId, serverId: m.serverId }, m.id);
   }
 }
-// `from:ada` (or from:"Ada Lovelace") narrows a search to one author; whatever
-// else is in the box is the text query. The rest of the panel (channels,
-// servers, DMs) always matches the text part alone.
+// Discord-style operators: from:user, in:#channel, has:image|video|file|link,
+// before:YYYY-MM-DD, after:YYYY-MM-DD. Each narrows the message search;
+// whatever else is in the box is the text query. The rest of the panel
+// (channels, servers, DMs) always matches the text part alone.
 function parseFindQuery(raw) {
   const src = String(raw || '');
-  const m = /(^|\s)from:("[^"]*"|\S+)/i.exec(src);
-  if (!m) return { text: src.trim(), from: '' };
-  const from = m[2].replace(/^"|"$/g, '').trim();
-  // The operator's slot closes up: "a from:b c" is the query "a c", not "a  c".
-  const text = (src.slice(0, m.index) + ' ' + src.slice(m.index + m[0].length)).replace(/\s+/g, ' ').trim();
-  return { text, from };
+  const out = { text: '', from: '', in: '', has: '', before: '', after: '' };
+  let rest = src;
+  // Extract each operator: (start|space)op:"quoted"|value, closing the slot up.
+  const opRe = /(^|\s)(from|in|has|before|after):("[^"]*"|\S+)/gi;
+  let m;
+  while ((m = opRe.exec(rest))) {
+    const op = m[2].toLowerCase();
+    const val = m[3].replace(/^"|"$/g, '').trim();
+    if (op === 'from' && !out.from) out.from = val;
+    else if (op === 'in' && !out.in) out.in = val;
+    else if (op === 'has' && !out.has) out.has = val.toLowerCase();
+    else if (op === 'before' && !out.before) out.before = val;
+    else if (op === 'after' && !out.after) out.after = val;
+    rest = (rest.slice(0, m.index) + ' ' + rest.slice(m.index + m[0].length)).replace(/\s+/g, ' ');
+    opRe.lastIndex = 0; // the string changed; rescan from the start
+  }
+  out.text = rest.trim();
+  return out;
 }
 function runFindMsgSearch(raw, box, searching) {
   const my = ++findMsgSeq;
   clearTimeout(findMsgTimer);
   findMsgTimer = setTimeout(async () => {
-    const { text, from } = parseFindQuery(raw);
+    const { text, from, in: inCh, has, before, after } = parseFindQuery(raw);
     let results = [], fromInfo = null;
     try {
       const r = await api('/api/search?limit=20'
         + (text ? '&q=' + encodeURIComponent(text) : '')
-        + (from ? '&from=' + encodeURIComponent(from) : ''));
+        + (from ? '&from=' + encodeURIComponent(from) : '')
+        + (inCh ? '&in=' + encodeURIComponent(inCh) : '')
+        + (has ? '&has=' + encodeURIComponent(has) : '')
+        + (before ? '&before=' + encodeURIComponent(before) : '')
+        + (after ? '&after=' + encodeURIComponent(after) : ''));
       results = r.results || [];
       fromInfo = r.from || null;
     } catch { results = []; }
@@ -456,7 +473,8 @@ function renderFindResults(q) {
   if (!box) return;
   findRows = [];
   findSel = 0;
-  const { text: qText, from: qFrom } = parseFindQuery(q);
+  const { text: qText, from: qFrom, in: qIn, has: qHas, before: qBefore, after: qAfter } = parseFindQuery(q);
+  const qFilter = qFrom || qIn || qHas || qBefore || qAfter;
   const query = qText.trim().toLowerCase();
   const hit = (s) => !query || String(s || '').toLowerCase().includes(query);
   box.innerHTML = '';
@@ -488,12 +506,12 @@ function renderFindResults(q) {
         async () => { if (S.view !== 'home') await openHome(); await selectDmThread(t.id); });
     }
   }
-  if (!findRows.length && query.length < 2 && !qFrom) box.innerHTML = '<p class="muted small find-empty">No chats match.</p>';
+  if (!findRows.length && query.length < 2 && !qFilter) box.innerHTML = '<p class="muted small find-empty">No chats match.</p>';
   paintFindSel();
   // Message text searches the server (debounced) once the query is long
   // enough to be selective — or straight away when an author was named, since
   // `from:ada` on its own is a real search. Renders into this same list.
-  if (query.length >= 2 || qFrom) {
+  if (query.length >= 2 || qFilter) {
     const searching = document.createElement('p');
     searching.className = 'muted small find-empty';
     searching.textContent = 'Searching messages…';
@@ -517,8 +535,100 @@ async function activateFind(idx) {
 }
 $('#find-close').onclick = () => closeFind();
 $('#btn-find').onclick = (e) => { e.stopPropagation(); findOpen() ? closeFind() : openFind(); };
-$('#find-input').addEventListener('input', (e) => { findLastQ = e.target.value; renderFindResults(e.target.value); });
+// Discord-style filter autocomplete: typing `from:`, `in:`, or `has:` pops a
+// suggestion list; picking one completes the filter value.
+let fsSel = 0, fsRows = [];
+function findSuggestOp() {
+  const inp = $('#find-input');
+  if (!inp) return null;
+  const pos = inp.selectionStart ?? inp.value.length;
+  const before = inp.value.slice(0, pos);
+  const m = /(^|\s)(from|in|has|before|after):("[^"]*"?|\S*)$/i.exec(before);
+  if (!m) return null;
+  return { op: m[2].toLowerCase(), partial: m[3].replace(/^"|"$/g, ''), start: pos - m[0].length + (m[1] ? 1 : 0), full: m[0] };
+}
+function renderFindSuggest() {
+  const box = $('#find-suggest');
+  if (!box) return;
+  const ctx = findSuggestOp();
+  fsRows = []; fsSel = 0;
+  if (!ctx || (ctx.op !== 'from' && ctx.op !== 'in' && ctx.op !== 'has')) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  const q = ctx.partial.toLowerCase();
+  const hit = (s) => !q || String(s || '').toLowerCase().includes(q);
+  const rows = [];
+  if (ctx.op === 'from') {
+    // Users: server members first, then DM peers.
+    const seen = new Set();
+    const members = (S.view === 'server' && S.serverDetail) ? (S.serverDetail.members || []) : [];
+    for (const m of members) {
+      const u = m.user || m;
+      if (!u || seen.has(u.id)) continue;
+      if (hit(u.display_name) || hit(u.username)) { seen.add(u.id); rows.push({ icon: (u.display_name || '?')[0].toUpperCase(), name: u.display_name || u.username, sub: '@' + (u.username || ''), val: u.username || u.display_name }); }
+      if (rows.length >= 8) break;
+    }
+  } else if (ctx.op === 'in') {
+    const chans = (S.view === 'server' && S.serverDetail) ? (S.serverDetail.channels || []) : [];
+    for (const c of chans) {
+      if (c.type !== 'text') continue;
+      if (hit(c.name)) rows.push({ icon: '#', name: '#' + c.name, sub: S.serverDetail.name, val: c.name });
+      if (rows.length >= 8) break;
+    }
+  } else if (ctx.op === 'has') {
+    for (const [v, d] of [['image', 'Photos and GIFs'], ['video', 'Video clips'], ['file', 'Any attachment'], ['link', 'Links in the text']]) {
+      if (hit(v)) rows.push({ icon: '◈', name: v, sub: d, val: v });
+    }
+  }
+  if (!rows.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  box.innerHTML = '';
+  const sec = document.createElement('div');
+  sec.className = 'fs-sec';
+  sec.textContent = ctx.op === 'from' ? 'FROM' : ctx.op === 'in' ? 'IN CHANNEL' : 'HAS';
+  box.appendChild(sec);
+  rows.forEach((r, i) => {
+    fsRows.push(r);
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'fs-row'; b.dataset.fsIdx = i;
+    b.innerHTML = '<span class="fs-ic"></span><span class="fs-main"><span class="fs-name"></span><span class="fs-sub"></span></span>';
+    b.querySelector('.fs-ic').textContent = r.icon;
+    b.querySelector('.fs-name').textContent = r.name;
+    b.querySelector('.fs-sub').textContent = r.sub;
+    b.onclick = () => applyFindSuggest(i);
+    box.appendChild(b);
+  });
+  box.classList.remove('hidden');
+  paintFindSuggestSel();
+}
+function paintFindSuggestSel() {
+  document.querySelectorAll('#find-suggest .fs-row').forEach((el) => {
+    el.classList.toggle('sel', Number(el.dataset.fsIdx) === fsSel);
+  });
+}
+function applyFindSuggest(idx) {
+  const r = fsRows[idx];
+  const inp = $('#find-input');
+  const ctx = findSuggestOp();
+  if (!r || !inp || !ctx) return;
+  const pos = inp.selectionStart ?? inp.value.length;
+  // Quote values with spaces so the parser keeps them as one token.
+  const val = /\s/.test(r.val) ? `"${r.val}"` : r.val;
+  const before = inp.value.slice(0, ctx.start) + ctx.op + ':' + val + ' ';
+  inp.value = before + inp.value.slice(pos);
+  inp.selectionStart = inp.selectionEnd = before.length;
+  findLastQ = inp.value;
+  renderFindResults(inp.value);
+  renderFindSuggest();
+  inp.focus();
+}
+function hideFindSuggest() { const b = $('#find-suggest'); if (b) { b.classList.add('hidden'); b.innerHTML = ''; } fsRows = []; }
+$('#find-input').addEventListener('input', (e) => { findLastQ = e.target.value; renderFindResults(e.target.value); renderFindSuggest(); });
 $('#find-input').addEventListener('keydown', (e) => {
+  // Filter suggestions take arrow keys / Enter / Tab / Escape first.
+  if (fsRows.length && !$('#find-suggest').classList.contains('hidden')) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); fsSel = (fsSel + 1) % fsRows.length; paintFindSuggestSel(); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); fsSel = (fsSel - 1 + fsRows.length) % fsRows.length; paintFindSuggestSel(); return; }
+    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); applyFindSuggest(fsSel); return; }
+    if (e.key === 'Escape') { e.preventDefault(); hideFindSuggest(); return; }
+  }
   if (e.key === 'ArrowDown') { e.preventDefault(); if (findRows.length) { findSel = (findSel + 1) % findRows.length; paintFindSel(); } }
   else if (e.key === 'ArrowUp') { e.preventDefault(); if (findRows.length) { findSel = (findSel - 1 + findRows.length) % findRows.length; paintFindSel(); } }
   else if (e.key === 'Enter') { e.preventDefault(); activateFind(findSel); }

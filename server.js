@@ -2195,8 +2195,13 @@ async function searchAuthors(term) {
 app.get('/api/search', authRequired, async (req, res) => {
   const q = String(req.query.q || '').trim().slice(0, 80);
   const fromQ = String(req.query.from || '').trim().slice(0, 32);
-  // An author filter alone is a valid search; plain text still needs 2 chars.
-  if (q.length < 2 && !fromQ) return res.json({ results: [] });
+  const inQ = String(req.query.in || '').trim().slice(0, 64); // channel id or name
+  const hasQ = String(req.query.has || '').trim().toLowerCase().slice(0, 16); // image|video|file|link
+  const beforeQ = String(req.query.before || '').trim().slice(0, 32); // date or timestamp
+  const afterQ = String(req.query.after || '').trim().slice(0, 32);
+  // An author/channel/has/date filter alone is a valid search; plain text still needs 2 chars.
+  const hasFilter = fromQ || inQ || hasQ || beforeQ || afterQ;
+  if (q.length < 2 && !hasFilter) return res.json({ results: [] });
   const lim = Math.min(parseInt(req.query.limit || '20', 10) || 20, 30);
   const pat = '%' + q.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
   const me = req.user.id;
@@ -2210,6 +2215,49 @@ app.get('/api/search', authRequired, async (req, res) => {
   // the text as typed.
   const textSql = q.length >= 2 ? " AND m.content ILIKE ? ESCAPE '\\'" : '';
   const authorSql = authors.length ? ` AND m.user_id IN (${authors.map(() => '?').join(',')})` : '';
+  // in: — channel id directly, or resolve a channel name to its id.
+  let inChannelId = null;
+  if (inQ) {
+    try {
+      // Try as an id first (UUIDs pass through); else match by name in the
+      // user's servers.
+      const byId = await db.prepare('SELECT id FROM channels WHERE id = ?').get(inQ);
+      if (byId) inChannelId = byId.id;
+      else {
+        const byName = await db.prepare(`
+          SELECT ch.id FROM channels ch
+          JOIN server_members sm ON sm.server_id = ch.server_id AND sm.user_id = ?
+          WHERE LOWER(ch.name) = LOWER(?) LIMIT 1
+        `).get(me, inQ.replace(/^#/, ''));
+        if (byName) inChannelId = byName.id;
+      }
+    } catch {}
+  }
+  const inSql = inChannelId ? ' AND m.channel_id = ?' : '';
+  // has: — attachment presence. Images/videos by MIME, files by any attachment,
+  // links by a URL in the content.
+  let hasSql = '';
+  if (hasQ === 'image') hasSql = ` AND EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id AND a.mime LIKE 'image/%')`;
+  else if (hasQ === 'video') hasSql = ` AND EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id AND a.mime LIKE 'video/%')`;
+  else if (hasQ === 'file' || hasQ === 'attachment') hasSql = ` AND EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)`;
+  else if (hasQ === 'link') hasSql = ` AND m.content ILIKE '%http%'`;
+  // DMs store attachments in dm_attachments, not attachments.
+  let dmHasSql = '';
+  if (hasQ === 'image') dmHasSql = ` AND EXISTS (SELECT 1 FROM dm_attachments a WHERE a.message_id = m.id AND a.mime LIKE 'image/%')`;
+  else if (hasQ === 'video') dmHasSql = ` AND EXISTS (SELECT 1 FROM dm_attachments a WHERE a.message_id = m.id AND a.mime LIKE 'video/%')`;
+  else if (hasQ === 'file' || hasQ === 'attachment') dmHasSql = ` AND EXISTS (SELECT 1 FROM dm_attachments a WHERE a.message_id = m.id)`;
+  else if (hasQ === 'link') dmHasSql = ` AND m.content ILIKE '%http%'`;
+  // before:/after: — accept a date (YYYY-MM-DD) or a millisecond timestamp.
+  const parseDate = (s) => {
+    if (!s) return null;
+    if (/^\d+$/.test(s)) { const n = Number(s); return n > 0 ? n : null; }
+    const d = Date.parse(s);
+    return isNaN(d) ? null : d;
+  };
+  const beforeTs = parseDate(beforeQ);
+  const afterTs = parseDate(afterQ);
+  const beforeSql = beforeTs ? ' AND m.created_at < ?' : '';
+  const afterSql = afterTs ? ' AND m.created_at > ?' : '';
   const out = [];
   try {
     // Scoped to chats this account can actually open: a server they are a
@@ -2226,9 +2274,11 @@ app.get('/api/search', authRequired, async (req, res) => {
       LEFT JOIN messages p ON p.id = m.reply_to_id
       LEFT JOIN users pu ON pu.id = p.user_id
       WHERE m.thread_root_id IS NULL AND m.sys IS NULL
-        AND (ch.nsfw = 0 OR ? = 1)${textSql}${authorSql}
+        AND (ch.nsfw = 0 OR ? = 1)${textSql}${authorSql}${inSql}${hasSql}${beforeSql}${afterSql}
       ORDER BY m.created_at DESC LIMIT ?
-    `).all(me, nsfwOk, ...(q.length >= 2 ? [pat] : []), ...authors, lim);
+    `).all(me, nsfwOk, ...(q.length >= 2 ? [pat] : []), ...authors,
+      ...(inChannelId ? [inChannelId] : []),
+      ...(beforeTs ? [beforeTs] : []), ...(afterTs ? [afterTs] : []), lim);
     const smsgs = await hydrateMessages(srows, me);
     const sids = [...new Set(srows.map((r) => r.server_id))];
     const cids = [...new Set(srows.map((r) => r.channel_id))];
@@ -2253,9 +2303,10 @@ app.get('/api/search', authRequired, async (req, res) => {
     // searchable. Leaving a group deletes the row entirely.
     const drows = await db.prepare(`${DM_JOIN}
       JOIN dm_members dmm ON dmm.thread_id = m.thread_id AND dmm.user_id = ?
-      WHERE m.sys IS NULL AND (dmm.hidden IS NULL OR dmm.hidden = 0)${textSql}${authorSql}
+      WHERE m.sys IS NULL AND (dmm.hidden IS NULL OR dmm.hidden = 0)${textSql}${authorSql}${dmHasSql}${beforeSql}${afterSql}
       ORDER BY m.created_at DESC LIMIT ?
-    `).all(me, ...(q.length >= 2 ? [pat] : []), ...authors, lim);
+    `).all(me, ...(q.length >= 2 ? [pat] : []), ...authors,
+      ...(beforeTs ? [beforeTs] : []), ...(afterTs ? [afterTs] : []), lim);
     const dmsgs = await hydrateDm(drows, me);
     for (const [i, msg] of dmsgs.entries()) {
       const t = await db.prepare('SELECT * FROM dm_threads WHERE id = ?').get(drows[i].thread_id);

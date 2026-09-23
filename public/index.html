@@ -387,7 +387,8 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
       <header><strong>Search</strong><span class="spacer"></span><button id="find-close" class="mini">✕</button></header>
       <div id="find-search">
         <input id="find-input" placeholder="Search chats and messages…" autocomplete="off" />
-        <div class="find-hint muted small">Channels, servers, DMs and message text · from:name finds one person's posts</div>
+        <div id="find-suggest" class="hidden"></div>
+        <div class="find-hint muted small">Channels, servers, DMs and message text · from:name · in:#channel · has:image · before:2024-01-01</div>
       </div>
       <div id="find-results"></div>
     </aside>
