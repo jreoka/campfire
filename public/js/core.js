@@ -440,11 +440,11 @@ function mentionMatcher(authorId) {
     names.push(n);
   };
   // Specials first so a member actually named "everyone" can't shadow the
-  // broadcast token, then roles (a role name colliding with a username
-  // mentions the role, not the user), then usernames.
+  // broadcast token, then usernames (the older meaning of @), then roles.
+  // Explicit autocomplete picks bypass this entirely via <@id> / <@&id>.
   if (admin) { add('everyone', { kind: 'all' }); add('here', { kind: 'all' }); }
-  for (const r of (d.roles || [])) add(r.name, { kind: 'role', role: r });
   for (const m of (d.members || [])) add(m.username, { kind: 'user', user: m });
+  for (const r of (d.roles || [])) add(r.name, { kind: 'role', role: r });
   const me = (d.members || []).find((x) => x.id === S.me.id);
   const myRoles = new Set((me && me.roleIds) || []);
   names.sort((a, b) => b.length - a.length);
@@ -512,6 +512,29 @@ function renderRich(text, opts = {}) {
       ? '<img class="cemoi" src="' + em.url + '" alt="' + m + '" title="' + m + '" data-fb-emoji="' + m + '">'
       : (S.stdEmoji[n] || m);
   });
+  // ID-based mentions from autocomplete picks (<@id> for users, <@&id> for
+  // roles) resolve unambiguously, even when a username collides with a role
+  // name. These run before the name-based matcher below.
+  const d = S.serverDetail;
+  if (d && S.view === 'server') {
+    const membersById = new Map((d.members || []).map((m) => [m.id, m]));
+    const rolesById = new Map((d.roles || []).map((r) => [r.id, r]));
+    const me = (d.members || []).find((x) => x.id === S.me.id);
+    const myRoles = new Set((me && me.roleIds) || []);
+    h = h.replace(/<@&([A-Za-z0-9_-]{1,40})>/g, (m, id) => {
+      const r = rolesById.get(id);
+      if (!r) return m;
+      const col = /^#[0-9a-fA-F]{6}$/.test(r.color || '') ? r.color : '';
+      const mine = myRoles.has(r.id);
+      return '<span class="mention role' + (mine ? ' me' : '') + '" data-rid="' + esc(r.id) + '"'
+        + (col && !mine ? ' style="--rc:' + col + '"' : '') + '>@' + esc(r.name) + '</span>';
+    });
+    h = h.replace(/<@([A-Za-z0-9_-]{1,40})>/g, (m, id) => {
+      const mem = membersById.get(id);
+      if (!mem) return m;
+      return '<span class="mention' + (mem.id === S.me.id ? ' me' : '') + '" data-uid="' + mem.id + '">@' + esc(mem.display_name) + '</span>';
+    });
+  }
   // @mentions: in a server that is usernames + role names + (for an admin's
   // own message) @everyone / @here; anywhere else it stays username-only.
   // `opts.authorId` is the message's author, which is what decides whether

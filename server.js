@@ -5947,6 +5947,18 @@ async function notifyServerMessage(serverId, channelId, author, content, message
   let roles = [];
   try { roles = await serverRoles(serverId); } catch {}
   const roleIds = mentionedRoleIds(text, roles);
+  // ID-based mentions from autocomplete picks: <@&id> adds the role directly,
+  // <@id> is collected for the per-user check below.
+  const idRoleIds = [];
+  const idUserIds = [];
+  try {
+    for (const m of String(text || '').matchAll(/<@&([A-Za-z0-9_-]{1,40})>/g)) idRoleIds.push(m[1]);
+    for (const m of String(text || '').matchAll(/<@([A-Za-z0-9_-]{1,40})>/g)) {
+      // <@&id> also matches <@...>; the & distinguishes them.
+      if (!m[0].startsWith('<@&')) idUserIds.push(m[1]);
+    }
+  } catch {}
+  for (const id of idRoleIds) if (!roleIds.includes(id)) roleIds.push(id);
   const authorAdmin = author.userId ? await isAdmin(serverId, author.userId) : false;
   const everyone = authorAdmin && mentionsToken(text, 'everyone');
   const here = authorAdmin && !everyone && mentionsToken(text, 'here');
@@ -5976,6 +5988,7 @@ async function notifyServerMessage(serverId, channelId, author, content, message
     const mode = pm.get(`c:${channelId}`) || pm.get(`s:${serverId}`) || pm.get('global') || 'all';
     if (mode === 'muted') continue;
     const isMention = mentionsName(text, names.get(uid)) || roleHolders.has(uid)
+      || idUserIds.includes(uid)
       || everyone || (here && !!online && !!online[uid]);
     if (mode === 'mentions' && !isMention) continue;
     const title = `#${(ch && ch.name) || 'chat'} · ${s ? s.name : ''}`;

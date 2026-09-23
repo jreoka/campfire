@@ -2960,7 +2960,8 @@ const COMPOSER_FIELDS = () => ['#in-message', '#in-thread'].map((s) => $(s)).fil
 function onComposerInput(fn) { COMPOSER_FIELDS().forEach((inp) => inp.addEventListener('input', () => fn(inp))); }
 function onComposerKeydown(fn) { COMPOSER_FIELDS().forEach((inp) => inp.addEventListener('keydown', (e) => fn(e, inp))); }
 let mentionIdx = 0;
-function hideMentionPop() { $('#mention-pop').classList.add('hidden'); }
+let mentionCands = [];
+function hideMentionPop() { $('#mention-pop').classList.add('hidden'); mentionCands = []; }
 onComposerInput((inp) => {
   const upto = inp.value.slice(0, inp.selectionStart ?? inp.value.length);
   // Role names may contain spaces, so the query is "everything since the @".
@@ -2984,6 +2985,7 @@ onComposerInput((inp) => {
     if (canManage()) for (const t of ['everyone', 'here']) if (t.startsWith(q)) cands.push({ kind: 'all', insert: t });
   }
   const list = cands.slice(0, 6);
+  mentionCands = list;
   if (!list.length) { hideMentionPop(); return; }
   mentionIdx = 0;
   const pop = $('#mention-pop');
@@ -3002,7 +3004,7 @@ onComposerInput((inp) => {
     } else {
       b.innerHTML = `<span class="chan-glyph">@</span><span>@${c.insert} <span class="mitem-sub">${c.insert === 'everyone' ? 'Notify everyone' : 'Notify online members'}</span></span>`;
     }
-    b.onmousedown = (e) => { e.preventDefault(); applyMention(c.insert, inp); };
+    b.onmousedown = (e) => { e.preventDefault(); applyMention(c, inp); };
     pop.appendChild(b);
   });
   pop.classList.remove('hidden');
@@ -3018,13 +3020,22 @@ onComposerKeydown((e, inp) => {
   } else if ((e.key === 'Enter' || e.key === 'Tab') && items[mentionIdx]) {
     e.preventDefault();
     popupTookKey(e);
-    applyMention(items[mentionIdx].dataset.insert, inp);
+    applyMention(mentionCands[mentionIdx] || { kind: 'text', insert: items[mentionIdx].dataset.insert }, inp);
   } else if (e.key === 'Escape') hideMentionPop();
 });
-function applyMention(name, inp = $('#in-message')) {
+function applyMention(cand, inp = $('#in-message')) {
   const pos = inp.selectionStart ?? inp.value.length;
+  // Explicit autocomplete picks are unambiguous: users become <@id>, roles
+  // become <@&id> (Discord-style). The renderer resolves these to the current
+  // name, so a username colliding with a role name still mentions exactly
+  // what was picked. Plain @name text (typed by hand) still goes through
+  // the name-based matcher.
+  let insert;
+  if (cand.kind === 'user' && cand.user) insert = '<@' + cand.user.id + '>';
+  else if (cand.kind === 'role' && cand.role) insert = '<@&' + cand.role.id + '>';
+  else insert = '@' + cand.insert;
   // A function replacement, so a role name containing `$&`/`$1` stays literal.
-  inp.value = inp.value.slice(0, pos).replace(/@[^@\n]{0,32}$/, () => '@' + name + ' ');
+  inp.value = inp.value.slice(0, pos).replace(/@[^@\n]{0,32}$/, () => insert + ' ');
   hideMentionPop();
   inp.focus();
   syncRenderFor(inp);
