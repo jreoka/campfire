@@ -189,6 +189,7 @@ console.log('\n[6] the surfaces and the wiring are all present');
   check(js.includes("range.min = '0.002'") && js.includes("range.max = '0.03'"), 'the draw row has a thickness slider', null);
   check(js.includes('sc-thick-dot') && css.includes('.sc-thick-dot'), 'a dot previews the stroke width in the current colour', null);
   check(!/\['Thin', 0\.003\]/.test(js), 'the old Thin/Medium/Thick pills are gone', null);
+  check(/if \(!sc\.draw && sc\.textOnly\)/.test(js), 'draw mode wins the colour row on a text-only story', null);
   for (const rule of ['.ov-layer', '.ov-item', '.ov-draw', '.sc-tools', '.ov-editable', '.ov-pill', '.ov-sel', '.sc-swatch.tile']) {
     check(css.includes(rule), 'stylesheet has ' + rule, null);
   }

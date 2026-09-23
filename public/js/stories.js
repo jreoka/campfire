@@ -2636,7 +2636,7 @@ function storyRenderColors() {
   box.textContent = '';
   if (!preview || (!sc.draw && !sc.textOnly)) { box.classList.add('hidden'); return; }
   box.classList.remove('hidden');
-  if (sc.textOnly) {
+  if (!sc.draw && sc.textOnly) {
     SC_TEXT_BGS.forEach((bg, i) => {
       const b = storySwatch(box, 'sc-swatch tile', `background:linear-gradient(135deg,${bg.stops[0]},${bg.stops[1]})`, i === sc.textBg, () => storyTextOnlySetBg(i));
       b.title = bg.name;
