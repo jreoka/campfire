@@ -1661,9 +1661,7 @@ function svMoreMenu(x, y) {
   const it = svCurrentItem();
   if (!it) return;
   const tray = sv.trays[sv.ti];
-  const items = [
-    { label: 'Copy link', icon: '⧉', fn: () => { try { navigator.clipboard.writeText(location.origin + it.url); toast('Link copied'); } catch {} } },
-  ];
+  const items = [];
   if (svItemIsMine(tray, it)) {
     items.push({ label: 'Who watched', icon: '◎', fn: () => svViewers() });
     items.push({ label: 'Delete story', icon: '✕', danger: true, fn: () => svDelete(it) });
