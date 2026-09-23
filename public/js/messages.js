@@ -3692,6 +3692,7 @@ $('#composer').addEventListener('submit', (e) => {
   }
   if (S.view === 'home') sendDm(content, { attachments: S.pendingAtts, replyTo: S.replyTo?.id || null });
   else sendChat(content, { attachments: S.pendingAtts, replyTo: S.replyTo?.id || null });
+  try { haptic(10); } catch {} // sent: native apps tick on send
   draftClear(ctx); // sent: the draft goes with it
   S.pendingAtts = []; S.replyTo = null;
   renderComposerMeta();

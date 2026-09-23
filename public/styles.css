@@ -4497,3 +4497,39 @@ html.wrapper-app .msg .text,html.wrapper-app .msg .text *,html.wrapper-app input
 @media (prefers-reduced-motion:reduce){
   .vb-btn:hover,.vb-btn:hover svg,.vb-btn:active{transform:none}
 }
+/* ---------- native feel pass (2026-09-23) ----------
+   Makes the WebView app feel less like a PWA and more like a native app.
+   All web-only: no native code, deploys with the normal web pipeline. */
+
+/* UI chrome is never selectable. Message text, inputs, and code blocks keep
+   their selection; everything else (buttons, tabs, headers, nav) does not.
+   Long-pressing a button should never select its label. */
+button, .btn, [role="button"], .tab, .chan, .dmrow, .server-btn, .member,
+.pk-tab, .ctx-item, .sheet-btn, .nav-btn, .icon-btn {
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+}
+/* Headers, labels, and static UI text: not selectable. */
+.hdr, .sec-hdr, .fld-label, .set-label, .empty-hdr, .modal-hdr,
+#chat-hdr, #thread-hdr, .uc-name, .uc-disc {
+  -webkit-user-select:none;user-select:none;
+}
+
+/* Every interactive element gets a visible press. Buttons that already define
+   :active keep theirs; this is the fallback for the long tail that doesn't. */
+button:active, [role="button"]:active {
+  filter:brightness(.92);
+}
+/* Remove the iOS long-press callout on links in UI chrome. */
+a { -webkit-touch-callout:none; }
+/* But message content links keep the callout (copy link is useful there). */
+.msg .text a { -webkit-touch-callout:default; }
+
+/* Scrolling: momentum + no chained scroll to the page. Applied to the
+   scroll containers that users actually flick. */
+#messages, #thread-messages, .chan-list, .dm-list, .member-list,
+.sheet-body, .modal-body, .pk-body, #pk-gifs {
+  -webkit-overflow-scrolling:touch;overscroll-behavior:contain;
+}
+/* The app shell itself never rubber-bands (already none on html/body, but
+   belt-and-braces for nested fixed layers). */
+#app, #main, #chat { overscroll-behavior:none; }

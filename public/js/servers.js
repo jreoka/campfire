@@ -87,7 +87,7 @@ function serverBtn(s) {
   } else {
     b.textContent = label;
   }
-  b.onclick = () => selectServer(s.id);
+  b.onclick = () => { try { haptic(7); } catch {} selectServer(s.id); };
   wireDrag(b, 'server', s.id);
   return b;
 }
@@ -493,7 +493,7 @@ function renderChannels() {
     // The unread dot's slot is always in the row (hidden via CSS) so toggling
     // unread never shifts the channel name sideways.
     b.innerHTML = `<span class="unread-dot" aria-hidden="true"></span><span class="muted">#</span><span>${esc(c.name)}</span>${c.nsfw ? '<span class="nsfw-badge">18+</span>' : ''}`;
-    b.onclick = () => selectChannel(c.id);
+    b.onclick = () => { try { haptic(7); } catch {} selectChannel(c.id); };
     b.dataset.cid = c.id; b.dataset.ctype = 'text';
     b.ondblclick = () => confirmDeleteChannel(c);
     wireChanDrag(b, c);

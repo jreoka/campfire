@@ -1626,6 +1626,7 @@ $('#thread-composer').addEventListener('submit', (e) => {
   const list = threadAtts();
   list.length = 0; // the reply took them
   sendChat(content, { threadRoot: S.thread.rootId, replyTo: S.threadReplyTo?.id || null, attachments: atts });
+  try { haptic(10); } catch {} // sent: native apps tick on send
   S.threadReplyTo = null;
   renderComposerMeta();
   composerAutoGrow(inp); // programmatic clear doesn't fire 'input', so reset height here

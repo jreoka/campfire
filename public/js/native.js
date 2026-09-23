@@ -159,6 +159,40 @@ function cfInConversation() {
 function cfOpenNav() { document.body.classList.add('nav-open'); cfArm(); }
 function cfCloseNav() { document.body.classList.remove('nav-open'); cfArm(); }
 
+// ---------- edge-swipe: left edge opens the nav drawer (2026-09-23) ----------
+// Native apps let you swipe in from the screen edge to reveal navigation. On
+// touch devices, a horizontal swipe starting within 24px of the left edge
+// opens the drawer. Guarded so it never fires while scrolling vertically,
+// while a modal/lightbox/picker is open, or while typing.
+(function edgeSwipeNav() {
+  if (!('ontouchstart' in window)) return;
+  let sx = 0, sy = 0, tracking = false;
+  document.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    // Only the left edge, and not if the drawer is already open.
+    if (t.clientX > 24 || document.body.classList.contains('nav-open')) return;
+    // Don't steal from inputs, the lightbox, or open sheets/modals.
+    if (t.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+    if (t.target.closest('#lightbox, .modal-open, #picker, .sheet')) return;
+    sx = t.clientX; sy = t.clientY; tracking = true;
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (!tracking) return;
+    const t = e.touches[0];
+    const dx = t.clientX - sx, dy = t.clientY - sy;
+    // Vertical scroll wins — bail.
+    if (Math.abs(dy) > Math.abs(dx) || Math.abs(dy) > 12) { tracking = false; return; }
+    // Swiped right far enough: open the drawer.
+    if (dx > 64) {
+      tracking = false;
+      try { haptic(7); } catch {}
+      cfOpenNav();
+    }
+  }, { passive: true });
+  document.addEventListener('touchend', () => { tracking = false; }, { passive: true });
+})();
+
 window.addEventListener('popstate', () => {
   // A disarm() consumes the sentinel itself; that pop is ours, not the user's.
   if (!cfArmed) return;
