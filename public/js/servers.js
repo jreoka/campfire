@@ -233,7 +233,15 @@ async function selectServer(id) {
     try { loadStories().then(renderStorySurfaces); } catch {}
     if (S.srvSetId) { if (server.id === S.srvSetId) renderServerTab(); else closeServerSettings(); }
     if (S.chanSet) { if (server.id === S.chanSet.sid) renderChanSettings(); else closeChannelSettings(); }
-    if (firstText) selectChannel(firstText, { keepNav: true });
+    // Back to the channel this server was last in, not always the first.
+    // The saved id is only used if it's still a text channel here (it may
+    // have been deleted or the user lost access while away).
+    let target = firstText;
+    try {
+      const saved = localStorage.getItem('cf_lastchan_' + server.id);
+      if (saved && texts.some((c) => c.id === saved)) target = saved;
+    } catch {}
+    if (target) selectChannel(target, { keepNav: true });
     else { paintChanGlyph(''); $('#chan-name').textContent = '—'; $('#messages').innerHTML = ''; paintHeaderNameTap(false); paintHeaderGroupEdit(false); }
   } catch (err) {
     toast('Could not load server');
@@ -603,6 +611,9 @@ async function selectChannel(id, opts = {}) {
   flushDrafts(); // file the previous channel's text before its context changes
   saveScrollPos();
   S.channelId = id;
+  // Remember which channel this server was last in, so switching server tabs
+  // comes back to it instead of the first channel.
+  try { if (S.serverId) localStorage.setItem('cf_lastchan_' + S.serverId, id); } catch {}
   // In front of the reader now: drop the dot and stamp the read watermark, or a
   // cold start brings both back (the stamp was already in flight for a channel
   // the server considers unread but this client never saw marked).
