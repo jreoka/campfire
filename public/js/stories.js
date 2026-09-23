@@ -2654,6 +2654,11 @@ function storyRenderColors() {
   pk.className = 'sc-swatch sc-picker' + (custom ? ' on' : '');
   pk.title = 'Custom colour';
   pk.style.background = custom ? sc.drawColor : 'conic-gradient(#ff595e,#ffca3a,#8ac926,#1982c4,#6a4c93,#ff595e)';
+  const plus = document.createElement('span');
+  plus.className = 'sc-picker-plus';
+  plus.textContent = '+';
+  plus.style.display = custom ? 'none' : '';
+  pk.appendChild(plus);
   const ci = document.createElement('input');
   ci.type = 'color';
   ci.className = 'sc-picker-input';
@@ -2662,6 +2667,7 @@ function storyRenderColors() {
   ci.addEventListener('input', () => {
     sc.drawColor = ci.value;
     pk.style.background = ci.value;
+    plus.style.display = 'none';
     pk.classList.add('on');
     for (const el of box.querySelectorAll('.sc-swatch:not(.sc-picker)')) el.classList.remove('on');
     const d = box.querySelector('.sc-thick-dot');
