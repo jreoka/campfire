@@ -48,17 +48,23 @@ check(/@media \(max-width:520px\)\{\s*\.gif-grid\{columns:2\}/.test(css),
   'the modal drops to two columns on phones');
 
 // --- picker window size on desktop: skinnier than the first pass, and its
-// footing/height are measured off the real bottom stack ---
+// footing/height are anchored to the measured top of the bottom stack ---
 check(/#picker\{[^}]*width:min\(460px,calc\(100vw - 2rem\)\)/.test(css),
   'the picker window is skinnier on desktop (460px, was 560px)');
 check(/max-height:min\(480px,calc\(100dvh - var\(--composer-h\) - var\(--strip-h\) - var\(--safe-b\) - 24px\)\)/.test(css),
   'the stylesheet caps the picker at the room above the composer even before JS runs');
-check(/max = Math\.min\(480, vvh - footing - 24\)/.test(pickers),
-  'sizePicker caps the desktop height at 480 and at the visible room above the measured bottom stack');
-check(/pk\.style\.bottom = Math\.max\(0, Math\.round\(footing\)\) \+ 'px'/.test(pickers),
-  'sizePicker parks the desktop picker on the measured bottom stack (composer + strip + attachment/upload rows)');
+check(/#picker\{[^}]*bottom:calc\(var\(--composer-h\) \+ var\(--strip-h\) \+ var\(--safe-b\) \+ max\(0px, 100dvh - var\(--vvh, 100dvh\)\)\)/.test(css),
+  'the stylesheet fallback lifts the picker when the layout viewport runs taller than the visible window');
+check(/max = Math\.min\(480, stackTop - GAP - 16\)/.test(pickers),
+  'sizePicker caps the desktop height at 480 and at the real room above the measured stack top');
+check(/pk\.style\.bottom = Math\.max\(0, Math\.round\(layoutH - stackTop \+ GAP\)\) \+ 'px'/.test(pickers),
+  'sizePicker parks the desktop picker a fixed gap above the measured stack top (rect-based, immune to a stale layout viewport)');
+check(/getBoundingClientRect\(\)\.top/.test(pickers),
+  'the desktop footing is measured with getBoundingClientRect (visual-viewport coords from the real layout)');
 check(/contains\('anchored'\)\) \{/.test(pickers),
   'the anchored reaction picker keeps bottom:auto (the measured footing must not touch it)');
+check(!/vvh - footing - 24/.test(pickers),
+  'the old offsetHeight-summed footing math is gone');
 check(!/#picker\{[^}]*width:min\(560px,calc\(100vw - 2rem\)\)/.test(css),
   'the old 560px desktop width is gone');
 

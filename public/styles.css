@@ -1828,7 +1828,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 @keyframes flash{0%,40%{background:rgba(91,108,255,.27)}100%{background:transparent}}
 
 /* ---------- picker (emoji + GIFs) ---------- */
-#picker{position:absolute;left:.9rem;bottom:calc(var(--composer-h) + var(--strip-h) + var(--safe-b));width:min(460px,calc(100vw - 2rem));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-lg);z-index:150;display:flex;flex-direction:column;max-height:min(480px,calc(100dvh - var(--composer-h) - var(--strip-h) - var(--safe-b) - 24px));overflow:hidden;box-shadow:var(--shadow-2);}
+#picker{position:absolute;left:.9rem;bottom:calc(var(--composer-h) + var(--strip-h) + var(--safe-b) + max(0px, 100dvh - var(--vvh, 100dvh)));width:min(460px,calc(100vw - 2rem));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-lg);z-index:150;display:flex;flex-direction:column;max-height:min(480px,calc(100dvh - var(--composer-h) - var(--strip-h) - var(--safe-b) - 24px));overflow:hidden;box-shadow:var(--shadow-2);}
 #picker.anchored{position:fixed;bottom:auto}
 /* A picker opened for a profile field (status, bio) lives INSIDE a dialog, and
    the dialog layer reaches 175 (#modal-backdrop.over-pop, over a person card) —

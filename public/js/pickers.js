@@ -109,25 +109,31 @@ function sizePicker() {
     pk.style.bottom = '';
     max = Math.min(560, vvh - 16);
   } else {
-    // Desktop composer pick: the sheet floats above the composer, so both its
-    // footing and its cap are measured off the REAL bottom stack — the
-    // composer (which grows with multi-line drafts), the typing strip, and any
-    // visible staged-attachment / upload rows. A fixed guess (the old
-    // --composer-h math) parks the sheet's bottom edge behind a tall stack and
-    // cuts the bottom rows off.
-    const compH = comp && comp.offsetHeight ? comp.offsetHeight : 80;
-    const stripH = strip && strip.offsetHeight ? strip.offsetHeight : 0;
-    let extra = 0;
-    for (const sel of ['#attach-preview', '#upload-list']) {
+    // Desktop composer pick: the sheet floats above the composer, so its
+    // footing is anchored to the REAL top of the bottom stack — the composer
+    // (which grows with multi-line drafts), the typing strip, and any visible
+    // staged-attachment / upload rows — measured with getBoundingClientRect,
+    // which reports visual-viewport coords from the actual layout. Summing
+    // offsetHeights into a `bottom` offset breaks when the layout viewport is
+    // stale/taller than the visible window (some WebViews): the offset lands
+    // the sheet too low, it slides over the message input, and its own bottom
+    // rows get cut off. Anchoring to the stack's measured top keeps it parked
+    // above the input in every case.
+    let stackTop = Infinity;
+    for (const sel of ['#attach-preview', '#upload-list', '#typing-bar', '#composer']) {
       const el = document.querySelector(sel);
-      if (el && !el.classList.contains('hidden') && el.offsetHeight) extra += el.offsetHeight;
+      if (el && el.offsetHeight > 0) stackTop = Math.min(stackTop, el.getBoundingClientRect().top);
     }
-    const safeB = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-b')) || 0;
-    const footing = compH + stripH + extra + safeB;
-    pk.style.bottom = Math.max(0, Math.round(footing)) + 'px';
-    // 480px keeps it a comfortable size on tall screens; the 24px keeps it off
-    // the viewport's top edge on short ones.
-    max = Math.min(480, vvh - footing - 24);
+    if (!isFinite(stackTop)) stackTop = vvh - 80; // shouldn't happen; assume an 80px composer
+    // `bottom` resolves against the layout viewport while the rect is in
+    // visual-viewport coords; the two share their top edge, so converting via
+    // the layout height parks the sheet exactly GAP px above the stack.
+    const layoutH = document.documentElement.clientHeight || window.innerHeight;
+    const GAP = 8;
+    pk.style.bottom = Math.max(0, Math.round(layoutH - stackTop + GAP)) + 'px';
+    // 480px keeps it a comfortable size on tall screens; stackTop is the room
+    // above the stack, so this also keeps it off the viewport's top edge.
+    max = Math.min(480, stackTop - GAP - 16);
   }
   if (!(max > 0)) { pk.style.maxHeight = ''; return; }
   pk.style.maxHeight = Math.max(180, Math.round(max)) + 'px';
