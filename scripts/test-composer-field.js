@@ -214,7 +214,7 @@ function main() {
   });
   check(missing.length === 0, 'all four themes define --field and --field-line', missing);
   const fieldRule = ruleFor('#in-render')?.body || '';
-  check(/border-radius:16px/.test(fieldRule), 'the field and the send key share one radius family', fieldRule.slice(0, 60));
+  check(/border-radius:8px/.test(fieldRule), 'the field and the send key share one radius family', fieldRule.slice(0, 60));
 
   console.log('\n[2] the field\'s own controls are wired and styled');
   check(/align-items:flex-end/.test(ruleBody('#composer') || ''), '#composer bottom-aligns its children (send key stays on the bar when the box grows)');

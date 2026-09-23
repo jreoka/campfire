@@ -180,7 +180,7 @@ function wiringChecks() {
     'revealed on hover, always visible where there is no hover');
   check(/\.att-star\.on svg\{fill:var\(--accent\);stroke:var\(--accent\)\}/.test(css) && /\.pk-star\.on svg\{fill:var\(--accent\);stroke:var\(--accent\)\}/.test(css),
     'a starred GIF reads like a starred picker tile (same accent fill)');
-  check(/\.att-dl\{[^}]*border-radius:10px[^}]*background:rgba\(9,12,24,\.55\)/.test(css)
+  check(/\.att-dl\{[^}]*border-radius:5px[^}]*background:rgba\(9,12,24,\.55\)/.test(css)
     && /\.att-dl:active\{transform:scale\(\.92\)\}/.test(css),
     'the download button is the star\'s twin — same 32px square, rounding, scrim and press');
   check(/\.vplayer \.att-dl,\.txt-head \.att-dl\{position:static;opacity:1/.test(css),

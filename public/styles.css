@@ -532,7 +532,12 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 /* The one constructive action on a row (Admin → Users → Restore): same shape,
    accent fill. */
 .mini.primary{background:var(--accent-container);color:var(--on-container)}
-#me-card{display:flex;align-items:center;gap:.55rem;padding:.6rem .7rem;margin:.4rem .6rem .6rem calc(.6rem - var(--rail-w));border:0;border-radius:6px;background-color:var(--panel-2);font-size:.88rem;font-weight:600;overflow:hidden;transition:background-color .15s;position:relative;z-index:2}
+/* The me bar and the composer input pill are one row: both 51.2px tall
+   (me card = 2 x .6rem padding + its 32px avatar; pill = --field-h),
+   and this bottom margin matches #composer's bottom padding so their
+   bottom edges land on the same line. test-composer-field measures
+   the pair. */
+#me-card{display:flex;align-items:center;gap:.55rem;padding:.6rem .7rem;margin:.4rem .6rem calc(.9rem + var(--safe-b)) calc(.6rem - var(--rail-w));border:0;border-radius:6px;background-color:var(--panel-2);font-size:.88rem;font-weight:600;overflow:hidden;transition:background-color .15s;position:relative;z-index:2}
 /* The avatar + name is the only part of the bar that opens your card, so the
    space around mute/deafen/settings does nothing. It says so on hover with a
    rounded outline (outline, not border, so the target never moves the layout). */
@@ -831,7 +836,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #slowmode-hint{display:inline-flex;align-items:center;gap:.32rem;font-size:.74rem;font-weight:700;color:var(--amber);white-space:nowrap}
 #slowmode-hint.hidden{display:none}
 /* Rounded square-ish, not a circle — it reads as a key in the composer row and
-   matches the 16px radius the composer field uses. Its height is the field's
+   matches the 8px radius the composer field uses. Its height is the field's
    own (--field-h), not a fixed 46px: the two sit on the same bar, and a key
    shorter than the box it sends from looks like it fell out of the row. */
 .send-btn{width:46px;height:var(--field-h);border-radius:8px;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:background var(--t-fast),color var(--t-fast),transform .1s ease}
@@ -3136,12 +3141,15 @@ body{touch-action:manipulation}
   #chan-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #in-message,#in-thread{font-size:16px}
   #in-render,#thread-render{font-size:16px}
-  /* The phone composer is tighter than the desktop one and its field is 16px, so
+  /* The phone composer is tighter than the desktop one and its field is 8px, so
      its pill needs a smaller vertical padding to stay the same 51.2px as the me
      bar — and --composer-h (2 x .72rem + that pill) follows, as does the send
      key's --field-h. All three are measured by test-composer-field. */
   :root{--composer-h:74px;--field-pad-y:.7875rem;--field-h:calc(2 * var(--field-pad-y) + 1.5 * 1rem + 2px)}
   #composer{gap:.4rem;padding:.72rem;padding-bottom:calc(.72rem + var(--safe-b))}
+  /* Same baseline deal as desktop: the drawer is already inset by the
+     safe area, so the me bar only needs the phone composer's .72rem. */
+  #me-card{margin-bottom:.72rem}
   #composer .btn{padding:.7rem .9rem;min-height:44px}
   /* Thumb-sized tool keys — except the field's own leading +, which has to stay
      smaller than the field it sits in (a 44px disc in a 47px box has nowhere to

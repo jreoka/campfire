@@ -221,11 +221,11 @@ async function main() {
   const noComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
   check(!/\.embed-yt/.test(noComments(styles)) && !/embed-yt/.test(noComments(embedsSrc)) && !/embed-yt/.test(noComments(pickers)),
     'no card anywhere wears the retired chip anatomy — not the stylesheet, not the markup, not the handler');
-  check(/\.embed\{background:var\(--panel-2\);border:1px solid var\(--line-soft\);border-radius:12px;overflow:hidden;max-width:100%\}/.test(styles),
-    'so a facade card keeps the card chrome it used to drop (surface, hairline, the 12px clip)');
+  check(/\.embed\{background:var\(--panel-2\);border:1px solid var\(--line-soft\);border-radius:6px;overflow:hidden;max-width:100%\}/.test(styles),
+    'so a facade card keeps the card chrome it used to drop (surface, hairline, the 6px clip)');
   check(!/\.yt-facade::after/.test(styles),
     'and the tile needs no inset hairline of its own: the card\'s border box is the edge now');
-  check(/\.yt-play\{[^}]*border-radius:16px[^}]*box-shadow:0 0 0 1px rgba\(255,255,255,\.14\)/.test(styles),
+  check(/\.yt-play\{[^}]*border-radius:8px[^}]*box-shadow:0 0 0 1px rgba\(255,255,255,\.14\)/.test(styles),
     'the play affordance is a rounded square with a hairline ring (the app\'s own button shape), not a bare circle');
   check(/\.yt-facade:hover \.yt-play\{background:#f00/.test(styles),
     'and it takes YouTube red under the pointer — brand colour on user content, where it belongs');

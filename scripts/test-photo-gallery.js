@@ -392,7 +392,7 @@ async function main() {
   check(!/\.msg-atts\.gallery > \.att-slot > \.scan-block/.test(css), 'and is not looked for inside a slot it never has');
   check(/\.msg-atts\.gallery img\.att-img\{width:100%;height:100%;max-width:100%;max-height:none;object-fit:cover\}/.test(css),
     'the photo fills the tile (a contact sheet: the crop is the tile, the whole picture is the lightbox)');
-  check(/\.msg-atts\.gallery \.att-wrap\{display:block;width:100%!important;height:100%;max-width:100%;overflow:hidden;border-radius:12px;aspect-ratio:auto\}/.test(css),
+  check(/\.msg-atts\.gallery \.att-wrap\{display:block;width:100%!important;height:100%;max-width:100%;overflow:hidden;border-radius:6px;aspect-ratio:auto\}/.test(css),
     'the wrap fills the tile, and overrides the width an attachment reserves for its own shape');
   check(/\.msg-atts\.gallery video\.att-vid\{width:100%;height:100%;max-width:100%;max-height:none;object-fit:cover\}/.test(css),
     'a CLIP fills its tile exactly as a photo does (a clip has a poster frame like any other media)');
