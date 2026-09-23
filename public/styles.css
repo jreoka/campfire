@@ -1951,7 +1951,7 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
    the card. A phone is where it showed: the card is a full-height sheet there,
    so a dialog at 160 was painted entirely behind it and "Set a status" looked
    like a dead button. */
-#usercard{position:fixed;z-index:170;width:300px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:8px;overflow:hidden;display:flex;flex-direction:column;max-height:calc(100vh - 16px);max-height:calc(100dvh - 16px);--uc-text:var(--text);--uc-muted:var(--muted);--uc-faint:var(--faint);--uc-link:var(--accent-hover);--uc-chip:var(--panel-3);--uc-chip-line:var(--line)}
+#usercard{position:fixed;z-index:170;width:300px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:8px;overflow:hidden;overflow-y:auto;max-height:calc(100vh - 16px);max-height:calc(100dvh - 16px);--uc-text:var(--text);--uc-muted:var(--muted);--uc-faint:var(--faint);--uc-link:var(--accent-hover);--uc-chip:var(--panel-3);--uc-chip-line:var(--line)}
 /* The card's own text tones. Everything that sits DIRECTLY on the card's
    backdrop reads the --uc-* tones above; the card's opaque panels — the tab
    list, the status bubble, the presence switcher, the system/game status boxes
@@ -2015,8 +2015,8 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
   #usercard.sheet .uc-banner{border-radius:10px 10px 0 0}
 }
 @keyframes cf-sheet-up{from{transform:translateY(100%)}to{transform:translateY(0)}}
-.uc-banner{height:88px;flex-shrink:0;background:var(--panel-3);background-size:cover;background-position:center}
-.uc-body{padding:0 1rem 1rem;overflow-y:auto;min-height:0;overscroll-behavior:contain}
+.uc-banner{height:88px;position:sticky;top:0;background:var(--panel-3);background-size:cover;background-position:center}
+.uc-body{padding:0 1rem 1rem}
 .uc-body .avatar.big{width:66px;height:66px;font-size:1.4rem;margin-top:-33px}
 .uc-name{font-weight:750;font-size:1.02rem;margin-top:.4rem;letter-spacing:-.01em}
 .uc-sub{font-size:.8rem;color:var(--muted)}
@@ -2085,7 +2085,7 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 /* Custom status: a thought bubble beside the avatar. The avatar straddles the
    banner (margin-top:-33px), so the bubble wrap hangs itself -14px to sit on
    the picture's lower half, with two tail dots trailing toward it. */
-.uc-head{display:flex;align-items:flex-start;gap:1.05rem}
+.uc-head{display:flex;align-items:flex-start;gap:1.05rem;position:relative;z-index:1}
 .uc-bubble-wrap{flex:1;min-width:0;margin-top:-14px}
 .uc-bubble-fit{position:relative;width:fit-content;max-width:100%}
 .uc-bubble{position:relative;display:block;max-width:100%;background:var(--panel-3);border:0;border-radius:8px 8px 8px 3px;padding:.42rem .62rem;font:inherit;font-size:.82rem;line-height:1.25;color:var(--text);text-align:left;overflow-wrap:anywhere}

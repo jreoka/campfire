@@ -275,20 +275,24 @@ function main() {
   check(/paintStoryAvatar\(\$\('#pf-avatar'\), u, \{ ring: '3px'/.test(stories), 'the profile avatar is the story anchor');
 
   console.log('\n[4a] a tall card never strands content below the viewport');
-  // The desktop card is position:fixed with overflow:hidden and no height cap,
+  // The desktop card was position:fixed with overflow:hidden and no height cap,
   // so a card taller than the window (long bio, gaming section loading late,
-  // every mod tab) used to run off the bottom with no way to reach it. It is
-  // now a capped flex column: the banner stays put, the body scrolls.
-  check(/#usercard\{[^}]*display:flex;flex-direction:column/.test(css),
-    'the card is a flex column');
+  // every mod tab) ran off the bottom with no way to reach the cut-off rows.
+  // The card itself is now the scroll container, capped to the viewport, with
+  // the banner sticky at its top. (A first attempt made .uc-body the scroller,
+  // which clipped the avatar/bubble's negative-margin overlap — the banner
+  // painted over them. The overlap lives inside the card's own box now, so it
+  // survives.)
   check(/#usercard\{[^}]*max-height:calc\(100dvh - 16px\)/.test(css),
-    'capped to the viewport height (dvh, with the vh fallback beside it)');
-  check(/\.uc-banner\{[^}]*flex-shrink:0/.test(css),
-    'the banner never shrinks');
-  check(/\.uc-body\{[^}]*overflow-y:auto;min-height:0/.test(css),
-    'the body is the scroll container (min-height:0 so it can actually shrink)');
-  check(/\.uc-body\{[^}]*overscroll-behavior:contain/.test(css),
-    'scrolling the card never scrolls the page behind it');
+    'the card is capped to the viewport height (dvh, with the vh fallback beside it)');
+  check(/#usercard\{[^}]*overflow-y:auto/.test(css),
+    'and the card itself scrolls');
+  check(/\.uc-banner\{[^}]*position:sticky;top:0/.test(css),
+    'the banner sticks to the top while the rest slides beneath it');
+  check(/\.uc-head\{[^}]*position:relative;z-index:1/.test(css),
+    'the head (avatar + status bubble) paints above the positioned banner');
+  check(/\.uc-body \.avatar\.big\{[^}]*margin-top:-33px/.test(css),
+    'the avatar keeps its -33px overlap onto the banner');
 
   console.log('\n[4b] a DM header name opens that person\'s card as a phone sheet');
   check(/\$\('#chat-header'\)\.addEventListener\('click', \(e\) => \{/.test(ui), 'the header is a click target (ui.js)');
