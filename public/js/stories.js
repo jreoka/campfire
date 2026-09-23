@@ -102,6 +102,12 @@ function storyHomeCounts() {
   };
   add(storyUserTrays());
   add(storyData.servers);
+  // My own tray is delivered apart from the friends/everyone feed (the server
+  // keeps it in `mine`, never in a friend tray), but it still counts as a
+  // person on the row — never as unseen, which the author check below already
+  // guarantees. Without this, posting a story while nobody else has one left
+  // the row saying "No stories yet".
+  if (storyData.mine) add([storyData.mine]);
   const people = new Set();
   let unseen = 0;
   for (const it of byStory.values()) {
@@ -685,7 +691,12 @@ function renderHomeStories() {
   const av = $('#stories-nav-av');
   if (av) {
     av.innerHTML = '';
-    const first = trays[0] || srvTrays[0];
+    // My own tray is not in the friends/everyone/server trays above, so when
+    // it is the only thing live the row would otherwise wear the camera mark
+    // next to "1 person with stories". It yields to every real tray — it is
+    // only the face when there is nothing else to show.
+    const mineItems = (storyData.mine && S.me) ? storyLive(storyData.mine.items) : [];
+    const first = trays[0] || srvTrays[0] || (mineItems.length ? { user: S.me, items: mineItems } : null);
     if (first && first.user) paintAvatar(av, first.user);
     else if (first && first.items && first.items[0] && first.items[0].author) paintAvatar(av, first.items[0].author);
     else {
