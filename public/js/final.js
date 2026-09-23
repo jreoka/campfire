@@ -476,6 +476,17 @@ function clickInOverPopDialog(e) {
   if (!bd || !bd.classList.contains('over-pop')) return false;
   return clickInPath(e, ['#modal-backdrop']);
 }
+// The message hover bar (.msg-actions) is pure CSS :hover, so it freezes open
+// when the window loses focus without the pointer leaving the message —
+// clicking a link (the browser opens over the app), alt-tabbing away, anything
+// where focus leaves but no mouseleave ever fires. A stuck :hover only
+// re-evaluates on the next mousemove or click, which is why the bar sat there
+// until the window was clicked back into. Force every bar shut on blur via
+// body.win-blurred (see styles.css); on focus the browser re-resolves :hover
+// from the real pointer position, so a bar the pointer is genuinely still
+// over comes straight back.
+window.addEventListener('blur', () => document.body.classList.add('win-blurred'));
+window.addEventListener('focus', () => document.body.classList.remove('win-blurred'));
  document.addEventListener('click', (e) => {
   // Clicks inside the bottom sheet are handled by the sheet's own rows (a row may
   // open the picker), so they must not close it again in the same click. The same
