@@ -2649,11 +2649,31 @@ function storyRenderColors() {
   // A real colour picker after the presets: a native <input type=color> hides
   // inside a rainbow swatch. It updates live with no re-render mid-pick —
   // rebuilding the row would detach the input from under the OS picker popup.
+  // The rainbow is an SVG pie, not a conic-gradient background: on some mobile
+  // GPUs a conic background paints its square box straight through the
+  // border-radius clip, so the swatch read as a square shoved in the circle
+  // (flat edges at the top/bottom/left/right). SVG artwork is intrinsically
+  // circular — transparent corners, nothing for a broken clip to betray.
   const custom = !OV_COLORS.includes(sc.drawColor);
   const pk = document.createElement('label');
   pk.className = 'sc-swatch sc-picker' + (custom ? ' on' : '');
   pk.title = 'Custom colour';
-  pk.style.background = custom ? sc.drawColor : 'conic-gradient(#ff595e,#ffca3a,#8ac926,#1982c4,#6a4c93,#ff595e)';
+  if (custom) pk.style.background = sc.drawColor;
+  const wheel = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  wheel.setAttribute('viewBox', '0 0 28 28');
+  wheel.setAttribute('class', 'sc-picker-wheel');
+  wheel.setAttribute('aria-hidden', 'true');
+  const WHEEL = ['#ff595e', '#ff9f1c', '#ffe066', '#4ade80', '#38bdf8', '#a78bfa'];
+  for (let i = 0; i < 6; i++) {
+    const a0 = i * Math.PI / 3, a1 = (i + 1) * Math.PI / 3;
+    const w = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    w.setAttribute('d', 'M14 14L' + (14 + 14 * Math.sin(a0)).toFixed(2) + ' ' + (14 - 14 * Math.cos(a0)).toFixed(2) +
+      'A14 14 0 0 1 ' + (14 + 14 * Math.sin(a1)).toFixed(2) + ' ' + (14 - 14 * Math.cos(a1)).toFixed(2) + 'Z');
+    w.setAttribute('fill', WHEEL[i]);
+    wheel.appendChild(w);
+  }
+  wheel.style.display = custom ? 'none' : '';
+  pk.appendChild(wheel);
   const plus = document.createElement('span');
   plus.className = 'sc-picker-plus';
   plus.textContent = '+';
@@ -2667,6 +2687,7 @@ function storyRenderColors() {
   ci.addEventListener('input', () => {
     sc.drawColor = ci.value;
     pk.style.background = ci.value;
+    wheel.style.display = 'none';
     plus.style.display = 'none';
     pk.classList.add('on');
     for (const el of box.querySelectorAll('.sc-swatch:not(.sc-picker)')) el.classList.remove('on');

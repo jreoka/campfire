@@ -3981,6 +3981,9 @@ body.story-open{overflow:hidden}
 .sc-picker{position:relative;overflow:hidden}
 .sc-picker-input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;padding:0;border:0}
 .sc-picker-plus{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:17px;font-weight:800;line-height:1;text-shadow:0 1px 3px rgba(0,0,0,.65);pointer-events:none}
+/* Slightly larger than the swatch so the wheel sits under the 2px border
+   the way the other swatches' backgrounds do. */
+.sc-picker-wheel{position:absolute;inset:-2px;pointer-events:none}
 /* Brush thickness: a slider with a dot previewing the real stroke width in
    the current colour. */
 .sc-thick{flex:0 0 auto;display:flex;align-items:center;gap:.55rem;background:rgba(10,13,22,.62);border-radius:999px;padding:.32rem .75rem}
