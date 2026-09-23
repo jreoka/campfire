@@ -96,13 +96,38 @@ function sizePicker() {
   const strip = $('#typing-bar');
   let max;
   if (phoneLayout() && comp && comp.offsetHeight) {
+    pk.style.bottom = '';
     // With the keyboard up (the sheet is in its .pk-kb mode) the room above the
     // composer is the whole point, so the 18vh of chat kept visible while the
     // keyboard is DOWN no longer applies — it would push the sheet off the top.
     const forChat = pk.classList.contains('pk-kb') ? 8 : Math.round(vvh * 0.18);
     max = vvh - comp.offsetHeight - (strip ? strip.offsetHeight : 0) - forChat;
-  } else {
+  } else if (pk.classList.contains('anchored')) {
+    // The reaction picker floats near its anchor button: openPicker sets its
+    // top/left and the stylesheet keeps bottom:auto, so only the height is
+    // capped here and the inline footing below must not touch it.
+    pk.style.bottom = '';
     max = Math.min(560, vvh - 16);
+  } else {
+    // Desktop composer pick: the sheet floats above the composer, so both its
+    // footing and its cap are measured off the REAL bottom stack — the
+    // composer (which grows with multi-line drafts), the typing strip, and any
+    // visible staged-attachment / upload rows. A fixed guess (the old
+    // --composer-h math) parks the sheet's bottom edge behind a tall stack and
+    // cuts the bottom rows off.
+    const compH = comp && comp.offsetHeight ? comp.offsetHeight : 80;
+    const stripH = strip && strip.offsetHeight ? strip.offsetHeight : 0;
+    let extra = 0;
+    for (const sel of ['#attach-preview', '#upload-list']) {
+      const el = document.querySelector(sel);
+      if (el && !el.classList.contains('hidden') && el.offsetHeight) extra += el.offsetHeight;
+    }
+    const safeB = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-b')) || 0;
+    const footing = compH + stripH + extra + safeB;
+    pk.style.bottom = Math.max(0, Math.round(footing)) + 'px';
+    // 480px keeps it a comfortable size on tall screens; the 24px keeps it off
+    // the viewport's top edge on short ones.
+    max = Math.min(480, vvh - footing - 24);
   }
   if (!(max > 0)) { pk.style.maxHeight = ''; return; }
   pk.style.maxHeight = Math.max(180, Math.round(max)) + 'px';

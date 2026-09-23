@@ -47,13 +47,20 @@ check(/@media \(max-width:700px\),\(max-height:560px\) and \(pointer:coarse\)\{[
 check(/@media \(max-width:520px\)\{\s*\.gif-grid\{columns:2\}/.test(css),
   'the modal drops to two columns on phones');
 
-// --- bigger picker window on desktop ---
-check(/#picker\{[^}]*width:min\(560px,calc\(100vw - 2rem\)\)/.test(css),
-  'the picker window is wider on desktop (560px, was 370px)');
-check(/max = Math\.min\(560, vvh - 16\)/.test(pickers),
-  'sizePicker raises the desktop height cap to 560 (was 390)');
-check(!/max = Math\.min\(390, vvh - 16\)/.test(pickers),
-  'the old 390px desktop cap is gone');
+// --- picker window size on desktop: skinnier than the first pass, and its
+// footing/height are measured off the real bottom stack ---
+check(/#picker\{[^}]*width:min\(460px,calc\(100vw - 2rem\)\)/.test(css),
+  'the picker window is skinnier on desktop (460px, was 560px)');
+check(/max-height:min\(480px,calc\(100dvh - var\(--composer-h\) - var\(--strip-h\) - var\(--safe-b\) - 24px\)\)/.test(css),
+  'the stylesheet caps the picker at the room above the composer even before JS runs');
+check(/max = Math\.min\(480, vvh - footing - 24\)/.test(pickers),
+  'sizePicker caps the desktop height at 480 and at the visible room above the measured bottom stack');
+check(/pk\.style\.bottom = Math\.max\(0, Math\.round\(footing\)\) \+ 'px'/.test(pickers),
+  'sizePicker parks the desktop picker on the measured bottom stack (composer + strip + attachment/upload rows)');
+check(/contains\('anchored'\)\) \{/.test(pickers),
+  'the anchored reaction picker keeps bottom:auto (the measured footing must not touch it)');
+check(!/#picker\{[^}]*width:min\(560px,calc\(100vw - 2rem\)\)/.test(css),
+  'the old 560px desktop width is gone');
 
 if (failures.length) { console.log('\n' + failures.length + ' FAILURES'); process.exit(1); }
 console.log('\n' + passed + ' checks passed');
