@@ -102,7 +102,7 @@ function sizePicker() {
     const forChat = pk.classList.contains('pk-kb') ? 8 : Math.round(vvh * 0.18);
     max = vvh - comp.offsetHeight - (strip ? strip.offsetHeight : 0) - forChat;
   } else {
-    max = Math.min(390, vvh - 16);
+    max = Math.min(560, vvh - 16);
   }
   if (!(max > 0)) { pk.style.maxHeight = ''; return; }
   pk.style.maxHeight = Math.max(180, Math.round(max)) + 'px';

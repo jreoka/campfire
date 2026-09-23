@@ -1029,11 +1029,11 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 /* the title keeps clear of it (the ✕ is 30px + its .6rem inset) */
 .modal.x-only h3{padding-right:2.1rem}
 .modal.x-only .row.end{display:none}
-.gif-grid{display:flex;flex-wrap:wrap;gap:6px;overflow-y:auto;max-height:52dvh;min-height:140px;margin-top:.6rem;align-content:flex-start}
-.gif-grid .pk-gif{width:calc(33.333% - 5px)}
-.gif-grid .pk-gif img{height:110px}
+.gif-grid{display:block;columns:3;column-gap:6px;overflow-y:auto;max-height:52dvh;min-height:140px;margin-top:.6rem}
+.gif-grid .pk-gif{width:100%;margin:0 0 6px;break-inside:avoid}
+.gif-grid .pk-gif img{height:auto}
 @media (max-width:520px){
-  .gif-grid .pk-gif{width:calc(50% - 3px)}
+  .gif-grid{columns:2}
 }
 .modal h3{margin:.1rem 0 .9rem;font-size:1.12rem;font-weight:800;letter-spacing:-.01em}
 .modal input,.modal select,.modal textarea{width:100%;background:var(--inset);border:1px solid var(--line);color:var(--text);border-radius:5px;padding:.65rem .8rem;font-size:.93rem;margin-top:.4rem;outline:none;font-family:inherit;transition:border-color var(--t-fast),box-shadow var(--t-fast)}
@@ -1828,7 +1828,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 @keyframes flash{0%,40%{background:rgba(91,108,255,.27)}100%{background:transparent}}
 
 /* ---------- picker (emoji + GIFs) ---------- */
-#picker{position:absolute;left:.9rem;bottom:calc(var(--composer-h) + var(--strip-h) + var(--safe-b));width:min(370px,calc(100vw - 2rem));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-lg);z-index:150;display:flex;flex-direction:column;max-height:390px;overflow:hidden;box-shadow:var(--shadow-2);}
+#picker{position:absolute;left:.9rem;bottom:calc(var(--composer-h) + var(--strip-h) + var(--safe-b));width:min(560px,calc(100vw - 2rem));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-lg);z-index:150;display:flex;flex-direction:column;max-height:560px;overflow:hidden;box-shadow:var(--shadow-2);}
 #picker.anchored{position:fixed;bottom:auto}
 /* A picker opened for a profile field (status, bio) lives INSIDE a dialog, and
    the dialog layer reaches 175 (#modal-backdrop.over-pop, over a person card) —
@@ -1874,6 +1874,13 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 .pk-gif{position:relative;border:0;background:transparent;padding:2px;cursor:pointer;border-radius:5px;width:calc(50% - 3px)}
 .pk-gif img{width:100%;height:90px;object-fit:cover;border-radius:4px;display:block}
 .pk-gif:hover{outline:2px solid var(--accent)}
+/* GIF tabs are a masonry collage, not a uniform grid: every GIF keeps its own
+   aspect ratio (height:auto) so wide ones stop getting their sides cropped.
+   Headers and empty states span the columns; tiles never split across them. */
+#pk-gifs{display:block;columns:3;column-gap:6px}
+#pk-gifs>.pk-subrow,#pk-gifs>.pk-sec,#pk-gifs>.pk-empty{column-span:all}
+#pk-gifs .pk-gif{width:100%;margin:0 0 6px;break-inside:avoid}
+#pk-gifs .pk-gif img{height:auto}
 .pk-star{position:absolute;top:5px;right:5px;width:24px;height:24px;border:0;padding:0;background:rgba(9,12,24,.45);cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:4px;opacity:.55;transition:opacity .12s}
 .pk-star svg{width:14px;height:14px;fill:none;stroke:#fff;stroke-width:2}
 .pk-star.on svg{fill:var(--accent);stroke:var(--accent)}
@@ -1883,6 +1890,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
   #picker .pk-body{flex-direction:column;gap:.35rem}
   #picker .pk-rail{width:100%;flex-direction:row;overflow-x:auto;overflow-y:hidden;padding:0}
   #picker .pk-rail-btn{flex-shrink:0;min-width:52px}
+  #pk-gifs{columns:2}
 }
 .pk-empty{color:var(--muted);font-size:.85rem;padding:1rem;text-align:center;width:100%}
 .pk-empty.small{padding:.5rem;font-size:.78rem}
