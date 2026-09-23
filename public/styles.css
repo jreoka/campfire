@@ -1717,6 +1717,10 @@ body.win-blurred .msg-actions{opacity:0!important;visibility:hidden!important;po
 .edited{font-size:.7rem;color:var(--faint)}
 .mention{background:var(--accent-container);color:var(--on-container);border-radius:3px;padding:.05rem .3rem;font-weight:650}
 .mention.me{background:var(--accent);color:var(--on-accent)}
+/* In the composer backdrop the pill must be exactly as wide as the typed
+   text, or the caret drifts. The horizontal padding is what throws it off,
+   so the backdrop pills keep the background but lose the side padding. */
+#in-render-inner .mention,#thread-render-inner .mention{padding-left:0;padding-right:0}
 /* Role mentions wear the role's own colour; a role you hold reads as a
    personal mention (solid accent), so the inline colour is dropped there. */
 .mention.role{color:var(--rc,var(--on-container))}
