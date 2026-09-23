@@ -671,6 +671,48 @@ function composerSendKey(inp, formId) {
 }
 composerSendKey($('#in-message'), 'composer');
 composerSendKey($('#in-thread'), 'thread-composer');
+// Enter posts a staged message even when the composer input isn't focused:
+// an image is loaded ready to send, the reader clicked away to look at
+// something, and Enter should still send it. The per-input handler above owns
+// the focused case (it preventDefaults, so the document-level one must ignore
+// defaultPrevented or the message would send twice). This covers everything
+// else, routing to whichever composer actually has staged attachments.
+// Which composer (if any) has staged attachments ready to send. The thread's
+// own staged files win when a thread is open on them; otherwise the chat bar.
+function stagedSendTarget(){
+  try { if (typeof S !== 'undefined' && S.thread && threadAtts().length) return 'thread-composer'; } catch {}
+  try { if (typeof S !== 'undefined' && S.pendingAtts && S.pendingAtts.length) return 'composer'; } catch {}
+  return null;
+}
+// May a document-level Enter post the staged message? Anything that consumes
+// Enter itself keeps it — fields, buttons, links (a focused link opens on
+// Enter), and the composer inputs whose own handler already sent. The
+// autocomplete popups own it while open, and any overlay except the thread
+// panel owns the keyboard while it is up: never post a message behind the
+// lightbox, a dialog, or the emoji sheet.
+function globalEnterSendAllowed(e){
+  if (!e || e.key !== 'Enter' || e.shiftKey || e.isComposing) return false;
+  if (e.defaultPrevented || e.cfAutocomplete) return false;
+  const t = e.target;
+  if (t && t.closest && t.closest('input, textarea, select, [contenteditable="true"], button, a, [role="button"], summary')) return false;
+  try {
+    if (cfVisible('#mention-pop') || cfVisible('#emoji-pop') || cfVisible('#chan-pop')) return false;
+  } catch {}
+  try {
+    for (const layer of CF_BACK_LAYERS) {
+      if (layer.name === 'thread') continue;
+      try { if (layer.open()) return false; } catch {}
+    }
+  } catch {}
+  return true;
+}
+document.addEventListener('keydown', (e) => {
+  if (!globalEnterSendAllowed(e)) return;
+  const target = stagedSendTarget();
+  if (!target) return;
+  e.preventDefault();
+  document.getElementById(target)?.requestSubmit();
+});
 // A phone picker stands where the keyboard would be, so the two are mutually
 // exclusive by design (see openPicker): putting the caret back in a composer is
 // the reader asking to type, which means the sheet gets out of the way. Without
