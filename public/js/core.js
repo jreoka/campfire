@@ -512,9 +512,11 @@ function renderRich(text, opts = {}) {
       ? '<img class="cemoi" src="' + em.url + '" alt="' + m + '" title="' + m + '" data-fb-emoji="' + m + '">'
       : (S.stdEmoji[n] || m);
   });
+  }
   // ID-based mentions from autocomplete picks (<@id> for users, <@&id> for
   // roles) resolve unambiguously, even when a username collides with a role
-  // name. These run before the name-based matcher below.
+  // name. These run before the name-based matcher below. They run in plain
+  // mode too, so the composer's backdrop renders pills like Discord.
   const d = S.serverDetail;
   if (d && S.view === 'server') {
     const membersById = new Map((d.members || []).map((m) => [m.id, m]));
@@ -566,6 +568,7 @@ function renderRich(text, opts = {}) {
   }
   // #channel links: only in server context, and only when the name matches a
   // real channel (so #5, C#, hex colors etc. stay plain text).
+  if (!opts.plain) {
   h = h.replace(/(^|[\s(])#([A-Za-z0-9_-]{1,32})/g, (m, pre, name) => {
     if (S.view !== 'server') return m;
     const ch = (S.serverDetail?.channels || []).find((c) => c.name.toLowerCase() === name.toLowerCase());

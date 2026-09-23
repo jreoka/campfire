@@ -3025,15 +3025,20 @@ onComposerKeydown((e, inp) => {
 });
 function applyMention(cand, inp = $('#in-message')) {
   const pos = inp.selectionStart ?? inp.value.length;
-  // Explicit autocomplete picks are unambiguous: users become <@id>, roles
-  // become <@&id> (Discord-style). The renderer resolves these to the current
-  // name, so a username colliding with a role name still mentions exactly
-  // what was picked. Plain @name text (typed by hand) still goes through
-  // the name-based matcher.
+  // The composer shows human-readable @name (the backdrop renders it as a
+  // pill, like Discord). Only when the name collides with the other kind do
+  // we insert an unambiguous <@id> / <@&id> token instead.
   let insert;
-  if (cand.kind === 'user' && cand.user) insert = '<@' + cand.user.id + '>';
-  else if (cand.kind === 'role' && cand.role) insert = '<@&' + cand.role.id + '>';
-  else insert = '@' + cand.insert;
+  const server = S.view === 'server' ? S.serverDetail : null;
+  if (cand.kind === 'user' && cand.user) {
+    const collides = server && (server.roles || []).some((r) => r.name.toLowerCase() === cand.user.username.toLowerCase());
+    insert = collides ? '<@' + cand.user.id + '>' : '@' + cand.user.username;
+  } else if (cand.kind === 'role' && cand.role) {
+    const collides = server && (server.members || []).some((m) => m.username.toLowerCase() === cand.role.name.toLowerCase());
+    insert = collides ? '<@&' + cand.role.id + '>' : '@' + cand.role.name;
+  } else {
+    insert = '@' + cand.insert;
+  }
   // A function replacement, so a role name containing `$&`/`$1` stays literal.
   inp.value = inp.value.slice(0, pos).replace(/@[^@\n]{0,32}$/, () => insert + ' ');
   hideMentionPop();
