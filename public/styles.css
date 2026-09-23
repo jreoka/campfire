@@ -425,7 +425,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
    avatar asked to fill it would come out letterboxed — which is why the icon
    image used to be pinned to a hard-coded 48px instead. `padding:0` is what lets
    it be 100% of whatever --rail-ico says. */
-.server-btn{width:var(--rail-ico);height:var(--rail-ico);padding:0;border-radius:6px;border:0;background:var(--panel-2);color:var(--text);font-size:1.15rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;position:relative;flex-shrink:0;transition:background var(--t-fast),border-radius var(--t-fast)}
+.server-btn{width:var(--rail-ico);height:var(--rail-ico);padding:0;border-radius:12px;border:0;background:var(--panel-2);color:var(--text);font-size:1.15rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;position:relative;flex-shrink:0;transition:background var(--t-fast),border-radius var(--t-fast)}
 .server-btn img{border-radius:inherit}
 /* The active pill hugs the rail's OWN left edge, so its offset is the gutter
    between an icon and the rail — the icons are centred, so that is exactly half
@@ -438,7 +438,7 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 @keyframes pill-pop{0%{transform:translateY(-50%) scaleY(.15);opacity:0}55%{opacity:1}100%{transform:translateY(-50%) scaleY(1);opacity:1}}
 .server-btn.pill-pop::before,.fwrap.pill-pop .folder-btn::before,#home-wrap.pill-pop:has(> .active)::before{animation:pill-pop .28s ease-out}
 @media (prefers-reduced-motion:reduce){.server-btn.pill-pop::before,.fwrap.pill-pop .folder-btn::before,#home-wrap.pill-pop:has(> .active)::before{animation:none}}
-.server-btn:hover{background:var(--panel-3);border-radius:5px}
+.server-btn:hover{background:var(--panel-3);border-radius:10px}
 .server-btn.active{background:var(--accent);color:var(--on-accent)}
 /* Unread somewhere in this server: the count in a red corner badge (the number
    comes from the button's data-unread, so a badge can never render empty). A
@@ -449,9 +449,9 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 .folder-btn.open.unread[data-unread]::after{display:none}
 .server-btn.has-icon{background-color:transparent;background-size:cover;background-position:center}
 .server-btn.has-icon:hover{background-color:transparent}
-.server-btn.has-icon.active{border-radius:5px}
+.server-btn.has-icon.active{border-radius:10px}
 .server-btn.muted{opacity:.45}
-#btn-add-server{width:var(--rail-ico);height:var(--rail-ico);padding:0;border-radius:6px;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background var(--t-fast),transform .1s ease}
+#btn-add-server{width:var(--rail-ico);height:var(--rail-ico);padding:0;border-radius:12px;border:0;background:var(--accent);color:var(--on-accent);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background var(--t-fast),transform .1s ease}
 #btn-add-server:hover{background:var(--accent-hover)}
 #btn-add-server:active{transform:scale(.95)}
 /* The glyph is sized here rather than by the width/height on the <svg> it ships
@@ -460,8 +460,8 @@ h1,h2,h3{letter-spacing:-.02em;line-height:1.2}
 /* site-admin shield: same rail geometry as the add button, but a quiet tonal
    tool rather than a primary action (indigo only on hover/active) */
 #server-list #btn-admin{margin:.15rem 0 .5rem;flex-shrink:0}
-#btn-admin{position:relative;width:var(--rail-ico);height:var(--rail-ico);padding:0;border-radius:6px;border:0;background:var(--panel-3);color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background var(--t-fast),color var(--t-fast),border-radius var(--t-fast)}
-#btn-admin:hover{background:var(--panel-4);color:var(--text);border-radius:5px}
+#btn-admin{position:relative;width:var(--rail-ico);height:var(--rail-ico);padding:0;border-radius:12px;border:0;background:var(--panel-3);color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background var(--t-fast),color var(--t-fast),border-radius var(--t-fast)}
+#btn-admin:hover{background:var(--panel-4);color:var(--text);border-radius:10px}
 #btn-admin.active{background:var(--accent-container);color:var(--on-container)}
 #btn-admin.has-reports{color:var(--danger-tx)}
 #btn-admin.has-reports::after{content:'';position:absolute;top:6px;right:6px;width:9px;height:9px;border-radius:50%;background:var(--red);box-shadow:0 0 0 2px var(--panel-3)}
@@ -2577,7 +2577,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 /* ---------- server folders (Discord-style) ---------- */
 .fwrap{position:relative;width:var(--rail-ico);height:var(--rail-ico);flex-shrink:0}
 .folder-btn{
-  width:var(--rail-ico);height:var(--rail-ico);padding:0;border-radius:6px;border:0;cursor:pointer;
+  width:var(--rail-ico);height:var(--rail-ico);padding:0;border-radius:12px;border:0;cursor:pointer;
   display:flex;align-items:center;justify-content:center;position:relative;flex-shrink:0;
   background:color-mix(in srgb,var(--fcolor,#5865f2) 30%,var(--panel-2));
   transition:background .12s ease,border-radius var(--t-fast);
@@ -2941,7 +2941,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .dm-close:active{transform:scale(.88)}
 .dm-close svg{display:block}
 @media (hover:none){.dm-close{opacity:1}}
-.home-btn{background:var(--panel-2);border-radius:6px;position:relative;overflow:hidden;display:grid;place-items:center}
+.home-btn{background:var(--panel-2);border-radius:12px;position:relative;overflow:hidden;display:grid;place-items:center}
 
 .home-btn.active{background:var(--accent)}
 .home-btn.active::before{display:none}
@@ -4408,7 +4408,7 @@ html.wrapper-app .msg .text,html.wrapper-app .msg .text *,html.wrapper-app input
   .sheet-row:hover{background:var(--panel-3)}
   .ctx-item:hover{background:var(--panel-3)}
   .uc-tab:hover{background:var(--panel-4)}
-  .folder-btn:hover{background:color-mix(in srgb,var(--fcolor,#5865f2) 44%,var(--panel-2));border-radius:5px}
+  .folder-btn:hover{background:color-mix(in srgb,var(--fcolor,#5865f2) 44%,var(--panel-2));border-radius:10px}
   .msg:hover{background:rgba(255,255,255,.05)}
   [data-theme="light"] .msg:hover{background:rgba(20,26,38,.045)}
   .dm-close:hover{background:var(--danger-bg);color:var(--danger-tx)}
