@@ -91,6 +91,34 @@ def list_tree(root_id):
     return out
 
 
+def resolve_dir(root_id, parts, create=False, cache=None):
+    """Walk/create a chain of Drive folders; return the deepest folder's id."""
+    if cache is None:
+        cache = {}
+    pid, prefix = root_id, ""
+    for p in parts:
+        prefix = f"{prefix}{p}/"
+        if prefix in cache:
+            pid = cache[prefix]
+            continue
+        ent = find_child(pid, p)
+        if ent and ent["mimeType"] == FOLDER_MIME:
+            pid = ent["id"]
+        elif create:
+            r = drive("files", "create",
+                      "--params",
+                      json.dumps({"ignoreDefaultVisibility": True}),
+                      "--json",
+                      json.dumps({"name": p, "mimeType": FOLDER_MIME,
+                                  "parents": [pid]}))
+            pid = r["id"]
+            print(f"  mkdir {prefix}")
+        else:
+            return None
+        cache[prefix] = pid
+    return pid
+
+
 def ensure_parent(root_id, tree, rel, check):
     """Return the Drive id of rel's parent dir, creating missing dirs."""
     parts = rel.split("/")[:-1]
@@ -122,6 +150,30 @@ def git_bytes(rev, path):
 
 def norm(b):
     return b.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def tmp_git_bytes(rev, rel):
+    os.makedirs(TMPDIR, exist_ok=True)
+    tmp = os.path.join(TMPDIR, os.path.basename(rel) or "f")
+    with open(tmp, "wb") as f:
+        f.write(git_bytes(rev, rel))
+    return tmp
+
+
+def upload_new_id(pid, rev, rel):
+    tmp = tmp_git_bytes(rev, rel)
+    drive("+upload", tmp, "--parent", pid, "--name", os.path.basename(rel))
+    os.remove(tmp)
+    print(f"  + {rel}")
+
+
+def upload_id_update(file_id, rev, rel):
+    tmp = tmp_git_bytes(rev, rel)
+    drive("files", "update",
+          "--params", json.dumps({"fileId": file_id}),
+          "--upload", tmp)
+    os.remove(tmp)
+    print(f"  ~ {rel}")
 
 
 def upload_new(root_id, tree, rev, rel, check):
@@ -175,7 +227,7 @@ def main():
 
     root_id = drive_root()
     print(f"Drive: git_repos/campfire (target {to_rev[:12]})")
-    tree = list_tree(root_id)
+    dircache = {}
 
     if os.path.exists(STATE_FILE):
         from_rev = open(STATE_FILE).read().strip()
@@ -188,31 +240,59 @@ def main():
         parts = [p for p in diff.split("\0") if p]
         i = 0
         changed = False
-        while i < len(parts):
-            status, rel = parts[i][0], parts[i][1:]
-            i += 1
+        while i + 1 < len(parts):
+            status, rel = parts[i][0], parts[i + 1]
+            i += 2
+            name = os.path.basename(rel)
+            parent_parts = rel.split("/")[:-1]
             if status in ("A", "M"):
-                ent = tree.get(rel)
-                if ent and ent["mime"] != FOLDER_MIME:
-                    upload_update(tree, to_rev, rel, check)
-                else:
-                    if ent:  # a dir where a file should be; shouldn't happen
-                        trash(tree, rel, check)
-                    upload_new(root_id, tree, to_rev, rel, check)
-                changed = True
-            elif status == "D":
-                if rel in tree:
-                    trash(tree, rel, check)
+                pid = resolve_dir(root_id, parent_parts,
+                                  create=not check, cache=dircache)
+                ent = find_child(pid, name) if pid else None
+                if check:
+                    print(f"  {'~' if ent else '+'}{rel}")
+                elif ent and ent["mimeType"] != FOLDER_MIME:
+                    upload_id_update(ent["id"], to_rev, rel)
                     changed = True
-            # T (type change) etc: treat as re-upload
-            elif rel in tree:
-                upload_update(tree, to_rev, rel, check)
-                changed = True
+                elif ent:
+                    drive("files", "update", "--params",
+                          json.dumps({"fileId": ent["id"]}),
+                          "--json", json.dumps({"trashed": True}))
+                    print(f"  - {rel} (dir in the way)")
+                    upload_new_id(pid, to_rev, rel)
+                    changed = True
+                else:
+                    upload_new_id(pid, to_rev, rel)
+                    changed = True
+                if check:
+                    changed = True
+            elif status == "D":
+                pid = resolve_dir(root_id, parent_parts, cache=dircache)
+                ent = find_child(pid, name) if pid else None
+                if ent:
+                    if check:
+                        print(f"  - {rel}")
+                    else:
+                        drive("files", "update", "--params",
+                              json.dumps({"fileId": ent["id"]}),
+                              "--json", json.dumps({"trashed": True}))
+                        print(f"  - {rel}")
+                    changed = True
+            else:  # T and anything else: re-upload in place if present
+                pid = resolve_dir(root_id, parent_parts, cache=dircache)
+                ent = find_child(pid, name) if pid else None
+                if ent and ent["mimeType"] != FOLDER_MIME:
+                    if check:
+                        print(f"  ~ {rel}")
+                    else:
+                        upload_id_update(ent["id"], to_rev, rel)
+                    changed = True
         if not changed:
             print("No file changes between revs.")
     else:
         # No state: full-tree verification against the target rev.
         print("No sync state — doing a full verification pass.")
+        tree = list_tree(root_id)
         local = sh("git", "ls-tree", "-r", "--name-only", "-z",
                    to_rev).split("\0")
         local = [p for p in local if p]
@@ -239,7 +319,6 @@ def main():
         for rel in sorted(set(tree) - local_set):
             if tree[rel]["mime"] != FOLDER_MIME:
                 trash(tree, rel, check)
-        # drop dirs that ended up empty? Drive keeps them; harmless.
 
     if not check:
         with open(STATE_FILE, "w") as f:
