@@ -183,6 +183,12 @@ console.log('\n[6] the surfaces and the wiring are all present');
   check(sw.includes("'/js/story-edit.js'"), 'the new module is in the app-shell cache', null);
   check(/const CACHE = 'campfire-v\d+';/.test(sw), 'the service worker names a cache version (bump it on every public/ change)', null);
   const js = fs.readFileSync(path.join(ROOT, 'public/js/stories.js'), 'utf8');
+  // The draw colour row: presets, a real colour picker, and a thickness
+  // slider with a live dot preview (replacing the old Thin/Medium/Thick).
+  check(js.includes("ci.type = 'color'"), 'the draw row has a native colour picker', null);
+  check(js.includes("range.min = '0.002'") && js.includes("range.max = '0.03'"), 'the draw row has a thickness slider', null);
+  check(js.includes('sc-thick-dot') && css.includes('.sc-thick-dot'), 'a dot previews the stroke width in the current colour', null);
+  check(!/\['Thin', 0\.003\]/.test(js), 'the old Thin/Medium/Thick pills are gone', null);
   for (const rule of ['.ov-layer', '.ov-item', '.ov-draw', '.sc-tools', '.ov-editable', '.ov-pill', '.ov-sel', '.sc-swatch.tile']) {
     check(css.includes(rule), 'stylesheet has ' + rule, null);
   }

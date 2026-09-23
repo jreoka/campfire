@@ -2646,10 +2646,54 @@ function storyRenderColors() {
   for (const c of OV_COLORS) {
     storySwatch(box, 'sc-swatch', 'background:' + c, c === sc.drawColor, () => { sc.drawColor = c; storyRenderColors(); });
   }
-  for (const [label, w] of [['Thin', 0.003], ['Medium', 0.0075], ['Thick', 0.016]]) {
-    const b = storySwatch(box, 'sc-swatch wide', '', w === sc.drawWidth, () => { sc.drawWidth = w; storyRenderColors(); });
-    b.textContent = label;
-  }
+  // A real colour picker after the presets: a native <input type=color> hides
+  // inside a rainbow swatch. It updates live with no re-render mid-pick —
+  // rebuilding the row would detach the input from under the OS picker popup.
+  const custom = !OV_COLORS.includes(sc.drawColor);
+  const pk = document.createElement('label');
+  pk.className = 'sc-swatch sc-picker' + (custom ? ' on' : '');
+  pk.title = 'Custom colour';
+  pk.style.background = custom ? sc.drawColor : 'conic-gradient(#ff595e,#ffca3a,#8ac926,#1982c4,#6a4c93,#ff595e)';
+  const ci = document.createElement('input');
+  ci.type = 'color';
+  ci.className = 'sc-picker-input';
+  ci.setAttribute('aria-label', 'Custom draw colour');
+  ci.value = custom && /^#[0-9a-fA-F]{6}$/.test(sc.drawColor) ? sc.drawColor : '#ff4d6d';
+  ci.addEventListener('input', () => {
+    sc.drawColor = ci.value;
+    pk.style.background = ci.value;
+    pk.classList.add('on');
+    for (const el of box.querySelectorAll('.sc-swatch:not(.sc-picker)')) el.classList.remove('on');
+    const d = box.querySelector('.sc-thick-dot');
+    if (d) d.style.background = ci.value;
+  });
+  pk.appendChild(ci);
+  box.appendChild(pk);
+  // Thickness slider in place of the old Thin/Medium/Thick pills: the dot
+  // previews the real stroke width in the current colour.
+  const tw = document.createElement('div');
+  tw.className = 'sc-thick';
+  tw.title = 'Brush thickness';
+  const dot = document.createElement('span');
+  dot.className = 'sc-thick-dot';
+  const range = document.createElement('input');
+  range.type = 'range';
+  range.className = 'sc-thick-range';
+  range.min = '0.002';
+  range.max = '0.03';
+  range.step = '0.001';
+  range.value = String(Math.min(0.03, Math.max(0.002, sc.drawWidth || 0.007)));
+  range.setAttribute('aria-label', 'Brush thickness');
+  const paintDot = () => {
+    const w = parseFloat(range.value) || 0.007;
+    const px = Math.max(3, Math.min(22, Math.round(w * 900)));
+    dot.style.width = dot.style.height = px + 'px';
+    dot.style.background = sc.drawColor;
+  };
+  range.addEventListener('input', () => { sc.drawWidth = parseFloat(range.value); paintDot(); });
+  paintDot();
+  tw.append(dot, range);
+  box.appendChild(tw);
 }
 function storyDeleteSelected() {
   if (!sc || sc.sel < 0 || !sc.ovs[sc.sel]) return;
