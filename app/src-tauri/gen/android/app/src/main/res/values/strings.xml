@@ -1,4 +1,7 @@
 <resources>
     <string name="app_name">"Campfire"</string>
     <string name="main_activity_title">"Campfire"</string>
+    <!-- Long-press launcher shortcut (res/xml/shortcuts.xml). -->
+    <string name="shortcut_add_story">"Add to story"</string>
+    <string name="shortcut_add_story_long">"Add to your story"</string>
 </resources>

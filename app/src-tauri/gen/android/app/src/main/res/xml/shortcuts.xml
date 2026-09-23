@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Long-press the launcher icon → "Add to your story". The intent carries
+         campfire_url=/?story=1, which MainActivity holds as a pending deep link
+         and the page drains through the native bridge — the same path a tapped
+         notification takes. auth.js's handleDeepLinkQuery (?story=1) opens the
+         story composer. Works on cold start and when the app is already up. -->
+    <shortcut
+        android:shortcutId="add_story"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortLabel="@string/shortcut_add_story"
+        android:longLabel="@string/shortcut_add_story_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="moe.dill.campfire"
+            android:targetClass="moe.dill.campfire.MainActivity">
+            <extra
+                android:name="campfire_url"
+                android:value="/?story=1" />
+        </intent>
+    </shortcut>
+</shortcuts>
