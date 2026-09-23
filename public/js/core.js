@@ -400,7 +400,7 @@ function mentionedRoleIds(text, roles) {
   for (const r of sorted) {
     const n = String(r.name || '').trim();
     if (!n) continue;
-    const re = new RegExp('(^|[\\s(])@' + reEsc(n) + '(?![\\w])', 'gi');
+    const re = new RegExp('(^|[\\s(])@' + reEsc(n) + '(?!\\u200b)(?![\\w])', 'gi');
     let hit = false;
     s = s.replace(re, (m, pre) => { hit = true; return pre + '@' + '\u0000'.repeat(n.length); });
     if (hit) out.push(r.id);
@@ -448,8 +448,21 @@ function mentionMatcher(authorId) {
   const me = (d.members || []).find((x) => x.id === S.me.id);
   const myRoles = new Set((me && me.roleIds) || []);
   names.sort((a, b) => b.length - a.length);
-  const re = names.length ? new RegExp('(^|[\\s(])@(' + names.map(reEsc).join('|') + ')(?![\\w])', 'gi') : null;
-  mentionCache = { key, members: d.members, roles: d.roles, re, byName, myRoles };
+  // The regex captures an optional zero-width disambiguator: \u200b = user,
+  // \u200c = role (inserted by applyMention on name collisions).
+  const re = names.length ? new RegExp('(^|[\\s(])@(' + names.map(reEsc).join('|') + ')([\\u200b\\u200c]?)(?![\\w])', 'gi') : null;
+  // For marker disambiguation we need both kinds by name, not just the winner.
+  const usersByName = new Map();
+  const rolesByName = new Map();
+  for (const m of (d.members || [])) {
+    const k = String(m.username || '').trim().toLowerCase();
+    if (k && !usersByName.has(k)) usersByName.set(k, m);
+  }
+  for (const r of (d.roles || [])) {
+    const k = String(r.name || '').trim().toLowerCase();
+    if (k && !rolesByName.has(k)) rolesByName.set(k, r);
+  }
+  mentionCache = { key, members: d.members, roles: d.roles, re, byName, myRoles, usersByName, rolesByName };
   return mentionCache;
 }
 // Escape + fenced code / quotes / headings / inline code / bold / italic /
@@ -544,8 +557,19 @@ function renderRich(text, opts = {}) {
   // @everyone is a real mention or just someone typing the word.
   const mm = mentionMatcher(opts.authorId);
   if (mm && mm.re) {
-    h = h.replace(mm.re, (m, pre, name) => {
-      const hit = mm.byName.get(name.toLowerCase());
+    h = h.replace(mm.re, (m, pre, name, marker) => {
+      // A zero-width marker forces the kind: \u200b = user, \u200c = role.
+      // Otherwise fall back to the byName winner (usernames first).
+      let hit = null;
+      if (marker === '\u200b') {
+        const u = mm.usersByName.get(name.toLowerCase());
+        if (u) hit = { kind: 'user', user: u };
+      } else if (marker === '\u200c') {
+        const r = mm.rolesByName.get(name.toLowerCase());
+        if (r) hit = { kind: 'role', role: r };
+      } else {
+        hit = mm.byName.get(name.toLowerCase());
+      }
       if (!hit) return m;
       if (hit.kind === 'user') {
         const mem = hit.user;

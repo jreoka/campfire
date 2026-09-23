@@ -5853,7 +5853,8 @@ async function pushToUser(uid, payload, opts) {
 function reEsc(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function mentionsName(content, username) {
   try {
-    return new RegExp('(^|[\\s(])@' + reEsc(username) + '\\b').test(String(content || ''));
+    // A \u200c (role marker) after the name means it's a role mention, not a user.
+    return new RegExp('(^|[\\s(])@' + reEsc(username) + '(?!\\u200c)\\b').test(String(content || ''));
   } catch { return false; }
 }
 // A whole-word @token — the shape @everyone / @here are matched in, and the
@@ -5873,7 +5874,7 @@ function mentionedRoleIds(content, roles) {
   for (const r of sorted) {
     const n = String(r.name || '').trim();
     if (!n) continue;
-    const re = new RegExp('(^|[\\s(])@' + reEsc(n) + '(?![\\w])', 'gi');
+    const re = new RegExp('(^|[\\s(])@' + reEsc(n) + '(?!\\u200b)(?![\\w])', 'gi');
     let hit = false;
     s = s.replace(re, (m, pre) => { hit = true; return pre + '@' + '\u0000'.repeat(n.length); });
     if (hit) out.push(r.id);

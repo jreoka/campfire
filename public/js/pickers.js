@@ -3026,16 +3026,18 @@ onComposerKeydown((e, inp) => {
 function applyMention(cand, inp = $('#in-message')) {
   const pos = inp.selectionStart ?? inp.value.length;
   // The composer shows human-readable @name (the backdrop renders it as a
-  // pill, like Discord). Only when the name collides with the other kind do
-  // we insert an unambiguous <@id> / <@&id> token instead.
+  // pill, like Discord). When the name collides with the other kind, append
+  // an invisible marker: \u200b (zero-width space) = user, \u200c (zero-width
+  // non-joiner) = role. The renderer strips it for display but uses it to
+  // pick the right target. Widths stay matched, so the caret doesn't drift.
   let insert;
   const server = S.view === 'server' ? S.serverDetail : null;
   if (cand.kind === 'user' && cand.user) {
     const collides = server && (server.roles || []).some((r) => r.name.toLowerCase() === cand.user.username.toLowerCase());
-    insert = collides ? '<@' + cand.user.id + '>' : '@' + cand.user.username;
+    insert = '@' + cand.user.username + (collides ? '\u200b' : '');
   } else if (cand.kind === 'role' && cand.role) {
     const collides = server && (server.members || []).some((m) => m.username.toLowerCase() === cand.role.name.toLowerCase());
-    insert = collides ? '<@&' + cand.role.id + '>' : '@' + cand.role.name;
+    insert = '@' + cand.role.name + (collides ? '\u200c' : '');
   } else {
     insert = '@' + cand.insert;
   }
