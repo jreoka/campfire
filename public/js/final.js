@@ -671,17 +671,30 @@ function composerSendKey(inp, formId) {
 }
 composerSendKey($('#in-message'), 'composer');
 composerSendKey($('#in-thread'), 'thread-composer');
-// Enter posts a staged message even when the composer input isn't focused:
-// an image is loaded ready to send, the reader clicked away to look at
-// something, and Enter should still send it. The per-input handler above owns
-// the focused case (it preventDefaults, so the document-level one must ignore
-// defaultPrevented or the message would send twice). This covers everything
-// else, routing to whichever composer actually has staged attachments.
-// Which composer (if any) has staged attachments ready to send. The thread's
-// own staged files win when a thread is open on them; otherwise the chat bar.
-function stagedSendTarget(){
-  try { if (typeof S !== 'undefined' && S.thread && threadAtts().length) return 'thread-composer'; } catch {}
-  try { if (typeof S !== 'undefined' && S.pendingAtts && S.pendingAtts.length) return 'composer'; } catch {}
+// Enter posts the pending message even when the composer input isn't focused:
+// an image is loaded ready to send (or text typed but never posted), the reader
+// clicked away to look at something, and Enter should still send it. The
+// per-input handler above owns the focused case (it preventDefaults, so the
+// document-level one must ignore defaultPrevented or the message would send
+// twice). This covers everything else, routing to whichever composer actually
+// has something to send.
+// Which composer (if any) has something to send: staged attachments of any
+// type, or typed text that was never posted. The thread's composer wins when a
+// thread is open and holds either; otherwise the chat bar. A whitespace-only
+// box counts as empty — the submit handler would just clear it anyway.
+function enterSendTarget(){
+  try {
+    if (typeof S !== 'undefined' && S.thread) {
+      const inp = document.getElementById('in-thread');
+      if (threadAtts().length || (inp && inp.value.trim())) return 'thread-composer';
+    }
+  } catch {}
+  try {
+    if (typeof S !== 'undefined') {
+      const inp = document.getElementById('in-message');
+      if ((S.pendingAtts && S.pendingAtts.length) || (inp && inp.value.trim())) return 'composer';
+    }
+  } catch {}
   return null;
 }
 // May a document-level Enter post the staged message? Anything that consumes
@@ -708,7 +721,7 @@ function globalEnterSendAllowed(e){
 }
 document.addEventListener('keydown', (e) => {
   if (!globalEnterSendAllowed(e)) return;
-  const target = stagedSendTarget();
+  const target = enterSendTarget();
   if (!target) return;
   e.preventDefault();
   document.getElementById(target)?.requestSubmit();

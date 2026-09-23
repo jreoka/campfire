@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Offline checks for the document-level Enter-to-send (final.js): Enter posts
 // a staged message even when the composer input isn't focused.
-// [1] stagedSendTarget() routes to the composer that actually has staged files.
-// [2] globalEnterSendAllowed() only hijacks Enter when nothing else owns it.
+// [1] enterSendTarget() routes to the composer that has something to send:
+// staged attachments of any type, or typed-but-unposted text.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -29,36 +29,53 @@ function extractFn(src, name) {
   return null;
 }
 
-const targetBody = extractFn(finalJs, 'stagedSendTarget');
+const targetBody = extractFn(finalJs, 'enterSendTarget');
 const allowedBody = extractFn(finalJs, 'globalEnterSendAllowed');
-check(!!targetBody, 'final.js defines stagedSendTarget()');
+check(!!targetBody, 'final.js defines enterSendTarget()');
 check(!!allowedBody, 'final.js defines globalEnterSendAllowed()');
 // The document listener consults both — a wiring change that drops one fails.
-check(finalJs.includes('globalEnterSendAllowed(e)') && finalJs.includes('stagedSendTarget()'),
+check(finalJs.includes('globalEnterSendAllowed(e)') && finalJs.includes('enterSendTarget()'),
   'the document keydown listener consults both functions');
 
 // Drive the REAL functions against stubs: a refactor that changes what they
 // compute (rather than deleting them) fails here too.
-const stagedSendTarget = new Function('S', 'threadAtts',
-  'function stagedSendTarget(){' + targetBody + '}\nreturn stagedSendTarget;');
+const enterSendTargetFactory = new Function('S', 'threadAtts', 'document',
+  'function enterSendTarget(){' + targetBody + '}\nreturn enterSendTarget;');
 const globalEnterSendAllowed = new Function('cfVisible', 'CF_BACK_LAYERS',
   'function globalEnterSendAllowed(e){' + allowedBody + '}\nreturn globalEnterSendAllowed;');
 
-console.log('\n[1] stagedSendTarget routes to the composer holding staged files');
+console.log('\n[1] enterSendTarget routes to the composer holding something to send');
 {
-  const T = (S, threadAtts) => stagedSendTarget(S, threadAtts)();
-  check(T({ thread: { rootId: 'r1' }, pendingAtts: [{}, {}] }, () => [{}, {}]) === 'thread-composer',
+  const docStub = (msgVal, threadVal) => ({
+    getElementById: (id) => {
+      if (id === 'in-message') return msgVal === null ? null : { value: msgVal };
+      if (id === 'in-thread') return threadVal === null ? null : { value: threadVal };
+      return null;
+    },
+  });
+  const T = (S, threadAtts, msgVal = '', threadVal = '') =>
+    enterSendTargetFactory(S, threadAtts, docStub(msgVal, threadVal))();
+  const noThread = () => [];
+  check(T({ thread: { rootId: 'r1' }, pendingAtts: [{}, {}] }, () => [{}]) === 'thread-composer',
     'a thread with staged files wins over the chat bar');
-  check(T({ thread: { rootId: 'r1' }, pendingAtts: [{}] }, () => []) === 'composer',
-    'a thread with nothing staged falls through to the chat bar');
-  check(T({ thread: null, pendingAtts: [{}] }, () => []) === 'composer',
+  check(T({ thread: { rootId: 'r1' }, pendingAtts: [{}] }, noThread) === 'composer',
+    'a thread with nothing staged or typed falls through to the chat bar');
+  check(T({ thread: { rootId: 'r1' }, pendingAtts: [] }, noThread, '', 'typed reply') === 'thread-composer',
+    'typed-but-unposted thread text routes to the thread composer');
+  check(T({ thread: null, pendingAtts: [{}] }, noThread) === 'composer',
     'staged chat attachments route to the chat composer');
-  check(T({ thread: null, pendingAtts: [] }, () => []) === null,
-    'nothing staged routes nowhere');
-  check(T(undefined, () => []) === null,
+  check(T({ thread: null, pendingAtts: [] }, noThread, 'typed message') === 'composer',
+    'typed-but-unposted chat text routes to the chat composer');
+  check(T({ thread: null, pendingAtts: [] }, noThread, '   \n  ') === null,
+    'whitespace-only text counts as nothing to send');
+  check(T({ thread: null, pendingAtts: [] }, noThread) === null,
+    'nothing staged and nothing typed routes nowhere');
+  check(T(undefined, noThread) === null,
     'an undefined S (logged-out view) routes nowhere');
-  check(T({ thread: { rootId: 'r1' }, pendingAtts: [{}] }, () => { throw new Error('boom'); }) === 'composer',
+  check(T({ thread: { rootId: 'r1' }, pendingAtts: [{}] }, () => { throw new Error('boom'); }, 'hi') === 'composer',
     'a throwing threadAtts does not wedge the chat-bar fallback');
+  check(T({ thread: null, pendingAtts: [{}] }, noThread, null) === 'composer',
+    'staged attachments route even when the input element is absent');
 }
 
 console.log('\n[2] globalEnterSendAllowed only hijacks Enter when nothing else owns it');
