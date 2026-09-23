@@ -29,15 +29,6 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null, i
   S.picker = { mode, mid, input, ...(opts || {}) };
   const pk = $('#picker');
   pk.classList.remove('hidden');
-  // DEBUG: visible version badge so we can prove which code is running
-  let dbg = $('#pk-debug');
-  if (!dbg) {
-    dbg = document.createElement('div');
-    dbg.id = 'pk-debug';
-    dbg.style.cssText = 'position:absolute;top:2px;right:36px;font-size:10px;color:#ff0;background:#000;padding:2px 6px;border-radius:3px;z-index:99;font-family:monospace;';
-    pk.appendChild(dbg);
-  }
-  dbg.textContent = `gen:${S.bootGen} GAP:18 SW:v652`;
   const phone = phoneLayout();
   // `field` (a status / bio box) carries the ELEMENT it is inserting into, not a
   // bar name, and that element lives in a dialog the picker has to sit over.
@@ -140,7 +131,6 @@ function sizePicker() {
     // rows get cut off. Anchoring to the stack's measured top keeps it parked
     // above the input in every case.
     stackTop = Infinity;
-    let stackSel = 'none';
     // Measure the visible bottom stack. Use #composer-tools (the buttons row)
     // rather than #composer (which includes the textarea) so the picker sits
     // close to the buttons where Cross wants it.
@@ -154,7 +144,7 @@ function sizePicker() {
         if (!t || !t.textContent.trim()) continue;
       }
       const top = el.getBoundingClientRect().top;
-      if (top < stackTop) { stackTop = top; stackSel = sel; }
+      if (top < stackTop) stackTop = top;
     }
     if (!isFinite(stackTop)) stackTop = vvh - 80; // shouldn't happen; assume an 80px composer
     // `bottom` resolves against the layout viewport while the rect is in
@@ -164,9 +154,6 @@ function sizePicker() {
     const GAP = 18;
     const bottomPx = Math.max(0, Math.round(layoutH - stackTop + GAP));
     pk.style.bottom = bottomPx + 'px';
-    // DEBUG: update badge with measured values
-    const dbg2 = $('#pk-debug');
-    if (dbg2) dbg2.textContent = `gen:${S.bootGen} GAP:18 SW:v652 st:${Math.round(stackTop)}(${stackSel}) lh:${layoutH} b:${bottomPx}`;
     // 480px keeps it a comfortable size on tall screens; stackTop is the room
     // above the stack, so this also keeps it off the viewport's top edge.
     max = Math.min(480, stackTop - GAP - 16);

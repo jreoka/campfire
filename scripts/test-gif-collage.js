@@ -57,7 +57,7 @@ check(/#picker\{[^}]*bottom:calc\(var\(--composer-h\) \+ var\(--strip-h\) \+ var
   'the stylesheet fallback lifts the picker when the layout viewport runs taller than the visible window');
 check(/max = Math\.min\(480, stackTop - GAP - 16\)/.test(pickers),
   'sizePicker caps the desktop height at 480 and at the real room above the measured stack top');
-check(/pk\.style\.bottom = Math\.max\(0, Math\.round\(layoutH - stackTop \+ GAP\)\) \+ 'px'/.test(pickers),
+check(/const bottomPx = Math\.max\(0, Math\.round\(layoutH - stackTop \+ GAP\)\);\s*pk\.style\.bottom = bottomPx \+ 'px'/.test(pickers),
   'sizePicker parks the desktop picker a fixed gap above the measured stack top (rect-based, immune to a stale layout viewport)');
 check(/getBoundingClientRect\(\)\.top/.test(pickers),
   'the desktop footing is measured with getBoundingClientRect (visual-viewport coords from the real layout)');
