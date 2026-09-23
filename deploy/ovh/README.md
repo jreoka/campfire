@@ -11,31 +11,6 @@ Production since 2026-09-13 (on Hetzner), moved to OVHcloud on 2026-09-14.
 | Media | OVH object storage, bucket `campfire` (see §Media storage) |
 | Cost | cheaper than the Hetzner CX33 it replaced - that was the reason for the move |
 
-## Why we moved, twice
-
-**Off the old single-vCPU node (onto Hetzner).** That node had **`cpu=890m`,
-`mem=1193460Ki` (~1165 MiB) allocatable**, and the resident scanner then in use
-needed about a gigabyte - 996 MiB measured on production - so it ran
-`VIRUS_SCAN=0`. That was an accepted trade-off, not an oversight: AV scanning was
-the one feature that node could not afford. The CX33 had 8 GB, so **scanning came
-back on**, and the app got 4 cores instead of 1 - which was the other long-standing
-complaint (two niced ffmpeg encodes made the app feel sluggish on one vCPU).
-
-**Off Hetzner to here (2026-09-14), for cost.** The honest trade: this box is
-*smaller* - 2 vCPU / 4 GB against the CX33's 4 vCPU / 8 GB - and the stack's own
-limits are `1.5g` (app) + `1g` (db) + `1.5g` (clamav) plus cloudflared and coturn,
-so the headroom is thinner than it was, not fatter. It idles around 700 MB used
-with ~3 GB available and no OOM events so far, but the two concurrent niced
-ffmpeg encodes are the thing to watch on this host. Nothing about the app itself
-changed in the move: it was a database dump-and-restore plus a tunnel connector
-swap, and the media moved separately to OVH object storage in the same session.
-
-Scanning is **ClamAV in its own container** and it is the largest single consumer
-on the box: a loaded `clamd` holds ~1.0 GiB of signatures resident (measured, see
-"Uploads, scanning and compression"). That is the price of signature-based
-detection and it is why the app's own limit came down from `2g` to `1.5g` when
-the scanner arrived - the three limits now add up to what the host actually has.
-
 ## Layout on the host
 
 ```
