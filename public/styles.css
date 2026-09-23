@@ -62,6 +62,10 @@
   --r-md:5px;
   --r-lg:8px;
   --r-xl:10px;
+  /* Elevation: floating surfaces sit on these, not on flat fills. */
+  --shadow-1:0 2px 10px rgba(0,0,0,.45);
+  --shadow-2:0 10px 32px rgba(0,0,0,.5);
+  --shadow-3:0 24px 70px rgba(0,0,0,.6);
   --t-fast:.14s ease;
   /* Motion vocabulary. Anything a finger pushed (drawers, sheets, page swaps)
      rides --ease-native: it starts fast and decelerates, which is what a native
@@ -137,6 +141,10 @@
   --danger-line:rgba(220,38,38,.35);
   --danger-tx:#b91c1c;
   --spoiler:#141a26;
+  --shadow-1:0 2px 10px rgba(20,26,43,.14);
+  --shadow-2:0 10px 32px rgba(20,26,43,.18);
+  --shadow-3:0 24px 70px rgba(20,26,43,.24);
+  --avatar-ring:0 0 0 1px rgba(20,26,43,.14);
 }
 /* Dracula: official palette (https://draculatheme.com) mapped onto Campfire surfaces. */
 [data-theme="dracula"]{
@@ -542,7 +550,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #me-card #me-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #me-card .mstatus{font-size:.72rem;color:var(--muted);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.35}
 #me-card .mstatus.ugame{color:var(--accent)}
-.avatar{width:38px;height:38px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:700;color:#fff;flex-shrink:0;font-size:.85rem;background:var(--panel-3)}
+.avatar{width:38px;height:38px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:700;color:#fff;flex-shrink:0;font-size:.85rem;background:var(--panel-3);box-shadow:var(--avatar-ring,0 0 0 1px rgba(255,255,255,.08))}
 #voice-bar{display:flex;flex-direction:column;gap:.55rem;margin:0 .6rem 0 calc(.6rem - var(--rail-w));padding:.65rem .75rem;background:var(--panel-2);border:1px solid rgba(52,211,153,.35);border-bottom:0;font-size:.85rem;border-radius:6px 6px 0 0}
 /* In-call: the voice widget fuses to the top of the me bar (same width, no seam). */
 #voice-bar:not(.hidden)+#me-card{margin-top:0;border-top-left-radius:0;border-top-right-radius:0}
@@ -835,7 +843,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .send-btn.is-off{background:var(--panel-3);color:var(--faint);cursor:default}
 .send-btn.is-off:active{transform:none}
 #btn-more,#tbtn-more{display:none}
-#composer-more,#thread-composer-more{position:absolute;left:0;bottom:calc(100% + .5rem);z-index:60;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-lg);padding:.4rem;min-width:236px}
+#composer-more,#thread-composer-more{position:absolute;left:0;bottom:calc(100% + .5rem);z-index:60;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-lg);padding:.4rem;min-width:236px;box-shadow:var(--shadow-2);}
 /* The + menu is the phone's only way into attach / emoji / GIF / voice, so it
    gets the same icon-row treatment as the ctx menu on the desktop rather than
    a column of bare labels. */
@@ -977,7 +985,7 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 #srv-banner{height:88px;background-size:cover;background-position:center;border-bottom:1px solid var(--line-soft);flex-shrink:0}
 
 /* ---------- context menu ---------- */
-#ctx-menu{position:fixed;z-index:400;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);padding:.35rem;min-width:210px;max-width:280px;max-height:min(72vh,560px);overflow-y:auto;overscroll-behavior:contain}
+#ctx-menu{position:fixed;z-index:400;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);padding:.35rem;min-width:210px;max-width:280px;max-height:min(72vh,560px);overflow-y:auto;overscroll-behavior:contain;box-shadow:var(--shadow-2);}
 .ctx-item{display:flex;align-items:center;gap:.6rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:4px;padding:.55rem .65rem;font-size:.87rem;font-weight:600;cursor:pointer;transition:background var(--t-fast)}
 
 .ctx-item.danger{color:var(--danger-tx)}
@@ -1004,7 +1012,7 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
    same two elements). 175: over #usercard (170) and #tagcard (171), still under
    #lightbox (200), the menus (400) and the toast (500). */
 #modal-backdrop.over-pop{z-index:175}
-.modal{position:relative;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:8px;padding:1.5rem;width:100%;max-width:410px}
+.modal{position:relative;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:8px;padding:1.5rem;width:100%;max-width:410px;box-shadow:var(--shadow-3);}
 .modal.wide{max-width:580px}
 /* A read-only popout (openModal's opts.xClose — a channel's description) wears
    ONE way out: the ✕ in the panel's corner, and no footer at all. Hidden by
@@ -1034,7 +1042,7 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .modal label{font-size:.8rem;font-weight:700;color:var(--muted);letter-spacing:.02em}
 .modal hr{border:0;border-top:1px solid var(--line-soft)}
 .codebox{background:var(--inset);border:1px dashed var(--line);border-radius:6px;padding:.75rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:1.2rem;text-align:center;letter-spacing:.12em;margin:.75rem 0;user-select:all}
-#toast{position:fixed;left:50%;bottom:calc(1.2rem + var(--safe-b));transform:translateX(-50%);background:#e8eaf0;color:#141414;padding:.7rem 1.15rem;border-radius:5px;z-index:500;font-size:.86rem;font-weight:650;max-width:90vw;display:flex;align-items:center;gap:.6rem}
+#toast{position:fixed;left:50%;bottom:calc(1.2rem + var(--safe-b));transform:translateX(-50%);background:#e8eaf0;color:#141414;padding:.7rem 1.15rem;border-radius:5px;z-index:500;font-size:.86rem;font-weight:650;max-width:90vw;display:flex;align-items:center;gap:.6rem;box-shadow:var(--shadow-2);}
 #toast .btn.small.primary{background:#141414;border-color:transparent;color:#e8eaf0}
 
 /* ---------- profile-media crop stage (public/js/crop.js) ----------
@@ -1322,8 +1330,8 @@ body.ub-open #lightbox{--lb-pad-t:calc(4.4rem + var(--safe-t) + var(--ub-h))}
 .hb-find{margin:0;padding-left:1.05rem;display:flex;flex-direction:column;gap:.25rem}
 .hb-find li{font-size:.81rem;line-height:1.4;color:var(--text)}
 .hb-note{margin-top:.9rem;font-size:.79rem;line-height:1.45;color:var(--muted);padding-top:.8rem;border-top:1px solid var(--line-soft);overflow-wrap:anywhere}
-#mention-pop,#chan-pop{position:absolute;left:.9rem;bottom:calc(var(--composer-h) + var(--strip-h) + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:230px;max-height:230px;overflow-y:auto;z-index:60;padding:.3rem}
-#emoji-pop{position:absolute;left:.9rem;bottom:calc(var(--composer-h) + var(--strip-h) + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:270px;max-height:270px;overflow-y:auto;z-index:60;padding:.3rem}
+#mention-pop,#chan-pop{position:absolute;left:.9rem;bottom:calc(var(--composer-h) + var(--strip-h) + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:230px;max-height:230px;overflow-y:auto;z-index:60;padding:.3rem;box-shadow:var(--shadow-1);}
+#emoji-pop{position:absolute;left:.9rem;bottom:calc(var(--composer-h) + var(--strip-h) + var(--safe-b));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);min-width:270px;max-height:270px;overflow-y:auto;z-index:60;padding:.3rem;box-shadow:var(--shadow-2);}
 .emoji-item{display:flex;align-items:center;gap:.55rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);padding:.42rem .6rem;font-size:.88rem;cursor:pointer;border-radius:4px}
 .emoji-item:hover,.emoji-item.sel{background:var(--panel-3)}
 .emoji-item .ep-img{width:26px;height:26px;object-fit:contain;flex-shrink:0}
@@ -1345,8 +1353,8 @@ body.ub-open #lightbox{--lb-pad-t:calc(4.4rem + var(--safe-t) + var(--ub-h))}
 .reply-quote.deleted{cursor:default;font-style:italic;opacity:.75}
 .reply-quote.deleted:hover{color:var(--muted)}
 .msg-atts{display:flex;flex-direction:column;align-items:flex-start;gap:.45rem;margin-top:.35rem}
-.msg-atts img.att-img{max-width:100%;max-height:320px;border-radius:6px;cursor:zoom-in;object-fit:contain;background:#000}
-.msg-atts video.att-vid{max-width:100%;max-height:320px;border-radius:6px;background:#000}
+.msg-atts img.att-img{max-width:100%;max-height:320px;border-radius:6px;cursor:zoom-in;object-fit:contain;background:#000;box-shadow:0 0 0 1px var(--line-soft)}
+.msg-atts video.att-vid{max-width:100%;max-height:320px;border-radius:6px;background:#000;box-shadow:0 0 0 1px var(--line-soft)}
 /* Nothing the app RENDERS is a drag source. Chrome hands a dragged <img> over as
    a temporary FILE, so dragging a photo out of a message and letting go over the
    composer read as a file drop and re-attached the same picture — the drop zone
@@ -1665,7 +1673,7 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 .reaction:active{transform:scale(.9)}
 .reaction:hover{border-color:var(--accent)}
 .reaction.me{background:var(--accent-container);border-color:transparent;color:var(--on-container)}
-.msg-actions{position:absolute;right:.6rem;top:-18px;display:flex;gap:2px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:6px;padding:4px 6px;z-index:5;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .13s ease-out,visibility .13s}
+.msg-actions{position:absolute;right:.6rem;top:-18px;display:flex;gap:2px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:6px;padding:4px 6px;z-index:5;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .13s ease-out,visibility .13s;box-shadow:var(--shadow-1);}
 .msg{position:relative}
 .msg:hover .msg-actions,.msg:focus-within .msg-actions{opacity:1;visibility:visible;pointer-events:auto}
 /* The bar above is pure :hover, so it freezes open when the page stops being
@@ -1790,7 +1798,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 @keyframes rc-in{from{transform:translateY(var(--rc-in))}to{transform:translateY(0)}}
 @keyframes rc-out{from{transform:translateY(0)}to{transform:translateY(var(--rc-out))}}
 /* reaction hover tooltip (desktop): emoji + reactor names */
-#reaction-tip{position:fixed;z-index:350;display:flex;align-items:center;gap:.5rem;max-width:min(320px,calc(100vw - 16px));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:6px;padding:.5rem .7rem;font-size:.8rem;pointer-events:none;box-shadow:0 8px 28px rgba(0,0,0,.45)}
+#reaction-tip{position:fixed;z-index:350;display:flex;align-items:center;gap:.5rem;max-width:min(320px,calc(100vw - 16px));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:6px;padding:.5rem .7rem;font-size:.8rem;pointer-events:none;box-shadow:var(--shadow-2)}
 #reaction-tip .rt-emoji{font-size:1.25rem;line-height:1;flex-shrink:0}
 #reaction-tip .rt-emoji img.cemoi{width:24px;height:24px;object-fit:contain;vertical-align:middle}
 #reaction-tip .rt-names{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;line-height:1.35}
@@ -1815,7 +1823,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 @keyframes flash{0%,40%{background:rgba(91,108,255,.27)}100%{background:transparent}}
 
 /* ---------- picker (emoji + GIFs) ---------- */
-#picker{position:absolute;left:.9rem;bottom:calc(var(--composer-h) + var(--strip-h) + var(--safe-b));width:min(370px,calc(100vw - 2rem));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-lg);z-index:150;display:flex;flex-direction:column;max-height:390px;overflow:hidden}
+#picker{position:absolute;left:.9rem;bottom:calc(var(--composer-h) + var(--strip-h) + var(--safe-b));width:min(370px,calc(100vw - 2rem));background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-lg);z-index:150;display:flex;flex-direction:column;max-height:390px;overflow:hidden;box-shadow:var(--shadow-2);}
 #picker.anchored{position:fixed;bottom:auto}
 /* A picker opened for a profile field (status, bio) lives INSIDE a dialog, and
    the dialog layer reaches 175 (#modal-backdrop.over-pop, over a person card) —
@@ -2149,7 +2157,7 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .avatar.st-click:hover{filter:brightness(1.12)}
 .avatar.st-click:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #profile-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.68);display:flex;align-items:center;justify-content:center;z-index:100;padding:1rem}
-.profile{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-xl);width:100%;max-width:580px;max-height:88dvh;display:flex;flex-direction:column;overflow:hidden}
+.profile{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-xl);width:100%;max-width:580px;max-height:88dvh;display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-3);}
 .pf-banner{height:150px;background:var(--panel-3);background-size:cover;background-position:center;flex-shrink:0}
 .pf-head{display:flex;align-items:center;gap:.95rem;padding:.4rem 1rem 0}
 .pf-head .avatar.big{width:76px;height:76px;font-size:1.5rem;margin-top:-38px;flex-shrink:0}
@@ -2598,7 +2606,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 .folder-open > .server-btn.active{background:var(--accent);color:var(--on-accent)}
 
 /* folder context flyout */
-#folder-menu{position:fixed;z-index:400;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);padding:6px;min-width:210px}
+#folder-menu{position:fixed;z-index:400;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);padding:6px;min-width:210px;box-shadow:var(--shadow-2);}
 #folder-menu .fm-name{display:flex;justify-content:space-between;align-items:center;gap:.5rem;width:100%;background:transparent;border:0;color:var(--text);font-weight:750;font-size:.9rem;padding:.55rem .65rem;cursor:pointer;border-radius:4px}
 #folder-menu .fm-name:hover{background:var(--panel-3)}
 #folder-menu .fm-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -3199,7 +3207,7 @@ body{touch-action:manipulation}
   .srvset-wrap{flex-direction:column;gap:.25rem}
   .srv-subtabs.vertical{flex-direction:row;flex:0 0 auto;width:100%;overflow-x:auto;padding:.25rem 0 .6rem}
   .srv-subtabs.vertical .ftab{width:auto;text-align:center}
-  .modal{max-width:calc(100vw - 2rem)}
+  .modal{max-width:calc(100vw - 2rem);box-shadow:var(--shadow-3);}
   #voice-fab{display:flex;align-items:center;gap:.5rem;margin:.5rem .6rem 0;padding:.55rem .7rem;background:var(--panel-2);border:1px solid var(--line);border-radius:999px;font-size:.85rem}
   #voice-fab.hidden{display:none}
   #voice-fab .mini{padding:.45rem .8rem}
@@ -3499,7 +3507,7 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 [data-theme="light"] ::-webkit-scrollbar-thumb{background:#b9c2d4}
 [data-theme="light"] ::-webkit-scrollbar-thumb:hover{background:#9aa5bd}
 [data-theme="light"] *{scrollbar-color:#b9c2d4 transparent}
-[data-theme="light"] #toast{background:#141a26;color:#f2f4f8}
+[data-theme="light"] #toast{background:#141a26;color:#f2f4f8;box-shadow:var(--shadow-2);}
 [data-theme="light"] #toast .btn.small.primary{background:#f2f4f8;border-color:transparent;color:#141a26}
 /* Sidebar-banner rows sit under a dark scrim in every theme: keep their
    text light (custom name colors still win via inline style). */
@@ -4071,9 +4079,9 @@ body.story-open{overflow:hidden}
 @keyframes cf-fade{from{opacity:0}to{opacity:1}}
 @keyframes cf-pop-in{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
 @keyframes cf-rise-x{from{opacity:0;transform:translate(-50%,6px)}to{opacity:1;transform:translate(-50%,0)}}
-.modal,.settings,.profile{animation:cf-rise .16s ease-out}
+.modal,.settings,.profile{animation:cf-rise .16s ease-out;box-shadow:var(--shadow-3);}
 #modal-backdrop,#settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop,#profile-backdrop,#lightbox{animation:cf-fade .15s ease-out}
-#ctx-menu,#folder-menu,#picker,#usercard,#mention-pop,#emoji-pop,#chan-pop,#composer-more,#thread-composer-more{animation:cf-pop-in .13s ease-out}
+#ctx-menu,#folder-menu,#picker,#usercard,#mention-pop,#emoji-pop,#chan-pop,#composer-more,#thread-composer-more{animation:cf-pop-in .13s ease-out;box-shadow:var(--shadow-2);}
 #lightbox img,#lightbox-vid{animation:cf-pop-in .18s ease-out}
 #toast,#jump-present{animation:cf-rise-x .16s ease-out}
 .auth-card{animation:cf-rise .2s ease-out}
