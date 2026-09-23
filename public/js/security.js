@@ -921,7 +921,7 @@ function renderServerTab() {
       prev.classList.add('has-icon');
       const im = document.createElement('img');
       im.src = d.icon_url; im.alt = ''; im.width = 40; im.height = 40;
-      im.style.cssText = 'width:40px!important;height:40px!important;object-fit:cover!important;border-radius:10px!important;display:block!important';
+      im.style.cssText = 'width:40px!important;height:40px!important;object-fit:cover!important;border-radius:5px!important;display:block!important';
       im.onerror = () => { prev.classList.remove('has-icon'); prev.innerHTML = ''; prev.textContent = d.name.trim().charAt(0).toUpperCase(); };
       prev.appendChild(im);
     }
