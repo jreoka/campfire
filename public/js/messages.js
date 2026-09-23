@@ -2502,8 +2502,8 @@ function pruneLiveTop(box, n) {
   } catch {}
 }
 // ---------- history paging: older messages on demand ----------
-// A conversation opens on its newest page (80) and stops there. Scrolling up
-// near the top pages the next-older 80 in, until the server answers short.
+// A conversation opens on its newest page (40) and stops there. Scrolling up
+// near the top pages the next-older 40 in, until the server answers short.
 // That is what "no cap" has to mean here: every message stays reachable, but
 // the client only ever holds what the reader actually walked back through,
 // never the whole archive. Four things make it safe. The cursor is the OLDEST
@@ -2516,7 +2516,7 @@ function pruneLiveTop(box, n) {
 // status slot — absent until a full page has proved there is an older one,
 // then it announces the next page while it is in flight, or the retry when it
 // failed. A reader who never scrolls up never sees it and never pays for it.
-const HIST_PAGE = 80;          // messages per older page
+const HIST_PAGE = 40;          // messages per older page
 const HIST_LOAD_PX = 600;      // how close to the top counts as "asking for more"
 const histState = new Map();   // convo key -> { done, loading, error, extended }
 function historyKey() {
