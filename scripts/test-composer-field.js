@@ -272,8 +272,17 @@ function main() {
   const meMargins = css.match(/#me-card\{margin-bottom:[^}]+\}/g) || [];
   check(meMargins.some((r) => /margin-bottom:\.72rem/.test(r)),
     'portrait: the drawer is already safe-area inset, so the me bar needs just the .72rem');
-  check(meMargins.some((r) => /margin-bottom:calc\(\.72rem \+ var\(--safe-b\)\)/.test(r)),
-    'landscape: no drawer, so the me bar carries its own safe area exactly like the composer');
+  // Sideways the system inset can be generous (a slim gesture pill swimming in
+  // dead space), so its contribution is clamped to the phone's own .72rem unit —
+  // the bars sit close under the content instead of floating, and they move
+  // together: the me bar, the composer's padding, and the @/channel popups
+  // anchored above the composer all take the same clamped value.
+  check(/#me-card\{margin-bottom:calc\(\.72rem \+ min\(var\(--safe-b\),\.72rem\)\)\}/.test(css),
+    'landscape: the me bar takes the same clamped offset as the composer');
+  check(/#composer\{padding-bottom:calc\(\.72rem \+ min\(var\(--safe-b\),\.72rem\)\)\}/.test(css),
+    'landscape: the composer\'s own padding is clamped too, so the pill comes down with the me bar');
+  check(/#mention-pop,#chan-pop\{bottom:calc\(var\(--composer-h\) \+ var\(--strip-h\) \+ min\(var\(--safe-b\),\.72rem\)\)\}/.test(css),
+    'landscape: the @/channel popups anchor above the lowered composer');
 
   const chrome = findChrome();
   if (!chrome) return skip('no Chrome/Edge found (set CHROME_PATH)');

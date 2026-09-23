@@ -3300,11 +3300,18 @@ body{touch-action:manipulation}
 @media (max-height:560px) and (pointer:coarse){
   #left{display:contents}
   /* Sideways there is no drawer — #left is display:contents, so nothing insets
-     the sidebar for the safe area. The me bar carries its own, exactly like
-     #composer's padding-bottom, or it lands under the gesture bar while the
-     input pill floats above it. (Portrait keeps the plain .72rem: there the
-     fixed drawer is already safe-area inset.) */
-  #me-card{margin-bottom:calc(.72rem + var(--safe-b))}
+     the sidebar for the safe area. The me bar carries its own bottom offset
+     exactly like #composer's padding-bottom. The system's landscape inset can
+     be generous (a slim gesture pill swimming in dead space), so its
+     contribution is clamped to the phone's own .72rem unit: the bars sit close
+     under the content instead of floating. (Portrait keeps the plain .72rem:
+     there the fixed drawer is already safe-area inset.) */
+  #me-card{margin-bottom:calc(.72rem + min(var(--safe-b),.72rem))}
+  /* The same clamp on the composer's own padding, or the pill keeps floating
+     while the me bar comes down. The @/channel popups anchor above the
+     composer, so they take the same clamped value. */
+  #composer{padding-bottom:calc(.72rem + min(var(--safe-b),.72rem))}
+  #mention-pop,#chan-pop{bottom:calc(var(--composer-h) + var(--strip-h) + min(var(--safe-b),.72rem))}
   #left #sidebar{width:min(260px,38vw)!important;flex:0 0 auto!important;min-width:0;border-left:0;border-right:1px solid var(--line-soft)}
   #btn-nav-close{display:none!important}
   #btn-menu{display:none!important}
