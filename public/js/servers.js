@@ -669,7 +669,7 @@ async function selectChannel(id, opts = {}) {
     $('#messages').innerHTML = '<p class="muted">Loading…</p>';
   }
   try {
-    const { messages } = await api(`/api/servers/${S.serverId}/channels/${id}/messages?limit=40`);
+    const { messages } = await api(`/api/servers/${S.serverId}/channels/${id}/messages?limit=20`);
     if (S.channelId !== id) return; // moved on while loading — stale
     // A conversation the reader already walked back through keeps what it
     // loaded: the fresh page is merged behind it instead of pruning the history

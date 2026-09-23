@@ -615,7 +615,7 @@ async function selectDmThread(id, opts = {}) {
     $('#messages').innerHTML = '<p class="muted">Loading…</p>';
   }
   try {
-    const { messages } = await api(`/api/dms/${id}/messages?limit=40`);
+    const { messages } = await api(`/api/dms/${id}/messages?limit=20`);
     if (S.dmThreadId !== id) return;
     const tail = historyAfterTail(histKey, messages, cachedDm, messages, cachedAtLeast);
     S.dmMessages.set(id, tail.list);
