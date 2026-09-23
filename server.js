@@ -390,7 +390,16 @@ app.get('/invite/:code', async (req, res, next) => {
   }
   sendShell(res, next, og);
 });
-app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
+app.use(express.static(path.join(__dirname, 'public'), {
+  extensions: ['html'],
+  setHeaders: (res, filePath) => {
+    // The service worker must never be HTTP-cached, or browsers won't pick
+    // up new versions (and keep serving old assets from the old cache).
+    if (filePath.endsWith('/service-worker.js')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  },
+}));
 // Virus-scan gate: the ONE thing it refuses is a key whose bytes were deleted
 // because ClamAV matched a signature (410) — a direct link, an embed, or a
 // renamed-extension trick cannot get at bytes that are gone. It deliberately
