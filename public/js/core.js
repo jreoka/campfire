@@ -521,7 +521,7 @@ function renderRich(text, opts = {}) {
     const rolesById = new Map((d.roles || []).map((r) => [r.id, r]));
     const me = (d.members || []).find((x) => x.id === S.me.id);
     const myRoles = new Set((me && me.roleIds) || []);
-    h = h.replace(/<@&([A-Za-z0-9_-]{1,40})>/g, (m, id) => {
+    h = h.replace(/&lt;@&amp;([A-Za-z0-9_-]{1,40})&gt;/g, (m, id) => {
       const r = rolesById.get(id);
       if (!r) return m;
       const col = /^#[0-9a-fA-F]{6}$/.test(r.color || '') ? r.color : '';
@@ -529,7 +529,7 @@ function renderRich(text, opts = {}) {
       return '<span class="mention role' + (mine ? ' me' : '') + '" data-rid="' + esc(r.id) + '"'
         + (col && !mine ? ' style="--rc:' + col + '"' : '') + '>@' + esc(r.name) + '</span>';
     });
-    h = h.replace(/<@([A-Za-z0-9_-]{1,40})>/g, (m, id) => {
+    h = h.replace(/&lt;@([A-Za-z0-9_-]{1,40})&gt;/g, (m, id) => {
       const mem = membersById.get(id);
       if (!mem) return m;
       return '<span class="mention' + (mem.id === S.me.id ? ' me' : '') + '" data-uid="' + mem.id + '">@' + esc(mem.display_name) + '</span>';
