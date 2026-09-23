@@ -28,15 +28,15 @@ check(/#pk-gifs\{display:block;columns:3;column-gap:6px\}/.test(css),
   'the GIF tab is a 3-column masonry, not a flex grid');
 check(/#pk-gifs>\.pk-subrow,#pk-gifs>\.pk-sec,#pk-gifs>\.pk-empty\{column-span:all\}/.test(css),
   'headers and empty states span the columns instead of landing in one');
-check(/#pk-gifs \.pk-gif\{width:100%;margin:0 0 6px;break-inside:avoid;max-height:300px;overflow:hidden\}/.test(css),
+check(/#pk-gifs \.pk-gif\{width:100%;margin:0 0 6px;break-inside:avoid;max-height:300px;overflow:hidden;display:block\}/.test(css),
   'tiles are full column width, never split, and capped at 300px');
-check(/#pk-gifs \.pk-gif\{[^}]*max-height:300px;overflow:hidden/.test(css),
-  'runaway portrait tiles are capped at 300px via the button (bulletproof, not img max-height)');
+check(/#pk-gifs \.pk-gif\{[^}]*max-height:300px;overflow:hidden;display:block/.test(css),
+  'runaway portrait tiles are capped at 300px via the button (display:block for multicol)');
 
 // --- the profile-media GIF modal gets the same treatment ---
 check(/\.gif-grid\{display:block;columns:3;column-gap:6px;/.test(css),
   'the profile GIF modal is a masonry too');
-check(/\.gif-grid \.pk-gif\{[^}]*max-height:300px;overflow:hidden/.test(css),
+check(/\.gif-grid \.pk-gif\{[^}]*max-height:300px;overflow:hidden;display:block/.test(css),
   'the profile modal caps runaway portraits the same way');
 check(!/\.gif-grid \.pk-gif\{width:calc\(33\.333%/.test(css),
   'the old uniform 3-across tile width is gone');
