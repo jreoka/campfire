@@ -1668,14 +1668,16 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 .msg-actions{position:absolute;right:.6rem;top:-18px;display:flex;gap:2px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:4px 6px;z-index:5;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .13s ease-out,visibility .13s}
 .msg{position:relative}
 .msg:hover .msg-actions,.msg:focus-within .msg-actions{opacity:1;visibility:visible;pointer-events:auto}
-/* The bar above is pure :hover, so it freezes open when the window loses focus
-   without the pointer leaving the message — clicking a link (the browser opens
-   over the app), alt-tabbing away, etc. A stuck :hover only re-evaluates on
-   the next mousemove or click, which is why the bar sat there until the window
-   was clicked back into. JS adds .win-blurred to <body> on window blur and
-   removes it on focus; the !important declarations beat the hover rule above,
-   and on focus the browser re-resolves :hover from the real pointer position,
-   so a bar the pointer is genuinely still over comes straight back. */
+/* The bar above is pure :hover, so it freezes open when the page stops being
+   interactive without the pointer leaving the message — clicking a link (a new
+   tab never blurs the window), the OS browser opening over the app, alt-tabbing
+   away, etc. A stuck :hover only re-evaluates on the next mousemove or click,
+   which is why the bar sat there until the window was clicked back into. JS
+   adds .win-blurred to <body> while the window is blurred or the tab hidden
+   and removes it when the page is live again; the !important declarations beat
+   the hover rule above, and then the browser re-resolves :hover from the real
+   pointer position, so a bar the pointer is genuinely still over comes
+   straight back. */
 body.win-blurred .msg-actions{opacity:0!important;visibility:hidden!important;pointer-events:none!important}
 .msg-actions button{border:0;background:transparent;color:var(--text);border-radius:8px;padding:.2rem .35rem;font-size:1rem;line-height:1.2;cursor:pointer;min-width:30px;transition:background var(--t-fast);display:inline-flex;align-items:center;justify-content:center}
 /* The More-reactions button is a stroked SVG (currentColor), not an emoji, so it

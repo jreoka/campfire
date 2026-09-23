@@ -5,10 +5,11 @@
 // :hover only re-evaluates on the next mousemove or click, which is why the
 // bar sat there until the window was clicked back into.
 //
-// The direction is body.win-blurred's (final.js toggles it on window
-// blur/focus; styles.css hides every .msg-actions under it with !important,
-// which beats the .msg:hover rule no matter the specificity, and on focus the
-// browser re-resolves :hover from the real pointer position).
+// The direction is body.win-blurred's (final.js's syncWinBlurred() sets it
+// while the window is blurred or the tab hidden — blur/focus/visibilitychange;
+// styles.css hides every .msg-actions under it with !important, which beats
+// the .msg:hover rule no matter the specificity, and when the page is live
+// again the browser re-resolves :hover from the real pointer position).
 //
 // This drives the REAL wiring: it extracts the two window listeners out of
 // final.js and runs them against a stub, so a refactor that drops one fails
@@ -55,35 +56,53 @@ function main() {
     check(/!important/.test(body), 'so it wins the cascade over the :hover rule even when the bar is stuck open');
   }
 
-  console.log('\n[2] the wiring toggles the class on window blur/focus');
-  const blurRe = /window\.addEventListener\('blur',\s*(\(\)\s*=>\s*document\.body\.classList\.add\('win-blurred'\))\s*\)/;
-  const focusRe = /window\.addEventListener\('focus',\s*(\(\)\s*=>\s*document\.body\.classList\.remove\('win-blurred'\))\s*\)/;
-  const blurSrc = (blurRe.exec(finalJs) || [])[1];
-  const focusSrc = (focusRe.exec(finalJs) || [])[1];
-  check(!!blurSrc, 'final.js adds win-blurred on window blur');
-  check(!!focusSrc, 'final.js removes win-blurred on window focus');
-  if (blurSrc && focusSrc) {
-    // Drive the REAL callbacks against a stub DOM: a refactor that changes
-    // what they do (rather than deleting them) fails here too.
-    const listeners = {};
+  console.log('\n[2] the wiring hides the bar while blurred or hidden');
+  const fnRe = /function syncWinBlurred\(\)\{ ([^}]*) \}/;
+  const stmt = (fnRe.exec(finalJs) || [])[1];
+  check(!!stmt, 'final.js defines syncWinBlurred()');
+  for (const [t, tgt] of [['blur', 'window'], ['focus', 'window'], ['visibilitychange', 'document']]) {
+    check(finalJs.includes(`${tgt}.addEventListener('${t}', syncWinBlurred)`),
+      `${tgt} listens for ${t} with syncWinBlurred`);
+  }
+  if (stmt) {
+    // Drive the REAL function against a stub DOM: a refactor that changes
+    // what it computes (rather than deleting it) fails here too.
+    const listeners = { window: {}, document: {} };
     const cls = new Set();
-    const windowStub = { addEventListener: (t, cb) => { listeners[t] = cb; } };
-    const documentStub = { body: { classList: {
-      add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c),
-    } } };
-    const mk = (src) => new Function('window', 'document', 'return (' + src + ');')(windowStub, documentStub);
-    const onBlur = mk(blurSrc), onFocus = mk(focusSrc);
-    // final.js registers them via window.addEventListener — replay that here
-    // against the stub so the check below drives the real registration path.
-    windowStub.addEventListener('blur', onBlur);
-    windowStub.addEventListener('focus', onFocus);
-    check(typeof listeners.blur === 'function' && typeof listeners.focus === 'function',
-      'both callbacks are registered as window listeners');
-    listeners.blur();
-    check(cls.has('win-blurred'), 'blur puts win-blurred on <body>');
-    listeners.focus();
-    check(!cls.has('win-blurred'), 'focus takes it back off');
-    check(onBlur === listeners.blur && onFocus === listeners.focus, 'the registered callbacks are the extracted ones');
+    let hidden = false, focused = true;
+    const classList = {
+      add: (c) => cls.add(c), remove: (c) => cls.delete(c),
+      toggle: (c, f) => { f ? cls.add(c) : cls.delete(c); },
+      contains: (c) => cls.has(c),
+    };
+    const documentStub = {
+      get hidden() { return hidden; },
+      hasFocus: () => focused,
+      body: { classList },
+      addEventListener: (t, cb) => { listeners.document[t] = cb; },
+    };
+    const windowStub = { addEventListener: (t, cb) => { listeners.window[t] = cb; } };
+    const syncWinBlurred = new Function('document', 'return function syncWinBlurred(){ ' + stmt + ' }')(documentStub);
+    // final.js registers the same function on all three events — replay that
+    // here against the stub so the checks below drive the real registration.
+    windowStub.addEventListener('blur', syncWinBlurred);
+    windowStub.addEventListener('focus', syncWinBlurred);
+    documentStub.addEventListener('visibilitychange', syncWinBlurred);
+
+    // A link opened in a new tab: the window never blurs, the tab hides.
+    hidden = true; focused = true; listeners.document.visibilitychange();
+    check(cls.has('win-blurred'), 'a hidden tab hides the bar');
+    // Back to the tab: the bar may show again (hover re-resolves itself).
+    hidden = false; listeners.document.visibilitychange();
+    check(!cls.has('win-blurred'), 'a visible tab clears it');
+    // The OS browser opening over the app: the window blurs.
+    focused = false; listeners.window.blur();
+    check(cls.has('win-blurred'), 'a blurred window hides the bar');
+    focused = true; listeners.window.focus();
+    check(!cls.has('win-blurred'), 'a focused window clears it');
+    // Focus moving into an iframe keeps the document focused: no spurious hide.
+    focused = true; hidden = false; listeners.window.blur();
+    check(!cls.has('win-blurred'), 'a blur that keeps document focus does not hide the bar');
   }
 
   console.log('\n[3] the real stylesheet, in a real browser');
