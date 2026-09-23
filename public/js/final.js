@@ -886,7 +886,7 @@ function dismissUpdateNotice() {
   S.updateDismissedGen = S.updateGen || 0;
   paintUpdateBanner();
 }
-function applyUpdate() {
+async function applyUpdate() {
   const go = $('#ub-go');
   if (go) { go.disabled = true; go.textContent = 'Updating…'; }
   // Same last-breath flush beforeunload does, done here too so the click itself
@@ -894,6 +894,30 @@ function applyUpdate() {
   try { flushDrafts(); } catch {}
   try { rememberView(); } catch {}
   try { pinSeenFlush(); } catch {}
+  // Wait for the new service worker to finish installing before reloading.
+  // Otherwise the reload races the SW update: the old worker serves the old
+  // assets, the new one installs in the background, and it "takes a few turns"
+  // for the change to appear.
+  if ('serviceWorker' in navigator) {
+    try {
+      const r = await navigator.serviceWorker.getRegistration();
+      if (r) {
+        await r.update().catch(() => {});
+        const installing = r.installing;
+        if (installing) {
+          await new Promise((resolve) => {
+            const to = setTimeout(resolve, 5000);
+            installing.addEventListener('statechange', () => {
+              if (installing.state === 'installed' || installing.state === 'redundant') {
+                clearTimeout(to);
+                resolve();
+              }
+            });
+          });
+        }
+      }
+    } catch {}
+  }
   location.reload();
 }
 {
