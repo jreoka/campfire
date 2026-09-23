@@ -345,7 +345,13 @@ function setPickerTab(t) {
   if (t === 'emoji') renderEmojiRail();
   if (t === 'gifs') { gifSubView = 'all'; renderGifTab(); }
 }
-document.querySelectorAll('.pk-tab').forEach((b) => (b.onclick = () => { setPickerTab(b.dataset.ptab); applyPickerSearch($('#pk-search').value || ''); }));
+document.querySelectorAll('.pk-tab').forEach((b) => {
+  // Prevent the tab button from taking focus (which would blur the search and
+  // dismiss the keyboard on mobile). The click still fires, so tabs switch
+  // without closing the keyboard.
+  b.addEventListener('pointerdown', (e) => e.preventDefault());
+  b.onclick = () => { setPickerTab(b.dataset.ptab); applyPickerSearch($('#pk-search').value || ''); };
+});
 let emojiData = null, emojiLoadP = null;
 function ensureEmojiData() {
   if (emojiData) return Promise.resolve(emojiData);
