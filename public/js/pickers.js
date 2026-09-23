@@ -39,16 +39,26 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null, i
   // and the picker's own search field is never the answer.
   S.pickerReturnFocus = phone ? (cfEditable(document.activeElement) ? document.activeElement : null) : null;
   if (anchor && !phone) {
-    // reaction picker: float near the button that opened it (desktop only;
-    // mobile keeps the bottom-sheet). Prefer above, fall back below, clamped.
-    pk.classList.add('anchored');
-    const w = Math.min(360, innerWidth - 16), h = 380;
+    // The reaction/field picker floats near the button that opened it
+    // (desktop only; mobile keeps the bottom-sheet). Prefer above, fall back
+    // below, clamped. The composer picker (insert mode) is different: it only
+    // borrows the anchor's x for horizontal placement — vertically it parks
+    // above the composer via sizePicker's desktop branch, so it never slides
+    // over the message input or gets its bottom cut off.
+    const w = Math.min(460, innerWidth - 32);
     const left = Math.min(Math.max(8, anchor.x - w / 2), Math.max(8, innerWidth - w - 8));
-    let top = anchor.y - h - 10;
-    if (top < 8) top = anchor.y + 12;
-    if (top + h > innerHeight - 8) top = Math.max(8, innerHeight - h - 8);
     pk.style.left = left + 'px';
-    pk.style.top = top + 'px';
+    if (mode === 'insert') {
+      pk.classList.remove('anchored');
+      pk.style.top = '';
+    } else {
+      pk.classList.add('anchored');
+      const h = 380;
+      let top = anchor.y - h - 10;
+      if (top < 8) top = anchor.y + 12;
+      if (top + h > innerHeight - 8) top = Math.max(8, innerHeight - h - 8);
+      pk.style.top = top + 'px';
+    }
   } else {
     pk.classList.remove('anchored');
     pk.style.left = ''; pk.style.top = '';
@@ -138,22 +148,6 @@ function sizePicker() {
   }
   if (!(max > 0)) { pk.style.maxHeight = ''; return; }
   pk.style.maxHeight = Math.max(180, Math.round(max)) + 'px';
-  // TEMP DEBUG: show the measurements in the picker so a screenshot reveals them.
-  try {
-    const dbg = document.getElementById('pk-debug');
-    if (dbg) {
-      const cr = pk.getBoundingClientRect();
-      dbg.style.display = 'block';
-      dbg.textContent =
-        'stackTop=' + Math.round(stackTop) +
-        ' layoutH=' + Math.round(layoutH) +
-        ' bottom=' + pk.style.bottom +
-        ' maxH=' + pk.style.maxHeight +
-        ' pkBottom=' + Math.round(cr.bottom) +
-        ' innerH=' + window.innerHeight +
-        ' vvh=' + Math.round(vvh);
-    }
-  } catch {}
 }
 
 // A phone's picker is the keyboard's stand-in, and the user sizes it the way

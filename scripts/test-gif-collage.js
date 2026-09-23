@@ -63,6 +63,8 @@ check(/getBoundingClientRect\(\)\.top/.test(pickers),
   'the desktop footing is measured with getBoundingClientRect (visual-viewport coords from the real layout)');
 check(/contains\('anchored'\)\) \{/.test(pickers),
   'the anchored reaction picker keeps bottom:auto (the measured footing must not touch it)');
+check(/if \(mode === 'insert'\) \{\s*pk\.classList\.remove\('anchored'\);/.test(pickers),
+  'the composer GIF/emoji picker (insert mode) never takes the anchored branch — it parks above the composer via the desktop footing');
 check(!/vvh - footing - 24/.test(pickers),
   'the old offsetHeight-summed footing math is gone');
 check(!/#picker\{[^}]*width:min\(560px,calc\(100vw - 2rem\)\)/.test(css),
