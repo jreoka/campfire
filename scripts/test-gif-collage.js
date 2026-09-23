@@ -30,14 +30,14 @@ check(/#pk-gifs>\.pk-subrow,#pk-gifs>\.pk-sec,#pk-gifs>\.pk-empty\{column-span:a
   'headers and empty states span the columns instead of landing in one');
 check(/#pk-gifs \.pk-gif\{width:100%;margin:0 0 6px;break-inside:avoid\}/.test(css),
   'tiles are full column width and never split across columns');
-check(/#pk-gifs \.pk-gif img\{height:auto\}/.test(css),
-  'GIFs keep their own aspect ratio — no more cropped sides');
+check(/#pk-gifs \.pk-gif img\{height:auto;max-height:300px/.test(css),
+  'GIFs keep their own aspect ratio, with runaway portraits capped at 300px');
 
 // --- the profile-media GIF modal gets the same treatment ---
 check(/\.gif-grid\{display:block;columns:3;column-gap:6px;/.test(css),
   'the profile GIF modal is a masonry too');
-check(/\.gif-grid \.pk-gif img\{height:auto\}/.test(css),
-  'its GIFs keep their aspect ratio as well');
+check(/\.gif-grid \.pk-gif img\{height:auto;max-height:300px/.test(css),
+  'its GIFs keep their aspect ratio as well (portraits capped)');
 check(!/\.gif-grid \.pk-gif\{width:calc\(33\.333%/.test(css),
   'the old uniform 3-across tile width is gone');
 
@@ -69,6 +69,8 @@ check(!/vvh - footing - 24/.test(pickers),
   'the old offsetHeight-summed footing math is gone');
 check(!/#picker\{[^}]*width:min\(560px,calc\(100vw - 2rem\)\)/.test(css),
   'the old 560px desktop width is gone');
+check(/#pk-gifs \.pk-gif img\{[^}]*max-height:300px/.test(css),
+  'runaway portrait GIFs are capped at 300px so one tall tile cannot wreck the masonry balance');
 
 if (failures.length) { console.log('\n' + failures.length + ' FAILURES'); process.exit(1); }
 console.log('\n' + passed + ' checks passed');

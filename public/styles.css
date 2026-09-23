@@ -1031,7 +1031,7 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 .modal.x-only .row.end{display:none}
 .gif-grid{display:block;columns:3;column-gap:6px;overflow-y:auto;max-height:52dvh;min-height:140px;margin-top:.6rem}
 .gif-grid .pk-gif{width:100%;margin:0 0 6px;break-inside:avoid}
-.gif-grid .pk-gif img{height:auto}
+.gif-grid .pk-gif img{height:auto;max-height:300px;object-fit:cover;object-position:center top}
 @media (max-width:520px){
   .gif-grid{columns:2}
 }
@@ -1880,7 +1880,7 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 #pk-gifs{display:block;columns:3;column-gap:6px}
 #pk-gifs>.pk-subrow,#pk-gifs>.pk-sec,#pk-gifs>.pk-empty{column-span:all}
 #pk-gifs .pk-gif{width:100%;margin:0 0 6px;break-inside:avoid}
-#pk-gifs .pk-gif img{height:auto}
+#pk-gifs .pk-gif img{height:auto;max-height:300px;object-fit:cover;object-position:center top}
 .pk-star{position:absolute;top:5px;right:5px;width:24px;height:24px;border:0;padding:0;background:rgba(9,12,24,.45);cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:4px;opacity:.55;transition:opacity .12s}
 .pk-star svg{width:14px;height:14px;fill:none;stroke:#fff;stroke-width:2}
 .pk-star.on svg{fill:var(--accent);stroke:var(--accent)}
