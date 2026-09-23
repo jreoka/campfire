@@ -440,10 +440,11 @@ function mentionMatcher(authorId) {
     names.push(n);
   };
   // Specials first so a member actually named "everyone" can't shadow the
-  // broadcast token, then usernames (the older meaning of @), then roles.
+  // broadcast token, then roles (a role name colliding with a username
+  // mentions the role, not the user), then usernames.
   if (admin) { add('everyone', { kind: 'all' }); add('here', { kind: 'all' }); }
-  for (const m of (d.members || [])) add(m.username, { kind: 'user', user: m });
   for (const r of (d.roles || [])) add(r.name, { kind: 'role', role: r });
+  for (const m of (d.members || [])) add(m.username, { kind: 'user', user: m });
   const me = (d.members || []).find((x) => x.id === S.me.id);
   const myRoles = new Set((me && me.roleIds) || []);
   names.sort((a, b) => b.length - a.length);
