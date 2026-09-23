@@ -37,7 +37,7 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null, i
     dbg.style.cssText = 'position:absolute;top:2px;right:36px;font-size:10px;color:#ff0;background:#000;padding:2px 6px;border-radius:3px;z-index:99;font-family:monospace;';
     pk.appendChild(dbg);
   }
-  dbg.textContent = `gen:${S.bootGen} GAP:2 SW:v651`;
+  dbg.textContent = `gen:${S.bootGen} GAP:18 SW:v652`;
   const phone = phoneLayout();
   // `field` (a status / bio box) carries the ELEMENT it is inserting into, not a
   // bar name, and that element lives in a dialog the picker has to sit over.
@@ -161,12 +161,12 @@ function sizePicker() {
     // visual-viewport coords; the two share their top edge, so converting via
     // the layout height parks the sheet exactly GAP px above the stack.
     layoutH = document.documentElement.clientHeight || window.innerHeight;
-    const GAP = 2;
+    const GAP = 18;
     const bottomPx = Math.max(0, Math.round(layoutH - stackTop + GAP));
     pk.style.bottom = bottomPx + 'px';
     // DEBUG: update badge with measured values
     const dbg2 = $('#pk-debug');
-    if (dbg2) dbg2.textContent = `gen:${S.bootGen} GAP:2 SW:v651 st:${Math.round(stackTop)}(${stackSel}) lh:${layoutH} b:${bottomPx}`;
+    if (dbg2) dbg2.textContent = `gen:${S.bootGen} GAP:18 SW:v652 st:${Math.round(stackTop)}(${stackSel}) lh:${layoutH} b:${bottomPx}`;
     // 480px keeps it a comfortable size on tall screens; stackTop is the room
     // above the stack, so this also keeps it off the viewport's top edge.
     max = Math.min(480, stackTop - GAP - 16);
