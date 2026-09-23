@@ -263,6 +263,18 @@ function main() {
   const leadHover = ruleFor('#btn-plus:hover') || { sel: '' };
   check(css.indexOf(leadHover.sel + '{') > hoverBlock && /#tbtn-plus:hover/.test(leadHover.sel), 'and so is the leading +, on both bars', leadHover.sel);
 
+  console.log('\n[4b] the me bar sits on the composer\'s baseline');
+  // The me bar and the input pill are both 51.2px; their bottoms must land on
+  // the same line in every layout. The composer's bottom padding is the
+  // reference: calc(.9rem + safe-b) desktop, calc(.72rem + safe-b) phone.
+  check(/margin:[^;]*calc\(\.9rem \+ var\(--safe-b\)\)/.test(ruleBody('#me-card') || ''),
+    'desktop: the me bar\'s bottom margin is the composer\'s bottom padding');
+  const meMargins = css.match(/#me-card\{margin-bottom:[^}]+\}/g) || [];
+  check(meMargins.some((r) => /margin-bottom:\.72rem/.test(r)),
+    'portrait: the drawer is already safe-area inset, so the me bar needs just the .72rem');
+  check(meMargins.some((r) => /margin-bottom:calc\(\.72rem \+ var\(--safe-b\)\)/.test(r)),
+    'landscape: no drawer, so the me bar carries its own safe area exactly like the composer');
+
   const chrome = findChrome();
   if (!chrome) return skip('no Chrome/Edge found (set CHROME_PATH)');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-field-html-'));

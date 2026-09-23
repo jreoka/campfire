@@ -3299,6 +3299,12 @@ body{touch-action:manipulation}
    sidebar is always on screen. */
 @media (max-height:560px) and (pointer:coarse){
   #left{display:contents}
+  /* Sideways there is no drawer — #left is display:contents, so nothing insets
+     the sidebar for the safe area. The me bar carries its own, exactly like
+     #composer's padding-bottom, or it lands under the gesture bar while the
+     input pill floats above it. (Portrait keeps the plain .72rem: there the
+     fixed drawer is already safe-area inset.) */
+  #me-card{margin-bottom:calc(.72rem + var(--safe-b))}
   #left #sidebar{width:min(260px,38vw)!important;flex:0 0 auto!important;min-width:0;border-left:0;border-right:1px solid var(--line-soft)}
   #btn-nav-close{display:none!important}
   #btn-menu{display:none!important}
