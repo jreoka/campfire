@@ -59,5 +59,17 @@ check(
   'push notification text unchanged',
 );
 
+// [8] the DM sidebar preview no longer leaks a view-once caption to the
+// recipient (the sender still sees their own words).
+const homeSrc = fs.readFileSync(path.join(ROOT, 'public/js/home.js'), 'utf8');
+check(
+  /t\.last\.viewOnce && !t\.last\.mine \? 'Sent a view-once'/.test(homeSrc),
+  'sidebar preview masks a view-once caption for the recipient',
+);
+check(
+  /viewOnce: !!last\.view_once, mine: userId \? last\.user_id === userId : false/.test(serverSrc),
+  'thread payload carries the view-once flag and authorship',
+);
+
 console.log(passed + ' passed, ' + failures.length + ' failed');
 process.exit(failures.length ? 1 : 0);

@@ -594,8 +594,12 @@ function dmRowEl(t) {
   if (callN > 0 || inThis) b.classList.add('in-call');
   // Attachment-only messages still read as a sentence in the preview
   // ("Cross: Sent an attachment") instead of trailing off after the colon.
+  // A view-once caption belongs to the one-shot viewer (under the media), so the
+  // sidebar must not leak it to the recipient — show the generic line instead.
+  // The sender still sees their own words.
   const lastText = t.last
-    ? (String(t.last.content || '').trim() || ((t.last.attachments || 0) > 0 ? 'Sent an attachment' : ''))
+    ? (t.last.viewOnce && !t.last.mine ? 'Sent a view-once'
+      : (String(t.last.content || '').trim() || ((t.last.attachments || 0) > 0 ? 'Sent an attachment' : '')))
     : '';
   const sub = inThis ? '<span class="dm-incall">In call — you</span>'
     : callN > 0 ? `<span class="dm-incall">${callN} in call — open to join</span>`

@@ -5766,7 +5766,7 @@ async function dmThreadFor(userId, threadId) {
 }
 async function dmThreadView(t, userId) {
   const members = (await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id IN (SELECT user_id FROM dm_members WHERE thread_id = ?)`).all(t.id)).map(publicUser);
-  const last = await db.prepare(`SELECT m.content, m.created_at, u.display_name AS dname,
+  const last = await db.prepare(`SELECT m.content, m.created_at, m.view_once, m.user_id, u.display_name AS dname,
       (SELECT COUNT(*) FROM dm_attachments a WHERE a.message_id = m.id) AS atts
     FROM dm_messages m LEFT JOIN users u ON u.id = m.user_id
     WHERE m.thread_id = ? ORDER BY m.created_at DESC LIMIT 1`).get(t.id);
@@ -5777,7 +5777,7 @@ async function dmThreadView(t, userId) {
   return {
     id: t.id, name: t.name, description: t.description || '', isGroup: !!t.is_group, created_by: t.created_by || null, created_at: t.created_at, members,
     pinned,
-    last: last ? { content: last.content, attachments: last.atts || 0, created_at: last.created_at, author: last.dname || '?' } : null,
+    last: last ? { content: last.content, attachments: last.atts || 0, created_at: last.created_at, author: last.dname || '?', viewOnce: !!last.view_once, mine: userId ? last.user_id === userId : false } : null,
   };
 }
 async function dmNotify(threadId, obj) {
