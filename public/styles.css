@@ -4488,9 +4488,9 @@ html.wrapper-app .msg .text,html.wrapper-app .msg .text *,html.wrapper-app input
      surfaces only (`#messages` and `#thread-replies` — every conversation
      renders into one of them): member lists, the user card, the DM rows and the
      admin lists keep their names unadorned. */
-  #messages .msg .who:hover,#thread-replies .msg .who:hover{text-decoration:underline;text-decoration-thickness:.13em;text-underline-offset:-.05em;text-decoration-color:currentColor}
+  #messages .msg .who:hover,#thread-replies .msg .who:hover{text-decoration:underline;text-decoration-thickness:.13em;text-underline-offset:-.02em;text-decoration-color:currentColor}
   #messages .msg .who.grad-name:hover,#thread-replies .msg .who.grad-name:hover{text-decoration:none;position:relative}
-  #messages .msg .who.grad-name:hover::after,#thread-replies .msg .who.grad-name:hover::after{content:'';position:absolute;left:0;right:0;bottom:.33em;height:.12em;border-radius:1px;background:linear-gradient(90deg,var(--nm-c1),var(--nm-c2))}
+  #messages .msg .who.grad-name:hover::after,#thread-replies .msg .who.grad-name:hover::after{content:'';position:absolute;left:0;right:0;bottom:.30em;height:.12em;border-radius:1px;background:linear-gradient(90deg,var(--nm-c1),var(--nm-c2))}
   .dm-close:hover{background:var(--danger-bg);color:var(--danger-tx)}
   .hist-dot:hover{border-color:var(--accent);transform:scale(1.05)}
   .home-btn:hover{background:var(--panel-3)}
