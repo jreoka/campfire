@@ -2563,7 +2563,13 @@ app.post('/api/messages/:mid/unread', authRequired, async (req, res) => {
       ON CONFLICT (user_id, channel_id) DO UPDATE SET last_read_at = EXCLUDED.last_read_at`)
       .run(req.user.id, sm.channel_id, Number(sm.created_at) - 1);
     notifyUser(req.user.id, { t: 'chan-unread', serverId: sm.server_id, channelId: sm.channel_id });
-    return res.json({ ok: true, kind: 'server', serverId: sm.server_id, channelId: sm.channel_id });
+    // The bar quotes the watermark, so answer with the POST-stamp snapshot (the
+    // watermark just moved to this message): the client paints it at once when
+    // this is the open conversation, instead of waiting for a re-open. Unlike
+    // the /read routes (which answer pre-stamp, quoting what the open cleared),
+    // this snapshot is post-stamp — it is what the mark just made unread.
+    const snapshot = await chanUnreadSnapshot(req.user.id, { id: sm.channel_id, server_id: sm.server_id });
+    return res.json({ ok: true, kind: 'server', serverId: sm.server_id, channelId: sm.channel_id, snapshot });
   }
   const dm = await dmMsg(mid);
   if (!dm) return res.status(404).json({ error: 'no_message' });
@@ -2573,7 +2579,8 @@ app.post('/api/messages/:mid/unread', authRequired, async (req, res) => {
     .run(Number(dm.created_at) - 1, t.id, req.user.id);
   const unread = (await dmUnreadCounts(req.user.id)).get(t.id) || 0;
   notifyUser(req.user.id, { t: 'dm-unread', threadId: t.id, unread });
-  res.json({ ok: true, kind: 'dm', threadId: t.id, unread });
+  const snapshot = await dmUnreadSnapshot(req.user.id, t.id);
+  res.json({ ok: true, kind: 'dm', threadId: t.id, unread, snapshot });
 });
 
 // ---------- "Scan info": what ClamAV said about one attachment ----------

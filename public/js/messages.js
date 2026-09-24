@@ -3823,10 +3823,12 @@ function showTyping(userId, name) {
 // ---------- unread bar ----------
 // "N new messages since 6:07 PM · Mark as read" over the top of the open
 // conversation (owner request, modelled on Discord's banner). The numbers come
-// from the PRE-stamp snapshot the /read call returns (chanUnreadSnapshot /
-// dmUnreadSnapshot in server.js): only a conversation OPEN arms the bar, through
-// markChannelRead / markDmRead's onSnap — every other stamp (a message landing
-// in the open chat, a foregrounded tab) leaves it alone.
+// from the unread snapshot (chanUnreadSnapshot / dmUnreadSnapshot in server.js):
+// the /read calls answer PRE-stamp, quoting what the open cleared; a deliberate
+// "Mark unread" answers POST-stamp, quoting what the mark just made unread, and
+// paints at once through markMessageUnread. So the bar arms in exactly two
+// places — a conversation open, and a mark-unread — every other stamp (a message
+// landing in the open chat, a foregrounded tab) leaves it alone.
 // The bar is a POINTER, not a gate: the read watermark is already stamped by the
 // time it paints, so "Mark as read" dismisses it (and re-stamps, harmlessly —
 // which is also the honest action if the open's stamp failed). It leaves when

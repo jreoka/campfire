@@ -5,7 +5,8 @@
 // silently clear the badge — the dots vanished and the reader lost the answer to
 // "what was new, and since when?" without ever seeing it. The bar is that
 // answer, modelled on Discord's (owner request): it quotes how many messages
-// arrived and since when, over the top of the conversation the moment it opens.
+// arrived and since when, over the top of the conversation the moment it opens —
+// or the moment you mark a message unread in the open conversation.
 //
 // Two contracts make the numbers honest:
 //   1. `POST /api/channels/:cid/read` and `POST /api/dms/:tid/read` answer with
@@ -17,10 +18,14 @@
 //      only for other people — so "Mark unread" on your own message paints the
 //      bar when the conversation reopens. Sys messages and thread replies never
 //      count on either surface.
-//   2. Only a conversation OPEN arms the bar (markChannelRead / markDmRead's
-//      onSnap, set by selectChannel / selectDmThread). Every other stamp — a
-//      message landing in the one already open, a foregrounded tab — passes no
-//      onSnap and leaves the bar alone.
+//   2. The bar arms in exactly two places: a conversation OPEN (markChannelRead /
+//      markDmRead's onSnap, set by selectChannel / selectDmThread) and a deliberate
+//      "Mark unread" in the open conversation (POST /api/messages/:mid/unread
+//      answers with the post-stamp snapshot; markMessageUnread hands it straight
+//      to unreadBarShow, whose live guard only paints when that conversation is
+//      open — marking from anywhere else just lights the dots). Every other stamp —
+//      a message landing in the one already open, a foregrounded tab — leaves the
+//      bar alone.
 // The bar is a pointer, not a gate: the watermark is already stamped when it
 // paints, so Mark as read dismisses (and re-stamps, idempotently).
 //
@@ -252,6 +257,45 @@ function clientChecks() {
     check(!/[\u{1F300}-\u{1FAFF}\u{2190}-\u{21FF}\u{2600}-\u{27BF}\u{FE0F}]/u.test(barMarkup),
       'and the bar carries no emoji (the UI-chrome rule)', barMarkup);
     check(/Mark as read<\/button>/.test(index), 'the button says "Mark as read"');
+
+    console.log('\n[A7] marking unread paints the bar at once (no re-open needed)');
+    const actions = fs.readFileSync(path.join(ROOT, 'public/js/actions.js'), 'utf8');
+    const markRoute = server.slice(server.indexOf("app.post('/api/messages/:mid/unread'"));
+    check(/const snapshot = await chanUnreadSnapshot\(req\.user\.id, \{ id: sm\.channel_id, server_id: sm\.server_id \}\);/.test(markRoute)
+      && /channelId: sm\.channel_id, snapshot \}\);/.test(markRoute),
+      'the channel mark-unread answers with the post-stamp snapshot (what the mark just made unread)');
+    check(/const snapshot = await dmUnreadSnapshot\(req\.user\.id, t\.id\);/.test(markRoute)
+      && /threadId: t\.id, unread, snapshot \}\);/.test(markRoute),
+      'and the DM one does too (the old numeric unread dot-count is untouched)');
+    check(/unreadBarShow\(r\.kind === 'dm' \? 'dm' : 'server', r\.kind === 'dm' \? r\.threadId : r\.channelId, r\.snapshot\)/.test(actions),
+      'markMessageUnread hands that snapshot to unreadBarShow (whose live guard only paints the open conversation)');
+    const mmuBuild = new Function('api', 'S', 'markChanUnread', 'paintServerUnread', 'renderDmLists', 'paintHomeBadge', 'haptic', 'toast', 'unreadBarShow',
+      slice(actions, 'async function markMessageUnread(mid) {', '// Fan-out time choices') +
+      '\nreturn { markMessageUnread };');
+    const painted = [], dots = [];
+    const snap = { count: 3, since };
+    const S3 = { dmUnread: new Map() };
+    const noop = () => {};
+    const fakeMarkApi = (p, o) => {
+      check(p === '/api/messages/m1/unread' && o && o.method === 'POST', 'marking posts to the message unread route', p);
+      return Promise.resolve({ ok: true, kind: 'server', serverId: 's1', channelId: 'c1', snapshot: snap });
+    };
+    const { markMessageUnread } = mmuBuild(fakeMarkApi, S3,
+      (sid, cid) => dots.push([sid, cid]), noop, noop, noop, noop, noop,
+      (kind, id, u) => painted.push([kind, id, u]));
+    await markMessageUnread('m1');
+    check(dots.length === 1 && dots[0][0] === 's1' && dots[0][1] === 'c1', 'the dots still light', dots);
+    check(painted.length === 1 && painted[0][0] === 'server' && painted[0][1] === 'c1' && painted[0][2] === snap,
+      'and the route snapshot reaches unreadBarShow at once', painted);
+    painted.length = 0;
+    const { markMessageUnread: markDmUnread } = mmuBuild(
+      () => Promise.resolve({ ok: true, kind: 'dm', threadId: 't9', unread: 2, snapshot: snap }),
+      S3, noop, noop, noop, noop, noop, noop,
+      (kind, id, u) => painted.push([kind, id, u]));
+    await markDmUnread('m2');
+    check(S3.dmUnread.get('t9') === 2, 'the DM dot count still lands', [...S3.dmUnread]);
+    check(painted.length === 1 && painted[0][0] === 'dm' && painted[0][1] === 't9' && painted[0][2] === snap,
+      'same on the DM surface', painted);
   })();
 }
 
@@ -410,6 +454,23 @@ async function main() {
     check(has(r.data.unread) === 0, 'the channel stays cleared meanwhile');
     r = await api('POST', `/api/channels/${chat.id}/read`, {});
     check(r.status === 401, 'no token, no read (and no snapshot either)', r.status);
+
+    console.log('\n[B4] marking unread answers with the snapshot the bar paints at once');
+    asock.send({ t: 'message', serverId: srv.id, channelId: chat.id, content: 'markme' });
+    await waitFor(() => bsock.events.some((e) => e.t === 'message-new' && e.message && e.message.content === 'markme'), 5000);
+    const markId = ((bsock.events.find((e) => e.t === 'message-new' && e.message && e.message.content === 'markme') || {}).message || {}).id;
+    check(!!markId, 'the marked message has an id', markId);
+    r = await api('POST', `/api/messages/${markId}/unread`, { token: B.token });
+    check(r.status === 200 && r.data.ok === true, 'marking unread answers ok', r.data);
+    check(has(r.data.snapshot) >= 1, 'with the snapshot behind the mark (the bar paints without a re-open)', r.data.snapshot);
+    check(typeof r.data.snapshot.since === 'number' && r.data.snapshot.since > 0,
+      'and its watermark', r.data.snapshot);
+    const dmMarkId = ((bsock.events.find((e) => e.t === 'dm-new' && e.message && e.message.content === 'hi') || {}).message || {}).id;
+    check(!!dmMarkId, 'the DM has an id too', dmMarkId);
+    r = await api('POST', `/api/messages/${dmMarkId}/unread`, { token: B.token });
+    check(r.status === 200 && typeof r.data.unread === 'number',
+      'the DM dot-count still answers as a number', r.data);
+    check(has(r.data.snapshot) >= 1, 'and the DM mark answers with its snapshot too', r.data.snapshot);
   } finally {
     for (const c of conns) { try { c.close(); } catch {} }
     try { child && child.kill(); } catch {}

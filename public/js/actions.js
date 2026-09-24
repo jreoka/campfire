@@ -514,6 +514,13 @@ async function markMessageUnread(mid) {
       try { markChanUnread(r.serverId, r.channelId); } catch {}
       try { paintServerUnread(r.serverId); } catch {}
     }
+    // The bar used to wait for a re-open: the route now answers with the
+    // snapshot behind the mark, so paint it at once. unreadBarShow only paints
+    // when this IS the open conversation (its own live guard), so marking from
+    // anywhere else just lights the dots.
+    if (r && r.snapshot) {
+      try { unreadBarShow(r.kind === 'dm' ? 'dm' : 'server', r.kind === 'dm' ? r.threadId : r.channelId, r.snapshot); } catch {}
+    }
     haptic(8);
     toast('Marked unread');
   } catch { toast('Could not mark it unread'); }
