@@ -352,6 +352,28 @@ function main() {
   check(/text-overflow:ellipsis/.test((phRule || {}).body || '') && /overflow:hidden/.test((phRule || {}).body || ''),
     'and overlong text is cut with an ellipsis instead of falling off the box');
 
+  console.log('\n[4d] the phone thread takes the full chat area');
+  // The phone media query turns the thread panel from a 360px floating panel
+  // into the chat itself: full width, no panel edge line, the chat's own
+  // background. left:0 is unique to the phone's own rule (the desktop and
+  // 1100px rules never set it), so find that rule and check its query.
+  let phoneRule = null;
+  for (const m of css.matchAll(/#thread-panel\{([^}]*)\}/g)) {
+    if (/left:0/.test(m[1])) {
+      const q = css.lastIndexOf('@media', m.index);
+      phoneRule = { body: m[1], query: css.slice(q, css.indexOf('{', q)) };
+      break;
+    }
+  }
+  check(!!phoneRule && /max-width:700px/.test(phoneRule.query),
+    'the phone overrides the thread panel in the phone media query', phoneRule && phoneRule.query);
+  check(!!phoneRule && /width:auto!important/.test(phoneRule.body),
+    'so it spans the full width instead of a 360px panel', phoneRule && phoneRule.body);
+  check(!!phoneRule && /border-left:0/.test(phoneRule.body),
+    'with no panel edge line', phoneRule && phoneRule.body);
+  check(!!phoneRule && /background:var\(--bg\)/.test(phoneRule.body),
+    'and wears the chat\'s own background', phoneRule && phoneRule.body);
+
   const chrome = findChrome();
   if (!chrome) return skip('no Chrome/Edge found (set CHROME_PATH)');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-field-html-'));

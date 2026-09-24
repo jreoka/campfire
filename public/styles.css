@@ -3257,7 +3257,10 @@ body{touch-action:manipulation}
      the cap has to stand aside or the sheet would snap back mid-gesture. */
   #picker.pk-resizing{max-height:none}
   #mention-pop,#chan-pop{left:.5rem;right:.5rem}
-  #thread-panel{width:min(360px,100vw)!important}
+  /* On a phone the thread IS the chat, not a side panel: it takes the full
+     width, drops the panel edge line, and wears the chat's own background.
+     The X in its header is the way back. */
+  #thread-panel{left:0;width:auto!important;border-left:0;background:var(--bg)}
   #thread-resizer{display:none}
   #usercard{width:min(300px,calc(100vw - 16px))}
   #settings-backdrop,#srv-settings-backdrop,#chan-settings-backdrop{padding:var(--safe-t) 0 0}
