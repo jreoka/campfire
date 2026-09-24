@@ -3799,6 +3799,14 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
    scrim's alpha, so the picture still fades into the same near-black. */
 .sp-hero:not(.sp-hero-empty){background:#05070c}
 .sp-hero-media{-webkit-mask-image:linear-gradient(90deg,rgba(0,0,0,.06) 12%,rgba(0,0,0,.4) 58%,rgba(0,0,0,.72));mask-image:linear-gradient(90deg,rgba(0,0,0,.06) 12%,rgba(0,0,0,.4) 58%,rgba(0,0,0,.72))}
+/* A video story thumbnail is an empty <video> until its first frame lands, and
+   an empty <video> makes mobile browsers paint their own grey play-button
+   placeholder. While it loads, the video stays hidden and a spinner sits in
+   its place — on the hero card and on the badge ring alike. */
+.st-vid-loading{position:relative}
+.st-vid-loading video{visibility:hidden}
+.st-vid-loading::after{content:'';position:absolute;inset:0;margin:auto;width:26px;height:26px;border-radius:50%;border:3px solid rgba(255,255,255,.16);border-top-color:rgba(255,255,255,.85);animation:up-spin .8s linear infinite;pointer-events:none;z-index:1}
+.sp-hero-badge .st-vid-loading::after{width:18px;height:18px;border-width:2.5px}
 .sp-hero-in{position:relative;display:flex;align-items:center;gap:.9rem;flex-wrap:wrap;width:100%;min-width:0}
 .sp-hero-badge{position:relative;width:56px;height:56px;flex-shrink:0;border-radius:50%;background:var(--panel-3);color:var(--muted);display:inline-flex;align-items:center;justify-content:center}
 .sp-hero-badge>svg{width:22px;height:22px}

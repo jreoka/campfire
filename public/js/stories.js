@@ -384,6 +384,29 @@ function spServerRow(srvTrays) {
   }
   return row;
 }
+// A <video> story thumbnail is an empty element until its first frame lands,
+// and mobile browsers paint their own grey play-button placeholder into that
+// emptiness — which reads as broken for the second a video story takes to
+// load. Hide the element behind a spinner until the frame arrives (or the
+// thumbnail gives up and is removed, via storyThumbRetry). No-ops for photos.
+function storyThumbSpin(host, media) {
+  if (!host || !media) return;
+  const vid = media.tagName === 'VIDEO' ? media : media.querySelector('video');
+  if (!vid) return;
+  host.classList.add('st-vid-loading');
+  const settled = () => host.classList.remove('st-vid-loading');
+  // A cached thumbnail can already be decodable before we get here.
+  if (vid.readyState >= 2) { settled(); return; }
+  vid.addEventListener('loadeddata', settled, { once: true });
+  // storyThumbRetry removes the media when the 423 gate never opens: without
+  // this the spinner would sit on an empty card forever.
+  const obs = new MutationObserver(() => {
+    if (vid.isConnected) return;
+    try { obs.disconnect(); } catch {}
+    settled();
+  });
+  try { obs.observe(host, { childList: true, subtree: true }); } catch {}
+}
 // The hero: your story, its numbers, and the way in (watch / add).
 function spHero(mineItems) {
   const latest = mineItems[mineItems.length - 1] || null;
@@ -392,6 +415,9 @@ function spHero(mineItems) {
   if (latest) {
     const media = storyThumbEl(latest, 'sp-hero-media');
     if (media) hero.appendChild(media);
+    // A video story is an empty <video> until its first frame: show a spinner,
+    // not the browser's grey play-button placeholder, while it loads.
+    storyThumbSpin(hero, media);
   }
   const inn = document.createElement('div');
   inn.className = 'sp-hero-in';
@@ -403,6 +429,7 @@ function spHero(mineItems) {
     paintAvatar(av, S.me);
     const thumb = storyThumbEl(storyThumbItem(mineItems), 'st-thumb-inline');
     if (thumb) av.appendChild(thumb);
+    storyThumbSpin(av, thumb);
     badge.appendChild(av);
   } else badge.innerHTML = svSvg.camera;
   inn.appendChild(badge);
