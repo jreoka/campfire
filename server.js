@@ -1442,17 +1442,18 @@ app.get('/api/unread', authRequired, async (req, res) => {
   res.json({ channels: Object.fromEntries(m) });
 });
 // The pre-stamp unread snapshot a /read call is about to clear: how many
-// messages it is marking read and what the watermark was. The count follows
-// each surface's own unread rules exactly (channelUnreadFor / dmUnreadCounts),
-// and the "since" is the same COALESCE they age against. Computed BEFORE the
-// stamp so the answer can never race it — this is what the client's unread bar
-// quotes ("N new messages since 6:07 PM").
+// messages it is marking read and what the watermark was. System messages and
+// thread replies never count (they are not channel traffic); your own messages
+// DO count here — unlike the unread dots, which light only for other people —
+// so "Mark unread" on your own message paints the bar when the conversation
+// reopens. The "since" is the same COALESCE the unread rules age against.
+// Computed BEFORE the stamp so the answer can never race it — this is what the
+// client's unread bar quotes ("N new messages since 6:07 PM").
 async function chanUnreadSnapshot(userId, ch) {
   try {
     const row = await db.prepare(`
       SELECT (SELECT COUNT(*) FROM messages m
                WHERE m.channel_id = ?
-                 AND (m.user_id IS NULL OR m.user_id <> ?)
                  AND COALESCE(m.sys, '') = ''
                  AND (m.thread_root_id IS NULL OR m.thread_root_id = '')
                  AND m.created_at > COALESCE(r.last_read_at, sm.joined_at)) AS n,
@@ -1460,7 +1461,7 @@ async function chanUnreadSnapshot(userId, ch) {
         FROM server_members sm
         LEFT JOIN channel_reads r ON r.channel_id = ? AND r.user_id = ?
        WHERE sm.server_id = ? AND sm.user_id = ?`)
-      .get(ch.id, userId, ch.id, userId, ch.server_id, userId);
+      .get(ch.id, ch.id, userId, ch.server_id, userId);
     return { count: Number(row && row.n) || 0, since: Number(row && row.since) || null };
   } catch { return { count: 0, since: null }; }
 }
@@ -1469,13 +1470,13 @@ async function dmUnreadSnapshot(userId, threadId) {
     const row = await db.prepare(`
       SELECT (SELECT COUNT(*) FROM dm_messages m
                WHERE m.thread_id = ?
-                 AND m.user_id IS NOT NULL AND m.user_id <> ?
+                 AND m.user_id IS NOT NULL
                  AND (m.sys IS NULL OR m.sys = '')
                  AND m.created_at > COALESCE(mem.last_read_at, mem.joined_at)) AS n,
              COALESCE(mem.last_read_at, mem.joined_at) AS since
         FROM dm_members mem
        WHERE mem.thread_id = ? AND mem.user_id = ?`)
-      .get(threadId, userId, threadId, userId);
+      .get(threadId, threadId, userId);
     return { count: Number(row && row.n) || 0, since: Number(row && row.since) || null };
   } catch { return { count: 0, since: null }; }
 }

@@ -13,6 +13,10 @@
 //      dmUnreadSnapshot) — computed before the watermark moves, so the count can
 //      never race the stamp it describes. `since` is the same COALESCE the
 //      unread rules age against (last_read_at, falling back to joined_at).
+//      The snapshot counts your own messages too — unlike the dots, which light
+//      only for other people — so "Mark unread" on your own message paints the
+//      bar when the conversation reopens. Sys messages and thread replies never
+//      count on either surface.
 //   2. Only a conversation OPEN arms the bar (markChannelRead / markDmRead's
 //      onSnap, set by selectChannel / selectDmThread). Every other stamp — a
 //      message landing in the one already open, a foregrounded tab — passes no
@@ -23,8 +27,8 @@
 // Offline half: the real helpers sliced out of `public/js/messages.js`,
 // `public/js/servers.js` and `public/js/home.js`, run against fake DOM / api.
 // API half: a real server on a throwaway database — the pre-stamp snapshot on
-// both surfaces (count, `since` as the watermark, own/sys/thread-reply
-// exclusions). Skips (exit 0) when Postgres is down.
+// both surfaces (count, `since` as the watermark; sys/thread-reply exclusions,
+// own messages included). Skips (exit 0) when Postgres is down.
 //
 // Usage: node scripts/test-unread-banner.js
 'use strict';
@@ -216,15 +220,20 @@ function clientChecks() {
     const dmSnapAt = dmRoute.indexOf('const unread = await dmUnreadSnapshot(req.user.id, t.id);');
     check(dmSnapAt > 0 && dmSnapAt < dmRoute.indexOf('UPDATE dm_members SET last_read_at'),
       'and so is the DM one');
-    check(/AND \(m\.user_id IS NULL OR m\.user_id <> \?\)/.test(server)
-      && /AND COALESCE\(m\.sys, ''\) = ''/.test(server)
-      && /AND \(m\.thread_root_id IS NULL OR m\.thread_root_id = ''\)/.test(server)
-      && /AND m\.created_at > COALESCE\(r\.last_read_at, sm\.joined_at\)/.test(server),
-      'the channel count follows channelUnreadFor exactly (someone else, not sys, not a thread reply)');
-    check(/AND m\.user_id IS NOT NULL AND m\.user_id <> \?/.test(server)
-      && /AND \(m\.sys IS NULL OR m\.sys = ''\)/.test(server)
-      && /AND m\.created_at > COALESCE\(mem\.last_read_at, mem\.joined_at\)/.test(server),
-      'and the DM count follows dmUnreadCounts exactly');
+    const chSnapFn = server.slice(server.indexOf('async function chanUnreadSnapshot'),
+      server.indexOf('async function dmUnreadSnapshot'));
+    const dmSnapFn = server.slice(server.indexOf('async function dmUnreadSnapshot'),
+      server.indexOf("app.post('/api/channels/:chId/read'"));
+    check(!/m\.user_id\s*<>\s*\?/.test(chSnapFn)
+      && /AND COALESCE\(m\.sys, ''\) = ''/.test(chSnapFn)
+      && /AND \(m\.thread_root_id IS NULL OR m\.thread_root_id = ''\)/.test(chSnapFn)
+      && /AND m\.created_at > COALESCE\(r\.last_read_at, sm\.joined_at\)/.test(chSnapFn),
+      'the channel snapshot counts your own messages too (not sys, not a thread reply) — unlike the dots');
+    check(/AND m\.user_id IS NOT NULL/.test(dmSnapFn)
+      && !/m\.user_id\s*<>\s*\?/.test(dmSnapFn)
+      && /AND \(m\.sys IS NULL OR m\.sys = ''\)/.test(dmSnapFn)
+      && /AND m\.created_at > COALESCE\(mem\.last_read_at, mem\.joined_at\)/.test(dmSnapFn),
+      'same for the DM snapshot');
 
     console.log('\n[A6] the markup and the style contract');
     const headAt = index.indexOf('id="chat-header"'), barAt = index.indexOf('id="unread-bar"'), msgsAt = index.indexOf('id="messages"');
@@ -367,11 +376,11 @@ async function main() {
     check(has(r.data.unread) === 1, 'one new message since the last read');
     check(r.data.unread.since >= since1, 'and the watermark (since) advanced with the read', { since1, now: r.data.unread.since });
 
-    console.log('\n[B2] own messages and thread replies never count');
+    console.log('\n[B2] your own messages count for the bar (thread replies still never do)');
     bsock.send({ t: 'message', serverId: srv.id, channelId: chat.id, content: 'mine' });
     await waitFor(() => bsock.events.some((e) => e.t === 'message-new' && e.message && e.message.content === 'mine'), 5000);
     r = await chanRead(B.token, chat.id);
-    check(has(r.data.unread) === 0, 'your own message is not unread to you');
+    check(has(r.data.unread) === 1, 'your own message counts — the bar quotes the watermark, not the dot rules');
 
     asock.send({ t: 'message', serverId: srv.id, channelId: chat.id, content: 'root' });
     await waitFor(() => bsock.events.filter((e) => e.t === 'message-new').length >= 5, 5000);
