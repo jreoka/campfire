@@ -1937,6 +1937,23 @@ function storySetStep(step) {
   $('#sc-bar2').classList.toggle('hidden', !pick);
   $('#sc-pick').classList.toggle('hidden', !pick);
   $('#sc-flip').classList.toggle('hidden', !capture || sc.camFailed);
+  // A video story loops behind the audience panel if nothing stops it — the
+  // reader can hear it while picking who gets the story. Pause it whenever the
+  // step isn't preview, and resume it only when we were the ones who paused it
+  // (coming back from the audience step), never over a fresh preview.
+  const pv = $('#sc-play');
+  if (pv) {
+    if (preview) {
+      if (sc && sc.videoPausedByStep && pv.getAttribute('src')) {
+        sc.videoPausedByStep = false;
+        const p = pv.play();
+        if (p && p.catch) p.catch(() => {});
+      }
+    } else if (!pv.paused) {
+      try { pv.pause(); } catch {}
+      if (sc) sc.videoPausedByStep = true;
+    }
+  }
   // The mic button is only meaningful for the thing it records: a hold.
   $('#sc-mic').classList.toggle('hidden', !capture || sc.camFailed);
   if (capture) $('#sc-hint').classList.add('hidden');

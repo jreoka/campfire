@@ -205,6 +205,14 @@ function main() {
   for (const [re, what] of srvCallers) check(re.test(stories), what + ' says which server the post started in');
   check(/\$\('#stories-nav-add'\)\.onclick = \(\) => createStory\(\{\}\);/.test(stories) && /\$\('#sp-post'\)\.onclick = \(\) => createStory\(\{\}\);/.test(stories), 'while Home\'s rail ＋ and the story center pass no server (they open empty)');
 
+  console.log('\\n[6] the preview video cannot keep playing over the audience step');
+  check(/if \(pv\) \{/.test(stories) && /\} else if \(!pv\.paused\) \{/.test(stories),
+    'storySetStep pauses #sc-play whenever the step is not preview');
+  check(/sc\.videoPausedByStep = true/.test(stories),
+    'the pause is remembered so only the step-changer resumes it');
+  check(/sc\.videoPausedByStep && pv\.getAttribute\('src'\)/.test(stories),
+    'coming back to preview resumes it (and never plays a video with no src)');
+
   const chrome = findChrome();
   if (!chrome) {
     console.log('\n[test] SKIP browser half: no Chrome/Edge found (set CHROME_PATH)');
