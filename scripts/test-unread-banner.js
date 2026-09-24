@@ -270,9 +270,9 @@ function clientChecks() {
     check(dmDropped === 'unset', 'DM: the stale snapshot is dropped too', dmDropped);
 
     console.log('\n[A4] only an OPEN arms the bar');
-    check(/unreadBarHide\(\);\s*markChannelRead\(S\.serverId, id, 0, \{ onSnap: \(u\) => unreadBarShow\('server', id, u, \{ fromOpen: true \}\) \}\)/.test(servers),
+    check(/unreadBarHide\(\);\s*markChannelRead\(S\.serverId, id, 0, \{ onSnap: \(u\) => unreadBarShow\('server', id, u\) \}\)/.test(servers),
       'selectChannel hides the old bar and arms the new one (servers.js)');
-    check(/unreadBarHide\(\);\s*markDmRead\(id, 0, \{ onSnap: \(u\) => unreadBarShow\('dm', id, u, \{ fromOpen: true \}\) \}\)/.test(pins),
+    check(/unreadBarHide\(\);\s*markDmRead\(id, 0, \{ onSnap: \(u\) => unreadBarShow\('dm', id, u\) \}\)/.test(pins),
       'selectDmThread does the same (pins.js)');
     check(/markChannelRead\(m\.serverId, m\.channelId\);/.test(socket),
       'a message landing in the open chat stamps WITHOUT arming (no bar on every message)', 'socket.js');
@@ -418,19 +418,17 @@ function clientChecks() {
       /box\.id !== 'messages'/.test(messages) && /unreadBarCtx !== here/.test(messages),
       'the helper only answers for #messages, at the bottom, for the open conversation');
 
-    console.log('\n[A9] the open landing clears itself after a beat (already at the bottom)');
+    console.log('\n[A9] the beat clears a paint once the reader is back at the bottom');
     MS.view = 'server'; MS.serverId = 's1'; MS.channelId = 'c1'; MS.dmThreadId = null;
-    const msgEl = fakeEl(); msgEl.id = 'messages'; msgEl.dataset = { atBottom: '1' };
+    const msgEl = fakeEl(); msgEl.id = 'messages'; msgEl.dataset = { atBottom: '0' };
     els.set('#messages', msgEl);
     unreadBarShow('server', 'c1', { count: 2, since });
-    check(!bar.classList.contains('hidden'), 'setup: the open landing paints the bar');
-    unreadBarTimedDismiss(); // the 3s timer firing, reader still at the bottom
-    check(bar.classList.contains('hidden'), 'the beat clears a bar whose reader never left the bottom');
-    unreadBarShow('server', 'c1', { count: 2, since });
-    msgEl.dataset.atBottom = '0'; // scrolled up to read the history instead
-    unreadBarTimedDismiss();
+    check(!bar.classList.contains('hidden'), 'setup: away from the bottom the bar paints');
+    unreadBarTimedDismiss(); // the 3s timer firing, reader still away
     check(!bar.classList.contains('hidden'), 'away from the bottom the timer no-ops (the scroll-back rule owns it)');
-    unreadBarHide();
+    msgEl.dataset.atBottom = '1'; // programmatic return (jump-to-present pins before its scroll events)
+    unreadBarTimedDismiss();
+    check(bar.classList.contains('hidden'), 'the beat clears a bar whose reader is back at the bottom');
     unreadBarTimedDismiss();
     check(bar.classList.contains('hidden'), 'an already-hidden bar stays hidden, no throw');
     check(/bar\.classList\.remove\('hidden'\);\s*\n\s*unreadBarArmTimer\(\);/.test(messages),
@@ -446,27 +444,22 @@ function clientChecks() {
     unreadBarDisarmTimer(); // leave no live timer behind the test
     unreadBarHide();
 
-    console.log('\n[A10] the open landing never paints at the bottom');
+    console.log('\n[A10] the bar never paints at the bottom');
     MS.view = 'server'; MS.serverId = 's1'; MS.channelId = 'c1'; MS.dmThreadId = null;
     msgEl.dataset.atBottom = '1';
-    unreadBarShow('server', 'c1', { count: 3, since }, { fromOpen: true });
-    check(bar.classList.contains('hidden'), 'open at the bottom: no banner comes up');
+    unreadBarShow('server', 'c1', { count: 3, since });
+    check(bar.classList.contains('hidden'), 'at the bottom: no banner comes up, however triggered');
     check(!getCtx(), '...and nothing is armed behind it');
     msgEl.dataset.atBottom = '0'; // a deep link that lands scrolled up
-    unreadBarShow('server', 'c1', { count: 3, since }, { fromOpen: true });
-    check(!bar.classList.contains('hidden'), 'open away from the bottom still paints');
+    unreadBarShow('server', 'c1', { count: 3, since });
+    check(!bar.classList.contains('hidden'), 'away from the bottom it still paints');
     unreadBarDisarmTimer(); unreadBarHide();
-    msgEl.dataset.atBottom = '1';
-    unreadBarShow('server', 'c1', { count: 3, since }); // a deliberate mark-unread
-    check(!bar.classList.contains('hidden'), 'a deliberate mark-unread still paints at once');
-    check(getCtx() === 'server:c1', '...for this conversation');
-    unreadBarDisarmTimer(); unreadBarHide();
-    check(/onSnap: \(u\) => unreadBarShow\('server', id, u, \{ fromOpen: true \}\)/.test(servers),
-      'the channel open passes fromOpen');
-    check(/onSnap: \(u\) => unreadBarShow\('dm', id, u, \{ fromOpen: true \}\)/.test(pins),
-      'the DM open passes fromOpen');
+    check(/onSnap: \(u\) => unreadBarShow\('server', id, u\)/.test(servers),
+      'the channel open paints plainly');
+    check(/onSnap: \(u\) => unreadBarShow\('dm', id, u\)/.test(pins),
+      'the DM open paints plainly');
     check(/unreadBarShow\(r\.kind === 'dm' \? 'dm' : 'server', r\.kind === 'dm' \? r\.threadId : r\.channelId, r\.snapshot\)/.test(actions),
-      'the mark-unread path keeps its at-once paint (no fromOpen)');
+      'the mark-unread path paints plainly too');
   })();
   delete global.document; // the stub served the offline half only
 }

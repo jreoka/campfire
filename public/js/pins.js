@@ -566,7 +566,7 @@ async function selectDmThread(id, opts = {}) {
   // open's own stamp answers with the pre-stamp unread snapshot — that is what
   // arms the unread bar ("N new messages since …"); any other stamp leaves it.
   unreadBarHide();
-  markDmRead(id, 0, { onSnap: (u) => unreadBarShow('dm', id, u, { fromOpen: true }) });
+  markDmRead(id, 0, { onSnap: (u) => unreadBarShow('dm', id, u) });
   renderDmLists();
   S.callOpen = false;
   // A row tap closes the phone's nav page. The campfire button's restore must

@@ -3898,7 +3898,7 @@ function unreadBarArmTimer() {
   unreadBarDisarmTimer();
   unreadBarTimer = setTimeout(() => { unreadBarTimer = 0; unreadBarTimedDismiss(); }, 3000);
 }
-function unreadBarShow(kind, id, unread, opts) {
+function unreadBarShow(kind, id, unread) {
   const bar = $('#unread-bar');
   if (!bar) return;
   // A stale answer (the reader already moved on) or nothing to say: never paint.
@@ -3909,12 +3909,11 @@ function unreadBarShow(kind, id, unread, opts) {
     : (S.view === 'home' && S.dmThreadId === id);
   const n = (unread && Number(unread.count)) || 0;
   if (!live || n < 1 || document.body.classList.contains('nav-open')) return;
-  // The open landing drops the reader at the live bottom with everything the
-  // bar points at already in view: painting it there is pure noise (it would
-  // clear itself three seconds later anyway), so it never comes up. A
-  // deliberate mark-unread still paints at once — that paint is the action's
-  // feedback, and the beat below clears it.
-  if (opts && opts.fromOpen) {
+  // The reader is at the live bottom with everything the bar points at already
+  // in view: painting it there is pure noise, so it never comes up — not on
+  // the open landing, not on a deliberate mark-unread either. (Marking still
+  // answers with its own toast.) Away from the bottom it paints as before.
+  {
     const box = $('#messages');
     if (box && box.dataset.atBottom === '1') return;
   }
