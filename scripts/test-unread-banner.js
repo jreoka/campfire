@@ -495,6 +495,39 @@ function clientChecks() {
     check(calls.length === 0, 'no open conversation: nothing stamped');
     check(/window\.addEventListener\('focus', markActiveReadOnFocus\);/.test(final),
       'the handler is wired to window focus (visibilitychange alone misses it)');
+
+    console.log('\n[B2] clicking in the open chat stamps its lit dot at once');
+    const csrc = final.slice(final.indexOf('function markActiveReadOnChatClick'),
+      final.indexOf("$('#chat').addEventListener('click', markActiveReadOnChatClick);"));
+    check(csrc.startsWith('function markActiveReadOnChatClick'),
+      'setup: extracted the real chat-click handler from final.js');
+    const cunread = new Set(['s1:c1']);
+    const cS = { view: 'server', serverId: 's1', channelId: 'c1', dmThreadId: null, dmUnread: new Map() };
+    const chatClick = new Function('$', 'S', 'hasChanUnread', 'markChannelRead', 'markDmRead',
+      csrc + '\nreturn markActiveReadOnChatClick;')(
+      f$, cS,
+      (sid, cid) => cunread.has(sid + ':' + cid),
+      (...a) => calls.push(['chan', ...a]),
+      (...a) => calls.push(['dm', ...a]));
+    calls.length = 0;
+    chatClick();
+    check(calls.length === 1 && calls[0][0] === 'chan' && calls[0][3] === 0,
+      'dot lit + at bottom: clicking the chat stamps it read instantly');
+    calls.length = 0;
+    cunread.delete('s1:c1'); // no dot: idle clicks must cost nothing
+    chatClick();
+    check(calls.length === 0, 'no dot lit: idle clicks stamp nothing');
+    cunread.add('s1:c1');
+    fel.dataset.atBottom = '0';
+    chatClick();
+    check(calls.length === 0, 'scrolled up: the dot survives the click');
+    fel.dataset.atBottom = '1';
+    cS.view = 'home'; cS.dmThreadId = 't9'; cS.dmUnread.set('t9', 2);
+    chatClick();
+    check(calls.length === 1 && calls[0][0] === 'dm' && calls[0][1] === 't9',
+      'DM dot lit: clicking the chat stamps the thread');
+    check(/\$\('#chat'\)\.addEventListener\('click', markActiveReadOnChatClick\);/.test(final),
+      'the handler is scoped to the chat stage, not the whole document');
   })();
   delete global.document; // the stub served the offline half only
 }

@@ -519,6 +519,22 @@ function markActiveReadOnFocus() {
   } catch {}
 }
 window.addEventListener('focus', markActiveReadOnFocus);
+// Clicking around the open chat is "I'm reading this" too — a focused window
+// fires no focus event, so a click is the only signal left. Same bottom gate;
+// guarded on the lit dot so idle clicks cost nothing (the unconditional focus
+// stamp above stays the cross-device backstop).
+function markActiveReadOnChatClick() {
+  try {
+    const box = $('#messages');
+    if (!box || box.dataset.atBottom !== '1') return;
+    if (S.view === 'server' && S.serverId && S.channelId) {
+      if (hasChanUnread(S.serverId, S.channelId)) markChannelRead(S.serverId, S.channelId, 0);
+    } else if (S.view === 'home' && S.dmThreadId) {
+      if (S.dmUnread && S.dmUnread.has(S.dmThreadId)) markDmRead(S.dmThreadId, 0);
+    }
+  } catch {}
+}
+$('#chat').addEventListener('click', markActiveReadOnChatClick);
  document.addEventListener('click', (e) => {
   // Clicks inside the bottom sheet are handled by the sheet's own rows (a row may
   // open the picker), so they must not close it again in the same click. The same
