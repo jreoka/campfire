@@ -4253,9 +4253,12 @@ body.story-open{overflow:hidden}
    absolutely-placed one (`#stories-nav-add` on the Stories row, the GIF star,
    the history ✕) is already a containing block for its own ::after, and
    switching it to relative would drop it out of its pinned corner — which is
-   exactly what happened to the nav page's ✕ the first time round. */
+   exactly what happened to the nav page's ✕ the first time round, and to the
+   description popout's ✕: `.modal-x` wears `.mini` for its 30×30 shape, so it
+   is carved out below (it keeps the ::after hit box — an absolutely-placed
+   button is already a containing block for it). */
 @media (pointer:coarse){
-  .icon-btn,.me-icobtn,.mini,.chip,.dm-close,#urb-mark{position:relative}
+  .icon-btn,.me-icobtn,.mini:not(.modal-x),.chip,.dm-close,#urb-mark{position:relative}
   .icon-btn::after,.me-icobtn::after,.mini::after,.chip::after,#btn-nav-close::after,#urb-mark::after{
     content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
     width:max(100%,var(--tap));height:max(100%,var(--tap));

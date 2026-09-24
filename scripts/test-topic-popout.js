@@ -96,6 +96,21 @@ check(/padding-right:2\.1rem/.test(rule('.modal.x-only h3')), 'and the title pay
 // ~18px to spare at a 16px root (the browser pass measures a wrapping title).
 check(/padding-right:2\.1rem/.test(rule('.modal.x-only h3')) && 2.1 * 16 - (30 + 9.6 - 24) >= 8,
   'which is ≥ the 15.6px the ✕ reaches into the content box', { padding: 2.1 * 16, bite: 30 + 9.6 - 24 });
+// The ✕ wears .mini for its 30×30 shape, and the coarse-pointer tap-target
+// rule gives every .mini position:relative for its ::after hit box. That rule
+// comes later in the sheet than .modal-x's absolute placement, so without a
+// carve-out the ✕ falls into flow above the title on touch devices (owner
+// screenshot, 2026-09-24: the ✕ sat top-left, clipping the title). Walk every
+// rule after .modal-x's own and flag one that would turn it relative again.
+const laterCss = css.slice(css.indexOf('.modal-x{')).replace(/\/\*[\s\S]*?\*\//g, '');
+const relapses = [];
+for (const m of laterCss.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+  if (!/position\s*:\s*relative/.test(m[2])) continue;
+  const hooks = m[1].match(/\.[A-Za-z0-9_-]+/g) || [];
+  if (hooks.some((h) => h === '.mini' || h === '.modal-x') && !/:not\(\.modal-x\)/.test(m[1]))
+    relapses.push(m[1].trim().split('\n').pop());
+}
+check(relapses.length === 0, 'no later rule turns the corner ✕ relative again', relapses);
 
 const chromePath = findChrome();
 if (!chromePath) {
