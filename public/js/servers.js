@@ -414,15 +414,23 @@ function clearChanUnread(serverId, channelId) {
 // in the one already open coalesces into one stamp per ~second, and the same
 // helper serves the server's own chan-read push to this account's other devices.
 const chanReadTimers = new Map();
-function markChannelRead(serverId, channelId, delay = 600) {
+function markChannelRead(serverId, channelId, delay = 600, opts = {}) {
   if (!serverId || !channelId || !S.me) return;
   clearChanUnread(serverId, channelId);
   const prev = chanReadTimers.get(channelId);
-  if (prev) clearTimeout(prev);
-  chanReadTimers.set(channelId, setTimeout(() => {
-    chanReadTimers.delete(channelId);
-    api('/api/channels/' + encodeURIComponent(channelId) + '/read', { method: 'POST' }).catch(() => {});
-  }, delay));
+  // A coalesced burst keeps whichever call armed the unread bar (the latest
+  // opener wins): the /read answer carries the pre-stamp snapshot it quotes.
+  const onSnap = opts.onSnap || (prev && prev.onSnap) || null;
+  if (prev) clearTimeout(prev.timer);
+  chanReadTimers.set(channelId, {
+    timer: setTimeout(() => {
+      chanReadTimers.delete(channelId);
+      api('/api/channels/' + encodeURIComponent(channelId) + '/read', { method: 'POST' })
+        .then((r) => { if (onSnap) try { onSnap(r && r.unread); } catch {} })
+        .catch(() => {});
+    }, delay),
+    onSnap,
+  });
 }
 // Everything a whole server owns, in one request (the folder case is this once
 // per server it holds). Fire-and-forget: the local marks are already gone.
@@ -616,8 +624,11 @@ async function selectChannel(id, opts = {}) {
   try { if (S.serverId) localStorage.setItem('cf_lastchan_' + S.serverId, id); } catch {}
   // In front of the reader now: drop the dot and stamp the read watermark, or a
   // cold start brings both back (the stamp was already in flight for a channel
-  // the server considers unread but this client never saw marked).
-  markChannelRead(S.serverId, id, 0);
+  // the server considers unread but this client never saw marked). This open's
+  // own stamp answers with the pre-stamp unread snapshot — that is what arms the
+  // unread bar ("N new messages since …"); any other stamp leaves it alone.
+  unreadBarHide();
+  markChannelRead(S.serverId, id, 0, { onSnap: (u) => unreadBarShow('server', id, u) });
   rememberView();
   S.callOpen = false;
   // Mobile: tapping a channel slides the drawer away to reveal the chat.
@@ -1155,7 +1166,11 @@ function nameStyleFor(u) {
   if (!u) return '';
   const c1 = HEXC.test(u.name_color || '') ? u.name_color : '';
   const c2 = HEXC.test(u.name_gradient || '') ? u.name_gradient : '';
-  if (c1 && c2) return `background:linear-gradient(90deg,${c1},${c2});-webkit-background-clip:text;background-clip:text;color:transparent;display:inline-block`;
+  if (c1 && c2) {
+    // --nm-c1/--nm-c2 let a hover underline paint the SAME gradient
+    // (text-decoration-color cannot carry one — see the chat name hover rules).
+    return `background:linear-gradient(90deg,${c1},${c2});-webkit-background-clip:text;background-clip:text;color:transparent;display:inline-block;--nm-c1:${c1};--nm-c2:${c2}`;
+  }
   if (c1) return `color:${c1}`;
   if (S.view === 'server' && S.serverDetail) {
     const m = S.serverDetail.members.find((x) => x.id === u.id);
@@ -1163,6 +1178,12 @@ function nameStyleFor(u) {
     if (top) return `color:${top.color}`;
   }
   return '';
+}
+// The chat row's name wears this when nameStyleFor painted a two-tone name:
+// its color is transparent (background-clip:text), so the hover underline has to
+// come from the gradient instead of currentColor.
+function nameClassFor(u) {
+  return (u && HEXC.test(u.name_color || '') && HEXC.test(u.name_gradient || '')) ? ' grad-name' : '';
 }
 // Card background: solid color, or a top-to-bottom gradient when both
 // colors are set (mirrors nameStyleFor, which runs left-to-right).

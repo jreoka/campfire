@@ -562,8 +562,11 @@ async function selectDmThread(id, opts = {}) {
   rememberView();
   rememberHomeTab(); // this is the tab Home comes back to
   // Opening a thread clears its unread badge (row + home button) and tells the
-  // server, so it stays cleared across a reload or a rollout restart.
-  markDmRead(id, 0);
+  // server, so it stays cleared across a reload or a rollout restart. This
+  // open's own stamp answers with the pre-stamp unread snapshot — that is what
+  // arms the unread bar ("N new messages since …"); any other stamp leaves it.
+  unreadBarHide();
+  markDmRead(id, 0, { onSnap: (u) => unreadBarShow('dm', id, u) });
   renderDmLists();
   S.callOpen = false;
   // A row tap closes the phone's nav page. The campfire button's restore must
@@ -645,6 +648,7 @@ function paintHomePanel() {
   if (stories) { try { renderStoriesPage(); } catch {} }
 }
 function renderDmBlank() {
+  unreadBarHide(); // no conversation on screen, no bar
   // No conversation is open here: park whatever the one we just left was holding
   // (attachments and their in-flight uploads) rather than letting it follow the
   // reader onto Home or into the next chat.

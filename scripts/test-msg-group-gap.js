@@ -119,6 +119,7 @@ const STUBS = `
   function fmtFull() { return 'Thu, Sep 11 2026 at 2:00 PM'; }
   function fmtTime() { return '02:00 PM'; }
   function nameStyleFor() { return ''; }
+  function nameClassFor() { return ''; }
   function tagHTML() { return ''; }
   function isBigEmoji() { return false; }
   function renderRich(t) { return esc(t); }

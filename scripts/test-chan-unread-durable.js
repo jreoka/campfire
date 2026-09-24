@@ -84,7 +84,7 @@ function clientChecks() {
   const visBlocks = final.split("document.addEventListener('visibilitychange'").slice(1);
   check(visBlocks.some((b) => /clearActiveChanUnread\(\)/.test(b.slice(0, 900)) && /refreshUnreadState\(\)/.test(b.slice(0, 900))),
     'a foregrounded tab re-reads them (the sleeping-phone case)');
-  check(/if \(wsOpened\) \{ try \{ refreshUnreadState\(\); \} catch \{\} \}/.test(socket),
+  check(/if \(wsOpened\) \{\s*try \{ refreshUnreadState\(\); \} catch \{\}\s*\}/.test(socket),
     'a socket RECONNECT re-reads them too (the missed-push case)');
   check(/markChannelRead\(m\.serverId, m\.channelId\)/.test(socket),
     'a message landing in the open channel is stamped read, so it is not unread next boot');

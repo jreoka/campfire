@@ -2003,7 +2003,7 @@ function messageEl(m, opts = {}) {
     ? `<span class="avatar ghost" title="${esc(fmtFull(m.created_at))}"><span class="gts">${esc(fmtTime(m.created_at))}</span></span><div class="body">`
     : '<span class="avatar" data-uid="' + (m.webhook ? '' : (m.user ? m.user.id : '')) + '"></span><div class="body">';
   if (!grouped) {
-    inner += `<div class="head"><span class="who" data-uid="${m.webhook ? '' : (m.user ? m.user.id : '')}" style="${nameStyleFor(au)}">${esc(au ? au.display_name : 'deleted')}</span>${m.webhook ? '<span class="bot-tag">BOT</span>' : tagHTML(au)}<span class="when" title="${esc(fmtFull(m.created_at))}">${fmtTime(m.created_at)}</span>${m.edited ? '<span class="edited">(edited)</span>' : ''}</div>`;
+    inner += `<div class="head"><span class="who${nameClassFor(au)}" data-uid="${m.webhook ? '' : (m.user ? m.user.id : '')}" style="${nameStyleFor(au)}">${esc(au ? au.display_name : 'deleted')}</span>${m.webhook ? '<span class="bot-tag">BOT</span>' : tagHTML(au)}<span class="when" title="${esc(fmtFull(m.created_at))}">${fmtTime(m.created_at)}</span>${m.edited ? '<span class="edited">(edited)</span>' : ''}</div>`;
   }
   if (m.fwdFrom) {
     inner += `<div class="fwd-tag">Forwarded from <b>${esc(m.fwdFrom)}</b></div>`;
@@ -3819,4 +3819,51 @@ function showTyping(userId, name) {
     paintTyping();
   }, 2500));
 }
+
+// ---------- unread bar ----------
+// "N new messages since 6:07 PM · Mark as read" over the top of the open
+// conversation (owner request, modelled on Discord's banner). The numbers come
+// from the PRE-stamp snapshot the /read call returns (chanUnreadSnapshot /
+// dmUnreadSnapshot in server.js): only a conversation OPEN arms the bar, through
+// markChannelRead / markDmRead's onSnap — every other stamp (a message landing
+// in the open chat, a foregrounded tab) leaves it alone.
+// The bar is a POINTER, not a gate: the read watermark is already stamped by the
+// time it paints, so "Mark as read" dismisses it (and re-stamps, harmlessly —
+// which is also the honest action if the open's stamp failed). It leaves when
+// the conversation does (unreadBarHide at every open / blank).
+let unreadBarCtx = null; // 'server:<cid>' | 'dm:<tid>' — what the painted bar belongs to
+function unreadBarHide() {
+  unreadBarCtx = null;
+  const bar = $('#unread-bar');
+  if (bar) bar.classList.add('hidden');
+}
+function unreadBarShow(kind, id, unread) {
+  const bar = $('#unread-bar');
+  if (!bar) return;
+  // A stale answer (the reader already moved on) or nothing to say: never paint.
+  const live = kind === 'server'
+    ? (S.view === 'server' && S.channelId === id)
+    : (S.view === 'home' && S.dmThreadId === id);
+  const n = (unread && Number(unread.count)) || 0;
+  if (!live || n < 1) return;
+  const since = unread.since
+    ? new Date(Number(unread.since)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : '';
+  $('#urb-text').textContent = `${n} new message${n === 1 ? '' : 's'}${since ? ' since ' + since : ''}`;
+  unreadBarCtx = kind + ':' + id;
+  bar.classList.remove('hidden');
+}
+(() => {
+  const b = $('#urb-mark');
+  if (!b) return;
+  b.addEventListener('click', () => {
+    const ctx = unreadBarCtx;
+    unreadBarHide();
+    if (!ctx) return;
+    const i = ctx.indexOf(':');
+    const kind = ctx.slice(0, i), id = ctx.slice(i + 1);
+    if (kind === 'server') markChannelRead(S.serverId, id, 0);
+    else markDmRead(id, 0);
+  });
+})();
 

@@ -1402,6 +1402,24 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   booting marks every existing membership caught up (an upgrade must not light
   up every channel that ever saw a message) while a message after it is unread
   and a second boot does not seed again.
+  `node scripts/test-unread-banner.js` covers the unread bar ("N new messages
+  since H:MM · Mark as read" over the conversation the moment it opens — owner
+  request, modelled on Discord's banner): both `/read` routes answering with the
+  PRE-stamp `{ count, since }` snapshot (computed before the watermark moves, so
+  the count can never race the stamp it describes), the counts and the advancing
+  `since` on a real server (own / system / thread-reply exclusions on both
+  surfaces), only a conversation OPEN arming the bar (onSnap on
+  `markChannelRead` / `markDmRead` — a message landing in the open chat or a
+  foregrounded tab stamps silently), the overlay contract (`#unread-bar` is a
+  zero-height wrapper under the header whose pill OVERLAYS the messages, never
+  pushes them, and the inverse Mark-as-read pill carries no emoji), the
+  singular/plural + "since H:MM" copy, the stale-answer guard, and Mark as read
+  dismissing through the right writer. The offline half runs the real helpers
+  sliced out of `messages.js`, `servers.js` and `home.js`; the API half boots a
+  real server against a throwaway database and skips (exit 0) without Postgres.
+  Re-run it after touching the `/read` routes, `chanUnreadSnapshot` /
+  `dmUnreadSnapshot`, `markChannelRead` / `markDmRead`, or the bar's markup and
+  styles.
   `node scripts/test-rail-unread-badges.js` drives the same badges in a real
   browser (headless Chrome against a throwaway database, desktop viewport,
   skipping without Postgres or Chrome): it marks channels unread on three
@@ -1443,6 +1461,19 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   with `html.wrapper-app` on: the body stays `user-select:none`, the message text
   computes `text`, and a real mouse drag over it leaves that text in
   `window.getSelection()`.
+  `node scripts/test-name-hover.js` covers the chat name hover (owner request:
+  hovering a sender's name in the chat underlines it, in the name's OWN colour):
+  `nameStyleFor`'s ink IS the underline's (`currentColor` — inline `color` for a
+  chosen name colour or the member's top role colour), two-tone names are the
+  trap (background-clip:text with `color:transparent`, where a plain underline is
+  INVISIBLE) and carry `--nm-c1`/`--nm-c2` so their line paints the name's own
+  gradient, the rule lives in the END `@media (hover:hover)` block (a base-rule
+  `:hover` is a pinned bug on touch), and it is scoped to `#messages` /
+  `#thread-replies` ONLY — member lists, the user card, DM rows and admin lists
+  stay unadorned. All offline (20 checks; the real `nameStyleFor` /
+  `nameClassFor` sliced out of `servers.js` against a fake `S`). Re-run it after
+  touching `nameStyleFor`, the `.who` paint site in `messages.js`, or the name
+  hover rules in `styles.css`.
   `node scripts/test-touch-hold-hover.js` covers the "one row looks already
   selected" bug when a long-press slides its sheet up under a finger that is
   still down (offline; runs the real `suppressHoverFromTouch`/

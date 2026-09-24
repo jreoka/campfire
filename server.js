@@ -1441,18 +1441,58 @@ app.get('/api/unread', authRequired, async (req, res) => {
   const m = await channelUnreadFor(req.user.id);
   res.json({ channels: Object.fromEntries(m) });
 });
+// The pre-stamp unread snapshot a /read call is about to clear: how many
+// messages it is marking read and what the watermark was. The count follows
+// each surface's own unread rules exactly (channelUnreadFor / dmUnreadCounts),
+// and the "since" is the same COALESCE they age against. Computed BEFORE the
+// stamp so the answer can never race it — this is what the client's unread bar
+// quotes ("N new messages since 6:07 PM").
+async function chanUnreadSnapshot(userId, ch) {
+  try {
+    const row = await db.prepare(`
+      SELECT (SELECT COUNT(*) FROM messages m
+               WHERE m.channel_id = ?
+                 AND (m.user_id IS NULL OR m.user_id <> ?)
+                 AND COALESCE(m.sys, '') = ''
+                 AND (m.thread_root_id IS NULL OR m.thread_root_id = '')
+                 AND m.created_at > COALESCE(r.last_read_at, sm.joined_at)) AS n,
+             COALESCE(r.last_read_at, sm.joined_at) AS since
+        FROM server_members sm
+        LEFT JOIN channel_reads r ON r.channel_id = ? AND r.user_id = ?
+       WHERE sm.server_id = ? AND sm.user_id = ?`)
+      .get(ch.id, userId, ch.id, userId, ch.server_id, userId);
+    return { count: Number(row && row.n) || 0, since: Number(row && row.since) || null };
+  } catch { return { count: 0, since: null }; }
+}
+async function dmUnreadSnapshot(userId, threadId) {
+  try {
+    const row = await db.prepare(`
+      SELECT (SELECT COUNT(*) FROM dm_messages m
+               WHERE m.thread_id = ?
+                 AND m.user_id IS NOT NULL AND m.user_id <> ?
+                 AND (m.sys IS NULL OR m.sys = '')
+                 AND m.created_at > COALESCE(mem.last_read_at, mem.joined_at)) AS n,
+             COALESCE(mem.last_read_at, mem.joined_at) AS since
+        FROM dm_members mem
+       WHERE mem.thread_id = ? AND mem.user_id = ?`)
+      .get(threadId, userId, threadId, userId);
+    return { count: Number(row && row.n) || 0, since: Number(row && row.since) || null };
+  } catch { return { count: 0, since: null }; }
+}
 // Stamp one channel read (opening it, or a message landing in the one already
 // open). Idempotent, and the push is what clears the badge on this account's
-// other devices — one memory, not one per tab (see dm-read above).
+// other devices — one memory, not one per tab (see dm-read above). Answers with
+// the pre-stamp `unread` snapshot so the opener's unread bar can quote it.
 app.post('/api/channels/:chId/read', authRequired, async (req, res) => {
   const ch = await db.prepare('SELECT id, server_id FROM channels WHERE id = ?').get(req.params.chId);
   if (!ch) return res.status(404).json({ error: 'no_channel' });
   if (!(await isMember(ch.server_id, req.user.id))) return res.status(403).json({ error: 'not_member' });
+  const unread = await chanUnreadSnapshot(req.user.id, ch);
   await db.prepare(`INSERT INTO channel_reads (user_id, channel_id, last_read_at) VALUES (?,?,?)
     ON CONFLICT (user_id, channel_id) DO UPDATE SET last_read_at = EXCLUDED.last_read_at`)
     .run(req.user.id, ch.id, now());
   notifyUser(req.user.id, { t: 'chan-read', serverId: ch.server_id, channelId: ch.id });
-  res.json({ ok: true });
+  res.json({ ok: true, unread });
 });
 // A whole server in one go (the "Mark all as read" menu row; a folder is the
 // client calling this once per server it holds).
@@ -6555,9 +6595,10 @@ app.post('/api/dms/:tid/open', authRequired, async (req, res) => {
 app.post('/api/dms/:tid/read', authRequired, async (req, res) => {
   const t = await dmThreadFor(req.user.id, req.params.tid);
   if (!t) return res.status(404).json({ error: 'no_thread' });
+  const unread = await dmUnreadSnapshot(req.user.id, t.id);
   await db.prepare('UPDATE dm_members SET last_read_at = ? WHERE thread_id = ? AND user_id = ?').run(now(), t.id, req.user.id);
   notifyUser(req.user.id, { t: 'dm-read', threadId: t.id });
-  res.json({ ok: true });
+  res.json({ ok: true, unread });
 });
 
 // Group chat settings: rename and/or re-describe a group DM. Any member may

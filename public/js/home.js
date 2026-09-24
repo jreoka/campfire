@@ -114,15 +114,23 @@ async function refreshDms() {
 // badge back. Opening a chat stamps immediately; the messages that arrive in an
 // already-open chat are coalesced into one stamp (a busy DM is one write).
 const dmReadTimers = new Map();
-function markDmRead(tid, delay = 500) {
+function markDmRead(tid, delay = 500, opts = {}) {
   if (!tid || !S.me) return;
   if (S.dmUnread.delete(tid)) paintHomeBadge();
   const prev = dmReadTimers.get(tid);
-  if (prev) clearTimeout(prev);
-  dmReadTimers.set(tid, setTimeout(() => {
-    dmReadTimers.delete(tid);
-    api('/api/dms/' + encodeURIComponent(tid) + '/read', { method: 'POST' }).catch(() => {});
-  }, delay));
+  // A coalesced burst keeps whichever call armed the unread bar (see
+  // markChannelRead): the /read answer carries the pre-stamp snapshot.
+  const onSnap = opts.onSnap || (prev && prev.onSnap) || null;
+  if (prev) clearTimeout(prev.timer);
+  dmReadTimers.set(tid, {
+    timer: setTimeout(() => {
+      dmReadTimers.delete(tid);
+      api('/api/dms/' + encodeURIComponent(tid) + '/read', { method: 'POST' })
+        .then((r) => { if (onSnap) try { onSnap(r && r.unread); } catch {} })
+        .catch(() => {});
+    }, delay),
+    onSnap,
+  });
 }
 // Red count on the campfire home button: incoming friend requests only.
 // Unread DMs already show as their own red count on the rail avatars, so

@@ -1344,6 +1344,21 @@ body.ub-open #lightbox{--lb-pad-t:calc(4.4rem + var(--safe-t) + var(--ub-h))}
 .emoji-item .ep-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .emoji-item .ep-srv{color:var(--faint);font-size:.7rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100px}
 #chat{position:relative}
+/* ---------- unread bar ----------
+   "N new messages since 6:07 PM" over the top of the open conversation (owner
+   request, modelled on Discord's banner). #unread-bar is a zero-height flex
+   child right under the chat header: the .urb-pill is absolutely positioned
+   inside it, so the bar overlays the first messages the way the reference does
+   instead of pushing the conversation down — and it lands exactly below the
+   header at every breakpoint with no header-height arithmetic. Accent surface
+   with the on-accent ink; Mark as read is the inverse pill on it. */
+#unread-bar{position:relative;height:0;z-index:45}
+#unread-bar .urb-pill{position:absolute;top:.5rem;left:.8rem;right:.8rem;display:flex;align-items:center;justify-content:space-between;gap:.75rem;
+  background:var(--accent);color:var(--on-accent);border-radius:14px;padding:.5rem .5rem .5rem .95rem;
+  font-size:.86rem;font-weight:650;letter-spacing:-.01em;animation:cf-drop .24s var(--ease-native)}
+#unread-bar #urb-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#unread-bar #urb-mark{flex-shrink:0;border:0;border-radius:999px;background:var(--on-accent);color:var(--accent);
+  padding:.42rem .9rem;font-size:.8rem;font-weight:750;cursor:pointer}
 .mention-item{display:flex;align-items:center;gap:.55rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);padding:.5rem .65rem;font-size:.88rem;font-weight:550;cursor:pointer;border-radius:4px}
 .mention-item:hover,.mention-item.sel{background:var(--panel-3)}
 .mention-item .avatar{width:24px;height:24px;font-size:.7rem}
@@ -4168,7 +4183,7 @@ body.story-open{overflow:hidden}
    in this theme); buttons and icon buttons add a hair of scale so the control
    visibly gives under the thumb. Kept to one frame of transition or the lag is
    felt as slowness. */
-.chan,.dmrow,.member,.vuser,.find-row,.inbox-item,.thread-item,.rx-user,.fwd-dest,.anow-card,.anow-tile,.st-tile,.dm-close,.set-row,.set-check,.theme-card,.prow,.share-row,.gmem,.sc-pick-row,.adm-row,.adm-back,.adm-nav,.adm-head-reports,.dm-close,.ss-add,.mini,.chip,.ftab,.set-tab,.pk-tab,.pk-subbtn,.pk-rail-btn,.ctx-item,.sheet-row,.sheet-cancel,.uc-tab,.att-dl,.lb-btn,.pcaret{
+.chan,.dmrow,.member,.vuser,.find-row,.inbox-item,.thread-item,.rx-user,.fwd-dest,.anow-card,.anow-tile,.st-tile,.dm-close,.set-row,.set-check,.theme-card,.prow,.share-row,.gmem,.sc-pick-row,.adm-row,.adm-back,.adm-nav,.adm-head-reports,.dm-close,.ss-add,.mini,.chip,.ftab,.set-tab,.pk-tab,.pk-subbtn,.pk-rail-btn,.ctx-item,.sheet-row,.sheet-cancel,.uc-tab,.att-dl,.lb-btn,.pcaret,#urb-mark{
   -webkit-tap-highlight-color:transparent;
 }
 .chan:active,.dmrow:active,.member:active,.vuser:active,.find-row:active,.inbox-item:active,.thread-item:active,.rx-user:active,.fwd-dest:active,.anow-card:active,.anow-tile:active,.st-tile:active,.set-row:active,.set-check:active,.theme-card:active,.prow:active,.share-row:active,.gmem:active,.sc-pick-row:active,.adm-row:active,.adm-nav:active,.ctx-item:active,.sheet-row:active,.sheet-cancel:active,.uc-tab:active,.pk-tab:active,.pk-subbtn:active,.pk-rail-btn:active{
@@ -4179,10 +4194,10 @@ body.story-open{overflow:hidden}
 }
 /* The two rows the app is actually navigated with give the most: a channel or
    a DM is the phone's whole navigation surface. */
-.icon-btn:active,.chip:active,.mini:active,.me-icobtn:active,.vb-btn:active,.ss-add:active,.pk-star:active,.hist-x:active,.sb-close:active,.inbox-thumb:active{
+.icon-btn:active,.chip:active,.mini:active,.me-icobtn:active,.vb-btn:active,.ss-add:active,.pk-star:active,.hist-x:active,.sb-close:active,.inbox-thumb:active,#urb-mark:active{
   transform:scale(.92);
 }
-.icon-btn,.chip,.mini,.me-icobtn,.ss-add,.pk-star,.hist-x,.sb-close,.inbox-thumb{
+.icon-btn,.chip,.mini,.me-icobtn,.ss-add,.pk-star,.hist-x,.sb-close,.inbox-thumb,#urb-mark{
   transition:background var(--t-fast),color var(--t-fast),transform var(--t-press) var(--ease-native);
 }
 .chan:active,.dmrow:active,.member:active,.vuser:active,.find-row:active,.inbox-item:active,.thread-item:active,.anow-card:active,.anow-tile:active,.st-tile:active,.set-row:active,.theme-card:active,.prow:active,.sheet-row:active,.uc-tab:active,.ctx-item:active,.sc-pick-row:active,.gmem:active{
@@ -4206,7 +4221,7 @@ body.story-open{overflow:hidden}
 #chat-header.group-edit #chan-head:active{background:var(--panel-3)}
 #btn-group-edit:active{transform:scale(.9)}
 @media (prefers-reduced-motion:reduce){
-  .icon-btn:active,.chip:active,.mini:active,.me-icobtn:active,.vb-btn:active,.ss-add:active,.pk-star:active,.hist-x:active,.sb-close:active,.server-btn:active,.att-star:active,.att-dl:active,#btn-group-edit:active{transform:none}
+  .icon-btn:active,.chip:active,.mini:active,.me-icobtn:active,.vb-btn:active,.ss-add:active,.pk-star:active,.hist-x:active,.sb-close:active,.server-btn:active,.att-star:active,.att-dl:active,#btn-group-edit:active,#urb-mark:active{transform:none}
 }
 
 /* ---------- 2. tap targets ----------
@@ -4221,8 +4236,8 @@ body.story-open{overflow:hidden}
    switching it to relative would drop it out of its pinned corner — which is
    exactly what happened to the nav page's ✕ the first time round. */
 @media (pointer:coarse){
-  .icon-btn,.me-icobtn,.mini,.chip,.dm-close{position:relative}
-  .icon-btn::after,.me-icobtn::after,.mini::after,.chip::after,#btn-nav-close::after{
+  .icon-btn,.me-icobtn,.mini,.chip,.dm-close,#urb-mark{position:relative}
+  .icon-btn::after,.me-icobtn::after,.mini::after,.chip::after,#btn-nav-close::after,#urb-mark::after{
     content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
     width:max(100%,var(--tap));height:max(100%,var(--tap));
   }
@@ -4464,6 +4479,18 @@ html.wrapper-app .msg .text,html.wrapper-app .msg .text *,html.wrapper-app input
   .folder-btn:hover{background:color-mix(in srgb,var(--fcolor,#5865f2) 44%,var(--panel-2));border-radius:10px}
   .msg:hover{background:rgba(255,255,255,.05)}
   [data-theme="light"] .msg:hover{background:rgba(20,26,38,.045)}
+  /* Hovering a sender's name in the chat area underlines it (owner request), and
+     the line wears the name's own ink: role / name colours arrive as inline
+     `color`, so `currentColor` is exact. The two-tone names are the trap —
+     nameStyleFor paints them with background-clip:text and `color:transparent`,
+     where currentColor would draw NO line — so they carry --nm-c1/--nm-c2 and
+     paint the same gradient as their name. Scoped to the two conversation
+     surfaces only (`#messages` and `#thread-replies` — every conversation
+     renders into one of them): member lists, the user card, the DM rows and the
+     admin lists keep their names unadorned. */
+  #messages .msg .who:hover,#thread-replies .msg .who:hover{text-decoration:underline;text-decoration-thickness:.08em;text-underline-offset:.22em;text-decoration-color:currentColor}
+  #messages .msg .who.grad-name:hover,#thread-replies .msg .who.grad-name:hover{text-decoration:none;position:relative}
+  #messages .msg .who.grad-name:hover::after,#thread-replies .msg .who.grad-name:hover::after{content:'';position:absolute;left:0;right:0;bottom:-.12em;height:.09em;border-radius:1px;background:linear-gradient(90deg,var(--nm-c1),var(--nm-c2))}
   .dm-close:hover{background:var(--danger-bg);color:var(--danger-tx)}
   .hist-dot:hover{border-color:var(--accent);transform:scale(1.05)}
   .home-btn:hover{background:var(--panel-3)}

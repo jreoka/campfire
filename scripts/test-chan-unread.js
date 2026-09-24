@@ -310,7 +310,7 @@ function resetStorage() {
   check(/folderUnreadCount\(f\)[\s\S]{0,240}?mr\.textContent = 'Mark all as read'/.test(rail),
     'and the folder\'s desktop flyout carries the same row');
   check(/markServerRead\(sid\)/.test(actions) && /markFolderRead\(fid\)/.test(actions), 'both go through the shared clearers');
-  check(/markChannelRead\(S\.serverId, id, 0\)/.test(servers), 'selectChannel clears the channel it opens AND stamps it read');
+  check(/markChannelRead\(S\.serverId, id, 0[,)]/.test(servers), 'selectChannel clears the channel it opens AND stamps it read');
   check(/markChanUnread\(m\.serverId, m\.channelId\)/.test(socket) && /const viewing = m\.serverId === S\.serverId && m\.channelId === S\.channelId && !document\.hidden/.test(socket),
     'message-new marks only unviewed channels');
   check(/if \(m\.serverId !== S\.serverId\) break;/.test(socket.slice(socket.indexOf("case 'message-new'"), socket.indexOf("case 'message-new'") + 1500)),

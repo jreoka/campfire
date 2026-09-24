@@ -291,6 +291,12 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
         </div>
       </div>
 
+      <!-- Unread bar: "N new messages since … · Mark as read" over the top of
+           the conversation (owner request). Zero-height wrapper right under the
+           header; the pill is positioned inside it, so it overlays the messages
+           instead of pushing them down. Logic: messages.js unreadBar*. -->
+      <div id="unread-bar" class="hidden"><div class="urb-pill"><span id="urb-text"></span><button id="urb-mark" type="button">Mark as read</button></div></div>
+
       <div id="messages"></div>
 
       <button id="jump-present" class="hidden"><span id="jp-text"></span><span class="jp-go">↓</span></button>

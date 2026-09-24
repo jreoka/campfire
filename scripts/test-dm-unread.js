@@ -128,7 +128,7 @@ function clientChecks() {
     console.log('\n[A3] the wiring');
     check(/case 'dm-new': \{[\s\S]*?markDmRead\(msg\.threadId\);/.test(socket), 'a message in the open chat stamps it read (socket dm-new)');
     check(/case 'dm-read': \{[\s\S]*?S\.dmUnread\.delete\(m\.threadId\)/.test(socket), 'the dm-read push clears the badge on this account\'s other devices');
-    check(/markDmRead\(id, 0\)/.test(pins), 'opening a DM stamps it immediately (selectDmThread)');
+    check(/markDmRead\(id, 0[,)]/.test(pins), 'opening a DM stamps it immediately (selectDmThread)');
     check(/v\.unread = unread\.get\(id\) \|\| 0;/.test(server), '/api/dms carries the per-thread count');
     check(/app\.post\('\/api\/dms\/:tid\/read', authRequired/.test(server), 'the read route exists and requires auth');
     check(/UPDATE dm_members SET last_read_at = \? WHERE thread_id = \? AND user_id = \?/.test(server), 'reading stamps only your own membership row');
