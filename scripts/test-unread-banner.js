@@ -112,6 +112,7 @@ function clientChecks() {
   const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
   const ui = fs.readFileSync(path.join(ROOT, 'public/js/ui.js'), 'utf8');
   const actions = fs.readFileSync(path.join(ROOT, 'public/js/actions.js'), 'utf8');
+  const final = fs.readFileSync(path.join(ROOT, 'public/js/final.js'), 'utf8');
   const native = fs.readFileSync(path.join(ROOT, 'public/js/native.js'), 'utf8');
   // unreadBarShow reads the drawer state off the real DOM; the offline half
   // stands in a fake body whose class list the drawer checks below drive.
@@ -460,6 +461,40 @@ function clientChecks() {
       'the DM open paints plainly');
     check(/unreadBarShow\(r\.kind === 'dm' \? 'dm' : 'server', r\.kind === 'dm' \? r\.threadId : r\.channelId, r\.snapshot\)/.test(actions),
       'the mark-unread path paints plainly too');
+
+    console.log('\n[B1] focusing the window marks the open conversation read');
+    const fsrc = final.slice(final.indexOf('function markActiveReadOnFocus'),
+      final.indexOf("window.addEventListener('focus', markActiveReadOnFocus);"));
+    check(fsrc.startsWith('function markActiveReadOnFocus'),
+      'setup: extracted the real focus handler from final.js');
+    const fel = fakeEl(); fel.id = 'messages'; fel.dataset = { atBottom: '1' };
+    const fmap = new Map([['#messages', fel]]);
+    const f$ = (sel) => fmap.get(sel) || null;
+    const fS = { view: 'server', serverId: 's1', channelId: 'c1', dmThreadId: null };
+    const calls = [];
+    const focusRead = new Function('$', 'S', 'markChannelRead', 'markDmRead',
+      fsrc + '\nreturn markActiveReadOnFocus;')(
+      f$, fS,
+      (...a) => calls.push(['chan', ...a]),
+      (...a) => calls.push(['dm', ...a]));
+    focusRead();
+    check(calls.length === 1 && calls[0][0] === 'chan' && calls[0][1] === 's1' && calls[0][2] === 'c1' && calls[0][3] === 0,
+      'at the bottom in a channel: stamps it read, no banner arming');
+    calls.length = 0;
+    fS.view = 'home'; fS.dmThreadId = 't1';
+    focusRead();
+    check(calls.length === 1 && calls[0][0] === 'dm' && calls[0][1] === 't1' && calls[0][2] === 0,
+      'at the bottom in a DM: stamps the thread read too');
+    calls.length = 0;
+    fel.dataset.atBottom = '0'; // scrolled up reading history
+    focusRead();
+    check(calls.length === 0, 'scrolled up: the unread mark survives the focus');
+    fel.dataset.atBottom = '1';
+    fS.view = 'home'; fS.dmThreadId = null; // home with no open thread
+    focusRead();
+    check(calls.length === 0, 'no open conversation: nothing stamped');
+    check(/window\.addEventListener\('focus', markActiveReadOnFocus\);/.test(final),
+      'the handler is wired to window focus (visibilitychange alone misses it)');
   })();
   delete global.document; // the stub served the offline half only
 }

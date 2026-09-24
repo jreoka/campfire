@@ -504,6 +504,21 @@ function syncWinBlurred(){ document.body.classList.toggle('win-blurred', documen
 window.addEventListener('blur', syncWinBlurred);
 window.addEventListener('focus', syncWinBlurred);
 document.addEventListener('visibilitychange', syncWinBlurred);
+// Clicking the window into focus is Discord's "you're reading it now": if the
+// open conversation sits at the live bottom, everything an unread mark could
+// point at is already in view, so stamp it read. Scrolled up, the mark
+// survives — the reader hasn't seen the new messages yet. (visibilitychange
+// doesn't cover this: it only fires when the tab hides, not when the window
+// merely loses focus behind another one.)
+function markActiveReadOnFocus() {
+  try {
+    const box = $('#messages');
+    if (!box || box.dataset.atBottom !== '1') return;
+    if (S.view === 'server' && S.serverId && S.channelId) markChannelRead(S.serverId, S.channelId, 0);
+    else if (S.view === 'home' && S.dmThreadId) markDmRead(S.dmThreadId, 0);
+  } catch {}
+}
+window.addEventListener('focus', markActiveReadOnFocus);
  document.addEventListener('click', (e) => {
   // Clicks inside the bottom sheet are handled by the sheet's own rows (a row may
   // open the picker), so they must not close it again in the same click. The same
