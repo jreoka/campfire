@@ -241,7 +241,7 @@ async function main() {
     check(geo.threadRowAlign === 'flex-end' && geo.chatRowAlign === 'flex-end', 'both bars bottom-align the key',
       { thread: geo.threadRowAlign, chat: geo.chatRowAlign });
     check(geo.threadPlus === geo.chatPlus && JSON.stringify(geo.threadTools) === JSON.stringify(geo.chatTools),
-      'the same controls are visible on both bars (attach / emoji / GIF on the desktop, + menu on a phone)',
+      'the same controls are visible on both bars (attach hides into the + menu on a phone; the emoji / GIF keys ride the bar on both)',
       { plus: [geo.chatPlus, geo.threadPlus], chat: geo.chatTools, thread: geo.threadTools });
 
     console.log('\n[3] each bar\'s key reads its own box');

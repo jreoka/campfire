@@ -18,8 +18,10 @@
 //     still fires with the key disabled (pinned in test-drafts-browser.js).
 //     It is also exactly as TALL as the field it sends from (--field-h), which
 //     it used to miss by a few pixels as a flat 46px key.
-//  4. the + menu was a column of bare labels. It is the phone's only way into
-//     attach / emoji / GIF / voice, so it gets icon rows like the ctx menu.
+//  4. the + menu was a column of bare labels. It is the phone's way into attach
+//     / voice / view-once / story / poll, so it gets icon rows like the ctx
+//     menu — while the emoji and GIF keys ride the bar itself, like the desktop
+//     bar (the phone used to hide them and keep only the + menu).
 //
 // Offline static checks, then the real index.html + styles.css in headless
 // Chrome (skipping without Chrome) for the geometry and the send key, driven
@@ -131,6 +133,17 @@ window.__report = function () {
     insetBg: getComputedStyle(document.documentElement).getPropertyValue('--inset').trim(),
     inputPad: cs('#in-message', 'padding'),
     renderPad: cs('#in-render', 'padding'),
+    // The phone rail's keys: the + menu plus the emoji and GIF keys (the
+    // attach key stays in the menu). The rail's right edge must clear the
+    // field's left padding, or the caret starts under a key.
+    tools: R('#composer-tools'),
+    btnEmoji: cs('#btn-emoji', 'display'),
+    btnGif: cs('#btn-gif', 'display'),
+    btnAttach: cs('#btn-attach', 'display'),
+    inputPadLeft: cs('#in-message', 'paddingLeft'),
+    tbtnEmoji: cs('#tbtn-emoji', 'display'),
+    tbtnGif: cs('#tbtn-gif', 'display'),
+    threadPadLeft: cs('#in-thread', 'paddingLeft'),
     lead,
     leadTop: +(lead.t - field.t).toFixed(1),
     leadBottom: +(field.b - lead.b).toFixed(1),
@@ -389,9 +402,32 @@ function main() {
     const tf = phone.threadField || {};
     check(!!tl.w && tl.t - tf.t > 2 && tf.b - tl.b > 2 && tl.l - tf.l > 2 && tf.r - tl.r > 2,
       'the thread + sits fully inside its own field', { lead: tl, field: tf });
-    check(/flex/.test(phone.tbtnMore) && phone.tbtnPlus === 'none' && phone.tbtnAttach === 'none',
-      'the phone keeps only the + menu, exactly as the chat bar does',
+    check(/inline-flex/.test(phone.tbtnMore) && phone.tbtnPlus === 'none' && phone.tbtnAttach === 'none',
+      'the phone thread bar keeps the + menu too, and its attach key stays in it',
       { more: phone.tbtnMore, plus: phone.tbtnPlus, attach: phone.tbtnAttach });
+    // The emoji and GIF keys ride the phone bar itself now, like the desktop
+    // bar — they used to be hidden and reachable only through the + menu.
+    check(/inline-flex/.test(phone.btnEmoji) && /inline-flex/.test(phone.btnGif) && phone.btnAttach === 'none',
+      'the phone bar carries the emoji and GIF keys beside the + menu (attach stays a menu row)',
+      { emoji: phone.btnEmoji, gif: phone.btnGif, attach: phone.btnAttach });
+    check(/inline-flex/.test(phone.tbtnEmoji) && /inline-flex/.test(phone.tbtnGif),
+      'and the thread bar carries them too',
+      { emoji: phone.tbtnEmoji, gif: phone.tbtnGif });
+    // The rail (left:.4rem; 44px emoji + 44px GIF + 32px + disc, .15rem gaps =
+    // 131.2px) has to end before the text starts: 8.75rem = 140px of left
+    // padding on the field and its backdrop, on both bars.
+    check(phone.inputPadLeft === '140px' && phone.renderPad === phone.inputPad,
+      'the field and its backdrop leave 140px on the left for the three-key rail',
+      { padLeft: phone.inputPadLeft });
+    check(!!phone.tools && (phone.tools.r - phone.field.l) <= parseFloat(phone.inputPadLeft),
+      'and the rail really ends inside that padding',
+      { railRight: phone.tools && +(phone.tools.r - phone.field.l).toFixed(1), padLeft: phone.inputPadLeft });
+    check(phone.threadPadLeft === '140px' && phone.threadRenderPad === phone.threadInputPad,
+      'the thread bar leaves the same room',
+      { padLeft: phone.threadPadLeft });
+    check(!!phone.threadTools && (phone.threadTools.r - phone.threadField.l) <= parseFloat(phone.threadPadLeft),
+      'and its rail ends inside it too',
+      { railRight: phone.threadTools && +(phone.threadTools.r - phone.threadField.l).toFixed(1), padLeft: phone.threadPadLeft });
 
     console.log('\n[6] the send key reads the box');
     check(phone.empty.off && phone.empty.disabled, 'empty box: muted and not clickable', phone.empty);
