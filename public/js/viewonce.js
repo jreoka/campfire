@@ -22,6 +22,18 @@ function voLeftSecs(vo) {
   const until = Number(vo && vo.replayUntil) || 0;
   return until ? Math.max(0, Math.ceil((until - Date.now()) / 1000)) : 0;
 }
+// The open receipt: "Opened by X at 2:15 AM" (the date joins in when it wasn't
+// today). On the opener's own card it reads "Opened at …" — they know it was
+// them. Null when nobody has opened it yet.
+function voOpenedSub(vo) {
+  const at = Number(vo && vo.openedAt) || 0;
+  if (!at) return null;
+  const d = new Date(at), t = new Date();
+  const sameDay = d.getFullYear() === t.getFullYear() && d.getMonth() === t.getMonth() && d.getDate() === t.getDate();
+  const when = (sameDay ? '' : fmtDay(at) + ' ') + fmtTime(at);
+  if (typeof S !== 'undefined' && S.me && vo.openedById && vo.openedById === S.me.id) return 'Opened at ' + when;
+  return 'Opened by ' + (vo.openedBy || 'them') + ' at ' + when;
+}
 function voCardHTML(m) {
   const vo = m && m.viewOnce;
   if (!vo) return '';
@@ -29,10 +41,13 @@ function voCardHTML(m) {
   const state = voLiveState(vo);
   const isVid = vo.kind === 'video';
   const what = isVid ? 'video' : 'photo';
+  // The open receipt: "Opened by X at 2:15 AM" (the date joins in when it
+  // wasn't today). On the opener's own card it's just "Opened at …".
+  const opened = voOpenedSub(vo);
   if (state === 'consumed') {
     return `<div class="vo-card vo-done"><span class="vo-ico">${isVid ? voIcon('video') : voIcon('image')}</span>`
       + `<span class="vo-main"><span class="vo-title">View-once ${what}</span>`
-      + `<span class="vo-sub">${mine ? 'Opened by them' : 'Opened'}</span></span></div>`;
+      + `<span class="vo-sub">${esc(opened || (mine ? 'Opened by them' : 'Opened'))}</span></span></div>`;
   }
   const replay = state === 'replayable';
   let sub;
@@ -41,10 +56,10 @@ function voCardHTML(m) {
     // the copy for each tick and what to leave behind when it runs out.
     const label = (mine ? 'They can replay · ' : '') + '{n}s left' + (mine ? '' : ' to replay');
     const txt = (mine ? 'They can replay · ' : '') + voLeftSecs(vo) + 's left' + (mine ? '' : ' to replay');
-    sub = `<span class="vo-count" data-vo-until="${Number(vo.replayUntil) || 0}" data-vo-label="${label}" data-vo-done="${mine ? 'Opened by them' : 'Replay window closed'}">${txt}</span>`;
+    sub = `<span class="vo-count" data-vo-until="${Number(vo.replayUntil) || 0}" data-vo-label="${label}" data-vo-done="${esc(opened || (mine ? 'Opened by them' : 'Replay window closed'))}">${txt}</span>`;
     voTickStart();
   } else {
-    sub = mine ? 'Waiting to be opened · one view, one replay' : 'Tap to open · one view, one replay';
+    sub = opened ? esc(opened) : (mine ? 'Waiting to be opened · one view, one replay' : 'Tap to open · one view, one replay');
   }
   return `<button type="button" class="vo-card${replay ? ' vo-replay' : ''}${mine ? ' vo-mine' : ''}" data-vo="${esc(m.id)}"${mine ? ' disabled' : ''}>`
     + `<span class="vo-ico">${isVid ? voIcon('video') : voIcon('image')}</span>`

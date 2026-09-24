@@ -843,6 +843,11 @@ WHERE (s.audience = 'server' OR s.audience = 'friends')
   await addColumn('dm_messages', 'view_once_state', "TEXT NOT NULL DEFAULT ''");
   await addColumn('dm_messages', 'view_once_replays', 'BIGINT NOT NULL DEFAULT 1');
   await addColumn('dm_messages', 'view_once_replay_until', 'BIGINT NOT NULL DEFAULT 0');
+  // View-once open receipts: who opened it and when, so the card can read
+  // "Opened by X at <time>". Stamped on the first /viewonce/open; a replay
+  // never moves it.
+  await addColumn('dm_messages', 'view_once_opened_by', 'TEXT');
+  await addColumn('dm_messages', 'view_once_opened_at', 'BIGINT NOT NULL DEFAULT 0');
   // The replay-window sweeper (reapExpiredViewOnce) asks for exactly this slice
   // of a table that is otherwise large, so give it an index of its own.
   try {

@@ -3750,6 +3750,18 @@ app.post('/api/dm/:mid/viewonce/open', authRequired, async (req, res) => {
   if (!att || !String(att.url).includes('/uploads/viewonce/')) return res.status(410).json({ error: 'media_gone' });
   const key = storage.s3KeyFromUrl(String(att.url).split('?')[0]);
   const ticket = viewOnceTicket(key, req.user.id);
+  // The first open stamps the receipt — who opened it and when — so the card
+  // can read "Opened by X at <time>". A replay never moves the stamp. The
+  // push goes out with the ticket so the sender's card flips live, while the
+  // item is still unopened (the viewer hasn't closed yet to consume it).
+  if (!Number(m.view_once_opened_at)) {
+    await db.prepare('UPDATE dm_messages SET view_once_opened_by = ?, view_once_opened_at = ? WHERE id = ? AND (view_once_opened_at IS NULL OR view_once_opened_at = 0)')
+      .run(req.user.id, now(), m.id);
+    try {
+      const full = await fullDm(m.id, null);
+      await dmNotify(m.thread_id, { t: 'dm-updated', message: full });
+    } catch (e) { console.warn('[viewonce] opened push failed:', (e && e.message) || e); }
+  }
   res.json({
     url: String(att.url).split('?')[0] + '?t=' + ticket,
     kind: att.kind, mime: att.mime, caption: m.content || '', name: att.filename,
@@ -6189,6 +6201,7 @@ const DM_JOIN = `SELECT m.*, u.username, u.display_name, u.avatar_color, u.avata
 async function hydrateDm(rows, meId) {
   const ids = rows.map((r) => r.id);
   const attBy = {}, reactBy = {}, parentAttBy = {}, voBy = {};
+  const voOpenerNames = new Map();
   const voIds = new Set(rows.filter((r) => r.view_once).map((r) => r.id));
   const pollBy = await pollsForMessages('dm', ids);
   if (ids.length) {
@@ -6207,6 +6220,14 @@ async function hydrateDm(rows, meId) {
       const t = (reactBy[r.message_id] = reactBy[r.message_id] || {});
       const e = (t[r.emoji] = t[r.emoji] || { emoji: r.emoji, count: 0, users: [] });
       e.count++; e.users.push(r.user_id);
+    }
+    // View-once open receipts: one lookup for every distinct opener on screen.
+    const voOpenerIds = [...new Set(rows.filter((r) => r.view_once && r.view_once_opened_by).map((r) => r.view_once_opened_by))];
+    if (voOpenerIds.length) {
+      const voph = voOpenerIds.map(() => '?').join(',');
+      for (const u of await db.prepare(`SELECT id, display_name FROM users WHERE id IN (${voph})`).all(...voOpenerIds)) {
+        voOpenerNames.set(u.id, u.display_name || '?');
+      }
     }
     const parentIds = [...new Set(rows.filter((r) => r.reply_to_id && !String(r.p_content || '').trim()).map((r) => r.reply_to_id))];
     if (parentIds.length) {
@@ -6232,6 +6253,10 @@ async function hydrateDm(rows, meId) {
       replaysLeft: Number(r.view_once_replays) || 0,
       replayUntil: Number(r.view_once_replay_until) || 0,
       replayWindowMs: VIEWONCE_REPLAY_MS,
+      // Open receipt ("Opened by X at <time>"): who opened it and when.
+      openedAt: Number(r.view_once_opened_at) || 0,
+      openedBy: r.view_once_opened_by ? (voOpenerNames.get(r.view_once_opened_by) || '?') : null,
+      openedById: r.view_once_opened_by || null,
     }, voBy[r.id] || {}) : null,
     replyTo: r.reply_to_id ? (r.p_content != null ? { id: r.reply_to_id, author: r.p_name || 'deleted', snippet: String(r.p_content).slice(0, 140) } : { id: r.reply_to_id, author: 'deleted', snippet: '', deleted: true }) : null,
     threadCount: 0, edited: !!r.edited_at, _dm: true,

@@ -81,5 +81,33 @@ check(
   'in-app background notification masks a view-once caption',
 );
 
+// [11] open receipts: after the recipient opens a view-once, the card reads
+// "Opened by X at <time>".
+const dbSrc = fs.readFileSync(path.join(ROOT, 'db.js'), 'utf8');
+check(
+  /addColumn\('dm_messages', 'view_once_opened_by', 'TEXT'\)/.test(dbSrc)
+    && /addColumn\('dm_messages', 'view_once_opened_at', 'BIGINT NOT NULL DEFAULT 0'\)/.test(dbSrc),
+  'migration adds the open-receipt columns',
+);
+check(
+  /view_once_opened_by = \?, view_once_opened_at = \? WHERE id = \? AND \(view_once_opened_at IS NULL OR view_once_opened_at = 0\)/.test(serverSrc),
+  'first /viewonce/open stamps who opened it and when (replays never move it)',
+);
+check(
+  /\[viewonce\] opened push failed/.test(serverSrc)
+    && /dmNotify\(m\.thread_id, \{ t: 'dm-updated', message: full \}\)/.test(serverSrc),
+  'first open pushes dm-updated so the sender\u2019s card flips live',
+);
+check(
+  /openedAt: Number\(r\.view_once_opened_at\) \|\| 0/.test(serverSrc)
+    && /openedBy: r\.view_once_opened_by \? \(voOpenerNames\.get\(r\.view_once_opened_by\) \|\| '\?'\) : null/.test(serverSrc),
+  'thread payload carries the opener name and timestamp',
+);
+const voSrc = fs.readFileSync(path.join(ROOT, 'public/js/viewonce.js'), 'utf8');
+check(
+  /function voOpenedSub\(vo\)/.test(voSrc) && /'Opened by ' \+ \(vo\.openedBy \|\| 'them'\) \+ ' at ' \+ when/.test(voSrc),
+  'card renders the "Opened by X at <time>" receipt',
+);
+
 console.log(passed + ' passed, ' + failures.length + ' failed');
 process.exit(failures.length ? 1 : 0);
