@@ -3704,7 +3704,9 @@ app.post('/api/dm/viewonce', authRequired, async (req, res) => {
       .run(uid(), mid, url, caption || (kind === 'video' ? 'View-once video' : 'View-once photo'), mime, size, kind, 0, now());
     const full = await fullDm(mid, null);
     await dmNotify(t.id, { t: 'dm-new', message: full });
-    try { await notifyDmMessage(t, me, caption || pushed, mid); } catch {}
+    // The caption lives under the media in the one-shot viewer — the push must
+    // not leak it. `pushed` is the generic line ("Sent a view-once").
+    try { await notifyDmMessage(t, me, pushed, mid); } catch {}
     sent.push(t.id);
   }
   if (!sent.length) {

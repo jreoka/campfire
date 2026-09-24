@@ -992,7 +992,9 @@ function chanName(id) {
 function notifyMsg(m) {
   if (!m.user) return;
   const title = m.threadId ? `${m.user.display_name} (DM)` : `${m.user.display_name} (#${chanName(m.channelId)})`;
-  const body = (m.content || '[attachment]').slice(0, 120);
+  // A view-once caption belongs to the one-shot viewer (under the media) — a
+  // notification must not leak it.
+  const body = (m.viewOnce ? 'Sent a view-once' : (m.content || '[attachment]')).slice(0, 120);
   // Desktop app: WebView2 has no Notification API to fall back on, so the shell
   // shows it (final.js nativeNotify). The Android shell never takes this path —
   // its background service owns notifications, and a page-led one would double

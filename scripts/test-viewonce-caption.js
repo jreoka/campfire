@@ -53,11 +53,9 @@ check(
   /caption: m\.content \|\| ''/.test(serverSrc),
   '/viewonce/open still returns the caption',
 );
-// [7] push notifications still use the caption as the fallback text
-check(
-  /notifyDmMessage\(t, me, caption \|\| pushed, mid\)/.test(serverSrc),
-  'push notification text unchanged',
-);
+// (the old "push notification text unchanged" pin was retired when pushes were
+// masked: the server push and the in-app background notification are pinned
+// under [9] and [10] below instead.)
 
 // [8] the DM sidebar preview no longer leaks a view-once caption to the
 // recipient (the sender still sees their own words).
@@ -69,6 +67,18 @@ check(
 check(
   /viewOnce: !!last\.view_once, mine: userId \? last\.user_id === userId : false/.test(serverSrc),
   'thread payload carries the view-once flag and authorship',
+);
+
+// [9] push surfaces never carry a view-once caption (the server push or the
+// in-app background-tab notification would put it on the lock screen).
+check(
+  /notifyDmMessage\(t, me, pushed, mid\)/.test(serverSrc),
+  'server push uses the generic view-once line, not the caption',
+);
+const socketSrc = fs.readFileSync(path.join(ROOT, 'public/js/socket.js'), 'utf8');
+check(
+  /m\.viewOnce \? 'Sent a view-once' : \(m\.content \|\| '\[attachment\]'\)/.test(socketSrc),
+  'in-app background notification masks a view-once caption',
 );
 
 console.log(passed + ' passed, ' + failures.length + ' failed');
