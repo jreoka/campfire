@@ -523,16 +523,20 @@ window.addEventListener('focus', markActiveReadOnFocus);
 // fires no focus event, so a click is the only signal left. Same bottom gate;
 // guarded on the lit dot so idle clicks cost nothing (the unconditional focus
 // stamp above stays the cross-device backstop).
+// The open conversation, stamped read — but only when it actually owns an
+// unread mark, so ordinary focus/click/scroll traffic never writes. Bottom
+// gate: at the live bottom everything the mark could point at is in view.
+function markOpenReadIfMarked() {
+  const box = $('#messages');
+  if (!box || box.dataset.atBottom !== '1') return;
+  if (S.view === 'server' && S.serverId && S.channelId) {
+    if (hasChanUnread(S.serverId, S.channelId)) markChannelRead(S.serverId, S.channelId, 0);
+  } else if (S.view === 'home' && S.dmThreadId) {
+    if (S.dmUnread && S.dmUnread.has(S.dmThreadId)) markDmRead(S.dmThreadId, 0);
+  }
+}
 function markActiveReadOnChatClick() {
-  try {
-    const box = $('#messages');
-    if (!box || box.dataset.atBottom !== '1') return;
-    if (S.view === 'server' && S.serverId && S.channelId) {
-      if (hasChanUnread(S.serverId, S.channelId)) markChannelRead(S.serverId, S.channelId, 0);
-    } else if (S.view === 'home' && S.dmThreadId) {
-      if (S.dmUnread && S.dmUnread.has(S.dmThreadId)) markDmRead(S.dmThreadId, 0);
-    }
-  } catch {}
+  try { markOpenReadIfMarked(); } catch {}
 }
 $('#chat').addEventListener('click', markActiveReadOnChatClick);
  document.addEventListener('click', (e) => {

@@ -1303,6 +1303,11 @@ function watchBottomState(box) {
     // all pin '1' before their scroll events arrive, so they never trip this.
     if (wasBottom !== '1' && box.dataset.atBottom === '1') {
       try { unreadBarAutoDismiss(box); } catch {}
+      // The reader's own scroll is "I'm reading this" too: a lit dot on the
+      // open conversation clears the moment they reach the live bottom, the
+      // way Discord's pill going away means read. Guarded on the mark, so an
+      // ordinary scroll never writes.
+      try { if (typeof markOpenReadIfMarked === 'function') markOpenReadIfMarked(); } catch {}
     }
   }, { passive: true });
   document.addEventListener('visibilitychange', () => {
