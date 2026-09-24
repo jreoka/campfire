@@ -387,23 +387,43 @@ function spServerRow(srvTrays) {
 // A <video> story thumbnail is an empty element until its first frame lands,
 // and mobile browsers paint their own grey play-button placeholder into that
 // emptiness — which reads as broken for the second a video story takes to
-// load. Hide the element behind a spinner until the frame arrives (or the
-// thumbnail gives up and is removed, via storyThumbRetry). No-ops for photos.
+// load. Hide the element behind a spinner until the frame it will actually
+// show is ready (or the thumbnail gives up and is removed, via
+// storyThumbRetry). No-ops for photos.
 function storyThumbSpin(host, media) {
   if (!host || !media) return;
   const vid = media.tagName === 'VIDEO' ? media : media.querySelector('video');
   if (!vid) return;
   host.classList.add('st-vid-loading');
-  const settled = () => host.classList.remove('st-vid-loading');
+  let settled = false;
+  const settle = () => {
+    if (settled) return;
+    settled = true;
+    // One frame after the pixels are ready, so the compositor paints the
+    // frame — not the placeholder — in the same pass the video appears.
+    requestAnimationFrame(() => host.classList.remove('st-vid-loading'));
+  };
+  const onData = () => {
+    // storyThumbMedia seeks to 0.06 on loadeddata: the frame the video ends
+    // up showing is the SEEKED one. Settling on loadeddata flashed the grey
+    // placeholder for a split second after the spinner — the seek had emptied
+    // the element again.
+    if (vid.seeking) vid.addEventListener('seeked', settle, { once: true });
+    else settle();
+  };
   // A cached thumbnail can already be decodable before we get here.
-  if (vid.readyState >= 2) { settled(); return; }
-  vid.addEventListener('loadeddata', settled, { once: true });
+  if (vid.readyState >= 2) {
+    if (vid.seeking) vid.addEventListener('seeked', settle, { once: true });
+    else settle();
+  } else {
+    vid.addEventListener('loadeddata', onData, { once: true });
+  }
   // storyThumbRetry removes the media when the 423 gate never opens: without
   // this the spinner would sit on an empty card forever.
   const obs = new MutationObserver(() => {
     if (vid.isConnected) return;
     try { obs.disconnect(); } catch {}
-    settled();
+    settle();
   });
   try { obs.observe(host, { childList: true, subtree: true }); } catch {}
 }

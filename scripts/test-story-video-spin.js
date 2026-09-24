@@ -77,7 +77,8 @@ if (!/function spHero/.test(centerSrc) || !/function storyThumbSpin/.test(center
 console.log('\n[1] the helper exists and is wired to both hero surfaces');
 check(/function storyThumbSpin\(host, media\)/.test(stories), 'storyThumbSpin(host, media) exists');
 check(/media\.tagName === 'VIDEO'/.test(stories), 'it no-ops for photos (only VIDEO arms the spinner)');
-check(/vid\.addEventListener\('loadeddata', settled, \{ once: true \}\)/.test(stories), 'the first frame settles it');
+check(/vid\.addEventListener\('loadeddata', onData, \{ once: true \}\)/.test(stories), 'it waits for the first data');
+check(/if \(vid\.seeking\) vid\.addEventListener\('seeked', settle, \{ once: true \}\)/.test(stories), 'a seek in flight settles on `seeked`, not `loadeddata`');
 check(/storyThumbRetry removes the media/.test(stories), 'the give-up path (media removed) settles it too');
 const heroSrc = slice(stories, 'function spHero(mineItems) {', '\nfunction spEmpty() {');
 check(/storyThumbSpin\(hero, media\)/.test(heroSrc), 'spHero arms the spinner on the hero backdrop');
@@ -134,28 +135,38 @@ window.__t1 = {
   spinAnim: spinCs.animationName === 'up-spin',
   spinSize: spinCs.width,
 };
-// The first frame lands: everything settles.
+// storyThumbMedia seeks to 0.06 on loadeddata: fake the seek in flight the
+// way the real thumbnail does, or the test would never see the race.
+Object.defineProperty(vid, 'seeking', { get: () => true, configurable: true });
 vid.dispatchEvent(new Event('loadeddata'));
 window.__t2 = {
   heroLoading: hero.classList.contains('st-vid-loading'),
   vidHidden: getComputedStyle(vid).visibility === 'hidden',
 };
-// The give-up path: storyThumbRetry removes a thumbnail the 423 gate never
-// opens. The spinner must not sit on the empty card forever.
-const hero2 = spHero([vit]);
-document.getElementById('hero2').appendChild(hero2);
-hero2.querySelector('.sp-hero-media').remove();
+Object.defineProperty(vid, 'seeking', { get: () => false, configurable: true });
+vid.dispatchEvent(new Event('seeked'));
 setTimeout(() => {
-  window.__t3 = { heroLoading: hero2.classList.contains('st-vid-loading') };
-  // A photo never arms the spinner at all.
-  const pit = { id: 'p1', kind: 'image', url: ${JSON.stringify(WHITE)}, created_at: now - 3600e3, expires_at: now + 72000e3, views: 1, reactions: [] };
-  const hero3 = spHero([pit]);
-  document.getElementById('hero3').appendChild(hero3);
-  window.__t4 = {
-    heroLoading: hero3.classList.contains('st-vid-loading'),
-    imgHidden: getComputedStyle(hero3.querySelector('.sp-hero-media')).visibility === 'hidden',
+  window.__t3 = {
+    heroLoading: hero.classList.contains('st-vid-loading'),
+    vidHidden: getComputedStyle(vid).visibility === 'hidden',
   };
-  window.__ready = true;
+  // The give-up path: storyThumbRetry removes a thumbnail the 423 gate never
+  // opens. The spinner must not sit on the empty card forever.
+  const hero2 = spHero([vit]);
+  document.getElementById('hero2').appendChild(hero2);
+  hero2.querySelector('.sp-hero-media').remove();
+  setTimeout(() => {
+    window.__t4 = { heroLoading: hero2.classList.contains('st-vid-loading') };
+    // A photo never arms the spinner at all.
+    const pit = { id: 'p1', kind: 'image', url: ${JSON.stringify(WHITE)}, created_at: now - 3600e3, expires_at: now + 72000e3, views: 1, reactions: [] };
+    const hero3 = spHero([pit]);
+    document.getElementById('hero3').appendChild(hero3);
+    window.__t5 = {
+      heroLoading: hero3.classList.contains('st-vid-loading'),
+      imgHidden: getComputedStyle(hero3.querySelector('.sp-hero-media')).visibility === 'hidden',
+    };
+    window.__ready = true;
+  }, 400);
 }, 400);
 </script></body></html>`;
 }
@@ -204,19 +215,24 @@ async function main() {
     check(t1.spinAnim, 'the ::after spinner is animated with up-spin');
     check(t1.spinSize === '26px', 'the hero spinner is the full-size mark', t1.spinSize);
 
-    console.log('\n[4] the first frame settles it');
+    console.log('\n[4] the 0.06s seek does not flash the placeholder');
     const t2 = await ev('window.__t2');
-    check(!t2.heroLoading, 'loadeddata drops the loading class');
-    check(!t2.vidHidden, 'the video is visible again');
+    check(t2.heroLoading, 'loadeddata mid-seek keeps the spinner up');
+    check(t2.vidHidden, 'the <video> stays hidden through the seek');
 
-    console.log('\n[5] the give-up path does not strand a spinner');
+    console.log('\n[5] the seeked frame settles it');
     const t3 = await ev('window.__t3');
-    check(!t3.heroLoading, 'removing the thumbnail clears the loading class');
+    check(!t3.heroLoading, 'seeked drops the loading class');
+    check(!t3.vidHidden, 'the video is visible again');
 
-    console.log('\n[6] photos are untouched');
+    console.log('\n[6] the give-up path does not strand a spinner');
     const t4 = await ev('window.__t4');
-    check(!t4.heroLoading, 'a photo hero never arms the spinner');
-    check(!t4.imgHidden, 'a photo is never hidden');
+    check(!t4.heroLoading, 'removing the thumbnail clears the loading class');
+
+    console.log('\n[7] photos are untouched');
+    const t5 = await ev('window.__t5');
+    check(!t5.heroLoading, 'a photo hero never arms the spinner');
+    check(!t5.imgHidden, 'a photo is never hidden');
   } finally {
     try { if (ws) ws.close(); } catch {}
     try { chrome.kill(); } catch {}
