@@ -132,9 +132,9 @@ function clientChecks() {
   // The whole bar module: the helpers plus the Mark-as-read wiring at its end.
   const build = new Function('$', 'S', 'markChannelRead', 'markDmRead',
     messages.slice(messages.indexOf('let unreadBarCtx = null;')) +
-    '\nreturn { unreadBarShow, unreadBarHide };');
+    '\nreturn { unreadBarShow, unreadBarHide, unreadBarAutoDismiss };');
   const stamped = [];
-  const { unreadBarShow, unreadBarHide } = build($, MS,
+  const { unreadBarShow, unreadBarHide, unreadBarAutoDismiss } = build($, MS,
     (sid, cid, d) => stamped.push(['server', sid, cid, d]),
     (tid, d) => stamped.push(['dm', tid, d]));
 
@@ -380,6 +380,42 @@ function clientChecks() {
     check(S3.dmUnread.get('t9') === 2, 'the DM dot count still lands', [...S3.dmUnread]);
     check(painted.length === 1 && painted[0][0] === 'dm' && painted[0][1] === 't9' && painted[0][2] === snap,
       'same on the DM surface', painted);
+
+    console.log('\n[A8] scrolling back to the bottom dismisses the bar (Discord-style)');
+    MS.view = 'server'; MS.serverId = 's1'; MS.channelId = 'c1'; MS.dmThreadId = null;
+    const msgBox = () => ({ id: 'messages', dataset: { atBottom: '1' } });
+    unreadBarShow('server', 'c1', { count: 2, since });
+    check(!bar.classList.contains('hidden'), 'setup: the open channel paints the bar');
+    unreadBarAutoDismiss(msgBox());
+    check(bar.classList.contains('hidden'), 'the reader\'s own return to the bottom dismisses it');
+    unreadBarShow('server', 'c1', { count: 2, since });
+    unreadBarAutoDismiss({ id: 'messages', dataset: { atBottom: '0' } });
+    check(!bar.classList.contains('hidden'), 'still up means still up: no dismiss away from the bottom');
+    unreadBarAutoDismiss({ id: 'thread-replies', dataset: { atBottom: '1' } });
+    check(!bar.classList.contains('hidden'), 'scrolling the thread panel never touches the channel bar');
+    MS.channelId = 'c2'; // the reader moved on; a stale bar is not this box's to clear
+    unreadBarAutoDismiss(msgBox());
+    check(!bar.classList.contains('hidden'), 'a bar from another conversation is left alone');
+    MS.channelId = 'c1';
+    unreadBarHide();
+    unreadBarAutoDismiss(msgBox());
+    check(bar.classList.contains('hidden'), 'an already-hidden bar is a silent no-op');
+    MS.view = 'home'; MS.dmThreadId = 't1';
+    unreadBarShow('dm', 't1', { count: 2, since });
+    unreadBarAutoDismiss(msgBox());
+    check(bar.classList.contains('hidden'), 'same on the DM surface');
+    // The transition gate lives in the scroll handler: only a '0'->'1' flip of
+    // the bottom pin may call the helper, so the open landing (which pins '1'
+    // before its scroll events arrive) can never clear a bar that just painted.
+    const watch = messages.slice(messages.indexOf('function watchBottomState(box) {'));
+    const scrollH = watch.slice(0, watch.indexOf('armLineGuard(box);'));
+    check(/const wasBottom = box\.dataset\.atBottom;/.test(scrollH),
+      'the scroll handler snapshots the pin before re-measuring it');
+    check(/if \(wasBottom !== '1' && box\.dataset\.atBottom === '1'\) \{\s*try \{ unreadBarAutoDismiss\(box\); \} catch \{\}\s*\}/.test(scrollH),
+      'and only a 0->1 transition may dismiss the bar');
+    check(/function unreadBarAutoDismiss\(box\) \{/.test(messages) &&
+      /box\.id !== 'messages'/.test(messages) && /unreadBarCtx !== here/.test(messages),
+      'the helper only answers for #messages, at the bottom, for the open conversation');
   })();
   delete global.document; // the stub served the offline half only
 }

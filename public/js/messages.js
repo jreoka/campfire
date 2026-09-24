@@ -1253,6 +1253,7 @@ function watchBottomState(box) {
     // the history is not the reader leaving the bottom, and re-pinning mid
     // animation would cut it short.
     if (box._smoothUntil && Date.now() < box._smoothUntil) { box._smoothUntil = Date.now() + 250; return; }
+    const wasBottom = box.dataset.atBottom;
     const prevTop = box._lastTop;
     const top = box.scrollTop;
     // Older messages are paged in from the reader's OWN movement upward. Input
@@ -1293,6 +1294,13 @@ function watchBottomState(box) {
     // event inside the gesture that demoted the pin: the demotion stands.
     if (userUp || (!moved && Date.now() - (box._userUpAt || 0) < 900)) return;
     markBottomState(box);
+    // The reader's own scroll brought them back to the live bottom: dismiss
+    // the unread bar the way Discord's pill goes away at the bottom. Only a
+    // '0'→'1' transition fires — the open landing, re-snaps and jump-to-present
+    // all pin '1' before their scroll events arrive, so they never trip this.
+    if (wasBottom !== '1' && box.dataset.atBottom === '1') {
+      try { unreadBarAutoDismiss(box); } catch {}
+    }
   }, { passive: true });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden || box.dataset.atBottom !== '1') return;
@@ -3842,6 +3850,24 @@ function unreadBarHide() {
   unreadBarCtx = null;
   const bar = $('#unread-bar');
   if (bar) bar.classList.add('hidden');
+}
+// Discord-style: the bar is a pointer at new messages, so once the reader has
+// scrolled back down to the live bottom they've seen everything it points at
+// and it dismisses on its own. Only the reader's own return to the bottom
+// counts — the caller gates on a '0'→'1' transition of the bottom pin, because
+// programmatic placements (channel open, late-media re-snaps, jump-to-present)
+// set the pin synchronously before their scroll events arrive, and a bar that
+// just painted must never be cleared by the landing that revealed it.
+function unreadBarAutoDismiss(box) {
+  try {
+    if (!box || box.id !== 'messages' || box.dataset.atBottom !== '1') return;
+    const bar = $('#unread-bar');
+    if (!bar || bar.classList.contains('hidden') || !unreadBarCtx) return;
+    const here = S.view === 'server' ? 'server:' + S.channelId
+      : S.view === 'home' ? 'dm:' + S.dmThreadId : null;
+    if (unreadBarCtx !== here) return; // not this conversation's bar: leave it
+    unreadBarHide();
+  } catch {}
 }
 function unreadBarShow(kind, id, unread) {
   const bar = $('#unread-bar');
