@@ -266,6 +266,9 @@ S.tagEmojiDone = null; // repaint callback after a tag-emoji pick
 // strip is not at y=0). --vvh is the visible height. A fixed layer that wants to
 // BE the visible strip is `top:var(--vv-top);bottom:var(--kb)` — nothing else
 // gets that right in both models (see #modal-backdrop and #usercard.sheet).
+let _pkSettleT = 0; // the settle timer below; declared up here because
+                    // wirePickerViewport() runs at parse time, before the
+                    // function that owns the timer textually appears.
 function keyboardOffset() {
   const vv = window.visualViewport;
   if (!vv) return 0;
@@ -282,6 +285,7 @@ function wirePickerViewport() {
     root.setProperty('--kb', keyboardOffset() + 'px');
     root.setProperty('--vv-top', Math.max(0, Math.round(vv.offsetTop)) + 'px');
     root.setProperty('--vvh', Math.round(vv.height) + 'px');
+    settlePickerKeyboard();
     if (raf) return;
     raf = requestAnimationFrame(() => { raf = 0; try { sizePicker(); } catch {} });
   };
@@ -305,6 +309,33 @@ function paintPickerKeyboard() {
   const on = document.activeElement === $('#pk-search');
   pk.classList.toggle('pk-kb', on);
   try { sizePicker(); } catch {}
+  settlePickerKeyboard();
+}
+// A keyboard transition is an ANIMATION (~250ms), but some WebViews report it
+// with a single resize/blur at the START — the measurement taken then is
+// mid-flight, and with no further events the sheet parks at the keyboard's
+// half-gone height and never comes back down (reported: dropping the keyboard
+// left the picker floating). So after every signal that a transition may be
+// under way, take one more measurement once the animation has surely settled.
+// Each new signal pushes it back, so it fires once, after the last one. It
+// only re-reads the same numbers the event handlers read, so on a
+// well-behaved engine it is a silent no-op.
+function settlePickerKeyboard() {
+  clearTimeout(_pkSettleT);
+  _pkSettleT = setTimeout(() => {
+    _pkSettleT = 0;
+    const pk = $('#picker');
+    if (!pk || pk.classList.contains('hidden')) return;
+    const vv = window.visualViewport;
+    const root = document.documentElement.style;
+    if (vv) {
+      root.setProperty('--kb', keyboardOffset() + 'px');
+      root.setProperty('--vv-top', Math.max(0, Math.round(vv.offsetTop)) + 'px');
+      root.setProperty('--vvh', Math.round(vv.height) + 'px');
+    }
+    if (pk.classList.contains('pk-resizing')) return; // the finger owns the height right now
+    try { sizePicker(); } catch {}
+  }, 400);
 }
 $('#pk-search').addEventListener('focus', paintPickerKeyboard);
 $('#pk-search').addEventListener('blur', paintPickerKeyboard);
