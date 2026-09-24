@@ -1418,7 +1418,15 @@ img,video{-webkit-user-drag:none}
 /* A picture that never loads degrades to a file card (final.js) — the
    placeholder goes with it. */
 .att-wrap:has(.file-card) .att-ph{display:none}
-.att-wrap.pending:not(.ready) img.att-img{opacity:0;transition:opacity .2s var(--ease-out)}
+/* Blur-up: while a picture loads, its (tiny) preview paints blurred behind the
+   spinner instead of hiding behind a grey box, then sharpens in place. The
+   placeholder goes transparent so the blur shows through, and the wrap clips
+   the blur's fringe. att-swap keeps its own concealment (the carried frame
+   must stay the thing the reader sees). */
+.att-wrap.pending:not(.ready):not(.att-swap) .att-ph{background:transparent}
+.att-wrap.pending:not(.ready):not(.att-swap){overflow:hidden}
+.att-wrap.pending:not(.ready):not(.att-swap) img.att-img{opacity:1;filter:blur(16px) saturate(1.25);transform:scale(1.03)}
+.att-wrap img.att-img{transition:opacity .2s var(--ease-out),filter .3s var(--ease-out),transform .3s var(--ease-out)}
 .spoiler{border-radius:3px;padding:0 .3rem;cursor:pointer}
 .msg .text .spoiler:not(.shown),.uc-bio .spoiler:not(.shown){background:var(--spoiler);color:transparent;user-select:none}
 .msg .text .spoiler:not(.shown) a,.uc-bio .spoiler:not(.shown) a{color:transparent}
@@ -1470,6 +1478,13 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 .att-wrap.loading video.att-vid{visibility:hidden}
 .att-vid-load{position:absolute;inset:0;display:none;align-items:center;justify-content:center;border:0;padding:0;border-radius:6px;background:#000;z-index:1;cursor:pointer}
 .att-wrap.loading .att-vid-load{display:flex}
+/* Blur-up for clips: the server-minted first frame (see serverPosterSrcFor)
+   paints blurred behind the spinner shell while the clip loads. The shell goes
+   transparent so the blur shows through; the reveal drops the layer. The wrap
+   clips the blur's fringe (gallery tiles already clip). */
+.att-vid-blur{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:6px;filter:blur(16px) saturate(1.25);transform:scale(1.06);pointer-events:none}
+.att-wrap.loading.has-sposter{overflow:hidden}
+.att-wrap.loading.has-sposter .att-vid-load{background:transparent}
 .att-spin{width:24px;height:24px;border-radius:50%;border:2.5px solid rgba(255,255,255,.18);border-top-color:rgba(255,255,255,.85);animation:up-spin .8s linear infinite}
 /* The download button over a picture or a video. It and the favorite star are a
    matched PAIR in the top-right corner: same 32px box, same 10px rounding, same

@@ -278,6 +278,17 @@ function thumbSrcFor(url) {
   if (!/^\/uploads\/files\/[A-Za-z0-9._-]+$/.test(clean)) return '';
   return '/uploads/thumbs/' + clean.slice('/uploads/'.length) + '.webp';
 }
+// The server-minted first-frame poster for a files/ clip — the video analog of
+// the photo thumb above (see media-compress.js: posters/files/<src>.webp, minted
+// on first request like the thumbs). Strict like the thumb: only keys the
+// pipeline will actually mint, so anything else degrades instead of 404ing.
+function serverPosterSrcFor(url) {
+  const s = String(url || '');
+  const clean = s.split('?')[0];
+  if (!/^\/uploads\/files\/[A-Za-z0-9._-]+\.(mp4|m4v|mov|webm)$/i.test(clean)) return '';
+  const q = s.indexOf('?');
+  return '/uploads/posters/' + clean.slice('/uploads/'.length) + '.webp' + (q >= 0 ? s.slice(q) : '');
+}
 function imageSrcFor(a) {
   const url = String((a && a.url) || '');
   const thumb = thumbSrcFor(url);
@@ -406,10 +417,17 @@ function attVideoHTML(a, opts) {
   const d = attDimsFor(a);
   const ar = d ? (d.w / d.h) : 0;
   const style = ar ? ` style="--att-ar:${ar.toFixed(4)}"` : '';
-  const poster = (!opts || opts.live !== false) ? attPickedFrame(a) : '';
+  const live = !opts || opts.live !== false;
+  const poster = live ? attPickedFrame(a) : '';
+  // No captured frame (another device, a reload): the server mints a first-frame
+  // poster on first request — the clip gets a blurred frame behind the spinner
+  // instead of the black shell, and the video element wears it as its poster so
+  // the reveal always lands on a real frame.
+  const serverPoster = (!poster && live) ? serverPosterSrcFor(a.url) : '';
+  const posterAttr = poster || serverPoster;
   const tile = !!(opts && opts.tile);
   const door = tile ? '<button type="button" class="att-tile-open" aria-label="Open video in the viewer"></button>' : '';
-  return `<span class="att-wrap${poster ? '' : ' loading'}${a.spoiler ? ' spoiler' : ''}${ar ? ' ar' : ' no-ar'}"${style}${attMeta(a, 'video')}><video class="att-vid" draggable="false" src="${esc(a.url)}" data-fb-src="${esc(a.url)}"${tile ? '' : ' controls'} preload="metadata" playsinline${poster ? ` poster="${esc(poster)}"` : ''}></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${door}${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
+  return `<span class="att-wrap${poster ? '' : ' loading'}${serverPoster ? ' has-sposter' : ''}${a.spoiler ? ' spoiler' : ''}${ar ? ' ar' : ' no-ar'}"${style}${attMeta(a, 'video')}>${serverPoster ? `<img class="att-vid-blur" src="${esc(serverPoster)}" alt="" aria-hidden="true" />` : ''}<video class="att-vid" draggable="false" src="${esc(a.url)}" data-fb-src="${esc(a.url)}"${tile ? '' : ' controls'} preload="metadata" playsinline${posterAttr ? ` poster="${esc(posterAttr)}"` : ''}></video><button type="button" class="att-vid-load" aria-label="Play video"><span class="att-spin"></span></button>${door}${attDl(a)}${a.spoiler ? '<button type="button" class="spoiler-veil">Spoiler</button>' : ''}</span>`;
 }
 // The still FRAME this page already holds for a clip, as the poster to paint it
 // with — the upload path files the frame the upload card captured under the
@@ -817,7 +835,7 @@ function patchVideoNode(oldEl, a) {
   // while `posterOk` short-circuits requestVideoPoster below is a clip that never
   // reveals itself until the reader clicks the panel.
   if (nextVid.dataset.posterOk === '1') { try { revealVideoShell(nextVid); } catch {} }
-  try { requestVideoPoster(nextVid); observeStick(nextVid); } catch {}
+  try { wireServerPoster(nextVid); requestVideoPoster(nextVid); observeStick(nextVid); } catch {}
   // The published bytes are the source now, so the picked copy can be released
   // once the new element has read its metadata (a beat later, not before).
   if (a.scan === 'clean') {
@@ -1035,6 +1053,32 @@ function requestVideoPoster(v) {
     }, { rootMargin: '320px 0px' });
   }
   try { posterIO.observe(v); } catch { ensureVideoPoster(v); }
+}
+// A files/ clip's server-minted poster (see serverPosterSrcFor): the blur layer
+// reveals the shell the moment the frame is in, and the client-side capture is
+// skipped — the frame is already here, so fetching the clip just to redraw it
+// would be pure waste. A poster that fails to mint falls back to the capture.
+function wireServerPoster(v) {
+  if (!v || v.dataset.sposterWired) return;
+  const wrap = (v.closest && v.closest('.att-wrap')) || null;
+  const blur = wrap && wrap.querySelector(':scope > .att-vid-blur');
+  if (!wrap || !blur) return;
+  v.dataset.sposterWired = '1';
+  const reveal = () => {
+    try { blur.remove(); } catch {}
+    v.dataset.posterOk = '1';
+    revealVideoShell(v);
+  };
+  const giveUp = () => {
+    try { blur.remove(); } catch {}
+    try { wrap.classList.remove('has-sposter'); } catch {}
+    // posterOk stays unset: requestVideoPoster still runs the client capture.
+  };
+  if (blur.complete && blur.naturalWidth > 0) reveal();
+  else {
+    blur.addEventListener('load', reveal, { once: true });
+    blur.addEventListener('error', giveUp, { once: true });
+  }
 }
 // ---------- stick-to-bottom on media resize ----------
 // A video can change size more than once: no intrinsic size until metadata
@@ -2068,7 +2112,7 @@ function messageEl(m, opts = {}) {
   if (!grouped) paintAvatar(div.querySelector('.avatar'), au);
   if (m.threadLast) paintThreadCardAvatar(div.querySelector('.thread-link'), m);
   try {
-    div.querySelectorAll('video.att-vid').forEach((v) => { requestVideoPoster(v); wireVideoPlayState(v); observeStick(v); });
+    div.querySelectorAll('video.att-vid').forEach((v) => { wireServerPoster(v); requestVideoPoster(v); wireVideoPlayState(v); observeStick(v); });
     // Images grow 0 -> full height on load and shove bottom-pinned readers
     // upward; load/error listeners can miss instant (cached) loads, but the
     // resize itself is always observable — follow it while near the bottom.

@@ -324,7 +324,7 @@ async function renderPinsList() {
     row.appendChild(btns);
     box.appendChild(row);
   }
-  try { box.querySelectorAll('video.att-vid').forEach((v) => ensureVideoPoster(v)); } catch {}
+  try { box.querySelectorAll('video.att-vid').forEach((v) => { try { wireServerPoster(v); } catch {} ensureVideoPoster(v); }); } catch {}
 }
 // Jump-to-message flight control.
 //
