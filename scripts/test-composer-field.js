@@ -70,6 +70,8 @@ const threadMarkup = index.slice(index.indexOf('<aside id="thread-panel"'), inde
 const meCardMarkup = index.slice(index.indexOf('<div id="me-card">'), index.indexOf('\n      </div>', index.indexOf('<div id="me-card">')) + '\n      </div>'.length);
 // The real send-key logic, verbatim (it is the last function in core.js).
 const paintSrc = core.slice(core.indexOf('function paintComposerSend()'));
+// The real auto-grow, verbatim: an emptied box must drop its grown height.
+const growSrc = (finalJs.match(/function composerAutoGrow\(inp\) \{[\s\S]*?\n\}\n/) || [])[0] || '';
 // The field's visible surface rules, for the source-level assertions.
 function ruleBody(sel) {
   const i = css.indexOf('\n' + sel + '{');
@@ -107,6 +109,7 @@ function pageHtml() {
 window.$ = (s) => document.querySelector(s);
 window.S = { view: 'server', serverId: 's', channelId: 'c', dmThreadId: null, pendingAtts: [] };
 ${paintSrc}
+${growSrc}
 window.__send = (sel) => { const b = document.querySelector(sel || '.send-btn'); return { off: b.classList.contains('is-off'), disabled: b.disabled, title: b.title }; };
 window.__report = function () {
   const R = (s) => { const el = document.querySelector(s); if (!el) return null; const b = el.getBoundingClientRect(); return { t: +b.top.toFixed(1), l: +b.left.toFixed(1), w: +b.width.toFixed(1), h: +b.height.toFixed(1), b: +b.bottom.toFixed(1), r: +b.right.toFixed(1) }; };
@@ -174,6 +177,35 @@ window.__report = function () {
     threadEmpty: (() => { S.thread = null; document.querySelector('#in-thread').value = ''; paintComposerSend(); return window.__send('#thread-composer .send-btn'); })(),
     threadTyped: (() => { S.thread = { rootId: 'r1' }; document.querySelector('#in-thread').value = 'a reply'; paintComposerSend(); return window.__send('#thread-composer .send-btn'); })(),
     threadBlank: (() => { S.thread = { rootId: 'r1' }; document.querySelector('#in-thread').value = '   '; paintComposerSend(); return window.__send('#thread-composer .send-btn'); })(),
+    // The auto-grow, through the real function: an emptied box must drop its
+    // grown height — even when the panel is hidden, where measuring is
+    // impossible (the guard used to return early there, so a tall empty box
+    // rode along into the next thread with its placeholder pushed to the top).
+    // Runs last: it leaves both boxes empty and one line tall.
+    grow: (() => {
+      const t = document.querySelector('#in-thread');
+      const m = document.querySelector('#in-message');
+      const panel = document.querySelector('#thread-panel');
+      const h = (el) => el.getBoundingClientRect().height;
+      const oneLine = h(t);
+      t.value = 'a\nb\nc'; composerAutoGrow(t);
+      const grown = h(t);
+      panel.classList.add('hidden');
+      t.value = '';
+      composerAutoGrow(t);
+      const hiddenInline = t.style.height || '(cleared)';
+      panel.classList.remove('hidden');
+      const afterHidden = h(t);
+      t.value = 'x\ny'; composerAutoGrow(t);
+      const regrown = h(t);
+      t.value = ''; composerAutoGrow(t);
+      const reset = h(t);
+      m.value = 'a\nb\nc'; composerAutoGrow(m);
+      const mGrown = h(m);
+      m.value = ''; composerAutoGrow(m);
+      const mReset = h(m);
+      return { oneLine, grown, hiddenInline, afterHidden, regrown, reset, mGrown, mReset };
+    })(),
   };
 };
 setTimeout(() => { document.title = JSON.stringify(window.__report()); }, 300);
@@ -186,6 +218,9 @@ function probe(chrome, url, { width, height, dpr, touch }) {
   try {
     const args = [
       '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
+      // Running as root (containers, this dev box) needs the sandbox off or
+      // Chrome refuses to start at all; everywhere else it stays on.
+      ...((typeof process.getuid === 'function' && process.getuid() === 0) ? ['--no-sandbox'] : []),
       '--user-data-dir=' + path.join(dir, 'prof'), '--force-device-scale-factor=' + dpr,
       '--window-size=' + width + ',' + height, '--virtual-time-budget=3000', '--dump-dom', url,
     ];
@@ -376,6 +411,16 @@ function main() {
     check(desktop.threadFieldBg === desktop.fieldBg && desktop.threadRadius === desktop.fieldRadius,
       'with the same surface (the panel is its own column, not its own design)',
       { bg: desktop.threadFieldBg, r: desktop.threadRadius });
+
+    console.log('\n[8] an emptied box never stays tall');
+    const g = desktop.grow;
+    check(!!growSrc, 'the real composerAutoGrow was sliced out of final.js for the probe');
+    check(g.grown > g.oneLine + 10, 'three lines grow the thread box', { grown: g.grown, oneLine: g.oneLine });
+    check(g.hiddenInline === '(cleared)', 'clearing it while the panel is hidden still drops the grown height (it used to ride along, tall and empty, into the next thread)', g);
+    check(Math.abs(g.afterHidden - g.oneLine) <= 0.5, 'so the reopened box is one line again, placeholder centred', { after: g.afterHidden, oneLine: g.oneLine });
+    check(g.regrown > g.oneLine + 10, 'and it still grows when there is text to show', g);
+    check(Math.abs(g.reset - g.oneLine) <= 0.5, 'clearing it on screen returns it to one line', g);
+    check(g.mGrown > g.oneLine + 10 && Math.abs(g.mReset - g.oneLine) <= 0.5, 'the chat bar shares the same promise (one function drives both)', g);
   } finally {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }
