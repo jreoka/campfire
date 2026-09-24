@@ -195,6 +195,11 @@ async function selectServer(id) {
   openServerView();
   S.serverId = id;
   S.channelId = null;
+  // No conversation is on screen during the switch: the outgoing channel's bar
+  // must not linger over the incoming server (and its "Mark as read" must not
+  // stamp a channel of the wrong server). selectChannel re-arms below if the
+  // drawer isn't covering the new channel.
+  unreadBarHide();
   // Paint the Threads button HERE, not in openServerView (which runs one line
   // above and so still sees the OUTGOING server): a server is on screen from
   // the moment its id is set, and a server with no text channel never reaches
@@ -425,8 +430,15 @@ function markChannelRead(serverId, channelId, delay = 600, opts = {}) {
   chanReadTimers.set(channelId, {
     timer: setTimeout(() => {
       chanReadTimers.delete(channelId);
+      // The snapshot this /read answers with quotes the world as of the send:
+      // a request that flew across a dead socket (a server reload) can come
+      // back quoting messages from the gap — which the reader may already have
+      // seen render — so its answer must not paint the bar. Capture the
+      // connection epoch at send time (bumped in socket.js's onclose) and
+      // compare it at answer time.
+      const epoch = S.connEpoch || 0;
       api('/api/channels/' + encodeURIComponent(channelId) + '/read', { method: 'POST' })
-        .then((r) => { if (onSnap) try { onSnap(r && r.unread); } catch {} })
+        .then((r) => { if (onSnap && (S.connEpoch || 0) === epoch) try { onSnap(r && r.unread); } catch {} })
         .catch(() => {});
     }, delay),
     onSnap,

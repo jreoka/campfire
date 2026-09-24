@@ -219,7 +219,12 @@ function showInvite(srv, invite) {
 
 // ---------- mobile nav ----------
 // ---------- mobile navigation ----------
-$('#btn-menu').onclick = () => document.body.classList.toggle('nav-open');
+$('#btn-menu').onclick = () => {
+  document.body.classList.toggle('nav-open');
+  // The drawer covers the conversation: a bar painted while reading must not
+  // linger over the channel list.
+  if (document.body.classList.contains('nav-open')) unreadBarHide();
+};
 // Mobile nav is a full-screen page, so it carries its own ✕ (the chat header's
 // ☰ is behind the page while it is open).
 $('#btn-nav-close').onclick = (e) => { e.stopPropagation(); document.body.classList.remove('nav-open'); };

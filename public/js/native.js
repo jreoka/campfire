@@ -156,7 +156,7 @@ function cfInConversation() {
   if (document.body.classList.contains('dm-open')) return true;
   try { return S.view === 'server' && !!S.channelId; } catch { return false; }
 }
-function cfOpenNav() { document.body.classList.add('nav-open'); cfArm(); }
+function cfOpenNav() { document.body.classList.add('nav-open'); try { unreadBarHide(); } catch {} cfArm(); }
 function cfCloseNav() { document.body.classList.remove('nav-open'); cfArm(); }
 
 // ---------- edge-swipe: left edge opens the nav drawer (2026-09-23) ----------
@@ -275,6 +275,8 @@ function cfEndDrag(commit) {
     el.style.transition = '';
     el.style.transform = '';
     document.body.classList.toggle('nav-open', open);
+    // A dragged-open drawer covers the conversation like any other open.
+    if (open) { try { unreadBarHide(); } catch {} }
   };
   once = () => done();
   el.addEventListener('transitionend', once);

@@ -125,8 +125,11 @@ function markDmRead(tid, delay = 500, opts = {}) {
   dmReadTimers.set(tid, {
     timer: setTimeout(() => {
       dmReadTimers.delete(tid);
+      // Same dead-socket guard as markChannelRead (see servers.js): a snapshot
+      // that flew across a reload must not paint the bar.
+      const epoch = S.connEpoch || 0;
       api('/api/dms/' + encodeURIComponent(tid) + '/read', { method: 'POST' })
-        .then((r) => { if (onSnap) try { onSnap(r && r.unread); } catch {} })
+        .then((r) => { if (onSnap && (S.connEpoch || 0) === epoch) try { onSnap(r && r.unread); } catch {} })
         .catch(() => {});
     }, delay),
     onSnap,

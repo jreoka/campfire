@@ -167,6 +167,11 @@ function connectWS() {
   ws.onclose = (ev) => {
     if (ev && ev.code === 4401) { connAuthDead(); return; } // bad token — don't loop
     if (!store.token || S.ws !== ws) return; // logged out or superseded — stay quiet
+    // A /read in flight across this gap answers with a snapshot of a world the
+    // reader may already have moved past (a server reload): markChannelRead /
+    // markDmRead compare this at answer time and drop the stale snapshot so it
+    // never paints the unread bar.
+    S.connEpoch = (S.connEpoch || 0) + 1;
     connAttempts++;
     armConnSoon();
     // The voice readout rides the same socket: flip it to Reconnecting… now

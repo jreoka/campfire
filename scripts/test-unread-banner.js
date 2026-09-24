@@ -29,6 +29,18 @@
 // The bar is a pointer, not a gate: the watermark is already stamped when it
 // paints, so Mark as read dismisses (and re-stamps, idempotently).
 //
+// Two glitches the owner reported from the phone, and the guards that stop them:
+//   3. The bar painted OVER the channel list: on a phone the nav drawer covers
+//      the conversation but S.channelId still names it, so the live guard
+//      passed. unreadBarShow now refuses to paint while `nav-open` is on the
+//      body, every drawer-open path hides a painted bar, and selectServer hides
+//      it mid-switch (its "Mark as read" can no longer stamp a channel of the
+//      wrong server either).
+//   4. The bar appeared in chats when the server reloaded: a /read POST in
+//      flight across the outage comes back quoting messages from the gap.
+//      socket.js's onclose bumps S.connEpoch; the stamp helpers capture it at
+//      send time and drop the snapshot if it moved before the answer lands.
+//
 // Offline half: the real helpers sliced out of `public/js/messages.js`,
 // `public/js/servers.js` and `public/js/home.js`, run against fake DOM / api.
 // API half: a real server on a throwaway database — the pre-stamp snapshot on
@@ -98,6 +110,18 @@ function clientChecks() {
   const socket = fs.readFileSync(path.join(ROOT, 'public/js/socket.js'), 'utf8');
   const server = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
   const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
+  const ui = fs.readFileSync(path.join(ROOT, 'public/js/ui.js'), 'utf8');
+  const native = fs.readFileSync(path.join(ROOT, 'public/js/native.js'), 'utf8');
+  // unreadBarShow reads the drawer state off the real DOM; the offline half
+  // stands in a fake body whose class list the drawer checks below drive.
+  const bodyClasses = new Set();
+  global.document = {
+    body: { classList: {
+      add: (c) => bodyClasses.add(c),
+      remove: (c) => bodyClasses.delete(c),
+      contains: (c) => bodyClasses.has(c),
+    } },
+  };
   const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
 
   console.log('\n[A1] the bar quotes the pre-stamp snapshot, and only for the open chat');
@@ -141,6 +165,22 @@ function clientChecks() {
   unreadBarShow('dm', 't1', { count: 2, since });
   check(!bar.classList.contains('hidden') && /^2 new messages since /.test(text.textContent),
     'the open DM paints', text.textContent);
+
+  console.log('\n[A1b] the bar never paints over the phone nav drawer');
+  unreadBarHide();
+  bodyClasses.add('nav-open'); // the drawer covers the conversation
+  unreadBarShow('dm', 't1', { count: 2, since });
+  check(bar.classList.contains('hidden'),
+    'no bar over the DM list, even for the open conversation');
+  MS.view = 'server'; MS.channelId = 'c1';
+  unreadBarShow('server', 'c1', { count: 2, since });
+  check(bar.classList.contains('hidden'),
+    'same over the channel list (the screenshot glitch)');
+  bodyClasses.delete('nav-open');
+  // A2 below expects the open DM painted: restore exactly that.
+  MS.view = 'home'; MS.dmThreadId = 't1';
+  unreadBarShow('dm', 't1', { count: 2, since });
+  check(!bar.classList.contains('hidden'), 'closing the drawer restores normal painting');
 
   console.log('\n[A2] Mark as read dismisses it and stamps through the right writer');
   mark.listeners.click();
@@ -200,6 +240,34 @@ function clientChecks() {
     await sleep(30);
     check(apiCalls.length === 1, 'a stamp without onSnap still stamps', apiCalls);
 
+    console.log('\n[A3b] a /read that flew across a dead socket never paints the bar');
+    let responder = null;
+    const gatedApi = () => new Promise((res) => { responder = res; });
+    const { markChannelRead: mcrGated } = chanBuild(gatedApi, () => {}, MS);
+    let dropped = 'unset';
+    mcrGated('s1', 'c10', 0, { onSnap: (u) => { dropped = u; } });
+    await sleep(30); // the timer fired: the POST is in flight
+    MS.connEpoch = (MS.connEpoch || 0) + 1; // the server reloaded mid-flight
+    responder(unreadAnswer);
+    await sleep(30);
+    check(dropped === 'unset', 'channel: the stale snapshot is dropped', dropped);
+    let kept = 'unset';
+    mcrGated('s1', 'c11', 0, { onSnap: (u) => { kept = u; } });
+    await sleep(30);
+    responder(unreadAnswer);
+    await sleep(30);
+    check(kept === unreadAnswer.unread, 'channel: without a disconnect the snapshot still paints', kept);
+    let dmResponder = null;
+    const dmGatedApi = () => new Promise((res) => { dmResponder = res; });
+    const { markDmRead: mdrGated } = dmBuild(dmGatedApi, () => {}, MS);
+    let dmDropped = 'unset';
+    mdrGated('t10', 0, { onSnap: (u) => { dmDropped = u; } });
+    await sleep(30);
+    MS.connEpoch = (MS.connEpoch || 0) + 1;
+    dmResponder(unreadAnswer);
+    await sleep(30);
+    check(dmDropped === 'unset', 'DM: the stale snapshot is dropped too', dmDropped);
+
     console.log('\n[A4] only an OPEN arms the bar');
     check(/unreadBarHide\(\);\s*markChannelRead\(S\.serverId, id, 0, \{ onSnap: \(u\) => unreadBarShow\('server', id, u\) \}\)/.test(servers),
       'selectChannel hides the old bar and arms the new one (servers.js)');
@@ -212,6 +280,22 @@ function clientChecks() {
     check(/markChannelRead\(serverId, channelId, delay = 600, opts = \{\}\)/.test(servers)
       && /markDmRead\(tid, delay = 500, opts = \{\}\)/.test(home),
       'and every old 3-arg call site still works (opts is optional)');
+
+    console.log('\n[A4b] the two glitch guards are wired');
+    check(/document\.body\.classList\.contains\('nav-open'\)/.test(messages),
+      'unreadBarShow never paints over the open nav drawer');
+    check(/S\.channelId = null;\s*(\/\/[^\n]*\n\s*)*unreadBarHide\(\);/.test(servers),
+      'selectServer hides the bar mid-switch (no conversation on screen)');
+    check(/\$\('#btn-menu'\)\.onclick = \(\) => \{[\s\S]*?if \(document\.body\.classList\.contains\('nav-open'\)\) unreadBarHide\(\);/.test(ui),
+      'opening the drawer hides a painted bar (menu button)');
+    check(/function cfOpenNav\(\) \{[^}]*unreadBarHide\(\);/.test(native),
+      'and the back-gesture drawer does too');
+    check(/S\.connEpoch = \(S\.connEpoch \|\| 0\) \+ 1;/.test(socket),
+      'a dead socket bumps the connection epoch (socket.js onclose)');
+    check(/const epoch = S\.connEpoch \|\| 0;/.test(servers) && /\(S\.connEpoch \|\| 0\) === epoch/.test(servers),
+      'markChannelRead drops a snapshot that flew across the gap');
+    check(/const epoch = S\.connEpoch \|\| 0;/.test(home) && /\(S\.connEpoch \|\| 0\) === epoch/.test(home),
+      'markDmRead does the same');
 
     console.log('\n[A5] the server answers with the PRE-stamp snapshot');
     check(/async function chanUnreadSnapshot\(userId, ch\)/.test(server) && /async function dmUnreadSnapshot\(userId, threadId\)/.test(server),
@@ -297,6 +381,7 @@ function clientChecks() {
     check(painted.length === 1 && painted[0][0] === 'dm' && painted[0][1] === 't9' && painted[0][2] === snap,
       'same on the DM surface', painted);
   })();
+  delete global.document; // the stub served the offline half only
 }
 
 // ---------- [B] the API, against a real server ----------

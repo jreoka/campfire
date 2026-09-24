@@ -3847,11 +3847,13 @@ function unreadBarShow(kind, id, unread) {
   const bar = $('#unread-bar');
   if (!bar) return;
   // A stale answer (the reader already moved on) or nothing to say: never paint.
+  // The phone's nav drawer covers the conversation, so a bar painted over the
+  // channel list is the "banner in no chat" glitch — never paint there either.
   const live = kind === 'server'
     ? (S.view === 'server' && S.channelId === id)
     : (S.view === 'home' && S.dmThreadId === id);
   const n = (unread && Number(unread.count)) || 0;
-  if (!live || n < 1) return;
+  if (!live || n < 1 || document.body.classList.contains('nav-open')) return;
   const since = unread.since
     ? new Date(Number(unread.since)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
     : '';
