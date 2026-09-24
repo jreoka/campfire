@@ -423,7 +423,7 @@ function clientChecks() {
     els.set('#messages', msgEl);
     unreadBarShow('server', 'c1', { count: 2, since });
     check(!bar.classList.contains('hidden'), 'setup: the open landing paints the bar');
-    unreadBarTimedDismiss(); // the 5s timer firing, reader still at the bottom
+    unreadBarTimedDismiss(); // the 3s timer firing, reader still at the bottom
     check(bar.classList.contains('hidden'), 'the beat clears a bar whose reader never left the bottom');
     unreadBarShow('server', 'c1', { count: 2, since });
     msgEl.dataset.atBottom = '0'; // scrolled up to read the history instead
@@ -438,8 +438,8 @@ function clientChecks() {
       'every hide path disarms it (a stale timer can never clear a future bar)');
     check(/box\.dataset\.atBottom = '0'; \} catch \{\} \}\s*\n\s*\/\/ The reader left the bottom/.test(messages),
       'the reader scrolling up disarms it too');
-    check(/unreadBarTimedDismiss\(\); \}, 5000\)/.test(messages),
-      'one beat is five seconds');
+    check(/unreadBarTimedDismiss\(\); \}, 3000\)/.test(messages),
+      'one beat is three seconds');
     msgEl.dataset.atBottom = '1';
     unreadBarShow('server', 'c1', { count: 2, since });
     unreadBarDisarmTimer(); // leave no live timer behind the test

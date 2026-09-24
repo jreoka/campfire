@@ -3875,7 +3875,7 @@ function unreadBarAutoDismiss(box) {
 }
 // The open landing puts the reader at the live bottom with the bar freshly
 // painted: they've seen everything it points at, so it's a transient notice,
-// not a chore — one beat to read it, then it clears itself. The fire-time
+// not a chore — one beat (three seconds) to read it, then it clears itself. The fire-time
 // guards are the source of truth (the reader may have scrolled up since, or
 // the conversation changed), so arming is unconditional and every hide path
 // disarms.
@@ -3895,7 +3895,7 @@ function unreadBarTimedDismiss() {
 }
 function unreadBarArmTimer() {
   unreadBarDisarmTimer();
-  unreadBarTimer = setTimeout(() => { unreadBarTimer = 0; unreadBarTimedDismiss(); }, 5000);
+  unreadBarTimer = setTimeout(() => { unreadBarTimer = 0; unreadBarTimedDismiss(); }, 3000);
 }
 function unreadBarShow(kind, id, unread) {
   const bar = $('#unread-bar');
