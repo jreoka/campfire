@@ -1280,6 +1280,9 @@ function watchBottomState(box) {
     if (userUp && drove) {
       box._userUpAt = Date.now();
       if (box.dataset.atBottom !== '0') { try { box.dataset.atBottom = '0'; } catch {} }
+      // The reader left the bottom: the timed notice is over (its fire-time
+      // guard would no-op anyway) and the scroll-back-down rule takes over.
+      try { unreadBarDisarmTimer(); } catch {}
       try { if (typeof maybeLoadOlderMessages === 'function') maybeLoadOlderMessages(box); } catch {}
       return;
     }
@@ -3848,6 +3851,7 @@ function showTyping(userId, name) {
 let unreadBarCtx = null; // 'server:<cid>' | 'dm:<tid>' — what the painted bar belongs to
 function unreadBarHide() {
   unreadBarCtx = null;
+  unreadBarDisarmTimer();
   const bar = $('#unread-bar');
   if (bar) bar.classList.add('hidden');
 }
@@ -3869,6 +3873,30 @@ function unreadBarAutoDismiss(box) {
     unreadBarHide();
   } catch {}
 }
+// The open landing puts the reader at the live bottom with the bar freshly
+// painted: they've seen everything it points at, so it's a transient notice,
+// not a chore — one beat to read it, then it clears itself. The fire-time
+// guards are the source of truth (the reader may have scrolled up since, or
+// the conversation changed), so arming is unconditional and every hide path
+// disarms.
+let unreadBarTimer = 0;
+function unreadBarDisarmTimer() {
+  try { clearTimeout(unreadBarTimer); } catch {}
+  unreadBarTimer = 0;
+}
+function unreadBarTimedDismiss() {
+  try {
+    const box = $('#messages');
+    const bar = $('#unread-bar');
+    if (!bar || bar.classList.contains('hidden') || !unreadBarCtx) return;
+    if (!box || box.dataset.atBottom !== '1') return;
+    unreadBarHide();
+  } catch {}
+}
+function unreadBarArmTimer() {
+  unreadBarDisarmTimer();
+  unreadBarTimer = setTimeout(() => { unreadBarTimer = 0; unreadBarTimedDismiss(); }, 5000);
+}
 function unreadBarShow(kind, id, unread) {
   const bar = $('#unread-bar');
   if (!bar) return;
@@ -3886,6 +3914,7 @@ function unreadBarShow(kind, id, unread) {
   $('#urb-text').textContent = `${n} new message${n === 1 ? '' : 's'}${since ? ' since ' + since : ''}`;
   unreadBarCtx = kind + ':' + id;
   bar.classList.remove('hidden');
+  unreadBarArmTimer();
 }
 (() => {
   const b = $('#urb-mark');

@@ -132,9 +132,9 @@ function clientChecks() {
   // The whole bar module: the helpers plus the Mark-as-read wiring at its end.
   const build = new Function('$', 'S', 'markChannelRead', 'markDmRead',
     messages.slice(messages.indexOf('let unreadBarCtx = null;')) +
-    '\nreturn { unreadBarShow, unreadBarHide, unreadBarAutoDismiss };');
+    '\nreturn { unreadBarShow, unreadBarHide, unreadBarAutoDismiss, unreadBarDisarmTimer, unreadBarTimedDismiss, unreadBarArmTimer };');
   const stamped = [];
-  const { unreadBarShow, unreadBarHide, unreadBarAutoDismiss } = build($, MS,
+  const { unreadBarShow, unreadBarHide, unreadBarAutoDismiss, unreadBarDisarmTimer, unreadBarTimedDismiss } = build($, MS,
     (sid, cid, d) => stamped.push(['server', sid, cid, d]),
     (tid, d) => stamped.push(['dm', tid, d]));
 
@@ -416,6 +416,34 @@ function clientChecks() {
     check(/function unreadBarAutoDismiss\(box\) \{/.test(messages) &&
       /box\.id !== 'messages'/.test(messages) && /unreadBarCtx !== here/.test(messages),
       'the helper only answers for #messages, at the bottom, for the open conversation');
+
+    console.log('\n[A9] the open landing clears itself after a beat (already at the bottom)');
+    MS.view = 'server'; MS.serverId = 's1'; MS.channelId = 'c1'; MS.dmThreadId = null;
+    const msgEl = fakeEl(); msgEl.id = 'messages'; msgEl.dataset = { atBottom: '1' };
+    els.set('#messages', msgEl);
+    unreadBarShow('server', 'c1', { count: 2, since });
+    check(!bar.classList.contains('hidden'), 'setup: the open landing paints the bar');
+    unreadBarTimedDismiss(); // the 5s timer firing, reader still at the bottom
+    check(bar.classList.contains('hidden'), 'the beat clears a bar whose reader never left the bottom');
+    unreadBarShow('server', 'c1', { count: 2, since });
+    msgEl.dataset.atBottom = '0'; // scrolled up to read the history instead
+    unreadBarTimedDismiss();
+    check(!bar.classList.contains('hidden'), 'away from the bottom the timer no-ops (the scroll-back rule owns it)');
+    unreadBarHide();
+    unreadBarTimedDismiss();
+    check(bar.classList.contains('hidden'), 'an already-hidden bar stays hidden, no throw');
+    check(/bar\.classList\.remove\('hidden'\);\s*\n\s*unreadBarArmTimer\(\);/.test(messages),
+      'painting the bar arms the timer');
+    check(/unreadBarCtx = null;\s*\n\s*unreadBarDisarmTimer\(\);/.test(messages),
+      'every hide path disarms it (a stale timer can never clear a future bar)');
+    check(/box\.dataset\.atBottom = '0'; \} catch \{\} \}\s*\n\s*\/\/ The reader left the bottom/.test(messages),
+      'the reader scrolling up disarms it too');
+    check(/unreadBarTimedDismiss\(\); \}, 5000\)/.test(messages),
+      'one beat is five seconds');
+    msgEl.dataset.atBottom = '1';
+    unreadBarShow('server', 'c1', { count: 2, since });
+    unreadBarDisarmTimer(); // leave no live timer behind the test
+    unreadBarHide();
   })();
   delete global.document; // the stub served the offline half only
 }
