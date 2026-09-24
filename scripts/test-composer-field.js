@@ -20,8 +20,8 @@
 //     it used to miss by a few pixels as a flat 46px key.
 //  4. the + menu was a column of bare labels. It is the phone's way into attach
 //     / voice / view-once / story / poll, so it gets icon rows like the ctx
-//     menu — while the emoji and GIF keys ride the bar itself, like the desktop
-//     bar (the phone used to hide them and keep only the + menu).
+//     menu — while the emoji and GIF keys ride the bar's right edge itself,
+//     like the desktop bar (the phone used to hide them entirely).
 //
 // Offline static checks, then the real index.html + styles.css in headless
 // Chrome (skipping without Chrome) for the geometry and the send key, driven
@@ -133,17 +133,24 @@ window.__report = function () {
     insetBg: getComputedStyle(document.documentElement).getPropertyValue('--inset').trim(),
     inputPad: cs('#in-message', 'padding'),
     renderPad: cs('#in-render', 'padding'),
-    // The phone rail's keys: the + menu plus the emoji and GIF keys (the
-    // attach key stays in the menu). The rail's right edge must clear the
-    // field's left padding, or the caret starts under a key.
-    tools: R('#composer-tools'),
+    // The phone rail's keys: the + disc keeps the field's left, the emoji and
+    // GIF keys sit on the field's right, like the desktop bar (the attach key
+    // stays in the menu). Each key is measured on its own — the rail container
+    // is a zero-height strip now — and the right rail must end inside the
+    // field's right padding, or the caret starts under a key.
+    keyEmoji: R('#btn-emoji'),
+    keyGif: R('#btn-gif'),
+    tkeyEmoji: R('#tbtn-emoji'),
+    tkeyGif: R('#tbtn-gif'),
     btnEmoji: cs('#btn-emoji', 'display'),
     btnGif: cs('#btn-gif', 'display'),
     btnAttach: cs('#btn-attach', 'display'),
     inputPadLeft: cs('#in-message', 'paddingLeft'),
+    inputPadRight: cs('#in-message', 'paddingRight'),
     tbtnEmoji: cs('#tbtn-emoji', 'display'),
     tbtnGif: cs('#tbtn-gif', 'display'),
     threadPadLeft: cs('#in-thread', 'paddingLeft'),
+    threadPadRight: cs('#in-thread', 'paddingRight'),
     lead,
     leadTop: +(lead.t - field.t).toFixed(1),
     leadBottom: +(field.b - lead.b).toFixed(1),
@@ -266,9 +273,10 @@ function main() {
 
   console.log('\n[2] the field\'s own controls are wired and styled');
   check(/align-items:flex-end/.test(ruleBody('#composer') || ''), '#composer bottom-aligns its children (send key stays on the bar when the box grows)');
-  // The two offsets are the centred rest position for a 32px control inside the
-  // one-line pill — (pill height - 32) / 2 — so they move with --field-pad-y and
-  // must agree with each other. [5]/[7] measure the result.
+  // bottom:9.6px is the centred rest position for the 32px + disc inside the
+  // one-line pill — (pill height - 32) / 2 — so it moves with --field-pad-y,
+  // and the tool rail sits on the same line. The phone's 44px emoji/GIF keys
+  // carry their own -6px nudge so they centre too. [5]/[7] measure the result.
   const plusBottom = /bottom:([\d.]+)px/.exec(ruleBody('#btn-plus,#tbtn-plus') || '');
   const toolsBottom = /bottom:([\d.]+)px/.exec(ruleFor('#composer-tools')?.body || '');
   check(!!plusBottom && Number(plusBottom[1]) > 2, 'the leading + rides the bottom of the box', plusBottom && plusBottom[1]);
@@ -405,29 +413,44 @@ function main() {
     check(/inline-flex/.test(phone.tbtnMore) && phone.tbtnPlus === 'none' && phone.tbtnAttach === 'none',
       'the phone thread bar keeps the + menu too, and its attach key stays in it',
       { more: phone.tbtnMore, plus: phone.tbtnPlus, attach: phone.tbtnAttach });
-    // The emoji and GIF keys ride the phone bar itself now, like the desktop
-    // bar — they used to be hidden and reachable only through the + menu.
+    // The emoji and GIF keys sit on the field's right on the phone now, like
+    // the desktop bar; the + disc keeps the left.
     check(/inline-flex/.test(phone.btnEmoji) && /inline-flex/.test(phone.btnGif) && phone.btnAttach === 'none',
-      'the phone bar carries the emoji and GIF keys beside the + menu (attach stays a menu row)',
+      'the phone bar carries the emoji and GIF keys on the field\'s right (attach stays a menu row)',
       { emoji: phone.btnEmoji, gif: phone.btnGif, attach: phone.btnAttach });
     check(/inline-flex/.test(phone.tbtnEmoji) && /inline-flex/.test(phone.tbtnGif),
       'and the thread bar carries them too',
       { emoji: phone.tbtnEmoji, gif: phone.tbtnGif });
-    // The rail (left:.4rem; 44px emoji + 44px GIF + 32px + disc, .15rem gaps =
-    // 131.2px) has to end before the text starts: 8.75rem = 140px of left
-    // padding on the field and its backdrop, on both bars.
-    check(phone.inputPadLeft === '140px' && phone.renderPad === phone.inputPad,
-      'the field and its backdrop leave 140px on the left for the three-key rail',
-      { padLeft: phone.inputPadLeft });
-    check(!!phone.tools && (phone.tools.r - phone.field.l) <= parseFloat(phone.inputPadLeft),
-      'and the rail really ends inside that padding',
-      { railRight: phone.tools && +(phone.tools.r - phone.field.l).toFixed(1), padLeft: phone.inputPadLeft });
-    check(phone.threadPadLeft === '140px' && phone.threadRenderPad === phone.threadInputPad,
+    const ke = phone.keyEmoji || {}, kg = phone.keyGif || {}, kf = phone.field || {};
+    check(Math.abs(ke.w - 44) <= 0.5 && Math.abs(kg.w - 44) <= 0.5,
+      'both keys are the 44px thumb size',
+      { emojiW: ke.w, gifW: kg.w });
+    check(Math.abs((kf.r - kg.r) - 6.4) <= 1,
+      'the GIF key hugs the field\'s right padding edge (right:.4rem)',
+      { gap: +(kf.r - kg.r).toFixed(1) });
+    check(Math.abs((kg.l - ke.r) - 2.4) <= 1,
+      'the emoji key sits left of it with the rail\'s .15rem gap',
+      { gap: +(kg.l - ke.r).toFixed(1) });
+    check(Math.abs((ke.t - kf.t) - (kf.b - ke.b)) <= 2 && Math.abs((kg.t - kf.t) - (kf.b - kg.b)) <= 2,
+      'and both are centred on the one-line field, like the + disc',
+      { emoji: [+(ke.t - kf.t).toFixed(1), +(kf.b - ke.b).toFixed(1)], gif: [+(kg.t - kf.t).toFixed(1), +(kf.b - kg.b).toFixed(1)] });
+    // Right rail: 6.4 + 44 + 2.4 + 44 = 96.8px. 6.6rem = 105.6px of right
+    // padding keeps the same ~9px clearance the left's 2.95rem always had, so
+    // no caret or glyph starts under a key. The left is back to just the +.
+    check(phone.inputPadRight === '105.6px' && phone.inputPadLeft === '47.2px' && phone.renderPad === phone.inputPad,
+      'the field and its backdrop leave 6.6rem on the right, 2.95rem on the left',
+      { padRight: phone.inputPadRight, padLeft: phone.inputPadLeft });
+    check((kf.r - ke.l) <= parseFloat(phone.inputPadRight),
+      'and the right rail really ends inside that padding',
+      { railWidth: +(kf.r - ke.l).toFixed(1), padRight: phone.inputPadRight });
+    const te = phone.tkeyEmoji || {}, tg = phone.tkeyGif || {}, tfd = phone.threadField || {};
+    check(phone.threadPadRight === '105.6px' && phone.threadPadLeft === '47.2px' && phone.threadRenderPad === phone.threadInputPad,
       'the thread bar leaves the same room',
-      { padLeft: phone.threadPadLeft });
-    check(!!phone.threadTools && (phone.threadTools.r - phone.threadField.l) <= parseFloat(phone.threadPadLeft),
-      'and its rail ends inside it too',
-      { railRight: phone.threadTools && +(phone.threadTools.r - phone.threadField.l).toFixed(1), padLeft: phone.threadPadLeft });
+      { padRight: phone.threadPadRight, padLeft: phone.threadPadLeft });
+    check(Math.abs((tfd.r - tg.r) - 6.4) <= 1 && Math.abs((tg.l - te.r) - 2.4) <= 1
+      && Math.abs((te.t - tfd.t) - (tfd.b - te.b)) <= 2 && (tfd.r - te.l) <= parseFloat(phone.threadPadRight),
+      'and its keys sit the same way',
+      { gifGap: +(tfd.r - tg.r).toFixed(1), keyGap: +(tg.l - te.r).toFixed(1) });
 
     console.log('\n[6] the send key reads the box');
     check(phone.empty.off && phone.empty.disabled, 'empty box: muted and not clickable', phone.empty);

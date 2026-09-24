@@ -3190,25 +3190,34 @@ body{touch-action:manipulation}
      smaller than the field it sits in (a 44px disc in a 47px box has nowhere to
      sit) and gets its touch target from the ::after hit box below instead. */
   #composer .tool-btn:not(#btn-plus):not(#btn-more),#composer .gif-btn{min-height:44px;min-width:44px;justify-content:center}
-  #composer-tools{right:auto;left:.4rem}
-  /* The rail holds three keys now — the 44px emoji and GIF keys plus the 32px
-     + disc, with .15rem gaps, starting at left:.4rem: 6.4 + 44 + 2.4 + 44 + 2.4
-     + 32 = 131.2px. 8.75rem (140px) keeps the same ~9px clearance the
-     single-key 2.95rem had, so no caret or glyph starts under a key. */
-  #composer-box #in-message{padding-right:.5rem;padding-left:8.75rem}
-  #in-render{padding:var(--field-pad-y) .5rem var(--field-pad-y) 8.75rem}
-  /* The attach key stays in the + menu (its row is still there); the emoji and
-     GIF keys ride the bar itself now, like the desktop bar. */
+  /* The + disc keeps the field's left; the emoji and GIF keys move to the
+     field's right, like the desktop bar. The rail spans the field and each key
+     carries its own bottom offset, so every size stays centred on a one-line
+     field (the 32px disc at 9.6px, the 44px keys at 3.6px) and rides the bar
+     when the box grows. */
+  #composer-tools{left:.4rem;display:block}
+  #btn-more{position:absolute;left:0;bottom:0}
+  #btn-gif{position:absolute;right:0;bottom:-6px}
+  #btn-emoji{position:absolute;right:calc(44px + .15rem);bottom:-6px}
+  /* Right rail: 6.4 + 44 + 2.4 + 44 = 96.8px. 6.6rem (105.6px) keeps the same
+     ~9px clearance the left's 2.95rem always had, so no caret or glyph starts
+     under a key. The left keeps just the + disc: 2.95rem again. */
+  #composer-box #in-message{padding-right:6.6rem;padding-left:2.95rem}
+  #in-render{padding:var(--field-pad-y) 6.6rem var(--field-pad-y) 2.95rem}
+  /* The attach key stays in the + menu (its row is still there). */
   #btn-attach{display:none}
   #btn-plus{display:none}
   #btn-more{display:inline-flex;align-items:center;justify-content:center}
   /* The thread bar is the chat bar's own version, so the phone treatment is the
-     same one: the + menu moves to the field's left, with the emoji and GIF
-     keys beside it. */
+     same one: the + disc keeps the field's left, the emoji and GIF keys move
+     to the field's right. */
   #thread-composer .tool-btn:not(#tbtn-plus):not(#tbtn-more),#thread-composer .gif-btn{min-height:44px;min-width:44px;justify-content:center}
-  #thread-composer-tools{right:auto;left:.4rem}
-  #thread-composer-box #in-thread{padding-right:.5rem;padding-left:8.75rem}
-  #thread-render{padding:var(--field-pad-y) .5rem var(--field-pad-y) 8.75rem}
+  #thread-composer-tools{left:.4rem;display:block}
+  #tbtn-more{position:absolute;left:0;bottom:0}
+  #tbtn-gif{position:absolute;right:0;bottom:-6px}
+  #tbtn-emoji{position:absolute;right:calc(44px + .15rem);bottom:-6px}
+  #thread-composer-box #in-thread{padding-right:6.6rem;padding-left:2.95rem}
+  #thread-render{padding:var(--field-pad-y) 6.6rem var(--field-pad-y) 2.95rem}
   #tbtn-attach{display:none}
   #tbtn-plus{display:none}
   #tbtn-more{display:inline-flex;align-items:center;justify-content:center}
