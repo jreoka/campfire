@@ -2023,7 +2023,11 @@ function messageEl(m, opts = {}) {
     inner += `<div class="edit-box"><textarea id="edit-area" maxlength="5000">${esc(m.content)}</textarea>`
       + (eatts.length ? `<div class="edit-atts">` + eatts.map((a) => `<span class="edit-att">${a.kind === 'image' && a.scan !== 'infected' ? `<img src="${esc(a.url)}" alt="" loading="lazy" />` : ''}<span class="edit-att-name">${esc(a.name)}${a.scan === 'infected' ? ' (removed: virus detected)' : ''}</span><button type="button" class="mini edit-att-x" data-act="edit-unattach" data-aid="${esc(a.id)}" title="Remove attachment">✕</button></span>`).join('') + `</div>` : '')
       + `<div class="row"><button class="btn small primary" data-act="edit-save">Save</button><button class="btn small" data-act="edit-cancel">Cancel</button></div></div>`;
-  } else if (m.content) {
+  } else if (m.content && !m.viewOnce) {
+    // A view-once caption is part of the story, not the chat: it renders under
+    // the media in the one-shot viewer (like a story caption) instead of as a
+    // text bubble attached to the card. `content` is still stored for the
+    // viewer's caption, push notifications and the DM list preview.
     const big = isBigEmoji(m.content) && !m.attachments?.length;
     inner += `<div class="text${big ? ' bigemoji' : ''}">${renderRich(m.content, { authorId: m.user && m.user.id })}${grouped && m.edited ? ' <span class="edited">(edited)</span>' : ''}</div>`;
     if (!big && typeof linkEmbedsHTML === 'function') inner += linkEmbedsHTML(m.content);
