@@ -906,7 +906,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
    metrics: this is why the composer shows a dimmed `#` run instead. */
 #in-render .md-h,#thread-render .md-h{font-size:inherit;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:var(--muted)}
 #in-render a,#thread-render a{color:var(--accent-hover)}
-#in-message::placeholder,#in-thread::placeholder{color:var(--muted)}
+#in-message::placeholder,#in-thread::placeholder{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 #members{width:244px;background:var(--panel);border-left:1px solid var(--line-soft);overscroll-behavior:contain;flex-shrink:0;order:5;display:flex;flex-direction:column;min-height:0}
 /* The collapsed members bar: gone from the layout entirely, so the chat and the
@@ -2580,7 +2580,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
    and the fold, and the spinner plus the % already say it. */
 #thread-upload-list .up-card,#thread-attach-preview .att-chip{max-width:100%}
 #thread-upload-list .up-hverb{display:none}
-#in-thread::placeholder{color:var(--muted)}
+#in-thread::placeholder{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:1100px){
   #thread-panel{position:fixed;top:var(--safe-t);bottom:var(--safe-b);right:0;z-index:40;border-left:1px solid var(--line)}
 }

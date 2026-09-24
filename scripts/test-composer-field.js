@@ -319,6 +319,18 @@ function main() {
   check(/#mention-pop,#chan-pop\{bottom:calc\(var\(--composer-h\) \+ var\(--strip-h\) \+ min\(var\(--safe-b\),\.72rem\)\)\}/.test(css),
     'landscape: the @/channel popups anchor above the lowered composer');
 
+  console.log('\n[4c] the placeholder truncates instead of wrapping');
+  // On a narrow bar "Message #general" used to wrap onto two lines, and the
+  // second line fell off the one-line box. It now stays on one line and takes
+  // an ellipsis, on both bars.
+  const phRule = ruleFor('#in-message::placeholder');
+  check(!!phRule && /#in-thread::placeholder/.test(phRule.sel),
+    'one rule covers both bars\' placeholders', phRule && phRule.sel);
+  check(/white-space:nowrap/.test((phRule || {}).body || ''),
+    'the placeholder never wraps to a second line');
+  check(/text-overflow:ellipsis/.test((phRule || {}).body || '') && /overflow:hidden/.test((phRule || {}).body || ''),
+    'and overlong text is cut with an ellipsis instead of falling off the box');
+
   const chrome = findChrome();
   if (!chrome) return skip('no Chrome/Edge found (set CHROME_PATH)');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-field-html-'));
