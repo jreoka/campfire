@@ -57,12 +57,12 @@ check(
 // masked: the server push and the in-app background notification are pinned
 // under [9] and [10] below instead.)
 
-// [8] the DM sidebar preview no longer leaks a view-once caption to the
-// recipient (the sender still sees their own words).
+// [8] the DM sidebar preview never shows a view-once caption — the generic
+// line for the recipient and the sender alike.
 const homeSrc = fs.readFileSync(path.join(ROOT, 'public/js/home.js'), 'utf8');
 check(
-  /t\.last\.viewOnce && !t\.last\.mine \? 'Sent a view-once'/.test(homeSrc),
-  'sidebar preview masks a view-once caption for the recipient',
+  /t\.last\.viewOnce \? 'Sent a view-once'/.test(homeSrc),
+  'sidebar preview masks a view-once caption for everyone',
 );
 check(
   /viewOnce: !!last\.view_once, mine: userId \? last\.user_id === userId : false/.test(serverSrc),

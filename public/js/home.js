@@ -595,10 +595,10 @@ function dmRowEl(t) {
   // Attachment-only messages still read as a sentence in the preview
   // ("Cross: Sent an attachment") instead of trailing off after the colon.
   // A view-once caption belongs to the one-shot viewer (under the media), so the
-  // sidebar must not leak it to the recipient — show the generic line instead.
-  // The sender still sees their own words.
+  // sidebar never shows it — the generic line for the recipient and the sender
+  // alike.
   const lastText = t.last
-    ? (t.last.viewOnce && !t.last.mine ? 'Sent a view-once'
+    ? (t.last.viewOnce ? 'Sent a view-once'
       : (String(t.last.content || '').trim() || ((t.last.attachments || 0) > 0 ? 'Sent an attachment' : '')))
     : '';
   const sub = inThis ? '<span class="dm-incall">In call — you</span>'
