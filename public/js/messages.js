@@ -3873,12 +3873,13 @@ function unreadBarAutoDismiss(box) {
     unreadBarHide();
   } catch {}
 }
-// The open landing puts the reader at the live bottom with the bar freshly
-// painted: they've seen everything it points at, so it's a transient notice,
-// not a chore — one beat (three seconds) to read it, then it clears itself. The fire-time
-// guards are the source of truth (the reader may have scrolled up since, or
-// the conversation changed), so arming is unconditional and every hide path
-// disarms.
+// A paint is a transient notice, not a chore — one beat (three seconds) to
+// read it, then it clears itself if the reader is at the live bottom. The
+// fire-time guards are the source of truth (the reader may have scrolled up
+// since, or the conversation changed), so arming is unconditional and every
+// hide path disarms. The timer is also the backstop for a programmatic return
+// to the bottom: jump-to-present pins atBottom before its scroll events, so
+// the scroll transition rule never fires there.
 let unreadBarTimer = 0;
 function unreadBarDisarmTimer() {
   try { clearTimeout(unreadBarTimer); } catch {}
@@ -3897,7 +3898,7 @@ function unreadBarArmTimer() {
   unreadBarDisarmTimer();
   unreadBarTimer = setTimeout(() => { unreadBarTimer = 0; unreadBarTimedDismiss(); }, 3000);
 }
-function unreadBarShow(kind, id, unread) {
+function unreadBarShow(kind, id, unread, opts) {
   const bar = $('#unread-bar');
   if (!bar) return;
   // A stale answer (the reader already moved on) or nothing to say: never paint.
@@ -3908,6 +3909,15 @@ function unreadBarShow(kind, id, unread) {
     : (S.view === 'home' && S.dmThreadId === id);
   const n = (unread && Number(unread.count)) || 0;
   if (!live || n < 1 || document.body.classList.contains('nav-open')) return;
+  // The open landing drops the reader at the live bottom with everything the
+  // bar points at already in view: painting it there is pure noise (it would
+  // clear itself three seconds later anyway), so it never comes up. A
+  // deliberate mark-unread still paints at once — that paint is the action's
+  // feedback, and the beat below clears it.
+  if (opts && opts.fromOpen) {
+    const box = $('#messages');
+    if (box && box.dataset.atBottom === '1') return;
+  }
   const since = unread.since
     ? new Date(Number(unread.since)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
     : '';

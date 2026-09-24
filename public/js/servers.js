@@ -640,7 +640,7 @@ async function selectChannel(id, opts = {}) {
   // own stamp answers with the pre-stamp unread snapshot — that is what arms the
   // unread bar ("N new messages since …"); any other stamp leaves it alone.
   unreadBarHide();
-  markChannelRead(S.serverId, id, 0, { onSnap: (u) => unreadBarShow('server', id, u) });
+  markChannelRead(S.serverId, id, 0, { onSnap: (u) => unreadBarShow('server', id, u, { fromOpen: true }) });
   rememberView();
   S.callOpen = false;
   // Mobile: tapping a channel slides the drawer away to reveal the chat.

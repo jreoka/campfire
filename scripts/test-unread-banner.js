@@ -111,6 +111,7 @@ function clientChecks() {
   const server = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
   const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
   const ui = fs.readFileSync(path.join(ROOT, 'public/js/ui.js'), 'utf8');
+  const actions = fs.readFileSync(path.join(ROOT, 'public/js/actions.js'), 'utf8');
   const native = fs.readFileSync(path.join(ROOT, 'public/js/native.js'), 'utf8');
   // unreadBarShow reads the drawer state off the real DOM; the offline half
   // stands in a fake body whose class list the drawer checks below drive.
@@ -132,9 +133,9 @@ function clientChecks() {
   // The whole bar module: the helpers plus the Mark-as-read wiring at its end.
   const build = new Function('$', 'S', 'markChannelRead', 'markDmRead',
     messages.slice(messages.indexOf('let unreadBarCtx = null;')) +
-    '\nreturn { unreadBarShow, unreadBarHide, unreadBarAutoDismiss, unreadBarDisarmTimer, unreadBarTimedDismiss, unreadBarArmTimer };');
+    '\nreturn { unreadBarShow, unreadBarHide, unreadBarAutoDismiss, unreadBarDisarmTimer, unreadBarTimedDismiss, unreadBarArmTimer, getCtx: () => unreadBarCtx };');
   const stamped = [];
-  const { unreadBarShow, unreadBarHide, unreadBarAutoDismiss, unreadBarDisarmTimer, unreadBarTimedDismiss } = build($, MS,
+  const { unreadBarShow, unreadBarHide, unreadBarAutoDismiss, unreadBarDisarmTimer, unreadBarTimedDismiss, getCtx } = build($, MS,
     (sid, cid, d) => stamped.push(['server', sid, cid, d]),
     (tid, d) => stamped.push(['dm', tid, d]));
 
@@ -269,9 +270,9 @@ function clientChecks() {
     check(dmDropped === 'unset', 'DM: the stale snapshot is dropped too', dmDropped);
 
     console.log('\n[A4] only an OPEN arms the bar');
-    check(/unreadBarHide\(\);\s*markChannelRead\(S\.serverId, id, 0, \{ onSnap: \(u\) => unreadBarShow\('server', id, u\) \}\)/.test(servers),
+    check(/unreadBarHide\(\);\s*markChannelRead\(S\.serverId, id, 0, \{ onSnap: \(u\) => unreadBarShow\('server', id, u, \{ fromOpen: true \}\) \}\)/.test(servers),
       'selectChannel hides the old bar and arms the new one (servers.js)');
-    check(/unreadBarHide\(\);\s*markDmRead\(id, 0, \{ onSnap: \(u\) => unreadBarShow\('dm', id, u\) \}\)/.test(pins),
+    check(/unreadBarHide\(\);\s*markDmRead\(id, 0, \{ onSnap: \(u\) => unreadBarShow\('dm', id, u, \{ fromOpen: true \}\) \}\)/.test(pins),
       'selectDmThread does the same (pins.js)');
     check(/markChannelRead\(m\.serverId, m\.channelId\);/.test(socket),
       'a message landing in the open chat stamps WITHOUT arming (no bar on every message)', 'socket.js');
@@ -444,6 +445,28 @@ function clientChecks() {
     unreadBarShow('server', 'c1', { count: 2, since });
     unreadBarDisarmTimer(); // leave no live timer behind the test
     unreadBarHide();
+
+    console.log('\n[A10] the open landing never paints at the bottom');
+    MS.view = 'server'; MS.serverId = 's1'; MS.channelId = 'c1'; MS.dmThreadId = null;
+    msgEl.dataset.atBottom = '1';
+    unreadBarShow('server', 'c1', { count: 3, since }, { fromOpen: true });
+    check(bar.classList.contains('hidden'), 'open at the bottom: no banner comes up');
+    check(!getCtx(), '...and nothing is armed behind it');
+    msgEl.dataset.atBottom = '0'; // a deep link that lands scrolled up
+    unreadBarShow('server', 'c1', { count: 3, since }, { fromOpen: true });
+    check(!bar.classList.contains('hidden'), 'open away from the bottom still paints');
+    unreadBarDisarmTimer(); unreadBarHide();
+    msgEl.dataset.atBottom = '1';
+    unreadBarShow('server', 'c1', { count: 3, since }); // a deliberate mark-unread
+    check(!bar.classList.contains('hidden'), 'a deliberate mark-unread still paints at once');
+    check(getCtx() === 'server:c1', '...for this conversation');
+    unreadBarDisarmTimer(); unreadBarHide();
+    check(/onSnap: \(u\) => unreadBarShow\('server', id, u, \{ fromOpen: true \}\)/.test(servers),
+      'the channel open passes fromOpen');
+    check(/onSnap: \(u\) => unreadBarShow\('dm', id, u, \{ fromOpen: true \}\)/.test(pins),
+      'the DM open passes fromOpen');
+    check(/unreadBarShow\(r\.kind === 'dm' \? 'dm' : 'server', r\.kind === 'dm' \? r\.threadId : r\.channelId, r\.snapshot\)/.test(actions),
+      'the mark-unread path keeps its at-once paint (no fromOpen)');
   })();
   delete global.document; // the stub served the offline half only
 }
