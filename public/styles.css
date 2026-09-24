@@ -3803,10 +3803,22 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
    an empty <video> makes mobile browsers paint their own grey play-button
    placeholder. While it loads, the video stays hidden and a spinner sits in
    its place — on the hero card and on the badge ring alike. */
-.st-vid-loading{position:relative}
-.st-vid-loading video{visibility:hidden}
-.st-vid-loading::after{content:'';position:absolute;inset:0;margin:auto;width:26px;height:26px;border-radius:50%;border:3px solid rgba(255,255,255,.16);border-top-color:rgba(255,255,255,.85);animation:up-spin .8s linear infinite;pointer-events:none;z-index:1}
-.sp-hero-badge .st-vid-loading::after{width:18px;height:18px;border-width:2.5px}
+.st-loading{position:relative}
+/* The real media crossfades in over the blur-up placeholder (see
+   storyThumbBlur): opacity rides the settle, transform rides along so
+   .sp-card-media keeps its own hover zoom — transition is not additive, one
+   rule would eat the other. */
+.st-real{transition:opacity .25s ease}
+.st-loading .st-real{opacity:0}
+/* Blur-up placeholder: a tiny derived still of the story, painted blurred
+   behind the spinner while the real media loads. Scaled past its own box so
+   the blur's transparent fringe never shows; hosts clip it (overflow:hidden). */
+.st-blur{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:blur(18px) saturate(1.25);transform:scale(1.12);pointer-events:none}
+.st-loading::after{content:'';position:absolute;inset:0;margin:auto;width:26px;height:26px;border-radius:50%;border:3px solid rgba(255,255,255,.16);border-top-color:rgba(255,255,255,.85);animation:up-spin .8s linear infinite;pointer-events:none;z-index:1}
+.sp-hero-badge .st-loading::after{width:18px;height:18px;border-width:2.5px}
+/* The badge ring is a circle: the blur wears the ring thumbnail's geometry,
+   with a gentler blur and no scale (nothing clips the fringe on a circle). */
+.sp-hero-badge .st-blur{inset:-2px;width:calc(100% + 4px);height:calc(100% + 4px);border-radius:50%;transform:none;filter:blur(10px) saturate(1.25)}
 .sp-hero-in{position:relative;display:flex;align-items:center;gap:.9rem;flex-wrap:wrap;width:100%;min-width:0}
 .sp-hero-badge{position:relative;width:56px;height:56px;flex-shrink:0;border-radius:50%;background:var(--panel-3);color:var(--muted);display:inline-flex;align-items:center;justify-content:center}
 .sp-hero-badge>svg{width:22px;height:22px}
@@ -3835,7 +3847,7 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
 /* Same single-paint rule as the hero (see above): the card's bottom scrim is a
    mask on the photo, over the scrim's own base colour. */
 .sp-card:has(> .sp-card-media){background:#05070c}
-.sp-card-media{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;transition:transform .25s ease}
+.sp-card-media{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;transition:transform .25s ease,opacity .25s ease}
 .sp-card-media>.st-thumb-media{border-radius:0;width:100%;height:100%;object-fit:cover;display:block}
 .sp-card-media{-webkit-mask-image:linear-gradient(to top,rgba(0,0,0,.08) 4%,rgba(0,0,0,.65) 42%,rgba(0,0,0,.95) 70%);mask-image:linear-gradient(to top,rgba(0,0,0,.08) 4%,rgba(0,0,0,.65) 42%,rgba(0,0,0,.95) 70%)}
 .sp-card:hover .sp-card-media{transform:scale(1.04)}

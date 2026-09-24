@@ -263,6 +263,7 @@ function deleteUploaded(url) {
   // A derived preview (thumbs/files/…) is an artifact of the source, so it goes
   // with it instead of lingering as an orphan the sweep never lists.
   try { drop(key && require('./media-compress').thumbKeyFor(key)); } catch {}
+  try { drop(key && require('./media-compress').posterKeyFor(key)); } catch {}
   // Always attempt the local unlink too: harmless when absent, and covers
   // files still on disk from before an S3 migration.
   drop(key);
@@ -479,6 +480,25 @@ app.use('/uploads/thumbs', async (req, res, next) => {
     const ready = await mc.ensureThumb(src, { waitMs: THUMB_WAIT_MS });
     if (!ready) {
       // Never cached: the next open must be able to get the real preview.
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(404).json({ error: 'not_found' });
+    }
+    return next();
+  } catch { return next(); }
+});
+// Derived story-video posters (see media-compress.js): one tiny frame a touch
+// into the file, minted on first request exactly like the thumbs above — the
+// Stories page paints it blurred behind the spinner while the video loads.
+app.use('/uploads/posters', async (req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  try {
+    const key = storage.s3KeyFromUrl(String(req.originalUrl || '').split('?')[0]);
+    const mc = require('./media-compress');
+    const src = key && mc.posterSourceKey(key);
+    if (!src) return next();
+    const ready = await mc.ensurePoster(src, { waitMs: THUMB_WAIT_MS });
+    if (!ready) {
+      // Never cached: the next open must be able to get the real poster.
       res.setHeader('Cache-Control', 'no-store');
       return res.status(404).json({ error: 'not_found' });
     }

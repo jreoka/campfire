@@ -1219,6 +1219,125 @@ async function encodeThumb(srcKey, tkey) {
   }
 }
 
+// ---------- story-video posters (posters/) ----------
+// The blur-up placeholder behind a video story's loading spinner (see
+// storyThumbBlur, public/js/stories.js): one tiny frame a touch into the file,
+// always shown blurred, so it only has to carry colour and composition.
+// Deliberately NOT part of the thumbs/ pipeline above: thumbs are 640px chat
+// tiles with a bucket-scan backfill, and video was excluded from them on
+// purpose (a still tile is not what the chat wants for a moving picture).
+// Posters are minted on first request only — no backfill — through the same
+// encode lock and the same wait-then-404 contract as thumbs.
+const POSTER_DIR = 'posters/';
+const POSTER_EXT = '.webp';
+const POSTER_PX = 320; // long side: it is only ever painted blurred
+const POSTER_Q = 60;
+const POSTER_WAIT = Symbol('poster_wait');
+const POSTER_RETRY_MS = 10 * 60 * 1000;
+const POSTER_VIDEO_EXTS = new Set(['.mp4', '.m4v', '.mov', '.webm']);
+
+// 'files/abc.mp4' -> 'posters/files/abc.mp4.webp'. Null for anything that is
+// not a chat/DM upload or not a video.
+function posterKeyFor(srcKey) {
+  const key = String(srcKey || '');
+  if (!key.startsWith('files/')) return null;
+  if (key.includes('..') || /[\0]/.test(key)) return null;
+  if (!/^[A-Za-z0-9._/-]+$/.test(key)) return null;
+  if (!POSTER_VIDEO_EXTS.has(extOf(key))) return null;
+  return POSTER_DIR + key + POSTER_EXT;
+}
+
+// The inverse, with a round-trip check so a hand-made posters/ key can never
+// name a source the forward direction would not have produced.
+function posterSourceKey(posterKey) {
+  const key = String(posterKey || '');
+  if (!key.startsWith(POSTER_DIR) || !key.endsWith(POSTER_EXT)) return null;
+  const src = key.slice(POSTER_DIR.length, -POSTER_EXT.length);
+  return posterKeyFor(src) === key ? src : null;
+}
+
+const posterHave = new Set();   // srcKey -> poster verified this process
+const posterTried = new Map();  // srcKey -> when a mint was refused (short-lived)
+const posterJobs = new Map();   // srcKey -> in-flight Promise<posterKey|null>
+
+function postersPossible() {
+  return THUMB_ENABLED && checkFfmpeg() && probeEncoders().webp;
+}
+
+// Same contract as ensureThumb: bounded wait, then null, and the mint finishes
+// behind the response for the next open.
+async function ensurePoster(srcKey, opts) {
+  const pkey = posterKeyFor(srcKey);
+  if (!pkey || !postersPossible()) return null;
+  if (posterHave.has(srcKey)) return pkey;
+  const triedAt = posterTried.get(srcKey);
+  if (triedAt && now() - triedAt < POSTER_RETRY_MS) return null;
+  let job = posterJobs.get(srcKey);
+  if (!job) {
+    job = mintPoster(srcKey, pkey).finally(() => posterJobs.delete(srcKey));
+    posterJobs.set(srcKey, job);
+  }
+  const waitMs = Math.max(0, Number(opts && opts.waitMs) || 0);
+  if (!waitMs) return job;
+  const load = compressLoad();
+  if (load.active >= load.concurrency || load.queued > 0) return null;
+  const raced = await Promise.race([
+    job,
+    new Promise((resolve) => { const t = setTimeout(() => resolve(POSTER_WAIT), waitMs); try { t.unref(); } catch {} }),
+  ]);
+  return raced === POSTER_WAIT ? null : raced;
+}
+
+async function mintPoster(srcKey, pkey) {
+  try {
+    if (!(await keyExists(pkey))) {
+      const ok = await withCompressLock(() => encodePoster(srcKey, pkey));
+      if (!ok) { posterTried.set(srcKey, now()); return null; }
+    }
+    posterHave.add(srcKey);
+    posterTried.delete(srcKey);
+    return pkey;
+  } catch (e) {
+    warn('poster failed for ' + srcKey + ': ' + String((e && e.message) || e).slice(0, 140));
+    posterTried.set(srcKey, now());
+    return null;
+  }
+}
+
+async function encodePoster(srcKey, pkey) {
+  const rand = crypto.randomBytes(8).toString('hex');
+  const tmpIn = path.join(os.tmpdir(), `cf-poster-in-${rand}${extOf(srcKey) || '.bin'}`);
+  const tmpOut = path.join(os.tmpdir(), `cf-poster-out-${rand}${POSTER_EXT}`);
+  try {
+    await downloadToTemp(srcKey, tmpIn);
+    const inStat = await fs.promises.stat(tmpIn).catch(() => null);
+    if (!inStat || !inStat.size) return false;
+    // -ss before -i: a fast seek a touch into the file. Phone video frame 0 is
+    // often black (the client's thumbnails seek to 0.06 for the same reason),
+    // and a black blur is no placeholder at all.
+    const box = `scale='min(${POSTER_PX},iw)':'min(${POSTER_PX},ih)':force_original_aspect_ratio=decrease`;
+    const r = await runFfmpeg([
+      '-hide_banner', '-loglevel', 'error', '-y', '-ss', '0.1', '-i', tmpIn, '-threads', '1', '-map_metadata', '-1', '-an',
+      '-vf', box,
+      '-c:v', 'libwebp', '-quality', String(POSTER_Q), '-frames:v', '1', tmpOut,
+    ]);
+    if (!r.ok) {
+      const err = String(r.error || 'encode_failed').slice(0, 160);
+      stats.errors++;
+      stats.lastError = { key: srcKey, error: 'poster: ' + err.slice(0, 120), at: now() };
+      warn('poster encode failed, keeping original:', srcKey, err);
+      return false;
+    }
+    const outStat = await fs.promises.stat(tmpOut).catch(() => null);
+    if (!outStat || !outStat.size) return false;
+    await replaceBytes(pkey, tmpOut, 'image/webp');
+    return true;
+  } finally {
+    try { await fs.promises.unlink(tmpIn); } catch {}
+    try { await fs.promises.unlink(tmpOut); } catch {}
+  }
+}
+
 const cacheBust = (cleanUrl) => `${cleanUrl}?v=${Date.now().toString(36)}`;
 // How the job line reports the size move. A normalized conversion (see planFor:
 // the HEIC rule and the Apple-playability rule) is EXPECTED to grow — Opus in,
@@ -2063,6 +2182,8 @@ module.exports = {
   kickProfileMedia, kickBucketScan, reconcileBucket, getBucketScanStats, refsForKey, compressStandalone, keySize,
   // derived chat-image previews (thumbs/)
   thumbKeyFor, thumbSourceKey, ensureThumb,
+  // derived story-video posters (posters/)
+  posterKeyFor, posterSourceKey, ensurePoster,
   // the shared ffmpeg runner and its pod-wide encode slot, for image-crop.js:
   // the profile crop stage is a deliberate, bounded encode the reader is
   // waiting on, and it takes the SAME slot as the sweeper so it can never be a

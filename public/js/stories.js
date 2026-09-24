@@ -323,8 +323,10 @@ function spCard(t) {
   b.className = 'sp-card' + (t.unseen > 0 ? '' : ' seen');
   const name = t.user.display_name || t.user.username || 'User';
   b.title = t.unseen > 0 ? `Watch ${name} — ${t.unseen} new` : `Watch ${name}'s story again`;
-  const media = storyThumbEl(storyThumbItem(t.items), 'sp-card-media');
+  const thumbItem = storyThumbItem(t.items);
+  const media = storyThumbEl(thumbItem, 'sp-card-media');
   if (media) b.appendChild(media);
+  storyThumbSpin(b, media, thumbItem);
   const ago = document.createElement('span');
   ago.className = 'sp-card-ago';
   ago.textContent = storyAgo(t.latest || ((t.items[t.items.length - 1] || {}).created_at) || Date.now());
@@ -384,48 +386,101 @@ function spServerRow(srvTrays) {
   }
   return row;
 }
-// A <video> story thumbnail is an empty element until its first frame lands,
-// and mobile browsers paint their own grey play-button placeholder into that
+// A story thumbnail's bytes are not instant: the /uploads gate can 423 while
+// the scan runs, and a video is an empty element until its first frame lands
+// (mobile browsers paint their own grey play-button placeholder into that
 // emptiness — which reads as broken for the second a video story takes to
-// load. Hide the element behind a spinner until the frame it will actually
-// show is ready (or the thumbnail gives up and is removed, via
-// storyThumbRetry). No-ops for photos.
-function storyThumbSpin(host, media) {
+// load). While it loads, the host wears .st-loading: the real media stays
+// invisible, a blurred version of it paints behind (see storyThumbBlur — the
+// "blur-up" placeholder), and the app's own spinner sits on top. Settles when
+// the media can actually paint, or when storyThumbRetry gives up and removes
+// the media. `it` is the story item, for the blur source.
+function storyThumbSpin(host, media, it) {
   if (!host || !media) return;
   const vid = media.tagName === 'VIDEO' ? media : media.querySelector('video');
-  if (!vid) return;
-  host.classList.add('st-vid-loading');
+  const img = !vid ? (media.tagName === 'IMG' ? media : media.querySelector('img')) : null;
+  if (!vid && !img) return;
+  media.classList.add('st-real');
+  host.classList.add('st-loading');
+  const dropBlur = storyThumbBlur(host, it);
   let settled = false;
   const settle = () => {
     if (settled) return;
     settled = true;
-    // One frame after the pixels are ready, so the compositor paints the
-    // frame — not the placeholder — in the same pass the video appears.
-    requestAnimationFrame(() => host.classList.remove('st-vid-loading'));
+    // The media crossfades in over the blur; the blur leaves once the fade
+    // lands, so there is never a frame of empty card between the two.
+    requestAnimationFrame(() => {
+      host.classList.remove('st-loading');
+      setTimeout(dropBlur, 300);
+    });
   };
-  const onData = () => {
-    // storyThumbMedia seeks to 0.06 on loadeddata: the frame the video ends
-    // up showing is the SEEKED one. Settling on loadeddata flashed the grey
-    // placeholder for a split second after the spinner — the seek had emptied
-    // the element again.
-    if (vid.seeking) vid.addEventListener('seeked', settle, { once: true });
-    else settle();
-  };
-  // A cached thumbnail can already be decodable before we get here.
-  if (vid.readyState >= 2) {
-    if (vid.seeking) vid.addEventListener('seeked', settle, { once: true });
-    else settle();
+  if (vid) {
+    const onData = () => {
+      // storyThumbMedia seeks to 0.06 on loadeddata: the frame the video ends
+      // up showing is the SEEKED one. Settling on loadeddata flashed the grey
+      // placeholder for a split second after the spinner — the seek had emptied
+      // the element again.
+      if (vid.seeking) vid.addEventListener('seeked', settle, { once: true });
+      else settle();
+    };
+    // A cached thumbnail can already be decodable before we get here.
+    if (vid.readyState >= 2) {
+      if (vid.seeking) vid.addEventListener('seeked', settle, { once: true });
+      else settle();
+    } else {
+      vid.addEventListener('loadeddata', onData, { once: true });
+    }
   } else {
-    vid.addEventListener('loadeddata', onData, { once: true });
+    // A cached photo can already be complete before we get here.
+    if (img.complete && img.naturalWidth > 0) { settle(); return; }
+    img.addEventListener('load', settle, { once: true });
+    // No settle on error: storyThumbRetry is still retrying behind the 423
+    // gate, and the give-up observer below settles if it never lands.
   }
   // storyThumbRetry removes the media when the 423 gate never opens: without
   // this the spinner would sit on an empty card forever.
   const obs = new MutationObserver(() => {
-    if (vid.isConnected) return;
+    if (media.isConnected) return;
     try { obs.disconnect(); } catch {}
     settle();
   });
   try { obs.observe(host, { childList: true, subtree: true }); } catch {}
+}
+// The "blur-up" placeholder: a tiny derived still of the story — the thumbs/
+// pipeline for photos, a first-frame poster for video (see media-compress.js)
+// — painted blurred behind the spinner while the real media loads. A
+// progressive enhancement: if the derived still cannot be minted the <img>
+// errors and removes itself, and the spinner carries the loading state alone.
+// Returns a drop() that unpaints it; the settle path calls it.
+function storyBlurSrc(it) {
+  const url = String((it && it.url) || '');
+  const clean = url.split('?')[0];
+  if (!/^\/uploads\/files\/[A-Za-z0-9._-]+$/.test(clean)) return '';
+  const q = url.indexOf('?') >= 0 ? url.slice(url.indexOf('?')) : '';
+  const base = clean.slice('/uploads/'.length);
+  if (it.kind === 'video') return '/uploads/posters/' + base + '.webp' + q;
+  return '/uploads/thumbs/' + base + '.webp' + q;
+}
+function storyThumbBlur(host, it) {
+  const noop = () => {};
+  let src = '';
+  try { src = storyBlurSrc(it); } catch { return noop; }
+  if (!src) return noop;
+  const img = document.createElement('img');
+  img.className = 'st-blur';
+  img.alt = '';
+  img.setAttribute('aria-hidden', 'true');
+  img.decoding = 'async';
+  let live = true;
+  img.addEventListener('load', () => {
+    if (!live) return;
+    // Only paint it while the real media is still on its way — a blur that
+    // lands after the settle would flash over the finished picture.
+    if (host.classList.contains('st-loading')) host.prepend(img);
+  }, { once: true });
+  img.addEventListener('error', () => { live = false; try { img.remove(); } catch {} }, { once: true });
+  img.src = src;
+  return () => { live = false; try { img.remove(); } catch {} };
 }
 // The hero: your story, its numbers, and the way in (watch / add).
 function spHero(mineItems) {
@@ -437,7 +492,7 @@ function spHero(mineItems) {
     if (media) hero.appendChild(media);
     // A video story is an empty <video> until its first frame: show a spinner,
     // not the browser's grey play-button placeholder, while it loads.
-    storyThumbSpin(hero, media);
+    storyThumbSpin(hero, media, latest);
   }
   const inn = document.createElement('div');
   inn.className = 'sp-hero-in';
@@ -449,7 +504,7 @@ function spHero(mineItems) {
     paintAvatar(av, S.me);
     const thumb = storyThumbEl(storyThumbItem(mineItems), 'st-thumb-inline');
     if (thumb) av.appendChild(thumb);
-    storyThumbSpin(av, thumb);
+    storyThumbSpin(av, thumb, storyThumbItem(mineItems));
     badge.appendChild(av);
   } else badge.innerHTML = svSvg.camera;
   inn.appendChild(badge);
