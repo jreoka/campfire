@@ -11,11 +11,12 @@
 // member's top role colour — underline in `currentColor`, which is exactly the
 // inline colour.
 //
-// Scope is part of the contract: the hover lives ONLY on the two conversation
-// surfaces (`#messages`, `#thread-replies` — every conversation renders into one
-// of them). Member lists, the user card, the DM rows and the admin lists must
-// stay unadorned, and the rule must live in the END `@media (hover:hover)`
-// block (base-rule `:hover` is a pinned bug on touch).
+// Scope is part of the contract: the hover lives on the names you read — the
+// two conversation surfaces (`#messages`, `#thread-replies` — every conversation
+// renders into one of them), the user card name and the profile screen name.
+// Member lists, the DM rows and the admin lists stay unadorned, and every rule
+// must live in the END `@media (hover:hover)` block (base-rule `:hover` is a
+// pinned bug on touch).
 //
 // Offline (no Chrome, no database): the real nameStyleFor/nameClassFor sliced
 // out of `public/js/servers.js` run against a fake `S`, plus the stylesheet and
@@ -82,29 +83,56 @@ check(nameClassFor({ name_gradient: '#445566' }) === '' && nameStyleFor({ name_g
 console.log('\n[2] the stylesheet contract');
 check(/class="who\$\{nameClassFor\(au\)\}"/.test(messages) && /style="\$\{nameStyleFor\(au\)\}"/.test(messages),
   'the chat row paints the name through both helpers (one .who site serves #messages and #thread-replies)');
-const rule = `#messages .msg .who:hover,#thread-replies .msg .who:hover{text-decoration:underline;text-decoration-thickness:.08em;text-underline-offset:.22em;text-decoration-color:currentColor}`;
+const pickers = fs.readFileSync(path.join(ROOT, 'public/js/pickers.js'), 'utf8');
+check(/class="uc-uname\$\{nameClassFor\(u\)\}"/.test(pickers) && /style="\$\{nameStyleFor\(u\)\}"/.test(pickers),
+  'the user card name goes through both helpers too (the grad-name marker drives the gradient line)');
+check(/class="mname\$\{nameClassFor\(u\)\}"/.test(pickers),
+  'and the profile screen name');
+const rule = `#messages .msg .who:hover,#thread-replies .msg .who:hover{text-decoration:underline;text-decoration-thickness:.13em;text-underline-offset:.05em;text-decoration-color:currentColor}`;
 check(css.includes(rule), 'hovering a chat name underlines it in currentColor', rule);
 const gradRule = `#messages .msg .who.grad-name:hover::after,#thread-replies .msg .who.grad-name:hover::after{`;
 check(css.includes(gradRule)
   && /background:linear-gradient\(90deg,var\(--nm-c1\),var\(--nm-c2\)\)\}/.test(css),
   'and a two-tone name\'s line is its own gradient');
+check(/#messages \.msg \.who\.grad-name:hover::after,#thread-replies \.msg \.who\.grad-name:hover::after\{[^}]*bottom:\.23em;height:\.12em/.test(css),
+  'the gradient line sits at the tuned height');
+for (const [sel, label] of [
+  ['#usercard .uc-name .uc-uname:hover', 'the user card name'],
+  ['#pf-name .mname:hover', 'the profile screen name'],
+]) {
+  check(new RegExp(sel.replace(/[.#]/g, '\\$&') + '\\{[^}]*text-decoration:underline;text-decoration-thickness:\\.13em;text-underline-offset:\\.05em;text-decoration-color:currentColor\\}').test(css),
+    'hovering ' + label + ' underlines it exactly like the chat name', sel);
+}
+check(/#usercard \.uc-name \.uc-uname\.grad-name:hover::after\{[^}]*bottom:\.23em[^}]*background:linear-gradient\(90deg,var\(--nm-c1\),var\(--nm-c2\)\)/.test(css)
+  && /#pf-name \.mname\.grad-name:hover::after\{[^}]*bottom:\.23em[^}]*background:linear-gradient\(90deg,var\(--nm-c1\),var\(--nm-c2\)\)/.test(css),
+  'two-tone names get the same gradient line on the card and the profile');
 
 const lastHover = css.lastIndexOf('@media (hover:hover){');
 check(lastHover > 0 && css.indexOf('.who:hover') > lastHover,
   'the rule lives in the END hover block (a base-rule :hover is a pinned bug on touch)');
-check(!/#messages \.msg \.who:hover[^}]*text-decoration/.test(css.slice(0, lastHover)),
-  'and nowhere in the base cascade');
+check(css.indexOf('#usercard .uc-name .uc-uname:hover') > lastHover
+  && css.indexOf('#pf-name .mname:hover') > lastHover,
+  'the card and profile rules live there too');
+check(!/#messages \.msg \.who:hover[^}]*text-decoration/.test(css.slice(0, lastHover))
+  && !/#usercard \.uc-name \.uc-uname:hover/.test(css.slice(0, lastHover))
+  && !/#pf-name \.mname:hover/.test(css.slice(0, lastHover)),
+  'and none of them in the base cascade');
 
-console.log('\n[3] the chat area, and only the chat area');
+console.log('\n[3] names you read, and only those');
 const whoHover = css.indexOf('#messages .msg .who:hover,#thread-replies .msg .who:hover');
 check(whoHover > lastHover && /#messages \.msg \.who:hover,#thread-replies \.msg \.who:hover/.test(css),
   'both conversation surfaces carry it (a channel, a DM and a thread all render into these)');
-for (const sel of ['.dmname:hover', '.mname:hover', '.anow-name:hover', '.uc-name', '.adm-name']) {
+for (const sel of ['.dmname:hover', '.anow-name:hover', '.adm-name']) {
   const i = css.indexOf(sel);
   const nearby = i < 0 ? '' : css.slice(i, i + 220);
   check(i < 0 || !/text-decoration/.test(nearby),
-    'no underline leaks onto ' + sel + ' (member lists, the user card, DM rows, admin)', nearby);
+    'no underline leaks onto ' + sel + ' (member lists, DM rows, admin)', nearby);
 }
+// .mname is shared: member lists wear it bare, the profile screen wears it under
+// #pf-name. Only the #pf-name one may hover-underline.
+const cssSansProfile = css.replace(/#pf-name \.mname(\.grad-name)?(:hover)?(::after)?/g, '');
+check(!/\.mname:hover/.test(cssSansProfile),
+  'no underline leaks onto member-list .mname (only #pf-name wears it)');
 
 console.log('');
 if (failures.length) {

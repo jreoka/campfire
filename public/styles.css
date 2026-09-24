@@ -4484,13 +4484,20 @@ html.wrapper-app .msg .text,html.wrapper-app .msg .text *,html.wrapper-app input
      `color`, so `currentColor` is exact. The two-tone names are the trap —
      nameStyleFor paints them with background-clip:text and `color:transparent`,
      where currentColor would draw NO line — so they carry --nm-c1/--nm-c2 and
-     paint the same gradient as their name. Scoped to the two conversation
-     surfaces only (`#messages` and `#thread-replies` — every conversation
-     renders into one of them): member lists, the user card, the DM rows and the
-     admin lists keep their names unadorned. */
+     paint the same gradient as their name. The hover lives on the names you
+     read: the two conversation surfaces (`#messages` and `#thread-replies` —
+     every conversation renders into one of them), the user card name and the
+     profile screen name. Member lists, DM rows and admin lists keep theirs
+     unadorned. */
   #messages .msg .who:hover,#thread-replies .msg .who:hover{text-decoration:underline;text-decoration-thickness:.13em;text-underline-offset:.05em;text-decoration-color:currentColor}
   #messages .msg .who.grad-name:hover,#thread-replies .msg .who.grad-name:hover{text-decoration:none;position:relative}
   #messages .msg .who.grad-name:hover::after,#thread-replies .msg .who.grad-name:hover::after{content:'';position:absolute;left:0;right:0;bottom:.23em;height:.12em;border-radius:1px;background:linear-gradient(90deg,var(--nm-c1),var(--nm-c2))}
+  #usercard .uc-name .uc-uname:hover{text-decoration:underline;text-decoration-thickness:.13em;text-underline-offset:.05em;text-decoration-color:currentColor}
+  #usercard .uc-name .uc-uname.grad-name:hover{text-decoration:none;position:relative}
+  #usercard .uc-name .uc-uname.grad-name:hover::after{content:'';position:absolute;left:0;right:0;bottom:.23em;height:.12em;border-radius:1px;background:linear-gradient(90deg,var(--nm-c1),var(--nm-c2))}
+  #pf-name .mname:hover{text-decoration:underline;text-decoration-thickness:.13em;text-underline-offset:.05em;text-decoration-color:currentColor}
+  #pf-name .mname.grad-name:hover{text-decoration:none;position:relative}
+  #pf-name .mname.grad-name:hover::after{content:'';position:absolute;left:0;right:0;bottom:.23em;height:.12em;border-radius:1px;background:linear-gradient(90deg,var(--nm-c1),var(--nm-c2))}
   .dm-close:hover{background:var(--danger-bg);color:var(--danger-tx)}
   .hist-dot:hover{border-color:var(--accent);transform:scale(1.05)}
   .home-btn:hover{background:var(--panel-3)}

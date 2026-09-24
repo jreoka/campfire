@@ -2246,7 +2246,7 @@ async function openUserCard(uid, x, y, fallback, opts = {}) {
     <div class="uc-banner"${ban ? ` style="background-image:url('${esc(ban)}')"` : ''}></div>
     <div class="uc-body">
       <div class="uc-head"><span class="avatar big"></span>${statusBubbleHTML(u)}</div>
-      <div class="uc-name"><span style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u)}</div>
+      <div class="uc-name"><span class="uc-uname${nameClassFor(u)}" style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u)}</div>
       <div class="uc-sub">@${esc(u.username)}${u.role === 'owner' ? ' · server owner' : ''}</div>
       ${isSysAdmin(u) || isEarlyUser(u) ? `<div class="uc-badges">${isSysAdmin(u) ? '<span class="sysadmin-badge">System admin</span>' : ''}${isEarlyUser(u) ? '<span class="early-badge">Early user</span>' : ''}</div>` : ''}
       ${uid === S.me.id
@@ -2906,7 +2906,7 @@ function openProfileScreen(uid, fallback) {
   const stLabel = pstreaming ? 'Streaming' : ({ online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Invisible' }[st] || 'Offline');
   $('#pf-banner').style.backgroundImage = u.banner_url ? `url('${esc(u.banner_url)}')` : '';
   paintAvatar($('#pf-avatar'), u);
-  $('#pf-name').innerHTML = `<span class="mname" style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u)}`;
+  $('#pf-name').innerHTML = `<span class="mname${nameClassFor(u)}" style="${nameStyleFor(u)}">${esc(u.display_name)}</span>${tagHTML(u)}`;
   $('#pf-sub').textContent = '@' + u.username + (u.role === 'owner' ? ' · server owner' : '');
   const body = $('#pf-body');
   let actions = '';
