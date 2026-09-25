@@ -4141,10 +4141,16 @@ function userTz(u) {
 function localDay(ts, tzMin) { return utcDay(Number(ts) + userTz(tzMin) * 60000); }
 // Level = 1 + number of playtime thresholds passed (minutes): 1h, 3h, 8h, 20h, 40h, 80h, 160h, 320h, 640h, 1280h, 2560h
 const LEVEL_MIN = [0, 60, 180, 480, 1200, 2400, 4800, 9600, 19200, 38400, 76800, 153600];
+// Past the historical table each level needs double the playtime of the last,
+// so levels are theoretically infinite with ever-growing gaps between them
+// (level grows logarithmically with playtime). The table values are kept so
+// nobody's current level changes.
+const LEVEL_GROWTH = 2;
 function levelForMs(ms) {
   const min = ms / 60000;
   let l = 1;
   for (let i = 1; i < LEVEL_MIN.length; i++) if (min >= LEVEL_MIN[i]) l = i + 1;
+  for (let bar = LEVEL_MIN[LEVEL_MIN.length - 1] * LEVEL_GROWTH; min >= bar; bar *= LEVEL_GROWTH) l++;
   return l;
 }
 async function creditPlay(userId, game, ms, ts, tzMin) {
