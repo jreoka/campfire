@@ -224,7 +224,10 @@ fn default_start_minimized() -> bool {
 #[cfg(desktop)]
 impl Default for Settings {
     fn default() -> Self {
-        Self { start_minimized: default_start_minimized() }
+        Self {
+            start_minimized: default_start_minimized(),
+            overlay: OverlaySettings::default(),
+        }
     }
 }
 
@@ -654,7 +657,7 @@ fn get_overlay_settings(app: AppHandle) -> OverlaySettings {
 
 #[cfg(desktop)]
 #[tauri::command]
-fn set_overlay_settings(
+async fn set_overlay_settings(
     app: AppHandle,
     enabled: bool,
     corner: String,
@@ -682,10 +685,12 @@ fn overlay_state(app: AppHandle) -> serde_json::Value {
 }
 
 /// Push the current call snapshot from the page. Shows, hides, moves and
-/// repaints the overlay window as needed.
+/// repaints the overlay window as needed. Async: on Windows,
+/// WebviewWindowBuilder::build deadlocks inside a synchronous command, so
+/// any path that might create the window must not run on the IPC thread.
 #[cfg(desktop)]
 #[tauri::command]
-fn overlay_update(app: AppHandle, in_call: bool, speakers: Vec<OverlaySpeaker>) {
+async fn overlay_update(app: AppHandle, in_call: bool, speakers: Vec<OverlaySpeaker>) {
     {
         let st = app.state::<State>();
         let mut ov = st.overlay.lock().unwrap();
@@ -872,6 +877,11 @@ pub fn run() {
                 let cached = load_settings(&app).overlay;
                 *app.state::<State>().overlay_settings.lock().unwrap() = cached;
             }
+            // Build the overlay window once, hidden, on the main thread.
+            // WebviewWindowBuilder::build deadlocks on Windows when called
+            // from inside a (synchronous) command, so the hot path in
+            // apply_overlay must never be the first thing to create it.
+            let _ = ensure_overlay_window(&app);
             // Older builds never passed `--autostart`, so an already-enabled
             // login entry still launches with no args. Rewrite it in place now
             // that the plugin supplies the flag. A disabled entry is left
