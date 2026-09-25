@@ -6156,9 +6156,16 @@ async function notifyReaction(authorId, reactor, emoji, target) {
     url,
   }, { webPush: !(await userVisible(authorId)) });
 }
-// A friend's custom status changed: "Your friend Cross" / "Updated their
-// status to: In a meeting". Only the status text pings — presence flips
-// (online/away/dnd) would be a storm.
+// A friend's custom status changed. Deliberately quiet: no notification-center
+// entry (status edits are far too chatty for the inbox), just an occasional
+// push, with two anti-spam layers:
+//   1. Per (viewer, changer) cooldown in the shared rate_limits table — a
+//      friend who rewrites their status every few minutes pings you once.
+//   2. A short per-viewer digest window — several friends changing status at
+//      once collapses into a single push instead of one push per friend.
+const STATUS_PUSH_COOLDOWN_MS = 6 * 3600e3; // one status ping per changer per viewer per 6h
+const STATUS_DIGEST_MS = 5 * 60e3;          // batch a viewer's status pings over 5min
+const statusDigests = new Map(); // viewerId -> { timer, items: Map(changerId -> {name, text, avatar}) }
 async function notifyFriendStatus(user, statusText) {
   const text = String(statusText || '').trim();
   if (!text) return;
@@ -6168,15 +6175,50 @@ async function notifyFriendStatus(user, statusText) {
       .all(user.id, user.id, user.id)).map((r) => r.uid);
   } catch { return; }
   if (!uids.length) return;
-  const title = `Your friend ${displayOf(user)}`;
-  const body = `Updated their status to: ${text}`.slice(0, 160);
+  const name = displayOf(user);
+  const avatar = user.avatar_url || '/icons/icon-192.png';
   for (const uid of uids) {
     if (uid === user.id) continue;
     try { if ((await notifMode(uid, ['global'])) === 'muted') continue; } catch {}
     try { if (await db.prepare('SELECT 1 FROM blocks WHERE user_id = ? AND blocked_id = ?').get(uid, user.id)) continue; } catch {}
-    await pushInbox(uid, { kind: 'friend-status', title, body });
-    await pushToUser(uid, { title, body, icon: user.avatar_url || '/icons/icon-192.png', tag: `status:${user.id}`, url: '/?friends=1' }, { webPush: !(await userVisible(uid)) });
+    // The digest always tracks the latest text (a typo fix seconds later
+    // replaces the earlier draft); the cooldown is enforced at flush time so
+    // repeated edits by the same changer still only ping once per window.
+    let d = statusDigests.get(uid);
+    if (!d) {
+      d = { timer: null, items: new Map() };
+      if (statusDigests.size > 5000) statusDigests.delete(statusDigests.keys().next().value); // bound the map
+      statusDigests.set(uid, d);
+    }
+    d.items.set(user.id, { name, text: text.slice(0, 160), avatar });
+    if (!d.timer) {
+      d.timer = setTimeout(() => { flushFriendStatusDigest(uid).catch(() => {}); }, STATUS_DIGEST_MS);
+      if (d.timer.unref) d.timer.unref();
+    }
   }
+}
+async function flushFriendStatusDigest(uid) {
+  const d = statusDigests.get(uid);
+  statusDigests.delete(uid);
+  if (!d || !d.items.size) return;
+  // Cooldown: one ping per (viewer, changer) per window, enforced when sending.
+  const items = [];
+  for (const [changerId, item] of d.items) {
+    try { if (!(await rateHit(`statuspush:${uid}:${changerId}`, 1, STATUS_PUSH_COOLDOWN_MS)).ok) continue; } catch {}
+    items.push(item);
+  }
+  if (!items.length) return;
+  let title, body, icon = '/icons/icon-192.png';
+  if (items.length === 1) {
+    title = `Your friend ${items[0].name}`;
+    body = `Updated their status to: ${items[0].text}`;
+    icon = items[0].avatar;
+  } else {
+    title = `${items.length} friends updated their status`;
+    body = items.slice(0, 3).map((i) => `${i.name}: ${i.text}`).join(' · ').slice(0, 160);
+    if (items.length > 3) body = `${body} · +${items.length - 3} more`;
+  }
+  await pushToUser(uid, { title, body, icon, tag: 'status-digest', url: '/?friends=1' }, { webPush: !(await userVisible(uid)) });
 }
 // drop a user's live sockets from a server (membership gone): stop server
 // broadcasts + pull them out of its voice rooms
