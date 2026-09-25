@@ -680,7 +680,8 @@ async fn set_overlay_settings(
 #[cfg(desktop)]
 #[tauri::command]
 fn overlay_state(app: AppHandle) -> serde_json::Value {
-    let ov = app.state::<State>().overlay.lock().unwrap();
+    let state = app.state::<State>();
+    let ov = state.overlay.lock().unwrap();
     serde_json::json!({ "in_call": ov.in_call, "speakers": ov.speakers })
 }
 
@@ -718,7 +719,7 @@ fn ensure_overlay_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow>
     }
     let w = tauri::WebviewWindowBuilder::new(app, "overlay", tauri::WebviewUrl::App("overlay.html".into()))
         .title("Campfire Overlay")
-        .inner_size(tauri::LogicalSize::new(232.0, 120.0))
+        .inner_size(232.0, 120.0)
         .transparent(true)
         .decorations(false)
         .shadow(false)
@@ -742,7 +743,8 @@ fn apply_overlay(app: &AppHandle) {
         .unwrap()
         .clone();
     let (in_call, speakers) = {
-        let ov = app.state::<State>().overlay.lock().unwrap();
+        let state = app.state::<State>();
+        let ov = state.overlay.lock().unwrap();
         (ov.in_call, ov.speakers.clone())
     };
     if !settings.enabled || !in_call {
