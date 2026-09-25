@@ -238,6 +238,7 @@ function setSettingsTab(t) {
   $('#set-games').classList.toggle('hidden', t !== 'games');
   $('#set-media').classList.toggle('hidden', t !== 'media');
   $('#set-notifs').classList.toggle('hidden', t !== 'notifs');
+  $('#set-overlay').classList.toggle('hidden', t !== 'overlay');
   $('#set-blocked').classList.toggle('hidden', t !== 'blocked');
   $('#set-themes').classList.toggle('hidden', t !== 'themes');
   // Every pane that has to ask the server says so on the page itself until the
@@ -246,6 +247,7 @@ function setSettingsTab(t) {
   const pane = $('#set-' + t);
   if (t === 'account') tabSpinWhile(pane, Promise.all([renderSecurityTab(), renderDesktopApp()]));
   if (t === 'notifs') tabSpinWhile(pane, renderNotifsTab());
+  if (t === 'overlay') tabSpinWhile(pane, renderOverlayTab());
   if (t === 'blocked') tabSpinWhile(pane, renderBlockedTab());
   if (t === 'themes') renderThemesTab();
   if (t === 'games') tabSpinWhile(pane, renderGamesTab());
@@ -622,6 +624,73 @@ async function renderDesktopApp() {
     box.appendChild(note);
   }
   if (inApp) box.appendChild(row);
+}
+// ---------- overlay tab (in-call overlay, desktop app) ----------
+const OVERLAY_CORNERS = [
+  ['top-left', 'Top left'],
+  ['top-right', 'Top right'],
+  ['bottom-left', 'Bottom left'],
+  ['bottom-right', 'Bottom right'],
+];
+async function renderOverlayTab() {
+  const box = $('#set-overlay');
+  if (!box) return;
+  box.innerHTML = '';
+  const p = document.createElement('p'); p.className = 'muted small';
+  p.textContent = 'A tiny panel that floats over fullscreen games during voice calls, showing who\u2019s talking. It never steals clicks or focus \u2014 it\u2019s click-through.';
+  box.appendChild(p);
+  if (!isDesktopShell()) {
+    const note = document.createElement('p'); note.className = 'muted small';
+    if (isAndroidShell()) {
+      note.textContent = 'The in-call overlay isn\u2019t available on Android yet \u2014 calls pause when the app is backgrounded, so there\u2019s nothing to float over a game.';
+      box.appendChild(note);
+    } else {
+      note.textContent = 'The overlay lives in the desktop app.';
+      box.appendChild(note);
+      const row = document.createElement('div'); row.className = 'row'; row.style.marginTop = '.5rem';
+      const dl = document.createElement('a');
+      dl.className = 'btn small primary'; dl.textContent = 'Download for Windows';
+      dl.href = 'https://github.com/jreoka/campfire/releases/latest'; dl.target = '_blank';
+      row.appendChild(dl);
+      box.appendChild(row);
+    }
+    return;
+  }
+  const inv = window.__TAURI__.core.invoke;
+  let cur = null;
+  try { cur = await inv('get_overlay_settings'); }
+  catch {
+    // Older app builds have no overlay commands: the invoke rejects, so the
+    // controls stay hidden rather than shown dead.
+    const note = document.createElement('p'); note.className = 'muted small';
+    note.textContent = 'Your app build is too old for the overlay \u2014 grab the latest release to use it.';
+    box.appendChild(note);
+    return;
+  }
+  const row = document.createElement('div'); row.className = 'row'; row.style.marginTop = '.5rem';
+  const cb = document.createElement('label'); cb.className = 'set-check';
+  const inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = !!cur.enabled;
+  cb.appendChild(inp); cb.appendChild(document.createTextNode(' Show overlay during calls'));
+  row.appendChild(cb);
+  const lab = document.createElement('label'); lab.className = 'muted small';
+  lab.appendChild(document.createTextNode(' Corner '));
+  const sel = document.createElement('select');
+  for (const [v, t] of OVERLAY_CORNERS) {
+    const o = document.createElement('option'); o.value = v; o.textContent = t;
+    if (v === cur.corner) o.selected = true;
+    sel.appendChild(o);
+  }
+  lab.appendChild(sel);
+  row.appendChild(lab);
+  box.appendChild(row);
+  const save = async () => {
+    try {
+      await inv('set_overlay_settings', { enabled: inp.checked, corner: sel.value });
+      toast(inp.checked ? 'Overlay enabled' : 'Overlay disabled');
+    } catch (err) { toast('Failed: ' + prettyError(err.message)); }
+  };
+  inp.onchange = save;
+  sel.onchange = save;
 }
 // ---------- games tab (game-activity manager) ----------
 // Everything about one account's game tracking: totals, every tracked game,

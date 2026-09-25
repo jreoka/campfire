@@ -41,6 +41,11 @@ Native wrapper around the Campfire web app. Built with **Tauri v2**:
     that omits the audio element, i.e. Windows plays the user's own notification
     sound; a Windows-wide "Play a sound" switch or Focus Assist can still
     silence it.
+  - **In-call overlay** — a tiny always-on-top, click-through panel that floats
+    over fullscreen games during voice calls, showing who's talking (avatar +
+    green ring). The page pushes speaker snapshots to the shell, which owns
+    the window. Settings → Overlay controls it (on/off, screen corner); the
+    prefs live in `settings.json` next to the other per-machine settings.
 - **Android** — same web app in a native shell (full Campfire experience
   including voice; no tray/watcher/autostart — mobile has none). Needs
   Android 7+. Microphone/camera permissions are requested in-app when voice

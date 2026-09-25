@@ -358,6 +358,8 @@ function leaveVoice(silent) {
   const vkey = myVoiceKey();
   S.voice = null;
   stopSpeakingMonitor();
+  if (overlaySyncTimer) { clearTimeout(overlaySyncTimer); overlaySyncTimer = null; }
+  syncOverlayNow(); // hides the in-call overlay at once
   voicePeerDown.clear(); // no room, no readout (paintVoiceStatus bails on !S.voice)
   if (S.me?.streaming_game) { S.me.streaming_game = null; try { paintMe(); } catch {} }
   $('#voice-bar').classList.add('hidden');
@@ -1355,6 +1357,51 @@ function renderVoiceUsers() {
 }
 function setSpeakingUI(userId, speaking) {
   document.querySelectorAll('[data-vuser="' + CSS.escape(userId) + '"]').forEach((el) => el.classList.toggle('speaking', speaking));
+  scheduleOverlaySync();
+}
+// ---------- in-call overlay (desktop app) ----------
+// The native shell floats a tiny always-on-top panel over fullscreen games
+// while in a call. The page is the only side that knows who's talking, so it
+// pushes snapshots here; the shell owns the window itself. Debounced: the
+// mic monitor flips every 200ms and voice-state bursts arrive in flurries,
+// and the shell repaints on every push.
+let overlaySyncTimer = null;
+function overlaySnapshot() {
+  if (!S.voice) return { inCall: false, speakers: [] };
+  const occ = S.voiceOccupancy.get(myVoiceKey()) || [];
+  const seen = new Set();
+  const ids = ['me', ...occ.map((p) => p && p.id).filter(Boolean)];
+  const speakers = [];
+  for (const id of ids) {
+    const key = id === 'me' ? (S.me && S.me.id) : id;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const u = voicePeerInfo(id);
+    if (!u || !u.id) continue;
+    const talking = !!u.speaking && !u.muted && !u.deafened;
+    speakers.push({
+      id: String(u.id),
+      name: (u.display_name || u.username || '?') + (u.me ? ' (you)' : ''),
+      avatar_url: u.avatar_url ? new URL(u.avatar_url, location.origin).href : null,
+      avatar_color: u.avatar_color || '#555',
+      speaking: talking,
+      muted: !!u.muted || !!u.deafened,
+    });
+    if (speakers.length >= 12) break;
+  }
+  return { inCall: true, speakers };
+}
+function syncOverlayNow() {
+  if (!isDesktopShell()) return;
+  const inv = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+  if (typeof inv !== 'function') return;
+  const snap = overlaySnapshot();
+  inv('overlay_update', { inCall: snap.inCall, speakers: snap.speakers }).catch(() => {});
+}
+function scheduleOverlaySync() {
+  if (!isDesktopShell()) return;
+  if (overlaySyncTimer) return;
+  overlaySyncTimer = setTimeout(() => { overlaySyncTimer = null; syncOverlayNow(); }, 300);
 }
 // Voice activity detection: local mic level → broadcast speech state so every
 // client sees green rings (works for all rooms, not just the one you're in).
@@ -1389,6 +1436,8 @@ function startSpeakingMonitor() {
       }
     }, 200);
   } catch {}
+  // Fresh snapshot the moment a call starts (the debounce only covers flips).
+  syncOverlayNow();
 }
 function stopSpeakingMonitor() {
   clearInterval(speakTimer); speakTimer = null;

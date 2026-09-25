@@ -76,6 +76,39 @@ struct State {
     current_game: Mutex<Option<String>>,
     // every game scoring above threshold right now (for the Go Live picker)
     running_games: Mutex<Vec<String>>,
+    // latest in-call speaker snapshot pushed by the page (overlay_update)
+    overlay: Mutex<OverlayState>,
+    // cached overlay prefs (mirrors settings.json; set_overlay_settings keeps
+    // both in sync so the hot path never touches the disk)
+    overlay_settings: Mutex<OverlaySettings>,
+}
+
+/// One call participant, as the overlay window renders them.
+#[cfg(desktop)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+struct OverlaySpeaker {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    avatar_url: Option<String>,
+    #[serde(default)]
+    avatar_color: String,
+    #[serde(default)]
+    speaking: bool,
+    #[serde(default)]
+    muted: bool,
+}
+
+/// What the in-call overlay currently shows. Pushed by the page's voice code;
+/// the overlay window itself is owned here so it keeps working while the
+/// main window loads the remote site.
+#[cfg(desktop)]
+#[derive(Clone, Default)]
+struct OverlayState {
+    in_call: bool,
+    speakers: Vec<OverlaySpeaker>,
 }
 
 // Discord's DB tags each executable with an `os` ("win32" / "darwin" /
@@ -139,13 +172,48 @@ fn app_data_dir<R: Runtime>(app: &AppHandle<R>) -> std::path::PathBuf {
 // Per-machine app preferences (they describe this install, not the account,
 // so they never go in the server DB). Stored as JSON next to games.json.
 #[cfg(desktop)]
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct Settings {
     // An autostart launch stays tray-only. Defaults to on: launching at login
     // should never steal focus mid-boot, and the toggle is right there in the
     // tray menu (and in Settings → Desktop app).
     #[serde(default = "default_start_minimized")]
     start_minimized: bool,
+    // In-call overlay (Settings → Overlay). Defaults on.
+    #[serde(default)]
+    overlay: OverlaySettings,
+}
+
+/// In-call overlay preferences: the little always-on-top speaker panel that
+/// floats over fullscreen games while in a voice call.
+#[cfg(desktop)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct OverlaySettings {
+    #[serde(default = "default_overlay_enabled")]
+    enabled: bool,
+    // one of: top-left, top-right, bottom-left, bottom-right
+    #[serde(default = "default_overlay_corner")]
+    corner: String,
+}
+
+#[cfg(desktop)]
+fn default_overlay_enabled() -> bool {
+    true
+}
+
+#[cfg(desktop)]
+fn default_overlay_corner() -> String {
+    "top-left".to_string()
+}
+
+#[cfg(desktop)]
+impl Default for OverlaySettings {
+    fn default() -> Self {
+        Self {
+            enabled: default_overlay_enabled(),
+            corner: default_overlay_corner(),
+        }
+    }
 }
 
 #[cfg(desktop)]
@@ -569,6 +637,136 @@ fn get_watch_state(app: AppHandle) -> serde_json::Value {
     })
 }
 
+// ---------- in-call overlay ----------
+// A tiny always-on-top, click-through panel that floats over fullscreen games
+// while in a voice call, showing who's talking. The page's voice code pushes
+// speaker snapshots here (voice.js → overlay_update); this side owns the
+// window itself so the overlay keeps working even though the main window
+// loads the remote site.
+#[cfg(desktop)]
+const OVERLAY_CORNERS: &[&str] = &["top-left", "top-right", "bottom-left", "bottom-right"];
+
+#[cfg(desktop)]
+#[tauri::command]
+fn get_overlay_settings(app: AppHandle) -> OverlaySettings {
+    app.state::<State>().overlay_settings.lock().unwrap().clone()
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn set_overlay_settings(
+    app: AppHandle,
+    enabled: bool,
+    corner: String,
+) -> Result<OverlaySettings, String> {
+    let corner = corner.trim().to_lowercase();
+    if !OVERLAY_CORNERS.contains(&corner.as_str()) {
+        return Err("unknown corner".to_string());
+    }
+    let settings = OverlaySettings { enabled, corner };
+    *app.state::<State>().overlay_settings.lock().unwrap() = settings.clone();
+    let mut s = load_settings(&app);
+    s.overlay = settings.clone();
+    store_settings(&app, s);
+    apply_overlay(&app);
+    Ok(settings)
+}
+
+/// The page's current call snapshot, for the overlay page to pull on load
+/// (the window may have been created after the last push).
+#[cfg(desktop)]
+#[tauri::command]
+fn overlay_state(app: AppHandle) -> serde_json::Value {
+    let ov = app.state::<State>().overlay.lock().unwrap();
+    serde_json::json!({ "in_call": ov.in_call, "speakers": ov.speakers })
+}
+
+/// Push the current call snapshot from the page. Shows, hides, moves and
+/// repaints the overlay window as needed.
+#[cfg(desktop)]
+#[tauri::command]
+fn overlay_update(app: AppHandle, in_call: bool, speakers: Vec<OverlaySpeaker>) {
+    {
+        let st = app.state::<State>();
+        let mut ov = st.overlay.lock().unwrap();
+        ov.in_call = in_call;
+        ov.speakers = speakers.into_iter().take(12).collect();
+    }
+    apply_overlay(&app);
+}
+
+#[cfg(desktop)]
+fn overlay_monitor_size(app: &AppHandle) -> (f64, f64) {
+    app.get_webview_window("main")
+        .and_then(|w| w.primary_monitor().ok().flatten())
+        .map(|m| {
+            let s = m.size().to_logical::<f64>(m.scale_factor());
+            (s.width, s.height)
+        })
+        .unwrap_or((1920.0, 1080.0))
+}
+
+#[cfg(desktop)]
+fn ensure_overlay_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
+    if let Some(w) = app.get_webview_window("overlay") {
+        return Ok(w);
+    }
+    let w = tauri::WebviewWindowBuilder::new(app, "overlay", tauri::WebviewUrl::App("overlay.html".into()))
+        .title("Campfire Overlay")
+        .inner_size(tauri::LogicalSize::new(232.0, 120.0))
+        .transparent(true)
+        .decorations(false)
+        .shadow(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .visible(false)
+        .build()?;
+    // Click-through: the game underneath keeps every click and keypress.
+    w.set_ignore_cursor_events(true)?;
+    Ok(w)
+}
+
+/// Show/hide/repaint the overlay window from the cached settings + snapshot.
+#[cfg(desktop)]
+fn apply_overlay(app: &AppHandle) {
+    use tauri::Emitter;
+    let settings = app
+        .state::<State>()
+        .overlay_settings
+        .lock()
+        .unwrap()
+        .clone();
+    let (in_call, speakers) = {
+        let ov = app.state::<State>().overlay.lock().unwrap();
+        (ov.in_call, ov.speakers.clone())
+    };
+    if !settings.enabled || !in_call {
+        if let Some(w) = app.get_webview_window("overlay") {
+            let _ = w.hide();
+        }
+        return;
+    }
+    let win = match ensure_overlay_window(app) {
+        Ok(w) => w,
+        Err(_) => return,
+    };
+    // One compact row per speaker; the page renders them.
+    let n = speakers.len().clamp(1, 12) as f64;
+    let (ww, wh) = (232.0, 12.0 + n * 46.0);
+    let _ = win.set_size(tauri::LogicalSize::new(ww, wh));
+    let (sw, sh) = overlay_monitor_size(app);
+    let m = 16.0;
+    let (x, y) = match settings.corner.as_str() {
+        "top-right" => (sw - ww - m, m),
+        "bottom-left" => (m, sh - wh - m),
+        "bottom-right" => (sw - ww - m, sh - wh - m),
+        _ => (m, m),
+    };
+    let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+    let _ = win.emit("overlay-speakers", serde_json::json!({ "speakers": speakers }));
+    let _ = win.show();
+}
+
 // Open an external link in the OS default browser. Called by the
 // frontend's Tauri link interceptor: target=_blank clicks die silently
 // inside the WebView (at least on Windows/WebView2 — no navigation, no
@@ -641,6 +839,8 @@ pub fn run() {
             unread: AtomicU32::new(0),
             current_game: Mutex::new(None),
             running_games: Mutex::new(Vec::new()),
+            overlay: Mutex::new(OverlayState::default()),
+            overlay_settings: Mutex::new(OverlaySettings::default()),
         })
         .invoke_handler(tauri::generate_handler![
             get_autostart,
@@ -652,6 +852,10 @@ pub fn run() {
             get_current_game,
             get_running_games,
             notify,
+            get_overlay_settings,
+            set_overlay_settings,
+            overlay_state,
+            overlay_update,
             open_external
         ])
         .on_window_event(|window, event| {
@@ -662,6 +866,12 @@ pub fn run() {
         })
         .setup(|app| {
             let app = app.handle().clone();
+            // Prime the overlay settings cache from settings.json (the page
+            // only ever talks to the cache on the hot path).
+            {
+                let cached = load_settings(&app).overlay;
+                *app.state::<State>().overlay_settings.lock().unwrap() = cached;
+            }
             // Older builds never passed `--autostart`, so an already-enabled
             // login entry still launches with no args. Rewrite it in place now
             // that the plugin supplies the flag. A disabled entry is left

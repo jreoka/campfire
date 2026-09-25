@@ -937,14 +937,20 @@ function onWS(m) {
         const occ = S.voiceOccupancy.get('dm:' + m.threadId) || [];
         const p = occ.find((x) => x.id === m.userId);
         if (p) { p.muted = m.muted; p.speaking = !!m.speaking; p.deafened = !!m.deafened; p.camera = !!m.camera; p.sharing = !!m.sharing; p.serverMuted = !!m.serverMuted; p.streamName = m.streamName || null; }
-        if (S.voice && S.voice.kind === 'dm' && S.voice.threadId === m.threadId) renderStage();
+        if (S.voice && S.voice.kind === 'dm' && S.voice.threadId === m.threadId) {
+          renderStage();
+          if (typeof scheduleOverlaySync === 'function') scheduleOverlaySync();
+        }
         break;
       }
       const occ = S.voiceOccupancy.get(m.channelId) || [];
       const p = occ.find((x) => x.id === m.userId);
       if (p) { p.muted = m.muted; p.speaking = !!m.speaking; p.deafened = !!m.deafened; p.camera = !!m.camera; p.sharing = !!m.sharing; p.serverMuted = !!m.serverMuted; p.streamName = m.streamName || null; }
       if (m.serverId === S.serverId) renderVoiceUsers();
-      if (S.voice && S.voice.channelId === m.channelId) renderStage();
+      if (S.voice && S.voice.channelId === m.channelId) {
+        renderStage();
+        if (typeof scheduleOverlaySync === 'function') scheduleOverlaySync();
+      }
       break;
     }
     case 'voice-mod': {

@@ -1,7 +1,7 @@
 {
   "$schema": "../schemas/schema.json",
   "identifier": "default",
-  "windows": ["main"],
+  "windows": ["main", "overlay"],
   "permissions": [
     "core:default",
     "core:window:allow-hide",
@@ -13,6 +13,10 @@
     "allow-set-unread-count",
     "allow-notify",
     "allow-get-running-games",
+    "allow-get-overlay-settings",
+    "allow-set-overlay-settings",
+    "allow-overlay-state",
+    "allow-overlay-update",
     "allow-open-external"
   ],
   "remote": {

@@ -1,0 +1,91 @@
+<!doctype html>
+<!-- Campfire in-call overlay.
+  A tiny always-on-top, click-through window (owned by the Rust shell) that
+  floats over fullscreen games during voice calls. The page's voice code
+  pushes speaker snapshots to the `overlay_update` command; the shell repaints
+  this page through the `overlay-speakers` event. Bundled with the app in
+  app/dist so it never depends on the site deploy. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body {
+    margin: 0; padding: 0; background: transparent; overflow: hidden;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    user-select: none; -webkit-user-select: none; cursor: default;
+  }
+  #ov { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+  .sp {
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(17, 19, 24, 0.78); border-radius: 10px;
+    padding: 5px 10px 5px 5px; color: #fff;
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  }
+  .av {
+    width: 34px; height: 34px; border-radius: 50%; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 15px; color: #fff; background: #555;
+    overflow: hidden; border: 2px solid transparent; box-sizing: border-box;
+  }
+  .av img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .sp.talking .av { border-color: #3ba55d; box-shadow: 0 0 8px rgba(59, 165, 93, 0.8); }
+  .sp.muted { opacity: 0.55; }
+  .nm {
+    font-size: 13px; line-height: 1.2; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+</style>
+</head>
+<body>
+<div id="ov"></div>
+<script>
+'use strict';
+var ov = document.getElementById('ov');
+function render(speakers) {
+  ov.innerHTML = '';
+  for (var i = 0; i < Math.min((speakers || []).length, 12); i++) {
+    (function (s) {
+      var row = document.createElement('div');
+      row.className = 'sp' + (s.speaking ? ' talking' : '') + (s.muted ? ' muted' : '');
+      var av = document.createElement('div');
+      av.className = 'av';
+      var name = s.name || '?';
+      if (s.avatar_url) {
+        var img = document.createElement('img');
+        img.src = s.avatar_url; img.alt = ''; img.draggable = false;
+        img.onerror = function () { img.remove(); av.textContent = name.slice(0, 1).toUpperCase(); };
+        av.appendChild(img);
+      } else {
+        av.textContent = name.slice(0, 1).toUpperCase();
+        av.style.background = s.avatar_color || '#555';
+      }
+      var nm = document.createElement('div');
+      nm.className = 'nm';
+      nm.textContent = name;
+      row.appendChild(av);
+      row.appendChild(nm);
+      ov.appendChild(row);
+    })((speakers || [])[i]);
+  }
+}
+async function boot() {
+  var T = window.__TAURI__;
+  if (!T) return;
+  if (T.event && typeof T.event.listen === 'function') {
+    try {
+      await T.event.listen('overlay-speakers', function (e) {
+        render((e.payload && e.payload.speakers) || []);
+      });
+    } catch (err) {}
+  }
+  // Pull the current snapshot in case the window was created after the last
+  // push (the shell only emits on change).
+  try {
+    var st = await T.core.invoke('overlay_state');
+    if (st && st.in_call) render(st.speakers || []);
+  } catch (err) {}
+}
+boot();
+</script>
+</body>
+</html>
