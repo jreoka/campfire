@@ -6112,6 +6112,27 @@ async function notifyDmMessage(thread, author, content, messageId) {
     }, { webPush: !(await userVisible(uid)) });
   }
 }
+// Incoming 1:1 DM calls also buzz the phone: the in-app ringing banner only
+// reaches open tabs, so a call to a closed/locked device would otherwise be a
+// silent missed call. Fires once per call (the wasEmpty gate at the call site);
+// muted DMs stay silent, and a recipient who's already looking just gets the
+// banner (webPush suppressed) while their other devices still ring via the
+// native push sockets inside pushToUser. Group DMs are deliberately excluded —
+// a group call shouldn't light up everyone's phone.
+async function pushDmCallIncoming(t, caller, video, others) {
+  if (!t || t.is_group) return;
+  for (const uid of others) {
+    if ((await notifMode(uid, [`dm:${t.id}`, 'global'])) === 'muted') continue;
+    await pushToUser(uid, {
+      title: displayOf(caller),
+      body: video ? 'Incoming video call' : 'Incoming voice call',
+      icon: caller.avatar_url || '/icons/icon-192.png',
+      tag: `dm-call:${t.id}`,
+      url: `/?dm=${t.id}`,
+      requireInteraction: true,
+    }, { webPush: !(await userVisible(uid)) });
+  }
+}
 // reactions ----------
 // Reactions never land in the notification inbox — the message itself carries
 // the record (bar + hover list), so the inbox is for mentions/friend events.
@@ -8193,6 +8214,7 @@ wss.on('connection', async (ws, req) => {
           notifyUser(uid, { t: 'dm-call-incoming', threadId, video: !!msg.video,
             caller: { id: me.userId, username: me.username, display_name: me.display_name, avatar_color: me.avatar_color, active_tag: me.active_tag || null, avatar_url: me.avatar_url || null } });
         }
+        await pushDmCallIncoming(t, me, !!msg.video, others);
       }
       await pushFriendsVoice(me.userId);
       return;

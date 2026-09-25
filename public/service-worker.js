@@ -37,6 +37,7 @@ self.addEventListener('push', (e) => {
     badge: '/icons/icon-192.png',
     tag: d.tag || 'campfire',
     renotify: true,
+    requireInteraction: !!d.requireInteraction,
     data: { url: d.url || '/' },
   }));
 });
