@@ -1423,12 +1423,16 @@ img,video{-webkit-user-drag:none}
    placeholder goes transparent so the blur shows through. The image sharpens
    at exactly the size it will keep: an earlier scale(1.03) on the blurred
    state (meant to crop the blur's soft edge) visibly shrank every photo as it
-   landed, so the zoom is gone — the soft edge reads as a vignette for the
-   fraction of a second the blur is up, the same treatment spoiler veils use.
-   att-swap keeps its own concealment (the carried frame must stay the thing
-   the reader sees). */
+   landed, so the zoom is gone — the wrap instead carries the picture's own
+   border-radius while pending, so the overflow clip follows the rounded shape
+   and the soft edge can't spill past the corners (the same pairing spoiler
+   veils use). The soft edge reads as a vignette for the fraction of a second
+   the blur is up. att-swap keeps its own concealment (the carried frame must
+   stay the thing the reader sees). */
 .att-wrap.pending:not(.ready):not(.att-swap) .att-ph{background:transparent}
-.att-wrap.pending:not(.ready):not(.att-swap){overflow:hidden}
+.att-wrap.pending:not(.ready):not(.att-swap){overflow:hidden;border-radius:6px}
+/* Pins round their pictures at 5px, not 6px — the clip has to match. */
+.pin-atts .att-wrap.pending:not(.ready):not(.att-swap){border-radius:5px}
 .att-wrap.pending:not(.ready):not(.att-swap) img.att-img{opacity:1;filter:blur(16px) saturate(1.25)}
 .att-wrap img.att-img{transition:opacity .2s var(--ease-out),filter .3s var(--ease-out)}
 .spoiler{border-radius:3px;padding:0 .3rem;cursor:pointer}
