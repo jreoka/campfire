@@ -136,6 +136,66 @@ async function repairMojibakeNames() {
     console.error('[campfire] attachment name repair failed (will retry next boot):', (e && e.message) || e);
   }
 }
+// Strip the legacy ?v=<ts> cache-buster from stored upload URLs (new uploads
+// are minted without it since the 4829e3c cleanup). Every /uploads/ key is
+// immutable — the compressor publishes to a fresh key and nothing is ever
+// rewritten in place — so the parameter changes nothing about what is served;
+// it only uglifies copied links. The strip is scoped to /uploads/ URLs so a
+// ?v= that MEANS something (youtube.com/watch?v=…) in message text is never
+// touched. Marker-guarded like repairMojibakeNames: a failed run leaves the
+// marker unset and retries next boot. Bump STRIP_CACHEBUST_REV to re-run.
+const STRIP_CACHEBUST_MARKER = 'upload_cachebuster_stripped';
+const STRIP_CACHEBUST_REV = 'v1';
+const CACHEBUST_COLS = [
+  ['attachments', 'url'],
+  ['dm_attachments', 'url'],
+  ['users', 'avatar_url'],
+  ['users', 'banner_url'],
+  ['users', 'sidebar_banner_url'],
+  ['servers', 'banner_url'],
+  ['stories', 'url'],
+  ['media_history', 'url'],
+  ['custom_emoji', 'url'],
+  ['webhooks', 'avatar_url'],
+  ['messages', 'webhook_avatar'],
+  ['messages', 'content'],
+  ['dm_messages', 'content'],
+  ['message_reports', 'content'],
+  ['message_reports', 'snapshot'],
+  ['link_embeds', 'url'],
+  ['link_embeds', 'data'],
+  ['reminders', 'text'],
+];
+function stripUploadCacheBuster(s) {
+  return String(s || '').replace(/\/uploads\/[^\s"'<>()\]]+/g, (m) => {
+    let u = m.replace(/\?v=[A-Za-z0-9]+&/g, '?');
+    u = u.replace(/&v=[A-Za-z0-9]+/g, '');
+    return u.replace(/\?v=[A-Za-z0-9]+$/, '');
+  });
+}
+async function stripUploadCacheBusters() {
+  if ((await metaGet(STRIP_CACHEBUST_MARKER)) === STRIP_CACHEBUST_REV) return;
+  try {
+    let fixed = 0, looked = 0;
+    for (const [table, col] of CACHEBUST_COLS) {
+      if (!(await db.tableExists(table))) continue;
+      const rows = await db.prepare(
+        `SELECT id, ${col} FROM ${table} WHERE ${col} LIKE '%?v=%'`
+      ).all();
+      looked += rows.length;
+      for (const r of rows) {
+        const clean = stripUploadCacheBuster(r[col]);
+        if (clean === r[col]) continue;
+        await db.prepare(`UPDATE ${table} SET ${col} = ? WHERE id = ?`).run(clean, r.id);
+        fixed++;
+      }
+    }
+    await metaSet(STRIP_CACHEBUST_MARKER, STRIP_CACHEBUST_REV);
+    console.log(`[campfire] upload cache-buster strip (${STRIP_CACHEBUST_REV}): ${fixed} value(s) cleaned of ${looked} candidate(s)`);
+  } catch (e) {
+    console.error('[campfire] upload cache-buster strip failed (will retry next boot):', (e && e.message) || e);
+  }
+}
 // Background timers with async bodies: a rejection must log, never escape
 // into an unhandled rejection (which would crash the process).
 function safeInterval(fn, ms) {
@@ -8592,6 +8652,7 @@ async function boot() {
   await db.withLock(db.LOCKS.bootRepair, async () => {
     await repairThreads();
     await repairMojibakeNames();
+    await stripUploadCacheBusters();
     await initPushKeys();
   });
   // Stale playing_game / streaming_game clears. These are cluster-wide writes,
