@@ -58,8 +58,20 @@ ok(libSrc.includes('load_settings(&app).overlay'), 'setup primes overlay setting
 ok(libSrc.includes('only_while_gaming'), 'OverlaySettings has only_while_gaming');
 ok(libSrc.includes('default_overlay_only_while_gaming'), 'only_while_gaming has a serde default');
 ok(/fn default_overlay_only_while_gaming\(\)[^{]*\{[^}]*true/s.test(libSrc), 'only_while_gaming defaults to true');
-ok(/settings\.only_while_gaming\s*&&\s*!gaming/.test(libSrc), 'apply_overlay hides the panel when no game is running');
+ok(/settings\.only_while_gaming\s*&&\s*!\(\s*gaming\s*&&\s*focused\s*\)/.test(libSrc), 'apply_overlay hides the panel when no game is running or focused');
 ok(/current_game\.lock\(\)\.unwrap\(\)\.is_some\(\)/.test(libSrc), 'apply_overlay reads game detection state');
+// --- overlay only over the game window (Windows foreground tracking) ---
+ok(libSrc.includes('game_pids: Mutex<std::collections::HashSet<sysinfo::Pid>>'), 'State tracks game PIDs');
+ok(libSrc.includes('game_focused: AtomicBool'), 'State tracks game window focus');
+ok(libSrc.includes('fn GetForegroundWindow()'), 'Windows foreground window FFI declared');
+ok(libSrc.includes('fn GetWindowThreadProcessId('), 'Windows foreground PID FFI declared');
+ok(libSrc.includes('fn foreground_is_game('), 'foreground_is_game helper exists');
+ok(libSrc.includes('pid == own_pid'), 'own windows never flip the focus gate');
+ok(libSrc.includes('sysinfo::Pid::from_u32(pid)'), 'foreground PID compared against game PIDs');
+ok(libSrc.includes('let focus_app = app.clone();'), 'focus tracker thread spawned in setup');
+ok(libSrc.includes('Duration::from_secs(1)'), 'focus tracker polls every second');
+ok(/focused != prev/.test(libSrc), 'overlay re-evaluated only when focus changes');
+ok(libSrc.includes('pids.insert(p.pid())'), 'watcher collects PIDs evidencing the game');
 ok(libSrc.includes('*state.current_game.lock().unwrap() = game.clone();\n                                update_tray(&app, game.as_deref());\n                                // Game started or stopped: re-evaluate the\n                                // "only while gaming" overlay gate.\n                                apply_overlay(&app);'),
   'game watcher re-evaluates the overlay on game change');
 
@@ -110,6 +122,7 @@ ok(!/renderOverlayTab[\s\S]*?createElement\('select'\)/.test(settings.slice(sett
 ok(settings.includes("'Only while gaming'"), 'tab has an only-while-gaming row');
 ok(settings.includes('only_while_gaming: gInp.checked'), 'tab saves the gaming-only preference');
 ok(settings.includes('cur.only_while_gaming !== false'), 'gaming-only defaults on for old settings');
+ok(settings.includes('alt-tab away and it hides'), 'tab hint describes the focus behavior');
 
 // --- styles for the revamped tab ---
 const css = read(path.join(root, 'public/styles.css'));

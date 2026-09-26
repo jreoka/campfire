@@ -81,6 +81,14 @@ struct State {
     // cached overlay prefs (mirrors settings.json; set_overlay_settings keeps
     // both in sync so the hot path never touches the disk)
     overlay_settings: Mutex<OverlaySettings>,
+    // PIDs of processes currently evidencing the detected game, refreshed
+    // every watcher poll (Windows "only over the game window" overlay gate)
+    #[cfg(windows)]
+    game_pids: Mutex<std::collections::HashSet<sysinfo::Pid>>,
+    // whether the foreground window right now belongs to the detected game
+    // (Windows only — other platforms show the overlay while a game runs)
+    #[cfg(windows)]
+    game_focused: AtomicBool,
 }
 
 /// One call participant, as the overlay window renders them.
@@ -797,6 +805,35 @@ fn ensure_overlay_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow>
     Ok(w)
 }
 
+// Raw user32 imports: no new crates for two Win32 calls that user32.dll
+// always provides in a GUI process.
+#[cfg(all(desktop, windows))]
+extern "C" {
+    fn GetForegroundWindow() -> *mut std::ffi::c_void;
+    fn GetWindowThreadProcessId(hwnd: *mut std::ffi::c_void, pid: *mut u32) -> u32;
+}
+
+// Is the focused window right now the detected game's? Our own windows are
+// ignored (the previous value is kept) so showing the overlay can't flip the
+// gate off if it ever steals focus for a frame.
+#[cfg(all(desktop, windows))]
+fn foreground_is_game(state: &State, own_pid: u32) -> bool {
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.is_null() {
+        return false;
+    }
+    let mut pid: u32 = 0;
+    unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
+    if pid == 0 || pid == own_pid {
+        return state.game_focused.load(Ordering::Relaxed);
+    }
+    state
+        .game_pids
+        .lock()
+        .unwrap()
+        .contains(&sysinfo::Pid::from_u32(pid))
+}
+
 /// Show/hide the overlay window from the cached settings + snapshot and hand
 /// the latest speakers to the page. The page filters to whoever is speaking,
 /// fades rows in/out, and sizes the window itself through `overlay_fit`.
@@ -815,10 +852,16 @@ fn apply_overlay(app: &AppHandle) {
         (ov.in_call, ov.speakers.clone())
     };
     let gaming = app.state::<State>().current_game.lock().unwrap().is_some();
+    // Windows also requires the game window itself to be focused; other
+    // platforms gate on "a game is running" only.
+    #[cfg(windows)]
+    let focused = app.state::<State>().game_focused.load(Ordering::Relaxed);
+    #[cfg(not(windows))]
+    let focused = true;
     // The panel is only for games: when "only while gaming" is on it stays
-    // hidden unless a game is currently detected, so it never floats over
-    // the desktop or other apps.
-    if !settings.enabled || !in_call || (settings.only_while_gaming && !gaming) {
+    // hidden unless a game is running (and, on Windows, its window is
+    // frontmost), so it never floats over the desktop or other apps.
+    if !settings.enabled || !in_call || (settings.only_while_gaming && !(gaming && focused)) {
         if let Some(w) = app.get_webview_window("overlay") {
             let _ = w.hide();
         }
@@ -907,6 +950,10 @@ pub fn run() {
             running_games: Mutex::new(Vec::new()),
             overlay: Mutex::new(OverlayState::default()),
             overlay_settings: Mutex::new(OverlaySettings::default()),
+            #[cfg(windows)]
+            game_pids: Mutex::new(std::collections::HashSet::new()),
+            #[cfg(windows)]
+            game_focused: AtomicBool::new(true),
         })
         .invoke_handler(tauri::generate_handler![
             get_autostart,
@@ -1033,6 +1080,31 @@ pub fn run() {
                 }
             });
 
+            // Windows: track the foreground window for the overlay's "only over
+            // the game window" gate. Polls GetForegroundWindow every second;
+            // the overlay shows only while the focused window belongs to the
+            // detected game — alt-tab to a browser and it hides, tab back and
+            // it returns. Only re-evaluates on change so a steady state costs
+            // nothing. (macOS/Linux keep the "while a game is running" gate:
+            // reliable foreground detection isn't portable there.)
+            #[cfg(windows)]
+            {
+                let focus_app = app.clone();
+                std::thread::spawn(move || {
+                    let app = focus_app;
+                    let state = app.state::<State>();
+                    let own_pid = std::process::id();
+                    loop {
+                        let focused = foreground_is_game(&state, own_pid);
+                        let prev = state.game_focused.swap(focused, Ordering::Relaxed);
+                        if focused != prev {
+                            apply_overlay(&app);
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                    }
+                });
+            }
+
             // Game watcher: poll every POLL_SECS; beacon immediately on change and
             // every HEARTBEAT_SECS while playing (server credits capped time).
             let watch_app = app.clone();
@@ -1129,6 +1201,44 @@ pub fn run() {
                     *state.running_games.lock().unwrap() = running;
                     let game: Option<String> =
                         scored.into_iter().next().map(|(_, _, n)| n);
+                    // Windows overlay gate: remember which PIDs evidence the
+                    // winning game, so the focus thread can tell whether the
+                    // foreground window is the game itself. Mirrors the
+                    // scoring evidence above (foldered path/suffix, bare exe
+                    // or display name).
+                    #[cfg(windows)]
+                    {
+                        let mut pids = std::collections::HashSet::new();
+                        if let Some(ref name) = game {
+                            if let Some(entry) = games.iter().find(|g| &g.name == name) {
+                                for p in system.processes().values() {
+                                    let full = p
+                                        .exe()
+                                        .map(|e| {
+                                            e.to_string_lossy().replace('\\', "/").to_lowercase()
+                                        })
+                                        .unwrap_or_default();
+                                    let base =
+                                        full.rsplit('/').next().unwrap_or("").to_string();
+                                    let disp = p.name().to_string_lossy().to_lowercase();
+                                    let foldered_hit = entry.foldered.iter().any(|f| {
+                                        let fb = f.rsplit('/').next().unwrap_or("");
+                                        base == fb
+                                            && (full == *f
+                                                || full.ends_with(&format!("/{}", f)))
+                                    });
+                                    let bare_hit = entry
+                                        .bare
+                                        .iter()
+                                        .any(|b| b == &base || b == &disp);
+                                    if foldered_hit || bare_hit {
+                                        pids.insert(p.pid());
+                                    }
+                                }
+                            }
+                        }
+                        *state.game_pids.lock().unwrap() = pids;
+                    }
                     let tok = state.token.lock().unwrap().clone();
                     if let Some(tok) = tok {
                         let changed = {

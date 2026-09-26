@@ -689,7 +689,7 @@ async function renderOverlayTab() {
   const gTitle = document.createElement('div'); gTitle.className = 'ov-title';
   gTitle.textContent = 'Only while gaming';
   const gHint = document.createElement('div'); gHint.className = 'muted small';
-  gHint.textContent = 'Show the panel only when a game is running — never over your desktop or other apps.';
+  gHint.textContent = 'The panel only appears while a game is running and its window is in front — alt-tab away and it hides.';
   gTx.appendChild(gTitle); gTx.appendChild(gHint);
   const gSw = document.createElement('label'); gSw.className = 'ov-switch';
   const gInp = document.createElement('input'); gInp.type = 'checkbox';
