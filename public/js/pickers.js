@@ -2027,6 +2027,10 @@ function lbSlideOut() {
 }
 $('#lightbox')?.addEventListener('pointerdown', (e) => {
   if (!lb.open) return;
+  // Only the primary button starts a gesture: a right/middle press must
+  // neither pan nor read its release as a tap (which would zoom the photo
+  // on a right-click — the gesture the context menu owns).
+  if (e.button) return;
   // The bar, the arrows and the strip own their own presses: the gesture handlers
   // (and the tap-the-backdrop-to-close rule) must never see them.
   if (e.target.closest('#lb-bar, .lb-nav, #lb-strip')) return;

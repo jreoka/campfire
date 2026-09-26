@@ -185,5 +185,12 @@ if (!ctxSrc) { console.log('FAILED: could not slice ctxFor out of actions.js'); 
   check(pup.includes('if (lbHoldLift()) return;'), 'lbPointerUp stands down for a long-press lift-off');
 }
 
+// 11. The gesture handlers ignore non-primary buttons: a right-click must not
+// zoom the photo (the context menu owns that gesture).
+{
+  const pd = slice(pickers, "$('#lightbox')?.addEventListener('pointerdown'", "addEventListener('pointermove'");
+  check(pd.includes('if (e.button) return;'), 'lightbox pointerdown ignores non-primary buttons');
+}
+
 if (failures.length) { console.log('\n' + failures.length + ' FAILED'); process.exit(1); }
 console.log('\nall ' + passed + ' checks passed');
