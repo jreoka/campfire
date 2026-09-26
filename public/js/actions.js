@@ -1384,6 +1384,11 @@ document.addEventListener('touchend', (e) => {
 }, { passive: false });
 document.addEventListener('touchstart', (e) => {
   noteTouchStart();
+  // A second finger is a gesture (pinch), never a hold: cancel any pending
+  // hold and don't start another — otherwise pinching to zoom in the viewer
+  // buzzes and slides the sheet up mid-gesture.
+  if (e.touches.length > 1) { clearTimeout(holdT); holdT = null; return; }
+  if (holdT) { clearTimeout(holdT); holdT = null; }
   // A link is the browser's (its own long-press sheet) — except an attachment's
   // own link: the plain file card IS an `<a data-att-id>`, and its rows now live
   // behind the pointer alone, so it has to be holdable like every other

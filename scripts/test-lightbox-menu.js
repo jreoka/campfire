@@ -233,5 +233,13 @@ if (!ctxSrc) { console.log('FAILED: could not slice ctxFor out of actions.js'); 
   check(holdBlock.includes('{ over: true }'), 'the lightbox hold asks for the lifted sheet');
 }
 
+// 14. A second finger cancels the hold: pinching to zoom in the viewer must
+// never buzz the sheet up mid-gesture.
+{
+  const start = slice(actions, "document.addEventListener('touchstart', (e) => {", 'holdT = setTimeout(');
+  check(start.includes('if (e.touches.length > 1) { clearTimeout(holdT); holdT = null; return; }'),
+    'a second finger cancels the pending hold and starts none');
+}
+
 if (failures.length) { console.log('\n' + failures.length + ' FAILED'); process.exit(1); }
 console.log('\nall ' + passed + ' checks passed');
