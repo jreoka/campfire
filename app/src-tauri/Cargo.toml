@@ -29,3 +29,9 @@ serde_json = "1"
 # stays out of the APK.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-notification = "2"
+
+# Raw Run-key reads on Windows only: lets the app tell a deleted autostart
+# entry (NSIS uninstaller on manual upgrades — healed) from one the user
+# disabled in Task Manager (respected). Already in the tree via auto-launch.
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.10"

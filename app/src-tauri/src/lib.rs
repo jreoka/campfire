@@ -187,6 +187,13 @@ struct Settings {
     // tray menu (and in Settings → Desktop app).
     #[serde(default = "default_start_minimized")]
     start_minimized: bool,
+    // The user's start-on-login preference. Persisted here — not just in the
+    // OS autostart entry — because the Windows NSIS uninstaller deletes the
+    // Run value on manual upgrades. Without this, the app can't tell "the
+    // user turned it off" from "the entry was wiped", and the setting is
+    // forgotten on every manual reinstall.
+    #[serde(default)]
+    autostart: bool,
     // In-call overlay (Settings → Overlay). Defaults on.
     #[serde(default)]
     overlay: OverlaySettings,
@@ -243,6 +250,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             start_minimized: default_start_minimized(),
+            autostart: false,
             overlay: OverlaySettings::default(),
         }
     }
@@ -265,6 +273,42 @@ fn store_settings<R: Runtime>(app: &AppHandle<R>, settings: Settings) {
     if let Ok(json) = serde_json::to_string_pretty(&settings) {
         let _ = std::fs::write(path, json);
     }
+}
+
+/// True when the OS start-on-login entry is entirely absent — as opposed to
+/// merely reported disabled. On Windows the user can disable the entry in
+/// Task Manager (which we respect); the NSIS uninstaller instead *deletes*
+/// the Run value on manual upgrades, which is the case we heal.
+#[cfg(all(desktop, target_os = "windows"))]
+fn autostart_entry_missing<R: Runtime>(app: &AppHandle<R>) -> bool {
+    let name = app.package_info().name.clone();
+    winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .open_subkey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run")
+        .and_then(|k| k.get_value::<String, _>(name))
+        .is_err()
+}
+
+#[cfg(all(desktop, not(target_os = "windows")))]
+fn autostart_entry_missing<R: Runtime>(_app: &AppHandle<R>) -> bool {
+    // No Task-Manager-style override on other platforms; a negative
+    // is_enabled is treated as a missing entry.
+    true
+}
+
+/// Enable/disable the OS start-on-login entry and persist the preference in
+/// settings.json, so a wiped entry can be told apart from a deliberate off.
+#[cfg(desktop)]
+fn set_autostart_state<R: Runtime>(app: &AppHandle<R>, enabled: bool) -> Result<(), String> {
+    let a = app.autolaunch();
+    if enabled {
+        a.enable().map_err(|e| e.to_string())?;
+    } else {
+        a.disable().map_err(|e| e.to_string())?;
+    }
+    let mut settings = load_settings(app);
+    settings.autostart = enabled;
+    store_settings(app, settings);
+    Ok(())
 }
 
 // Build the game list from Discord's detectable-games DB.
@@ -570,12 +614,7 @@ fn get_autostart(app: AppHandle) -> Result<bool, String> {
 #[cfg(desktop)]
 #[tauri::command]
 fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
-    let a = app.autolaunch();
-    if enabled {
-        a.enable().map_err(|e| e.to_string())?;
-    } else {
-        a.disable().map_err(|e| e.to_string())?;
-    }
+    set_autostart_state(&app, enabled)?;
     // The tray's Start-minimized item is only enabled while this is on.
     let cur = app.state::<State>().current_game.lock().unwrap().clone();
     update_tray(&app, cur.as_deref());
@@ -991,12 +1030,32 @@ pub fn run() {
             // from inside a (synchronous) command, so the hot path in
             // apply_overlay must never be the first thing to create it.
             let _ = ensure_overlay_window(&app);
-            // Older builds never passed `--autostart`, so an already-enabled
-            // login entry still launches with no args. Rewrite it in place now
-            // that the plugin supplies the flag. A disabled entry is left
-            // alone — the user turned start-on-login off deliberately.
-            if app.autolaunch().is_enabled().unwrap_or(false) {
-                let _ = app.autolaunch().enable();
+            // Reconcile the persisted start-on-login preference with the OS
+            // entry. Older builds never persisted it, so an enabled entry is
+            // adopted as the preference (otherwise the first run of this
+            // build would "forget" it). An enabled entry is also rewritten
+            // in place so it always points at this install with the current
+            // args — older builds passed no `--autostart`. And if the
+            // preference is on but the entry is gone — the NSIS uninstaller
+            // deletes the Run value on manual upgrades — re-create it. A
+            // value that exists but reports disabled was turned off in Task
+            // Manager; that choice is respected (Windows only).
+            {
+                let os_enabled = app.autolaunch().is_enabled().unwrap_or(false);
+                let mut settings = load_settings(&app);
+                let mut dirty = false;
+                if os_enabled {
+                    if !settings.autostart {
+                        settings.autostart = true;
+                        dirty = true;
+                    }
+                    let _ = app.autolaunch().enable();
+                } else if settings.autostart && autostart_entry_missing(&app) {
+                    let _ = app.autolaunch().enable();
+                }
+                if dirty {
+                    store_settings(&app, settings);
+                }
             }
             let icon = tauri::image::Image::from_bytes(ICON_BYTES)?;
             let _tray = TrayIconBuilder::with_id("campfire")
@@ -1024,12 +1083,8 @@ pub fn run() {
                     match event.id.0.as_str() {
                         "open" => show_main_window(app),
                         "autostart" => {
-                            let a = app.autolaunch();
-                            let _ = if a.is_enabled().unwrap_or(false) {
-                                a.disable()
-                            } else {
-                                a.enable()
-                            };
+                            let enabled = !app.autolaunch().is_enabled().unwrap_or(false);
+                            let _ = set_autostart_state(app, enabled);
                             let cur =
                                 app.state::<State>().current_game.lock().unwrap().clone();
                             update_tray(app, cur.as_deref());
