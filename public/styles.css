@@ -1942,6 +1942,10 @@ img.cemoi{height:1.7em;width:auto;max-width:100%;object-fit:contain;vertical-ali
 /* ---------- bottom sheet (touch message menu) ---------- */
 #sheet-backdrop{position:fixed;inset:0;background:rgba(4,6,11,.6);z-index:158;opacity:0;transition:opacity var(--t-sheet) var(--ease-native)}
 #sheet-backdrop.open{opacity:1}
+/* A sheet opened on the lightbox (the mobile hold menu) must paint above the
+   viewer (z-index 200) instead of under it. */
+#sheet-backdrop.over-lightbox{z-index:205}
+#sheet.over-lightbox{z-index:206}
 #sheet{position:fixed;left:0;right:0;bottom:0;z-index:159;background:var(--panel-2);border:0;border-radius:8px 8px 0 0;padding:.6rem .9rem calc(.9rem + var(--safe-b));transform:translateY(105%);transition:transform var(--t-sheet) var(--ease-native);max-height:78vh;max-height:78dvh;display:flex;flex-direction:column;overflow:hidden;overscroll-behavior:contain}
 /* Dragged taller from its handle/header (sheetDragExpand, final.js), or opened
    with the class by a caller that knows the list is long. The list is the only

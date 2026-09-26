@@ -730,7 +730,7 @@ function openFolderSheet(fid) {
     },
   });
 }
-function openCtxSheet(items, head) {
+function openCtxSheet(items, head, opts) {
   if (!items || !items.length) return;
   suppressHoverFromTouch();
   closeCtx();
@@ -739,9 +739,13 @@ function openCtxSheet(items, head) {
   closeCtxSheet();
   const bd = document.createElement('div');
   bd.id = 'sheet-backdrop';
+  // A sheet opened on the lightbox must paint above it (the viewer is
+  // z-index 200, above the sheet's usual 158/159).
+  if (opts && opts.over) bd.classList.add('over-lightbox');
   bd.onclick = () => closeCtxSheet();
   const sh = document.createElement('div');
   sh.id = 'sheet';
+  if (opts && opts.over) sh.classList.add('over-lightbox');
   sh.setAttribute('role', 'dialog');
   sh.innerHTML = '<div class="sheet-handle"></div>';
   if (head && (head.title || head.sub)) {
@@ -1403,7 +1407,7 @@ document.addEventListener('touchstart', (e) => {
       if (items.length) {
         holdSheet = true;
         if (typeof lbNoteHold === 'function') lbNoteHold(); // the lift-off is the sheet's, not a tap's
-        openCtxSheet(items, typeof lbHeadFor === 'function' ? lbHeadFor(e.target) : null);
+        openCtxSheet(items, typeof lbHeadFor === 'function' ? lbHeadFor(e.target) : null, { over: true });
         return;
       }
     }

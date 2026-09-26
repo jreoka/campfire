@@ -218,5 +218,20 @@ if (!ctxSrc) { console.log('FAILED: could not slice ctxFor out of actions.js'); 
     'closeLightbox dismisses the viewer-opened menu/sheet');
 }
 
+// 13. The hold sheet paints ABOVE the lightbox (200), not under it.
+{
+  const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
+  const sheetZ = Number((css.match(/#sheet\.over-lightbox\{z-index:(\d+)/) || [])[1]);
+  const bdZ = Number((css.match(/#sheet-backdrop\.over-lightbox\{z-index:(\d+)/) || [])[1]);
+  check(Number.isFinite(sheetZ) && sheetZ > 200, 'the hold sheet lifts above the lightbox', sheetZ);
+  check(Number.isFinite(bdZ) && bdZ > 200 && bdZ < sheetZ, 'the hold backdrop sits between viewer and sheet', bdZ);
+  const sheet = slice(actions, 'function openCtxSheet(items, head, opts) {', "sh.setAttribute('role', 'dialog')");
+  check(sheet.includes("if (opts && opts.over) bd.classList.add('over-lightbox')") &&
+    sheet.includes("if (opts && opts.over) sh.classList.add('over-lightbox')"),
+    'openCtxSheet lifts the sheet when asked');
+  const holdBlock = slice(actions, 'holdT = setTimeout(', 'const mt = t.closest');
+  check(holdBlock.includes('{ over: true }'), 'the lightbox hold asks for the lifted sheet');
+}
+
 if (failures.length) { console.log('\n' + failures.length + ' FAILED'); process.exit(1); }
 console.log('\nall ' + passed + ' checks passed');
