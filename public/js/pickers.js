@@ -550,8 +550,15 @@ function insertAtCursor(input, text) {
     try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch {}
     return;
   }
-  // Programmatic insert (emoji / mention pickers) fires no 'input' event, so
-  // the composer draft has to be told about it explicitly.
+  // Programmatic insert (emoji / mention pickers, and the document-level paste
+  // handler for pastes that land while the composer isn't focused) fires no
+  // 'input' event, so the composer side effects that ride on it have to run
+  // explicitly: the draft write, the auto-grow, and the send key. Without the
+  // grow, a pasted long link wraps to several lines while the box stays one
+  // row tall — the backdrop then renders the wrapped text half-clipped below
+  // the optical centre, which reads as the link "shifting downwards".
+  try { composerAutoGrow(input); } catch {}
+  try { paintComposerSend(); } catch {}
   try { draftSoon(input, draftCtxForEl(input)); } catch {}
 }
 // One backdrop painter per bar; the caller says which field it just changed.
