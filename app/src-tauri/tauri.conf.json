@@ -6,6 +6,19 @@
   "build": {
     "frontendDist": "../dist"
   },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "dialog": false,
+      "endpoints": [
+        "https://github.com/jreoka/campfire/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI1QUFDOTYxMEIxRkZBQkYKUldTLytoOExZY21xdGY2UWZqWmpicU4ybVd1M0dxbVdhWnMrUnZPb3d1TzJpMTFLYXZaWVlyNm8K",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "app": {
     "macOSPrivateApi": true,
     "withGlobalTauri": true,

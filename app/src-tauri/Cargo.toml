@@ -29,6 +29,10 @@ serde_json = "1"
 # stays out of the APK.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-notification = "2"
+# In-app updates for the desktop shells only. The updater and its prompt
+# dialog live entirely in Rust, so no webview permissions are needed.
+tauri-plugin-updater = "2"
+tauri-plugin-dialog = "2"
 
 # Raw Run-key reads on Windows only: lets the app tell a deleted autostart
 # entry (NSIS uninstaller on manual upgrades — healed) from one the user

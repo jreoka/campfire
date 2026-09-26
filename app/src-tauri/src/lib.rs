@@ -399,6 +399,103 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
+/// Background in-app update checker (desktop only).
+///
+/// A dedicated OS thread — deliberately not the async runtime — polls the
+/// GitHub release manifest configured under `plugins.updater` in
+/// tauri.conf.json: once shortly after launch, then every six hours. When a
+/// newer signed release is found it is downloaded in the background and the
+/// user is asked whether to restart into it now. A version that was already
+/// offered this session is not offered again, so the prompt never nags.
+#[cfg(desktop)]
+fn spawn_update_checker(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        // Let the app finish launching (and the network settle) before the
+        // first check.
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        let mut offered: Option<String> = None;
+        loop {
+            let _ = check_for_updates(&app, &mut offered, false);
+            std::thread::sleep(std::time::Duration::from_secs(6 * 3600));
+        }
+    });
+}
+
+/// Check for an update, download it, and offer to install.
+///
+/// `manual` is true when the user picked "Check for updates" in the tray: the
+/// already-offered suppression is skipped and a "you're up to date" dialog
+/// confirms a negative result. Automatic checks stay silent on failure and
+/// when there is nothing new — a laptop on a plane is not an error.
+#[cfg(desktop)]
+fn check_for_updates(
+    app: &AppHandle,
+    offered: &mut Option<String>,
+    manual: bool,
+) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let update = tauri::async_runtime::block_on(async {
+        app.updater()
+            .map_err(|e| e.to_string())?
+            .check()
+            .await
+            .map_err(|e| e.to_string())
+    })?;
+    let update = match update {
+        Some(u) => u,
+        None => {
+            if manual {
+                update_dialog(app, "You're up to date.", "Campfire", false);
+            }
+            return Ok(());
+        }
+    };
+    if !manual && offered.as_deref() == Some(update.version.as_str()) {
+        return Ok(()); // already offered this version this session
+    }
+    // Download first so the prompt never makes the user wait; the bytes are
+    // verified against the release signature inside download/install.
+    let bytes = tauri::async_runtime::block_on(update.download(|_, _| {}, || {}))
+        .map_err(|e| e.to_string())?;
+    *offered = Some(update.version.clone());
+    let restart = update_dialog(
+        app,
+        &format!(
+            "Campfire {} is ready — restart now to install it?",
+            update.version
+        ),
+        "Campfire update",
+        true,
+    );
+    if restart {
+        // On Windows install() spawns the NSIS updater and exits the process
+        // itself; on macOS/Linux it swaps the bundle in place and we restart.
+        update.install(bytes).map_err(|e| e.to_string())?;
+        app.restart();
+    }
+    Ok(())
+}
+
+/// Native OK (or OK/Cancel) prompt. `blocking_show` blocks the calling thread,
+/// so this must only run on a background thread — never the main thread.
+#[cfg(desktop)]
+fn update_dialog(app: &AppHandle, message: &str, title: &str, ask: bool) -> bool {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let mut dialog = app
+        .dialog()
+        .message(message)
+        .title(title)
+        .kind(MessageDialogKind::Info);
+    if ask {
+        dialog = dialog.buttons(MessageDialogButtons::OkCancelCustom(
+            "Restart now".to_string(),
+            "Later".to_string(),
+        ));
+    }
+    dialog.blocking_show()
+}
+
 #[cfg(desktop)]
 fn tray_menu<R: Runtime>(app: &AppHandle<R>, game: Option<&str>) -> tauri::Result<Menu<R>> {
     let label = game
@@ -426,9 +523,19 @@ fn tray_menu<R: Runtime>(app: &AppHandle<R>, game: Option<&str>) -> tauri::Resul
         None::<&str>,
     )?;
     let sep_bottom = PredefinedMenuItem::separator(app)?;
+    let check_updates =
+        MenuItem::with_id(app, "check_updates", "Check for updates", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let items: [&dyn IsMenuItem<R>; 7] =
-        [&open, &game_item, &sep_top, &autostart, &start_minimized, &sep_bottom, &quit];
+    let items: [&dyn IsMenuItem<R>; 8] = [
+        &open,
+        &game_item,
+        &sep_top,
+        &autostart,
+        &start_minimized,
+        &sep_bottom,
+        &check_updates,
+        &quit,
+    ];
     Menu::with_items(app, &items)
 }
 
@@ -968,6 +1075,12 @@ pub fn run() {
         // OS notifications for a backgrounded window (no Notification API in
         // any of the desktop WebViews).
         .plugin(tauri_plugin_notification::init())
+        // In-app updates: signed bundles are fetched from the GitHub release
+        // manifest (plugins.updater in tauri.conf.json) and the dialog plugin
+        // prompts before installing. Both live entirely in Rust, so no
+        // webview permissions are needed.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(State {
             token: Mutex::new(None),
             games: Mutex::new(Vec::new()),
@@ -1020,6 +1133,11 @@ pub fn run() {
             // from inside a (synchronous) command, so the hot path in
             // apply_overlay must never be the first thing to create it.
             let _ = ensure_overlay_window(&app);
+            // Background in-app update checks (desktop only): 30s after
+            // launch, then every six hours, plus the tray's "Check for
+            // updates" item. Failures stay silent — no network is normal.
+            #[cfg(desktop)]
+            spawn_update_checker(&app);
             // Reconcile the persisted start-on-login preference with the OS
             // entry. Older builds never persisted it, so an enabled entry is
             // adopted as the preference (otherwise the first run of this
@@ -1090,6 +1208,15 @@ pub fn run() {
                         "quit" => {
                             clear_game_on_exit(app);
                             app.exit(0);
+                        }
+                        "check_updates" => {
+                            // Runs on its own thread: check + download hit the
+                            // network and the prompt blocks.
+                            let app = app.clone();
+                            std::thread::spawn(move || {
+                                let mut offered = None;
+                                let _ = check_for_updates(&app, &mut offered, true);
+                            });
                         }
                         _ => {}
                     }

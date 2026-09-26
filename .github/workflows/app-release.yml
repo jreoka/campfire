@@ -84,11 +84,14 @@ jobs:
       - name: Build Tauri app
         working-directory: app
         run: npm run build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       - uses: actions/upload-artifact@v4
         with:
           name: campfire-windows
           path: |
             app/src-tauri/target/release/bundle/nsis/*.exe
+            app/src-tauri/target/release/bundle/nsis/*.exe.sig
             app/src-tauri/target/release/bundle/msi/*.msi
             app/src-tauri/target/release/campfire.exe
 
@@ -111,10 +114,14 @@ jobs:
       - name: Build Tauri app
         working-directory: app
         run: npm run build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       - uses: actions/upload-artifact@v4
         with:
           name: campfire-macos
-          path: app/src-tauri/target/release/bundle/dmg/*.dmg
+          path: |
+            app/src-tauri/target/release/bundle/dmg/*.dmg
+            app/src-tauri/target/release/bundle/macos/*.tar.gz*
 
   linux:
     needs: resolve
@@ -140,12 +147,15 @@ jobs:
       - name: Build Tauri app
         working-directory: app
         run: npm run build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       - uses: actions/upload-artifact@v4
         with:
           name: campfire-linux
           path: |
             app/src-tauri/target/release/bundle/deb/*.deb
             app/src-tauri/target/release/bundle/appimage/*.AppImage
+            app/src-tauri/target/release/bundle/appimage/*.AppImage.sig
 
   android:
     needs: resolve
@@ -203,9 +213,18 @@ jobs:
     needs: [resolve, windows, macos, linux, android]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: bundles
+      - name: Build updater manifest
+        run: |
+          node scripts/gen-updater-json.js \
+            --version "${{ needs.resolve.outputs.version }}" \
+            --tag "${{ needs.resolve.outputs.tag }}" \
+            --bundles bundles \
+            --notes "Campfire app ${{ needs.resolve.outputs.version }}" > latest.json
+          node -e "const m=require('./latest.json'); console.log('manifest ok:', m.version, Object.keys(m.platforms).join(','))"
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -219,7 +238,9 @@ jobs:
             - **Linux**: `*.deb` or the portable `*.AppImage` (needs WebKitGTK on the system, present on most desktop distros).
             - **Android**: `app-universal-release.apk` — sideload (allow install from unknown sources). Needs Android 7+.
             - Desktop apps do tray icon, start-on-login, and game detection (richest on Windows — Discord's game DB barely covers macOS/Linux). The Android app is the full Campfire experience including voice, without the desktop extras.
+            - **Auto-updates**: from this release on, the desktop apps check for updates on launch (and via the tray's *Check for updates*) and install them in-app — no more manual exe downloads. The NSIS installer / AppImage / macOS app update in place; the portable `campfire.exe` and the DMG/DEB do not.
           files: |
+            latest.json
             bundles/campfire-windows/**
             bundles/campfire-macos/**
             bundles/campfire-linux/**
