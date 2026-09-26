@@ -4,7 +4,14 @@
   floats over fullscreen games during voice calls. The page's voice code
   pushes speaker snapshots to the `overlay_update` command; the shell repaints
   this page through the `overlay-speakers` event. Bundled with the app in
-  app/dist so it never depends on the site deploy. -->
+  app/dist so it never depends on the site deploy.
+
+  Only participants who are CURRENTLY speaking get a row: a row fades in when
+  someone starts talking and fades back out when they stop. Rows are keyed by
+  speaker id so a re-render never rebuilds a row that is already on screen.
+  The page owns the row lifecycle, so it also owns the panel height: after
+  every change it reports the visible row count to the shell's `overlay_fit`
+  command, which resizes (and re-anchors) the window. -->
 <html>
 <head>
 <meta charset="utf-8">
@@ -20,19 +27,28 @@
     background: rgba(17, 19, 24, 0.78); border-radius: 10px;
     padding: 5px 10px 5px 5px; color: #fff;
     -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    /* The resting state is invisible: rows fade in on `.in` and fade back to
+       this when the speaker stops, before being removed from the DOM. */
+    opacity: 0; transform: translateY(-6px) scale(0.97);
+    transition: opacity 0.28s ease-out, transform 0.28s ease-out;
   }
+  .sp.in { opacity: 1; transform: none; }
   .av {
     width: 34px; height: 34px; border-radius: 50%; flex: none;
     display: flex; align-items: center; justify-content: center;
     font-weight: 700; font-size: 15px; color: #fff; background: #555;
-    overflow: hidden; border: 2px solid transparent; box-sizing: border-box;
+    overflow: hidden; border: 2px solid #3ba55d; box-sizing: border-box;
+    box-shadow: 0 0 8px rgba(59, 165, 93, 0.8);
   }
   .av img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .sp.talking .av { border-color: #3ba55d; box-shadow: 0 0 8px rgba(59, 165, 93, 0.8); }
-  .sp.muted { opacity: 0.55; }
+  .sp.muted .av { border-color: transparent; box-shadow: none; }
   .nm {
     font-size: 13px; line-height: 1.2; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis;
+  }
+  .mt {
+    margin-left: auto; flex: none; opacity: 0.7;
+    display: flex; align-items: center;
   }
 </style>
 </head>
@@ -41,33 +57,96 @@
 <script>
 'use strict';
 var ov = document.getElementById('ov');
-function render(speakers) {
-  ov.innerHTML = '';
-  for (var i = 0; i < Math.min((speakers || []).length, 12); i++) {
-    (function (s) {
-      var row = document.createElement('div');
-      row.className = 'sp' + (s.speaking ? ' talking' : '') + (s.muted ? ' muted' : '');
-      var av = document.createElement('div');
-      av.className = 'av';
-      var name = s.name || '?';
-      if (s.avatar_url) {
-        var img = document.createElement('img');
-        img.src = s.avatar_url; img.alt = ''; img.draggable = false;
-        img.onerror = function () { img.remove(); av.textContent = name.slice(0, 1).toUpperCase(); };
-        av.appendChild(img);
-      } else {
-        av.textContent = name.slice(0, 1).toUpperCase();
-        av.style.background = s.avatar_color || '#555';
-      }
-      var nm = document.createElement('div');
-      nm.className = 'nm';
-      nm.textContent = name;
-      row.appendChild(av);
-      row.appendChild(nm);
-      ov.appendChild(row);
-    })((speakers || [])[i]);
+// id -> { el, fadeTimer }. A row with a pending fadeTimer is still in the DOM
+// (fading out); if its speaker starts talking again the removal is cancelled.
+var rows = new Map();
+var FADE_MS = 300;
+var MAX_ROWS = 12;
+
+function fit() {
+  var n = 0;
+  rows.forEach(function () { n++; });
+  var T = window.__TAURI__;
+  if (T && T.core && typeof T.core.invoke === 'function') {
+    T.core.invoke('overlay_fit', { rows: n }).catch(function () {});
   }
 }
+
+function buildRow(s) {
+  var row = document.createElement('div');
+  row.className = 'sp';
+  var av = document.createElement('div');
+  av.className = 'av';
+  var name = s.name || '?';
+  if (s.avatar_url) {
+    var img = document.createElement('img');
+    img.src = s.avatar_url; img.alt = ''; img.draggable = false;
+    img.onerror = function () { img.remove(); av.textContent = name.slice(0, 1).toUpperCase(); };
+    av.appendChild(img);
+  } else {
+    av.textContent = name.slice(0, 1).toUpperCase();
+    av.style.background = s.avatar_color || '#555';
+  }
+  var nm = document.createElement('div');
+  nm.className = 'nm';
+  nm.textContent = name;
+  row.appendChild(av);
+  row.appendChild(nm);
+  if (s.muted) {
+    row.classList.add('muted');
+    var mt = document.createElement('span');
+    mt.className = 'mt';
+    mt.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/></svg>';
+    row.appendChild(mt);
+  }
+  return row;
+}
+
+// Only speaking participants are shown. Everyone else (idle, muted, just
+// listening) stays out of the panel entirely.
+function render(speakers) {
+  var seen = Object.create(null);
+  var seenCount = 0;
+  var list = speakers || [];
+  for (var i = 0; i < list.length && seenCount < MAX_ROWS; i++) {
+    var s = list[i];
+    if (!s || !s.speaking) continue;
+    var id = String(s.id || s.name || i);
+    seen[id] = true;
+    seenCount++;
+    var r = rows.get(id);
+    if (r) {
+      // Back while fading out: cancel the removal and keep the row.
+      if (r.fadeTimer) { clearTimeout(r.fadeTimer); r.fadeTimer = null; }
+      r.el.classList.add('in');
+      var nm = r.el.querySelector('.nm');
+      if (nm && nm.textContent !== (s.name || '?')) nm.textContent = s.name || '?';
+      r.el.classList.toggle('muted', !!s.muted);
+    } else {
+      var el = buildRow(s);
+      ov.appendChild(el);
+      rows.set(id, { el: el, fadeTimer: null });
+      // Paint the resting state first so the transition to `.in` animates.
+      requestAnimationFrame((function (node) {
+        return function () { node.classList.add('in'); };
+      })(el));
+    }
+  }
+  rows.forEach(function (r, id) {
+    if (seen[id] || r.fadeTimer) return;
+    r.el.classList.remove('in');
+    r.fadeTimer = setTimeout((function (key, node) {
+      return function () {
+        node.remove();
+        var cur = rows.get(key);
+        if (cur && cur.el === node) rows.delete(key);
+        fit();
+      };
+    })(id, r.el), FADE_MS);
+  });
+  fit();
+}
+
 async function boot() {
   var T = window.__TAURI__;
   if (!T) return;

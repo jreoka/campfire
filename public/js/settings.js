@@ -637,7 +637,7 @@ async function renderOverlayTab() {
   if (!box) return;
   box.innerHTML = '';
   const p = document.createElement('p'); p.className = 'muted small';
-  p.textContent = 'A tiny panel that floats over fullscreen games during voice calls, showing who\u2019s talking. It never steals clicks or focus \u2014 it\u2019s click-through.';
+  p.textContent = 'A tiny panel that floats over fullscreen games during voice calls. Only the people talking appear \u2014 they fade away when they stop. It never steals clicks or focus \u2014 it\u2019s click-through.';
   box.appendChild(p);
   if (!isDesktopShell()) {
     const note = document.createElement('p'); note.className = 'muted small';
@@ -667,30 +667,63 @@ async function renderOverlayTab() {
     box.appendChild(note);
     return;
   }
-  const row = document.createElement('div'); row.className = 'row'; row.style.marginTop = '.5rem';
-  const cb = document.createElement('label'); cb.className = 'set-check';
+  // Enable row: title + hint on the left, a switch on the right.
+  const enRow = document.createElement('div'); enRow.className = 'set-row ov-row';
+  const enTx = document.createElement('div'); enTx.className = 'grow';
+  const enTitle = document.createElement('div'); enTitle.className = 'ov-title';
+  enTitle.textContent = 'Show overlay during calls';
+  const enHint = document.createElement('div'); enHint.className = 'muted small';
+  enHint.textContent = 'A floating panel over fullscreen games while you\u2019re in a voice call.';
+  enTx.appendChild(enTitle); enTx.appendChild(enHint);
+  const sw = document.createElement('label'); sw.className = 'ov-switch';
   const inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = !!cur.enabled;
-  cb.appendChild(inp); cb.appendChild(document.createTextNode(' Show overlay during calls'));
-  row.appendChild(cb);
-  const lab = document.createElement('label'); lab.className = 'muted small';
-  lab.appendChild(document.createTextNode(' Corner '));
-  const sel = document.createElement('select');
+  inp.setAttribute('aria-label', 'Show overlay during calls');
+  const knob = document.createElement('span'); knob.setAttribute('aria-hidden', 'true');
+  sw.appendChild(inp); sw.appendChild(knob);
+  enRow.appendChild(enTx); enRow.appendChild(sw);
+  box.appendChild(enRow);
+  // Corner row: title + hint on the left, a visual 2x2 corner picker.
+  let corner = cur.corner || 'top-left';
+  const cRow = document.createElement('div'); cRow.className = 'set-row ov-row';
+  const cTx = document.createElement('div'); cTx.className = 'grow';
+  const cTitle = document.createElement('div'); cTitle.className = 'ov-title';
+  cTitle.textContent = 'Corner';
+  const cHint = document.createElement('div'); cHint.className = 'muted small';
+  cHint.textContent = 'Where the panel appears on your screen.';
+  cTx.appendChild(cTitle); cTx.appendChild(cHint);
+  const grid = document.createElement('div'); grid.className = 'ov-corners';
+  grid.setAttribute('role', 'group'); grid.setAttribute('aria-label', 'Overlay corner');
+  const dots = {
+    'top-left': [5, 5], 'top-right': [33, 5],
+    'bottom-left': [5, 19], 'bottom-right': [33, 19],
+  };
+  const btns = {};
   for (const [v, t] of OVERLAY_CORNERS) {
-    const o = document.createElement('option'); o.value = v; o.textContent = t;
-    if (v === cur.corner) o.selected = true;
-    sel.appendChild(o);
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'ov-corner'; b.title = t;
+    b.setAttribute('aria-pressed', v === corner ? 'true' : 'false');
+    b.setAttribute('aria-label', t);
+    const [dx, dy] = dots[v];
+    b.innerHTML = '<svg width="44" height="30" viewBox="0 0 44 30" aria-hidden="true">'
+      + '<rect x="2.5" y="2.5" width="39" height="25" rx="4" fill="none" stroke="currentColor" stroke-width="1.6" opacity="0.45"/>'
+      + '<rect x="' + dx + '" y="' + dy + '" width="6" height="6" rx="1.5" fill="currentColor"/></svg>';
+    b.addEventListener('click', () => {
+      corner = v;
+      for (const [kv, kb] of Object.entries(btns)) kb.setAttribute('aria-pressed', kv === v ? 'true' : 'false');
+      save();
+    });
+    btns[v] = b;
+    grid.appendChild(b);
   }
-  lab.appendChild(sel);
-  row.appendChild(lab);
-  box.appendChild(row);
+  cRow.appendChild(cTx); cRow.appendChild(grid);
+  box.appendChild(cRow);
   const save = async () => {
     try {
-      await inv('set_overlay_settings', { enabled: inp.checked, corner: sel.value });
+      await inv('set_overlay_settings', { enabled: inp.checked, corner });
       toast(inp.checked ? 'Overlay enabled' : 'Overlay disabled');
     } catch (err) { toast('Failed: ' + prettyError(err.message)); }
   };
   inp.onchange = save;
-  sel.onchange = save;
 }
 // ---------- games tab (game-activity manager) ----------
 // Everything about one account's game tracking: totals, every tracked game,

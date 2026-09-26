@@ -685,10 +685,13 @@ fn overlay_state(app: AppHandle) -> serde_json::Value {
     serde_json::json!({ "in_call": ov.in_call, "speakers": ov.speakers })
 }
 
-/// Push the current call snapshot from the page. Shows, hides, moves and
-/// repaints the overlay window as needed. Async: on Windows,
-/// WebviewWindowBuilder::build deadlocks inside a synchronous command, so
-/// any path that might create the window must not run on the IPC thread.
+/// Push the current call snapshot from the page. Shows, hides and repaints the
+/// overlay window as needed. Sizing is NOT done here: rows fade in/out in the
+/// overlay page, so only the page knows the panel's live height — it reports
+/// its visible row count back through `overlay_fit`, which sizes the window.
+/// Async: on Windows, WebviewWindowBuilder::build deadlocks inside a
+/// synchronous command, so any path that might create the window must not run
+/// on the IPC thread.
 #[cfg(desktop)]
 #[tauri::command]
 async fn overlay_update(app: AppHandle, in_call: bool, speakers: Vec<OverlaySpeaker>) {
@@ -699,6 +702,54 @@ async fn overlay_update(app: AppHandle, in_call: bool, speakers: Vec<OverlaySpea
         ov.speakers = speakers.into_iter().take(12).collect();
     }
     apply_overlay(&app);
+}
+
+/// Resize the overlay window to the page's visible row count and re-anchor it
+/// in its configured corner. Called by the overlay page after every render:
+/// speakers appear only while talking and fade out when they stop, so the
+/// panel height follows the rows on screen, not the snapshot size.
+#[cfg(desktop)]
+#[tauri::command]
+async fn overlay_fit(app: AppHandle, rows: usize) {
+    let win = match app.get_webview_window("overlay") {
+        Some(w) => w,
+        None => return,
+    };
+    // One compact row per visible speaker; the page renders them. Row math
+    // mirrors overlay.html: 8px page padding top/bottom, 44px rows
+    // (34px avatar + 5px padding each side), 6px gaps.
+    let n = rows.clamp(1, 12) as f64;
+    let _ = win.set_size(tauri::LogicalSize::new(232.0, 10.0 + n * 50.0));
+    overlay_place(&app, &win);
+}
+
+/// Position the overlay window in its configured corner, keeping its current
+/// size (used both after a fit and when the corner changes).
+#[cfg(desktop)]
+fn overlay_place(app: &AppHandle, win: &tauri::WebviewWindow) {
+    let settings = app
+        .state::<State>()
+        .overlay_settings
+        .lock()
+        .unwrap()
+        .clone();
+    let scale = win.scale_factor().unwrap_or(1.0);
+    let (ww, wh) = win
+        .outer_size()
+        .map(|s| {
+            let l = s.to_logical::<f64>(scale);
+            (l.width, l.height)
+        })
+        .unwrap_or((232.0, 120.0));
+    let (sw, sh) = overlay_monitor_size(app);
+    let m = 16.0;
+    let (x, y) = match settings.corner.as_str() {
+        "top-right" => (sw - ww - m, m),
+        "bottom-left" => (m, sh - wh - m),
+        "bottom-right" => (sw - ww - m, sh - wh - m),
+        _ => (m, m),
+    };
+    let _ = win.set_position(tauri::LogicalPosition::new(x, y));
 }
 
 #[cfg(desktop)]
@@ -732,7 +783,9 @@ fn ensure_overlay_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow>
     Ok(w)
 }
 
-/// Show/hide/repaint the overlay window from the cached settings + snapshot.
+/// Show/hide the overlay window from the cached settings + snapshot and hand
+/// the latest speakers to the page. The page filters to whoever is speaking,
+/// fades rows in/out, and sizes the window itself through `overlay_fit`.
 #[cfg(desktop)]
 fn apply_overlay(app: &AppHandle) {
     use tauri::Emitter;
@@ -757,19 +810,7 @@ fn apply_overlay(app: &AppHandle) {
         Ok(w) => w,
         Err(_) => return,
     };
-    // One compact row per speaker; the page renders them.
-    let n = speakers.len().clamp(1, 12) as f64;
-    let (ww, wh) = (232.0, 12.0 + n * 46.0);
-    let _ = win.set_size(tauri::LogicalSize::new(ww, wh));
-    let (sw, sh) = overlay_monitor_size(app);
-    let m = 16.0;
-    let (x, y) = match settings.corner.as_str() {
-        "top-right" => (sw - ww - m, m),
-        "bottom-left" => (m, sh - wh - m),
-        "bottom-right" => (sw - ww - m, sh - wh - m),
-        _ => (m, m),
-    };
-    let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+    overlay_place(app, &win);
     let _ = win.emit("overlay-speakers", serde_json::json!({ "speakers": speakers }));
     let _ = win.show();
 }
@@ -863,6 +904,7 @@ pub fn run() {
             set_overlay_settings,
             overlay_state,
             overlay_update,
+            overlay_fit,
             open_external
         ])
         .on_window_event(|window, event| {
