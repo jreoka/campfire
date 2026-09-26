@@ -1753,8 +1753,9 @@ body.win-blurred .msg-actions{opacity:0!important;visibility:hidden!important;po
 .tc-text.att{font-style:italic;color:var(--faint)}
 .tc-when{flex:none;margin-left:auto;padding-left:.3rem;font-size:.72rem;color:var(--faint)}
 .edited{font-size:.7rem;color:var(--faint)}
-.mention{background:var(--accent-container);color:var(--on-container);border-radius:3px;padding:.05rem .3rem;font-weight:650}
+.mention{background:var(--accent-container);color:var(--on-container);border-radius:3px;padding:.05rem .3rem;font-weight:650;transition:filter .12s ease}
 .mention.me{background:var(--accent);color:var(--on-accent)}
+.mention:hover{filter:brightness(.9)}
 /* In the composer backdrop the pill must be exactly as wide as the typed
    text, or the caret drifts. The horizontal padding is what throws it off,
    so the backdrop pills keep the background but lose the side padding. */
