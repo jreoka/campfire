@@ -249,7 +249,11 @@ const upBanner = uploader('banners', IMG_MIMES, MAX_IMG_BYTES);
 const upSidebar = uploader('sidebar', IMG_MIMES, MAX_IMG_BYTES);
 const upIcon = uploader('icons', IMG_MIMES, MAX_IMG_BYTES);
 const upEmoji = uploader('emoji', IMG_MIMES, 4 * 1024 * 1024);
-function uploadUrl(sub, file) { return `/uploads/${sub}/${file.filename}?v=${Date.now().toString(36)}`; }
+// Upload URLs are clean paths: bytes behind a key are immutable (the
+// compressor always publishes to a fresh key, and there is no scan gate
+// holding files back), so no cache-buster is needed. Old rows may still
+// carry a legacy ?v=<ts> suffix; it is ignored when serving.
+function uploadUrl(sub, file) { return `/uploads/${sub}/${file.filename}`; }
 function deleteUploaded(url) {
   if (!url || !url.startsWith('/uploads/')) return;
   const clean = String(url).split('?')[0];
@@ -3326,7 +3330,7 @@ async function copyUploadTo(url, sub) {
       await fs.promises.copyFile(src, path.join(UPLOAD_DIR, dstKey));
     }
   } catch { return null; }
-  return `/uploads/${dstKey}?v=${Date.now().toString(36)}`;
+  return `/uploads/${dstKey}`;
 }
 const copyUpload = (url) => copyUploadTo(url, 'files');
 const storyKindForMime = (mime) => (String(mime || '').startsWith('video/') ? 'video' : String(mime || '').startsWith('image/') ? 'image' : '');
@@ -3449,7 +3453,8 @@ app.get('/api/stories', authRequired, async (req, res) => {
 app.post('/api/stories', authRequired, async (req, res) => {
   const me = req.user;
   const url = String(req.body?.url || '');
-  // Chat uploads carry a ?v=<ts> cache key (see uploadUrl).
+  // Chat uploads are clean /uploads/files/<name> paths; a legacy ?v=<ts>
+  // cache key is still accepted on rows written before it was dropped.
   if (!/^\/uploads\/files\/[A-Za-z0-9._-]+(?:\?v=[a-z0-9]+)?$/.test(url)) return res.status(400).json({ error: 'bad_media' });
   const mime = String(req.body?.mime || '').slice(0, 80);
   const kind = storyKindForMime(mime);
@@ -3664,7 +3669,7 @@ app.post('/api/upload/viewonce', authRequired, (req, res, next) => {
   if ((!mt || mt === 'application/octet-stream') && CODE_TEXT_EXTS.has(path.extname(String(req.file.originalname || '')).toLowerCase().slice(1))) mt = 'text/plain';
   const kind = mt.startsWith('image/') ? 'image' : mt.startsWith('video/') ? 'video' : 'file';
   if (kind === 'file') { deleteUploaded('/uploads/' + fileKey); return res.status(400).json({ error: 'bad_media (photos and videos only)' }); }
-  res.json({ url: '/uploads/' + fileKey + '?v=' + Date.now().toString(36), name: attName(req.file.originalname), mime: mt, size: req.file.size, kind, scan });
+  res.json({ url: '/uploads/' + fileKey, name: attName(req.file.originalname), mime: mt, size: req.file.size, kind, scan });
 });
 
 app.post('/api/dm/viewonce', authRequired, async (req, res) => {

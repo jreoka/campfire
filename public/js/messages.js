@@ -161,10 +161,9 @@ function wireAttImage(img) {
 // already paints them (see setAttPreview / setAttPreviewFor). Those bytes are
 // worth keeping past the send: the message that appears a WebSocket round trip
 // later can paint the picture the reader just picked instead of fetching it back,
-// and when the compressor later republishes the file under a new key (or the
-// server hands the attachment a fresh ?v=) the element under it keeps the frame
-// it already has — the handover moves no pixels and nothing blinks (see
-// attShot / patchImageNode). A clip's entry is a still FRAME captured off the
+// and when the compressor later republishes the file under a new key the element
+// under it keeps the frame it already has — the handover moves no pixels and
+// nothing blinks (see attShot / patchImageNode). A clip's entry is a still FRAME captured off the
 // picked file, which is its poster, never a playable source (see attPickedFrame).
 //
 // Entries older than LOCAL_PREVIEW_CAP_BYTES are dropped oldest-first (blob urls
@@ -441,7 +440,7 @@ function attPickedFrame(a) {
   if (!a || !a.url) return '';
   // The frame the upload path captured, filed under the url the upload answered
   // with — looked up the way the patch looks up the source on screen, because a
-  // republish in place hands the attachment a fresh ?v= (see videoPosterFor).
+  // republish hands the attachment a new URL for the same file (see videoPosterFor).
   const shot = (typeof videoPosterFor === 'function') ? videoPosterFor(a.url) : '';
   if (/^data:/.test(String(shot || ''))) return String(shot);
   // Then the picked frame itself, which outlives the poster cache's 30 entries.
@@ -598,10 +597,9 @@ function videoPosterShot(url) {
   try { return (url && typeof videoPosterCache !== 'undefined') ? (videoPosterCache.get(url) || null) : null; } catch { return null; }
 }
 // …and the same question for a url written differently. The upload path files the
-// frame under the url the UPLOAD answered with, and the attachment comes back with
-// a fresh ?v= the moment the compressor settles it in place (see srcPathOf: the
-// cache-buster is not a different file, and the republished bytes are the same
-// picture). So the exact key first, then any key naming the same file.
+// frame under the url the UPLOAD answered with, and the attachment comes back
+// under a new key the moment the compressor settles it (see srcPathOf: the
+// path is what identifies the file). So the exact key first, then any key naming the same file.
 function videoPosterFor(url) {
   const exact = videoPosterShot(url);
   if (exact) return exact;
@@ -655,8 +653,8 @@ function patchAttachmentNode(oldEl, a) {
 // nothing moves and nothing blinks.
 //
 // The element is only replaced when the thing it is SHOWING changes. A photo the
-// compressor settled by rewriting the same key comes back as the same thumbnail
-// with a fresh `?v=` (the bytes on disk are the same file), and re-pointing the
+// compressor settled by publishing a new key comes back as the same thumbnail
+// under a new URL (the bytes on disk are the same picture), and re-pointing the
 // <img> at it would throw away the painted frame and decode it again — the flash
 // this whole path exists to remove. Only the identity moves then (data-fb-url /
 // data-fb-orig, which the lightbox and the menus read); the painted picture is
@@ -680,8 +678,8 @@ function patchImageNode(oldEl, a) {
   const shownPath = srcPathOf(oldImg && (oldImg.currentSrc || oldImg.getAttribute('src')));
   const wantPath = srcPathOf(img.currentSrc || img.getAttribute('src'));
   // Is the new rendering the SAME FILE the element is already showing? A blob and
-  // the published upload of it — or an upload and its republish-in-place under a
-  // fresh ?v= — are one picture. Showing the freshly parsed element then would
+  // the published upload of it — or an upload and its republish under a new
+  // key — are one picture. Showing the freshly parsed element then would
   // throw the painted frame away and decode the same bytes again, which is the
   // blink this path exists to remove. So nothing is re-pointed: the element the
   // reader is looking at is MOVED into the new box (which brings the reserved
@@ -789,8 +787,8 @@ function patchVideoNode(oldEl, a) {
   const oldVid = oldEl.querySelector ? oldEl.querySelector('video.att-vid') : null;
   if (!oldVid) return false;
   const oldUrl = String(oldEl.getAttribute('data-fb-url') || '');
-  // The same file behind a fresh ?v= — the everyday "the compressor settled it in
-  // place": the player is left completely alone (a replaced <video> restarts, and
+  // The same file behind a new URL — the everyday "the compressor settled it":
+  // the player is left completely alone (a replaced <video> restarts, and
   // its poster would have to be captured again), and only the identity moves.
   const sameFile = !!srcPathOf(oldVid.getAttribute('src')) && srcPathOf(oldVid.getAttribute('src')) === srcPathOf(a.url);
   if (sameFile) {

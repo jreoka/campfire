@@ -77,7 +77,7 @@
 //   under a fresh key and leaves the old object for the orphan sweep: bytes
 //   behind a live URL are never rewritten under a reader, and a player reading
 //   ranges out of one is the worst case that rule exists to prevent.
-// - Same URL shape always (/uploads/<sub>/<file>?v=<cachekey>). The bytes move
+// - Same URL shape always (/uploads/<sub>/<file>). The bytes move
 //   to a new random filename and the DB row (url/mime/size/filename) is updated
 //   to match, so a download is never named after a format its bytes are not in.
 //   Display filenames are otherwise never touched.
@@ -1338,7 +1338,6 @@ async function encodePoster(srcKey, pkey) {
   }
 }
 
-const cacheBust = (cleanUrl) => `${cleanUrl}?v=${Date.now().toString(36)}`;
 // How the job line reports the size move. A normalized conversion (see planFor:
 // the HEIC rule and the Apple-playability rule) is EXPECTED to grow — Opus in,
 // AAC out — so the log has to say `+24%` rather than the `--24%` a bare
@@ -1560,7 +1559,7 @@ async function compressLocked(key, opts) {
     const dir = key.slice(0, key.lastIndexOf('/') + 1);
     const newKey = dir + crypto.randomBytes(16).toString('hex') + plan.outExt;
     await replaceBytes(newKey, tmpOut, newMime);
-    const newUrl = cacheBust('/uploads/' + newKey);
+    const newUrl = '/uploads/' + newKey;
     for (const rr of rows) {
       const table = tableFor(rr.tbl);
       // A format change carries the rest of the row with it: the MIME, the
@@ -1777,7 +1776,7 @@ async function commitStandaloneLocked(key, refs, opts) {
     const newKey = dir + crypto.randomBytes(16).toString('hex') + plan.outExt;
     const newMime = MIME_BY_OUT[plan.outExt] || storage.mimeForFilename(newKey);
     await replaceBytes(newKey, tmpOut, newMime);
-    const newUrl = cacheBust('/uploads/' + newKey);
+    const newUrl = '/uploads/' + newKey;
     for (const r2 of refs) {
       // table/col come from this module's own list, never from a request.
       const setFlag = FLAG_TABLES.has(r2.table) ? ', compressed = 1' : '';
