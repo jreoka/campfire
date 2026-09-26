@@ -2081,6 +2081,9 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .uc-bio code{background:var(--panel-3);border-radius:3px;padding:.05rem .35rem;font-size:.85em}
 .uc-bio img.cemoi{width:22px;height:22px;vertical-align:-4px}
 .uc-since{font-size:.74rem;color:var(--faint);margin-top:.55rem}
+.uc-localtime{font-size:.74rem;color:var(--faint);margin-top:.3rem;display:flex;align-items:center;gap:.35rem}
+.uc-localtime svg{flex:none;opacity:.75}
+#usercard .uc-localtime{color:var(--uc-faint)}
 .uc-badges{margin-top:.45rem;display:flex;gap:.35rem;flex-wrap:wrap}
 .pf-badges{margin-bottom:.55rem;display:flex;gap:.35rem;flex-wrap:wrap}
 .early-badge{display:inline-flex;align-items:center;font-size:.68rem;font-weight:700;letter-spacing:.02em;color:var(--accent-hover);background:var(--accent-dim);border-radius:999px;padding:.18rem .6rem}
@@ -2233,6 +2236,8 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 .pf-playing{font-size:.86rem;color:var(--accent-hover);font-weight:650;display:flex;align-items:center;gap:.4rem}
 .pf-bio{font-size:.9rem;color:var(--text);overflow-wrap:anywhere}
 .pf-since{font-size:.8rem;color:var(--faint)}
+.pf-localtime{font-size:.8rem;color:var(--faint);margin-top:.35rem;display:flex;align-items:center;gap:.35rem}
+.pf-localtime svg{flex:none;opacity:.75}
 .pf-gaming{display:block}
 .pf-actions{display:flex;flex-wrap:wrap;gap:.45rem}
 .uc-gaming-head{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin-bottom:.35rem}

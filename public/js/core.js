@@ -652,6 +652,52 @@ function fmtJoined(ts) {
   const month = d.toLocaleDateString([], { month: 'short' }).replace(/\.$/, '');
   return `${month} ${ordinalDay(d.getDate())}, ${d.getFullYear()}`;
 }
+// A user's local time from the IANA zone their client reported
+// (POST /api/me/timezone). '' when unknown — the row stays hidden.
+function fmtLocalTime(tz, d = new Date()) {
+  if (!tz) return '';
+  try {
+    return new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit', timeZone: tz }).format(d);
+  } catch { return ''; }
+}
+// Feather-style clock, matching the user card's tab icons (no emoji in chrome).
+const CLOCK_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
+// The local-time row for a user card (`uc-localtime`) or the profile screen
+// (`pf-localtime`). `data-tz` is what the minute ticker repaints from.
+function localTimeRowHTML(u, cls) {
+  const tz = u && u.timezone;
+  const t = fmtLocalTime(tz);
+  if (!t) return '';
+  return `<div class="${cls}" data-tz="${esc(tz)}">${CLOCK_SVG}<span class="lt-time">${esc(t)}</span><span class="lt-label">local time</span></div>`;
+}
+// One ticker repaints every visible local-time clock (cards, profiles).
+function tickLocalTimes() {
+  try {
+    document.querySelectorAll('[data-tz]').forEach((el) => {
+      const t = fmtLocalTime(el.dataset.tz);
+      if (!t) return;
+      const label = el.querySelector('.lt-time');
+      if (label) label.textContent = t;
+    });
+    // Travel: the OS zone changed since boot — report it so the row (and
+    // everyone else's view of it) follows the account, not the old zone.
+    try {
+      const cur = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+      if (S && S.me && cur && cur !== (S.me.timezone || '')) reportTimezone();
+    } catch {}
+  } catch {}
+}
+setInterval(tickLocalTimes, 30000);
+// Report this device's IANA zone; no-op when it already matches the account.
+async function reportTimezone() {
+  try {
+    if (!S || !S.me) return;
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    if (!tz || tz === (S.me.timezone || '')) return;
+    const r = await api('/api/me/timezone', { method: 'POST', body: JSON.stringify({ timezone: tz }) }).catch(() => null);
+    if (r && r.user) { S.me = { ...S.me, ...r.user }; try { paintMe(); } catch {} }
+  } catch {}
+}
 // How long ago something happened, for lists of things that are not in front of
 // you (search hits): "just now" / "10m ago" / "3h ago" / "5d ago", and once
 // "how long ago" stops meaning anything, the date itself.

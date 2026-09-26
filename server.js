@@ -897,6 +897,9 @@ function publicUser(u) {
     game_enabled: u.game_enabled === undefined ? 1 : u.game_enabled,
     nsfw_ok: !!u.nsfw_ok,
     game_exclusions: u.game_exclusions || '[]',
+    // IANA timezone name (e.g. America/New_York) reported by the client —
+    // the user card + profile render a live local-time row from it.
+    timezone: u.timezone || null,
     // '' = never set: clients resolve it to 'dark' locally. Stored (not just
     // localStorage) so the theme follows the account cross-device.
     theme: ['dark', 'light', 'dracula', 'oled'].includes(u.theme) ? u.theme : '',
@@ -924,7 +927,7 @@ function blockedByOwnerLock(req, res, target) {
 }
 // Avatar decorations (settings → profile). IDs must match AVATAR_DECOS in public/js/core.js.
 const AVATAR_DECOS = ['ember', 'fireflies', 'aurora', 'neon', 'tide', 'stardust'];
-const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, presence_auto, playing_game, playing_since, streaming_game, bio, name_color, name_gradient, card_color, card_gradient, avatar_decoration, active_tag_server_id, active_tag, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, deletion_scheduled_at, tz_offset, nsfw_ok, theme';
+const USER_COLS = 'id, username, display_name, avatar_color, avatar_url, banner_url, sidebar_banner_url, status, status_text, status_expires_at, presence_expires_at, presence_auto, playing_game, playing_since, streaming_game, bio, name_color, name_gradient, card_color, card_gradient, avatar_decoration, active_tag_server_id, active_tag, token_valid_after, totp_enabled, created_at, game_enabled, game_exclusions, is_admin, disabled, deletion_scheduled_at, tz_offset, nsfw_ok, theme, timezone';
 
 // ---------- shared rate limiting ----------
 // Every limiter lives in the rate_limits table rather than in process memory,
@@ -1348,6 +1351,25 @@ app.post('/api/passkeys/login/verify', async (req, res) => {
 });
 
 app.get('/api/me', authRequired, (req, res) => res.json({ user: publicUser(req.user) }));
+
+// The client's IANA timezone name (e.g. America/New_York), reported on boot
+// and whenever it changes (travel). The user card + profile render a live
+// local-time row from it. The zone is validated against ICU's list — garbage
+// (or a zone-less client) stores nothing and the row simply stays hidden.
+app.post('/api/me/timezone', authRequired, async (req, res) => {
+  const tz = String((req.body || {}).timezone || '').trim().slice(0, 64);
+  if (!tz) return res.status(400).json({ error: 'timezone_required' });
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(new Date()); }
+  catch { return res.status(400).json({ error: 'bad_timezone' }); }
+  if (tz === (req.user.timezone || '')) return res.json({ user: publicUser(req.user) });
+  await db.prepare('UPDATE users SET timezone = ? WHERE id = ?').run(tz, req.user.id);
+  try {
+    const fu = await freshUser(req.user.id);
+    await broadcastUserUpdate(fu);
+    notifyUser(req.user.id, { t: 'user-updated', user: fu });
+    return res.json({ user: fu });
+  } catch { return res.json({ user: publicUser(req.user) }); }
+});
 
 app.get('/api/servers', authRequired, async (req, res) => {
   const rows = await db.prepare(`

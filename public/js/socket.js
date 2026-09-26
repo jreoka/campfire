@@ -781,6 +781,8 @@ function onWS(m) {
       // somebody is looking at it, and the profile screen shows the same row.
       try { refreshUserCardGame(u); } catch {}
       try { refreshProfileGame(u); } catch {}
+      try { refreshUserCardLocalTime(u); } catch {}
+      try { refreshProfileLocalTime(u); } catch {}
       if (S.view === 'home') {
         renderDmMembers();
         // The open DM's header wears this person's face + light, so a rename, a

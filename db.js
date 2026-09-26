@@ -227,6 +227,9 @@ CREATE INDEX IF NOT EXISTS idx_members_user ON server_members(user_id);
   await addColumn('servers', 'tag_emoji', 'TEXT');
   await addColumn('users', 'active_tag_server_id', 'TEXT');
   await addColumn('users', 'active_tag', 'TEXT');
+  // IANA timezone name (e.g. America/New_York) reported by the client — shown
+  // as a live local-time row on the user's card + profile.
+  await addColumn('users', 'timezone', 'TEXT');
   await addColumn('messages', 'reply_to_id', 'TEXT');
   await addColumn('messages', 'sys', 'TEXT');
   await addColumn('messages', 'thread_root_id', 'TEXT');

@@ -351,6 +351,9 @@ async function boot() {
       const tz = -new Date().getTimezoneOffset();
       if (Number.isFinite(tz)) api('/api/me', { method: 'PATCH', body: JSON.stringify({ tzOffset: tz }) }).catch(() => {});
     } catch {}
+    // Report the IANA zone name too — the user card + profile render a live
+    // local-time row from it. reportTimezone() no-ops when it matches.
+    try { reportTimezone(); } catch {}
   } catch (err) {
     // Saved session but unreachable server (offline, wifi dead, server down):
     // stay on the app shell under the full-screen reconnect overlay instead

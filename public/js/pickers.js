@@ -2347,6 +2347,7 @@ async function openUserCard(uid, x, y, fallback, opts = {}) {
       ${u.playing_game ? gameRowHTML(u) : ''}
       ${u.bio ? `<div class="uc-bio">${renderRich(u.bio)}</div>` : ''}
       ${u.created_at ? `<div class="uc-since">Member since ${fmtJoined(u.created_at)}</div>` : ''}
+      ${localTimeRowHTML(u, 'uc-localtime')}
       <div id="uc-gaming" class="uc-gaming hidden"></div>
       ${voiceVolHTML}
       ${voiceModHTML}
@@ -2457,6 +2458,39 @@ function refreshUserCardVolumes(uid) {
 // waiting for the card to be reopened (a full card repaint on every presence
 // frame would fight the reader's pointer, which is why the socket's user-update
 // path deliberately leaves the card alone). Called from socket.js.
+// A timezone landing while somebody reads the card (first report, travel)
+// repaints the local-time row in place — same slot openUserCard paints it
+// into, right under "Member since". Called from socket.js's user-updated.
+function refreshUserCardLocalTime(u) {
+  try {
+    const c = $('#usercard');
+    if (!c || !u || c.classList.contains('hidden') || c.dataset.uid !== u.id) return;
+    const cur = c.querySelector('.uc-localtime');
+    const html = localTimeRowHTML(u, 'uc-localtime');
+    if (!html) { if (cur) cur.remove(); return; }
+    if (cur) cur.outerHTML = html;
+    else {
+      const anchor = c.querySelector('.uc-since') || c.querySelector('.uc-bio') || c.querySelector('.uc-sub');
+      if (!anchor) return;
+      anchor.insertAdjacentHTML('afterend', html);
+    }
+  } catch {}
+}
+function refreshProfileLocalTime(u) {
+  try {
+    const bd = $('#profile-backdrop');
+    if (!bd || !u || bd.classList.contains('hidden') || String(bd.dataset.uid) !== String(u.id)) return;
+    const cur = bd.querySelector('.pf-localtime');
+    const html = localTimeRowHTML(u, 'pf-localtime');
+    if (!html) { if (cur) cur.remove(); return; }
+    if (cur) cur.outerHTML = html;
+    else {
+      const anchor = bd.querySelector('.pf-since') || bd.querySelector('.pf-bio') || bd.querySelector('.pf-status');
+      if (!anchor) return;
+      anchor.insertAdjacentHTML('afterend', html);
+    }
+  } catch {}
+}
 function refreshUserCardGame(u) {
   try {
     const c = $('#usercard');
@@ -3011,6 +3045,7 @@ function openProfileScreen(uid, fallback) {
     ${pstreaming ? `<div class="pf-playing ustream">Streaming ${esc(pstreaming)}</div>` : ''}
     ${u.bio ? `<div class="pf-bio">${renderRich(u.bio)}</div>` : ''}
     ${u.created_at ? `<div class="pf-since">Member since ${fmtJoined(u.created_at)}</div>` : ''}
+    ${localTimeRowHTML(u, 'pf-localtime')}
     <div id="pf-gaming" class="pf-gaming hidden"></div>
     <div class="pf-actions">${actions}<button class="btn small" id="pf-close">Close</button></div>`;
   // The profile picture carries the story affordance (see paintProfileStory).
