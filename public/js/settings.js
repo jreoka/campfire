@@ -682,23 +682,6 @@ async function renderOverlayTab() {
   sw.appendChild(inp); sw.appendChild(knob);
   enRow.appendChild(enTx); enRow.appendChild(sw);
   box.appendChild(enRow);
-  // Gaming-only row: same row pattern, the panel only appears while a game
-  // is detected so it never floats over the desktop or other apps.
-  const gRow = document.createElement('div'); gRow.className = 'set-row ov-row';
-  const gTx = document.createElement('div'); gTx.className = 'grow';
-  const gTitle = document.createElement('div'); gTitle.className = 'ov-title';
-  gTitle.textContent = 'Only while gaming';
-  const gHint = document.createElement('div'); gHint.className = 'muted small';
-  gHint.textContent = 'The panel only appears while a game is running and its window is in front — alt-tab away and it hides.';
-  gTx.appendChild(gTitle); gTx.appendChild(gHint);
-  const gSw = document.createElement('label'); gSw.className = 'ov-switch';
-  const gInp = document.createElement('input'); gInp.type = 'checkbox';
-  gInp.checked = cur.only_while_gaming !== false;
-  gInp.setAttribute('aria-label', 'Only while gaming');
-  const gKnob = document.createElement('span'); gKnob.setAttribute('aria-hidden', 'true');
-  gSw.appendChild(gInp); gSw.appendChild(gKnob);
-  gRow.appendChild(gTx); gRow.appendChild(gSw);
-  box.appendChild(gRow);
   // Corner row: title + hint on the left, a visual 2x2 corner picker.
   let corner = cur.corner || 'top-left';
   const cRow = document.createElement('div'); cRow.className = 'set-row ov-row';
@@ -736,12 +719,11 @@ async function renderOverlayTab() {
   box.appendChild(cRow);
   const save = async () => {
     try {
-      await inv('set_overlay_settings', { enabled: inp.checked, corner, only_while_gaming: gInp.checked });
+      await inv('set_overlay_settings', { enabled: inp.checked, corner });
       toast(inp.checked ? 'Overlay enabled' : 'Overlay disabled');
     } catch (err) { toast('Failed: ' + prettyError(err.message)); }
   };
   inp.onchange = save;
-  gInp.onchange = save;
 }
 // ---------- games tab (game-activity manager) ----------
 // Everything about one account's game tracking: totals, every tracked game,

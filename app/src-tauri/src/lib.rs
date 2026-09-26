@@ -209,9 +209,6 @@ struct OverlaySettings {
     // one of: top-left, top-right, bottom-left, bottom-right
     #[serde(default = "default_overlay_corner")]
     corner: String,
-    // when true the panel only appears while a game is detected running
-    #[serde(default = "default_overlay_only_while_gaming")]
-    only_while_gaming: bool,
 }
 
 #[cfg(desktop)]
@@ -225,17 +222,11 @@ fn default_overlay_corner() -> String {
 }
 
 #[cfg(desktop)]
-fn default_overlay_only_while_gaming() -> bool {
-    true
-}
-
-#[cfg(desktop)]
 impl Default for OverlaySettings {
     fn default() -> Self {
         Self {
             enabled: default_overlay_enabled(),
             corner: default_overlay_corner(),
-            only_while_gaming: default_overlay_only_while_gaming(),
         }
     }
 }
@@ -717,17 +708,12 @@ async fn set_overlay_settings(
     app: AppHandle,
     enabled: bool,
     corner: String,
-    only_while_gaming: Option<bool>,
 ) -> Result<OverlaySettings, String> {
     let corner = corner.trim().to_lowercase();
     if !OVERLAY_CORNERS.contains(&corner.as_str()) {
         return Err("unknown corner".to_string());
     }
-    let settings = OverlaySettings {
-        enabled,
-        corner,
-        only_while_gaming: only_while_gaming.unwrap_or(default_overlay_only_while_gaming()),
-    };
+    let settings = OverlaySettings { enabled, corner };
     *app.state::<State>().overlay_settings.lock().unwrap() = settings.clone();
     let mut s = load_settings(&app);
     s.overlay = settings.clone();
@@ -901,10 +887,10 @@ fn apply_overlay(app: &AppHandle) {
     let focused = app.state::<State>().game_focused.load(Ordering::Relaxed);
     #[cfg(not(windows))]
     let focused = true;
-    // The panel is only for games: when "only while gaming" is on it stays
-    // hidden unless a game is running (and, on Windows, its window is
-    // frontmost), so it never floats over the desktop or other apps.
-    if !settings.enabled || !in_call || (settings.only_while_gaming && !(gaming && focused)) {
+    // The panel is only for games: it stays hidden unless a game is running
+    // (and, on Windows, its window is frontmost), so it never floats over
+    // the desktop or other apps.
+    if !settings.enabled || !in_call || !(gaming && focused) {
         if let Some(w) = app.get_webview_window("overlay") {
             let _ = w.hide();
         }
