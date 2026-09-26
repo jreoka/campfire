@@ -151,5 +151,39 @@ if (!ctxSrc) { console.log('FAILED: could not slice ctxFor out of actions.js'); 
   check(r === true && messageMenuOpened === 1 && opened === null, 'message right-click still routes to the message menu');
 }
 
+// 8. The sheet header names the item and its kind.
+{
+  const { lbHeadFor } = new Function('lb', 'attFromEl', 'attItemsFor', lbSrc + '\nreturn { lbHeadFor };')
+    (lbState([photo(1), clip(2)], 1), () => null, attItemsFor);
+  const h = lbHeadFor(fakeEl());
+  check(h && h.title === 'clip2.mp4' && h.sub === 'Video' && h.glyph === '▶', 'video sheet header', h);
+  const h2 = new Function('lb', 'attFromEl', 'attItemsFor', lbSrc + '\nreturn { lbHeadFor };')
+    (lbState([photo(1)], 0), () => null, attItemsFor).lbHeadFor(fakeEl());
+  check(h2 && h2.title === 'photo1.png' && h2.sub === 'Image' && h2.glyph === '■', 'photo sheet header', h2);
+}
+// 9. A long-press lift-off is swallowed by the tap rules; an ordinary one is not.
+{
+  const lb = { holdAt: 0, pinch: { x: 1 }, pan: null, swipe: null };
+  const { lbHoldLift, lbNoteHold } = new Function('lb', lbSrc + '\nreturn { lbHoldLift, lbNoteHold };')(lb);
+  lbNoteHold();
+  check(lbHoldLift() === true, 'a fresh long-press stamp claims the lift-off');
+  check(lb.holdAt === 0 && lb.pinch === null, 'the stamp is consumed and gesture state retired');
+  check(lbHoldLift() === false, 'the next lift-off is an ordinary tap again');
+  lb.holdAt = Date.now() - 5000;
+  check(lbHoldLift() === false, 'a stale stamp does not swallow taps');
+}
+// 10. Wiring, by source: the hold path starts inside the viewer, opens the
+// sheet with the item's rows, stamps the hold, and the tap rules stand down.
+{
+  check(actions.includes("[data-att-id],#lightbox'") || actions.includes('[data-att-id],#lightbox'),
+    'the long-press hold target covers #lightbox');
+  const holdBlock = slice(actions, 'holdT = setTimeout(', 'const mt = t.closest');
+  check(holdBlock.includes("t.closest('#lightbox')") && holdBlock.includes('lbMenuItemsFor(e.target)') &&
+    holdBlock.includes('openCtxSheet(items') && holdBlock.includes('lbNoteHold()'),
+    'the hold branch builds the item rows into a sheet and stamps the hold');
+  const pup = slice(pickers, 'function lbPointerUp(e) {', 'if (lb.pinch) {');
+  check(pup.includes('if (lbHoldLift()) return;'), 'lbPointerUp stands down for a long-press lift-off');
+}
+
 if (failures.length) { console.log('\n' + failures.length + ' FAILED'); process.exit(1); }
 console.log('\nall ' + passed + ' checks passed');

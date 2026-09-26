@@ -1386,7 +1386,7 @@ document.addEventListener('touchstart', (e) => {
   // rendering of an attachment. The download chip inside a wrap (a link with no
   // identity of its own) is still the browser's.
   if (!e.target.closest || e.target.closest('input, textarea, select, a:not([data-att-id])')) return;
-  const t = e.target.closest('.msg,.chan,.member,.server-btn,.folder-btn,.vuser,[data-dmthread],.att-wrap,[data-att-id]');
+  const t = e.target.closest('.msg,.chan,.member,.server-btn,.folder-btn,.vuser,[data-dmthread],.att-wrap,[data-att-id],#lightbox');
   if (!t) return;
   const touch = e.touches[0];
   const x = touch.clientX, y = touch.clientY;
@@ -1395,6 +1395,18 @@ document.addEventListener('touchstart', (e) => {
   holdT = setTimeout(() => {
     holdT = null;
     haptic(12); // the long-press that opens a menu is one of the few beats left
+    // The media viewer: a long-press on the stage (or a strip thumb) slides up
+    // the item's own attachment rows — the touch twin of the desktop right-click
+    // menu. e.target, not t, is what the pointer is on: t is the viewer itself.
+    if (t.closest('#lightbox') && isCoarse() && typeof lbMenuItemsFor === 'function' && e.target && e.target.closest) {
+      const items = lbMenuItemsFor(e.target);
+      if (items.length) {
+        holdSheet = true;
+        if (typeof lbNoteHold === 'function') lbNoteHold(); // the lift-off is the sheet's, not a tap's
+        openCtxSheet(items, typeof lbHeadFor === 'function' ? lbHeadFor(e.target) : null);
+        return;
+      }
+    }
     // A message takes the hold on any of its pixels: holding a picture slides up
     // the same sheet the message body opens, with THAT file's rows in it (and
     // holding the body itself opens it with none — see msgAttItems).

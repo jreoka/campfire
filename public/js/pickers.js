@@ -1883,6 +1883,24 @@ function lbMenuItemsFor(el) {
   const items = attItemsFor(a);
   return items.length ? [{ head: a.name || 'attachment' }, ...items] : [];
 }
+// The sheet header for a long-press on the viewer (see the hold timer in
+// actions.js): the file's name over its kind, like mediaSheetHead.
+function lbHeadFor(el) {
+  const it = lbItemAt(el);
+  if (!it) return null;
+  const video = it.kind === 'video';
+  return { title: it.name || (video ? 'Video' : 'Photo'), sub: video ? 'Video' : 'Image', glyph: video ? '▶' : '■', color: 'var(--panel-3)' };
+}
+// True when this lift-off belongs to a long-press that opened the item's menu
+// (see lbNoteHold): the tap rules must stand down for it, or a tap on the
+// backdrop would close the viewer out from under the sheet.
+function lbHoldLift() {
+  if (Date.now() - (lb.holdAt || 0) < 800) { lb.holdAt = 0; lb.pinch = null; lb.pan = null; lb.swipe = null; return true; }
+  return false;
+}
+// Stamp a long-press that opened the item's menu (see the hold timer in
+// actions.js): the lift-off belongs to the sheet, not to the tap rules.
+function lbNoteHold() { lb.holdAt = Date.now(); }
 // Step one item. The ends are the ends — no wrap-around, so "next" on the last
 // picture is the disabled arrow the reader can see.
 function lbGo(delta) {
@@ -2081,6 +2099,7 @@ $('#lightbox')?.addEventListener('pointermove', (e) => {
 function lbPointerUp(e) {
   if (!lb.ptrs.has(e.pointerId)) return;
   lb.ptrs.delete(e.pointerId);
+  if (lbHoldLift()) return;
   if (lb.pinch) {
     if (lb.ptrs.size < 2) lb.pinch = null;
     if (lb.ptrs.size === 1) {
