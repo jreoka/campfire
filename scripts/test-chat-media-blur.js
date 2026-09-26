@@ -224,6 +224,22 @@ setTimeout(() => {
         ready: pwrap.classList.contains('ready'),
         filter: getComputedStyle(img).filter,
       };
+      // The reported bug: a photo visibly changed size as the blur lifted —
+      // the blurred state used to zoom the picture (transform:scale(1.03)) and
+      // animate back. Transitions are switched off for the measurement so the
+      // toggle reads settled values, not a mid-flight interpolation; the
+      // rendered box must be identical blurred and sharp.
+      img.style.transition = 'none';
+      pwrap.classList.add('ready');
+      const rSharp = img.getBoundingClientRect();
+      pwrap.classList.remove('ready');
+      const rBlur = img.getBoundingClientRect();
+      pwrap.classList.add('ready');
+      img.style.transition = '';
+      window.__p3 = {
+        wSharp: rSharp.width, hSharp: rSharp.height,
+        wBlur: rBlur.width, hBlur: rBlur.height,
+      };
       window.__ready = true;
     }, 400);
   }, 500);
@@ -296,6 +312,9 @@ async function main() {
     const p2 = await ev('window.__p2');
     check(p2.ready, 'load arms .ready');
     check(p2.filter === 'none', 'the photo sharpens on ready', p2.filter);
+    const p3 = await ev('window.__p3');
+    check(p3 && p3.wBlur === p3.wSharp && p3.hBlur === p3.hSharp && p3.wSharp > 0,
+      'the photo keeps its exact box from blurred to sharp (no size change)', JSON.stringify(p3));
   } finally {
     try { if (ws) ws.close(); } catch {}
     try { chrome.kill(); } catch {}

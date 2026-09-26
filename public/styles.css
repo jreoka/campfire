@@ -1420,13 +1420,17 @@ img,video{-webkit-user-drag:none}
 .att-wrap:has(.file-card) .att-ph{display:none}
 /* Blur-up: while a picture loads, its (tiny) preview paints blurred behind the
    spinner instead of hiding behind a grey box, then sharpens in place. The
-   placeholder goes transparent so the blur shows through, and the wrap clips
-   the blur's fringe. att-swap keeps its own concealment (the carried frame
-   must stay the thing the reader sees). */
+   placeholder goes transparent so the blur shows through. The image sharpens
+   at exactly the size it will keep: an earlier scale(1.03) on the blurred
+   state (meant to crop the blur's soft edge) visibly shrank every photo as it
+   landed, so the zoom is gone — the soft edge reads as a vignette for the
+   fraction of a second the blur is up, the same treatment spoiler veils use.
+   att-swap keeps its own concealment (the carried frame must stay the thing
+   the reader sees). */
 .att-wrap.pending:not(.ready):not(.att-swap) .att-ph{background:transparent}
 .att-wrap.pending:not(.ready):not(.att-swap){overflow:hidden}
-.att-wrap.pending:not(.ready):not(.att-swap) img.att-img{opacity:1;filter:blur(16px) saturate(1.25);transform:scale(1.03)}
-.att-wrap img.att-img{transition:opacity .2s var(--ease-out),filter .3s var(--ease-out),transform .3s var(--ease-out)}
+.att-wrap.pending:not(.ready):not(.att-swap) img.att-img{opacity:1;filter:blur(16px) saturate(1.25)}
+.att-wrap img.att-img{transition:opacity .2s var(--ease-out),filter .3s var(--ease-out)}
 .spoiler{border-radius:3px;padding:0 .3rem;cursor:pointer}
 .msg .text .spoiler:not(.shown),.uc-bio .spoiler:not(.shown){background:var(--spoiler);color:transparent;user-select:none}
 .msg .text .spoiler:not(.shown) a,.uc-bio .spoiler:not(.shown) a{color:transparent}
