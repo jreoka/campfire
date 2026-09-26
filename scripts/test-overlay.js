@@ -54,6 +54,14 @@ for (const corner of ['top-left', 'top-right', 'bottom-left', 'bottom-right']) {
 ok(libSrc.includes('overlay: Mutex::new(OverlayState::default())'), 'State carries overlay snapshot');
 ok(libSrc.includes('overlay_settings: Mutex::new(OverlaySettings::default())'), 'State caches overlay settings');
 ok(libSrc.includes('load_settings(&app).overlay'), 'setup primes overlay settings cache');
+// --- overlay only appears while gaming ---
+ok(libSrc.includes('only_while_gaming'), 'OverlaySettings has only_while_gaming');
+ok(libSrc.includes('default_overlay_only_while_gaming'), 'only_while_gaming has a serde default');
+ok(/fn default_overlay_only_while_gaming\(\)[^{]*\{[^}]*true/s.test(libSrc), 'only_while_gaming defaults to true');
+ok(/settings\.only_while_gaming\s*&&\s*!gaming/.test(libSrc), 'apply_overlay hides the panel when no game is running');
+ok(/current_game\.lock\(\)\.unwrap\(\)\.is_some\(\)/.test(libSrc), 'apply_overlay reads game detection state');
+ok(libSrc.includes('*state.current_game.lock().unwrap() = game.clone();\n                                update_tray(&app, game.as_deref());\n                                // Game started or stopped: re-evaluate the\n                                // "only while gaming" overlay gate.\n                                apply_overlay(&app);'),
+  'game watcher re-evaluates the overlay on game change');
 
 // --- overlay page contract ---
 const page = path.join(appRoot, 'dist/overlay.html');
@@ -99,6 +107,9 @@ ok(settings.includes('ov-switch'), 'tab uses a toggle switch for enable');
 ok(settings.includes('ov-corner'), 'tab uses a visual corner picker');
 ok(!/renderOverlayTab[\s\S]*?createElement\('select'\)/.test(settings.slice(settings.indexOf('async function renderOverlayTab()'), settings.indexOf('// ---------- games tab'))),
   'tab no longer uses a corner dropdown');
+ok(settings.includes("'Only while gaming'"), 'tab has an only-while-gaming row');
+ok(settings.includes('only_while_gaming: gInp.checked'), 'tab saves the gaming-only preference');
+ok(settings.includes('cur.only_while_gaming !== false'), 'gaming-only defaults on for old settings');
 
 // --- styles for the revamped tab ---
 const css = read(path.join(root, 'public/styles.css'));
