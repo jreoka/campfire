@@ -210,5 +210,13 @@ if (!ctxSrc) { console.log('FAILED: could not slice ctxFor out of actions.js'); 
   check(pd.includes('if (e.button) return;'), 'lightbox pointerdown ignores non-primary buttons');
 }
 
+// 12. Closing the viewer dismisses a menu opened on it (desktop context
+// menu and mobile hold sheet alike).
+{
+  const close = slice(pickers, 'function closeLightbox() {', 'function openLightbox(src, name, gallery) {');
+  check(close.includes('closeCtx();') && close.includes('closeCtxSheet();'),
+    'closeLightbox dismisses the viewer-opened menu/sheet');
+}
+
 if (failures.length) { console.log('\n' + failures.length + ' FAILED'); process.exit(1); }
 console.log('\nall ' + passed + ' checks passed');

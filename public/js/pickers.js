@@ -1977,6 +1977,8 @@ function closeLightbox() {
   lbPaintNav();
   lbBuildStrip();
   lbReset();
+  // A context menu or hold sheet opened on the viewer must not outlive it.
+  closeCtx(); closeCtxSheet();
 }
 // `gallery` (optional) is what lbGalleryAt answered: the message's media in order,
 // and where in them the one that was pressed sits. With it, the viewer opens on
