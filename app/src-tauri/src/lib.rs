@@ -1055,7 +1055,8 @@ fn apply_overlay(app: &AppHandle) {
     use tauri::Emitter;
     let speakers = {
         let state = app.state::<State>();
-        state.overlay.lock().unwrap().speakers.clone()
+        let ov = state.overlay.lock().unwrap();
+        ov.speakers.clone()
     };
     if !overlay_gate_open(app) {
         if let Some(w) = app.get_webview_window("overlay") {
