@@ -90,9 +90,9 @@ jobs:
         shell: bash
         working-directory: app
         run: |
-          shopt -s nullglob; sigs=(app/src-tauri/target/release/bundle/nsis/*.exe.sig);
+          shopt -s nullglob; sigs=(src-tauri/target/release/bundle/nsis/*.exe.sig);
           if [ ${#sigs[@]} -eq 0 ]; then
-            echo "FATAL: no updater .sig files at app/src-tauri/target/release/bundle/nsis/*.exe.sig — createUpdaterArtifacts may be off" >&2
+            echo "FATAL: no updater .sig files at src-tauri/target/release/bundle/nsis/*.exe.sig — createUpdaterArtifacts may be off" >&2
             exit 1
           fi
           echo "updater signatures: ${sigs[*]}"
@@ -130,9 +130,9 @@ jobs:
         shell: bash
         working-directory: app
         run: |
-          shopt -s nullglob; sigs=(app/src-tauri/target/release/bundle/macos/*.tar.gz.sig);
+          shopt -s nullglob; sigs=(src-tauri/target/release/bundle/macos/*.tar.gz.sig);
           if [ ${#sigs[@]} -eq 0 ]; then
-            echo "FATAL: no updater .sig files at app/src-tauri/target/release/bundle/macos/*.tar.gz.sig — createUpdaterArtifacts may be off" >&2
+            echo "FATAL: no updater .sig files at src-tauri/target/release/bundle/macos/*.tar.gz.sig — createUpdaterArtifacts may be off" >&2
             exit 1
           fi
           echo "updater signatures: ${sigs[*]}"
@@ -173,9 +173,9 @@ jobs:
         shell: bash
         working-directory: app
         run: |
-          shopt -s nullglob; sigs=(app/src-tauri/target/release/bundle/appimage/*.AppImage.sig);
+          shopt -s nullglob; sigs=(src-tauri/target/release/bundle/appimage/*.AppImage.sig);
           if [ ${#sigs[@]} -eq 0 ]; then
-            echo "FATAL: no updater .sig files at app/src-tauri/target/release/bundle/appimage/*.AppImage.sig — createUpdaterArtifacts may be off" >&2
+            echo "FATAL: no updater .sig files at src-tauri/target/release/bundle/appimage/*.AppImage.sig — createUpdaterArtifacts may be off" >&2
             exit 1
           fi
           echo "updater signatures: ${sigs[*]}"
