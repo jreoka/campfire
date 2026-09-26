@@ -661,14 +661,14 @@ function fmtLocalTime(tz, d = new Date()) {
   } catch { return ''; }
 }
 // Feather-style clock, matching the user card's tab icons (no emoji in chrome).
-const CLOCK_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
+const LOCALTIME_CLOCK_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
 // The local-time row for a user card (`uc-localtime`) or the profile screen
 // (`pf-localtime`). `data-tz` is what the minute ticker repaints from.
 function localTimeRowHTML(u, cls) {
   const tz = u && u.timezone;
   const t = fmtLocalTime(tz);
   if (!t) return '';
-  return `<div class="${cls}" data-tz="${esc(tz)}">${CLOCK_SVG}<span class="lt-time">${esc(t)}</span><span class="lt-label">local time</span></div>`;
+  return `<div class="${cls}" data-tz="${esc(tz)}">${LOCALTIME_CLOCK_SVG}<span class="lt-time">${esc(t)}</span><span class="lt-label">local time</span></div>`;
 }
 // One ticker repaints every visible local-time clock (cards, profiles).
 function tickLocalTimes() {

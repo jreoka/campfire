@@ -46,10 +46,10 @@ check('timezone change broadcasts user-updated', (() => {
 })());
 
 // ---------- client contract ----------
-for (const fn of ['fmtLocalTime', 'localTimeRowHTML', 'tickLocalTimes', 'reportTimezone', 'CLOCK_SVG']) {
+for (const fn of ['fmtLocalTime', 'localTimeRowHTML', 'tickLocalTimes', 'reportTimezone', 'LOCALTIME_CLOCK_SVG']) {
   check('core.js defines ' + fn, core.includes(fn));
 }
-check('no emoji in the clock (SVG per chrome rules)', !/\u{1F550}|\u{1F550}/u.test(core.slice(core.indexOf('CLOCK_SVG'), core.indexOf('CLOCK_SVG') + 400)));
+check('no emoji in the clock (SVG per chrome rules)', !/\u{1F550}|\u{1F550}/u.test(core.slice(core.indexOf('LOCALTIME_CLOCK_SVG'), core.indexOf('LOCALTIME_CLOCK_SVG') + 400)));
 check('user card paints the local-time row', pickers.includes("localTimeRowHTML(u, 'uc-localtime')"));
 check('profile paints the local-time row', pickers.includes("localTimeRowHTML(u, 'pf-localtime')"));
 check('refreshUserCardLocalTime exists', /function refreshUserCardLocalTime/.test(pickers));
@@ -71,7 +71,7 @@ function extract(re, name) {
 const escStub = `function esc(s){return String(s??'').replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}\n`;
 const fmtSrc = extract(/function fmtLocalTime\(tz, d = new Date\(\)\) \{[\s\S]*?\n\}/, 'fmtLocalTime');
 const rowSrc = extract(/function localTimeRowHTML\(u, cls\) \{[\s\S]*?\n\}/, 'localTimeRowHTML');
-const clockSrc = extract(/const CLOCK_SVG = '.*?';/, 'CLOCK_SVG');
+const clockSrc = extract(/const LOCALTIME_CLOCK_SVG = '.*?';/, 'LOCALTIME_CLOCK_SVG');
 if (fmtSrc && rowSrc && clockSrc) {
   const fns = new Function(escStub + fmtSrc + '\n' + clockSrc + '\n' + rowSrc + '\nreturn { fmtLocalTime, localTimeRowHTML };')();
   const { fmtLocalTime, localTimeRowHTML } = fns;
@@ -104,5 +104,26 @@ check('validation rejects empty', !validZone(''));
 check('validation rejects garbage', !validZone('Not/AZone'));
 check('validation rejects SQL-ish junk', !validZone("'; DROP TABLE users; --"));
 
+// ---------- cross-file top-level collision guard ----------
+// Two top-level `const`/`let`/`class` with the same name in different scripts
+// is a SyntaxError that kills every script after the second one (2026-09-26:
+// CLOCK_SVG in core.js collided with actions.js and stuck the app on the boot
+// splash because final.js never ran). `function` redeclaration is legal, so
+// only const/let/class are checked.
+{
+  const seen = new Map();
+  const dupes = [];
+  for (const f of fs.readdirSync(path.join(__dirname, '..', 'public', 'js'))) {
+    if (!f.endsWith('.js')) continue;
+    const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8');
+    for (const m of src.matchAll(/^(?:const|let|class)\s+([A-Za-z_$][\w$]*)/gm)) {
+      if (seen.has(m[1])) dupes.push(`${m[1]} (in ${seen.get(m[1])} and ${f})`);
+      else seen.set(m[1], f);
+    }
+  }
+  check('no duplicate top-level const/let/class across scripts' + (dupes.length ? ': ' + dupes.join('; ') : ''), dupes.length === 0);
+}
+
 console.log(`\n${passed} passed, ${failures.length} failed`);
 process.exit(failures.length ? 1 : 0);
+
