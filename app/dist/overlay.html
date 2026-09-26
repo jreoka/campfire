@@ -28,11 +28,13 @@
     padding: 5px 10px 5px 5px; color: #fff;
     -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
     /* The resting state is invisible: rows fade in on `.in` and fade back to
-       this when the speaker stops, before being removed from the DOM. */
-    opacity: 0; transform: translateY(-6px) scale(0.97);
-    transition: opacity 0.28s ease-out, transform 0.28s ease-out;
+       this when the speaker stops, before being removed from the DOM.
+       Opacity only — no slide or scale — so a row fades in place instead of
+       drifting as it fades. */
+    opacity: 0;
+    transition: opacity 0.28s ease-out;
   }
-  .sp.in { opacity: 1; transform: none; }
+  .sp.in { opacity: 1; }
   .av {
     width: 34px; height: 34px; border-radius: 50%; flex: none;
     display: flex; align-items: center; justify-content: center;

@@ -87,6 +87,18 @@ ok(/if\s*\(!s\s*\|\|\s*!s\.speaking\)\s*continue/.test(pageSrc), 'page renders o
 ok(pageSrc.includes("classList.add('in')"), 'page fades rows in');
 ok(pageSrc.includes("classList.remove('in')"), 'page fades rows out when speaking stops');
 ok(pageSrc.includes('fadeTimer'), 'page cancels a fade-out if the speaker talks again');
+// --- rows fade in place: opacity only, no slide or scale while fading ---
+function cssRule(src, sel) {
+  const m = src.match(new RegExp(sel.replace(/\./g, '\\.') + '\\s*\\{([^}]*)\\}'));
+  return m ? m[1] : null;
+}
+const spRest = cssRule(pageSrc, '.sp');
+ok(spRest && !/transform\s*:/.test(spRest), 'resting row has no transform (fades in place)');
+ok(spRest && /transition\s*:/.test(spRest) && !/transition\s*:[^;]*transform/.test(spRest),
+  'row transition is opacity-only');
+const spIn = cssRule(pageSrc, '.sp.in');
+ok(spIn && /opacity\s*:\s*1/.test(spIn) && !/transform\s*:/.test(spIn),
+  '.sp.in sets opacity only, no transform');
 
 // --- site: voice.js pushes snapshots ---
 const voice = read(path.join(root, 'public/js/voice.js'));
