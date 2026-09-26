@@ -1291,6 +1291,16 @@ function svShow(ti, ii) {
     $('#sv-wait').classList.add('hidden');
     $('#sv-wait').classList.remove('sv-wait-dead');
     svPaintOverlays(); // markup only lands once the picture has a real box
+    // A view counts as OPENING the story: the countdown starts when the
+    // story actually appears, not when the viewer navigates to it — a story
+    // stuck on "Processing…" was never really seen. (Tab previews only ever
+    // fetch the media bytes; they never reach this path.)
+    clearTimeout(sv.seenT);
+    const gen = sv.gen;
+    sv.seenT = setTimeout(() => {
+      if (!sv || sv.gen !== gen || !current()) return;
+      markStorySeen(it);
+    }, 500);
   };
   if (it.kind === 'video') {
     vid.muted = sv.muted;
@@ -1343,13 +1353,11 @@ function svShow(ti, ii) {
   sv.raf = requestAnimationFrame(svTick);
   clearTimeout(sv.retryT);
 
-  // count as seen shortly after it actually appears
+  // Bumped per item so a late media load (or its seen countdown) from the
+  // previous item can never leak into this one; the countdown itself starts
+  // in ready(), once the story is actually on screen.
   clearTimeout(sv.seenT);
-  const gen = ++sv.gen;
-  sv.seenT = setTimeout(() => {
-    if (!sv || sv.gen !== gen) return;
-    markStorySeen(it);
-  }, 500);
+  ++sv.gen;
 
   // Reactions: paint the rail for this item, then replay what people already
   // left so a new viewer sees what the room thought of it.
