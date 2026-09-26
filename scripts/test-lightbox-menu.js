@@ -71,7 +71,7 @@ function fakeEl({ inLightbox = true, thumbIndex = null, msgMid = null } = {}) {
   };
 }
 const labels = (items) => items.map((i) => i.label || ('[' + i.head + ']'));
-const lbState = (items, index) => ({ open: true, items, index: index || 0 });
+const lbState = (items, index, current) => ({ open: true, items, index: index || 0, current: current === undefined ? null : current });
 const photo = (n) => ({ kind: 'image', src: '/uploads/files/photo' + n + '.png', name: 'photo' + n + '.png', el: { slot: n } });
 const clip = (n) => ({ kind: 'video', src: '/uploads/files/clip' + n + '.mp4', name: 'clip' + n + '.mp4', el: { slot: n } });
 
@@ -105,6 +105,20 @@ const attFromEl = () => ({ id: 'att-1', url: '/uploads/files/photo1.png', name: 
 {
   const { lbMenuItemsFor } = driveLb({ open: false, items: [photo(1)], index: 0 }, attFromEl);
   check(lbMenuItemsFor(fakeEl()).length === 0, 'no menu rows when the viewer is closed');
+}
+// 5b. A LONE photo (no multi-item set: lb.items is null) still gets its rows
+// from the item on the stage.
+{
+  const { lbMenuItemsFor } = driveLb(lbState(null, 0, photo(7)), () => null);
+  const got = labels(lbMenuItemsFor(fakeEl()));
+  check(JSON.stringify(got) === JSON.stringify(['[photo7.png]', 'Copy image', 'Save image', 'Copy image link', 'Open image link']),
+    'lone photo offers the staged item\u2019s rows', got);
+}
+// 5c. A lone photo from a message keeps its rendering identity (Scan info).
+{
+  const { lbMenuItemsFor } = driveLb(lbState(null, 0, photo(7)), attFromEl);
+  const got = labels(lbMenuItemsFor(fakeEl()));
+  check(got.includes('Scan info'), 'lone message photo keeps its scan info', got);
 }
 // 5. An infected file offers the explanation, never the bytes.
 {
@@ -183,6 +197,10 @@ if (!ctxSrc) { console.log('FAILED: could not slice ctxFor out of actions.js'); 
     'the hold branch builds the item rows into a sheet and stamps the hold');
   const pup = slice(pickers, 'function lbPointerUp(e) {', 'if (lb.pinch) {');
   check(pup.includes('if (lbHoldLift()) return;'), 'lbPointerUp stands down for a long-press lift-off');
+  const show = slice(pickers, 'function lbShow(item) {', 'const isVid = it.kind');
+  check(show.includes('lb.current = item || null;'), 'lbShow records the item on the stage');
+  const reset = slice(pickers, 'function lbReset() {', 'const img = lbImg();');
+  check(reset.includes('lb.current = null;'), 'lbReset clears the staged item');
 }
 
 // 11. The gesture handlers ignore non-primary buttons: a right-click must not

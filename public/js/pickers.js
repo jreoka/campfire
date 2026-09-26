@@ -1778,7 +1778,7 @@ function lbApply(animate) {
 }
 function lbReset() {
   lb.scale = 1; lb.tx = 0; lb.ty = 0;
-  lb.ptrs.clear(); lb.pinch = null; lb.pan = null; lb.swipe = null;
+  lb.ptrs.clear(); lb.pinch = null; lb.pan = null; lb.swipe = null; lb.current = null;
   const img = lbImg();
   if (img) { img.style.transition = ''; img.style.transform = ''; }
   const root = $('#lightbox');
@@ -1867,13 +1867,15 @@ function lbMarkStrip() {
 // when the item came from one (so the id and the scan verdict ride along); a
 // lone item (an embed, a bookmark tile) falls back to its url/name/kind.
 function lbItemAt(el) {
-  if (!lb.open || !lb.items || !lb.items.length) return null;
+  if (!lb.open) return null;
   const b = el && el.closest ? el.closest('.lb-thumb[data-lb-i]') : null;
   if (b) {
     const i = Number(b.dataset.lbI);
-    if (Number.isInteger(i) && lb.items[i]) return lb.items[i];
+    if (lb.items && Number.isInteger(i) && lb.items[i]) return lb.items[i];
   }
-  return lb.items[lb.index] || null;
+  // lb.items only exists for a multi-item set; a lone photo still has the
+  // item lbShow put on the stage.
+  return lb.current || (lb.items && lb.items[lb.index]) || null;
 }
 function lbMenuItemsFor(el) {
   const it = lbItemAt(el);
@@ -1921,6 +1923,7 @@ function lbShow(item) {
   const it = item || {};
   const img = lbImg(), vid = lbVid();
   lbReset();
+  lb.current = item || null; // the thing on the stage — lb.items only exists for a multi-item set
   const isVid = it.kind === 'video';
   if (isVid) {
     if (img) { img.classList.add('hidden'); img.removeAttribute('src'); }
