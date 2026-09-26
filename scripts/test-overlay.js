@@ -99,6 +99,15 @@ ok(spRest && /transition\s*:/.test(spRest) && !/transition\s*:[^;]*transform/.te
 const spIn = cssRule(pageSrc, '.sp.in');
 ok(spIn && /opacity\s*:\s*1/.test(spIn) && !/transform\s*:/.test(spIn),
   '.sp.in sets opacity only, no transform');
+// --- rows float bar-less over the game: no pill, name stays readable ---
+ok(spRest && !/background\s*:/.test(spRest), 'row has no background pill');
+ok(spRest && !/border-radius/.test(spRest), 'row has no pill rounding');
+ok(spRest && !/backdrop-filter/.test(spRest), 'row has no backdrop blur');
+const nmRule = cssRule(pageSrc, '.nm');
+ok(nmRule && /text-shadow/.test(nmRule), 'name keeps a text shadow for legibility over the game');
+// --- panel sits a little below the top edge ---
+ok(libSrc.includes('m + drop'), 'top corners nudge the panel down from the edge');
+ok(!/bottom-(left|right)"\s*=>\s*\([^)]*\+\s*drop/.test(libSrc), 'bottom corners keep the plain edge margin');
 
 // --- site: voice.js pushes snapshots ---
 const voice = read(path.join(root, 'public/js/voice.js'));

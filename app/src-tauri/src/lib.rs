@@ -804,11 +804,15 @@ fn overlay_place(app: &AppHandle, win: &tauri::WebviewWindow) {
         .unwrap_or((232.0, 120.0));
     let (sw, sh) = overlay_monitor_size(app);
     let m = 16.0;
+    // The panel sits a little lower than the top edge so it clears in-game
+    // HUD elements pinned to the very top. Bottom corners keep the plain
+    // margin: pushing those down would shove the panel into the screen edge.
+    let drop = 28.0;
     let (x, y) = match settings.corner.as_str() {
-        "top-right" => (sw - ww - m, m),
+        "top-right" => (sw - ww - m, m + drop),
         "bottom-left" => (m, sh - wh - m),
         "bottom-right" => (sw - ww - m, sh - wh - m),
-        _ => (m, m),
+        _ => (m, m + drop),
     };
     let _ = win.set_position(tauri::LogicalPosition::new(x, y));
 }

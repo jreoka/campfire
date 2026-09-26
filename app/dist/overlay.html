@@ -24,13 +24,12 @@
   #ov { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
   .sp {
     display: flex; align-items: center; gap: 8px;
-    background: rgba(17, 19, 24, 0.78); border-radius: 10px;
     padding: 5px 10px 5px 5px; color: #fff;
-    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
-    /* The resting state is invisible: rows fade in on `.in` and fade back to
-       this when the speaker stops, before being removed from the DOM.
-       Opacity only — no slide or scale — so a row fades in place instead of
-       drifting as it fades. */
+    /* No pill behind the row: the avatar and name float directly over the
+       game. The resting state is invisible: rows fade in on `.in` and fade
+       back to this when the speaker stops, before being removed from the
+       DOM. Opacity only — no slide or scale — so a row fades in place
+       instead of drifting as it fades. */
     opacity: 0;
     transition: opacity 0.28s ease-out;
   }
@@ -47,6 +46,9 @@
   .nm {
     font-size: 13px; line-height: 1.2; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis;
+    /* No pill behind the row any more, so the name floats over the game
+       itself: a soft shadow keeps it readable over bright scenes. */
+    text-shadow: 0 1px 5px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.6);
   }
   .mt {
     margin-left: auto; flex: none; opacity: 0.7;
