@@ -1858,6 +1858,31 @@ function lbMarkStrip() {
   }
   if (on && on.scrollIntoView) { try { on.scrollIntoView({ block: 'nearest', inline: 'center' }); } catch {} }
 }
+// ---------- lightbox right-click ----------
+// The desktop context menu for the media viewer (wired into ctxFor in
+// actions.js): the item's own attachment rows — Copy image, Save, Copy link,
+// Open link, Scan info — the same rows a right-click on the message's tile
+// offers. A right-click on a strip thumb addresses THAT thumb's item instead
+// of the one on the stage. The rows are built from the message's own rendering
+// when the item came from one (so the id and the scan verdict ride along); a
+// lone item (an embed, a bookmark tile) falls back to its url/name/kind.
+function lbItemAt(el) {
+  if (!lb.open || !lb.items || !lb.items.length) return null;
+  const b = el && el.closest ? el.closest('.lb-thumb[data-lb-i]') : null;
+  if (b) {
+    const i = Number(b.dataset.lbI);
+    if (Number.isInteger(i) && lb.items[i]) return lb.items[i];
+  }
+  return lb.items[lb.index] || null;
+}
+function lbMenuItemsFor(el) {
+  const it = lbItemAt(el);
+  if (!it || typeof attItemsFor !== 'function') return [];
+  const fromEl = (it.el && typeof attFromEl === 'function') ? attFromEl(it.el) : null;
+  const a = fromEl || { id: '', url: it.src || '', name: it.name || '', kind: it.kind || 'image', scan: 'clean' };
+  const items = attItemsFor(a);
+  return items.length ? [{ head: a.name || 'attachment' }, ...items] : [];
+}
 // Step one item. The ends are the ends — no wrap-around, so "next" on the last
 // picture is the disabled arrow the reader can see.
 function lbGo(delta) {

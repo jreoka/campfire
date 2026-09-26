@@ -1324,6 +1324,16 @@ function channelMenuItems(cid, ctype) {
 function channelCtxMenu(cid, ctype, x, y) { openCtx(x, y, channelMenuItems(cid, ctype)); }
 function ctxFor(el, x, y) {
   if (!el || !el.closest) return false;
+  // The media viewer owns its stage: a right-click there gets the item's own
+  // attachment rows (the strip thumb under the pointer, else the item on the
+  // stage — see lbMenuItemsFor), never the message menu behind it.
+  if (el.closest('#lightbox')) {
+    if (typeof lbMenuItemsFor === 'function') {
+      const lbItems = lbMenuItemsFor(el);
+      if (lbItems.length) { openCtx(x, y, lbItems); return true; }
+    }
+    return false;
+  }
   // A message owns every pixel of itself, media included: an attachment's rows
   // ride in the message's own menu rather than in a menu of their own, scoped to
   // the file the pointer is actually on (see msgAttItems) — so a right-click on
