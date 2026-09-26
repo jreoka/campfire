@@ -21,6 +21,7 @@ fn main() {
                 "set_overlay_settings",
                 "overlay_state",
                 "overlay_update",
+                "overlay_message",
                 "overlay_fit",
                 "open_external",
             ]),

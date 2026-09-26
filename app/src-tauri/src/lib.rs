@@ -119,6 +119,25 @@ struct OverlayState {
     speakers: Vec<OverlaySpeaker>,
 }
 
+/// One incoming chat message, as the overlay toast renders it: who sent it,
+/// where it's from, and a short preview. Transient — the overlay page shows
+/// each toast for a few seconds and drops it; nothing is stored here.
+#[cfg(desktop)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+struct OverlayMessage {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    avatar_url: Option<String>,
+    #[serde(default)]
+    avatar_color: String,
+    // "#general", "DM", or a group chat name.
+    #[serde(default)]
+    source: String,
+    #[serde(default)]
+    text: String,
+}
+
 // Discord's DB tags each executable with an `os` ("win32" / "darwin" /
 // "linux"; the non-desktop entries are sparse but real). Match only this
 // platform's entries.
@@ -209,10 +228,19 @@ struct OverlaySettings {
     // one of: top-left, top-right, bottom-left, bottom-right
     #[serde(default = "default_overlay_corner")]
     corner: String,
+    // Incoming chat messages pop up on the panel as little cards (sender,
+    // avatar, where the message is from, preview). Defaults on.
+    #[serde(default = "default_show_messages")]
+    show_messages: bool,
 }
 
 #[cfg(desktop)]
 fn default_overlay_enabled() -> bool {
+    true
+}
+
+#[cfg(desktop)]
+fn default_show_messages() -> bool {
     true
 }
 
@@ -227,6 +255,7 @@ impl Default for OverlaySettings {
         Self {
             enabled: default_overlay_enabled(),
             corner: default_overlay_corner(),
+            show_messages: default_show_messages(),
         }
     }
 }
@@ -815,12 +844,13 @@ async fn set_overlay_settings(
     app: AppHandle,
     enabled: bool,
     corner: String,
+    show_messages: bool,
 ) -> Result<OverlaySettings, String> {
     let corner = corner.trim().to_lowercase();
     if !OVERLAY_CORNERS.contains(&corner.as_str()) {
         return Err("unknown corner".to_string());
     }
-    let settings = OverlaySettings { enabled, corner };
+    let settings = OverlaySettings { enabled, corner, show_messages };
     *app.state::<State>().overlay_settings.lock().unwrap() = settings.clone();
     let mut s = load_settings(&app);
     s.overlay = settings.clone();
@@ -858,22 +888,47 @@ async fn overlay_update(app: AppHandle, in_call: bool, speakers: Vec<OverlaySpea
     apply_overlay(&app);
 }
 
-/// Resize the overlay window to the page's visible row count and re-anchor it
-/// in its configured corner. Called by the overlay page after every render:
-/// speakers appear only while talking and fade out when they stop, so the
-/// panel height follows the rows on screen, not the snapshot size.
+/// Push one incoming chat message to the overlay as a toast. The toast only
+/// makes sense while the panel is actually up (same gate as apply_overlay)
+/// and only if the user left message previews on — anything else is dropped,
+/// because a toast for a message from an hour ago is noise. The overlay page
+/// shows each toast for a few seconds and lets it fade; nothing is queued.
 #[cfg(desktop)]
 #[tauri::command]
-async fn overlay_fit(app: AppHandle, rows: usize) {
+async fn overlay_message(app: AppHandle, msg: OverlayMessage) {
+    use tauri::Emitter;
+    {
+        let state = app.state::<State>();
+        if !state.overlay_settings.lock().unwrap().show_messages {
+            return;
+        }
+    }
+    if !overlay_gate_open(&app) {
+        return;
+    }
+    let win = match ensure_overlay_window(&app) {
+        Ok(w) => w,
+        Err(_) => return,
+    };
+    overlay_place(&app, &win);
+    let _ = win.emit("overlay-message", &msg);
+    let _ = win.show();
+}
+
+/// Resize the overlay window to the page's content height and re-anchor it in
+/// its configured corner. Called by the overlay page after every render: the
+/// page owns the row/toast lifecycle, so only it knows the live height — it
+/// reports scrollHeight and the shell clamps it.
+#[cfg(desktop)]
+#[tauri::command]
+async fn overlay_fit(app: AppHandle, height: f64) {
     let win = match app.get_webview_window("overlay") {
         Some(w) => w,
         None => return,
     };
-    // One compact row per visible speaker; the page renders them. Row math
-    // mirrors overlay.html: 8px page padding top/bottom, 44px rows
-    // (34px avatar + 5px padding each side), 6px gaps.
-    let n = rows.clamp(1, 12) as f64;
-    let _ = win.set_size(tauri::LogicalSize::new(232.0, 10.0 + n * 50.0));
+    // One compact panel; the page renders speakers and message toasts.
+    let h = height.clamp(24.0, 620.0);
+    let _ = win.set_size(tauri::LogicalSize::new(232.0, h));
     overlay_place(&app, &win);
 }
 
@@ -970,34 +1025,39 @@ fn foreground_is_game(state: &State, own_pid: u32) -> bool {
         .contains(&sysinfo::Pid::from_u32(pid))
 }
 
+/// Whether the overlay panel should currently be up: enabled, in a call, and
+/// a game running (on Windows, its window also frontmost). Shared by
+/// apply_overlay and the message toast path so a toast can never appear
+/// somewhere the panel itself wouldn't.
+#[cfg(desktop)]
+fn overlay_gate_open(app: &AppHandle) -> bool {
+    let state = app.state::<State>();
+    let settings = state.overlay_settings.lock().unwrap().clone();
+    let in_call = state.overlay.lock().unwrap().in_call;
+    let gaming = state.current_game.lock().unwrap().is_some();
+    // Windows also requires the game window itself to be focused; other
+    // platforms gate on "a game is running" only.
+    #[cfg(windows)]
+    let focused = state.game_focused.load(Ordering::Relaxed);
+    #[cfg(not(windows))]
+    let focused = true;
+    // The panel is only for games: it stays hidden unless a game is running
+    // (and, on Windows, its window is frontmost), so it never floats over
+    // the desktop or other apps.
+    settings.enabled && in_call && gaming && focused
+}
+
 /// Show/hide the overlay window from the cached settings + snapshot and hand
 /// the latest speakers to the page. The page filters to whoever is speaking,
 /// fades rows in/out, and sizes the window itself through `overlay_fit`.
 #[cfg(desktop)]
 fn apply_overlay(app: &AppHandle) {
     use tauri::Emitter;
-    let settings = app
-        .state::<State>()
-        .overlay_settings
-        .lock()
-        .unwrap()
-        .clone();
-    let (in_call, speakers) = {
+    let speakers = {
         let state = app.state::<State>();
-        let ov = state.overlay.lock().unwrap();
-        (ov.in_call, ov.speakers.clone())
+        state.overlay.lock().unwrap().speakers.clone()
     };
-    let gaming = app.state::<State>().current_game.lock().unwrap().is_some();
-    // Windows also requires the game window itself to be focused; other
-    // platforms gate on "a game is running" only.
-    #[cfg(windows)]
-    let focused = app.state::<State>().game_focused.load(Ordering::Relaxed);
-    #[cfg(not(windows))]
-    let focused = true;
-    // The panel is only for games: it stays hidden unless a game is running
-    // (and, on Windows, its window is frontmost), so it never floats over
-    // the desktop or other apps.
-    if !settings.enabled || !in_call || !(gaming && focused) {
+    if !overlay_gate_open(app) {
         if let Some(w) = app.get_webview_window("overlay") {
             let _ = w.hide();
         }
@@ -1111,6 +1171,7 @@ pub fn run() {
             set_overlay_settings,
             overlay_state,
             overlay_update,
+            overlay_message,
             overlay_fit,
             open_external
         ])

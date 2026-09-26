@@ -17,6 +17,7 @@
     "allow-set-overlay-settings",
     "allow-overlay-state",
     "allow-overlay-update",
+    "allow-overlay-message",
     "allow-overlay-fit",
     "allow-open-external"
   ],

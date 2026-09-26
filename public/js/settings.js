@@ -682,6 +682,22 @@ async function renderOverlayTab() {
   sw.appendChild(inp); sw.appendChild(knob);
   enRow.appendChild(enTx); enRow.appendChild(sw);
   box.appendChild(enRow);
+  // Message previews row: title + hint on the left, a switch on the right.
+  const msgRow = document.createElement('div'); msgRow.className = 'set-row ov-row';
+  const msgTx = document.createElement('div'); msgTx.className = 'grow';
+  const msgTitle = document.createElement('div'); msgTitle.className = 'ov-title';
+  msgTitle.textContent = 'Show message previews';
+  const msgHint = document.createElement('div'); msgHint.className = 'muted small';
+  msgHint.textContent = 'Incoming chats pop up on the panel as little cards \u2014 sender, picture, and where it\u2019s from.';
+  msgTx.appendChild(msgTitle); msgTx.appendChild(msgHint);
+  const msgSw = document.createElement('label'); msgSw.className = 'ov-switch';
+  const msgInp = document.createElement('input'); msgInp.type = 'checkbox';
+  msgInp.checked = cur.show_messages !== false; // default on, including older builds
+  msgInp.setAttribute('aria-label', 'Show message previews');
+  const msgKnob = document.createElement('span'); msgKnob.setAttribute('aria-hidden', 'true');
+  msgSw.appendChild(msgInp); msgSw.appendChild(msgKnob);
+  msgRow.appendChild(msgTx); msgRow.appendChild(msgSw);
+  box.appendChild(msgRow);
   // Corner row: title + hint on the left, a visual 2x2 corner picker.
   let corner = cur.corner || 'top-left';
   const cRow = document.createElement('div'); cRow.className = 'set-row ov-row';
@@ -719,11 +735,16 @@ async function renderOverlayTab() {
   box.appendChild(cRow);
   const save = async () => {
     try {
-      await inv('set_overlay_settings', { enabled: inp.checked, corner });
+      const args = { enabled: inp.checked, corner };
+      // Older app builds don't know show_messages: sending it would fail the
+      // whole save, so only include it when the build reported the key.
+      if (cur && 'show_messages' in cur) args.showMessages = msgInp.checked;
+      await inv('set_overlay_settings', args);
       toast(inp.checked ? 'Overlay enabled' : 'Overlay disabled');
     } catch (err) { toast('Failed: ' + prettyError(err.message)); }
   };
   inp.onchange = save;
+  msgInp.onchange = save;
 }
 // ---------- games tab (game-activity manager) ----------
 // Everything about one account's game tracking: totals, every tracked game,

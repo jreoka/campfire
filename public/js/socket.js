@@ -304,6 +304,7 @@ function onWS(m) {
     }
     case 'message-new': {
       const msg = m.message;
+      if (msg) overlayMessage(msg);
       // Background unread: a normal message from someone else in a channel the
       // reader is not looking at (another server, another channel, or a hidden
       // tab) earns that channel's dot. Thread replies have their own surface.
@@ -469,6 +470,7 @@ function onWS(m) {
     }
     case 'dm-new': {
       const msg = m.message;
+      if (msg) overlayMessage(msg);
       const inHistDm = S.histMode && S.histMode.kind === 'dm' && S.histMode.id === msg.threadId;
       let dmDrop = 0;
       if (!inHistDm) {
@@ -1014,6 +1016,36 @@ function notifyMsg(m) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   sfx.msg();
   try { new Notification(title, { body }); } catch {}
+}
+// Desktop overlay: show an incoming message as a toast on the gaming panel.
+// The shell drops it unless the panel is actually up (in a call, game
+// running) and the user left message previews on — so this just fires and
+// forgets. View-once captions never leave this page, and DND stays quiet.
+function overlayMessage(m) {
+  try {
+    if (!m || m.sys || typeof isDesktopShell !== 'function' || !isDesktopShell()) return;
+    if (S.me && m.user && m.user.id === S.me.id) return;
+    if (S.me && S.me.status === 'dnd') return;
+    const T = window.__TAURI__;
+    if (!T || !T.core || typeof T.core.invoke !== 'function') return;
+    let label;
+    if (m.threadId) {
+      const t = (S.dms || []).find((t) => t.id === m.threadId);
+      label = t && t.isGroup ? (t.name || 'Group chat') : 'DM';
+    } else {
+      label = '#' + chanName(m.channelId);
+    }
+    const body = m.viewOnce ? 'Sent a view-once' : (m.content || '[attachment]');
+    T.core.invoke('overlay_message', {
+      msg: {
+        name: (m.user && m.user.display_name) || '?',
+        avatar_url: m.user && m.user.avatar_url ? new URL(m.user.avatar_url, location.origin).href : null,
+        avatar_color: (m.user && m.user.avatar_color) || '#555',
+        source: label,
+        text: String(body).slice(0, 140),
+      },
+    }).catch(() => {});
+  } catch {}
 }
 if ('Notification' in window && Notification.permission === 'default') {
   document.addEventListener('click', function once() {
