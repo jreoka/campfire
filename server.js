@@ -26,6 +26,19 @@ if (JWT_SECRET === 'dev-secret-change-me') {
 const ORIGIN = process.env.ORIGIN || ''; // e.g. https://chat.example.com (used for hints only)
 const KLIPY_KEY = process.env.KLIPY_KEY || '';
 
+// ---------- standard emoji shortcodes (for push notification bodies) ----------
+// Warmed once from public/emoji.json at boot: push bodies are plain text, so a
+// :shortcode: in a message would otherwise arrive on the phone as literal text.
+// Custom server emoji have no unicode form, so those stay as :name:.
+let STD_EMOJI = {};
+try {
+  const ej = JSON.parse(fs.readFileSync(path.join(__dirname, 'public', 'emoji.json'), 'utf8'));
+  if (ej && ej.shortcodes) STD_EMOJI = ej.shortcodes;
+} catch {}
+function emojifyText(t) {
+  return String(t || '').replace(/:([a-z0-9_+-]{2,32}):/g, (m, n) => STD_EMOJI[n] || m);
+}
+
 // ---------- app version (powers client auto-update) ----------
 // Content hash of backend + frontend: changes exactly when a deploy changes code.
 const APP_VERSION = (() => {
@@ -6165,7 +6178,7 @@ async function notifyServerMessage(serverId, channelId, author, content, message
       || everyone || (here && !!online && !!online[uid]);
     if (mode === 'mentions' && !isMention) continue;
     const title = `#${(ch && ch.name) || 'chat'} · ${s ? s.name : ''}`;
-    const body = `${displayOf(author)}: ${text}`.slice(0, 160);
+    const body = emojifyText(`${displayOf(author)}: ${text}`).slice(0, 160);
     // Notification center is for mentions + major events only — plain new
     // messages never land in the inbox, even on 'All messages' (that scope
     // still controls the OS/push ping below).
@@ -6187,7 +6200,7 @@ async function notifyDmMessage(thread, author, content, messageId) {
   for (const uid of mems) {
     if ((await notifMode(uid, [`dm:${thread.id}`, 'global'])) === 'muted') continue;
     const title = thread.is_group ? (thread.name || 'Group chat') : `${displayOf(author)} (DM)`;
-    const body = thread.is_group ? `${displayOf(author)}: ${text}`.slice(0, 160) : text.slice(0, 160);
+    const body = thread.is_group ? emojifyText(`${displayOf(author)}: ${text}`).slice(0, 160) : emojifyText(text).slice(0, 160);
     // DMs stay out of the notification inbox (mentions + major events only) —
     // visible tabs badge via dm-new, hidden/closed devices still get a push below.
     await pushToUser(uid, {

@@ -2073,7 +2073,7 @@ function messageEl(m, opts = {}) {
     if (m.replyTo.deleted || (m.replyTo.author === 'deleted' && !m.replyTo.snippet)) {
       inner += `<div class="reply-quote deleted"><span class="rq-text">Original message was deleted</span></div>`;
     } else {
-      inner += `<div class="reply-quote" data-jump="${m.replyTo.id}"><span class="rq-author">${esc(m.replyTo.author)}</span><span class="rq-text">${esc(m.replyTo.snippet)}</span></div>`;
+      inner += `<div class="reply-quote" data-jump="${m.replyTo.id}"><span class="rq-author">${esc(m.replyTo.author)}</span><span class="rq-text">${emojifyHTML(esc(m.replyTo.snippet))}</span></div>`;
     }
   }
   if (S.editing === m.id) {
@@ -2968,7 +2968,7 @@ function paintComposerChips(box, list, reply, clearReply, held) {
     const chip = document.createElement('div');
     chip.className = 'att-chip';
     const rau = msgAuthor(reply);
-    chip.innerHTML = `<span>Replying to <b>${esc(rau ? rau.display_name : '?')}</b>: ${esc(replyPreviewOf(reply))}</span>`;
+    chip.innerHTML = `<span>Replying to <b>${esc(rau ? rau.display_name : '?')}</b>: ${emojifyHTML(esc(replyPreviewOf(reply)))}</span>`;
     const x = document.createElement('button'); x.className = 'mini'; x.type = 'button'; x.textContent = '✕';
     x.onclick = () => clearReply();
     chip.appendChild(x); box.appendChild(chip);

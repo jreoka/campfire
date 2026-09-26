@@ -474,6 +474,16 @@ function mentionMatcher(authorId) {
 // .md-tok) instead of dropped, and the composer CSS must never change glyph
 // metrics (weight, size, padding) — one dropped character and the caret drifts
 // off the text it is supposed to be sitting in.
+// The :shortcode: -> emoji pass, shared by renderRich and the spots that only
+// want emojis (reply quotes, composer chips): operates on already-escaped HTML.
+function emojifyHTML(h) {
+  return h.replace(/:([a-z0-9_+-]{2,32}):/g, (m, n) => {
+    const em = S.emojiAll[n]; // cross-server: any emoji from a joined server
+    return em
+      ? '<img class="cemoi" src="' + em.url + '" alt="' + m + '" title="' + m + '" data-fb-emoji="' + m + '">'
+      : (S.stdEmoji[n] || m);
+  });
+}
 function renderRich(text, opts = {}) {
   const plain = !!opts.plain;
   const tok = (s) => (plain ? '<span class="md-tok">' + s + '</span>' : '');
@@ -519,12 +529,7 @@ function renderRich(text, opts = {}) {
        .replace(/(^|[\s(])\*([^\*\n]+)\*/g, (m, pre, inner) => pre + tok('*') + '<em>' + inner + '</em>' + tok('*'))
        .replace(/~~([^~]+)~~/g, (m, inner) => tok('~~') + '<del>' + inner + '</del>' + tok('~~'));
   if (!opts.plain) {
-  h = h.replace(/:([a-z0-9_+-]{2,32}):/g, (m, n) => {
-    const em = S.emojiAll[n]; // cross-server: any emoji from a joined server
-    return em
-      ? '<img class="cemoi" src="' + em.url + '" alt="' + m + '" title="' + m + '" data-fb-emoji="' + m + '">'
-      : (S.stdEmoji[n] || m);
-  });
+    h = emojifyHTML(h);
   }
   // ID-based mentions from autocomplete picks (<@id> for users, <@&id> for
   // roles) resolve unambiguously, even when a username collides with a role
