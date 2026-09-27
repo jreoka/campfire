@@ -213,10 +213,29 @@ console.log('\n[1] what counts as a link that IS a picture');
     'https://a.example/c.gif', 'https://a.example/d.webp', 'https://a.example/e.avif',
     'https://a.example/f.bmp', 'https://a.example/g.svg', 'http://a.example/h.png',
   ]) check(isDirectImageUrl(u), 'a picture file: ' + u, null);
-  // The near misses, each a real way this gets over-eager. The rule is
-  // deliberately narrow: a false positive swallows a clickable URL.
-  check(!isDirectImageUrl('https://a.example/i.png?size=large'),
-    'an image extension behind a query is a GENERATED image, not the file', null);
+  // A QUERY STRING IS NOT A DISQUALIFIER, and this is the check that exists
+  // because getting it wrong shipped: nearly every real image link carries one
+  // (a Discord CDN attachment, a Giphy `?cid=&rid=`, a `?width=200&format=webp`
+  // screenshot, a cache-buster), and excluding them took the embed pass down
+  // with the text pass — the whole point of the shared predicate is that the
+  // two cannot disagree, so a tighter text rule meant those links stopped
+  // EMBEDDING AT ALL. Only the PATH ending in the extension ever mattered, and
+  // `/photo?format=png` (a generated image, the path does not end in one) is
+  // still excluded by that.
+  for (const u of [
+    'https://cdn.discordapp.com/attachments/1/2/photo.png?ex=6734a1b2&is=6640&hm=9f2c',
+    'https://media.giphy.com/media/abc/giphy.gif?cid=abc&rid=giphy.gif&ctv=x',
+    'https://images.example.com/s/photo.webp?width=200&format=webp',
+    'https://a.example/i.png?size=large',
+  ]) {
+    check(isDirectImageUrl(u), 'a picture link keeps its query string: ' + u, null);
+    // …and it must still reach the EMBED pass, not just the text pass. This is
+    // the assertion that would have caught the regression.
+    check((embedForUrl(u) || '').includes('embed-img'),
+      'and the embed pass still renders it as a picture: ' + u, embedForUrl(u));
+  }
+  check(!isDirectImageUrl('https://a.example/photo?format=png'),
+    'a GENERATED image (the path does not end in the extension) is still not a picture', null);
   check(isDirectImageUrl('https://a.example/i.png#frag'),
     'a fragment is harmless — the request is the same file', null);
   check(!isDirectImageUrl(PAGE), 'an ordinary page is not a picture', null);
@@ -409,10 +428,16 @@ async function main() {
     check(typeof keepPic === 'string' && keepPic.includes('embed-img') && keepPic.includes('data-fb-img="' + dead + '"'),
       'a message that is only a picture link keeps its picture card', keepPic);
     for (const t of ['look ' + PIC, '**' + PIC + '**', '`https://example.com/a.png`', PIC + '\n' + PIC,
-      '```\n' + PIC + '\n```', PAGE, 'https://a.example/x.png?size=2', 'plain words', '']) {
+      '```\n' + PIC + '\n```', PAGE, 'plain words', '']) {
       check((await ev('window.__keep(' + JSON.stringify(t) + ')')) === '',
         'and no card is forced for anything else: ' + JSON.stringify(t).slice(0, 40), null);
     }
+    // A picture link WITH a query is the one shape here that still IS a picture
+    // on its own: it used to sit in the list above and force no card, which is
+    // exactly the regression — those links stopped embedding altogether.
+    const keepQuery = await ev('window.__keep(' + JSON.stringify('https://cdn.example.com/p.png?ex=1&is=2') + ')');
+    check(typeof keepQuery === 'string' && keepQuery.includes('embed-img'),
+      'a picture link with a query string still keeps its card', keepQuery);
     // The one shape the text cannot tell: a real system line is a line in the
     // channel, so the ROW is the signal (messageEl asks with `m.sys ? ''`).
     const sysHtml = await ev(`(() => {

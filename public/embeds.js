@@ -265,11 +265,19 @@ function soundcloudEmbedHTML(url, info) {
 //
 // "Direct" is doing real work here, and it is narrow on purpose — it decides
 // whether a link KEEPS its anchor, so a false positive silently swallows a
-// clickable URL out of a sentence. The one case that has to be excluded is a
-// query string: an image extension behind one is a GENERATED image (a Gravatar
-// or an avatar service, a CDN's `?width=200`), not the file, and a request for
-// it answers a picture we cannot embed directly. The path has to end in the
-// image extension, and nothing else may follow it.
+// clickable URL out of a sentence. The path has to END in the image extension.
+// That is the whole test, and it has to stay exactly as permissive as the rule
+// it replaced: a query string does NOT disqualify the link.
+//
+// That last one is not a detail. Nearly every real image link has one — a
+// Discord CDN attachment (`photo.png?ex=…&is=…&hm=…`), a Giphy `?cid=…&rid=…`, a
+// screenshot service's `?width=200&format=webp`, a cache-buster. They are all
+// still the picture file, and excluding them here took the embed pass down with
+// the text pass: the whole point of sharing this predicate is that the two
+// cannot disagree, so tightening it silently stopped those links EMBEDDING AT
+// ALL. An image extension behind a query is a generated image only when the
+// PATH does not end in one (`/photo?format=png`), and that case is already
+// excluded — by the path test, which is the only thing that ever mattered.
 //
 // A page that merely looks like one (imgur.com/pic.png is an HTML page) is not
 // excluded by rule — it is harmless, because the failed-load handler in
@@ -279,7 +287,6 @@ function isDirectImageUrl(url) {
   let p;
   try { p = new URL(url); } catch { return false; }
   if (p.protocol !== 'http:' && p.protocol !== 'https:') return false;
-  if (p.search) return false;               // a query means a generated image, not the file
   return IMG_EXT_RE.test(p.pathname.toLowerCase());
 }
 

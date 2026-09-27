@@ -743,9 +743,15 @@ the same message is prose too, and the composer's backdrop (`opts.plain`) is off
 entirely because the caret lives on it. "Direct" is the embed's OWN predicate,
 `isDirectImageUrl` in embeds.js — the same one `directMediaEmbedHTML` renders
 from, so text and embed cannot disagree about which links are pictures, which is
-the whole bug. It excludes a query string (an image extension behind one is a
-generated image, not the file) and nothing else: a page that merely LOOKS like
-one (`imgur.com/pic.png`) is harmless, because…
+the whole bug. **It must never be tightened past the rule it replaced, or the
+embed pass goes down with the text pass and those links stop embedding AT ALL** —
+which is exactly what happened once: excluding a query string on the theory that
+an image extension behind one is a generated image, when nearly every real image
+link has one (a Discord CDN attachment `photo.png?ex=…&is=…`, Giphy's
+`?cid=…&rid=…`, `?width=200&format=webp`, a cache-buster). Only the PATH ending
+in the extension is tested; that is also what excludes a generated
+`/photo?format=png`. A page that merely LOOKS like one (`imgur.com/pic.png`) is
+harmless, because…
 The picture is still a first-class click target meanwhile: a tap on it opens the
 lightbox exactly as before, which is what the printed URL used to be the backup
 for. **…and a picture that would not load hands its link back.** The two passes

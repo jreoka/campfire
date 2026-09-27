@@ -1292,9 +1292,18 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   embed's own predicate — `isDirectImageUrl` in `embeds.js`, the same one
   `directMediaEmbedHTML` renders from — so the text pass and the embed pass
   cannot disagree about which links are pictures, which is the whole bug. It is
-  narrow on purpose, since a false positive swallows a clickable link: a query
-  string means a GENERATED image rather than the file, and nothing else is
-  excluded. The TEXT half runs the real `renderRich` sliced out of `core.js`
+  narrow on purpose, since a false positive swallows a clickable link out of a
+  sentence — but it must stay exactly as permissive as the rule it replaced, or
+  tightening it takes the EMBED pass down with the text pass and those links stop
+  embedding at all. That is what happened once: a query string was excluded on
+  the theory that an image extension behind one is a generated image, and since
+  nearly every real image link has one (Discord CDN attachments, Giphy's
+  `?cid=&rid=`, a `?width=200&format=webp`, a cache-buster) it silently stopped
+  every one of them embedding. Only the PATH ending in the extension is tested,
+  which is also what excludes a generated `/photo?format=png`; the test asserts
+  both halves — the predicate, and `embedForUrl` still returning a picture — for
+  a set of real query-carrying links, which is what would have caught it. The
+  TEXT half runs the real `renderRich` sliced out of `core.js`
   (with the real predicate from `embeds.js`, plus a fresh `vm` realm for the case
   where `embeds.js` never loaded at all) and locks in that a message that is
   nothing but one direct image link reads as that URL with no anchor, that a
