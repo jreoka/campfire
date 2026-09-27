@@ -146,6 +146,26 @@ function myVoiceKey() {
   return S.voice.kind === 'dm' ? dmOccKey(S.voice.threadId) : S.voice.channelId;
 }
 function dmCallPeers(tid) { return S.voiceOccupancy.get(dmOccKey(tid)) || []; }
+// Threads whose DM-call occupancy this client has been TOLD about — including
+// "nobody is in it". Kept apart from the occupancy map itself, because that map
+// deliberately drops empty rooms (see dmPeerLeft) and so cannot tell a drained
+// call from a room this client has never heard of. That ambiguity is the whole
+// bug: a count read as `livePeers.length || t.callCount` falls back to the
+// /api/dms SNAPSHOT whenever the roster is empty, so leaving a call you were the
+// last one in left the row still advertising the count from before you joined —
+// a call that no longer existed, offering to be joined. Knowing the answer is
+// zero is not the same as not having an answer, and only the second may consult
+// the snapshot.
+const dmOccKnown = new Set();
+function dmOccAnswered(threadId) { dmOccKnown.add(threadId); }
+// How many people are in this thread's call. The live roster wins whenever this
+// client has an answer for it; `thread.callCount` (the /api/dms snapshot) is
+// only the boot-time placeholder for the moment before the subscribe-time
+// voice-peers frames land.
+function dmCallCount(tid, thread) {
+  if (dmOccKnown.has(tid)) return dmCallPeers(tid).length;
+  return (thread && thread.callCount) || 0;
+}
 // Every voice event converges DM-call occupancy on its own (not just the
 // paired voice-peers snapshot), so the in-call border + join strip update
 // live even if one message is missed or arrives out of band.
@@ -156,12 +176,14 @@ function dmPeerJoined(threadId, peer) {
   if (!occ.some((p) => p.id === peer.id)) occ.push({ ...peer });
   S.voiceOccupancy.set(key, occ);
   if (!S.voiceSince.has(key)) S.voiceSince.set(key, Date.now());
+  dmOccAnswered(threadId);
 }
 function dmPeerLeft(threadId, userId) {
   const key = dmOccKey(threadId);
   const occ = (S.voiceOccupancy.get(key) || []).filter((p) => p.id !== userId);
   if (occ.length) S.voiceOccupancy.set(key, occ);
   else { S.voiceOccupancy.delete(key); S.voiceSince.delete(key); }
+  dmOccAnswered(threadId);
 }
 function inThisDmCall(tid) { return !!(S.voice && S.voice.kind === 'dm' && S.voice.threadId === tid); }
 function voiceLabel() {
@@ -221,6 +243,10 @@ function onDmCallEnded(threadId) {
   // belt-and-suspenders in case it was missed.
   S.voiceOccupancy.delete(dmOccKey(threadId));
   S.voiceSince.delete(dmOccKey(threadId));
+  // "The call is over" is the same kind of answer as "these people are in it":
+  // without it the row would fall back to the snapshot and keep offering a call
+  // that the server just said had ended (see dmOccKnown).
+  dmOccAnswered(threadId);
   try { renderDmLists(); } catch {}
   if (S.view === 'home' && S.dmThreadId === threadId) { try { renderDmMembers(); } catch {} }
 }
@@ -356,6 +382,9 @@ function leaveVoice(silent) {
   $('#stage').classList.add('hidden');
   $('#stage-grid').innerHTML = '';
   const vkey = myVoiceKey();
+  // Captured now, while S.voice still says which room this was: it is nulled
+  // two lines below, and the drain check further down needs to know it.
+  const leftDmThread = S.voice.kind === 'dm' ? S.voice.threadId : null;
   S.voice = null;
   stopSpeakingMonitor();
   if (overlaySyncTimer) { clearTimeout(overlaySyncTimer); overlaySyncTimer = null; }
@@ -371,6 +400,11 @@ function leaveVoice(silent) {
     const occ = S.voiceOccupancy.get(vkey) || [];
     S.voiceOccupancy.set(vkey, occ.filter((p) => p.id !== S.me.id));
     if (!(S.voiceOccupancy.get(vkey) || []).length) S.voiceSince.delete(vkey);
+    // Leaving is how a 1:1 call most often EMPTIES: this client was the last one
+    // in it, and it is the one tab that knows the room is now empty without
+    // waiting for the server's echo. Record that as an answer, or the row falls
+    // back to t.callCount and goes on advertising the call that just ended.
+    if (leftDmThread) dmOccAnswered(leftDmThread);
   }
   if (!silent) { sfx.leave(); S.ws?.send(JSON.stringify({ t: 'voice-leave' })); }
   renderChannels();

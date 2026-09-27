@@ -592,7 +592,7 @@ function dmRowEl(t) {
   // Presence light on direct DMs: same corner dot the friends list uses.
   const avSt = av ? statusOf(av.id) : '';
   const avDot = av ? dotOf(avSt, !isOff(avSt) && av.streaming_game ? av.streaming_game : null) : '';
-  const callN = dmCallPeers(t.id).length || t.callCount || 0;
+  const callN = dmCallCount(t.id, t);
   const inThis = S.voice && S.voice.kind === 'dm' && S.voice.threadId === t.id;
   if (callN > 0 || inThis) b.classList.add('in-call');
   // Attachment-only messages still read as a sentence in the preview

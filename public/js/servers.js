@@ -1112,13 +1112,13 @@ function renderDmMembers() {
   const box = $('#member-list');
   box.innerHTML = '';
   // Active call strip: join the ongoing DM call (or jump into the call view).
-  const callPeers = dmCallPeers(t.id);
+  const callN = dmCallCount(t.id, t);
   const inCall = S.voice && S.voice.kind === 'dm' && S.voice.threadId === t.id;
-  if (inCall || callPeers.length) {
+  if (inCall || callN) {
     const strip = document.createElement('div');
     strip.className = 'call-strip';
     const label = document.createElement('span');
-    label.innerHTML = `<span class="live-dot"></span>${inCall ? 'You are in this call' : `<b>${callPeers.length}</b>&nbsp;in call`}`;
+    label.innerHTML = `<span class="live-dot"></span>${inCall ? 'You are in this call' : `<b>${callN}</b>&nbsp;in call`}`;
     const btn = document.createElement('button');
     btn.className = 'mini';
     btn.textContent = inCall ? 'Open' : 'Join';

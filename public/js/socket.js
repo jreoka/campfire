@@ -876,6 +876,10 @@ function onWS(m) {
         S.voiceOccupancy.set(key, m.peers);
         if ((m.peers || []).length) { if (!S.voiceSince.has(key)) S.voiceSince.set(key, Date.now()); }
         else S.voiceSince.delete(key);
+        // An empty roster here is an ANSWER, not an absence: this is the frame
+        // that retires the /api/dms callCount snapshot for this thread (see
+        // dmOccKnown in voice.js).
+        dmOccAnswered(m.threadId);
         if (S.voice && S.voice.kind === 'dm' && S.voice.threadId === m.threadId) {
           onVoicePeers(m.peers);
           renderStage();
