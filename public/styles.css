@@ -1667,7 +1667,24 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 .yt-facade:hover .yt-play{background:#f00;transform:scale(1.05)}
 /* Inline media that carries its own shape: the picture (or the clip) IS the card,
    so the card's surface and hairline step aside — one boundary, not two. */
-.embed-plain{background:transparent;border:0}
+/* A picture-only message is the ONE media shape with no `.embeds` wrapper —
+   keepEmbedFor returns the bare `.embed` card, not a list of them — so it is
+   also the only one that never met `.embeds{margin-top:.45rem}` and sat flush
+   against the head row: the server tag's descender grazed the picture, and
+   with a tag the collision is on screen (reported, with the tag circled).
+   The air is bought here rather than in the row's own padding, because
+   `.msg{padding:.45rem .6rem}` is also the hover pill — a padding change
+   reshapes every message row's highlight. */
+.embed-plain{background:transparent;border:0;margin-top:.45rem}
+/* The same card INSIDE a `.embeds` list — a picture under a sentence, where
+   keepEmbedFor stands aside and linkEmbedsHTML wraps it — would otherwise wear
+   the wrapper's .45rem AND its own, and sit twice as far off the text as a
+   link card in the same position does. Cancelling the own margin inside the
+   list is what keeps "one gap" true for both shapes. (The first draft of this
+   fix tried a `.text + .embed-plain` exception instead, which measured as dead
+   CSS: a picture-only message renders no `.text` at all, and a picture after
+   text is not a sibling of `.text` — it is a grandchild, via `.embeds`.) */
+.embeds .embed-plain{margin-top:0}
 .embed-media{background:transparent}
 .embed-img{max-width:100%;max-height:320px;border-radius:6px;cursor:zoom-in;display:block;object-fit:contain;background:#000}
 .embed-vid{max-width:100%;max-height:320px;border-radius:6px;background:#000;display:block}
