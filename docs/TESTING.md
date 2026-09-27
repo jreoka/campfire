@@ -1317,6 +1317,13 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   text, is what makes a system line a system line). Re-run it after touching
   `isDirectImageUrl` / `directMediaEmbedHTML` in `embeds.js`, the URL pass in
   `renderRich`, `keepEmbedFor` or the failed-picture handler in `messages.js`.
+  `node scripts/check-pasted-picture-live.js` (or with a base URL) is the
+  deploy half: it reads `/api/version` and compares the bytes the SITE serves
+  for those three files against this checkout, and re-asserts the rule, the
+  marks and the recovery are present in what is actually being served — so a
+  deploy that half-landed cannot pass for a working feature. It only reads. The
+  rendered result itself needs a real account (registration is captcha-walled),
+  so this plus the test above is the strongest check available without one.
   `node scripts/test-photo-gallery.js` covers the picture grid a message with
   several photos renders (`attsBlockHTML`; headless Chrome, skipping without
   Chrome — it runs the real `attachmentHTML`/`attsBlockHTML` against the real
