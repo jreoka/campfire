@@ -834,6 +834,20 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   delimiters stay in the flow (dimmed), message rendering is unchanged, and
   the `#in-render` rules stay metric-neutral (no padding/size/weight/font
   changes — `.spoiler` and `<code>` have to override the generic rules).
+  `node scripts/test-mention-caret.js` covers the mention pill and the caret a
+  completion leaves behind. The reported bug was "@miicat47 you wanna see n" with
+  the caret in the middle of a letter, and it had two independent causes: the
+  backdrop's `.mention` was `font-weight:650` while the transparent textarea it
+  sits over is regular, so on any real UI face the pill was wider than the typed
+  characters and pushed everything after it (and the caret) sideways; and
+  `inp.value = ...` resets the selection, so accepting a completion from the
+  middle of a line left the caret at the end of the box. The test pins the
+  font-independent half offline (a backdrop child may change no advance width,
+  and the three completers all route through `completeInsert`, which restores
+  the caret) and then measures the real page in headless Chrome at a phone and a
+  desktop viewport, forcing a weight-differentiating face — a bare Linux
+  container's default face has identical 400 and 650 advances, which is exactly
+  what let this ship. Skips without Chrome.
   `node scripts/test-role-mentions.js` covers server-role mentions and the
   admin-only `@everyone` / `@here` offline (it runs the real `renderRich` out of
   `core.js` plus the real `mentionsToken`/`mentionedRoleIds` out of `server.js`):

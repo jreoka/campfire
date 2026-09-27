@@ -1757,9 +1757,19 @@ body.win-blurred .msg-actions{opacity:0!important;visibility:hidden!important;po
 .mention.me{background:var(--accent);color:var(--on-accent)}
 .mention:hover{filter:brightness(.9)}
 /* In the composer backdrop the pill must be exactly as wide as the typed
-   text, or the caret drifts. The horizontal padding is what throws it off,
-   so the backdrop pills keep the background but lose the side padding. */
-#in-render-inner .mention,#thread-render-inner .mention{padding-left:0;padding-right:0}
+   text, or the caret drifts. Two things threw it off and both are neutralised
+   here: the horizontal padding (kept as a background, dropped as a metric) and
+   the WEIGHT. `.mention` is 650, and the backdrop lays out the same characters
+   the transparent textarea measures, so on any real UI face (Segoe UI, SF,
+   Roboto) the bolder glyphs are wider — every mention then pushed the text after
+   it, and the caret with it, by a few px per pill. That is the reported "mention
+   a user, type a word, the caret ends up in the middle of a letter". The weight
+   is inherited for the same reason `#in-render strong` is, and faked with the
+   same hairline text-shadow, which paints outside the glyph without changing its
+   advance width. It is invisible to a naive probe: the test container's default
+   face has IDENTICAL 400 and 650 advances, which is precisely what let this
+   ship — scripts/test-mention-caret.js measures a weight-differentiating face. */
+#in-render-inner .mention,#thread-render-inner .mention{padding-left:0;padding-right:0;font-weight:inherit;text-shadow:.03em 0 0 currentColor,-.03em 0 0 currentColor}
 /* Role mentions wear the role's own colour; a role you hold reads as a
    personal mention (solid accent), so the inline colour is dropped there. */
 .mention.role{color:var(--rc,var(--on-container))}

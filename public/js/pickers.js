@@ -3149,6 +3149,44 @@ onComposerKeydown((e, inp) => {
     applyMention(mentionCands[mentionIdx] || { kind: 'text', insert: items[mentionIdx].dataset.insert }, inp);
   } else if (e.key === 'Escape') hideMentionPop();
 });
+// Programmatic completion insert, shared by the three autocompletes.
+//
+// `inp.value = ...` moves the caret to the END of the box, whatever it was
+// before — a programmatic assignment resets the selection, and the popups are
+// reachable from the MIDDLE of a line (edit the earlier word, keep typing after
+// it). The three completers below used to leave it there, so accepting a mention
+// with Enter jumped the caret to the end of the message, and the next character
+// you typed landed somewhere else entirely. The caret belongs just past the text
+// the completion inserted.
+function completeInsert(inp, head, re, insert) {
+  const pos = inp.selectionStart ?? inp.value.length;
+  const tail = inp.value.slice(pos);
+  const m = re.exec(head);
+  if (!m) { try { inp.setSelectionRange(pos, pos); } catch {} return; }
+  // The completion ends in a space so the next word starts fresh — but only when
+  // there is no word already starting there. Two cases, and they are not the
+  // same test: text AFTER the caret that already begins with a space means the
+  // space is there and adding another leaves a double gap, while an EMPTY tail
+  // means the completion is the end of the message and the space is exactly what
+  // is wanted. Checking the tail for a space and then trimming the insert is
+  // wrong in the second case (it left "@miicat47s" waiting to be typed onto).
+  const text = tail && /^\s/.test(tail) ? insert.replace(/\s+$/, '') : insert;
+  // The caret goes after what was inserted, and the run it replaced is gone, so
+  // the offset is measured from the START of the run rather than from the old
+  // end. The text AFTER the caret is kept: the old code rebuilt the value from
+  // the head alone, so completing mid-line silently deleted the rest of the
+  // sentence.
+  // A function replacement, so a role name containing `$&`/`$1` stays literal.
+  //
+  // The `{0,31}` in each caller's pattern is 31, not the 32 the popup's own
+  // query matcher allows, and the difference is a real bug: a name is 1 to 32
+  // characters AFTER its leading `@`, but `head` ends AT the caret, so
+  // `{0,32}` also swallowed the 33rd character — the space that followed the
+  // query — and welded it to the name ("@miicat47s"). 31 leaves that space
+  // outside the match, which is where it belongs.
+  inp.value = head.replace(re, () => text) + tail;
+  try { inp.setSelectionRange(m.index + text.length, m.index + text.length); } catch {}
+}
 function applyMention(cand, inp = $('#in-message')) {
   const pos = inp.selectionStart ?? inp.value.length;
   // The composer shows human-readable @name (the backdrop renders it as a
@@ -3167,8 +3205,7 @@ function applyMention(cand, inp = $('#in-message')) {
   } else {
     insert = '@' + cand.insert;
   }
-  // A function replacement, so a role name containing `$&`/`$1` stays literal.
-  inp.value = inp.value.slice(0, pos).replace(/@[^@\n]{0,32}$/, () => insert + ' ');
+  completeInsert(inp, inp.value.slice(0, pos), /@[^@\n]{0,31}$/, insert + ' ');
   hideMentionPop();
   inp.focus();
   syncRenderFor(inp);
@@ -3218,7 +3255,7 @@ onComposerKeydown((e, inp) => {
 });
 function applyChannel(name, inp = $('#in-message')) {
   const pos = inp.selectionStart ?? inp.value.length;
-  inp.value = inp.value.slice(0, pos).replace(/#[A-Za-z0-9_-]{0,32}$/, '#' + name + ' ');
+  completeInsert(inp, inp.value.slice(0, pos), /#[A-Za-z0-9_-]{0,31}$/, '#' + name + ' ');
   hideChanPop();
   inp.focus();
   syncRenderFor(inp);
@@ -3284,7 +3321,7 @@ onComposerKeydown((e, inp) => {
 });
 function applyEmoji(name, inp = $('#in-message')) {
   const pos = inp.selectionStart ?? inp.value.length;
-  inp.value = inp.value.slice(0, pos).replace(/:[a-z0-9_+-]{1,32}$/, ':' + name + ': ');
+  completeInsert(inp, inp.value.slice(0, pos), /:[a-z0-9_+-]{1,31}$/, ':' + name + ': ');
   hideEmojiPop();
   inp.focus();
   syncRenderFor(inp);

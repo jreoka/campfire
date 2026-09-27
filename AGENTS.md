@@ -1632,7 +1632,28 @@ first paint, so the installed app can be styled with no flash).
   it read as a hole punched in the chat. `#in-message` (the transparent
   textarea that owns the caret) and `#in-render` (the backdrop you actually
   see) must keep IDENTICAL padding at every breakpoint or the caret drifts off
-  the glyphs; only the surface lives on the backdrop. The leading `+` and the
+  the glyphs; only the surface lives on the backdrop. **Anything painted INSIDE
+  a backdrop must change no advance width either** — the side padding, the
+  weight, the size, the family — because the caret belongs to the textarea and
+  tracks the glyphs the reader SEES, which are the backdrop's. That rule caught
+  a real reported bug: "@miicat47 you wanna see n" left the caret in the middle
+  of a letter, because the backdrop's `.mention` was `font-weight:650` against
+  the textarea's regular text. On every real UI face (Segoe UI, SF, Roboto) a
+  650 run is wider than a 400 one, so each pill pushed the rest of the line —
+  and the caret — sideways. The pill now inherits the weight and fakes it with
+  the same hairline `text-shadow` `#in-render strong` uses, which paints outside
+  the glyph without moving it. **You cannot see this bug with a naive probe:** a
+  bare Linux container's default face measures 68.95px for '@miicat47' at both
+  400 and 650 — IDENTICAL — so the drift measures as zero and the bug looks
+  already fixed. Measure with a weight-differentiating face, or assert on the
+  CSS (font-independent, and the only half that can run without a browser);
+  `scripts/test-mention-caret.js` does both. The second half of that same report
+  was `inp.value = ...`: a programmatic assignment resets the selection to the
+  end of the box, and the popups are reachable from the middle of a line, so
+  accepting a mention jumped the caret to the end. All three completers
+  (`applyMention` / `applyChannel` / `applyEmoji`) now go through one
+  `completeInsert` (pickers.js), which replaces the run and puts the caret after
+  what it inserted. The leading `+` and the
   tool rail ride the BOTTOM of the box (`#composer` is `align-items:flex-end`)
   so a box grown to several lines keeps every control on one bar, and the `+` is
   32px — small enough to fit its field — with its thumb target coming from a
