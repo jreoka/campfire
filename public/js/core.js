@@ -669,7 +669,24 @@ function renderRich(text, opts = {}) {
     return '<a href="' + url + '" target="_blank" rel="noopener">' + url + '</a>';
   };
   h = h.replace(/(https?:\/\/[^\s<]+)/g, anchorPass);
-  if (inlineImageUrl) h = '<span data-fb-img-text="' + esc(inlineImageUrl) + '">' + h + '</span>';
+  // NOT esc() AGAIN. `inlineImageUrl` was matched out of `esc(text)` above, so it
+  // is ALREADY escaped: a second esc() is a no-op for any url without a
+  // special character in it, which is why every plain `.png` test passed and why
+  // this went unnoticed — and it is a live bug for every url that HAS one. A
+  // message that is nothing but
+  //   https://x/y.jpg?a=1&b=2
+  // writes the marker as `…?a=1&amp;b=2`, while the embed pass writes
+  // `data-fb-img` from the RAW message text with a single esc() and the browser
+  // reads that back as `…?a=1&b=2`. The recovery in messages.js looks the marker
+  // up BY the img's url, so it found nothing: the picture loaded, and its raw url
+  // stayed printed on top of it. Every CDN attachment, every `?utm_source=…`,
+  // every cache-buster — every picture link with an ampersand in it.
+  //
+  // One esc() is also the safe amount here, not a risk: the value is already
+  // escaped, so it cannot contain a raw `"` or `<` to break out of the
+  // attribute, and the URL pass above already dropped anything that was not
+  // http(s):// followed by no whitespace or `<`.
+  if (inlineImageUrl) h = '<span data-fb-img-text="' + inlineImageUrl + '">' + h + '</span>';
   h = h.replace(/\u0000(\d+)\u0000/g, (m, i) => tok('`') + '<code>' + codes[+i] + '</code>' + tok('`'));
   h = h.replace(/\u0001(\d+)\u0001/g, (m, i) => {
     const f = fences[+i];

@@ -2082,13 +2082,55 @@ function keepEmbedFor(content) {
 document.addEventListener('load', (e) => {
   const img = e.target;
   if (!img || !img.dataset || !img.dataset.fbImg) return;
-  const text = img.closest('.msg')?.querySelector('.text');
+  const text = pastedPictureTextFor(img);
   if (!text) return;
-  // Only ever the block THIS picture's marker is in: a message can hold more
-  // than one picture link, and the other one still has a picture to wait for.
-  if (!text.querySelector('[data-fb-img-text="' + CSS.escape(img.dataset.fbImg) + '"]')) return;
   try { text.remove(); } catch {}
 }, true);
+// The two markers that have to name the SAME picture: the <img>'s
+// `data-fb-img` and the text block's `data-fb-img-text`. This is where they are
+// matched, and the reason it is its own function is that getting it wrong is
+// silent and only shows up on a subset of links.
+//
+// The bug this fixes: the text pass used to write its marker as
+// esc(esc(url)) — the url is matched out of text that was already escaped, so
+// escaping it again is safe for quoting and is a NO-OP for a url with nothing
+// special in it, which is why every plain `.png` test passed. The embed pass
+// writes `data-fb-img` with one esc() and takes its url from the RAW message
+// text, so the browser reads that attribute back as the url as typed. A url
+// with an ampersand in it — which is every CDN attachment, every
+// `?utm_source=…`, every cache-buster — was therefore written into the marker
+// as a literal `&amp;` and into the <img> as a real `&`, and a lookup by one
+// string could never find the other. Every such picture kept its raw url printed
+// on top of it, and, had the picture been dead, kept the message with no link
+// in it at all.
+//
+// Both sides are read here with getAttribute, which is what the marker's
+// attribute selector is matched against; dataset would agree with it on every
+// browser that matters, and is not the thing that was wrong.
+//
+// The marker's own span — what the failed-picture handler replaces with the
+// anchor, so it must be the span and nothing wider.
+function pastedPictureMarkFor(img) {
+  const text = img.closest('.msg')?.querySelector('.text');
+  if (!text) return null;
+  const url = img.getAttribute('data-fb-img');
+  if (!url) return null;
+  try {
+    return text.querySelector('[data-fb-img-text="' + CSS.escape(url) + '"]');
+  } catch { return null; }
+}
+// …and the message's whole TEXT BLOCK, which is what a successful load has to
+// take away. NOT the same node, and the difference is the bug this function
+// exists to end: for a picture-only message the marker span is the ENTIRE text,
+// so removing just the span leaves an empty `.text` div behind it — and an
+// empty div with `white-space:pre-wrap` still holds the line the picture was
+// pushed down by, so the picture starts one blank line too low with a strip of
+// dead space above it. The block also carries a grouped message's `(edited)`
+// marker, which has to go with it: the picture is still the message, and its own
+// timestamp is on the row.
+function pastedPictureTextFor(img) {
+  return pastedPictureMarkFor(img)?.closest('.text') || null;
+}
 // A picture that was already in the browser cache can finish before this
 // listener is attached to a node inserted by innerHTML, and a missed load is
 // the same bug as a missing one — so messageEl asks the images it just painted
@@ -2096,10 +2138,8 @@ document.addEventListener('load', (e) => {
 function settlePastedPicture(root) {
   root.querySelectorAll('img[data-fb-img]').forEach((img) => {
     if (!img.complete || !img.naturalWidth) return;
-    const text = img.closest('.msg')?.querySelector('.text');
-    if (text && text.querySelector('[data-fb-img-text="' + CSS.escape(img.dataset.fbImg) + '"]')) {
-      try { text.remove(); } catch {}
-    }
+    const text = pastedPictureTextFor(img);
+    if (text) { try { text.remove(); } catch {} }
   });
 }
 
@@ -2113,13 +2153,11 @@ function settlePastedPicture(root) {
 document.addEventListener('error', (e) => {
   const img = e.target;
   if (!img || !img.dataset || !img.dataset.fbImg) return;
-  const url = img.dataset.fbImg;
   // The message's own text block: a SIBLING of the embed strip, not an ancestor,
   // so it is found through the row.
-  const text = img.closest('.msg')?.querySelector('.text');
-  if (!text) return;
-  const old = text.querySelector('[data-fb-img-text="' + CSS.escape(url) + '"]');
+  const old = pastedPictureMarkFor(img);
   if (old) {
+    const url = img.getAttribute('data-fb-img');
     const a = document.createElement('a');
     a.href = url;
     a.target = '_blank';

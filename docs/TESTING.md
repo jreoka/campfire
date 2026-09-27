@@ -1326,7 +1326,16 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   checked separately and twice: the helper clears a row in the state a cache hit
   leaves behind, and a warm picture painted a second time comes back textless
   with nothing waiting and nothing calling by hand, which is the check that
-  notices `messageEl` ever stopping to ask. A sentence around the same link keeps
+  notices `messageEl` ever stopping to ask. **The whole `[5]` half is also run
+  against a real `?a=1&b=2` picture, served for real, in both directions** — the
+  two markers that have to name the same picture are written by two different
+  passes from two different strings (one escapes the RAW url, the other escapes
+  a url already matched out of escaped text), and that mismatch is invisible to
+  any extension-only URL, so a suite made only of `.png` URLs passes while every
+  real CDN link keeps its URL printed on screen. The dead-picture half for a
+  query string matters as much as the live one: that same lookup is the only way
+  a message whose picture is gone gets its link back at all. A sentence around
+  the same link keeps
   its own anchor throughout, and `keepEmbedFor` is checked directly: that one
   card, and no card for a sentence, a second link, a fenced one, a query-string
   URL, an ordinary page or a system line (the row, not the text, is what makes a

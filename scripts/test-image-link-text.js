@@ -361,7 +361,12 @@ async function main() {
       return;
     }
     if (/^\/favicon\.ico/.test(req.url || '')) { res.writeHead(204); res.end(); return; }
-    if (/^\/pics\/here\.png$/.test(req.url || '')) {
+    // …and the same picture behind a QUERY STRING, which is the case that broke:
+    // a request with `?a=1&b=2` on a real picture path, served, so the success
+    // path is what gets tested rather than the 404 path. Routed on the path
+    // alone, the query is simply not part of the match — the same rule the
+    // app's own predicate turns on.
+    if (/^\/pics\/here\.png(?:\?|$)/.test(req.url || '')) {
       // One real pixel, so a check about a picture that WORKS (the lightbox tap)
       // has a picture that stays on screen and cannot race the 404.
       res.writeHead(200, { 'Content-Type': 'image/png' });
@@ -501,13 +506,36 @@ async function main() {
       'leaving no anchor and no marker — the picture is the whole message', st);
     check(st.imgs === 1 && st.cards === 0,
       'and the picture itself is still the only card below it', st);
-    // A picture already in the cache finishes BEFORE a listener attached to a
-    // freshly innerHTML'd node can hear it, so the event never comes and the
-    // text would sit there forever on a revisit. messageEl cannot wait for an
-    // event it has already missed, so it asks the images it just painted
-    // whether they are done — that is the only half of this fix that is
-    // reachable without a network round trip, and it is asserted here
-    // directly, on a row rebuilt with the listener's own state.
+    // …and the SAME for a url WITH AN AMPERSAND IN IT, which is where this
+    // actually broke and where it broke hardest. The two markers that have to
+    // agree — the <img>'s data-fb-img and the text's data-fb-img-text — are
+    // written by two different passes, from two different strings: the embed
+    // pass takes its url from the RAW message text, the text pass matches its
+    // url out of text that was ALREADY escaped, and escaping that a second time
+    // turned every `&` into a literal `&amp;`. The two markers then named
+    // different strings, the lookup in the recovery found nothing, and the raw
+    // url sat on top of a perfectly good picture. A plain `.png` cannot see this
+    // at all — there is nothing in it to escape — which is why every other check
+    // in this file passed while the real-world links did not.
+    //
+    // So: a real query string, a real 404, both directions.
+    const q = 'http://127.0.0.1:' + port + '/pics/q.jpg?a=1&b=2';
+    await paint('mq-dead', q);
+    await sleep(1200);
+    st = await read('mq-dead');
+    check(st.anchors === 1 && st.href === q && st.text.trim() === q,
+      'a DEAD picture behind a query string still hands its link back', st);
+    check(st.imgs === 0, 'and its dead card is still cleared away', st);
+
+    await paint('mq-live', live + '?a=1&b=2');
+    st = await read('mq-live');
+    check(st.markedUrl === live + '?a=1&b=2',
+      'a LIVE picture behind a query string: the marker names the very same url as the <img>', st);
+    await sleep(1200);
+    st = await read('mq-live');
+    check(st.text.trim() === '' && st.anchors === 0 && st.imgs === 1,
+      'and its raw url is taken away, ampersand and all', st);
+
     // A picture already in the cache finishes BEFORE a listener attached to a
     // freshly innerHTML'd node can hear it, so on a revisit there is no event to
     // catch and the text would sit there forever. messageEl cannot wait for an

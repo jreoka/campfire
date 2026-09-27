@@ -764,7 +764,8 @@ The two passes mark themselves — the text in `data-fb-img-text`, the `<img>` i
   the URL is the exact wall of characters this feature exists to remove. A
   capture-phase `load` listener removes the block (not just the marker span: for
   this shape of message the marker IS the whole text, so an emptied div would
-  still hold the gap the picture was pushed down by).
+  still hold the gap the picture was pushed down by, and it takes a grouped
+  message's `(edited)` marker with it).
 - **A cached picture** → no event ever fires, so `messageEl` asks the images it
   just painted whether they are already complete (`settlePastedPicture`). A load
   listener attached to a node inserted by `innerHTML` cannot hear a load that
@@ -774,6 +775,17 @@ The two passes mark themselves — the text in `data-fb-img-text`, the `<img>` i
 - **The picture would not load** → a capture-phase `error` listener puts a real
   anchor where the marker was and drops the dead image, so a picture-only
   message can never end up with nothing in it.
+
+**Both markers are written from two DIFFERENT strings, and they have to end up
+naming the same picture.** This is the trap that cost two days: the embed pass
+takes its URL from the RAW message text and escapes it once, while the text pass
+matches its URL out of text that was ALREADY escaped — so escaping that a second
+time is a no-op for any URL with nothing special in it (every plain `.png`, and
+therefore every other test in the file) and a live bug for every URL that has an
+`&` in it. The two markers then named different strings, the recovery's lookup
+found nothing, and the raw URL sat on top of a perfectly good picture. **A test
+for this feature that only uses extension-only URLs cannot see the bug; the
+tests use a real `?a=1&b=2` picture, served for real, in both directions.**
 
 **Both directions need a test, separately, and the wiring needs its own.** A
 helper that is correct but never called passes a test that calls it by hand —
