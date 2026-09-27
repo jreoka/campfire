@@ -2064,6 +2064,45 @@ function keepEmbedFor(content) {
   const html = embedForUrl(url);
   return html && html.includes('embed-img') ? html : '';
 }
+// A picture that DID load: the text pass left the message with no link in it and
+// marked the block, because it did not know yet whether the picture would come.
+// Now that it has, the URL is a wall of characters sitting on top of the picture
+// the reader came for — exactly what the marker exists to prevent — so the whole
+// text block goes, and the picture is the message. This is the other half of the
+// error handler below, and it was missing: the marker had a way back to a link
+// and no way forward to nothing, so a picture-only message printed its own URL
+// above itself forever.
+//
+// The block is removed rather than the marker span alone, and emptied, because
+// for this shape of message the marker IS the entire text (renderRich only marks
+// a message that is nothing but one link) — an emptied div would still hold the
+// gap the picture was pushed down by. The (edited) marker a grouped message
+// carries is inside that same block, which is why it goes too: the picture is
+// still the message, and its own timestamp is on the row.
+document.addEventListener('load', (e) => {
+  const img = e.target;
+  if (!img || !img.dataset || !img.dataset.fbImg) return;
+  const text = img.closest('.msg')?.querySelector('.text');
+  if (!text) return;
+  // Only ever the block THIS picture's marker is in: a message can hold more
+  // than one picture link, and the other one still has a picture to wait for.
+  if (!text.querySelector('[data-fb-img-text="' + CSS.escape(img.dataset.fbImg) + '"]')) return;
+  try { text.remove(); } catch {}
+}, true);
+// A picture that was already in the browser cache can finish before this
+// listener is attached to a node inserted by innerHTML, and a missed load is
+// the same bug as a missing one — so messageEl asks the images it just painted
+// whether they are already done, rather than trusting an event it can miss.
+function settlePastedPicture(root) {
+  root.querySelectorAll('img[data-fb-img]').forEach((img) => {
+    if (!img.complete || !img.naturalWidth) return;
+    const text = img.closest('.msg')?.querySelector('.text');
+    if (text && text.querySelector('[data-fb-img-text="' + CSS.escape(img.dataset.fbImg) + '"]')) {
+      try { text.remove(); } catch {}
+    }
+  });
+}
+
 // A picture that would not load: the text pass left the message with no link in
 // it, so hand the URL back where it was. The image itself goes — a dead one is a
 // black rectangle — and only the marker span is swapped, so every other part of
@@ -2176,6 +2215,7 @@ function messageEl(m, opts = {}) {
   if (!grouped) paintAvatar(div.querySelector('.avatar'), au);
   if (m.threadLast) paintThreadCardAvatar(div.querySelector('.thread-link'), m);
   try {
+    settlePastedPicture(div);
     div.querySelectorAll('video.att-vid').forEach((v) => { wireServerPoster(v); requestVideoPoster(v); wireVideoPlayState(v); observeStick(v); });
     // Images grow 0 -> full height on load and shove bottom-pinned readers
     // upward; load/error listeners can miss instant (cached) loads, but the

@@ -194,6 +194,7 @@ ${pairSrc}
 window.S = S;
 window.__keep = keepEmbedFor;
 window.__messageEl = (m) => messageEl(m).outerHTML;
+window.__settle = settlePastedPicture;
 window.__acts = __acts;
 window.__toasts = [];
 `;
@@ -480,14 +481,77 @@ async function main() {
       return window.__acts.join(',');
     })()`);
 
+    // While the picture is on its way the text is still there, marked — that is
+    // the only thing to hand the link back from if it never arrives. This is
+    // the state that used to be ASSERTED AS THE FINISH LINE, which is why the
+    // URL sat above every picture forever: nothing ever took the text away.
     await paint('m0', live);
     let st = await read('m0');
-    check(st.anchors === 0 && st.imgs === 1 && st.cards === 0,
-      'painted, a picture-only message is the picture: no anchor in the text, one card', st);
     check(st.markedUrl === live,
-      'and the text carries the marker the recovery needs, naming the same URL', st);
+      'painted, the text carries the marker the recovery needs, naming the same URL', st);
+
+    // …and when the picture DOES load, the text goes. The picture is the
+    // message; the URL above it is the exact wall of characters this feature
+    // exists to remove, and there is no third state where it lingers.
+    await sleep(1200);
+    st = await read('m0');
+    check(st.text.trim() === '',
+      'a picture that loads takes the raw URL away with it', st);
+    check(st.anchors === 0 && !st.markedUrl,
+      'leaving no anchor and no marker — the picture is the whole message', st);
+    check(st.imgs === 1 && st.cards === 0,
+      'and the picture itself is still the only card below it', st);
+    // A picture already in the cache finishes BEFORE a listener attached to a
+    // freshly innerHTML'd node can hear it, so the event never comes and the
+    // text would sit there forever on a revisit. messageEl cannot wait for an
+    // event it has already missed, so it asks the images it just painted
+    // whether they are done — that is the only half of this fix that is
+    // reachable without a network round trip, and it is asserted here
+    // directly, on a row rebuilt with the listener's own state.
+    // A picture already in the cache finishes BEFORE a listener attached to a
+    // freshly innerHTML'd node can hear it, so on a revisit there is no event to
+    // catch and the text would sit there forever. messageEl cannot wait for an
+    // event it has already missed, so it asks the images it just painted whether
+    // they are done. TWO checks, because those are two different claims and the
+    // first one alone is the bug:
+    //
+    //  - the helper does its job, on a row in the state a cache hit leaves
+    //    behind (forced complete, no event in flight)…
+    const cold = live + '?cold=1';
+    const helper = await ev(`(() => {
+      const host = document.createElement('div');
+      host.innerHTML = window.__messageEl({ id: 'mc', user: 'u1', content: ${JSON.stringify(cold)}, created_at: Date.now() });
+      const row = host.firstElementChild;
+      document.getElementById('messages').appendChild(row);
+      const img = row.querySelector('img[data-fb-img]');
+      const before = !!row.querySelector('.text');
+      Object.defineProperty(img, 'complete', { value: true, configurable: true });
+      Object.defineProperty(img, 'naturalWidth', { value: 4, configurable: true });
+      window.__settle(row);
+      return { before, after: !!row.querySelector('.text') };
+    })()`);
+    check(helper.before && !helper.after,
+      'the cache catch takes a finished picture off its text, with no event in flight', helper);
+    //  - …and messageEl ACTUALLY CALLS IT, which is the half that is easy to
+    //    lose and the half that regresses silently. A warm picture, painted a
+    //    second time so the browser has it: the row must come back with no text
+    //    AT ALL, read in the same tick, with nothing waiting and nothing calling
+    //    anything by hand. If messageEl ever stops asking, this is the check
+    //    that notices.
+    await paint('warm', live);
+    await sleep(900);
+    const wired = await ev(`(() => {
+      const host = document.createElement('div');
+      host.innerHTML = window.__messageEl({ id: 'mw', user: 'u1', content: ${JSON.stringify(live)}, created_at: Date.now() });
+      const row = host.firstElementChild;
+      const img = row.querySelector('img[data-fb-img]');
+      return { alreadyComplete: !!(img && img.complete), text: (row.querySelector('.text') || {}).textContent || '' };
+    })()`);
+    check(wired.alreadyComplete && wired.text.trim() === '',
+      'and messageEl asks for itself, so a cache hit is textless on the very first paint', wired);
     // The picture is the message now, so a TAP ON IT has to keep working — this
-    // is what the text used to be the backup for.
+    // is what the text used to be the backup for, and now that the text is
+    // gone it is the ONLY way back to the original.
     check((await tap('m0')) === 'lightbox:' + live,
       'and tapping the picture still opens the lightbox on it', null);
 

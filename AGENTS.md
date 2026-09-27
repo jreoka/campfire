@@ -754,11 +754,32 @@ in the extension is tested; that is also what excludes a generated
 harmless, because…
 The picture is still a first-class click target meanwhile: a tap on it opens the
 lightbox exactly as before, which is what the printed URL used to be the backup
-for. **…and a picture that would not load hands its link back.** The two passes
-mark their answer — the text in `data-fb-img-text`, the `<img>` in `data-fb-img` —
-and a capture-phase `error` listener (`messages.js`) puts a real anchor where the
-marker is and drops the dead image, so a picture-only message can never end up
-with nothing in it. The card itself for that shape of message is built by
+for — and now that the text is gone, it is the ONLY way back to the original.
+**The marker is a PENDING answer, and it has to be answered in BOTH directions.**
+The two passes mark themselves — the text in `data-fb-img-text`, the `<img>` in
+`data-fb-img` — and `messages.js` is where the marker is resolved:
+
+- **The picture loaded** → the text block goes. It was only ever there because
+  the text pass cannot know whether the picture will come, and once it has come
+  the URL is the exact wall of characters this feature exists to remove. A
+  capture-phase `load` listener removes the block (not just the marker span: for
+  this shape of message the marker IS the whole text, so an emptied div would
+  still hold the gap the picture was pushed down by).
+- **A cached picture** → no event ever fires, so `messageEl` asks the images it
+  just painted whether they are already complete (`settlePastedPicture`). A load
+  listener attached to a node inserted by `innerHTML` cannot hear a load that
+  already happened, and a revisit to a channel is mostly cache hits, so the
+  event-only version printed the URL above the picture forever on exactly the
+  screen people use most.
+- **The picture would not load** → a capture-phase `error` listener puts a real
+  anchor where the marker was and drops the dead image, so a picture-only
+  message can never end up with nothing in it.
+
+**Both directions need a test, separately, and the wiring needs its own.** A
+helper that is correct but never called passes a test that calls it by hand —
+which is how the cache path was nearly shipped unverified. The test builds the
+cached state, asserts the helper clears it, AND paints a warm picture a second
+time to assert `messageEl` clears it unprompted. The card itself for that shape of message is built by
 `keepEmbedFor` from the same predicate rather than by the embed pass (whose answer
 — a direct picture is not something anyone can click — is decided by the URL's
 shape, not by a fetch), and a system line short-circuits before any of this: the

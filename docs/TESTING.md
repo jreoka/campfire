@@ -1314,18 +1314,26 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   backdrop (`opts.plain`) still lays out and anchors every character (the caret
   lives on it) while the story surfaces keep their own separate behaviour. The
   PAIR half runs in headless Chrome (skipping without it) against a real server
-  that 404s the picture: the real `messageEl` paints the real row, a picture-only
-  message is the picture (no anchor in the text, one card, the marker naming the
-  same URL), tapping it still opens the lightbox — the thing the text used to be
-  the backup for — and a failed `<img>` fires its real `error`, so the
-  capture-phase handler puts a real anchor back where the marker was and the
-  dead image is gone rather than left as a black rectangle. A sentence around the
-  same link keeps its own anchor throughout, and `keepEmbedFor` is checked
-  directly: that one card, and no card for a sentence, a second link, a fenced
-  one, a query-string URL, an ordinary page or a system line (the row, not the
-  text, is what makes a system line a system line). Re-run it after touching
-  `isDirectImageUrl` / `directMediaEmbedHTML` in `embeds.js`, the URL pass in
-  `renderRich`, `keepEmbedFor` or the failed-picture handler in `messages.js`.
+  that 404s the picture: the real `messageEl` paints the real row, and the
+  marker is treated as the PENDING answer it is — checked in both directions,
+  because both were wrong at different times. While the picture is in flight the
+  text is still there, marked with the same URL. When it LOADS, the text block
+  goes (no anchor, no marker, the picture the only card below), tapping it still
+  opens the lightbox — the thing the text used to be the backup for, and now its
+  only route back. When it does NOT load, the `<img>` fires its real `error`, so
+  the capture-phase handler puts a real anchor back where the marker was and the
+  dead image is gone rather than left as a black rectangle. The CACHED case is
+  checked separately and twice: the helper clears a row in the state a cache hit
+  leaves behind, and a warm picture painted a second time comes back textless
+  with nothing waiting and nothing calling by hand, which is the check that
+  notices `messageEl` ever stopping to ask. A sentence around the same link keeps
+  its own anchor throughout, and `keepEmbedFor` is checked directly: that one
+  card, and no card for a sentence, a second link, a fenced one, a query-string
+  URL, an ordinary page or a system line (the row, not the text, is what makes a
+  system line a system line). Re-run it after touching `isDirectImageUrl` /
+  `directMediaEmbedHTML` in `embeds.js`, the URL pass in `renderRich`,
+  `keepEmbedFor`, or the marker resolution in `messages.js` — the load listener,
+  `settlePastedPicture` and the failed-picture handler together.
   `node scripts/check-pasted-picture-live.js` (or with a base URL) is the
   deploy half: it reads `/api/version` and compares the bytes the SITE serves
   for those three files against this checkout, and re-asserts the rule, the
