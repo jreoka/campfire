@@ -256,6 +256,33 @@ function soundcloudEmbedHTML(url, info) {
     + esc(src) + '" title="SoundCloud player" loading="lazy" allow="autoplay" allowfullscreen></iframe>');
 }
 
+// Does this URL IS a picture? The one rule, shared by the embed pass and the
+// TEXT pass (renderRich in core.js, which leaves such a URL unlinked so the raw
+// characters do not sit above the picture the link already renders). It has to
+// be the embed's own predicate, because a link that embeds as a picture in one
+// place and as an anchor in the other is exactly the "why is the link printed
+// above my image" report.
+//
+// "Direct" is doing real work here, and it is narrow on purpose — it decides
+// whether a link KEEPS its anchor, so a false positive silently swallows a
+// clickable URL out of a sentence. The one case that has to be excluded is a
+// query string: an image extension behind one is a GENERATED image (a Gravatar
+// or an avatar service, a CDN's `?width=200`), not the file, and a request for
+// it answers a picture we cannot embed directly. The path has to end in the
+// image extension, and nothing else may follow it.
+//
+// A page that merely looks like one (imgur.com/pic.png is an HTML page) is not
+// excluded by rule — it is harmless, because the failed-load handler in
+// messages.js hands the link straight back when the picture does not come.
+const IMG_EXT_RE = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/;
+function isDirectImageUrl(url) {
+  let p;
+  try { p = new URL(url); } catch { return false; }
+  if (p.protocol !== 'http:' && p.protocol !== 'https:') return false;
+  if (p.search) return false;               // a query means a generated image, not the file
+  return IMG_EXT_RE.test(p.pathname.toLowerCase());
+}
+
 function directMediaEmbedHTML(url) {
   let path = '';
   try { path = new URL(url).pathname.toLowerCase(); } catch { return null; }
@@ -263,8 +290,12 @@ function directMediaEmbedHTML(url) {
   // surface and hairline around a picture that already has rounded corners drew a
   // second boundary one pixel outside the first. Audio keeps the card — a bare
   // <audio> element on the chat background has no shape of its own.
-  if (/\.(png|jpe?g|gif|webp|avif|bmp|svg)$/.test(path)) {
-    return '<div class="embed embed-media embed-plain"><img class="embed-img" draggable="false" src="' + esc(url) + '" alt="" loading="lazy" /></div>';
+  if (isDirectImageUrl(url)) {
+    // data-fb-img carries the URL so a load failure can put the LINK back where
+    // the raw text was: a message that is only a picture link renders the text
+    // unlinked (renderRich), and a picture that does not load must not leave the
+    // message with nothing in it at all.
+    return '<div class="embed embed-media embed-plain"><img class="embed-img" draggable="false" data-fb-img="' + esc(url) + '" src="' + esc(url) + '" alt="" loading="lazy" /></div>';
   }
   if (/\.(mp4|webm|mov|m4v)$/.test(path)) {
     return '<div class="embed embed-media embed-plain"><video class="embed-vid" draggable="false" src="' + esc(url) + '" controls preload="metadata" playsinline></video></div>';
@@ -745,4 +776,4 @@ function scanInviteCards(root) {
 if (typeof document !== 'undefined') installLinkCards();
 
 // Node test hook (browsers ignore: `module` is undefined there).
-try { if (typeof module !== 'undefined') module.exports = { linkEmbedsHTML, linkifyHTML, storyTextHTML, storyLinkEmbedsHTML, embedForUrl, cleanEmbedUrl, stripEmbedIgnored, cardBodyHTML, linkCardHTML, setLinkPreviews, inviteFromUrl, inviteCardHTML, fillInvite, fmtMembers, __cardCache: cardCache, __inviteCache: inviteCache }; } catch {}
+try { if (typeof module !== 'undefined') module.exports = { linkEmbedsHTML, linkifyHTML, storyTextHTML, storyLinkEmbedsHTML, embedForUrl, cleanEmbedUrl, isDirectImageUrl, stripEmbedIgnored, cardBodyHTML, linkCardHTML, setLinkPreviews, inviteFromUrl, inviteCardHTML, fillInvite, fmtMembers, __cardCache: cardCache, __inviteCache: inviteCache }; } catch {}

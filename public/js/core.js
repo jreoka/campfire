@@ -491,12 +491,20 @@ function renderRich(text, opts = {}) {
   // Fenced code blocks first, so nothing inside them is formatted. A trailing
   // unclosed fence runs to end of message (Discord-style).
   const fences = [];
+  // The whole message, code fences included. A direct image link inside a fence
+  // never gets a card (the embed pass ignores fenced text), so it must keep its
+  // link — the picture decision further down is off when this is set.
+  let hiddenCode = false;
+  const hasImgRule = typeof isDirectImageUrl === 'function'; // embeds.js is loaded first, but never assume it
+  const codeHasPicture = (code) => hasImgRule && isDirectImageUrl((/https?:\/\/[^\s<]+/.exec(code) || [''])[0]);
   h = h.replace(/^```([A-Za-z0-9_+-]*)\r?\n([\s\S]*?)\r?\n```/gm, (m, lang, code) => {
     fences.push({ lang, code, closed: true });
+    if (codeHasPicture(code)) hiddenCode = true;
     return '\u0001' + (fences.length - 1) + '\u0001';
   });
   h = h.replace(/^```([A-Za-z0-9_+-]*)\r?\n([\s\S]*)$/m, (m, lang, code) => {
     fences.push({ lang, code, closed: false });
+    if (codeHasPicture(code)) hiddenCode = true;
     return '\u0001' + (fences.length - 1) + '\u0001';
   });
   // Quote runs: consecutive > lines merge into one blockquote. The backdrop
@@ -610,7 +618,58 @@ function renderRich(text, opts = {}) {
     return pre + '<span class="chan-link" data-clink="' + ch.id + '" data-ctype="' + ch.type + '">#' + esc(ch.name) + '</span>';
   });
   }
-  h = h.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  // A URL is normally turned into an anchor. NOT when it is the very thing the
+  // message is about: a link that embeds AS A PICTURE (a direct image link —
+  // `isDirectImageUrl` in embeds.js, the same predicate `directMediaEmbedHTML`
+  // renders from) already draws the whole picture below this text, and a line of
+  // raw URL above it says nothing the picture has not — it is a wall of
+  // characters sitting on top of the image the reader came for (owner ask:
+  // show the image, not the link). So a message that is just a link to a picture
+  // IS the picture.
+  //
+  // "Just" is the whole of it, and deliberately narrow: the message is ONE link
+  // with nothing but whitespace anywhere around it (a paste keeps its trailing
+  // newline, which is not a sentence). A URL next to a word is prose and keeps
+  // its clickable anchor — a sentence is not a caption for its own picture —
+  // and so does a second link in the same message. The link is measured on the
+  // raw text and then CLEANED exactly the way the embed pass cleans it
+  // (trailing full stops and unbalanced closers are punctuation, not part of a
+  // pasted link), so both passes are looking at one URL and cannot disagree
+  // about it.
+  //
+  // This runs BEFORE the code placeholders go back in, so a `code`-quoted or
+  // spoilered picture link is code/spoiler text, not a link to something that
+  // was never embedded either way (the embed pass skips those too, in
+  // stripEmbedIgnored).
+  //
+  // A picture that turns out not to load has to be recoverable: the embed pass
+  // marks its `<img>` with `data-fb-img` and this pass marks the message with
+  // `data-fb-img-text`, so a failed image can hand its URL back as a real link
+  // (messages.js). A fenced code block is code, never a caption: a direct-image
+  // link in one gets no card either (the embed pass skips fenced text), so it
+  // keeps its link, exactly as it did.
+  const bareText = (v) => String(v == null ? '' : v).replace(/<[^>]*>/g, '').trim();
+  const soleUrl = (() => {
+    if (plain || typeof cleanEmbedUrl !== 'function' || !hasImgRule) return '';
+    // Markdown delimiters are not words: **url**, ||url|| and `url` are still a
+    // message that is nothing but the link.
+    const whole = esc(text).replace(/[`*~|]/g, '');
+    const first = /https?:\/\/[^\s<]+/.exec(whole);
+    if (!first) return '';
+    const around = whole.slice(0, first.index) + '\n' + whole.slice(first.index + first[0].length);
+    if (bareText(around)) return '';
+    return cleanEmbedUrl(first[0]);
+  })();
+  const inlineImageUrl = (soleUrl && isDirectImageUrl(soleUrl) && !hiddenCode) ? soleUrl : '';
+  // Compared CLEANED, because the pass below matches the URL as typed — a paste
+  // ending in a full stop matches with the stop on it, and the stop is
+  // punctuation, not a different link.
+  const anchorPass = (mm0, url) => {
+    if (inlineImageUrl && cleanEmbedUrl(url) === inlineImageUrl) return mm0;
+    return '<a href="' + url + '" target="_blank" rel="noopener">' + url + '</a>';
+  };
+  h = h.replace(/(https?:\/\/[^\s<]+)/g, anchorPass);
+  if (inlineImageUrl) h = '<span data-fb-img-text="' + esc(inlineImageUrl) + '">' + h + '</span>';
   h = h.replace(/\u0000(\d+)\u0000/g, (m, i) => tok('`') + '<code>' + codes[+i] + '</code>' + tok('`'));
   h = h.replace(/\u0001(\d+)\u0001/g, (m, i) => {
     const f = fences[+i];

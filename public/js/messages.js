@@ -2040,6 +2040,57 @@ function paintThreadCardAvatar(card, m) {
   const av = card && card.querySelector('.tc-av');
   if (av) paintAvatar(av, m && m.threadLast ? msgAuthor(m.threadLast) : null);
 }
+// A message whose text is nothing but a direct image link, and so is rendered
+// as the picture alone (no anchor in the text — see renderRich in core.js).
+// The embed pass is not consulted for these: its answer, a direct picture is
+// not a link anyone can click, is decided by the URL's shape rather than by
+// anything a fetch could say about it, and an unreachable picture must stay
+// on screen as a link to the original rather than turning into a guess. So this
+// is the ONE card, built from the same predicate the text pass used, and it is
+// what the failed-load handler below rewrites into that link.
+function keepEmbedFor(content) {
+  if (typeof embedForUrl !== 'function' || typeof cleanEmbedUrl !== 'function' || typeof isDirectImageUrl !== 'function') return '';
+  const whole = String(content == null ? '' : content).trim();
+  if (!whole) return '';
+  // A real system line ("X pinned a message", the join/leave notices) is a line
+  // in the channel, never a picture somebody pasted. Those short-circuit in
+  // messageEl, but this rule is asked with the same shape of message, and this
+  // app has no sentinel character in a message to tell them apart — so the row
+  // is the only honest signal, and it is the caller's job to ask.
+  if (/\s/.test(whole.replace(/https?:\/\/\S+/, ''))) return ''; // words around the link: prose
+  if (!/^https?:\/\//.test(whole)) return '';                      // more than one link
+  const url = cleanEmbedUrl(whole);
+  if (!url || !isDirectImageUrl(url)) return '';
+  const html = embedForUrl(url);
+  return html && html.includes('embed-img') ? html : '';
+}
+// A picture that would not load: the text pass left the message with no link in
+// it, so hand the URL back where it was. The image itself goes — a dead one is a
+// black rectangle — and only the marker span is swapped, so every other part of
+// the message (a mentioned user, a link in a sentence) is left exactly as it was
+// painted. The anchor is built here rather than asked of renderRich, which would
+// answer the same way for a bare picture URL: that IS the picture. No message
+// lookup, no re-render — an ordinary anchor is the whole of the recovery.
+document.addEventListener('error', (e) => {
+  const img = e.target;
+  if (!img || !img.dataset || !img.dataset.fbImg) return;
+  const url = img.dataset.fbImg;
+  // The message's own text block: a SIBLING of the embed strip, not an ancestor,
+  // so it is found through the row.
+  const text = img.closest('.msg')?.querySelector('.text');
+  if (!text) return;
+  const old = text.querySelector('[data-fb-img-text="' + CSS.escape(url) + '"]');
+  if (old) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = url;
+    old.replaceWith(a);
+  }
+  try { img.closest('.embed')?.remove(); } catch {}
+}, true);
+
 function messageEl(m, opts = {}) {
   const div = document.createElement('div');
   // The painted node carries its own timestamp: a day divider belongs to the day
@@ -2087,8 +2138,23 @@ function messageEl(m, opts = {}) {
     // text bubble attached to the card. `content` is still stored for the
     // viewer's caption, push notifications and the DM list preview.
     const big = isBigEmoji(m.content) && !m.attachments?.length;
+    // keepEmbed: a message that is ONLY a direct image link renders the text
+    // unlinked (the picture below IS the message — see renderRich in core.js),
+    // which leaves no embeds at all. It is still the one case where the text
+    // pass and the embed pass have to be asked in step, so they are: the
+    // predicted single picture card is kept, and a message with anything else
+    // in it keeps the embed pass's own answer (first card only, no players),
+    // so a card never shows up beside a link the reader is meant to click.
+    // A SYSTEM line is a line in the channel, never a picture somebody pasted,
+    // so it keeps the embed pass's own answer whatever its text is (the pin
+    // notice, the join/leave notices). A real message that is nothing but a
+    // direct image link renders the text unlinked (renderRich in core.js — the
+    // picture below IS the message), which leaves no embeds at all, so the card
+    // is built here from the SAME predicate instead: one card, for one shape of
+    // message, with no guess about it.
+    const keepEmbed = m.sys ? '' : keepEmbedFor(m.content);
     inner += `<div class="text${big ? ' bigemoji' : ''}">${renderRich(m.content, { authorId: m.user && m.user.id })}${grouped && m.edited ? ' <span class="edited">(edited)</span>' : ''}</div>`;
-    if (!big && typeof linkEmbedsHTML === 'function') inner += linkEmbedsHTML(m.content);
+    if (!big && typeof linkEmbedsHTML === 'function') inner += keepEmbed || linkEmbedsHTML(m.content);
   }
   if (m.attachments?.length) {
     // The list is painting these: the picked-bytes store (see attPreviewEntry)

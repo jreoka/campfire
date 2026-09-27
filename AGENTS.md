@@ -729,6 +729,38 @@ images and clips) drops the card chrome — one boundary, not a hairline box one
 pixel outside a rounded picture; audio keeps the card, because a bare `<audio>`
 element has no shape of its own. Generic unfurl cards and invite cards were
 already the refined pair and are unchanged.
+**A link that IS a picture is the picture, and the message says nothing**
+(owner ask, "when i send a direct image link it just shows the url as well"):
+pasting `https://…/photo.jpg` rendered the raw URL as the message text AND the
+picture right below it — a wall of characters on top of the image the reader
+came for. So when the message is nothing but one direct image link, `renderRich`
+leaves that URL as plain text and the picture below is the whole message. The
+decision is deliberately narrow, because the cost of getting it wrong is a
+swallowed link: the message must be ONE link with nothing but whitespace around
+it (a paste keeps its trailing newline), a URL next to a word is prose and keeps
+its anchor (a sentence is not a caption for its own picture), a second link in
+the same message is prose too, and the composer's backdrop (`opts.plain`) is off
+entirely because the caret lives on it. "Direct" is the embed's OWN predicate,
+`isDirectImageUrl` in embeds.js — the same one `directMediaEmbedHTML` renders
+from, so text and embed cannot disagree about which links are pictures, which is
+the whole bug. It excludes a query string (an image extension behind one is a
+generated image, not the file) and nothing else: a page that merely LOOKS like
+one (`imgur.com/pic.png`) is harmless, because…
+The picture is still a first-class click target meanwhile: a tap on it opens the
+lightbox exactly as before, which is what the printed URL used to be the backup
+for. **…and a picture that would not load hands its link back.** The two passes
+mark their answer — the text in `data-fb-img-text`, the `<img>` in `data-fb-img` —
+and a capture-phase `error` listener (`messages.js`) puts a real anchor where the
+marker is and drops the dead image, so a picture-only message can never end up
+with nothing in it. The card itself for that shape of message is built by
+`keepEmbedFor` from the same predicate rather than by the embed pass (whose answer
+— a direct picture is not something anyone can click — is decided by the URL's
+shape, not by a fetch), and a system line short-circuits before any of this: the
+ROW is what makes a system line a system line, not its text.
+`scripts/test-image-link-text.js` covers the rule, the text, and the pair (in
+Chrome, against a 404 that really happens). A story's caption is typed prose and
+deliberately keeps its link (`linkifyHTML`/`storyTextHTML` are separate surfaces,
+untouched).
 Three traps found doing it, all about absolutely positioned boxes:
 `.ov-item` and `.sv-cap`/`.vo-cap` set `left` with `right:auto`, so each was laid
 out in the space to its RIGHT — a sticker at x:0.5 and a 200-character caption on

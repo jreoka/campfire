@@ -1286,6 +1286,37 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   faded (it used to dim the last line and lie). Re-run it after touching
   `textFileHTML` / `expandTextFile` / `copyTextFile` / `textPreviewable`, the
   `.txtfile` block in `styles.css`, or the `data-act` router in `pickers.js`.
+  `node scripts/test-image-link-text.js` covers a link that IS a picture not
+  printing its own URL above the picture (owner ask: a pasted direct image link
+  showed the raw URL as the message text AND the image below it). The RULE is the
+  embed's own predicate — `isDirectImageUrl` in `embeds.js`, the same one
+  `directMediaEmbedHTML` renders from — so the text pass and the embed pass
+  cannot disagree about which links are pictures, which is the whole bug. It is
+  narrow on purpose, since a false positive swallows a clickable link: a query
+  string means a GENERATED image rather than the file, and nothing else is
+  excluded. The TEXT half runs the real `renderRich` sliced out of `core.js`
+  (with the real predicate from `embeds.js`, plus a fresh `vm` realm for the case
+  where `embeds.js` never loaded at all) and locks in that a message that is
+  nothing but one direct image link reads as that URL with no anchor, that a
+  picture link next to a word is prose and keeps its link, that a second link in
+  the same message, a full stop after it, whitespace around it and `` `code` ``
+  or a fence around it all keep their links, that `**bold**` and `||spoiler||`
+  around a link are not words and stay picture-only, and that the composer's
+  backdrop (`opts.plain`) still lays out and anchors every character (the caret
+  lives on it) while the story surfaces keep their own separate behaviour. The
+  PAIR half runs in headless Chrome (skipping without it) against a real server
+  that 404s the picture: the real `messageEl` paints the real row, a picture-only
+  message is the picture (no anchor in the text, one card, the marker naming the
+  same URL), tapping it still opens the lightbox — the thing the text used to be
+  the backup for — and a failed `<img>` fires its real `error`, so the
+  capture-phase handler puts a real anchor back where the marker was and the
+  dead image is gone rather than left as a black rectangle. A sentence around the
+  same link keeps its own anchor throughout, and `keepEmbedFor` is checked
+  directly: that one card, and no card for a sentence, a second link, a fenced
+  one, a query-string URL, an ordinary page or a system line (the row, not the
+  text, is what makes a system line a system line). Re-run it after touching
+  `isDirectImageUrl` / `directMediaEmbedHTML` in `embeds.js`, the URL pass in
+  `renderRich`, `keepEmbedFor` or the failed-picture handler in `messages.js`.
   `node scripts/test-photo-gallery.js` covers the picture grid a message with
   several photos renders (`attsBlockHTML`; headless Chrome, skipping without
   Chrome — it runs the real `attachmentHTML`/`attsBlockHTML` against the real
