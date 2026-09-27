@@ -1496,9 +1496,14 @@ story's author object for a poster who is in no loaded roster. That card's
 actions are a vertical tab list, not a wrapped row of pills:
 build new ones with `ucTabHTML(id, icon, label, ' primary'|' danger')` (`UC_ICONS`
 in `pickers.js`, inline SVG — no emoji), and the container is `.uc-tabs`; the
-voice-call controls keep the older `.uc-actions` pill row. `friendBtnHTML` takes a
-base class + icon flag so the same button serves both the tab list and the plain
-profile-screen pill. On a phone tapping the me bar opens that card as a
+voice-call controls keep the older `.uc-actions` pill row. The card's own
+rows are deliberately NOT tinted by importance: Message is a plain tab (the
+owner called the `primary` fill "highlighted for no particular reason"), so
+`primary` is now only ever a state of its own — the friend button's
+`Accept request`. Plain rows are the default; add `primary` only where it
+means "this is a state you can act on", never "this is the main button".
+`friendBtnHTML` takes a base class + icon flag so the same button serves both
+the tab list and the plain profile-screen pill. On a phone tapping the me bar opens that card as a
 full-height `.sheet` that slides up from the bottom (`openOwnCard` adds the class
 and clears the popup's inline geometry, so `#usercard.sheet` owns it and
 `clampUserCard()` must keep bailing on a sheet); desktop keeps the

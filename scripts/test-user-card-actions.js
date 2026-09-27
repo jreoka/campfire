@@ -231,7 +231,8 @@ function main() {
   check(mention.includes('class="uc-tab"') && mention.includes('id="uc-mention"'), 'a plain tab row', mention);
   check(/<svg[\s\S]*<\/svg><span>Mention<\/span>/.test(mention), 'an inline SVG then the label', mention);
   check(mention.includes('aria-hidden="true"'), 'the icon is decorative to a screen reader');
-  check(ucTabHTML('uc-message', 'message', 'Message', ' primary').includes('class="uc-tab primary"'), 'the primary variant (Message)');
+  check(ucTabHTML('uc-message', 'message', 'Message').includes('class="uc-tab"') && !/uc-message[^\n]*primary/.test(pickers), 'Message is a plain tab — no primary highlight');
+  check(ucTabHTML('uc-message', 'message', 'Message', ' primary').includes('class="uc-tab primary"'), 'the primary variant still exists (Accept request)');
   check(ucTabHTML('uc-ban', 'x-user', 'Ban', ' danger').includes('class="uc-tab danger"'), 'the danger variant (Ban)');
   for (const name of ['mention', 'message', 'plus', 'x-user', 'check-user', 'minus-user', 'slash', 'check', 'user', 'close']) {
     check(!!UC_ICONS[name], 'icon ' + name + ' exists');
@@ -249,7 +250,7 @@ function main() {
   check(/\.uc-tabs\{[^}]*flex-direction:column/.test(css), 'the container stacks its rows (.css)');
   check(/\.uc-tab\{[^}]*width:100%/.test(css), 'each row fills the width (.css)');
   check(/\.uc-tab\.danger\{[^}]*--danger-tx/.test(css), 'danger rows are tinted (.css)');
-  check(/\.uc-tab\.primary\{[^}]*--accent-container/.test(css), 'the primary row is tinted (.css)');
+  check(/\.uc-tab\.primary\{[^}]*--accent-container/.test(css), 'the primary variant is tinted for the accept-request row (.css)');
   check(/\.avatar\.st-click\{[^}]*cursor:pointer/.test(css), 'the story avatar reads as clickable (.css)');
 
   console.log('\n[3] the friend button has a tab shape');
