@@ -1735,7 +1735,28 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 .reaction.me{background:var(--accent-container);border-color:transparent;color:var(--on-container)}
 .msg-actions{position:absolute;right:.6rem;top:-18px;display:flex;gap:2px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:6px;padding:4px 6px;z-index:5;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .13s ease-out,visibility .13s;box-shadow:var(--shadow-1);}
 .msg{position:relative}
-.msg:hover .msg-actions,.msg:focus-within .msg-actions{opacity:1;visibility:visible;pointer-events:auto}
+.msg:hover .msg-actions{opacity:1;visibility:visible;pointer-events:auto}
+/* The keyboard half of the same reveal, on its OWN rule and not sharing a
+   selector list with :hover: an engine that cannot parse :has() invalidates
+   the ENTIRE list, so folding these together would cost such an engine the
+   hover reveal too — the bar would never appear at all. Split, the worst case
+   is the bar going back to pointer-only, which is what it was before the
+   focus half existed.
+
+   :has(:focus-visible), NOT :focus-within. They are not synonyms and the
+   difference is the whole point: a MOUSE click on a quick-reaction leaves that
+   button as document.activeElement for as long as the reader stays on the
+   page, so :focus-within kept the bar of a message the pointer had already
+   left — click 👍 on one message, move down to another, and BOTH bars sat open,
+   because the clicked button still held focus. :focus-visible matches only
+   keyboard-driven focus, so the bar follows the pointer and the keyboard and
+   nothing else.
+
+   A link focused by Tab still matches (:focus-visible is true for keyboard
+   focus on any element), so the keyboard route into a message is unharmed.
+   Touch is unaffected either way: the (hover:none) block further down removes
+   the bar on a touch screen entirely, so it never had a focus consumer. */
+.msg:has(:focus-visible) .msg-actions{opacity:1;visibility:visible;pointer-events:auto}
 /* The bar above is pure :hover, so it freezes open when the page stops being
    interactive without the pointer leaving the message — clicking a link (a new
    tab never blurs the window), the OS browser opening over the app, alt-tabbing
