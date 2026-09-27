@@ -1808,6 +1808,19 @@ NEXT: iterate per owner feedback on the live site.
   equivalent check after touching `server.js` or the WS protocol.
 - **Bump `service-worker.js` CACHE version on any `public/` change** or clients
   keep stale cached shells.
+- **A dead credential in the VPS's `~/.docker/config.json` breaks EVERY build.**
+  The file had a Docker Hub auth entry whose token no longer resolves, so
+  `docker pull node:22-alpine` answered `401 Unauthorized: incorrect username or
+  password` and `up -d --build` died at `load metadata for docker.io/library/node`
+  — long before it ever looked at the repo. Anonymous pulls are fine, so the fix
+  is to empty the entry rather than refresh it (`echo '{"auths":{}}' >
+  ~/.docker/config.json`, keeping a backup). Two things make this easy to
+  misread as something else: the failure names a BASE IMAGE, not the app, and it
+  looks identical to a genuine build break. Symptom to recognise: the app
+  container is healthy and serving the PREVIOUS commit, and `/app` inside the
+  running container has no trace of the change even though the host checkout is
+  already pulled. The app code is baked into the image (only `./data` is a bind
+  mount), so a `git pull` alone changes nothing that is served.
 - **A `flex:1` column needs `align-self:stretch`, not just `min-width:0`.** In a
   flex container with `align-items:flex-start` (server settings `.srvset-wrap`),
   a child's CROSS size is fit-content, so one nowrap child — an invite URL in
