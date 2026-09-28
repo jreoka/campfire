@@ -2168,6 +2168,73 @@ document.addEventListener('error', (e) => {
   try { img.closest('.embed')?.remove(); } catch {}
 }, true);
 
+// ---------- the DM call lines ("X started a call" / "Call ended") ----------
+// Two system lines bracket every call in a DM or group thread. They are cards
+// rather than sentences for one reason that matters most on the FIRST one: the
+// reader is meant to be able to click it and be in the call. A centred grey
+// sentence is not a button, and the whole point of the line is the invitation.
+//
+// `callMeta` is what makes that honest. The line was posted when the call STARTED
+// and nothing about it changes when the call later ends, so the button cannot
+// ask the roster whether a call is up (by the time you scroll back it is over and
+// the answer is no). It carries the thread it belongs to and whether the starter
+// had their camera on, and joining is offered whenever the thread still exists —
+// a call you join from an old line is a NEW call, which is the correct behaviour
+// and the reason the button never lies about being live.
+//
+// The end line is the mirror image: no button at all, just the elapsed time the
+// server measured from the real first join.
+// The phone glyph is the app's own "this is a call" shape (the same mark the
+// call bar and the header's call keys use), so the line reads as the same event
+// the reader already knows. A plain handset is what a VOICE call gets, and the
+// camera shape is what a VIDEO call gets — the two kinds are genuinely
+// different to the person reading them (one of them has to grant the camera),
+// so they do not get the same mark.
+const CALL_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 10.5 19.5 7v10L15 13.5"/><rect x="3" y="6" width="12" height="12" rx="2.5"/></svg>';
+const CALL_VIDEO_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5.5" width="13" height="13" rx="2.5"/><path d="M15.5 10.5 21.5 7v10l-6-3.5"/></svg>';
+const CALL_OFF_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 10.5 19.5 7v10L15 13.5"/><rect x="3" y="6" width="12" height="12" rx="2.5"/><path d="M3 3l18 18"/></svg>';
+function callSysLineHTML(m) {
+  const meta = m.callMeta || {};
+  const start = m.sys === 'call-start';
+  const video = !!meta.video;
+  const text = esc(m.content || '');
+  if (!start) {
+    return `<span class="call-pill call-pill-end">${CALL_OFF_SVG}<span class="call-txt">${text}</span></span>`;
+  }
+  const tid = esc(meta.threadId || m.threadId || '');
+  return `<span class="call-pill call-pill-live">${video ? CALL_VIDEO_SVG : CALL_SVG}`
+    + `<span class="call-txt">${text}</span>`
+    + `<button type="button" class="call-join" data-calljoin="${tid}" data-callvideo="${video ? '1' : '0'}">Join</button>`
+    + '</span>';
+}
+// The button is delegated, not bound per row: a live tail can paint hundreds of
+// call lines and re-binding on every append is how you leak a listener per
+// message. It is wired once here and the row is found by attribute at click
+// time, so a line that is still in the DOM long after it was appended still
+// joins the right call.
+document.addEventListener('click', (e) => {
+  const b = e.target.closest ? e.target.closest('[data-calljoin]') : null;
+  if (!b) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const tid = b.getAttribute('data-calljoin');
+  if (!tid) return;
+  const video = b.getAttribute('data-callvideo') === '1';
+  joinCallFromLine(tid, video);
+});
+// Joining from a line has to work from ANYWHERE in the app — the reader may be
+// looking at a different thread, or a server channel, with the call line in a
+// thread they scrolled back through. So it navigates to the thread first and
+// only then joins, which is also what makes the line usable from history mode.
+async function joinCallFromLine(threadId, video) {
+  if (S.view !== 'home' || S.dmThreadId !== threadId) {
+    try { await openHome(); } catch {}
+    try { await selectDmThread(threadId); } catch { toast('That chat is gone'); return; }
+  }
+  if (inThisDmCall(threadId)) { try { openCallView(); } catch {} return; }
+  joinDmCall(threadId, !!video);
+}
+
 function messageEl(m, opts = {}) {
   const div = document.createElement('div');
   // The painted node carries its own timestamp: a day divider belongs to the day
@@ -2177,6 +2244,15 @@ function messageEl(m, opts = {}) {
   if (m.sys) {
     div.className = 'msg sys';
     div.dataset.mid = m.id;
+    // A CALL line is not a sentence: it is a small card with a live Join target
+    // (see callSysLineHTML). It is the only system line that is interactive, and
+    // it is the only one that can be a card, so it is the only one that must not
+    // be escaped into textContent. Everything else stays exactly as plain text.
+    if (m.sys === 'call-start' || m.sys === 'call-end') {
+      div.className = 'msg sys call-sys';
+      div.innerHTML = callSysLineHTML(m);
+      return div;
+    }
     div.textContent = m.content;
     return div;
   }

@@ -928,6 +928,39 @@ CREATE INDEX IF NOT EXISTS idx_voice_occupants_server ON voice_occupants(server_
 CREATE INDEX IF NOT EXISTS idx_voice_occupants_thread ON voice_occupants(thread_id);
 `);
   await db.exec(`
+-- The DM call that is CURRENTLY OPEN in each thread, one row per thread.
+--
+-- A DM call is not a message, so nothing about it survives in chat: the roster
+-- in voice_occupants says WHO is in the room, but it has no memory of a call
+-- that has already been announced. This table is that memory, and it is what
+-- makes the pair of system lines exactly one pair per call instead of one per
+-- join and leave.
+--
+-- The row exists only WHILE the call is running. The first person into an empty
+-- thread inserts it; the last person out deletes it, and the deletion is what
+-- ends the "Call ended" line — carrying started_at with it so the duration is
+-- the real elapsed time and not a re-derived guess.
+--
+-- It is shared state, not a per-process Map, for the same reason voice_occupants
+-- is: the person who starts a call and the person who ends it are usually on
+-- DIFFERENT replicas, and only the thread row is visible to both. A replica that
+-- only remembered its own joins would announce the same call twice and never
+-- close it. Writers take the per-thread advisory lock (db.withKeyLock, keyed
+-- 'dmcall:<threadId>') so the check-then-insert cannot interleave.
+CREATE TABLE IF NOT EXISTS dm_call_sessions (
+  thread_id TEXT PRIMARY KEY REFERENCES dm_threads(id) ON DELETE CASCADE,
+  started_at BIGINT NOT NULL,
+  started_by TEXT,
+  video BIGINT NOT NULL DEFAULT 0
+);
+`);
+  // The call a system line is ABOUT, as JSON, on the message row itself. The
+  // "started a call" line has to stay a JOIN button after the call is over — the
+  // roster is empty by then, so nothing live can say the call is still up — and
+  // the "Call ended" line has to keep the duration it was given rather than
+  // re-deriving one later. Both are facts about the line, so they ride the line.
+  await addColumn('dm_messages', 'call_meta', 'TEXT');
+  await db.exec(`
 -- Cluster-wide live sockets. Presence used to be read from this process's own
 -- clients Set, which is wrong the moment there is more than one replica: each
 -- pod would report only the people connected to it, so half the roster read

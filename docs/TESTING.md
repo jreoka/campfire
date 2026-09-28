@@ -1867,3 +1867,43 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   touching `router.js`'s route table/writers, `boot()`/`showAuth()`/`setMode()`/
   `doLogout()` in `auth.js`, `rememberView()` in `core.js`, `cfArm` in
   `native.js`, the SPA fallback in `server.js`, or the shell's script list.
+- `node scripts/test-dm-call-lines.js` covers the DM/group call announcements —
+  the "**X started a voice call**" line with its Join key, and the "**Call ended ·
+  lasted 47 minutes**" line. Boots a real server against a throwaway database and
+  drives the real WebSocket voice path (a real three-member group, real
+  friendships, real joins and leaves), then reads the thread back over the real
+  API. The rules it pins, each of which a naive version gets wrong:
+  **one pair per call** (every join and every leave runs the same
+  `afterDmVoiceChange`, so a three-person call is still one start line, and a call
+  running down 3 → 2 → 1 is not re-announced — the latch is the open
+  `dm_call_sessions` row, not the headcount, which is why `peers.length === 1`
+  would double-announce on every leave); **the server posts them, not the
+  client** (the starter routinely rings and closes the tab, so a client-side
+  implementation loses the start line and the end line both); **the duration is
+  measured from the real first join** by whichever replica sees the room drain,
+  not from the end event; **a call nobody answered is not a call** (under
+  `CALL_ANNOUNCE_IGNORE_MS` there is a start line and deliberately no end line —
+  two STARTS in a row is therefore legal and expected, and the test asserts
+  exactly that pairing rule rather than a stricter one the product does not
+  promise); **it self-heals** (a replica dying while holding the last occupant
+  leaves a session row with nobody in the room, and the next call must retire it
+  or every later call in that thread goes silent forever — the check is
+  "does anyone in the room PREDATE the row", because asking "is anyone in the
+  room" is always yes, the joining socket has already written its own row); and
+  the lines are inert where they must be (never counted as unread, never
+  searchable, no invented author in the sidebar preview). The wording rules run
+  offline first: `fmtCallDuration` FLOORS rather than rounds, so a 59.9s call is
+  never promoted to "1 minute", and the client card is rendered from the real
+  `callSysLineHTML` (escaped, thread-carrying, Join on the start line only).
+  Also asserts the FK cascade: a session row dies with its thread. Skips the
+  server half without Postgres. Re-run after touching `afterDmVoiceChange`,
+  `dmCallStarted`/`dmCallEnded`, `postDmCallLine`, `dm_call_sessions`, the
+  `call_meta` column, or `dmThreadView`'s `last`.
+- `node scripts/test-dm-call-lines-browser.js` looks at the two call lines as
+  PIXELS, because "make it look nice" is a visual claim no offline assertion can
+  settle. Renders the real `callSysLineHTML` output inside the real
+  `.call-pill` rules from the real `styles.css` in headless Chrome, in BOTH
+  themes and at a phone width, and writes `docs/call-lines-{dark,light,phone}.png`
+  so a change to the card is reviewable in the diff. Skips without Chrome.
+  Re-run after editing the `.call-*` rules, the call SVG constants, or
+  `callSysLineHTML`.

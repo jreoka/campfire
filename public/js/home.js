@@ -604,9 +604,13 @@ function dmRowEl(t) {
     ? (t.last.viewOnce ? 'Sent a view-once'
       : (String(t.last.content || '').trim() || ((t.last.attachments || 0) > 0 ? 'Sent an attachment' : '')))
     : '';
+  // A system line speaks for itself ("Cross left the chat", "Call ended · lasted
+  // 4 minutes"), so the row shows those words alone. The "author: " prefix is for
+  // a person, and on a line with no author it only ever read as a stray "?".
+  const lastWho = (t.last && t.last.sys) ? '' : (t.last ? `${t.last.author}: ` : '');
   const sub = inThis ? '<span class="dm-incall">In call — you</span>'
     : callN > 0 ? `<span class="dm-incall">${callN} in call — open to join</span>`
-    : esc(t.last ? `${t.last.author}: ${lastText}`.slice(0, 60) : 'No messages yet');
+    : esc(t.last ? `${lastWho}${lastText}`.slice(0, 60) : 'No messages yet');
   // Name span holds only the text: the gradient style clips its background to
   // the element box, so a tag inside would eat the far colour stop. The
   // mname-row keeps name + tag on one line with the tag right after the name.

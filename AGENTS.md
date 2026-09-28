@@ -1844,6 +1844,57 @@ half only together with a migration for any live `story_audiences` rows.
 
 NEXT: iterate per owner feedback on the live site.
 
+## DM call announcements (`call-start` / `call-end`)
+
+Every 1:1 and group call leaves two lines in its thread: **"X started a voice
+call"** with a Join key, and **"Call ended · lasted 47 minutes"** when the last
+person hangs up. They are `dm_messages` rows on the EXISTING system-line channel
+(`sys` = `'call-start'` / `'call-end'`, not `'info'`), which is what makes them
+free everywhere else: a system line already skips unread counts, push
+notifications, embeds, search, reporting and the message menus, so none of those
+needed a new exception.
+
+**The server posts them, never the client.** The starter routinely rings a thread
+and closes the tab before anyone answers; a client-side implementation loses the
+start line with them, and loses the end line too. The only place that sees both
+boundaries is `afterDmVoiceChange`, which already runs on every join, leave and
+eviction and already reads the CLUSTER-WIDE roster.
+
+**The latch is a row, not a headcount.** `dm_call_sessions` holds one row per
+thread for as long as a call is running, and it is the reason a five-person call
+leaves two lines instead of ten. The obvious alternative — post when
+`peers.length === 1` — is wrong in a way that only shows up in a group: a call
+going 2 → 1 on a leave reads as "length 1" and announces itself all over again.
+Writers take the per-thread advisory lock (`db.withKeyLock('dmcall:'+tid)`) so the
+check-then-insert cannot interleave across replicas, and the state is shared
+because the person who starts a call and the person who ends it are usually on
+DIFFERENT pods.
+
+**It self-heals, and the check is not the obvious one.** A replica dying while
+holding the last occupant means the leave never runs, so the row outlives the
+call — and left alone it is permanent: every later call in that thread finds it,
+decides it was already announced, and says nothing. So `dmCallStarted` retires a
+row the roster contradicts. The honest test is *"does anyone in the room PREDATE
+the row"* (`voice_occupants.updated_at < started_at`), **not** "is anyone in the
+room": the socket calling this function has already written its own row, so the
+latter always answers yes and the stale row is never retired. That is also what
+makes it recover from a restart with no separate repair pass.
+
+**The Join key is not a lie, because it cannot consult the roster.** The start
+line is written when the call STARTS and is never rewritten, so at click time
+the answer to "is this call up?" is reliably no. The key therefore carries the
+thread in `dm_messages.call_meta` and always offers to join — joining from an old
+line starts a NEW call, which is the correct behaviour and the reason the key
+never has to claim to be live. The end line has no key at all.
+`scripts/test-dm-call-lines.js` (server, real WebSocket path) and
+`scripts/test-dm-call-lines-browser.js` (the card as pixels, both themes + a
+phone) cover it; see `docs/TESTING.md`.
+
+**Duration wording:** `fmtCallDuration` FLOORS, never rounds — a 59.9s call must
+not be promoted to "1 minute". Under `CALL_ANNOUNCE_IGNORE_MS` (10s) a call
+posts a start line and deliberately NO end line, because ringing an empty thread
+and hanging up is not a call; two start lines in a row is therefore normal.
+
 ## Verification conventions
 
 - **`node --check <file>` after every JS edit.**

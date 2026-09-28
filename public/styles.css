@@ -816,6 +816,33 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .msg .text{overflow-wrap:anywhere;white-space:pre-wrap;font-size:.93rem;color:var(--text)}
 .msg .text a{color:var(--accent-hover)}
 .msg.sys{justify-content:center;color:var(--faint);font-size:.83rem}
+/* The DM call lines. Both keep the centred, faint system-line voice of
+   .msg.sys, but they are cards: a hairline tonal pill that reads as a thing you
+   can act on rather than a sentence you scrolled past. Green on the start line
+   is the app's own "live/online" semantic and the phone glyph is the same shape
+   the call bar uses, so the two read as the same event; the end line is muted,
+   because the call it describes is over and the only thing left to say is how
+   long it was.
+   Flat by construction: tonal fill + one hairline, no shadow, no gradient. */
+.call-sys{margin:.28rem 0}
+.call-pill{display:inline-flex;align-items:center;gap:.45rem;max-width:100%;padding:.34rem .5rem .34rem .6rem;border:1px solid var(--line-soft);border-radius:999px;background:var(--panel-2);font-size:.8rem;line-height:1.25;color:var(--muted)}
+.call-pill svg{flex:0 0 auto;opacity:.85}
+.call-pill .call-txt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.call-pill-live{border-color:color-mix(in srgb,var(--green) 34%,transparent);background:color-mix(in srgb,var(--green) 8%,transparent);color:var(--text)}
+.call-pill-live svg{color:var(--green);opacity:1}
+.call-pill-end{color:var(--faint)}
+.call-pill-end svg{opacity:.6}
+/* The Join key. Accent fill, because it is the one actionable thing on the line
+   and it has to be unmistakable at a glance while scrolling. Sized like the
+   other small keys in the app and given a real touch target on a phone. */
+.call-join{flex:0 0 auto;margin-left:.1rem;padding:.24rem .68rem;border:0;border-radius:999px;background:var(--accent);color:var(--on-accent);font:inherit;font-size:.76rem;font-weight:700;line-height:1.3;cursor:pointer;transition:background .12s ease}
+.call-join:hover{background:var(--accent-hover)}
+.call-join:active{background:var(--accent-active)}
+.call-join:focus-visible{outline:2px solid var(--accent-hover);outline-offset:2px}
+/* A phone gets a real 38px target (the app's own .btn height), grown on the
+   VERTICAL axis only. Widening it as well made the key wider than the words it
+   sits beside, which reads as a banner rather than a key. */
+@media (max-width:640px){.call-join{min-height:38px;padding-block:0}}
 /* flex-end, not center: the send key rides the bottom edge so it stays on the
    same line as the field's own controls when the box grows to several lines.
    On a one-line box the two are within a pixel of each other either way. */

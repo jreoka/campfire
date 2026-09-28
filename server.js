@@ -5903,7 +5903,7 @@ async function dmThreadFor(userId, threadId) {
 }
 async function dmThreadView(t, userId) {
   const members = (await db.prepare(`SELECT ${USER_COLS} FROM users WHERE id IN (SELECT user_id FROM dm_members WHERE thread_id = ?)`).all(t.id)).map(publicUser);
-  const last = await db.prepare(`SELECT m.content, m.created_at, m.view_once, m.user_id, u.display_name AS dname,
+  const last = await db.prepare(`SELECT m.content, m.created_at, m.view_once, m.user_id, m.sys, u.display_name AS dname,
       (SELECT COUNT(*) FROM dm_attachments a WHERE a.message_id = m.id) AS atts
     FROM dm_messages m LEFT JOIN users u ON u.id = m.user_id
     WHERE m.thread_id = ? ORDER BY m.created_at DESC LIMIT 1`).get(t.id);
@@ -5914,7 +5914,11 @@ async function dmThreadView(t, userId) {
   return {
     id: t.id, name: t.name, description: t.description || '', isGroup: !!t.is_group, created_by: t.created_by || null, created_at: t.created_at, members,
     pinned,
-    last: last ? { content: last.content, attachments: last.atts || 0, created_at: last.created_at, author: last.dname || '?', viewOnce: !!last.view_once, mine: userId ? last.user_id === userId : false } : null,
+    // A system line has no author, and the sidebar preview must not invent one:
+    // the existing join/leave notices would have rendered as "?: Cross left the
+    // chat", and the call lines are the same shape. sys rides along so the
+    // client can drop the name prefix and show the line's own words.
+    last: last ? { content: last.content, attachments: last.atts || 0, created_at: last.created_at, author: last.dname || '?', sys: last.sys || null, viewOnce: !!last.view_once, mine: userId ? last.user_id === userId : false } : null,
   };
 }
 async function dmNotify(threadId, obj) {
@@ -6490,6 +6494,11 @@ async function hydrateDm(rows, meId) {
   return patchAttachmentSnippets(rows.map((r) => ({
     id: r.id, threadId: r.thread_id, content: r.content, created_at: r.created_at,
     sys: r.sys || null,
+    // The call a 'call-start' / 'call-end' system line is about, so the client
+    // can put a Join button on the first and show the elapsed time on the second
+    // without re-deriving either from text. Null on every other message, and on
+    // every line posted before this column existed.
+    callMeta: (() => { try { return r.call_meta ? JSON.parse(r.call_meta) : null; } catch { return null; } })(),
     fwdFrom: r.fwd_from || null,
     // Set when this DM answers a story (the attached media is the story's
     // preview, copied so it survives the story's expiry).
@@ -8102,9 +8111,121 @@ async function leaveVoice(ws, notify = true) {
   for (const other of voiceRooms.get(key) || []) safeSend(other, { t: 'voice-peers', serverId: v.serverId, channelId: v.channelId, peers });
   safeSend(ws, { t: 'voice-peers', serverId: v.serverId, channelId: v.channelId, peers });
 }
+// ---------- DM call announcements (the "started a call" / "Call ended" pair) ----------
+// Every DM and group call leaves two lines in its thread: one when the first
+// person rings, and one when the last person hangs up carrying how long it ran.
+// They are posted from HERE rather than from the client's own join/leave, for
+// three reasons that all point the same way:
+//   * the STARTING client may be gone before the call ends (they ring, nobody
+//     picks up, they close the tab) — the line has to be posted by the server,
+//     not by the tab that happened to press the button;
+//   * both lines must be the SAME call, and the two boundaries are observed on
+//     different replicas, so the memory of "this call was already announced" has
+//     to be shared state (dm_call_sessions), not a per-process Map;
+//   * the duration is only knowable at the end, and it must be measured from
+//     the first join, not from whoever happened to still be connected.
+//
+// The ROSTER is the cluster-wide one (voicePeersPayload reads the shared
+// registry), so a call spanning two pods announces once, not twice.
+//
+// `sys` is the existing system-line channel: dm_messages.sys rows already skip
+// unread counts, skip push notifications, skip embeds and render as a centred
+// faint line, so an announcement is invisible to every one of those rules
+// without a single new exception.
+const CALL_ANNOUNCE_IGNORE_MS = 10000;
+function fmtCallDuration(ms) {
+  const n = Number(ms);
+  if (!(n > 0)) return 'under a minute';
+  // Whole seconds, FLOORED. Rounding would let a call that ran 0.9s be reported
+  // as "1 second" and a 59.9s call as "1 minute" — both invent a boundary the
+  // call never reached, and the second one is the worse lie because a minute is
+  // a number a reader actually cares about. Flooring can only ever undershoot.
+  // (Sub-second calls cannot reach here: dmCallEnded ignores anything under
+  // CALL_ANNOUNCE_IGNORE_MS, so the "0 seconds" edge is unreachable in
+  // practice — but it is handled rather than asserted.)
+  const s = Math.floor(n / 1000);
+  if (s < 60) return `${s} second${s === 1 ? '' : 's'}`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} minute${m === 1 ? '' : 's'}`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  if (h < 24) return rm ? `${h} hour${h === 1 ? '' : 's'} ${rm} minute${rm === 1 ? '' : 's'}` : `${h} hour${h === 1 ? '' : 's'}`;
+  const d = Math.floor(h / 24);
+  const rh = h % 24;
+  return rh ? `${d} day${d === 1 ? '' : 's'} ${rh} hour${rh === 1 ? '' : 's'}` : `${d} day${d === 1 ? '' : 's'}`;
+}
+async function postDmCallLine(threadId, sys, text, meta) {
+  const mid = uid();
+  try {
+    await db.prepare('INSERT INTO dm_messages (id,thread_id,user_id,content,sys,call_meta,created_at) VALUES (?,?,?,?,?,?,?)')
+      .run(mid, threadId, null, String(text).slice(0, 200), sys, meta ? JSON.stringify(meta) : null, now());
+  } catch (e) {
+    // An instance that has not run the migration yet must still be able to hold
+    // a call; the line is the nice part, not the call.
+    console.error('[dm-call] line failed:', (e && e.message) || e);
+    return;
+  }
+  await dmNotify(threadId, { t: 'dm-new', message: await fullDm(mid, null) });
+}
+// Called with the thread's roster ALREADY known to be non-empty. Announces the
+// call exactly once: the row is what makes the second caller a continuation.
+async function dmCallStarted(threadId, starter, video) {
+  await db.withKeyLock('dmcall:' + threadId, async () => {
+    const openRow = await db.prepare('SELECT thread_id, started_at FROM dm_call_sessions WHERE thread_id = ?').get(threadId);
+    if (openRow) {
+      // A row with NOBODY in the room is a call that ended without the ending
+      // being observed — a replica died holding the last occupant, so its leave
+      // never ran here and no replica saw the roster drain. Left alone it would
+      // be permanent: every later call in this thread would find the row, decide
+      // it was already announced, and say nothing at all. The row is only ever a
+      // claim that a call is running, and the ROSTER is the truth about that, so
+      // the row that the roster contradicts is closed and the new call gets its
+      // own pair of lines. (That is also what makes this self-healing after a
+      // restart: no separate repair pass is needed, the next join settles it.)
+      // "Is anybody actually in this call?" cannot be asked as "does anyone have
+      // a row right now" — the join that is calling this function has ALREADY
+      // written its own row, so that question always answers yes and the stale
+      // row would never be retired. The honest question is whether anyone in the
+      // room was here when the row was written: an occupant whose row predates
+      // the session is somebody still in the call it describes, and an occupant
+      // who joined after it is a person arriving at a call that is already over.
+      const predates = await db.prepare('SELECT 1 AS ok FROM voice_occupants WHERE thread_id = ? AND updated_at < ? LIMIT 1')
+        .get(threadId, Number(openRow.started_at) || 0);
+      if (predates) return; // a real, live call — this is somebody joining it
+      await db.prepare('DELETE FROM dm_call_sessions WHERE thread_id = ?').run(threadId);
+    }
+    const at = now();
+    try {
+      await db.prepare('INSERT INTO dm_call_sessions (thread_id,started_at,started_by,video) VALUES (?,?,?,?)')
+        .run(threadId, at, starter ? starter.userId : null, video ? 1 : 0);
+    } catch (e) {
+      console.error('[dm-call] session insert failed:', (e && e.message) || e);
+      return;
+    }
+    const who = starter ? displayOf(starter) : 'Someone';
+    await postDmCallLine(threadId, 'call-start',
+      `${who} started a ${video ? 'video' : 'voice'} call`,
+      { threadId, startedAt: at, video: !!video, live: true });
+  }).catch((e) => console.error('[dm-call] start failed:', (e && e.message) || e));
+}
+// Called when the roster has just gone EMPTY. Closes the open session and posts
+// the "Call ended" line with the real elapsed time.
+async function dmCallEnded(threadId) {
+  await db.withKeyLock('dmcall:' + threadId, async () => {
+    const open = await db.prepare('SELECT started_at FROM dm_call_sessions WHERE thread_id = ?').get(threadId);
+    if (!open) return; // no open call to close (and nothing to report)
+    try { await db.prepare('DELETE FROM dm_call_sessions WHERE thread_id = ?').run(threadId); } catch {}
+    const ms = Math.max(0, now() - (Number(open.started_at) || 0));
+    // A call that never had anybody in it is not a call. Ringing an empty thread
+    // and hanging up a second later would otherwise leave a matched pair of
+    // lines saying the call lasted 3 seconds.
+    if (ms < CALL_ANNOUNCE_IGNORE_MS) return;
+    await postDmCallLine(threadId, 'call-end', `Call ended · lasted ${fmtCallDuration(ms)}`, { threadId, startedAt: Number(open.started_at) || 0, endedAt: now(), durationMs: ms });
+  }).catch((e) => console.error('[dm-call] end failed:', (e && e.message) || e));
+}
 // Push fresh DM-call occupancy to every thread member (drives in-call
 // badges + join buttons). When the room drains, the call is over.
-async function afterDmVoiceChange(threadId) {
+async function afterDmVoiceChange(threadId, starter) {
   const key = dmVoiceKey(threadId);
   const peers = await voicePeersPayload(key);
   const mems = new Set((await db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ?').all(threadId)).map((r) => r.user_id));
@@ -8113,10 +8234,15 @@ async function afterDmVoiceChange(threadId) {
   }
   if (!peers.length) {
     voiceRooms.delete(key);
+    // The room is empty, so nobody can be told to join it — the line that goes
+    // out instead is the one that says the call is over.
+    await dmCallEnded(threadId);
     for (const c of clients) {
       if (c.meta && mems.has(c.meta.userId)) safeSend(c, { t: 'dm-call-ended', threadId });
     }
+    return;
   }
+  await dmCallStarted(threadId, starter || null, !!(starter && starter.video));
 }
 // Pull one user out of a DM call (group remove/ban/leave). Their client
 // drops its peer connections via voice-kicked, like server voice eviction.
@@ -8395,6 +8521,12 @@ wss.on('connection', async (ws, req) => {
         }
         await pushDmCallIncoming(t, me, !!msg.video, others);
       }
+      // The "started a call" line belongs to whoever pressed the button, and it
+      // is posted by the SERVER so it survives them closing the tab before
+      // anybody answers (see afterDmVoiceChange). Pass the caller along: the
+      // second and later joiners of a live call must not be announced as
+      // starters, and that is decided by the open dm_call_sessions row.
+      await afterDmVoiceChange(threadId, { userId: me.userId, display_name: me.display_name, username: me.username, video: !!msg.video });
       await pushFriendsVoice(me.userId);
       return;
     }
