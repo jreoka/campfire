@@ -185,7 +185,7 @@ async function renderNotifsTab() {
   }
   if (pushOK && subscribed) {
     const r = btnRow();
-    button('Send test push', false, async () => { try { await api('/api/push/test', { method: 'POST' }); toast('Test push sent'); } catch { toast('Test failed'); } }, r);
+    button('Send test push', false, () => pushTestReport(), r);
     button('Disable on this device', false, async () => { await pushTeardown(); renderNotifsTab(); }, r);
   }
   }
@@ -194,6 +194,25 @@ async function renderNotifsTab() {
   const note2 = document.createElement('p'); note2.className = 'muted small';
   note2.textContent = 'Right-click (or long-press) a server or channel for its own rules. DM threads follow the default rule.';
   box.appendChild(note2);
+}
+// What the "test push" button is allowed to claim. The old one said "Test push
+// sent" whenever the POST itself returned 2xx — and the server answered 2xx
+// even when the push service had just refused the payload — so the one button a
+// person reaches for when notifications are not working was the one thing that
+// could not tell them they were broken. It now reports the send's fate, and the
+// server's own words when it has them (see /api/push/test).
+async function pushTestReport() {
+  let r;
+  try { r = await api('/api/push/test', { method: 'POST' }); }
+  catch (e) {
+    const body = (e && e.body) || {};
+    const detail = body.errors && body.errors[0] && body.errors[0].detail;
+    if (body.error === 'rejected') { toast(detail || 'The push service refused this notification.'); return; }
+    if (body.error === 'not_subscribed') { toast('No device is subscribed to push — turn notifications on for this device first.'); return; }
+    toast('Test failed'); return;
+  }
+  if (!r || r.ok === false) { toast('The push was not delivered — check the server log.'); return; }
+  toast(r.subs > 1 ? 'Test push sent to ' + r.delivered + ' of ' + r.subs + ' devices' : 'Test push sent');
 }
 function urlB64ToU8(s) {
   const pad = '='.repeat((4 - (s.length % 4)) % 4);

@@ -804,7 +804,16 @@ async function api(path, opts = {}) {
     headers: { 'Content-Type': 'application/json', ...(store.token ? { Authorization: 'Bearer ' + store.token } : {}), ...(opts.headers || {}) },
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || ('http_' + res.status));
+  if (!res.ok) {
+    const err = new Error(data.error || ('http_' + res.status));
+    // The parsed body travels with the error. A caller that needs to say more
+    // than the error code (Settings -> Notifications has to explain WHY a push
+    // was refused, and the server is the only one that knows) used to have to
+    // guess, and the detail was dropped on the floor here.
+    err.body = data;
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 // Union of custom emoji across every server the user has joined: a

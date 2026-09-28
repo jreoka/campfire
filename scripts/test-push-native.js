@@ -63,8 +63,14 @@ function sourceChecks() {
   const server = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
   console.log('\n[A1] every push payload reaches the device sockets');
   check(/function notifyPushSockets\(userId, payload\)/.test(server), 'a native push fan-out exists');
-  check(/async function pushToUser\(uid, payload, opts\) \{\s*\n\s*notifyPushSockets\(uid, payload\);/.test(server),
+  // The socket fan-out must happen before the web-push gate, or a phone in
+  // someone's pocket goes quiet whenever another device has the page open. The
+  // call is now captured into a local (pushToUser reports what it delivered),
+  // so match the call itself and its position rather than the whole statement.
+  check(/async function pushToUser\(uid, payload, opts\) \{\s*\n(?:\s*const \w+ = )?notifyPushSockets\(uid, payload\);/.test(server),
     'pushToUser fans out to the native sockets before any gate');
+  check(/const sockets = notifyPushSockets\(uid, payload\);\s*\n\s*if \(opts && opts\.webPush === false\) return/.test(server),
+    'the gate on web push still sits AFTER that fan-out');
   check(/bus\.subscribe\('push', \(p\) => \{ if \(p && p\.userId\) notifyPushSocketsLocal\(p\.userId, p\.payload\); \}\)/.test(server),
     'a replica delivers a peer replica\'s native push');
   console.log('\n[A2] web push keeps the account-wide gate');

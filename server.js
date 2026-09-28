@@ -5996,6 +5996,42 @@ async function metaGet(k) { try { return (await db.prepare('SELECT value FROM me
 async function metaSet(k, v) { await db.prepare('INSERT INTO meta (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(k, v); }
 let VAPID_PUBLIC = process.env.VAPID_PUBLIC || null;
 let VAPID_PRIVATE = process.env.VAPID_PRIVATE || null;
+// The VAPID `sub` claim is a CONTACT address for the application server, and it
+// is the one piece of the push handshake that is easy to leave unset — which
+// costs iPhone users every notification, silently.
+//
+// Apple's push service (web.push.apple.com) REJECTS a subject whose host is
+// `localhost` with `403 BadJwtToken`, and a `mailto:` at a domain nobody owns is
+// the same story waiting to happen. The old default was exactly that: with no
+// PUSH_SUBJECT configured, every send came back 403, the row stayed in
+// push_subs forever (only 404/410 are pruned), and Settings → Notifications
+// cheerfully said the test push was sent. The server never treated a 403 as
+// anything but a log line, so the failure was invisible from the inside.
+//
+// The fallback is therefore the deployment's own site URL, which is a real
+// https: address Apple will accept, and PUSH_SUBJECT still overrides it for an
+// operator who wants a mailto: contact. A localhost/127.0.0.1 subject is not
+// merely a bad default here, it is the documented cause of BadJwtToken, so it is
+// rejected outright rather than passed through to fail 403 on every message.
+function vapidSubject() {
+  const set = String(process.env.PUSH_SUBJECT || '').trim();
+  const host = String(process.env.DOMAIN || '').trim() || String(ORIGIN || '').trim()
+    .replace(/^https?:\/\//i, '').replace(/\/$/, '');
+  const chosen = set || (host ? 'https://' + host : 'mailto:admin@localhost');
+  let bad = false;
+  try {
+    const u = new URL(chosen);
+    // Apple rejects a web subject that is a local address; keep one out of the
+    // handshake entirely rather than let every push die on it.
+    bad = (u.protocol === 'https:' && ['localhost', '127.0.0.1', '[::1]', '::1'].includes(u.hostname));
+  } catch { bad = true; }
+  if (bad) {
+    console.warn('[push] PUSH_SUBJECT ' + chosen + ' is a localhost address, which Apple rejects with BadJwtToken. Falling back to a mailto: contact.');
+    return 'mailto:admin@localhost';
+  }
+  return chosen;
+}
+let VAPID_SUBJECT = null;
 async function initPushKeys() {
   if (!VAPID_PUBLIC) VAPID_PUBLIC = await metaGet('vapid_public');
   if (!VAPID_PRIVATE) VAPID_PRIVATE = await metaGet('vapid_private');
@@ -6004,7 +6040,9 @@ async function initPushKeys() {
     VAPID_PUBLIC = keys.publicKey; VAPID_PRIVATE = keys.privateKey;
     if (!process.env.VAPID_PUBLIC) { await metaSet('vapid_public', VAPID_PUBLIC); await metaSet('vapid_private', VAPID_PRIVATE); }
   }
-  webpush.setVapidDetails(process.env.PUSH_SUBJECT || 'mailto:notifications@localhost', VAPID_PUBLIC, VAPID_PRIVATE);
+  VAPID_SUBJECT = vapidSubject();
+  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE);
+  console.log('[push] web push subject ' + VAPID_SUBJECT);
 }
 function userLive(uid) {
   for (const c of clients) if (c.meta && c.meta.userId === uid) return true;
@@ -6017,23 +6055,49 @@ async function notifMode(uid, scopes) {
   for (const s of scopes) if (map.has(s)) return map.get(s);
   return map.get('global') || 'all';
 }
+// What a fan-out to one account's subscriptions actually did. The old code threw
+// this away and every caller reported success unconditionally, which is how a
+// server that answered Apple's push service with 403 on every send could still
+// tell the owner her test notification was sent. Returns
+// { delivered, failed, subs, errors } — `subs` 0 means nobody is subscribed at
+// all, which is a different answer from "every subscription was rejected".
+//
 // `opts.webPush === false` keeps a page-visible account from ALSO getting the
 // OS push (see the userVisible() call sites) — but the native push sockets are
 // addressed per DEVICE and always get the payload: a phone in someone's pocket
 // must ring whether or not another device of the same account has Campfire open.
 async function pushToUser(uid, payload, opts) {
-  notifyPushSockets(uid, payload);
-  if (opts && opts.webPush === false) return;
+  const sockets = notifyPushSockets(uid, payload);
+  if (opts && opts.webPush === false) return { delivered: sockets, failed: 0, subs: 0, errors: [], skipped: true };
   let subs = [];
-  try { subs = await db.prepare('SELECT endpoint, p256dh, auth FROM push_subs WHERE user_id = ?').all(uid); } catch { return; }
-  for (const s of subs) {
-    webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify(payload)).catch(async err => {
-      if (err && (err.statusCode === 404 || err.statusCode === 410)) {
+  try { subs = await db.prepare('SELECT endpoint, p256dh, auth FROM push_subs WHERE user_id = ?').all(uid); } catch { return { delivered: sockets, failed: 0, subs: 0, errors: ['db'] }; }
+  // Fire the sends together and let each one report its own fate. A 404/410 is a
+  // dead endpoint and is pruned, as it always was. A 403 is NOT pruned: nothing
+  // about the device is wrong, so the subscription is kept and the send is
+  // retried on the next message. That matters most for exactly the failure this
+  // shape was added for — a bad VAPID subject is fixed in the server's config,
+  // and the moment it is, the phone rings without anyone having to reach a
+  // relative's iPhone and re-enable notifications.
+  const results = await Promise.all(subs.map((s) => webpush
+    .sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify(payload))
+    .then(() => null)
+    .catch(async (err) => {
+      const code = err && err.statusCode;
+      if (code === 404 || code === 410) {
         try { await db.prepare('DELETE FROM push_subs WHERE endpoint = ?').run(s.endpoint); } catch {}
       }
-      console.error('[push]', uid, (err && (err.statusCode || err.message)) || 'error');
-    });
-  }
+      let detail = String((err && err.body) || '').slice(0, 200);
+      // Apple's answer to a localhost (or otherwise unusable) VAPID subject.
+      // Say it in words: the raw "403" in a log line is what hid this for so
+      // long, because nothing about the number points at the subject.
+      if (code === 403 && /BadJwtToken/i.test(detail)) {
+        detail = 'BadJwtToken — Apple rejected the VAPID subject (' + VAPID_SUBJECT + '). Set PUSH_SUBJECT to a real https:// or mailto: contact.';
+      }
+      console.error('[push]', uid, (code || (err && err.message) || 'error'), detail);
+      return { code: code || 0, detail };
+    })));
+  const errors = results.filter(Boolean);
+  return { delivered: sockets + results.length - errors.length, failed: errors.length, subs: subs.length, errors };
 }
 function reEsc(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function mentionsName(content, username) {
@@ -6674,8 +6738,19 @@ app.post('/api/push/test', authRequired, async (req, res) => {
   // `test` tells a native shell to show it even while its own window is in the
   // foreground — you tap this button from the settings screen, so a
   // foreground-suppressed notification would look like a failure.
-  await pushToUser(req.user.id, { title: 'Campfire', body: 'Test push — delivery works!', tag: 'campfire-test', url: '/', test: true });
-  res.json({ ok: true });
+  //
+  // The answer is the SEND's fate, not "the request worked". This button used to
+  // reply { ok: true } before the push service had been contacted at all, so a
+  // server whose every push was being rejected with 403 still told the person
+  // tapping it that the notification was sent — and nothing ever appeared.
+  // Now a device with no subscription, and a push service that refused the
+  // payload, are two different answers the client can print.
+  const r = await pushToUser(req.user.id, { title: 'Campfire', body: 'Test push — delivery works!', tag: 'campfire-test', url: '/', test: true });
+  if (r.subs === 0 && r.delivered === 0) return res.json({ ok: false, reason: 'not_subscribed' });
+  if (r.subs > 0 && r.delivered === 0) {
+    return res.status(502).json({ ok: false, reason: 'rejected', errors: r.errors.map((e) => ({ code: e.code, detail: e.detail })) });
+  }
+  res.json({ ok: true, delivered: r.delivered, subs: r.subs });
 });
 app.get('/api/notifs/prefs', authRequired, async (req, res) => {
   const rows = await db.prepare('SELECT scope, mode FROM notif_prefs WHERE user_id = ?').all(req.user.id);
@@ -7590,13 +7665,17 @@ function notifyPushSocketsLocal(userId, payload) {
     console.log('[push] fanout user=%s test=%s sockets=%d sent=%d gated-visible=%d tag=%s',
       shortUid(userId), force ? 1 : 0, sockets, sent, gated, (payload && payload.tag) || '-');
   }
+  return sent;
 }
 function notifyPushSockets(userId, payload) {
-  notifyPushSocketsLocal(userId, payload);
+  const sent = notifyPushSocketsLocal(userId, payload);
   // The publisher delivers to its own sockets and the bus to every OTHER
   // replica, so one replica answers the message and every replica rings the
   // phones it holds (see the delivery contract in bus.js).
   busPublish('push', { userId, payload });
+  // The peers' own devices are counted by THEM; this replica can only speak for
+  // the phones it holds, which is exactly what a per-replica reply should say.
+  return sent;
 }
 
 // Token + account checks shared by the chat socket and the native push socket:
