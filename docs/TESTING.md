@@ -1881,11 +1881,14 @@ dev server: the media gate (unsigned/tampered tickets), per-friend DMs, the
   client** (the starter routinely rings and closes the tab, so a client-side
   implementation loses the start line and the end line both); **the duration is
   measured from the real first join** by whichever replica sees the room drain,
-  not from the end event; **a call nobody answered is not a call** (under
+  not from the end event; **the end line is gated on duration alone** (under
   `CALL_ANNOUNCE_IGNORE_MS` there is a start line and deliberately no end line —
-  two STARTS in a row is therefore legal and expected, and the test asserts
-  exactly that pairing rule rather than a stricter one the product does not
-  promise); **it self-heals** (a replica dying while holding the last occupant
+  note this is a DURATION gate and does not consult headcount, so one person
+  alone in a 30s call DOES get an end line, and the "nobody answered" case is
+  caught only because such a call is short; two STARTS in a row is therefore
+  legal and expected, and the test asserts exactly that pairing rule rather than
+  a stricter one the product does not promise, including the orphan start line
+  a short abandoned call leaves behind); **it self-heals** (a replica dying while holding the last occupant
   leaves a session row with nobody in the room, and the next call must retire it
   or every later call in that thread goes silent forever — the check is
   "does anyone in the room PREDATE the row", because asking "is anyone in the

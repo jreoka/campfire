@@ -1892,8 +1892,15 @@ phone) cover it; see `docs/TESTING.md`.
 
 **Duration wording:** `fmtCallDuration` FLOORS, never rounds — a 59.9s call must
 not be promoted to "1 minute". Under `CALL_ANNOUNCE_IGNORE_MS` (10s) a call
-posts a start line and deliberately NO end line, because ringing an empty thread
-and hanging up is not a call; two start lines in a row is therefore normal.
+posts a start line and deliberately NO end line. The gate is DURATION ALONE and
+never asks how many people were in the call: one person alone for 30s does get an
+end line, and the ringing case is caught only because such a call is short.
+Someone alone for 9s falls under the line with it, which is accepted. The
+consequence is deliberate and is the thing to know before "fixing" it: the start
+line is NOT suppressed, so a short abandoned call leaves an unmatched "X started
+a call" and no end line. Two starts in a row is therefore normal, and the start
+must not be retracted to restore the pairing — that would delete a line somebody
+may already have read.
 
 ## Verification conventions
 

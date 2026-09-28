@@ -8216,9 +8216,20 @@ async function dmCallEnded(threadId) {
     if (!open) return; // no open call to close (and nothing to report)
     try { await db.prepare('DELETE FROM dm_call_sessions WHERE thread_id = ?').run(threadId); } catch {}
     const ms = Math.max(0, now() - (Number(open.started_at) || 0));
-    // A call that never had anybody in it is not a call. Ringing an empty thread
-    // and hanging up a second later would otherwise leave a matched pair of
-    // lines saying the call lasted 3 seconds.
+    // Suppressed on DURATION ALONE — this never asks how many people were in
+    // the call. One person alone in a call for 30s is a call and does get an end
+    // line; the common case this exists for is ringing an empty thread and
+    // hanging up in a few seconds, which is caught here only because such a
+    // call is short. Someone alone for 9s falls under the line with it, which is
+    // accepted: a sub-10s call did not happen as far as the transcript is
+    // concerned.
+    //
+    // Consequence, and it is DELIBERATE: the start line is not suppressed
+    // (there is no knowing at that point that nobody will ever join), so a
+    // short abandoned call leaves an unmatched "X started a call" and no end
+    // line. Two STARTS in a row is therefore normal. Do not "fix" the pairing
+    // here by retracting the start — that would delete a line somebody may
+    // already have read, which is worse than the orphan.
     if (ms < CALL_ANNOUNCE_IGNORE_MS) return;
     await postDmCallLine(threadId, 'call-end', `Call ended · lasted ${fmtCallDuration(ms)}`, { threadId, startedAt: Number(open.started_at) || 0, endedAt: now(), durationMs: ms });
   }).catch((e) => console.error('[dm-call] end failed:', (e && e.message) || e));

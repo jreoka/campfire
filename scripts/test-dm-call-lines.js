@@ -340,14 +340,26 @@ const callSysLineHTML = new Function('esc',
     a.send({ t: 'voice-leave' });
     await sleep(600);
 
-    // ---- [6] a call nobody answered is not a call -------------------------
+    // ---- [6] a call under the threshold posts a start and no end ---------
+    // The gate is DURATION ALONE. It never asks how many people were in the
+    // call, so this section deliberately makes no claim about headcount: what it
+    // pins is that a call which lives under CALL_ANNOUNCE_IGNORE_MS leaves an
+    // ORPHAN start line and no end line. That orphan is the accepted behaviour
+    // (the start cannot be retracted — somebody may already have read it), and
+    // asserting it here is what stops a later reader from "fixing" the pairing.
     const before = callLines(c).length;
     a.send({ t: 'voice-join', threadId: tid });
     await until(() => callLines(c).length > before);
-    a.send({ t: 'voice-leave' }); // straight back out, no answer
+    a.send({ t: 'voice-leave' }); // straight back out, nobody answered
     await sleep(1500);
-    check(callLines(c).length === before + 1, 'ringing an empty thread and hanging up is not a call',
+    check(callLines(c).length === before + 1, 'a call under 10s posts its start line and NO end line',
       callLines(c).map((m) => m.message.content));
+    // Scoped to what THIS section added — callLines() is the whole thread
+    // history, and earlier sections legitimately left a call-end line behind.
+    check(callLines(c).slice(before).every((m) => m.message.sys === 'call-start'),
+      'the orphan it leaves behind is a start line, not a silent end', callLines(c).slice(before).map((m) => m.message.sys));
+    check(!callLines(c).slice(before).some((m) => m.message.sys === 'call-end'),
+      'and there is no end line to match it', callLines(c).slice(before).map((m) => m.message.sys));
 
     // ---- [7] it self-heals: a stale row is retired by the roster ----------
     // Simulates the replica that died holding the last occupant: the session row
