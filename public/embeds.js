@@ -163,16 +163,46 @@ function soundcloudInfo(u) {
   return { set: p.pathname.includes('/sets/') };
 }
 
-function embedShell(provider, inner) {
-  return '<div class="embed"><span class="embed-src">' + esc(provider) + '</span>' + inner + '</div>';
+// YouTube serves a video's poster frame at several widths, and hqdefault —
+// 480x360 — is the smallest of the ones that exist for EVERY video. It was also
+// the only one we ever asked for, so a 300–700px tile (and a phone, which has
+// twice the device pixels behind the same CSS width) was painting a 480px
+// picture stretched across it: reported as "the thumbnail is pixelated".
+//
+// The ladder is maxresdefault (1280x720) → sddefault (640x480) → hqdefault, but
+// the first rung is NOT free: YouTube 404s maxresdefault for any video it holds
+// no HD frame for (old uploads, small sources, some Shorts). So the <img> walks
+// the ladder in onerror and only gives up when the last rung fails too — which
+// is the same "no picture at all" case the single old URL had. Nothing here
+// costs a request of our own: the browser re-requests the CDN either way.
+const YT_THUMBS = ['maxresdefault', 'sddefault', 'hqdefault'];
+function ytThumb(id, rung) {
+  return 'https://i.ytimg.com/vi/' + id + '/' + YT_THUMBS[rung || 0] + '.jpg';
+}
+// Attributes for a poster that climbs the ladder itself. Referenced by the
+// inline onerror, so it has to stay a global function (a classic script).
+function ytThumbNext(img) {
+  const id = img.getAttribute('data-yt-thumb');
+  const rung = parseInt(img.getAttribute('data-yt-thumb-rung') || '0', 10) || 0;
+  if (!id || rung + 1 >= YT_THUMBS.length) {
+    // Every rung is gone: the poster is dead for this video, and the card says
+    // so the same way any other failed thumbnail does — a card's media box is
+    // removed rather than left as an empty grey rectangle.
+    const box = img.closest ? img.closest('.el-media') : null;
+    if (box) box.remove();
+    else img.style.display = 'none';
+    return;
+  }
+  img.setAttribute('data-yt-thumb-rung', String(rung + 1));
+  img.src = ytThumb(id, rung + 1);
+}
+function ytThumbAttrs(id, extra) {
+  return 'src="' + ytThumb(id, 0) + '" data-yt-thumb="' + id + '" data-yt-thumb-rung="0"'
+    + (extra || '') + ' onerror="ytThumbNext(this)"';
 }
 
-// YouTube poster fallback: maxresdefault 404s on videos that never got a
-// high-res thumbnail — step down to hqdefault, then hide if that's gone too.
-function ytThumbFallback(img) {
-  const fb = img.getAttribute('data-yt-fb');
-  if (fb) { img.removeAttribute('data-yt-fb'); img.src = fb; }
-  else img.style.display = 'none';
+function embedShell(provider, inner) {
+  return '<div class="embed"><span class="embed-src">' + esc(provider) + '</span>' + inner + '</div>';
 }
 
 function ytEmbedHTML(url, yt) {
@@ -180,18 +210,17 @@ function ytEmbedHTML(url, yt) {
   try { if (new URL(url).hostname.toLowerCase().includes('music.')) provider = 'YouTube Music'; } catch {}
   // A Short gets a 9:16 tile and its card HUGS that tile (styles.css): a
   // full-width card wrapped around a narrow vertical box reads as a mistake. The
-  // poster is maxresdefault (1280x720, true 16:9) — hqdefault is only 480x360
-  // 4:3, so the facade's object-fit:cover was upscaling it into pixelation.
-  // maxres doesn't exist for every video (older/low-res uploads 404), so the
-  // img falls back to hqdefault on error, then hides if that fails too.
-  // For vertical Shorts YouTube pillarboxes a vertical frame into the 4:3
-  // hqdefault, and `.yt-facade img{object-fit:cover}` crops those bars back
-  // off, so the picture fills the tile edge to edge at full height. The
+  // poster keeps whatever shape YouTube gives us — a vertical frame is
+  // pillarboxed into the 4:3 thumbnails, and `.yt-facade img{object-fit:cover}`
+  // crops exactly those bars back off, so the picture fills the tile edge to
+  // edge at full height on every rung of the ladder. The
   // provider name is the plain one on both shapes: "Short" is a URL form, not a
   // different site, and the vertical tile already says what it is.
   const vertical = !!yt.shorts;
-  const thumbMax = 'https://i.ytimg.com/vi/' + yt.id + '/maxresdefault.jpg';
-  const thumbHq = 'https://i.ytimg.com/vi/' + yt.id + '/hqdefault.jpg';
+  // The poster climbs YouTube's thumbnail ladder (see YT_THUMBS): the tile is
+  // far wider than the 480x360 frame hqdefault always answers with, and asking
+  // for one size meant a blurry picture on every link.
+  const thumbAttrs = ytThumbAttrs(yt.id, ' alt="" loading="lazy"');
   const play = 'https://www.youtube-nocookie.com/embed/' + yt.id + '?autoplay=1&rel=0';
   // One card anatomy for every provider, YouTube included: the name is the header
   // row above the video (styles.css `.embed-src`) and the facade sits under it,
@@ -203,7 +232,7 @@ function ytEmbedHTML(url, yt) {
   return '<div class="embed' + (vertical ? ' embed-vertical' : '') + '">'
     + '<span class="embed-src">' + esc(provider) + '</span>'
     + '<button type="button" class="yt-facade' + (vertical ? ' vertical' : '') + '" data-yt-play="' + esc(play) + '" aria-label="Play video">'
-    + '<img src="' + esc(thumbMax) + '" alt="" loading="lazy" data-yt-fb="' + esc(thumbHq) + '" onerror="ytThumbFallback(this)" />'
+    + '<img ' + thumbAttrs + ' />'
     + '<span class="yt-play"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span>'
     + '</button></div>';
 }
@@ -480,8 +509,22 @@ function cardTextHTML(d, url) {
   return h;
 }
 function cardBodyHTML(d, url) {
+  const yt = ytFromUrl(url);
   let h = '<span class="el-body">' + cardTextHTML(d, url) + '</span>';
-  if (d && d.image) {
+  if (yt) {
+    // A YouTube card's poster is OURS to pick, because the id is in the link.
+    // Both sources we would otherwise print it from hand over the same 480x360
+    // frame — the seeded card (painted before any fetch) and the oEmbed answer
+    // the server caches — and the card is drawn hundreds of CSS pixels wide, so
+    // that frame was being stretched and looked pixelated. Asking YouTube's CDN
+    // for the best frame the video actually has is one extra request on a
+    // picture that is already being requested, and the viewer sees it sharp on
+    // a phone's 2x screen too. It does go straight to YouTube rather than
+    // through our own image proxy, which is what the chat facade has always
+    // done for the same frame.
+    h += '<span class="el-media"><img class="el-img" draggable="false" ' + ytThumbAttrs(yt.id, ' width="1280" height="720" alt="" loading="lazy" decoding="async"')
+      + ' /></span>';
+  } else if (d && d.image) {
     const dims = (d.imageW && d.imageH) ? ' width="' + d.imageW + '" height="' + d.imageH + '"' : '';
     h += '<span class="el-media"><img class="el-img" draggable="false" src="' + eh(d.image) + '"' + dims
       + ' alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.closest(\'.el-media\').remove()" /></span>';
@@ -489,9 +532,10 @@ function cardBodyHTML(d, url) {
   return h;
 }
 // The little we can say about a link without asking anybody: a YouTube video's
-// poster frame is a stable URL on YouTube's own CDN (the chat facade already
-// loads it straight from there), so the card has a thumbnail the instant it is
-// painted. The unfurl fills the title and channel in a moment later; an unfurl
+// id is a stable URL on YouTube's own CDN (the chat facade already loads the
+// poster frame straight from there), so the card has a thumbnail the instant it
+// is painted — cardBodyHTML mints it from the id, at the sharpest size YouTube
+// actually has for that video. The unfurl fills the title and channel in a moment later; an unfurl
 // that finds nothing, or is switched off, still leaves a card worth tapping
 // instead of a bare hostname.
 function seedMeta(url) {
@@ -502,9 +546,6 @@ function seedMeta(url) {
     site: 'YouTube',
     title: '',
     description: '',
-    image: 'https://i.ytimg.com/vi/' + id + '/maxresdefault.jpg',
-    imageW: 1280,
-    imageH: 720,
   };
 }
 // The first card for a message gets the full-width treatment; the next few
@@ -796,4 +837,4 @@ function scanInviteCards(root) {
 if (typeof document !== 'undefined') installLinkCards();
 
 // Node test hook (browsers ignore: `module` is undefined there).
-try { if (typeof module !== 'undefined') module.exports = { linkEmbedsHTML, linkifyHTML, storyTextHTML, storyLinkEmbedsHTML, embedForUrl, cleanEmbedUrl, isDirectImageUrl, stripEmbedIgnored, cardBodyHTML, linkCardHTML, setLinkPreviews, inviteFromUrl, inviteCardHTML, fillInvite, fmtMembers, __cardCache: cardCache, __inviteCache: inviteCache }; } catch {}
+try { if (typeof module !== 'undefined') module.exports = { linkEmbedsHTML, linkifyHTML, storyTextHTML, storyLinkEmbedsHTML, embedForUrl, cleanEmbedUrl, isDirectImageUrl, stripEmbedIgnored, cardBodyHTML, ytThumb, ytThumbNext, YT_THUMBS, linkCardHTML, setLinkPreviews, inviteFromUrl, inviteCardHTML, fillInvite, fmtMembers, __cardCache: cardCache, __inviteCache: inviteCache }; } catch {}

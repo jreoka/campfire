@@ -1678,8 +1678,10 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
    a narrow tile reads as a mistake. The width is what is chosen (the height then
    follows from the ratio): 260px is 462px tall, and a phone steps it down so one
    Short never owns the screen. object-fit:cover on the poster is what makes the
-   shape work with hqdefault's pillarboxed 4:3 frame — it crops the bars, not the
-   picture. The played player inherits the same shape. */
+   shape work with YouTube's pillarboxed frame (a vertical video is letterboxed
+   into whatever 4:3 thumbnail we ask for) — it crops the bars, not the picture,
+   and it crops them on every rung of the thumbnail ladder. The played player
+   inherits the same shape. */
 .embed-vertical{width:min(260px,100%)}
 .yt-facade.vertical{aspect-ratio:9/16}
 .embed-vertical .embed-frame.yt-player{aspect-ratio:9/16;height:auto}
