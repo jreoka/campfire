@@ -209,8 +209,12 @@ console.log('\n[2] a story takes the compact card, never chat\'s players');
   for (const u of ['https://youtu.be/dQw4w9WgXcQ', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
     'https://www.youtube.com/shorts/dQw4w9WgXcQ']) {
     const card = storyTextHTML(u);
+    // The poster is minted from the video id at the sharpest frame YouTube has,
+    // and walks its own ladder down (hqdefault) for videos with no HD frame.
     check(card.includes('src="https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg"'),
       'a YouTube sticker carries a poster frame with no unfurl at all: ' + u, card);
+    check(card.includes('data-yt-thumb="dQw4w9WgXcQ"') && /onerror="ytThumbNext\(this\)"/.test(card),
+      "and the card's poster can fall back to a smaller frame: " + u, card);
     check(/>YouTube</.test(card), 'and names the site', card);
   }
   setLinkPreviews(false);

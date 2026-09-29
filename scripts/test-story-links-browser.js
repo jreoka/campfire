@@ -394,7 +394,8 @@ async function main() {
       + ' return { site: (c.querySelector(".el-site") || {}).textContent || "",'
       + ' img: img ? img.getAttribute("src") : "", w: r ? Math.round(r.width) : 0, h: r ? Math.round(r.height) : 0 }; })()');
     check(!!yt && yt.site === 'YouTube', 'the card names YouTube', yt);
-    check(!!yt && /i\.ytimg\.com\/vi\/dQw4w9WgXcQ\/hqdefault\.jpg$/.test(yt.img), 'with the video poster frame', yt);
+    check(!!yt && /i\.ytimg\.com\/vi\/dQw4w9WgXcQ\/maxresdefault\.jpg$/.test(yt.img),
+      'with the sharpest video poster frame (it climbs its own ladder down if that is missing)', yt);
     check(!!yt && yt.w > 0 && yt.h > 0, 'painted, not collapsed', yt);
     const ytPt = await evaluate('window.__points("#sv-ov .embed-link")');
     const ytHit = ytPt && await evaluate('window.__hit(' + ytPt.link.x + ',' + ytPt.link.y + ')');

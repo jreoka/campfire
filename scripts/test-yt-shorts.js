@@ -163,8 +163,42 @@ async function main() {
   check(/class="yt-facade vertical"/.test(short), 'and its facade wears the vertical shape');
   check(short.includes('<span class="embed-src">YouTube</span>'),
     'the label is the provider name alone — a Short is a URL form, not a different site', short.match(/embed-src">[^<]+/));
-  check(short.includes('i.ytimg.com/vi/' + SHORT_ID + '/maxresdefault.jpg'),
-    'the poster is maxresdefault, with hqdefault as the onerror fallback', short.match(/i\.ytimg[^"]+/));
+  check(short.includes('src="https://i.ytimg.com/vi/' + SHORT_ID + '/maxresdefault.jpg"'),
+    'the poster asks for the sharpest frame first (maxresdefault, 1280x720)',
+    short.match(/i\.ytimg[^"]+/));
+  check(short.includes('data-yt-thumb="' + SHORT_ID + '"') && /data-yt-thumb-rung="0"/.test(short)
+    && /onerror="ytThumbNext\(this\)"/.test(short),
+    'and climbs the ladder itself — sddefault then hqdefault — because YouTube 404s maxresdefault for any video it holds no HD frame for',
+    short.match(/data-yt-thumb[^>]+/));
+  check(JSON.stringify(embeds.YT_THUMBS) === JSON.stringify(['maxresdefault', 'sddefault', 'hqdefault'])
+    && embeds.ytThumb(SHORT_ID, 2).endsWith('/hqdefault.jpg'),
+    'the last rung is hqdefault — the 480x360 frame that exists for EVERY id is still the floor', embeds.YT_THUMBS);
+  // The ladder only works if a dead rung actually advances, and only stops at
+  // the end: hqdefault missing must remove the picture, not leave a broken tile.
+  const imgs = [...short.matchAll(/<img ([^>]+)>/g)].map((m) => {
+    const a = {};
+    for (const at of m[1].matchAll(/([\w-]+)="([^"]*)"/g)) a[at[1]] = at[2];
+    return a;
+  }).filter((a) => a['data-yt-thumb']);
+  check(imgs.length === 1 && imgs[0]['data-yt-thumb'] === SHORT_ID,
+    "the facade's poster carries the id and its rung, which is all the handler needs", imgs);
+  // Drive the handler the way onerror does: an exhausted ladder removes the media
+  // box, so a video YouTube has no frame for looks the same as any other card
+  // with no image rather than showing a broken image icon.
+  const probeImg = { attrs: { 'data-yt-thumb': 'aaaaaa', 'data-yt-thumb-rung': '2' },
+    getAttribute(k) { return this.attrs[k]; }, setAttribute(k, v) { this.attrs[k] = v; },
+    src: '', style: {},
+    removed: false,
+    closest(sel) { if (sel !== '.el-media') return null; const self = this; return { remove() { self.removed = true; } }; } };
+  embeds.ytThumbNext(probeImg);
+  check(probeImg.removed === true && probeImg.src === '',
+    'the handler gives up cleanly at the end of the ladder (no broken tile, no further request)', probeImg);
+  const midImg = { attrs: { 'data-yt-thumb': 'aaaaaa', 'data-yt-thumb-rung': '0' },
+    getAttribute(k) { return this.attrs[k]; }, setAttribute(k, v) { this.attrs[k] = v; }, src: '',
+    closest() { return null; } };
+  embeds.ytThumbNext(midImg);
+  check(midImg.src.endsWith('/sddefault.jpg') && midImg.attrs['data-yt-thumb-rung'] === '1',
+    'and steps down one rung at a time, remembering where it is', midImg);
   check(short.includes('youtube-nocookie.com/embed/' + SHORT_ID + '?autoplay=1'), 'and the play url is unchanged');
 
   const watch = embeds.embedForUrl(WATCH);

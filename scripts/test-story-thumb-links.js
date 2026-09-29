@@ -308,8 +308,8 @@ async function main() {
     check(hero.cards === 1, 'the URL is the embed CARD, not a ladder of characters', hero);
     check(hero.leftOver === false, 'and the raw URL text is gone', hero.rawText);
     check(hero.site === 'YouTube', 'the card names the site with no unfurl at all', hero);
-    check(!!hero.poster && /i\.ytimg\.com\/vi\/dQw4w9WgXcQ\/hqdefault\.jpg$/.test(hero.poster),
-      'and carries the video poster frame', hero.poster);
+    check(!!hero.poster && /i\.ytimg\.com\/vi\/dQw4w9WgXcQ\/maxresdefault\.jpg$/.test(hero.poster),
+      'and carries the sharpest video poster frame (falling back down the ladder if it is missing)', hero.poster);
     check(!!hero.wrapPos && hero.wrapPos !== 'static', 'the wrapper is a positioned box', hero.wrapPos);
     check(hero.layerIsContainingBlock, 'so the overlay layer resolves against the thumbnail, not the banner', hero.layerParent);
     check(!!hero.itemFont && !!hero.cardFont,
