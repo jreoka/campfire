@@ -163,8 +163,8 @@ async function main() {
   check(/class="yt-facade vertical"/.test(short), 'and its facade wears the vertical shape');
   check(short.includes('<span class="embed-src">YouTube</span>'),
     'the label is the provider name alone — a Short is a URL form, not a different site', short.match(/embed-src">[^<]+/));
-  check(short.includes('i.ytimg.com/vi/' + SHORT_ID + '/hqdefault.jpg'),
-    'the poster is still hqdefault — it is the fallback for every id', short.match(/i\.ytimg[^"]+/));
+  check(short.includes('i.ytimg.com/vi/' + SHORT_ID + '/maxresdefault.jpg'),
+    'the poster is maxresdefault, with hqdefault as the onerror fallback', short.match(/i\.ytimg[^"]+/));
   check(short.includes('youtube-nocookie.com/embed/' + SHORT_ID + '?autoplay=1'), 'and the play url is unchanged');
 
   const watch = embeds.embedForUrl(WATCH);

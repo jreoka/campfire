@@ -167,18 +167,31 @@ function embedShell(provider, inner) {
   return '<div class="embed"><span class="embed-src">' + esc(provider) + '</span>' + inner + '</div>';
 }
 
+// YouTube poster fallback: maxresdefault 404s on videos that never got a
+// high-res thumbnail — step down to hqdefault, then hide if that's gone too.
+function ytThumbFallback(img) {
+  const fb = img.getAttribute('data-yt-fb');
+  if (fb) { img.removeAttribute('data-yt-fb'); img.src = fb; }
+  else img.style.display = 'none';
+}
+
 function ytEmbedHTML(url, yt) {
   let provider = 'YouTube';
   try { if (new URL(url).hostname.toLowerCase().includes('music.')) provider = 'YouTube Music'; } catch {}
   // A Short gets a 9:16 tile and its card HUGS that tile (styles.css): a
   // full-width card wrapped around a narrow vertical box reads as a mistake. The
-  // poster stays hqdefault — YouTube pillarboxes a vertical frame into that 4:3
-  // thumbnail, and `.yt-facade img{object-fit:cover}` crops exactly those bars
-  // back off, so the picture fills the tile edge to edge at full height. The
+  // poster is maxresdefault (1280x720, true 16:9) — hqdefault is only 480x360
+  // 4:3, so the facade's object-fit:cover was upscaling it into pixelation.
+  // maxres doesn't exist for every video (older/low-res uploads 404), so the
+  // img falls back to hqdefault on error, then hides if that fails too.
+  // For vertical Shorts YouTube pillarboxes a vertical frame into the 4:3
+  // hqdefault, and `.yt-facade img{object-fit:cover}` crops those bars back
+  // off, so the picture fills the tile edge to edge at full height. The
   // provider name is the plain one on both shapes: "Short" is a URL form, not a
   // different site, and the vertical tile already says what it is.
   const vertical = !!yt.shorts;
-  const thumb = 'https://i.ytimg.com/vi/' + yt.id + '/hqdefault.jpg';
+  const thumbMax = 'https://i.ytimg.com/vi/' + yt.id + '/maxresdefault.jpg';
+  const thumbHq = 'https://i.ytimg.com/vi/' + yt.id + '/hqdefault.jpg';
   const play = 'https://www.youtube-nocookie.com/embed/' + yt.id + '?autoplay=1&rel=0';
   // One card anatomy for every provider, YouTube included: the name is the header
   // row above the video (styles.css `.embed-src`) and the facade sits under it,
@@ -190,7 +203,7 @@ function ytEmbedHTML(url, yt) {
   return '<div class="embed' + (vertical ? ' embed-vertical' : '') + '">'
     + '<span class="embed-src">' + esc(provider) + '</span>'
     + '<button type="button" class="yt-facade' + (vertical ? ' vertical' : '') + '" data-yt-play="' + esc(play) + '" aria-label="Play video">'
-    + '<img src="' + esc(thumb) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'" />'
+    + '<img src="' + esc(thumbMax) + '" alt="" loading="lazy" data-yt-fb="' + esc(thumbHq) + '" onerror="ytThumbFallback(this)" />'
     + '<span class="yt-play"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span>'
     + '</button></div>';
 }
@@ -489,9 +502,9 @@ function seedMeta(url) {
     site: 'YouTube',
     title: '',
     description: '',
-    image: 'https://i.ytimg.com/vi/' + id + '/hqdefault.jpg',
-    imageW: 480,
-    imageH: 360,
+    image: 'https://i.ytimg.com/vi/' + id + '/maxresdefault.jpg',
+    imageW: 1280,
+    imageH: 720,
   };
 }
 // The first card for a message gets the full-width treatment; the next few

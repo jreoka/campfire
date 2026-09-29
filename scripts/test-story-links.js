@@ -209,7 +209,7 @@ console.log('\n[2] a story takes the compact card, never chat\'s players');
   for (const u of ['https://youtu.be/dQw4w9WgXcQ', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
     'https://www.youtube.com/shorts/dQw4w9WgXcQ']) {
     const card = storyTextHTML(u);
-    check(card.includes('src="https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"'),
+    check(card.includes('src="https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg"'),
       'a YouTube sticker carries a poster frame with no unfurl at all: ' + u, card);
     check(/>YouTube</.test(card), 'and names the site', card);
   }
