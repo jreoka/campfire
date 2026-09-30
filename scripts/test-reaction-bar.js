@@ -240,7 +240,7 @@ async function main() {
       console.log('\n[B] the count roll in a real browser');
       const CDP_PORT = parseInt(process.env.TEST_CDP_PORT || '9353', 10);
       const chrome = spawn(chromePath, [
-        '--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${path.join(tmp, 'chrome')}`,
+        '--headless=new', '--no-sandbox', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${path.join(tmp, 'chrome')}`,
         '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--disable-dev-shm-usage',
         '--window-size=1200,900', 'about:blank',
       ], { stdio: 'ignore' });

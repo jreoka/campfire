@@ -428,7 +428,7 @@ async function main() {
   });
   await new Promise((res) => server.listen(0, '127.0.0.1', res));
   const port = server.address().port;
-  const chromeProc = spawn(chrome, ['--headless=new', '--remote-debugging-port=' + CDP_PORT,
+  const chromeProc = spawn(chrome, ['--headless=new', '--no-sandbox', '--remote-debugging-port=' + CDP_PORT,
     '--user-data-dir=' + path.join(dir, 'profile'), '--no-first-run', '--no-default-browser-check',
     '--hide-scrollbars', '--window-size=980,820', 'about:blank'], { stdio: 'ignore' });
 

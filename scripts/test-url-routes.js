@@ -395,7 +395,7 @@ async function main() {
     }
 
     chrome = spawn(chromePath, [
-      '--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${path.join(tmp, 'chrome')}`,
+      '--headless=new', '--no-sandbox', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${path.join(tmp, 'chrome')}`,
       '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--disable-dev-shm-usage',
       '--window-size=420,900', 'about:blank',
     ], { stdio: 'ignore' });

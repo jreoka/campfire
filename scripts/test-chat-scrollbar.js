@@ -220,7 +220,7 @@ async function browserChecks() {
 
   // Deliberately NO --hide-scrollbars: every other test wants them out of the
   // way, and this one exists to look at one.
-  const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=' + CDP_PORT,
+  const chrome = spawn(chromePath, ['--headless=new', '--no-sandbox', '--remote-debugging-port=' + CDP_PORT,
     '--user-data-dir=' + path.join(dir, 'profile'), '--no-first-run', '--no-default-browser-check',
     '--window-size=' + DESKTOP.w + ',' + DESKTOP.h,
     'file:///' + page.replace(/\\/g, '/')], { stdio: 'ignore' });

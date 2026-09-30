@@ -149,7 +149,7 @@ async function main() {
     // ---- Chrome + CDP ----
     const profile = path.join(tmp, 'chrome');
     chrome = spawn(chromePath, [
-      '--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${profile}`,
+      '--headless=new', '--no-sandbox', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${profile}`,
       '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--disable-dev-shm-usage',
       '--window-size=1200,900', 'about:blank',
     ], { stdio: 'ignore' });

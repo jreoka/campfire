@@ -130,7 +130,7 @@ async function probeTouch(chrome, url, sizes) {
   const port = 9300 + (process.pid % 400);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-touch-cdp-'));
   const child = spawn(chrome, [
-    '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
+    '--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
     '--remote-debugging-port=' + port, '--user-data-dir=' + path.join(dir, 'prof'), 'about:blank',
   ], { stdio: 'ignore' });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

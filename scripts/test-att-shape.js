@@ -221,7 +221,7 @@ function runChrome(chrome, html, files) {
       // spawn, not spawnSync: the server answering these pictures lives in THIS
       // process, and a synchronous wait would block the event loop and deadlock
       // the page against its own images.
-      const child = spawn(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+      const child = spawn(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
         '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof'), '--window-size=460,1400',
         '--virtual-time-budget=20000', '--dump-dom', 'http://127.0.0.1:' + port + '/'],
         { stdio: ['ignore', 'pipe', 'pipe'] });

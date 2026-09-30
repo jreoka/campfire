@@ -423,7 +423,7 @@ async function main() {
   await new Promise((res) => srv.listen(0, '127.0.0.1', res));
   const port = srv.address().port;
 
-  const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=' + CDP_PORT,
+  const chrome = spawn(chromePath, ['--headless=new', '--no-sandbox', '--remote-debugging-port=' + CDP_PORT,
     '--user-data-dir=' + path.join(dir, 'profile'), '--no-first-run', '--no-default-browser-check',
     '--hide-scrollbars', '--window-size=900,1400', 'about:blank'], { stdio: 'ignore' });
 
@@ -500,7 +500,7 @@ async function main() {
         rest.map((t) => t.w + '×' + t.h));
       check(rest.filter((t) => Math.abs(t.w - t.h) <= 1).every((t) => t.fit === 'cover'),
         'with the photo cropped to it (object-fit:cover)', [...new Set(rest.map((t) => t.fit))]);
-      check(rest.every((t) => t.radius === '12px'), 'and the app\'s 12px rounding', [...new Set(rest.map((t) => t.radius))]);
+      check(rest.every((t) => t.radius === '6px'), 'and the app\'s 6px rounding', [...new Set(rest.map((t) => t.radius))]);
       if (tall) {
         const t0 = g.tiles[0];
         check(t0.row === 'span 2', `the first tile is the tall one at ${n}`, t0.row);

@@ -240,7 +240,7 @@ async function main() {
   const htmlPath = path.join(dir, 'ring.html');
   fs.writeFileSync(htmlPath, pageHtml(solidPx('red'), solidPx('green')));
 
-  const child = spawn(chromePath, ['--headless=new', '--remote-debugging-port=' + CDP_PORT,
+  const child = spawn(chromePath, ['--headless=new', '--no-sandbox', '--remote-debugging-port=' + CDP_PORT,
     '--user-data-dir=' + path.join(dir, 'profile'), '--no-first-run', '--no-default-browser-check',
     '--hide-scrollbars', '--window-size=420,260', 'about:blank'], { stdio: 'ignore' });
 

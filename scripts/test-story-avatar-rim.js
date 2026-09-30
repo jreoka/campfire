@@ -247,7 +247,7 @@ async function main() {
   const htmlPath = path.join(dir, 'rim.html');
   fs.writeFileSync(htmlPath, pageHtml(solid('red'), solid('#00ff00')));
 
-  const child = spawn(chromePath, ['--headless=new', '--remote-debugging-port=' + CDP_PORT,
+  const child = spawn(chromePath, ['--headless=new', '--no-sandbox', '--remote-debugging-port=' + CDP_PORT,
     '--user-data-dir=' + path.join(dir, 'profile'), '--no-first-run', '--no-default-browser-check',
     '--hide-scrollbars', '--window-size=520,540', 'about:blank'], { stdio: 'ignore' });
   let ws;

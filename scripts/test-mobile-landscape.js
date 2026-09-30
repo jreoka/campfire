@@ -290,7 +290,7 @@ async function withChrome(fn) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-land-'));
   const port = 9350 + Math.floor(Math.random() * 200);
   fs.writeFileSync(path.join(tmp, 'page.html'), pageHtml());
-  const chrome = spawn(chromePath, ['--headless=new', `--remote-debugging-port=${port}`,
+  const chrome = spawn(chromePath, ['--headless=new', '--no-sandbox', `--remote-debugging-port=${port}`,
     `--user-data-dir=${path.join(tmp, 'prof')}`, '--no-first-run', '--no-default-browser-check',
     '--disable-gpu', '--disable-dev-shm-usage', '--window-size=1200,900', 'about:blank'], { stdio: 'ignore' });
   let ver = null;

@@ -283,7 +283,7 @@ async function browserChecks(chromePath) {
     if (!up) throw new Error('server did not come up\n' + serverLog.slice(-3000));
 
     chrome = spawn(chromePath, [
-      '--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${path.join(tmp, 'chrome')}`,
+      '--headless=new', '--no-sandbox', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${path.join(tmp, 'chrome')}`,
       '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--disable-dev-shm-usage',
       '--window-size=1200,900', 'about:blank',
     ], { stdio: 'ignore' });

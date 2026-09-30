@@ -141,7 +141,7 @@ async function main() {
   const htmlPath = path.join(dir, 'picker.html');
   fs.writeFileSync(htmlPath, pageHtml());
 
-  const child = spawn(chromePath, ['--headless=new', '--remote-debugging-port=' + CDP_PORT,
+  const child = spawn(chromePath, ['--headless=new', '--no-sandbox', '--remote-debugging-port=' + CDP_PORT,
     '--user-data-dir=' + path.join(dir, 'profile'), '--no-first-run', '--no-default-browser-check',
     '--window-size=900,700', 'about:blank'], { stdio: 'ignore' });
 

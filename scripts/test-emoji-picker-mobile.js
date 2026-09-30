@@ -261,7 +261,7 @@ async function withChrome(fn) {  const chromePath = findChrome();
   if (!block) return skip('could not find the #picker block in public/index.html');
   const htmlPath = path.join(tmp, 'picker.html');
   fs.writeFileSync(htmlPath, pageHtml(block));
-  const chrome = spawn(chromePath, ['--headless=new', `--remote-debugging-port=${port}`,
+  const chrome = spawn(chromePath, ['--headless=new', '--no-sandbox', `--remote-debugging-port=${port}`,
     `--user-data-dir=${path.join(tmp, 'prof')}`, '--no-first-run', '--no-default-browser-check',
     '--disable-gpu', '--disable-dev-shm-usage', '--window-size=1200,900', 'about:blank'], { stdio: 'ignore' });
   let ver = null;

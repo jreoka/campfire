@@ -125,7 +125,7 @@ async function main() {
     // ---- Chrome + CDP (fake camera: no hardware, real MediaStream frames) ----
     const profile = path.join(tmp, 'chrome');
     chrome = spawn(chromePath, [
-      '--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${profile}`,
+      '--headless=new', '--no-sandbox', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${profile}`,
       '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--disable-dev-shm-usage',
       '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream',
       '--autoplay-policy=no-user-gesture-required',

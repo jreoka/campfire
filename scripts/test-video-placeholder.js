@@ -191,7 +191,7 @@ async function main() {
   await new Promise((res) => server.listen(0, '127.0.0.1', res));
   const port = server.address().port;
 
-  const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=' + CDP_PORT,
+  const chrome = spawn(chromePath, ['--headless=new', '--no-sandbox', '--remote-debugging-port=' + CDP_PORT,
     '--user-data-dir=' + path.join(dir, 'profile'), '--no-first-run', '--no-default-browser-check',
     '--hide-scrollbars', '--autoplay-policy=no-user-gesture-required', '--window-size=520,640', 'about:blank'], { stdio: 'ignore' });
 
