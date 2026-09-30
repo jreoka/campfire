@@ -1269,6 +1269,22 @@ document.addEventListener('keydown', (e) => {
     const wrap = ytBtn.closest('.embed');
     const src = ytBtn.getAttribute('data-yt-play');
     if (wrap && src && !wrap.querySelector('iframe')) {
+      // The caption (the video's title and channel) is a row under the video
+      // rather than part of the facade, and it is taken out of the button FIRST:
+      // the player goes in where the button is, and anything still inside the
+      // button at that moment is thrown away with it. Doing it the other way
+      // round put the player in and left the caption behind it, where it was
+      // still in the DOM and still measured — just buried behind the video.
+      //
+      // It is lifted out to sit AFTER the button, not before it. insertBefore
+      // put the caption on the button's left, and the button is then replaced
+      // by the player — so the title arrived ABOVE the video, exactly where it
+      // is not supposed to be, and the card jumped: the caption had been below
+      // the picture for as long as anyone had seen it. A card is a picture with
+      // its caption under it; the caption does not change sides because you
+      // pressed play.
+      const cap = ytBtn.querySelector('.embed-yt-meta');
+      if (cap) ytBtn.parentNode.insertBefore(cap, ytBtn.nextSibling);
       const f = document.createElement('iframe');
       f.className = 'embed-frame yt-player';
       f.src = src;
@@ -1276,8 +1292,9 @@ document.addEventListener('keydown', (e) => {
       f.loading = 'lazy';
       f.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
       f.allowFullscreen = true;
-      // The player takes the facade's place INSIDE the same card, under the same
-      // provider header: the two are the same box, so nothing moves but the tile.
+      // The player takes the facade's place inside the same card, under the same
+      // provider header: the two are the same box, so nothing moves but the
+      // video.
       ytBtn.replaceWith(f);
     }
     return;

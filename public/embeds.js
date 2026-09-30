@@ -1,8 +1,9 @@
 /* Campfire link embeds — client-side rich previews for message links.
- * YouTube / YouTube Music get a click-to-play thumbnail (cheap until played);
- * X, Spotify, SoundCloud, Twitch, TikTok, Instagram, Vimeo and Streamable
- * render their official iframe players; direct image/video/audio links render
- * inline.
+ * YouTube / YouTube Music get a click-to-play thumbnail (cheap until played)
+ * captioned with the video's title and channel, which arrive from the same
+ * cached oEmbed the link cards use; X, Spotify, SoundCloud, Twitch, TikTok,
+ * Instagram, Vimeo and Streamable render their official iframe players; direct
+ * image/video/audio links render inline.
  *
  * Anything else gets a **link card**: a placeholder goes out with the message
  * and the server (unfurl.js, GET /api/unfurl) reads the page's OpenGraph /
@@ -201,6 +202,49 @@ function ytThumbAttrs(id, extra) {
     + (extra || '') + ' onerror="ytThumbNext(this)"';
 }
 
+// The caption under a YouTube card: the video's TITLE, with the channel under
+// it — the one thing about a link a reader cannot get from the picture, and the
+// one thing a poster frame never says. It is laid out rather than stacked on a
+// single line (a title is a sentence), and the site name moves onto the header
+// row beside YOUTUBE, which frees this row from a redundant "YouTube" of its
+// own; YouTube Music keeps "Music", the one word that says which YouTube it is.
+//
+// It is the SAME row in both states of the card: the facade paints it empty and
+// the unfurl fills it in (see fillYtMeta), the player keeps it, and a Short
+// carries the same caption under its narrow tile. So starting the video still
+// changes the tile and nothing else — the rows a reader has already read are not
+// rebuilt underneath them.
+// `done` marks a row that already says everything it is going to say, so the
+// unfurl scan leaves it alone (the same `data-carded` trick the link cards use).
+function ytCaptionHTML(id, title, author, done) {
+  // `id` here is what the row will be ASKED ABOUT, which is the URL the link
+  // was pasted as: the unfurl is keyed by URL and fetched with a URL. This row
+  // once carried the video's own id instead, and every card asked YouTube for a
+  // video id where it expected a link — oEmbed's `404 not found` came back for
+  // all of them and no card was ever captioned. The measured end of that, and of
+  // this, is in scripts/test-yt-titles.js: the card fills with the URL that was
+  // pasted and nothing else.
+  return '<span class="embed-yt-meta"'
+    + (done ? ' data-yt-titled="1"' : (id ? ' data-yt-meta="' + esc(id) + '"' : '')) + '>'
+    + (title ? '<span class="yt-title">' + eh(title) + '</span>' : '')
+    + (author ? '<span class="yt-author">' + eh(author) + '</span>' : '')
+    + '</span>';
+}
+// What a card paints in the caption the moment it is built: the title this
+// video already has in the unfurl cache, or an empty row waiting to be filled —
+// and carrying the URL it will be asked about, because the unfurl is keyed by
+// URL (ytCaptionHTML).
+//
+// It matters that a card NEVER paints a title it knows FROM A FILL: the message
+// list is rebuilt on every socket event, so a caption that refilled a frame
+// after each render would make a title blink out of a message nobody had
+// touched. Same reason the link cards read their cache synchronously.
+function ytCaptionFor(url) {
+  const hit = cardCache.get(url);
+  if (hit && hit.title) return ytCaptionHTML('', hit.title, hit.description || '', true);
+  return ytCaptionHTML(url, '', '');
+}
+
 function embedShell(provider, inner) {
   return '<div class="embed"><span class="embed-src">' + esc(provider) + '</span>' + inner + '</div>';
 }
@@ -222,18 +266,29 @@ function ytEmbedHTML(url, yt) {
   // for one size meant a blurry picture on every link.
   const thumbAttrs = ytThumbAttrs(yt.id, ' alt="" loading="lazy"');
   const play = 'https://www.youtube-nocookie.com/embed/' + yt.id + '?autoplay=1&rel=0';
-  // One card anatomy for every provider, YouTube included: the name is the header
-  // row above the video (styles.css `.embed-src`) and the facade sits under it,
-  // edge to edge. The label used to ride ON the poster as a blurred chip, which
-  // read as a different kind of card from Spotify/X/TikTok and then — once the
-  // player replaced the facade — had to be swapped for a header anyway; the owner
-  // asked for the banner to be there BEFORE the video starts too, so the card now
-  // wears it from the first paint.
+  // One card anatomy for every provider, YouTube included: the name is the
+  // header row above the video (styles.css `.embed-src`), the tile under it edge
+  // to edge, and the title + channel under that (ytCaptionHTML). The label once
+  // rode ON the poster as a blurred chip, which read as a different kind of card
+  // from Spotify/X/TikTok; the owner asked for the banner along the top before
+  // the video starts too, so the card has worn it since.
+  //
+  // The tile and the caption are two blocks inside ONE button: the whole card is
+  // the door, so a reader can hit the title as well as the picture, and the
+  // caption loads on the poster's own `loading="lazy"` rather than jumping into a
+  // row of its own once it lands.
+  //
+  // The header now carries the tail of the URL beside the name — "youtu.be",
+  // "youtube.com" — which is what tells a share link from a bare id, and costs
+  // no height: two short words on a full-width row is nothing, where a row saying
+  // only YOUTUBE was a whole band of card around two words. The band that buys is
+  // spent on the title instead, right under the video, where it is worth having.
   return '<div class="embed' + (vertical ? ' embed-vertical' : '') + '">'
-    + '<span class="embed-src">' + esc(provider) + '</span>'
+    + '<span class="embed-src">' + esc(provider) + '<span class="embed-host">' + esc(embedHost(url)) + '</span></span>'
     + '<button type="button" class="yt-facade' + (vertical ? ' vertical' : '') + '" data-yt-play="' + esc(play) + '" aria-label="Play video">'
-    + '<img ' + thumbAttrs + ' />'
-    + '<span class="yt-play"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span>'
+    + '<span class="yt-tile"><img ' + thumbAttrs + ' />'
+    + '<span class="yt-play"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></span>'
+    + ytCaptionFor(url)
     + '</button></div>';
 }
 
@@ -606,6 +661,67 @@ async function fillCard(el) {
   if (!d) { if (!el.dataset.keep) el.remove(); return; }
   el.innerHTML = cardBodyHTML(d, url);
 }
+// ---------- YouTube card captions ----------
+// A YouTube card is a PLAYER, not a link card: it never carries `data-unfurl`,
+// so the unfurl pass that fills the little cards walked straight past it and the
+// video was a poster frame with no word anywhere saying what it was. The title is
+// sitting in the same oEmbed answer the link cards use — it is already cached,
+// deduped and rate-limited — and all this needs is to ask for it.
+//
+// The fill is the smallest possible DOM edit: one innerHTML on a row of its own
+// that is EMPTY in the first paint, so a message re-render (which rebuilds the
+// list wholesale) repaints the cached answer with nothing to fetch. The card
+// itself, the tile and the player are never touched — which matters, because the
+// reader may be watching this very video by the time the answer lands, and a
+// re-render of the caption box could not yank an iframe out from under them.
+//
+// The empty row is the only one that exists without an answer, and it is
+// invisible: it has no height until there is something to say, so the first
+// paint of a card that never gets filled is exactly the card as it was before
+// titles existed.
+function paintYtMeta(el, d) {
+  if (!el || !el.isConnected || !d || !d.title) return;
+  el.innerHTML = ytCaptionHTML('', d.title, d.description || '', true);
+  el.dataset.ytTitled = '1';
+}
+async function fillYtMeta(el) {
+  const url = el.dataset.ytMeta;
+  if (!url) return;
+  const d = await fetchCard(url);
+  if (!el.isConnected) return;
+  paintYtMeta(el, d);
+}
+function fillYtCard(card) {
+  let rows;
+  try { rows = Array.from(card.querySelectorAll('.embed-yt-meta[data-yt-meta]')); } catch { return; }
+  for (const row of rows) fillYtMeta(row);
+}
+// What gets watched is the CARD, never the row. A caption that has nothing to
+// say has no height (`.embed-yt-meta:empty{display:none}`), and an
+// IntersectionObserver never reports a zero-height element as intersecting — not
+// even when it is on screen. So a row that waited to be asked FOR would never
+// be asked for, and the title would never arrive at all. The card is as tall as
+// its poster, it is what the reader scrolls to, and it carries its rows, so it
+// is the thing worth watching: once it comes into view the rows inside it are
+// filled, and the one that was already tall (a re-render, from the cache) is
+// found on the spot.
+function scanYtMeta(root) {
+  if (!previewsOn || !root || root.nodeType !== 1) return;
+  let nodes;
+  try {
+    nodes = (root.matches && root.matches('.embed-yt-meta[data-yt-meta]'))
+      ? [root] : Array.from(root.querySelectorAll('.embed-yt-meta[data-yt-meta]'));
+  } catch { return; }
+  for (const el of nodes) {
+    if (el.dataset.ytTitled) continue;
+    let card;
+    try { card = el.closest('.embed'); } catch { card = null; }
+    const watch = card || el;
+    if (card && card.dataset.ytScanned) continue;   // its other rows are watched by the same card
+    watch.dataset.ytScanned = '1';
+    if (cardObserver) cardObserver.observe(watch); else fillYtCard(watch);
+  }
+}
 function scanLinkCards(root) {
   if (!previewsOn || !root || root.nodeType !== 1) return;
   let nodes;
@@ -625,11 +741,22 @@ function scanLinkCards(root) {
 function installLinkCards() {
   try {
     if (typeof IntersectionObserver === 'function') {
+      // One observer, three kinds of card. Which one an element is is read off
+      // the element, not off a list of pending promises: everything it could be
+      // asked for lives on that node (a link card's URL, an invite's code, a
+      // YouTube caption's video), and the observer holds the same references the
+      // scans do. Dispatching on anything else — a parallel array of observed
+      // elements, say — is how an element ends up being handed to a filler that
+      // cannot read it and quietly does nothing, which is exactly what a caption
+      // row would look like from the outside: filled, marked, never asked for.
       cardObserver = new IntersectionObserver((entries) => {
         for (const e of entries) {
           if (!e.isIntersecting) continue;
-          cardObserver.unobserve(e.target);
-          fillCard(e.target);
+          const el = e.target;
+          cardObserver.unobserve(el);
+          if (el.dataset && el.dataset.unfurl) fillCard(el);
+          else if (el.dataset && el.dataset.invite) fillInvite(el);
+          else if (el.dataset && el.dataset.ytScanned) fillYtCard(el);
         }
       }, { rootMargin: '600px 0px' });
     }
@@ -638,7 +765,7 @@ function installLinkCards() {
   let scheduled = false;
   const flush = () => {
     scheduled = false;
-    for (const n of seen) { scanLinkCards(n); scanInviteCards(n); }
+    for (const n of seen) { scanLinkCards(n); scanInviteCards(n); scanYtMeta(n); }
     seen.clear();
   };
   let mo = null;
@@ -654,6 +781,7 @@ function installLinkCards() {
   const start = () => {
     scanLinkCards(document.body);
     scanInviteCards(document.body);
+    scanYtMeta(document.body);
     document.addEventListener('click', inviteCardClick);
     try { if (mo) mo.observe(document.body, { childList: true, subtree: true }); } catch {}
   };
@@ -837,4 +965,4 @@ function scanInviteCards(root) {
 if (typeof document !== 'undefined') installLinkCards();
 
 // Node test hook (browsers ignore: `module` is undefined there).
-try { if (typeof module !== 'undefined') module.exports = { linkEmbedsHTML, linkifyHTML, storyTextHTML, storyLinkEmbedsHTML, embedForUrl, cleanEmbedUrl, isDirectImageUrl, stripEmbedIgnored, cardBodyHTML, ytThumb, ytThumbNext, YT_THUMBS, linkCardHTML, setLinkPreviews, inviteFromUrl, inviteCardHTML, fillInvite, fmtMembers, __cardCache: cardCache, __inviteCache: inviteCache }; } catch {}
+try { if (typeof module !== 'undefined') module.exports = { linkEmbedsHTML, linkifyHTML, storyTextHTML, storyLinkEmbedsHTML, embedForUrl, cleanEmbedUrl, isDirectImageUrl, stripEmbedIgnored, cardBodyHTML, ytThumb, ytThumbNext, YT_THUMBS, ytCaptionHTML, ytEmbedHTML, linkCardHTML, setLinkPreviews, inviteFromUrl, inviteCardHTML, fillInvite, fmtMembers, __cardCache: cardCache, __inviteCache: inviteCache }; } catch {}

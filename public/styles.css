@@ -1647,7 +1647,13 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
    this header the moment the player replaced the facade (owner request: "can we
    keep the banner along the top of the embed the way it is before starting the
    video too"). */
-.embed-src{display:block;font-size:.68rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);padding:.5rem .8rem;border-bottom:1px solid var(--line-soft)}
+.embed-src{display:flex;align-items:baseline;gap:.5rem;font-size:.68rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);padding:.5rem .8rem;border-bottom:1px solid var(--line-soft);white-space:nowrap}
+/* The tail of the URL, opposite the provider name: a shared YouTube link is
+   "youtu.be" or "youtube.com/shorts/…", and on its own that tail is the most
+   useful thing in the row — it is what tells a share link from a bare id, and
+   it is the only part of the header that ever said something. Faint, and cut off
+   rather than wrapped, so it cannot open a second line under a one-line banner. */
+.embed-src .embed-host{margin-left:auto;font-weight:600;letter-spacing:0;text-transform:none;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .embed-frame{display:block;width:100%;border:0;background:#000}
 .embed-169{aspect-ratio:16/9}
 .embed-169 .embed-frame{width:100%;height:100%}
@@ -1670,7 +1676,8 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
 /* The click-to-play tile, inside the card's own chrome and under its header row.
    No inset hairline of its own any more: the card's border box is what draws that
    edge now that the facade is no longer the whole card. */
-.yt-facade{position:relative;display:block;width:100%;aspect-ratio:16/9;border:0;padding:0;background:#000;cursor:pointer}
+.yt-facade{position:relative;display:flex;flex-direction:column;align-items:stretch;width:100%;border:0;padding:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.yt-facade .yt-tile{position:relative;display:block;width:100%;aspect-ratio:16/9;background:#000}
 .yt-facade img{width:100%;height:100%;object-fit:cover;display:block}
 /* A YouTube SHORT is shot vertical, so its facade is a vertical rectangle — the
    16:9 box showed it as a pillarboxed strip (reported). Two pieces: the tile takes
@@ -1683,7 +1690,7 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
    and it crops them on every rung of the thumbnail ladder. The played player
    inherits the same shape. */
 .embed-vertical{width:min(260px,100%)}
-.yt-facade.vertical{aspect-ratio:9/16}
+.yt-facade.vertical .yt-tile{aspect-ratio:9/16}
 .embed-vertical .embed-frame.yt-player{aspect-ratio:9/16;height:auto}
 @media (max-width:700px),(max-height:560px) and (pointer:coarse){
   .embed-vertical{width:min(220px,100%)}
@@ -1694,6 +1701,30 @@ img.att-img.att-held{position:absolute;inset:0;margin:auto;z-index:1}
    design, on user content, where it belongs. */
 .yt-play{position:absolute;inset:0;margin:auto;width:62px;height:62px;border-radius:8px;background:rgba(8,11,20,.7);color:#fff;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);box-shadow:0 0 0 1px rgba(255,255,255,.14);transition:background .15s,transform .15s}
 .yt-facade:hover .yt-play{background:#f00;transform:scale(1.05)}
+/* The caption under a YouTube card: the video's title, then the channel that
+   posted it (embeds.js ytCaptionHTML). The picture says what the video LOOKS
+   like and nothing about what it IS, and a poster frame is the only thing a
+   YouTube link used to say anything at all.
+   The title is the card's real text — the same `.el-title` weight and colour a
+   link card uses, so the two kinds of card read as one family — and it takes
+   the lines it needs: a YouTube title is a sentence, and clamping it to one
+   made a card that had finally been told the video's name still not enough room
+   to say it. The channel is the second line because that is what a link card
+   shows for a description. */
+/* A card the unfurl has nothing for says nothing: the empty row takes no height
+   at all, so a video whose title never arrives is exactly the poster it was
+   before titles existed, and the row that does get an answer does not shift the
+   tile above it. */
+.embed-yt-meta{display:block;padding:.55rem .8rem .65rem;min-width:0}
+.embed-yt-meta:empty{display:none}
+.yt-title{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;font-size:.92rem;font-weight:650;line-height:1.35;overflow-wrap:anywhere}
+.yt-author{display:block;margin-top:.15rem;font-size:.78rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* A Short's card is a narrow column, so a full YouTube title in it is a wall of
+   four or five words a line. The tile is the Short; the caption is the name of
+   it, and it shrinks to suit the shape rather than running on beside a 9:16
+   tile set in the same size as a 16:9 one. */
+.embed-vertical .yt-title{-webkit-line-clamp:3;font-size:.86rem}
+.embed-vertical .yt-author{font-size:.74rem}
 /* Inline media that carries its own shape: the picture (or the clip) IS the card,
    so the card's surface and hairline step aside — one boundary, not two. */
 /* A picture-only message is the ONE media shape with no `.embeds` wrapper —
