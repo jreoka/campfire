@@ -60,7 +60,11 @@ check('boot reports the IANA zone', auth.includes('reportTimezone()'));
 check('styles: .uc-localtime', /\.uc-localtime\{/.test(css));
 check('styles: .pf-localtime', /\.pf-localtime\{/.test(css));
 check('card row reads --uc-faint on custom backdrops', /#usercard \.uc-localtime\{color:var\(--uc-faint\)\}/.test(css));
-check('SW cache bumped for the frontend change', /const CACHE = 'campfire-v707'/.test(sw));
+// v707 is the bump this feature shipped with; later features bumped it
+// further, so assert the bump survived rather than pinning an exact number.
+const swCache = (/const CACHE = 'campfire-v(\d+)'/.exec(sw) || [])[1];
+check('SW cache bumped for the frontend change', !!swCache && Number(swCache) >= 707,
+      'campfire-v' + swCache);
 
 // ---------- extracted pure functions, executed for real ----------
 function extract(re, name) {

@@ -91,6 +91,10 @@ function pageHtml() {
 <script>
 const $ = (s) => document.querySelector(s);
 function toast() {}
+// closeLightbox() dismisses an open context menu / hold sheet. Those live in
+// actions.js, which this harness page never loads, so stub them.
+function closeCtx() {}
+function closeCtxSheet() {}
 ${lbBlock}
 window.__open = openLightbox;
 window.__close = closeLightbox;
