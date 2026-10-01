@@ -161,7 +161,10 @@ function main() {
       const t = /<title>([\s\S]*?)<\/title>/.exec(r.stdout || '');
       if (!t) check(false, 'the fixture page ran', { status: r.status });
       else {
-        const out = JSON.parse(t[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
+        // Unescape in the same order the serializer nests: --dump-dom re-escapes
+        // the "&" of the fixture's own "&quot;" into "&amp;quot;", so &amp; must
+        // be undone first or it would eat the quot entities it wraps.
+        const out = JSON.parse(t[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"'));
         check(out.blurred.v === 'hidden' && out.blurred.o === '0' && out.blurred.p === 'none',
           'with win-blurred on <body>, the bar computes hidden/transparent/unclickable', out.blurred);
         check(out.unblurred.v === 'hidden' && out.unblurred.o === '0',

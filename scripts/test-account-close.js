@@ -187,7 +187,7 @@ function browserHalf() {
   <div class="modal">
     <h3 id="modal-title">t</h3>
     <div id="modal-body"></div>
-    <div class="row end"><button id="modal-close" class="btn">Cancel</button><button id="modal-ok" class="btn primary">OK</button></div>
+    <div class="row end"><button id="modal-x" class="mini modal-x" title="Close" aria-label="Close"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button><button id="modal-close" class="btn">Cancel</button><button id="modal-ok" class="btn primary">OK</button></div>
   </div>
 </div>
 <script>
