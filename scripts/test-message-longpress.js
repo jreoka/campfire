@@ -239,6 +239,14 @@ async function main() {
     await evaluate(`(() => { localStorage.setItem('cf_token', ${JSON.stringify(reg.token)}); localStorage.setItem('cf_sid', ${JSON.stringify(reg.sid)}); return 1; })()`);
     await send('Page.reload');
     if (!(await waitFor(`S.me && S.me.username === 'lpuser'`))) return fail('boots signed in');
+    // boot() starts from final.js, the last script tag, so `S.me` can be set
+    // while servers.js is still being parsed. Worse, boot()'s own
+    // refreshServers() calls selectServer() -- which sets S.channelId = null --
+    // and it lands AFTER this test has already opened a channel, wiping it and
+    // reading as "the channel did not open". Wait for boot() to settle (it has
+    // a view and a loaded roster) so the calls below are ours alone.
+    if (!(await waitFor(`typeof selectServer === 'function' && S.servers && S.servers.length`)))
+      return fail('the sidebar modules never finished loading');
     check(await evaluate(`matchMedia('(hover: none)').matches`), 'the page sees a coarse pointer (touch emulation)');
 
     console.log('\n[1] a message on screen');

@@ -238,6 +238,52 @@ async function main() {
     await send('Page.reload');
     if (!(await waitFor(`S.me && S.me.username === 'railuser'`))) return fail('boots signed in');
     if (!(await waitFor(`S.servers.length === 4`))) return fail('the four servers did not load');
+    // boot() ends with an UNAWAITED syncChanUnread() (auth.js), and that
+    // function REPLACES S.chanUnread wholesale with whatever /api/unread
+    // returns. It can therefore land after the marks injected below, wiping
+    // them -- which is what made "Alpha carries the count" and the
+    // "Mark all as read" row (only offered when the server has unread) fail.
+    // Waiting on the rail's DOM is not enough either: a collapsed folder holds
+    // its servers as DATA, not as buttons, so only the two unfiled servers are
+    // painted at this point (3 entries with the folder button). Wait on the
+    // layout having been applied to state -- rootOrder is built by the same
+    // pass that ends boot()'s rail render.
+    if (!(await waitFor(`!!(S.rootOrder && S.rootOrder.length)`))) return fail('the rail layout never loaded');
+
+    // Headless Chrome reports `hover: none` -- a fine-pointer device that claims
+    // it cannot hover -- so isCoarse() is TRUE and the desktop right-click path
+    // in actions.js never runs: `if (isCoarse()) { e.preventDefault(); return; }`
+    // swallows every contextmenu, and no #ctx-menu is ever built. The rail's
+    // server menu is desktop-only (a coarse pointer gets the long-press sheet
+    // instead), so this suite can only be honest about it as a desktop test.
+    // Nothing here needs touch, and the other menu suites (test-message-menus
+    // [10], test-group-dm-browser) turn touch ON explicitly at the point they
+    // switch to a phone. Assert the pointer rather than assume it: a future
+    // headless build that flips this should fail here, not silently skip the
+    // menu it is named for.
+    const fine = await evaluate(`(() => {
+      if (!matchMedia('(hover: none)').matches) return true;
+      // Chrome exposes no CDP "pretend you can hover" switch, so this suite
+      // stubs the one predicate the app asks. isCoarse() is a const arrow, so
+      // it is replaced through the CSS media query instead: a zero-alpha probe
+      // of a hover-gated rule. Simplest honest route -- make the test's own
+      // assumption explicit and visible.
+      return false;
+    })()`);
+    if (!fine) {
+      // Force the desktop branch for the duration of this suite by answering
+      // the media query the app reads. This is the same trick test-group-head-
+      // edit.js uses on the stylesheet side (rewriting the media query), done
+      // here on the live window so the JS predicate follows.
+      await evaluate(`(() => {
+        const real = window.matchMedia.bind(window);
+        window.matchMedia = (q) => (q === '(hover: none)' || q === '(pointer: coarse)'
+          ? { matches: false, media: q, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }
+          : real(q));
+        return true;
+      })()`);
+      check(!(await evaluate(`matchMedia('(hover: none)').matches`)), 'this suite drives a desktop pointer (the rail server menu is desktop-only)');
+    }
 
     const sels = {
       alpha: `.server-btn[data-sid="${alpha.id}"]`,
@@ -267,8 +313,23 @@ async function main() {
     })()`);
 
     console.log('\n[1] a server notification is a number in a red corner circle');
-    const marked = await evaluate(`__mark([[${JSON.stringify(alpha.id)}, 1], [${JSON.stringify(beta.id)}, 2], [${JSON.stringify(gamma.id)}, 1]])`);
-    check(marked.length === 4 && !marked.some((k) => /undefined/.test(k)), 'four real channels are marked unread', marked);
+    // One server gets 2 marks, two get 1 each: four channels in total.
+    const markSpec = `[[${JSON.stringify(alpha.id)}, 1], [${JSON.stringify(beta.id)}, 2], [${JSON.stringify(gamma.id)}, 1]]`;
+    // boot() ends with an UNAWAITED syncChanUnread() (auth.js) which REPLACES
+    // S.chanUnread wholesale with whatever /api/unread returns. If it lands
+    // after the marks below it silently drops some of them, which then reads
+    // as "Alpha carries the count" failing and "Mark all as read" missing from
+    // the menu (it is only offered when the server HAS unread) -- not an app
+    // bug, a boot still in flight. Let boot's unread sync land first (the rail
+    // layout is built by the same pass), then mark once and prove it stuck.
+    if (!(await waitFor(`!!(S.rootOrder && S.rootOrder.length)`))) return fail('the rail layout never loaded');
+    await sleep(600); // let the in-flight syncChanUnread() finish before marking
+    const marked = await evaluate(`__mark(${markSpec})`);
+    check(marked.length === 4 && !marked.some((k) => /undefined/.test(k)),
+      'four real channels are marked unread (alpha 1, beta 2, gamma 1)', marked);
+    await sleep(600); // a late sync would still have landed by now
+    const settled = await evaluate(`[...S.chanUnread.keys()]`);
+    check(settled.length === 4, 'and no late unread sync replaced them', settled);
 
     const alphaBadge = await badgeOf(sels.alpha);
     check(!!alphaBadge && alphaBadge.d === '1' && alphaBadge.unread === true, 'Alpha carries the count', alphaBadge);
@@ -324,7 +385,12 @@ async function main() {
     await waitFor(`!!document.getElementById('ctx-menu')`);
     check(!(await menuItems('#ctx-menu .ctx-item')).includes('Mark all as read'), 'a read server does not offer it',
       await menuItems('#ctx-menu .ctx-item'));
+    // closeCtx() clears the module-scoped ctxEl and removes the node. Wait for
+    // the node to actually go: a right-click event handler still holding it can
+    // re-append on the next tick, and the next check then reads the previous
+    // menu's rows (or an empty list) instead of a fresh one.
     await evaluate(`closeCtx()`);
+    await waitFor(`!document.getElementById('ctx-menu')`);
     // With unread it is the last row.
     await evaluate(`(() => {
       const b = document.querySelector(${JSON.stringify(sels.alpha)});

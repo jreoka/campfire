@@ -261,7 +261,15 @@ async function main() {
       const enterAs = async (token) => {
         await evaluate(`localStorage.setItem('cf_token', ${JSON.stringify(token)})`);
         await cmd('Page.reload');
+        // `S.me` is set partway through boot(), but boot() itself is kicked off
+        // from final.js — the LAST script tag — so `!!S.me` can be true while
+        // servers.js is still being parsed, and refreshServers/selectServer do
+        // not exist yet. Wait for the app's own view state instead: boot() only
+        // lands there once every module is loaded and the roster is in.
         if (!(await waitFor(`typeof S !== 'undefined' && !!S.me`))) throw new Error('the app did not boot');
+        if (!(await waitFor(`typeof selectServer === 'function' && typeof refreshServers === 'function'`)))
+          throw new Error('the sidebar modules never finished loading');
+        if (!(await waitFor(`S.view && S.me`))) throw new Error('boot() never settled a view');
         await evaluate(`(async () => { await refreshServers(${JSON.stringify(sid)}); await selectServer(${JSON.stringify(sid)}); await selectChannel(${JSON.stringify(chid)}); return true; })()`);
         if (!(await waitFor(`S.channelId === ${JSON.stringify(chid)}`))) throw new Error('the channel did not open');
       };
