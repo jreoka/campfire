@@ -99,7 +99,10 @@ function findChrome() {
 function clickPageHtml() {
   const escSrc = slice(core, 'function esc(s) {', '// Layout size of a popup');
   const codeSrc = slice(pickers, 'function fmtCountdown(ts) {', 'async function clearMyStatus() {');
-  const closer = slice(finalSrc, 'function clickInPath(e, sels) {', " document.addEventListener('click'");
+  // Same boundary as test-user-card-layer.js, and for the same reason:
+  // stopping at the delegate further down drags in the read-tracking code,
+  // whose \$('#chat').addEventListener(...) throws on this page (no #chat).
+  const closer = slice(finalSrc, 'function clickInPath(e, sels) {', '// The message hover bar');
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
 <link rel="stylesheet" href="file:///${ROOT.replace(/\\/g, '/')}/public/styles.css"></head><body>
 <div id="usercard"><div class="uc-body"><div id="presence-slot"></div></div></div>

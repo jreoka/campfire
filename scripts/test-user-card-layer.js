@@ -158,7 +158,11 @@ const uidFnSrc = slice(pickers, 'function uidClickTarget(e) {', '\n// ----------
 const modalSrc = slice(ui, 'let modalOkFn = null;', '// Promise-based confirm dialog.');
 // The card's real outside-click predicate + the over-pop stand-down, run
 // verbatim against the card this page opens.
-const closerSrc = slice(final, 'function clickInPath(e, sels) {', ' document.addEventListener');
+// Ends at the comment that starts the NEXT unrelated block, not at the
+// document.addEventListener further down: unrelated read-tracking code now
+// sits between the two, and it binds #chat at load time, so dragging it in
+// here threw on a page with no #chat and the harness never ran at all.
+const closerSrc = slice(final, 'function clickInPath(e, sels) {', '// The message hover bar');
 function pageHtml() {
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
 <style>${css}</style></head><body>
@@ -279,7 +283,6 @@ document.title = JSON.stringify(out);
 function runChrome(chromePath, dir, w, h) {
   const p = path.join(dir, `page-${w}x${h}.html`);
   fs.writeFileSync(p, pageHtml());
-  fs.writeFileSync('/tmp/uc-gen-' + w + 'x' + h + '.html', pageHtml());
   const r = spawnSync(chromePath, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
     '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof-' + w), `--window-size=${w},${h}`,
     '--virtual-time-budget=2000', '--dump-dom', 'file:///' + p.replace(/\\/g, '/')],

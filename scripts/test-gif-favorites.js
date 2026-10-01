@@ -142,9 +142,11 @@ function wiringChecks() {
     'a forwarded GIF keeps it (it must stay starrable in its new home)');
 
   console.log('\n[A4] the star is on the picture, and the menu carries the same action');
-  // The image branch hands the star the pending flag (nothing to star until the
-  // bytes are the final ones — see attFavHTML), so the call form carries it.
-  check(/function attFavHTML\(a, pending\)/.test(messages) && /\$\{attFavHTML\(a, pending\)\}/.test(messages),
+  // One call form, no flags: the pending-media card was removed entirely
+  // (d9bda55), so there is no "bytes are not final yet" state left to wait
+  // for. What still gates the star is the identity — gifFavKeyFor returns ''
+  // for anything there is no remote Klipy item behind (see below).
+  check(/function attFavHTML\(a\)/.test(messages) && /\$\{attFavHTML\(a\)\}/.test(messages),
     'the image branch renders it');
   check(/function gifFavKeyFor\(a\)/.test(messages) && /if \(a\.gif_slug\) return a\.gif_slug;/.test(messages),
     'a picker post is keyed on its Klipy slug');
@@ -167,9 +169,9 @@ function wiringChecks() {
     && /Add GIF to favorites/.test(actions) && /Remove GIF from favorites/.test(actions),
     'the message menu offers the same action for a touch/keyboard path');
   const imageBranch = slice(messages, "if (a.kind === 'image') {", "if (a.kind === 'video')");
-  check(imageBranch.includes('${attFavHTML(a, pending)}') && (messages.match(/attFavHTML\(a, pending\)/g) || []).length === 2,
+  check(imageBranch.includes('${attFavHTML(a)}') && (messages.match(/attFavHTML\(a\)/g) || []).length === 2,
     'and it rides the image branch only (never a video or a file card)',
-    (messages.match(/attFavHTML\(a, pending\)/g) || []).length);
+    (messages.match(/attFavHTML\(a\)/g) || []).length);
   check(/else for \(const g of gifResults\) box\.appendChild\(gifButton\(g, gifFavMatch\(S\.gifFavs, g\.slug, g\.gif\),/.test(pickers),
     'a picker tile reads starred from either key too (starred in chat, lit in All GIFs)');
 
@@ -337,6 +339,11 @@ document.title = JSON.stringify({
   wrap: r(wrap), starBox: r(star), dlBox: r(dl),
   starCss: cs(star), dlCss: cs(dl),
   opacity: star ? getComputedStyle(star).opacity : null,
+  // Headless Chrome answers any-hover:none, so the (hover:none) rules apply
+  // and the button is legitimately visible without a pointer. The two hover
+  // assertions below read this to report that rather than a bare 0.9.
+  canHover: !!(window.matchMedia && matchMedia('(any-hover: hover)').matches),
+  hoverMedia: !!(window.matchMedia && matchMedia('(hover: hover)').matches),
   imgSrc: (wrap.querySelector('img.att-img') || {}).getAttribute ? wrap.querySelector('img.att-img').getAttribute('src') : null,
 });
 </script></body></html>`;
@@ -424,7 +431,14 @@ async function browserChecks(chrome, gifAtt) {
     'the button carries the key, gif, thumb, mp4 and the title (with the .gif suffix stripped)', out.star);
   check(out.on === false && out.pressed === 'false' && out.title === 'Add to favorites',
     'an unstarred GIF reads as unstarred', out);
-  check(out.opacity === '0', 'and on a mouse device it waits for the hover (like the download button)', out.opacity);
+  // On a real pointer the button waits for hover (opacity 0). Headless Chrome
+  // reports no hover at all, so the shipped (hover:none) rule applies and 0.9 is
+  // the CORRECT value there -- both are asserted below by media query, so either
+  // measurement here is the right one for the environment it was taken in.
+  const starHoverState = out.canHover
+    ? (out.opacity === '0' ? null : 'the star sits visible on a device that CAN hover: ' + out.opacity)
+    : (out.opacity === '0.9' ? null : 'no-hover Chrome but the star measured ' + out.opacity);
+  check(!starHoverState, 'and it reveals on hover on a pointer device, and stands down on touch', starHoverState);
 
   console.log('\n[C2] it sits beside the download button, on the picture');
   check(out.starBox && out.wrap && out.starBox.x >= out.wrap.x && out.starBox.y >= out.wrap.y &&
@@ -436,11 +450,23 @@ async function browserChecks(chrome, gifAtt) {
     'with enough gap that their 44px thumb boxes cannot overlap', { star: out.starBox, dl: out.dlBox });
   check(out.starBox && out.starBox.x - out.wrap.x > out.wrap.w / 2 && out.starBox.y - out.wrap.y < 12,
     'top-right, on the picture\'s top edge', { star: out.starBox, wrap: out.wrap });
+  // Same box, same rounding, same scrim. "Reveal" is compared by the media query
+  // rather than the resolved opacity: on touch the two stand down to different
+  // values on purpose (the download button goes fully opaque, the star stops at
+  // .9 so it never competes with the picture it sits on), so demanding equal
+  // resolved opacities only ever holds on a pointer, where both are 0.
   check(out.starCss && out.dlCss && out.starCss.radius === out.dlCss.radius && out.starCss.bg === out.dlCss.bg &&
-    out.starCss.w === out.dlCss.w && out.starCss.h === out.dlCss.h && out.starCss.opacity === out.dlCss.opacity,
-    'and the two are a matched pair — same box, rounding, scrim and reveal',
+    out.starCss.w === out.dlCss.w && out.starCss.h === out.dlCss.h && out.starCss.position === out.dlCss.position,
+    'and the two are a matched pair — same box, rounding and scrim',
     { star: out.starCss, dl: out.dlCss });
-  check(out.dlCss && out.dlCss.radius === '10px' && out.dlCss.w === '32px',
+  check(/\.att-wrap:hover \.att-star,\.att-star:focus-visible\{opacity:1\}/.test(css)
+    && /\.att-wrap:hover \.att-dl,\.att-dl:focus-visible\{opacity:1\}/.test(css),
+    'and both are revealed together on hover');
+  // 5px, not the 10px this test used to assert: dd3beb9 halved every literal
+  // radius app-wide. The point of the check is "a rounded square, not the old
+  // circle", so it now pins the shipped value AND the fact that it is shared
+  // with the star -- the two are a matched pair by contract.
+  check(out.dlCss && out.dlCss.radius === '5px' && out.dlCss.w === '32px' && out.starCss.radius === out.dlCss.radius,
     'the download button is a rounded square, not the old circle', out.dlCss);
 
   console.log('\n[C3] the audio player and a text/code card keep that button INLINE');

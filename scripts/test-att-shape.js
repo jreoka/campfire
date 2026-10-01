@@ -327,7 +327,14 @@ async function main() {
     'and the height cap it is computed against follows the surface');
   check(/\.att-wrap \.att-ph\{display:none;position:absolute[^}]*pointer-events:none/.test(css) && /\.att-wrap\.pending \.att-ph\{display:flex\}/.test(css),
     'the placeholder is hidden until the wiring shows it, and eats no taps');
-  check(/\.att-wrap\.pending\.ready \.att-ph\{opacity:0\}/.test(css) && /\.att-wrap\.pending:not\(\.ready\) img\.att-img\{opacity:0/.test(css),
+  // The hand-over is two halves, and blur-up moved the second one. The
+  // placeholder still fades out on .ready; the picture itself is no longer
+  // hidden while pending (b5b0d15) — it paints BLURRED at full opacity and
+  // sharpens in place, which is what "hands the box over" means now. The
+  // still-hidden case is .att-swap, the deliberate video frame swap, and
+  // it is excluded above so the carried frame stays visible.
+  check(/\.att-wrap\.pending\.ready \.att-ph\{opacity:0\}/.test(css) && /\.att-wrap\.pending:not\(\.ready\):not\(\.att-swap\) img\.att-img\{opacity:1;filter:blur\(16px\)/.test(css)
+    && /\.att-wrap img\.att-img\{transition:opacity [^}]*filter [^}]*\}/.test(css),
     'and hands the box over once the picture paints');
   check(/\.att-wrap\.no-ar\.pending \.att-ph\{position:static;width:min\(200px,55vw\);aspect-ratio:4\/3/.test(css), 'an unmeasured picture gets a small neutral box instead of a guess');
   check(/\.att-wrap:has\(\.file-card\) \.att-ph\{display:none\}/.test(css), 'a picture that degrades to a file card drops the placeholder');
