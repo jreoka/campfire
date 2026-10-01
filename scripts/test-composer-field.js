@@ -59,6 +59,11 @@ function findChrome() {
   return candidates.find((p) => { try { return fs.existsSync(p); } catch { return false; } }) || null;
 }
 
+// A visible flex box reads `inline-flex` in the flow and `flex` when it is a
+// flex item -- CSS blockifies the outer display of a flex item. On the phone the
+// tool rail is display:block with every key position:absolute, so BOTH spellings
+// mean "shown"; only the display:none cases below must read exactly 'none'.
+const shown = (d) => d === 'flex' || d === 'inline-flex';
 const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
 const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
 const core = fs.readFileSync(path.join(ROOT, 'public/js/core.js'), 'utf8');
@@ -96,18 +101,47 @@ function ruleFor(sel) {
   return null;
 }
 
-function pageHtml() {
+function pageHtml(coarse) {
+  // The stylesheet is INLINED rather than <link>ed. A file:// <link> applies
+  // fine -- it is only JS access to its cssRules that is CORS-blocked -- but
+  // inlining is what lets `coarse` rewrite the touch-gated media conditions
+  // below in place, and keeps this fixture identical to the sibling suites'
+  // reading of one and the same sheet.
+  //
+  // coarse additionally restates every TOUCH-gated media condition as one a
+  // --dump-dom page can match, since it has no CDP channel for real touch
+  // emulation. This has to cover more than the two standalone blocks: the
+  // phone shell is `(max-width:700px),(max-height:560px) and (pointer:coarse)`,
+  // whose width half matched while its touch half silently did not -- so the
+  // phone measured keys that the phone rules never showed. No rule is added,
+  // removed or reordered; only the conditions change.
+  let sheet = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
+  if (coarse) for (const [cond, plain] of [
+    ['@media (pointer:coarse){', '@media all{'],
+    ['@media (hover:none){', '@media all{'],
+    ['@media (hover:hover){', '@media all{'],
+    ['(max-height:560px) and (pointer:coarse)', 'all'],
+    ['(pointer:coarse) and (min-width:701px)', 'all'],
+    ['(pointer:coarse)', 'all'],
+  ]) sheet = sheet.split(cond).join(plain);
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="file:///${ROOT.replace(/\\/g, '/')}/public/styles.css">
-<style>#chat{display:flex;flex-direction:column;height:100vh}
- #sidebar{width:268px;flex:0 0 auto}
+<style data-sheet${coarse ? ' data-coarse' : ''}>${sheet}</style>
+<style>#chat{height:100vh}
  /* The thread panel rises in with cf-rise, whose first frame is scale(.985) —
     and a --dump-dom page never advances that animation, so an un-suppressed
     panel measures 1.5% small and every one of its boxes with it. Measure the
     settled layout the reader actually ends up looking at. */
  #thread-panel{animation:none!important}</style></head><body>
-<div style="display:flex;height:100vh"><aside id="sidebar"><div style="flex:1"></div>${meCardMarkup}</aside>
+<!-- The REAL shell, minus the parts the composer does not touch. On a phone
+     #left is not a flex column beside #chat at all: it is a fixed, off-canvas
+     drawer (translateX(-102%)). The fixture used to synthesise a desktop
+     <aside id="sidebar"> column pinned open next to the chat, which ate 268px
+     of a 390px viewport -- the field then measured 154.8px wide, overflowing
+     to x=434, and every phone-geometry assertion below failed for reasons
+     that had nothing to do with the composer. Mirror the real tree instead:
+     #app > (#left > (#rail, #sidebar), #chat). -->
+<div id="app"><div id="left"><aside id="sidebar"><div style="flex:1"></div>${meCardMarkup}</aside></div>
 <main id="chat">${composerMarkup}</main>${threadMarkup}</div>
 <script>
 window.$ = (s) => document.querySelector(s);
@@ -125,6 +159,7 @@ window.__report = function () {
   const menuRows = [...document.querySelectorAll('#composer-more .ctx-item')];
   return {
     vw: innerWidth,
+    emulatedCoarse: !!document.querySelector('style[data-coarse]'),
     phone: matchMedia('(max-width:700px), (max-height:560px) and (pointer:coarse)').matches,
     coarse: matchMedia('(pointer:coarse)').matches,
     field,
@@ -181,8 +216,8 @@ window.__report = function () {
     fieldFont: cs('#in-render', 'fontSize'),
     // Every metric that decides the box's height and the caret's place: if any of
     // these differs between the two bars, the "own version" claim is a lie.
-    chatInputBox: ((s) => ({ font: cs(s, 'fontSize'), line: cs(s, 'lineHeight'), pad: cs(s, 'padding'), border: cs(s, 'borderTopWidth'), h: R(s).h }))('#in-message'),
-    threadInputBox: ((s) => ({ font: cs(s, 'fontSize'), line: cs(s, 'lineHeight'), pad: cs(s, 'padding'), border: cs(s, 'borderTopWidth'), h: R(s).h }))('#in-thread'),
+    chatInputBox: ({ font: cs('#in-message', 'fontSize'), line: cs('#in-message', 'lineHeight'), pad: cs('#in-message', 'padding'), border: cs('#in-message', 'borderTopWidth'), h: R('#in-message').h }),
+    threadInputBox: ({ font: cs('#in-thread', 'fontSize'), line: cs('#in-thread', 'lineHeight'), pad: cs('#in-thread', 'padding'), border: cs('#in-thread', 'borderTopWidth'), h: R('#in-thread').h }),
     threadAlign: cs('#thread-composer-row', 'align-items'),
     tbtnPlus: cs('#tbtn-plus', 'display'),
     tbtnMore: cs('#tbtn-more', 'display'),
@@ -210,7 +245,7 @@ window.__report = function () {
       const panel = document.querySelector('#thread-panel');
       const h = (el) => el.getBoundingClientRect().height;
       const oneLine = h(t);
-      t.value = 'a\nb\nc'; composerAutoGrow(t);
+      t.value = 'a\\nb\\nc'; composerAutoGrow(t);
       const grown = h(t);
       panel.classList.add('hidden');
       t.value = '';
@@ -218,11 +253,11 @@ window.__report = function () {
       const hiddenInline = t.style.height || '(cleared)';
       panel.classList.remove('hidden');
       const afterHidden = h(t);
-      t.value = 'x\ny'; composerAutoGrow(t);
+      t.value = 'x\\ny'; composerAutoGrow(t);
       const regrown = h(t);
       t.value = ''; composerAutoGrow(t);
       const reset = h(t);
-      m.value = 'a\nb\nc'; composerAutoGrow(m);
+      m.value = 'a\\nb\\nc'; composerAutoGrow(m);
       const mGrown = h(m);
       m.value = ''; composerAutoGrow(m);
       const mReset = h(m);
@@ -382,15 +417,21 @@ function main() {
   let phone, desktop;
   try {
     const htmlPath = path.join(dir, 'page.html');
-    fs.writeFileSync(htmlPath, pageHtml());
+    fs.writeFileSync(htmlPath, pageHtml(false));
+    const phonePath = path.join(dir, 'phone.html');
+    fs.writeFileSync(phonePath, pageHtml(true));
     const base = 'file:///' + htmlPath.replace(/\\/g, '/');
+    const phoneUrl = 'file:///' + phonePath.replace(/\\/g, '/');
 
     console.log('\n[5] geometry at a phone viewport');
-    phone = probe(chrome, base, { width: 390, height: 844, dpr: 3, touch: true });
-    // `--dump-dom` cannot enter a pointer:coarse media query (that needs CDP
-    // touch emulation), so the 44px hit-box expansion is asserted at source
-    // level in [2]; everything else here is real computed layout.
+    phone = probe(chrome, phoneUrl, { width: 390, height: 844, dpr: 3, touch: true });
+    // Everything here is real computed layout, against the phone fixture --
+    // whose touch-gated media conditions pageHtml(true) restates, because a
+    // --dump-dom page cannot enter them for real (see pageHtml). The 44px hit
+    // boxes still come from the sheet's own --tap rules, so they are measured
+    // here too; [2] additionally pins them at source level.
     check(phone.phone, 'the phone shell is active', { phone: phone.phone, coarse: phone.coarse });
+    check(phone.emulatedCoarse, "and the phone's touch half is on too (injected: --dump-dom cannot emulate touch)");
     check(phone.fieldBg !== phone.insetBg, 'the field is not the inset well', { field: phone.fieldBg, inset: phone.insetBg });
     check(phone.fieldBg === 'rgb(23, 31, 47)', 'and it is the dark theme field surface', phone.fieldBg);
     check(phone.inputPad === phone.renderPad, 'the textarea and the backdrop have identical padding, or the caret drifts off the glyphs', { input: phone.inputPad, render: phone.renderPad });
@@ -434,15 +475,15 @@ function main() {
     const tf = phone.threadField || {};
     check(!!tl.w && tl.t - tf.t > 2 && tf.b - tl.b > 2 && tl.l - tf.l > 2 && tf.r - tl.r > 2,
       'the thread + sits fully inside its own field', { lead: tl, field: tf });
-    check(/inline-flex/.test(phone.tbtnMore) && phone.tbtnPlus === 'none' && phone.tbtnAttach === 'none',
+    check(shown(phone.tbtnMore) && phone.tbtnPlus === 'none' && phone.tbtnAttach === 'none',
       'the phone thread bar keeps the + menu too, and its attach key stays in it',
       { more: phone.tbtnMore, plus: phone.tbtnPlus, attach: phone.tbtnAttach });
     // The emoji and GIF keys sit on the field's right on the phone now, like
     // the desktop bar; the + disc keeps the left.
-    check(/inline-flex/.test(phone.btnEmoji) && /inline-flex/.test(phone.btnGif) && phone.btnAttach === 'none',
+    check(shown(phone.btnEmoji) && shown(phone.btnGif) && phone.btnAttach === 'none',
       'the phone bar carries the emoji and GIF keys on the field\'s right (attach stays a menu row)',
       { emoji: phone.btnEmoji, gif: phone.btnGif, attach: phone.btnAttach });
-    check(/inline-flex/.test(phone.tbtnEmoji) && /inline-flex/.test(phone.tbtnGif),
+    check(shown(phone.tbtnEmoji) && shown(phone.tbtnGif),
       'and the thread bar carries them too',
       { emoji: phone.tbtnEmoji, gif: phone.tbtnGif });
     const ke = phone.keyEmoji || {}, kg = phone.keyGif || {}, kf = phone.field || {};
