@@ -319,7 +319,7 @@ function main() {
     try {
       const htmlPath = path.join(dir, 'page.html');
       fs.writeFileSync(htmlPath, cardPageHtml());
-      const r = spawnSync(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+      const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
         '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof'), '--window-size=520,720',
         '--virtual-time-budget=3000', '--dump-dom', 'file:///' + htmlPath.replace(/\\/g, '/')],
         { encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 });

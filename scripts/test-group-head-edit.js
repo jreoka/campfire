@@ -220,7 +220,7 @@ function measure(chrome, w, dpr, dir, cssPath) {
   const p = path.join(dir, `m-${w}-${dpr}-${path.basename(cssPath)}.html`);
   fs.writeFileSync(p, pageHtml(w, cssPath, true));
   const png = path.join(dir, `m-${w}-${dpr}-${path.basename(cssPath)}.png`);
-  const r = spawnSync(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+  const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
     '--no-default-browser-check', '--user-data-dir=' + path.join(dir, `prof-${w}-${dpr}-${path.basename(cssPath)}`),
     '--force-device-scale-factor=' + dpr, '--window-size=' + w + ',' + WINDOW_H,
     '--virtual-time-budget=2500', '--screenshot=' + png, '--dump-dom', 'file:///' + p.replace(/\\/g, '/')],

@@ -366,7 +366,7 @@ function run(chrome, files, main, win) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-admpage-'));
   try {
     for (const [name, html] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), html);
-    const r = spawnSync(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+    const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
       '--no-default-browser-check', '--allow-file-access-from-files', '--user-data-dir=' + path.join(dir, 'prof'),
       '--window-size=' + win, '--virtual-time-budget=8000', '--dump-dom', 'file:///' + path.join(dir, main).replace(/\\/g, '/')],
       { encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 });

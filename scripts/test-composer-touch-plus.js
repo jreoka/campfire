@@ -112,7 +112,7 @@ function probeNonTouch(chrome, url) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-touch-'));
   try {
     const r = spawnSync(chrome, [
-      '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
+      '--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
       '--user-data-dir=' + path.join(dir, 'prof'), '--window-size=1200,820',
       '--virtual-time-budget=2000', '--dump-dom', url,
     ], { encoding: 'utf8', timeout: 60000, maxBuffer: 32 * 1024 * 1024 });

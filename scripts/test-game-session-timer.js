@@ -184,7 +184,7 @@ else {
   try {
     const htmlPath = path.join(dir, 'page.html');
     fs.writeFileSync(htmlPath, pageHtml(fmt));
-    const r = spawnSync(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+    const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
       '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof'), '--window-size=520,900',
       '--virtual-time-budget=4000', '--dump-dom', 'file:///' + htmlPath.replace(/\\/g, '/')],
       { encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 });

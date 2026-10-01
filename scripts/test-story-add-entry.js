@@ -291,7 +291,7 @@ function probe(chrome, url, { width, height, dpr }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-storyadd-'));
   try {
     const args = [
-      '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
+      '--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
       '--user-data-dir=' + path.join(dir, 'prof'), '--force-device-scale-factor=' + dpr,
       '--window-size=' + width + ',' + height, '--virtual-time-budget=4000', '--dump-dom', url,
     ];

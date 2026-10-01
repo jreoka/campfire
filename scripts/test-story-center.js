@@ -228,7 +228,7 @@ async function e2e() {
     }
     if (!up) throw new Error('server did not come up\n' + serverLog.slice(-1500));
 
-    chrome = spawn(findChrome(), ['--headless=new', `--remote-debugging-port=${E2E_CDP_PORT}`, '--user-data-dir=' + path.join(dir, 'chrome'),
+    chrome = spawn(findChrome(), ['--headless=new', '--no-sandbox', `--remote-debugging-port=${E2E_CDP_PORT}`, '--user-data-dir=' + path.join(dir, 'chrome'),
       '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--hide-scrollbars', '--window-size=1100,860', 'about:blank'], { stdio: 'ignore' });
     let ver = null;
     for (let i = 0; i < 80 && !ver; i++) {

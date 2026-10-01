@@ -275,7 +275,7 @@ ${dangerSrc}
   try {
     const p = path.join(dir, 'page.html');
     fs.writeFileSync(p, html);
-    const r = spawnSync(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+    const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
       '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof'), '--window-size=900,900',
       '--virtual-time-budget=3000', '--dump-dom', 'file:///' + p.replace(/\\/g, '/')],
       { encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 });

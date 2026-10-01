@@ -259,7 +259,7 @@ async function startChrome() {
   const crypto = require('node:crypto');
   const WebSocket = require('ws');
   chrome = spawn(findChrome(), [
-    '--headless=new', '--remote-debugging-port=' + CDP_PORT,
+    '--headless=new', '--no-sandbox', '--remote-debugging-port=' + CDP_PORT,
     '--user-data-dir=' + path.join(os.tmpdir(), 'cf-stage-' + crypto.randomBytes(4).toString('hex')),
     '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--disable-dev-shm-usage',
     '--allow-file-access-from-files', '--window-size=1400,1000', 'about:blank',

@@ -180,7 +180,7 @@ else {
   const measure = (label, statusText) => {
     const page = path.join(dir, 'bubble.html');
     fs.writeFileSync(page, chipPageHtml(statusBubbleHTML(me({ status_text: statusText }))));
-    const r = spawnSync(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+    const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
       '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof'), '--window-size=1100,900',
       '--virtual-time-budget=2000', '--dump-dom', 'file:///' + page.replace(/\\/g, '/')],
       { encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 });

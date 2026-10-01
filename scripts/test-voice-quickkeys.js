@@ -406,7 +406,7 @@ function probe(chrome, html, { width, height, dpr }) {
     const file = path.join(dir, 'page.html');
     fs.writeFileSync(file, html);
     const args = [
-      '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
+      '--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
       '--user-data-dir=' + path.join(dir, 'prof'), '--force-device-scale-factor=' + dpr,
       '--window-size=' + width + ',' + height, '--virtual-time-budget=6000',
       '--dump-dom', 'file:///' + file.replace(/\\/g, '/'),

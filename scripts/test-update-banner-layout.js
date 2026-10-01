@@ -201,7 +201,7 @@ async function startChrome() {
   const WebSocket = require('ws');
   const profile = path.join(os.tmpdir(), 'cf-ub-cdp-' + crypto.randomBytes(4).toString('hex'));
   chrome = spawn(findChrome(), [
-    '--headless=new', '--remote-debugging-port=' + CDP_PORT, '--user-data-dir=' + profile,
+    '--headless=new', '--no-sandbox', '--remote-debugging-port=' + CDP_PORT, '--user-data-dir=' + profile,
     '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--disable-dev-shm-usage',
     '--hide-scrollbars', '--window-size=1400,1000', 'about:blank',
   ], { stdio: 'ignore' });

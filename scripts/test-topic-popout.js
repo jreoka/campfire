@@ -227,7 +227,7 @@ function runChrome(chromePath, dir, w, h, frame) {
   fs.writeFileSync(path.join(dir, 'page.html'), pageHtml());
   const main = frame ? 'frame.html' : 'page.html';
   if (frame) fs.writeFileSync(path.join(dir, 'frame.html'), frameHtml());
-  const r = spawnSync(chromePath, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+  const r = spawnSync(chromePath, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
     '--no-default-browser-check', '--allow-file-access-from-files', '--user-data-dir=' + path.join(dir, 'prof-' + (frame ? 'f' : w)),
     `--window-size=${w},${h}`, '--virtual-time-budget=3000', '--dump-dom', 'file:///' + path.join(dir, main).replace(/\\/g, '/')],
     { encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 });
