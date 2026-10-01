@@ -31,7 +31,9 @@ function findChrome() {
   return null;
 }
 const chrome = findChrome();
-if (!chrome) { console.log('[test] SKIP: no Chrome found (set CHROME_PATH)'); process.exit(0); }
+// A suite that could not run its browser half has proved nothing, so it must
+// be red. Exiting 0 here is what let "all green" cover a markup-only run.
+if (!chrome) { console.log('[test] SKIP: no Chrome found (set CHROME_PATH)'); process.exit(1); }
 
 function slice(src, from, to) {
   const a = src.indexOf(from);

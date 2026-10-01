@@ -45,6 +45,9 @@ function check(cond, name, detail) {
 function skip(msg) {
   console.log('[test] SKIP: ' + msg);
   console.log('\n' + (failures.length ? failures.length + ' static FAILED, ' + passed + ' passed' : 'static: all ' + passed + ' checks passed'));
+  // This suite is pure DB + static wiring, so "Postgres unreachable" means it
+  // proved nothing. Green here would be the lie c37b718 set out to kill.
+  if (!failures.length) { failures.push('the suite did not run: ' + msg); }
   process.exit(failures.length ? 1 : 0);
 }
 

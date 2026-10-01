@@ -122,7 +122,11 @@ check(/\.att-wrap\.pending:not\(\.ready\):not\(\.att-swap\) img\.att-img\{[^}]*o
   'a pending photo paints blurred, not hidden');
 check(/\.att-wrap\.pending:not\(\.ready\):not\(\.att-swap\) \.att-ph\{background:transparent\}/.test(css),
   'the photo placeholder goes transparent so the blur shows through');
-check(/\.att-wrap\.pending:not\(\.ready\):not\(\.att-swap\)\{overflow:hidden\}/.test(css),
+// No closing brace: f8f7f53 ("Clip the blur-up fringe to the picture's rounded
+// shape") appended border-radius:6px to this same rule, so demanding `}` right
+// after overflow:hidden turned this into a pattern the rule could never match
+// again. What matters is that the rule clips -- anything may follow.
+check(/\.att-wrap\.pending:not\(\.ready\):not\(\.att-swap\)\{overflow:hidden/.test(css),
   'the photo wrap clips the blur fringe while pending');
 check(/\.att-wrap img\.att-img\{[^}]*transition:[^}]*filter/.test(css),
   'the photo sharpens with a filter transition');

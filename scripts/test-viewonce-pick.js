@@ -209,11 +209,21 @@ function runChrome(pre) {
 
 if (!findChrome()) {
   console.log('\n[test] SKIP browser half: no Chrome/Edge found (set CHROME_PATH)');
+  // A suite that could not open a browser has proved nothing about the UI.
+  failures.push('browser half did not run: no Chrome (skip)');
 } else {
   console.log('\n[6] the menu itself (headless Chrome)');
   const picked = runChrome(['f2']);
   if (picked.skip) {
     console.log('[test] SKIP: no Chrome');
+    // Chrome vanished between the pre-flight check and the launch, or the
+    // harness could not reach DevTools. Either way this suite checked nothing,
+    // so it goes red rather than printing SKIP and reporting a pass.
+    failures.push('browser half did not run: no Chrome (skip)');
+    // Do not fall through: without the browser half this suite proves nothing,
+    // and printing SKIP and then exiting 0 reads as a pass to every runner.
+    failures.push('the picker harness did not run: no Chrome (skip)');
+    finish();
   } else if (picked.error || !picked.out || picked.out.error) {
     check(false, 'the picker harness ran', picked.error || (picked.out && picked.out.error));
   } else {

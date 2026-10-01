@@ -152,6 +152,8 @@ function main() {
   const chrome = findChrome();
   if (!chrome) {
     console.log('\n[test] SKIP browser half: no Chrome/Edge found (set CHROME_PATH)');
+  // A suite that could not open a browser has proved nothing about the UI.
+  failures.push('browser half did not run: no Chrome (skip)');
   } else {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-sv-head-'));
     try {

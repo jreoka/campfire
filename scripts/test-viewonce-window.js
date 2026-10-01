@@ -164,11 +164,17 @@ function runChrome() {
 
 if (!findChrome()) {
   console.log('\n[test] SKIP browser half: no Chrome/Edge found (set CHROME_PATH)');
+  // A suite that could not open a browser has proved nothing about the UI.
+  failures.push('browser half did not run: no Chrome (skip)');
 } else {
   console.log('\n[2] the card itself (headless Chrome)');
   const res = runChrome();
   if (res.skip) {
     console.log('[test] SKIP: no Chrome');
+    // Chrome vanished between the pre-flight check and the launch, or the
+    // harness could not reach DevTools. Either way this suite checked nothing,
+    // so it goes red rather than printing SKIP and reporting a pass.
+    failures.push('browser half did not run: no Chrome (skip)');
   } else if (res.error || !res.out || res.out.error) {
     check(false, 'the card harness ran', res.error || (res.out && res.out.error));
   } else {
