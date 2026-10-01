@@ -120,7 +120,7 @@ window.__boxes = [...document.querySelectorAll('[data-row]')].map((el) => {
 
 function runChrome(chromePath, url, dpr, outPng, dir) {
   const args = [
-    '--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+    '--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
     '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'profile-' + dpr),
     '--force-device-scale-factor=' + dpr,
     '--window-size=' + SIDE_W + ',' + (ROW_H * 4 + GAP * 3),

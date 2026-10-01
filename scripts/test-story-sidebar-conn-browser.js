@@ -197,7 +197,7 @@ window.__report = function () {
   const bar = box(document.getElementById('voice-bar'));
   const chip = box(document.getElementById('voice-conn'));
   const name = box(document.getElementById('voice-chan-name'));
-  const srvAddBox = box(srvAdd), homeAddBox = box(homeAdd), gBox = box(gPlus);
+  const srvAddBox = box(srvAdd), homeAddBox = box(homeAdd), gBox = box(gPlus), homeRowBox = box(homeRow);
   const cam = box(srvRow.querySelector('.ss-ic'));
   const srvRowBox = box(srvRow);
   if (!srvAddBox || !homeAddBox || !gBox || !cam || !srvRowBox) return { fatal: 'a measured element is missing' };
@@ -206,6 +206,11 @@ window.__report = function () {
     vw: innerWidth, vh: innerHeight,
     srvRow: srvRowBox, srvAdd: srvAddBox, srvCam: cam, srvHint: box(srvRow.querySelector('.ss-hint')),
     homeAdd: homeAddBox, homeRow: box(homeRow), groupPlus: gBox, sidebar: sb,
+    // Both ＋s hang off a .6rem inset of their OWN row's right edge, so the
+    // honest comparison is row-edge to ＋, not raw sidebar-edge to ＋ — Home's
+    // rows sit behind the .55rem gutter (237b37e) and the server's do not.
+    srvFromRow: +(srvRowBox.r - srvAddBox.r).toFixed(2),
+    homeFromRow: +(homeRowBox.r - homeAddBox.r).toFixed(2),
     srvFromEdge: +(sb.r - srvAddBox.r).toFixed(2),
     homeFromEdge: +(sb.r - homeAddBox.r).toFixed(2),
     addCol: { right: +(srvAddBox.r - homeAddBox.r).toFixed(2), left: +(srvAddBox.l - homeAddBox.l).toFixed(2), size: +(srvAddBox.w - homeAddBox.w).toFixed(2) },
@@ -235,7 +240,7 @@ function probe(chrome, html, { width, height, dpr }) {
     const file = path.join(dir, 'page.html');
     fs.writeFileSync(file, html);
     const args = [
-      '--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
+      '--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
       '--user-data-dir=' + path.join(dir, 'prof'), '--force-device-scale-factor=' + dpr,
       '--window-size=' + width + ',' + height, '--virtual-time-budget=4000',
       '--dump-dom', 'file:///' + file.replace(/\\/g, '/'),
@@ -259,11 +264,13 @@ function chromeHalf() {
   const desk = probe(chrome, pageHtml(LONG), { width: 1100, height: 760, dpr: 2 });
   if (desk.fatal) throw new Error('page reported: ' + desk.fatal);
   check(desk.nested === false, 'the server ＋ is a sibling of its row, not nested in it');
-  check(Math.abs(desk.srvFromEdge - 0.6 * 16) <= 2,
-    'and sits .6rem from the sidebar edge, like Home\'s', { srv: desk.srvFromEdge, home: desk.homeFromEdge });
+  check(Math.abs(desk.srvFromRow - 0.6 * 16) <= 2 && Math.abs(desk.homeFromRow - 0.6 * 16) <= 2,
+    'and both sit .6rem inside their own row\'s trailing edge', { srv: desk.srvFromRow, home: desk.homeFromRow });
   check(Math.abs(desk.srvFromEdge - desk.homeFromEdge) <= 0.6,
     'the two rows put their ＋ in exactly the same place', { srv: desk.srvFromEdge, home: desk.homeFromEdge });
-  check(desk.addCol.right === 0 && desk.addCol.left === 0 && desk.addCol.size === 0,
+  // Sub-pixel: the server ＋ is offset with a calc() off a fractional row edge,
+  // so the two circles land a hundredth of a pixel apart rather than exactly.
+  check(Math.abs(desk.addCol.right) <= 0.5 && Math.abs(desk.addCol.left) <= 0.5 && desk.addCol.size === 0,
     'right edge, left edge and size all agree (same column, same circle)', desk.addCol);
   check(Math.abs(desk.homeVsGroup) <= 0.6, 'and Home\'s ＋ is still in column with the GROUP CHATS ＋', { d: desk.homeVsGroup });
   check(Math.abs(desk.centred) <= 1, 'the ＋ sits on the row\'s centre line', { dy: desk.centred });

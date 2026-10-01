@@ -147,7 +147,7 @@ async function main() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-invcard-'));
   const { server: httpServer, port } = await startServer(pageHtml());
 
-  const child = spawn(chromePath, ['--headless=new', '--no-sandbox', '--remote-debugging-port=' + CDP_PORT,
+  const child = spawn(chromePath, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--remote-debugging-port=' + CDP_PORT,
     '--user-data-dir=' + path.join(dir, 'profile'), '--no-first-run', '--no-default-browser-check',
     '--window-size=900,900', 'about:blank'], { stdio: 'ignore' });
 

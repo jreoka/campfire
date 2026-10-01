@@ -99,7 +99,7 @@ try {
     const f = path.join(dir, name + '.html');
     fs.writeFileSync(f, page(theme, width));
     const shot = path.join(dir, name + '.png');
-    const r = spawnSync(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-sandbox',
+    const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--hide-scrollbars', '--no-sandbox',
       '--force-device-scale-factor=2', '--window-size=' + width + ',' + 420,
       '--screenshot=' + shot, '--virtual-time-budget=2000', 'file://' + f], { encoding: 'utf8' });
     const ok = fs.existsSync(shot) && fs.statSync(shot).size > 1000;
@@ -119,7 +119,7 @@ try {
   }
   // Objective measurements from the rendered page, via Chrome's own dump.
   const f = path.join(dir, 'dark-wide.html');
-  const dump = spawnSync(chrome, ['--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=2000',
+  const dump = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-sandbox', '--virtual-time-budget=2000',
     '--dump-dom', 'file://' + f], { encoding: 'utf8' });
   check(/call-join/.test(dump.stdout || ''), 'the rendered page really contains the Join key');
   check(/Call ended/.test(dump.stdout || ''), 'the rendered page really contains the end line');

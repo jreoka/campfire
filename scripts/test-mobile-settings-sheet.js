@@ -165,7 +165,7 @@ function run(chrome, html, size) {
   try {
     const p = path.join(dir, 'page.html');
     fs.writeFileSync(p, html);
-    const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+    const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
       '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof'), '--window-size=' + size,
       '--virtual-time-budget=2000', '--dump-dom', 'file:///' + p.replace(/\\/g, '/')],
       { encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 });
@@ -224,7 +224,9 @@ function main() {
     check(phone.cardStyle.position === 'fixed' && phone.cardRect.bottom === phone.innerH, 'pinned to the bottom of the viewport', { r: phone.cardRect, innerH: phone.innerH });
     check(phone.cardRect.x === 0 && phone.cardRect.w === phone.innerW, 'edge to edge', { r: phone.cardRect, innerW: phone.innerW });
     check(phone.cardRect.h === phone.innerH, 'full height', { h: phone.cardRect.h, innerH: phone.innerH });
-    check(parseFloat(phone.cardStyle.radiusTop) >= 14, 'with a rounded top', phone.cardStyle.radiusTop);
+    // 10px, not 18: dd3beb9 ("Make UI corners squarer") halved every radius in
+    // the app, and this assertion was never updated with it.
+    check(parseFloat(phone.cardStyle.radiusTop) >= 10, 'with a rounded top', phone.cardStyle.radiusTop);
     check(phone.afterClose.sheet === false && phone.afterClose.hidden === true, 'closing clears the sheet class (so the next open re-animates)');
   }
 

@@ -377,7 +377,7 @@ async function probe(chrome, pageFile, { width, height, dpr }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-mention-'));
   const port = 18800 + (process.pid % 400);
   const proc = spawn(chrome, [
-    '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
+    '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
     '--no-sandbox',
     '--user-data-dir=' + path.join(dir, 'prof'), '--force-device-scale-factor=' + dpr,
     '--window-size=' + width + ',' + height, '--remote-debugging-port=' + port, 'about:blank',

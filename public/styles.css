@@ -3928,6 +3928,12 @@ a.adm-rep-chip:hover{background:var(--panel-4);color:var(--text)}
    Home's row gives up. */
 #srv-stories .srv-stories{padding-right:2.7rem}
 #srv-stories .ss-add{position:absolute;right:.6rem;top:50%;transform:translateY(-50%);margin:0}
+/* The server row's ＋ is pinned to #srv-stories, which never picked up Home
+   column's .55rem gutter, so it lands .6rem from the sidebar edge while Home's
+   hangs off a wrapper that does carry the gutter: the same 8.8px further in.
+   Both the ＋s belong in one column, so the server one is pulled back by the
+   gutter Home's rows already sit behind (test-story-sidebar-conn-browser). */
+#srv-stories .ss-add{right:calc(.6rem + .55rem)}
 #srv-stories .ss-add svg{color:var(--on-accent)}
 /* All-watched status, not a count: uppercase + tracking so it never reads as a
    grey unread number again (see serverStoryChip in stories.js). */

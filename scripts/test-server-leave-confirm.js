@@ -185,7 +185,7 @@ function run(chrome, html) {
     fs.mkdirSync(dir, { recursive: true });
     const p = path.join(dir, 'page.html');
     fs.writeFileSync(p, html);
-    const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+    const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
       '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof'), '--window-size=1280,900',
       '--virtual-time-budget=4000', '--dump-dom', 'file:///' + p.replace(/\\/g, '/')],
       { encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 });

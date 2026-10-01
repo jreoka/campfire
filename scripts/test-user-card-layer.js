@@ -286,7 +286,7 @@ function runChrome(chromePath, dir, w, h) {
   const p = path.join(dir, `page-${w}x${h}.html`);
   fs.writeFileSync(p, pageHtml());
   fs.writeFileSync('/tmp/uc-gen-' + w + 'x' + h + '.html', pageHtml());
-  const r = spawnSync(chromePath, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+  const r = spawnSync(chromePath, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
     '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof-' + w), `--window-size=${w},${h}`,
     '--virtual-time-budget=2000', '--dump-dom', 'file:///' + p.replace(/\\/g, '/')],
     { encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 });

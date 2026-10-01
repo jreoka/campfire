@@ -118,7 +118,7 @@ function shot(chrome, html, dpr, dir) {
   const p = path.join(dir, 'p.html');
   fs.writeFileSync(p, html);
   const png = path.join(dir, 'pin-' + dpr + '.png');
-  const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+  const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
     '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof-' + dpr),
     '--force-device-scale-factor=' + dpr, '--window-size=' + SIDE_W + ',' + (ROW_H + 24),
     '--virtual-time-budget=2500', '--screenshot=' + png, '--dump-dom', 'file:///' + p.replace(/\\/g, '/')],

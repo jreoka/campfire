@@ -163,7 +163,7 @@ async function main() {
   </script>
 </body></html>`);
 
-  const chrome = spawn(chromePath, ['--headless=new', '--no-sandbox', `--remote-debugging-port=${PORT}`,
+  const chrome = spawn(chromePath, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', `--remote-debugging-port=${PORT}`,
     `--user-data-dir=${path.join(tmp, 'chrome')}`, '--no-first-run', '--disable-gpu',
     '--hide-scrollbars', '--window-size=460,320',
     'file:///' + path.join(tmp, 'p.html').replace(/\\/g, '/')]);

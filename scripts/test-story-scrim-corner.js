@@ -124,7 +124,7 @@ async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-scrim-'));
   const pagePath = path.join(tmp, 'page.html');
   fs.writeFileSync(pagePath, pageHtml());
-  const chrome = spawn(chromePath, ['--headless=new', '--no-sandbox', `--remote-debugging-port=${CDP_PORT}`,
+  const chrome = spawn(chromePath, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', `--remote-debugging-port=${CDP_PORT}`,
     '--user-data-dir=' + path.join(tmp, 'prof'), '--no-first-run', '--no-default-browser-check',
     '--disable-gpu', '--hide-scrollbars', '--window-size=900,900', 'about:blank'], { stdio: 'ignore' });
   let ws = null;

@@ -247,7 +247,7 @@ async function run() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-pkmin-'));
   const port = 18100 + Math.floor(Math.random() * 500);
   const chrome = spawn(chromePath,
-    ['--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run', '--no-default-browser-check',
+    ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-sandbox', '--no-first-run', '--no-default-browser-check',
      `--remote-debugging-port=${port}`, '--user-data-dir=' + path.join(dir, 'prof'),
      `--window-size=390,${SCREEN}`, 'about:blank'], { stdio: 'ignore' });
   try {

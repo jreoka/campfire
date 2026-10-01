@@ -299,7 +299,7 @@ window.__messageEl = messageEl;
 
   const c = spawn(chromePath, ['--headless=new', '--remote-debugging-port=' + CDP_PORT,
     '--user-data-dir=' + path.join(dir, 'p'), '--no-first-run', '--no-default-browser-check',
-    '--no-sandbox', '--disable-gpu', '--force-device-scale-factor=2', 'about:blank'], { stdio: 'ignore' });
+    '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--force-device-scale-factor=2', 'about:blank'], { stdio: 'ignore' });
   let ver = null;
   for (let i = 0; i < 120 && !ver; i++) { try { ver = await (await fetch('http://127.0.0.1:' + CDP_PORT + '/json/version')).json(); } catch { await sleep(500); } }
   if (!ver) { c.kill(); srv.close(); throw new Error('Chrome never published /json/version'); }

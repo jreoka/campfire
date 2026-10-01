@@ -408,7 +408,7 @@ function runChrome(chrome, html) {
     });
     srv.listen(0, '127.0.0.1', () => {
       const port = srv.address().port;
-      const child = spawn(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+      const child = spawn(chrome, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
         '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof'), '--window-size=460,900',
         '--virtual-time-budget=8000', '--dump-dom', 'http://127.0.0.1:' + port + '/'],
         { stdio: ['ignore', 'pipe', 'pipe'] });

@@ -121,7 +121,7 @@ async function main() {
     }
     if (!up) return fail('server did not come up');
 
-    chrome = spawn(chromePath, ['--headless=new', '--no-sandbox', '--remote-debugging-port=' + CDP_PORT,
+    chrome = spawn(chromePath, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--remote-debugging-port=' + CDP_PORT,
       '--user-data-dir=' + path.join(tmp, 'chrome'), '--no-first-run', '--no-default-browser-check',
       '--window-size=1000,800', 'about:blank'], { stdio: 'ignore' });
     let info = null;

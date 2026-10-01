@@ -239,7 +239,7 @@ function probe(chrome, url, { width, height, dpr, touch }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-field-'));
   try {
     const args = [
-      '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
+      '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
       // Running as root (containers, this dev box) needs the sandbox off or
       // Chrome refuses to start at all; everywhere else it stays on.
       ...((typeof process.getuid === 'function' && process.getuid() === 0) ? ['--no-sandbox'] : []),

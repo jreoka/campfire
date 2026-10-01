@@ -33,8 +33,43 @@ const WebSocket = require('ws');
 const ROOT = path.join(__dirname, '..');
 const CDP_PORT = parseInt(process.env.TEST_CDP_PORT || '9361', 10);
 const E2E_DB = 'campfire_story_center_e2e';
-const E2E_PORT = parseInt(process.env.TEST_PORT || '3431', 10);
+// A port we own, asked of the OS at run time. A fixed one collides with any
+// leaked server from an earlier run: the readiness probe then goes green
+// against THAT server, the real one dies on EADDRINUSE, and every later
+// assertion quietly drives a stranger's database.
+const E2E_PORT = parseInt(process.env.TEST_PORT || '0', 10);
 const E2E_CDP_PORT = parseInt(process.env.TEST_CDP_PORT2 || '9362', 10);
+
+// Ask the kernel for a free port and hand it straight back.
+function freePort() {
+  return new Promise((res, rej) => {
+    const s = require('net').createServer();
+    s.on('error', rej);
+    s.listen(0, '127.0.0.1', () => {
+      const p = s.address().port;
+      s.close(() => res(p));
+    });
+  });
+}
+
+// Prove the port is ours to take BEFORE spawning anything. The server does all
+// its DDL and bus work before it calls listen(), so a child that will die on
+// EADDRINUSE is still happily alive when a readiness probe first succeeds
+// against whoever already held the port — "someone answers" proves nothing.
+// Binding here turns a silent-wrong-run into a loud failure. We release
+// immediately: the child needs the port, and if a stranger takes it in the
+// gap the child dies on EADDRINUSE, which the liveness watch below catches.
+function assertPortFree(port) {
+  return new Promise((res, rej) => {
+    const s = require('net').createServer();
+    s.on('error', (e) => rej(e.code === 'EADDRINUSE'
+      ? new Error(`port ${port} is already in use — another server (or a leaked one from an earlier run) owns it. `
+        + 'Kill it, or re-run with TEST_PORT=<free port>. Never let a fixed port stand in for a port we own: '
+        + 'the probe would go green against the stranger and every assertion would drive its database instead of ours.')
+      : e));
+    s.listen(port, '127.0.0.1', () => s.close(() => res()));
+  });
+}
 
 function readEnvFile() {
   const out = {};
@@ -206,7 +241,12 @@ async function e2e() {
   const uploads = path.join(dir, 'uploads');
   fs.mkdirSync(uploads, { recursive: true });
   let child = null, chrome = null, ws = null;
+  const port = E2E_PORT || await freePort();
   try {
+    // Take the port first (and let it go again), so a collision is caught here
+    // rather than becoming a run that silently tests somebody else's database.
+    try { await assertPortFree(port); }
+    catch (e) { throw new Error(e.message); }
     await admin.query(`DROP DATABASE IF EXISTS ${E2E_DB} WITH (FORCE)`);
     await admin.query(`CREATE DATABASE ${E2E_DB}`);
     await admin.end();
@@ -214,7 +254,7 @@ async function e2e() {
       cwd: ROOT,
       env: {
         ...process.env,
-        PORT: String(E2E_PORT),
+        PORT: String(port),
         PGHOST: pg.host, PGPORT: String(pg.port), PGUSER: pg.user, PGPASSWORD: pg.password, PGDATABASE: E2E_DB,
         JWT_SECRET: 'test-story-center-secret', UPLOAD_DIR: uploads, UNFURL: '0',
       },
@@ -223,15 +263,33 @@ async function e2e() {
     let serverLog = '';
     child.stdout.on('data', (d) => { serverLog += d; });
     child.stderr.on('data', (d) => { serverLog += d; });
+    // Wait for OUR server: readiness alone is not enough, because a stranger on
+    // this port answers just as well as we do. The child does its DDL and bus
+    // setup before listen(), so if it is going to die of EADDRINUSE it may
+    // still be alive on the first green probe — keep watching it, and bail the
+    // moment it exits rather than driving whatever answered instead.
     let up = false;
     for (let i = 0; i < 120 && !up; i++) {
-      try { up = (await fetch(`http://127.0.0.1:${E2E_PORT}/api/config`)).ok; } catch {}
+      if (child.exitCode !== null) {
+        throw new Error(`the server we spawned exited (code ${child.exitCode}) instead of serving :${port} — `
+          + `something else owns that port\n${serverLog.slice(-1500)}`);
+      }
+      try { up = (await fetch(`http://127.0.0.1:${port}/api/config`)).ok; } catch {}
       if (!up) await sleep(250);
     }
     if (!up) throw new Error('server did not come up\n' + serverLog.slice(-1500));
+    // One last look now that it is actually listening: still ours?
+    check(child.exitCode === null, 'the server we spawned is the one still running',
+      child.exitCode === null ? null : { exitCode: child.exitCode, log: serverLog.slice(-800) });
+    if (child.exitCode !== null) return;
 
+    // --disable-dev-shm-usage is not optional here: /dev/shm is 64MB in a plain
+    // container, and this suite loads the whole app bundle, so Chromium runs out
+    // of shared memory and drops every request with ERR_INSUFFICIENT_RESOURCES
+    // (the page then silently boots unsigned-in instead of erroring).
     chrome = spawn(findChrome(), ['--headless=new', '--no-sandbox', `--remote-debugging-port=${E2E_CDP_PORT}`, '--user-data-dir=' + path.join(dir, 'chrome'),
-      '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--hide-scrollbars', '--window-size=1100,860', 'about:blank'], { stdio: 'ignore' });
+      '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--disable-dev-shm-usage',
+      '--hide-scrollbars', '--window-size=1100,860', 'about:blank'], { stdio: 'ignore' });
     let ver = null;
     for (let i = 0; i < 80 && !ver; i++) {
       try { ver = await (await fetch(`http://127.0.0.1:${E2E_CDP_PORT}/json/version`)).json(); } catch {}
@@ -282,15 +340,27 @@ async function e2e() {
     await send('Page.enable');
     await send('Runtime.enable');
     await send('Emulation.setDeviceMetricsOverride', { width: 1100, height: 860, deviceScaleFactor: 2, mobile: false });
-    await evaluate(`location.href = 'http://127.0.0.1:${E2E_PORT}/'`);
+    await evaluate(`location.href = 'http://127.0.0.1:${port}/'`);
     if (!(await waitFor(`typeof boot === 'function'`))) throw new Error('the app did not load');
-    await evaluate(`(async () => {
+    const reg = await evaluate(`(async () => {
       const r = await fetch('/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'sc', displayName: 'Story Center', password: 'passw0rd!x' }) });
       const d = await r.json();
       store.token = d.token; store.sid = d.sid;
+      return { status: r.status, token: !!d.token, err: d.error || null };
     })()`);
+    check(!!reg.token, 'registered the account', reg);
     await send('Page.reload');
-    if (!(await waitFor(`S.me && S.me.username === 'sc'`))) throw new Error('the app did not boot signed in');
+    if (!(await waitFor(`S.me && S.me.username === 'sc'`))) {
+      // Say WHERE we ended up, not just that it failed: the useful facts are
+      // the URL the page is actually on and whether /api/me answers at all.
+      const who = await evaluate(`(async () => {
+        let me = null;
+        try { const r = await fetch('/api/me'); me = { status: r.status, body: (await r.text()).slice(0, 200) }; } catch (e) { me = { error: String(e && e.message) }; }
+        return { href: location.href, me: S.me, view: S.view, token: !!store.token, apiMe: me };
+      })()`);
+      throw new Error('the app did not boot signed in — ' + JSON.stringify(who)
+        + (serverLog.slice(-600).trim() ? '\nserver said:\n' + serverLog.slice(-600) : ''));
+    }
     if (!(await evaluate(`(async () => { await openHome(); return S.view === 'home'; })()`))) throw new Error('Home did not open');
 
     console.log('\n[9] the real app: the Stories row opens the page');
@@ -318,7 +388,13 @@ async function e2e() {
     if (deskShot) console.log('  (wrote ' + deskShot + ')');
 
     console.log('\n[10] cards on the real page, and back to Friends');
-    await evaluate(`(() => {
+    // renderStoriesPage() early-returns on a hidden page, so the page has to be
+    // OPEN when we seed the tray and re-render — otherwise the render is a
+    // no-op and there is no card to click. Opening it here is also the honest
+    // thing to assert: the row is what puts it there in the first place.
+    await evaluate(`document.getElementById('btn-stories').click()`);
+    check(!!(await waitFor(`!document.getElementById('stories-page').classList.contains('hidden')`)), 'the story page is open again');
+    state = await evaluate(`(() => {
       const now = Date.now();
       const u = { id: 'u1', username: 'ada', display_name: 'Ada', avatar_color: '#5865f2' };
       storyData.friends = [{ id: 'u1', user: u, unseen: 2, latest: now - 60e3, items: [
@@ -326,9 +402,6 @@ async function e2e() {
         { id: 'st2', kind: 'image', url: '/icons/campfire-logo.png', created_at: now - 120e3, expires_at: now + 3600e3, seen: false, views: 0, reactions: [] },
       ] }];
       renderStoriesPage();
-      return true;
-    })()`);
-    state = await evaluate(`(() => {
       const card = document.querySelector('#sp-body .sp-card');
       const calls = [];
       const real = openStoryViewer;
@@ -432,7 +505,7 @@ async function main() {
   const port = server.address().port;
   const chromeProc = spawn(chrome, ['--headless=new', '--no-sandbox', '--remote-debugging-port=' + CDP_PORT,
     '--user-data-dir=' + path.join(dir, 'profile'), '--no-first-run', '--no-default-browser-check',
-    '--hide-scrollbars', '--window-size=980,820', 'about:blank'], { stdio: 'ignore' });
+    '--disable-dev-shm-usage', '--hide-scrollbars', '--window-size=980,820', 'about:blank'], { stdio: 'ignore' });
 
   let ws;
   try {

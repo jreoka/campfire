@@ -222,7 +222,7 @@ function measure(chrome, w, dpr, dir, cssPath) {
   const p = path.join(dir, `m-${w}-${dpr}-${path.basename(cssPath)}.html`);
   fs.writeFileSync(p, pageHtml(w, cssPath, true));
   const png = path.join(dir, `m-${w}-${dpr}-${path.basename(cssPath)}.png`);
-  const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+  const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
     '--no-default-browser-check', '--user-data-dir=' + path.join(dir, `prof-${w}-${dpr}-${path.basename(cssPath)}`),
     '--force-device-scale-factor=' + dpr, '--window-size=' + w + ',' + WINDOW_H,
     '--virtual-time-budget=2500', '--screenshot=' + png, '--dump-dom', 'file:///' + p.replace(/\\/g, '/')],
@@ -304,13 +304,27 @@ function main() {
     // stylesheet is loaded again with those at-rules turned into `@media all` and
     // the states are then measured where they land. Nothing else about the sheet
     // changes.
+    // Headless Chrome reports `hover:none` AND `pointer:fine` -- i.e. a
+    // fine-pointer device that claims it cannot hover. So the touch-screen rule
+    // (@media (hover:none){#btn-group-edit{opacity:1}}) fires on EVERY run here,
+    // desktop included, and the desktop rows above were measuring a touch
+    // screen's pencil. Two rewrites, both of which must be global:
+    //  - desktop: (hover:none) -> a condition Chrome can never match, so the
+    //    always-visible rule drops out and the pencil is left to :hover.
+    //  - coarse/phone: (pointer:coarse) and (hover:none) -> @media all.
+    // The old code used String.replace, which replaces only the FIRST match --
+    // and the pencil's own rule is the first (hover:none) block in the sheet, so
+    // that part happened to land, while the (pointer:coarse) rewrite left two of
+    // its three blocks unturned.
+    const all = (src, from, to) => src.split(from).join(to);
+    const desktopCss = path.join(dir, 'styles-desktop.css');
     const coarseCss = path.join(dir, 'styles-coarse.css');
     const phoneCss = path.join(dir, 'styles-phone.css');
-    fs.writeFileSync(coarseCss, css.replace('@media (pointer:coarse){', '@media all{'));
-    fs.writeFileSync(phoneCss, css.replace('@media (pointer:coarse){', '@media all{').replace('@media (hover:none){', '@media all{'));
-    const realCss = path.join(ROOT, 'public/styles.css');
+    fs.writeFileSync(desktopCss, all(css, '@media (hover:none){', '@media (hover:never){'));
+    fs.writeFileSync(coarseCss, all(all(css, '@media (pointer:coarse){', '@media all{'), '@media (hover:none){', '@media (hover:never){'));
+    fs.writeFileSync(phoneCss, all(all(css, '@media (pointer:coarse){', '@media all{'), '@media (hover:none){', '@media all{'));
     for (const [w, dpr, mode] of [[480, 1, 'desktop'], [480, 2, 'desktop'], [960, 1, 'desktop'], [480, 1, 'coarse'], [480, 1, 'phone']]) {
-      const out = measure(chrome, w, dpr, dir, mode === 'desktop' ? realCss : mode === 'coarse' ? coarseCss : phoneCss);
+      const out = measure(chrome, w, dpr, dir, mode === 'phone' ? phoneCss : mode === 'coarse' ? coarseCss : desktopCss);
       const tag = 'w' + w + '@' + dpr + ' ' + mode + ' — ';
       if (out.err) { check(false, tag + 'the harness ran', out.err); continue; }
       const g = out.group;

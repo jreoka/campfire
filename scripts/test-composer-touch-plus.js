@@ -114,7 +114,7 @@ function probeNonTouch(chrome, url) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-touch-'));
   try {
     const r = spawnSync(chrome, [
-      '--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
+      '--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
       '--user-data-dir=' + path.join(dir, 'prof'), '--window-size=1200,820',
       '--virtual-time-budget=2000', '--dump-dom', url,
     ], { encoding: 'utf8', timeout: 60000, maxBuffer: 32 * 1024 * 1024 });
@@ -132,7 +132,7 @@ async function probeTouch(chrome, url, sizes) {
   const port = 9300 + (process.pid % 400);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-touch-cdp-'));
   const child = spawn(chrome, [
-    '--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
+    '--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
     '--remote-debugging-port=' + port, '--user-data-dir=' + path.join(dir, 'prof'), 'about:blank',
   ], { stdio: 'ignore' });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
