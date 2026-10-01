@@ -91,6 +91,8 @@ console.log('\n[3] the keyboard walk in a browser');
 function findChrome() {
   const candidates = [
     process.env.CHROME_PATH,
+    '/ms-playwright/chromium-1148/chrome-linux/chrome',
+    '/ms-playwright/chromium_headless_shell-1148/chrome-linux/headless_shell',
     '/opt/meta-chromium/chrome',
     'C:/Program Files/Google/Chrome/Application/chrome.exe',
     'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',

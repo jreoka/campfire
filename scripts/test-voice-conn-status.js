@@ -36,7 +36,7 @@ function check(cond, name, detail) {
   if (cond) { passed++; console.log('  ok   ' + name); }
   else { failures.push(name + (d ? ' — ' + d : '')); console.log('  FAIL ' + name + (d ? ' — ' + d : '')); }
 }
-function skip(msg) { console.log('[test] SKIP: ' + msg); process.exit(0); }
+function skip(msg) { console.log('[test] SKIP: ' + msg); process.exit(1); }
 
 const index = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
 const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');

@@ -43,11 +43,13 @@ function check(cond, name, detail) {
   if (cond) { passed++; console.log('  ok   ' + name); }
   else { failures.push(name + (d ? ' — ' + d : '')); console.log('  FAIL ' + name + (d ? ' — ' + d : '')); }
 }
-function skip(msg) { console.log('[test] SKIP: ' + msg); process.exit(0); }
+function skip(msg) { console.log('[test] SKIP: ' + msg); process.exit(1); }
 
 function findChrome() {
   const candidates = [
     process.env.CHROME_PATH,
+    '/ms-playwright/chromium-1148/chrome-linux/chrome',
+    '/ms-playwright/chromium_headless_shell-1148/chrome-linux/headless_shell',
     'C:/Program Files/Google/Chrome/Application/chrome.exe',
     'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
     'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',

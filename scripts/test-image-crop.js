@@ -36,7 +36,7 @@ function check(name, cond, detail) {
   if (cond) { passed++; console.log('  ok   ' + name); }
   else { failures.push(name + (detail ? ' — ' + detail : '')); console.log('  FAIL ' + name + (detail ? ' — ' + detail : '')); }
 }
-function skip(msg) { console.log('[test] SKIP: ' + msg); process.exit(0); }
+function skip(msg) { console.log('[test] SKIP: ' + msg); process.exit(1); }
 
 const cropJs = fs.readFileSync(path.join(ROOT, 'public/js/crop.js'), 'utf8');
 const server = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');

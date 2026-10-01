@@ -60,7 +60,7 @@ function check(cond, name, detail) {
   if (cond) { passed++; console.log('  ok   ' + name); }
   else { failures.push(name + (d ? ' — ' + d : '')); console.log('  FAIL ' + name + (d ? ' — ' + d : '')); }
 }
-function skip(msg) { console.log('[test] SKIP: ' + msg); process.exit(0); }
+function skip(msg) { console.log('[test] SKIP: ' + msg); process.exit(1); }
 // …and the cleanup runs whatever happens, so a test that dies mid-way (a
 // leftover browser would sit there holding its profile lock) still tidies up.
 let cleanup = () => {};
@@ -72,6 +72,8 @@ process.on('SIGTERM', () => { cleanup(); process.exit(143); });
 function findChrome() {
   const candidates = [
     process.env.CHROME_PATH,
+    '/ms-playwright/chromium-1148/chrome-linux/chrome',
+    '/ms-playwright/chromium_headless_shell-1148/chrome-linux/headless_shell',
     '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
     '/usr/bin/google-chrome-stable',
   ].filter(Boolean);

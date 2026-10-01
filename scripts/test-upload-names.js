@@ -52,7 +52,7 @@ function check(name, cond, detail) {
 }
 function skip(why) {
   console.log('[test] skipped: ' + why);
-  process.exit(0);
+  process.exit(1);
 }
 
 // Exactly what the old parser did to the bytes: read the name's UTF-8 bytes as

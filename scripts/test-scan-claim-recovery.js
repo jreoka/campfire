@@ -60,7 +60,7 @@ function check(name, cond, detail) {
   if (cond) { passed++; console.log('  ok   ' + name); }
   else { failures.push(name + (d ? ' — ' + d : '')); console.log('  FAIL ' + name + (d ? ' — ' + d : '')); }
 }
-function skip(msg) { console.log('[test] SKIP: ' + msg); process.exit(0); }
+function skip(msg) { console.log('[test] SKIP: ' + msg); process.exit(1); }
 
 function readEnvFile() {
   const out = {};

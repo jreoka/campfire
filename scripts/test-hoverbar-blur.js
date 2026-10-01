@@ -201,6 +201,11 @@ function fixtureHtml() {
 
 function findChrome() {
   if (process.env.CHROME_PATH && fs.existsSync(process.env.CHROME_PATH)) return process.env.CHROME_PATH;
+  if (!process.env.CHROME_PATH) {
+    for (const p of ['/ms-playwright/chromium-1148/chrome-linux/chrome', '/ms-playwright/chromium_headless_shell-1148/chrome-linux/headless_shell',]) {
+      try { if (fs.existsSync(p)) return p; } catch {}
+    }
+  }
   const cands = process.platform === 'win32' ? [
     'C:/Program Files/Google/Chrome/Application/chrome.exe',
     'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',

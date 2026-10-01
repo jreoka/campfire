@@ -36,6 +36,8 @@ function check(cond, name, detail) {
 function findChrome() {
   const candidates = [
     process.env.CHROME_PATH,
+    '/ms-playwright/chromium-1148/chrome-linux/chrome',
+    '/ms-playwright/chromium_headless_shell-1148/chrome-linux/headless_shell',
     'C:/Program Files/Google/Chrome/Application/chrome.exe',
     'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
     'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
@@ -283,6 +285,7 @@ document.title = JSON.stringify(out);
 function runChrome(chromePath, dir, w, h) {
   const p = path.join(dir, `page-${w}x${h}.html`);
   fs.writeFileSync(p, pageHtml());
+  fs.writeFileSync('/tmp/uc-gen-' + w + 'x' + h + '.html', pageHtml());
   const r = spawnSync(chromePath, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
     '--no-default-browser-check', '--user-data-dir=' + path.join(dir, 'prof-' + w), `--window-size=${w},${h}`,
     '--virtual-time-budget=2000', '--dump-dom', 'file:///' + p.replace(/\\/g, '/')],

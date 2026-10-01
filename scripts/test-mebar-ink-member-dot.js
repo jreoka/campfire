@@ -57,7 +57,7 @@ function check(cond, name, detail) {
   else { failures.push(name + (d ? ' — ' + d : '')); console.log('  FAIL ' + name + (d ? ' — ' + d : '')); }
 }
 const near = (a, b, tol = 0.6) => Math.abs(a - b) <= tol;
-function skip(msg) { console.log('[test] SKIP: ' + msg); process.exit(0); }
+function skip(msg) { console.log('[test] SKIP: ' + msg); process.exit(1); }
 
 const css = fs.readFileSync(path.join(ROOT, 'public/styles.css'), 'utf8');
 const servers = fs.readFileSync(path.join(ROOT, 'public/js/servers.js'), 'utf8');
@@ -117,6 +117,8 @@ const SCRIMMED_BANNER = over(SCRIM.rgb, hexRGB(BANNER_FILL), SCRIM.a);
 function findChrome() {
   const c = [
     process.env.CHROME_PATH,
+    '/ms-playwright/chromium-1148/chrome-linux/chrome',
+    '/ms-playwright/chromium_headless_shell-1148/chrome-linux/headless_shell',
     'C:/Program Files/Google/Chrome/Application/chrome.exe',
     'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
     'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',

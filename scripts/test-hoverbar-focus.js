@@ -57,11 +57,13 @@ function check(cond, name, detail) {
   if (cond) { passed++; console.log('  ok   ' + name); }
   else { failures.push(name + (d ? ' — ' + d : '')); console.log('  FAIL ' + name + (d ? ' — ' + d : '')); }
 }
-function skip(msg) { console.log('[test] SKIP: ' + msg); process.exit(0); }
+function skip(msg) { console.log('[test] SKIP: ' + msg); process.exit(1); }
 
 function findChrome() {
   const candidates = [
     process.env.CHROME_PATH,
+    '/ms-playwright/chromium-1148/chrome-linux/chrome',
+    '/ms-playwright/chromium_headless_shell-1148/chrome-linux/headless_shell',
     '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
     '/home/agent/.cache/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome',
   ].filter(Boolean);

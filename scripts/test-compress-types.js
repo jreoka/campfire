@@ -446,7 +446,7 @@ async function main() {
 
 function skip(why) {
   console.log('[test] SKIP: ' + why);
-  process.exit(0);
+  process.exit(1);
 }
 
 main().catch((e) => { console.error('[test] FAILED:', (e && e.stack) || e); process.exit(1); });
