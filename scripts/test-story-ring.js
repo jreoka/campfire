@@ -153,7 +153,21 @@ window.__scan = async function (png) {
     return i < 0 || i + 2 >= d.length ? null : [d[i], d[i + 1], d[i + 2]];
   };
   const isFace = (p) => p[0] > 100 && p[1] < 100 && p[2] < 100;
-  const isGap = (p) => near(p, PALETTE.bg);
+  // The gap is painted by the avatar's OWN background-coloured border, so where
+  // it meets the photo and where it meets the ring both edges are antialiased.
+  // Those pixels are neither pure --bg nor photo: they are partial mixes of the
+  // background with their neighbour. A blend of the photo's edge with the gap
+  // lands only part of the way from --bg to the photo, so it sits much nearer
+  // the background than any real photo pixel does — measured on the failing
+  // dpr-1 rail tile, that boundary pixel is rgb(15,19,35), 24.6 from --bg,
+  // while the nearest genuinely-not-gap colour (a desaturated thumbnail) is
+  // 112.7 away and the nearest ring stroke is 256. A radius of 60 therefore
+  // admits every blend while no photo or stroke can reach it, so this widens
+  // the gap test without weakening it. The old radius of 24 called the blend
+  // "photo", ate a quarter-step out of each real gap and failed the four-sided
+  // assertion on a 1.75px gap.
+  const GAP_R = 60;
+  const isGap = (p) => dist2(p, PALETTE.bg) < GAP_R * GAP_R;
   const isStroke = (p) => near(p, PALETTE.line) || near(p, PALETTE.accent);
   let face = 0, strokePx = 0;
   // How much colour is left in the photo itself: the muted ("already watched
