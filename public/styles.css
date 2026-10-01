@@ -2836,6 +2836,24 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
    left after the margins, and 100% would push it past the sidebar. */
 #home-ui>#btn-friends,#home-ui>#stories-nav-wrap,#home-ui>#anow-strip,#home-ui>.chan-group-label,#home-ui>#dm-list,#home-ui>#group-list{margin-left:.55rem;margin-right:.55rem}
 #home-ui>#btn-friends{width:auto}
+/* A hair of air between two chats (owner request). The two lists (#dm-list,
+   #group-list) are plain stacks of rows with no gap of their own, so two chats
+   read as one block, and it showed most on a hover/active fill where the pair
+   merged into a single slab. A flex GAP is what buys it, not padding: every row
+   keeps its own box, so the presence light's halo, a DM's banner and each row's
+   rounded hover pill still sit inside the row that owns them (the halo in
+   .dmrow .avwrap .status-dot is knocked out in --panel, the sidebar's own
+   colour, so a gap of that same colour is the only thing that can be added
+   without a seam). 2px — the gap #text-channels/#voice-channels already use,
+   so a channel row and a chat row are one rhythm. ID-scoped to the two lists on
+   purpose: #btn-friends and #stories-nav-wrap are .dmrow rows too, but they are
+   the column's header controls and keep the margin the rule above gives them.
+   The :empty restatement is not redundant — this id pair outranks the shared
+   `#dm-list:empty{display:none}` below, so without it an empty list would keep
+   this rule's display and stop hiding.
+   scripts/test-dm-list-gap.js measures both lists in a real browser. */
+#home-ui>#dm-list,#home-ui>#group-list{display:flex;flex-direction:column;gap:2px}
+#home-ui>#dm-list:empty,#home-ui>#group-list:empty{display:none}
 .home-head{padding:.9rem .95rem;border-bottom:1px solid var(--line-soft)}
 .home-head strong{font-size:1rem;font-weight:750;letter-spacing:-.01em}
 .pad-x{padding:0 .75rem}
