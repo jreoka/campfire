@@ -349,12 +349,19 @@ async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-dm-gap-'));
   let child = null, chrome = null, ws = null;
   try {
-    // The drop is best-effort and the create is NOT fatal when it says the
-    // database is already there: the rows this harness creates are unique-named
-    // and it is about the GAP, so a leftover database from an interrupted run is
-    // a nuisance, not a reason to fail. Fresh state is asserted instead.
-    await admin.query(`DROP DATABASE IF EXISTS ${TEST_DB} WITH (FORCE)`).catch(() => console.log('  (note: the old ' + TEST_DB + ' was still in use; reusing it)'));
-    await admin.query(`CREATE DATABASE ${TEST_DB}`).catch((e) => { if (e.code !== '42P04') throw e; });
+    // A fresh database every run. The drop is retried while something still holds
+    // it (a previous run's server, which takes a moment to let go) and only then
+    // is the create treated as optional: the fixture's accounts are unique-named
+    // per run, so a leftover database left by an interrupted run is a nuisance,
+    // not a reason to fail.
+    let made = false;
+    for (let i = 0; i < 10 && !made; i++) {
+      try { await admin.query(`DROP DATABASE IF EXISTS ${TEST_DB} WITH (FORCE)`); }
+      catch { await sleep(500); continue; }
+      try { await admin.query(`CREATE DATABASE ${TEST_DB}`); made = true; }
+      catch (e) { if (e.code !== '42P04') throw e; await sleep(500); }
+    }
+    if (!made) console.log('  (note: ' + TEST_DB + ' was still in use; this run reuses it)');
     await admin.end();
 
     child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
@@ -432,6 +439,17 @@ async function main() {
     };
     await send('Page.enable');
     await send('Runtime.enable');
+    // A real pointer, because the tell this change is about is a HOVERED row's
+    // fill: a synthetic class would paint a state the product never reaches.
+    const hover = async (sel, nth = 0) => {
+      const at = await evaluate(`(() => { const el = document.querySelectorAll(${JSON.stringify(sel)})[${nth}];
+        if (!el) return null; const b = el.getBoundingClientRect();
+        return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) }; })()`);
+      if (!at) return false;
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y, buttons: 0 });
+      await sleep(250);
+      return true;
+    };
     await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` });
     const waitFor = async (expr, ms = 30000) => {
       const t0 = Date.now();
@@ -474,15 +492,20 @@ async function main() {
     };
     await openA('once');
 
+    // The app's own theme painter, called from the harness: same entry point the
+    // Settings panel uses, so a per-theme restatement of the gap would show.
+    const applyThemeProbe = async (theme) => {
+      const flipped = await evaluate(`(() => { applyTheme(${JSON.stringify(theme)}, { save: false }); return document.documentElement.dataset.theme; })()`);
+      check(flipped === theme, theme + ': the theme setter took the sidebar to ' + theme, { got: flipped });
+      await sleep(200);
+    };
     const measured = {};
     const shots = [];
     for (const theme of THEMES) {
       // A theme flip is a real user path, so go through the app's own painter
       // rather than poking the attribute: that is what keeps any per-theme
       // restatement of the gap honest.
-      const flipped = await evaluate(`(() => { applyTheme(${JSON.stringify(theme)}, { save: false }); return document.documentElement.dataset.theme; })()`);
-      if (flipped !== theme) { check(false, theme + ': the theme setter took the sidebar to ' + theme); continue; }
-      await sleep(200);
+      await applyThemeProbe(theme);
       await openA(theme);
       measured[theme] = await evaluate(PROBE);
       // "Make it look right" is not something an offline assertion settles, so
@@ -587,6 +610,53 @@ async function main() {
         theme + ': the air between rows is the sidebar\'s own colour, and the presence light is knocked out in it — no seam under the dot',
         { list: m.air[0], rail: m.air[1], haloKnockoutArea: m.air[2], halo: m.haloKnockout, panel: m.panelBg });
       check(near(parseFloat(m.dmMargin), 0.55 * REM, 0.6), theme + ': the column\'s .55rem side inset is unchanged', { marginLeft: m.dmMargin });
+    }
+
+    // The one measurement that matches the report: with a real hover on a real
+    // row, the two fills must not touch. The 2px line between them is read off
+    // the PIXELS (elementFromPoint in the air, the fill's own box above and
+    // below), not off the stylesheet.
+    if (await hover('#group-list .dmrow', 0)) {
+      await applyThemeProbe('dark');
+      const h = measured.dark || await evaluate(PROBE);
+      const hov = await evaluate(`(() => { const rows = [...document.querySelectorAll('#group-list .dmrow')];
+        const b = rows.map((r) => { const x = r.getBoundingClientRect(); return { top: x.top, bottom: x.bottom, h: x.height, bg: getComputedStyle(r).backgroundColor }; });
+        // The middle of the AIR, not the middle of the hovered row (which is
+        // filled): between the two row boxes, at the sidebar's left edge where
+        // only the list itself is in that band.
+        // The first whole pixel that lies ENTIRELY in the air: the row edges are
+        // fractional, so the pixel at the row's own bottom edge is half fill and
+        // half air, and the pixel at the next row's top edge is the other way
+        // round. Anything else measures a row, not the gap.
+        var air = Math.ceil(b[0].bottom);
+        if (air >= b[1].top) return { b: b, air: 'no whole pixel in a ' + (b[1].top - b[0].bottom).toFixed(2) + 'px gap' };
+        var x = Math.round(document.getElementById('group-list').getBoundingClientRect().left + 20);
+        // What is PAINTED there: the first opaque background up from whatever the
+        // hit test found, since a list (and a row at rest) paints nothing itself
+        // and the colour of the air is its ancestor's.
+        var el = document.elementFromPoint(x, air), col = null, from = null;
+        for (var n = el; n; n = n.parentElement) {
+          var c = getComputedStyle(n).backgroundColor;
+          if (c && c !== 'rgba(0, 0, 0, 0)') { col = c; from = n.id || n.className; break; }
+        }
+        return { b: b, air: col, airFrom: from, hit: el ? (el.id || el.className) : null,
+          airAt: air, airTop: Math.round(b[0].bottom * 100) / 100, airBottom: Math.round(b[1].top * 100) / 100,
+          panel: getComputedStyle(document.getElementById('sidebar')).backgroundColor }; })()`);
+      check(hov.b[0].bg !== 'rgba(0, 0, 0, 0)', 'the hovered row really is filled (a real :hover fill, not a painted-on class)',
+        { fill: hov.b[0].bg });
+      check(near(hov.b[1].top - hov.b[0].bottom, DM_GAP, 0.6),
+        'the hovered fill stops 2px short of the next row — the slab is broken', { air: Math.round((hov.b[1].top - hov.b[0].bottom) * 100) / 100 });
+      check(hov.air === hov.panel, 'and the 2px between the two rows is the sidebar\'s own colour',
+        { air: hov.air, panel: hov.panel, paintedBy: hov.airFrom, hit: hov.hit, sampledAt: hov.airAt,
+          between: hov.airTop + ' and ' + hov.airBottom });
+      const shot = await send('Page.captureScreenshot', {
+        format: 'png', clip: { x: 0, y: 260, width: 268, height: 150, scale: 2 },
+      });
+      const png = path.join(ROOT, '..', 'tmp', 'dm-list-gap', 'dm-list-gap-hover.png');
+      fs.mkdirSync(path.dirname(png), { recursive: true });
+      fs.writeFileSync(png, Buffer.from(shot.data, 'base64'));
+      console.log('  (wrote dm-list-gap-hover.png — the hovered pair, 2x)');
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 640, y: 640, buttons: 0 });
     }
 
     // Photos are how this change gets signed off by eye; the run's own temp
