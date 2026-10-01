@@ -1526,6 +1526,28 @@ left the sign-up reader a blank band under the shell to scroll into with the
 form's own buttons behind the keys. `scripts/test-mobile-landscape.js` [8]
 measures it for the dialog layer, `scripts/test-auth-keyboard.js` for the auth
 screen.
+**A keyboard's own minimize key is not a blur.** The picker sheet's `.pk-kb`
+mode is decided by `keyboardCovering()` in `pickers.js` — the visible viewport
+against the screen's high-water mark (`_pkFullH`, re-learned on rotation) — and
+NOT by whether `#pk-search` holds the caret. Both keys on most layouts hide the
+keys while leaving the caret exactly where it was, so a focus-keyed mode leaves
+the sheet parked on the keyboard's old top edge, in the height it was built for
+("it only goes back down a little bit"). Caret *and* geometry, together:
+`paintPickerKeyboardMode()` requires both. Every signal that can learn something
+about the keyboard — the caret events, the visualViewport sync, `window.resize`
+and the settle — routes through it, and the settle re-derives the mode as well
+as re-measuring, because a viewport event that arrives mid-transition and then
+nothing is exactly what these engines do. `sizePicker()` additionally holds the
+geometry still while a finger is down on the sheet (`pickerFingerDown()`): a
+focus-keyed mode used to re-lay the sheet out between touchstart and the click
+the same gesture produces — the lift blurs the field, the class flips, the
+collage slid out from under the finger and the click landed on the section
+header, so a picked GIF only highlighted and the SECOND tap sent it. The
+guard's window is deliberately NOT cleared on touchend (the click is dispatched
+after the lift-off); the settle clears it outright, so it can never outlast the
+real re-measure. `scripts/test-picker-kb-minimize.js` walks both reports
+end-to-end with real GIF tiles and real touch events, and fails on the old
+focus-keyed code.
 Home's main panel shows one of two no-conversation pages — the Friends feed or
 the story center — and they are switched in exactly one place,
 `paintHomePanel()` (pins.js): `S.homePanel` is the state, `renderDmBlank()`

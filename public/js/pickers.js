@@ -98,10 +98,23 @@ function openPicker(mode = 'insert', mid = null, tab = 'emoji', anchor = null, i
 // deliberately NOT subtracted here: it is what puts the sheet's bottom edge on
 // the keyboard's top edge (the `bottom` in styles.css), and taking it off the
 // height too would charge the composer's height twice.
+// Is a finger down ON the sheet (not on its chrome)? While one is, the sheet's
+// keyboard mode is frozen: it must not re-lay out between touchstart and the
+// click the same gesture produces, or the row under the finger moves and the
+// tap lands somewhere else (the reason a picked GIF used to need two taps).
+let _pkTouchAt = 0;
+function pickerFingerDown() {
+  return !!_pkTouchAt && (Date.now() - _pkTouchAt) < 900;
+}
 function sizePicker() {
   const pk = $('#picker');
   if (!pk || pk.classList.contains('hidden')) return;
-  const vvh = (window.visualViewport && window.visualViewport.height) || innerHeight;
+  // A finger is down: hold the geometry it is about to be trusted with. The
+  // guard window outlasts a slow tap and a drag-resize; what it must never
+  // outlast is the settle (see settlePickerKeyboard), which re-measures from
+  // live geometry 400ms after the last signal — long after any finger is up.
+  if (pickerFingerDown()) return;
+  const vvh = pickerVisibleH();
   const comp = $('#composer');
   const strip = $('#typing-bar');
   let max;
@@ -276,6 +289,40 @@ function keyboardOffset() {
   const layoutH = Math.max(doc ? doc.clientHeight : 0, window.innerHeight || 0);
   return Math.max(0, Math.round(layoutH - vv.height - vv.offsetTop));
 }
+// ---------- is a keyboard covering the screen RIGHT NOW? ----------
+// The sheet's keyboard mode is a GEOMETRY question, not a focus question.
+//
+// The search field holding the caret only says the reader ASKED for a keyboard.
+// The keyboard's own minimize key (the arrow on most layouts) then hides it
+// again WITHOUT ever taking the caret away — so a mode keyed on focus leaves the
+// sheet parked on the keyboard's old top edge, in the height it was built for,
+// long after the keys are gone (owner report: "if i open the gif picker and then
+// open the keyboard it slides the gif picker up which it's supposed to do but if
+// i minimize the keyboard the gif picker doesn't go back it only goes back down a
+// little bit").
+//
+// The fact is the visible viewport: exactly as tall as the screen while nothing
+// covers its bottom, shorter the moment a keyboard does. Measured that way both
+// engines agree without anyone having to say which model they are — a
+// resizes-content viewport (Android) shrinks the layout box AND the visible one,
+// a visual-only one (iOS, or a WebView that ignores interactive-widget) shrinks
+// only the visible one — and neither needs the caret to report it. That last
+// part is what makes the keyboard's own minimize key work, where the caret never
+// moves.
+//
+// The baseline is a high-water mark rather than a reading taken at open: the
+// keyboard is still animating away when a picker opens, so the height at that
+// instant can be short, and a short baseline would mean the keyboard is never
+// detected as up again. A rotation is a genuinely new screen height, so the mark
+// is dropped there and re-learned from the next reading.
+const PK_KB_MIN = 90; // px — the smallest cover that is a keyboard, not browser chrome
+let _pkFullH = 0;
+function pickerVisibleH() { return (window.visualViewport && window.visualViewport.height) || innerHeight; }
+function keyboardCovering() {
+  const h = pickerVisibleH();
+  if (h > _pkFullH) _pkFullH = h;
+  return _pkFullH - h >= PK_KB_MIN;
+}
 function wirePickerViewport() {
   if (!window.visualViewport) return;
   const vv = window.visualViewport;
@@ -285,31 +332,70 @@ function wirePickerViewport() {
     root.setProperty('--kb', keyboardOffset() + 'px');
     root.setProperty('--vv-top', Math.max(0, Math.round(vv.offsetTop)) + 'px');
     root.setProperty('--vvh', Math.round(vv.height) + 'px');
+    paintPickerKeyboardMode();
     settlePickerKeyboard();
     if (raf) return;
     raf = requestAnimationFrame(() => { raf = 0; try { sizePicker(); } catch {} });
   };
   vv.addEventListener('resize', sync);
   vv.addEventListener('scroll', sync);
-  window.addEventListener('orientationchange', sync);
+  window.addEventListener('orientationchange', () => {
+    _pkFullH = 0; // a rotated phone is a different screen: re-learn its height
+    sync();
+  });
   sync();
 }
 wirePickerViewport();
 // The finger owns the height while it is down; the measured cap comes back after
 // (see pickerDragResize, which clears both inline values before re-measuring).
 pickerDragResize($('#picker'));
-// Focusing the picker's own search field is the one moment the keyboard is
-// welcome back — while it is up the sheet becomes a fixed box whose bottom edge
-// is the keyboard's top (see #picker.pk-kb). A CLASS, not :has(#pk-search:focus):
+// Is the sheet's own search field the focused element RIGHT NOW? Read live
+// rather than carried in a flag: a flag goes stale the moment anything else
+// takes the caret (the reader taps the composer, a dialog opens), and a stale
+// flag used to mean the sheet kept its keyboard mode with no keyboard behind it.
+function pkSearchFocused() {
+  const s = $('#pk-search');
+  return !!s && document.activeElement === s;
+}
+// While the keyboard is genuinely up the sheet becomes a box whose bottom edge is
+// the keyboard's top (see #picker.pk-kb). A CLASS, not :has(#pk-search:focus):
 // :focus only applies while the DOCUMENT itself is focused, which is not always
 // true of an embedded WebView, and this decision must not depend on that.
+//
+// The mode is read from geometry (keyboardCovering), NOT from the caret. That one
+// choice is both fixes in this file:
+//
+//   - the keyboard's own minimize key hides the keys without ever blurring the
+//     search field, so a focus-keyed mode kept the sheet up at the keyboard's
+//     old height — the reported "it only goes back down a little bit";
+//   - and a focus-keyed mode also re-laid the sheet out between a finger landing
+//     on a GIF and lifting off it (the lift blurs the field, so the class flips
+//     and sizePicker runs), which slid the collage out from under the tap: the
+//     click was then delivered to the section header where the tile had just
+//     been, so the GIF only "highlighted" and the SECOND tap sent it. Mode
+//     therefore never changes between touchstart and touchend (see the guard in
+//     sizePicker) — a pick is one tap, every time.
 function paintPickerKeyboard() {
-  const pk = $('#picker');
-  if (!pk) return;
-  const on = document.activeElement === $('#pk-search');
-  pk.classList.toggle('pk-kb', on);
+  const changed = paintPickerKeyboardMode();
   try { sizePicker(); } catch {}
-  settlePickerKeyboard();
+  // A mode that just changed is a measurement taken mid-transition: schedule the
+  // settle (an unchanged one is not mid-flight, and must not keep rescheduling).
+  if (changed) settlePickerKeyboard();
+}
+// The class itself, off live geometry, and whether it moved. Every path that can
+// learn something about the keyboard goes through here — the caret events, the
+// viewport sync, the window resize and the settle — because the mode is a fact
+// about the screen, not about whichever signal happened to arrive.
+function paintPickerKeyboardMode() {
+  const pk = $('#picker');
+  if (!pk || pk.classList.contains('hidden')) return false;
+  // Caret, but no keyboard (the reader dismissed it, or the engine is one that
+  // only ever resizes the visual viewport): size to what is actually on screen.
+  const on = pkSearchFocused() && keyboardCovering();
+  const was = pk.classList.contains('pk-kb');
+  if (was === on) return false;
+  pk.classList.toggle('pk-kb', on);
+  return true;
 }
 // A keyboard transition is an ANIMATION (~250ms), but some WebViews report it
 // with a single resize/blur at the START — the measurement taken then is
@@ -334,11 +420,33 @@ function settlePickerKeyboard() {
       root.setProperty('--vvh', Math.round(vv.height) + 'px');
     }
     if (pk.classList.contains('pk-resizing')) return; // the finger owns the height right now
+    _pkTouchAt = 0; // the guard only ever defers to the settle, never outlasts it
+    // Re-derive the mode, then re-measure: a keyboard that left while the caret
+    // stayed is exactly the case a viewport event announced and nothing else did.
+    paintPickerKeyboardMode();
     try { sizePicker(); } catch {}
   }, 400);
 }
 $('#pk-search').addEventListener('focus', paintPickerKeyboard);
 $('#pk-search').addEventListener('blur', paintPickerKeyboard);
+// The gesture guard (see pickerFingerDown). Capture phase, so it is stamped
+// before anything the sheet's own handlers do with the touch — the search field
+// blurring on lift-off is a late signal and must not be able to re-measure the
+// sheet out from under the finger that is still down.
+document.addEventListener('touchstart', (e) => {
+  const pk = $('#picker');
+  if (!pk || pk.classList.contains('hidden')) return;
+  const t = e.target;
+  if (!t || !t.closest || !t.closest('#picker')) return;
+  // A drag of the sheet's own chrome owns the height (see pickerDragResize),
+  // which the guard would otherwise block on its very first re-layout.
+  if (t.closest('.pk-tabs, .pk-resize-grip')) return;
+  // Deliberately NOT cleared on touchend: the click that completes the tap is
+  // dispatched AFTER the lift-off, so clearing there would reopen the very
+  // window the guard exists to close. It is short and self-expiring, and the
+  // settle clears it outright — see sizePicker.
+  _pkTouchAt = Date.now();
+}, { capture: true, passive: true });
 // More robust: focusin bubbles and fires even when focus doesn't, and window
 // resize fires when the keyboard opens/closes in WebViews where visualViewport
 // is unreliable. Both re-check the keyboard state.

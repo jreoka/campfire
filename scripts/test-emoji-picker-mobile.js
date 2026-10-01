@@ -174,9 +174,26 @@ const __realClient = () => (__clientDesc && __clientDesc.get ? __clientDesc.get.
 let __kbInner = null, __kbClient = null, __kbVv = null;
 Object.defineProperty(window, 'innerHeight', { configurable: true, get: () => (__kbInner == null ? __realInner() : __kbInner) });
 Object.defineProperty(document.documentElement, 'clientHeight', { configurable: true, get: () => (__kbClient == null ? __realClient() : __kbClient) });
+const __vvDesc = window.visualViewport
+  ? Object.getOwnPropertyDescriptor(Object.getPrototypeOf(window.visualViewport), 'height') : null;
+const __realVv = () => (__vvDesc && __vvDesc.get ? __vvDesc.get.call(window.visualViewport) : __realInner());
+// Put the platform numbers back. __setKeyboard measures against the CURRENT
+// visual viewport, so a second call would subtract from the first one's stub and
+// report a keyboard that is twice the real one — every scenario that raises the
+// keys more than once has to start from here.
+window.__resetKeyboard = () => {
+  window.__kb.on = false; window.__kb.px = 0; window.__kb.mode = null;
+  __kbInner = null; __kbClient = null; __kbVv = null;
+  const vv = window.visualViewport;
+  if (vv) { try { Object.defineProperty(vv, 'height', { configurable: true, get: () => __realVv() }); } catch {} }
+  document.documentElement.style.setProperty('--vvh', (__realVv()) + 'px');
+  dispatchEvent(new Event('resize'));
+  if (vv) vv.dispatchEvent(new Event('resize'));
+  return __state();
+};
 window.__setKeyboard = (px, mode) => {
   const vv = window.visualViewport;
-  const fi = __realInner(), fv = vv ? vv.height : fi;
+  const fi = __realInner(), fv = __realVv();
   window.__kb.on = px > 0; window.__kb.px = px; window.__kb.mode = px > 0 ? mode : null;
   __kbInner = px > 0 && mode === 'content' ? fi - px : null;
   __kbClient = __kbInner;
@@ -367,9 +384,20 @@ function staticChecks() {
   check(/bottom:var\(--kb,0px\)/.test(block), 'the sheet rides the app keyboard offset (--kb)', block.slice(-260));
   check(!/max-height:62dvh/.test(block), 'the old fixed 62dvh cap is gone — a vh cannot know about the composer or the keys');
   check(/max-height:clamp\(220px/.test(block), 'the cap is a floor/ceiling clamp, so it can never measure to nothing');
-  check(/#picker\.pk-kb\{position:fixed;bottom:0;/.test(css),
-    'while search is focused the sheet is fixed at the keyboard’s own top edge');
+  // The sheet is NOT `position:fixed` while the keyboard is up: a fixed box
+  // cannot be trusted against the VISUAL viewport in a WebView (e579490 dropped
+  // it deliberately and JS sets `bottom` from the measured keyboard height
+  // instead), so the bottom edge is written inline per measurement.
+  check(!/#picker\.pk-kb\{position:fixed/.test(css),
+    'the keyboard-mode sheet is not position:fixed — JS sets its bottom from the measured keys');
+  check(/pk\.style\.bottom = keyboardOffset\(\) \+ 'px'/.test(pickers),
+    'and the keyboard’s top edge is written inline from the measured offset');
   check(/classList\.toggle\('pk-kb'/.test(pickers), 'and the class is painted by the search field’s own focus/blur');
+  // The class is painted from the CARET *and* the geometry, never the caret
+  // alone: the keyboard’s own minimize key hides the keys without blurring the
+  // field (scripts/test-picker-kb-minimize.js walks that end to end).
+  check(/pkSearchFocused\(\) && keyboardCovering\(\)/.test(pickers),
+    'but never from the caret alone — the keyboard can go away while the caret stays');
   check(/#picker\.pk-resizing\{max-height:none\}/.test(css), 'a drag owns the height while the finger is down');
   // The JS half: the phone never focuses the picker's search field, and a pick
   // differs from a dismissal.
@@ -430,12 +458,28 @@ async function browserChecks() {
     check(!!b.picker && b.picker.b <= b.vh - 300 + 2, 'iOS-style: the sheet stops at the keyboard, which the layout box cannot see', { b: b.picker && b.picker.b, kbTop: b.vh - 300 });
 
     console.log('\n[4] search is the one moment the keyboard is welcome back');
-    let f = await evaluate('(async () => { __setKeyboard(0, "content"); await __openSettled(); return __searchFocus(); })()');
+    // Focusing the search field asks for a keyboard; the keys take a moment to
+    // come up, so the mode is asserted once they are actually there (the caret
+    // alone is no longer enough to decide it — see the static half).
+    let f = await evaluate('(async () => { __setKeyboard(0, "content"); await __openSettled(); __searchFocus(); __setKeyboard(300, "visual"); await __settle(); return __state(); })()');
     check(f.activeId === 'pk-search', 'the search field holds the caret', { activeId: f.activeId });
-    check(f.pickerCls.includes('pk-kb'), 'with search focused the sheet switches to the keyboard-edge mode', { cls: f.pickerCls });
-    if (process.env.PICK_SHOT) await shoot('(() => { __setKeyboard(300, "visual"); return __settle(); })()', process.env.PICK_SHOT.replace(/\.png$/, '') + '-search.png');
-    check(f.pickerPos === 'fixed', 'and is fixed at the keyboard edge, not floated above the composer', { pos: f.pickerPos });
-    check(!!f.picker && inside(f.picker, f.vw, f.vh), 'the search sheet still fits the visible viewport', f.picker);
+    check(f.pickerCls.includes('pk-kb'), 'with search focused and the keys up, the sheet switches to the keyboard-edge mode', { cls: f.pickerCls });
+    if (process.env.PICK_SHOT) await shoot('__state()', process.env.PICK_SHOT.replace(/\.png$/, '') + '-search.png');
+    check(f.pickerPos === 'absolute', 'parked above the keyboard by measurement, not floated as a fixed box', { pos: f.pickerPos });
+    check(f.kb === 300, 'with the measured keyboard height as its footing', { kb: f.kb });
+    check(!!f.picker && f.picker.b <= f.vh - 300 + 2,
+      'the search sheet’s bottom edge is the keyboard’s top edge', { b: f.picker && f.picker.b, kbTop: f.vh - 300 });
+    check(!!f.picker && f.picker.t >= -1, 'and it is not shoved off the top', f.picker);
+    // The ▼ key: the keys go away, the caret stays exactly where it was. The
+    // sheet must come all the way back down — the reported bug, walked in full
+    // by scripts/test-picker-kb-minimize.js; here it just must not still be in
+    // keyboard mode with no keyboard under it.
+    let min = await evaluate('(async () => { const beforeH = __state().picker.h; __setKeyboard(0, "content"); await __settle(); await __settle(); return Object.assign({ beforeH: beforeH }, __state()); })()');
+    // The keyboard has gone: what the app must notice is that the screen is
+    // tall again, whatever the layout box happens to be reporting.
+    check(min.vh > 600, 'after the minimize the screen is its full height again', { vh: min.vh });
+    check(!min.pickerCls.includes('pk-kb'), 'and the sheet has left keyboard mode — the caret never moved', { cls: min.pickerCls });
+    check(!!min.picker && min.picker.b <= min.vh + 1, 'back down on the bottom edge', min.picker);
 
     console.log('\n[5] dismissing the sheet must not answer with a keyboard');
     let afterX = await evaluate('(() => { __setKeyboard(0, "content"); __open(); return __closeClick(); })()');
@@ -463,7 +507,10 @@ async function desktopChecks() {
     check(s.phone === false, 'the desktop does not get the phone layout');
     check(s.focusCalls >= 1, 'the desktop still focuses the search field', { focusCalls: s.focusCalls });
     check(s.pickerPos === 'absolute', 'the desktop picker stays the anchored popup', { pos: s.pickerPos });
-    check(!!s.picker && s.picker.w <= 400, 'the desktop popup keeps its popup width', s.picker);
+    // The desktop popup is the stylesheet's own sheet width (min(460px, 100vw-2rem));
+    // assert against THAT, not a number this test made up.
+    const cap = Math.min(460, 1280 - 32);
+    check(!!s.picker && s.picker.w <= cap + 1, 'the desktop popup keeps the stylesheet\u2019s popup width', { w: s.picker && s.picker.w, cap });
   });
 }
 
