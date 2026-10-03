@@ -3882,6 +3882,13 @@ document.addEventListener('paste', (e) => {
   if (files.length) {
     // screenshots / images / video pasted anywhere go straight to the composer
     e.preventDefault();
+    // Pasting inside the thread panel targets the thread's composer, not the chat's.
+    const tctx = (e.target && e.target.closest && e.target.closest('#thread-panel')) ? threadAttCtx() : null;
+    if (tctx) {
+      files.slice(0, maxAttsFor()).forEach((f) => uploadAndAttach(f, tctx));
+      const ti = $('#in-thread'); if (ti) ti.focus();
+      return;
+    }
     if (!composerTargetReady()) { toast('Pick a chat first, then paste'); return; }
     files.slice(0, maxAttsFor()).forEach((f) => uploadAndAttach(f));
     $('#in-message').focus();
@@ -3947,6 +3954,13 @@ document.addEventListener('drop', (e) => {
   const files = [...(e.dataTransfer.files || [])];
   dropReset();
   if (!files.length) return;
+  // Dropping inside the thread panel targets the thread's composer, not the chat's.
+  const tctx = (e.target && e.target.closest && e.target.closest('#thread-panel')) ? threadAttCtx() : null;
+  if (tctx) {
+    files.slice(0, maxAttsFor()).forEach((f) => uploadAndAttach(f, tctx));
+    const ti = $('#in-thread'); if (ti) ti.focus();
+    return;
+  }
   if (!composerTargetReady()) { toast('Pick a chat first, then drop'); return; }
   files.slice(0, maxAttsFor()).forEach((f) => uploadAndAttach(f));
   $('#in-message').focus();
