@@ -17,6 +17,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Campfire" />
 <link rel="stylesheet" href="/styles.css" />
+<style>/* story chooser drop highlight (see js/story-upload-dnd.js) */
+.sn-card.sn-dropping{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-dim)}</style>
 <script>try{var __t=localStorage.getItem('cf_theme');document.documentElement.setAttribute('data-theme',(['light','dracula','oled'].indexOf(__t)>=0)?__t:'dark');}catch(e){}
 /* Installed-app flag, set before the first paint so the shell can tighten
    itself up with no flash: an installed app has no browser chrome to work
@@ -873,6 +875,7 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
 <script src="/js/compose.js"></script>
 <script src="/js/story-edit.js"></script>
 <script src="/js/stories.js"></script>
+<script src="/js/story-upload-dnd.js"></script>
 <script src="/js/viewonce.js"></script>
 <script src="/js/pickers.js"></script>
 <script src="/js/crop.js"></script>
