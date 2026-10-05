@@ -7,8 +7,14 @@
 // switches). Both are top-level function declarations, so wrapping them here
 // — this script loads after messages.js — keeps the pill perfectly in step
 // with the typing strip, with no polling.
+//
+// The strip deliberately excludes yourself (showTyping returns early for
+// S.me.id), but the pill includes you: your own keystrokes are tracked here
+// on the same 2.5s lease.
 (function () {
   'use strict';
+
+  var selfTypingTimer = 0;
 
   function syncMemberTyping() {
     if (typeof S === 'undefined' || !S || !(S.typingNames instanceof Map)) return;
@@ -16,6 +22,7 @@
     if (!list) return;
     var typing = {};
     S.typingNames.forEach(function (_, id) { typing[String(id)] = true; });
+    if (selfTypingTimer && S.me && S.me.id != null) typing[String(S.me.id)] = true;
     var rows = list.querySelectorAll('.member[data-uid]');
     for (var i = 0; i < rows.length; i++) {
       var row = rows[i];
@@ -32,6 +39,23 @@
       }
     }
   }
+
+  function markSelfTyping() {
+    if (typeof S === 'undefined' || !S || !S.me) return;
+    clearTimeout(selfTypingTimer);
+    try { syncMemberTyping(); } catch (e) {}
+    selfTypingTimer = setTimeout(function () {
+      selfTypingTimer = 0;
+      try { syncMemberTyping(); } catch (e) {}
+    }, 2600);
+  }
+
+  // Your own keystrokes: the channel box and the thread reply box. Delegated
+  // so it works no matter when the inputs enter the DOM.
+  document.addEventListener('input', function (e) {
+    var t = e.target;
+    if (t && (t.id === 'in-message' || t.id === 'in-thread')) markSelfTyping();
+  });
 
   function wrap(name) {
     try {
