@@ -505,31 +505,6 @@ function stopAdminStatsLive() {
 }
 
 // ---------- media compression monitor ----------
-function scanLine(sc) {
-  if (!sc) return '';
-  const c = sc.counts || {};
-  // With no engine (VIRUS_SCAN=0) there are no verdicts at all — every upload is
-  // served as it lands, unscanned — so the line has to say that rather than read
-  // as a scanner that is merely behind.
-  if (!sc.scanning) {
-    return `Virus scan: OFF (VIRUS_SCAN=0) · uploads are served as they land, unscanned · infected ${c.infected || 0}`;
-  }
-  const eng = { off: 'OFF', none: 'NO ENGINE (fail-open)', starting: 'STARTING', ready: 'READY', failed: 'ENGINE FAILED (fail-open)' }[sc.engine || ''] || String(sc.engine || '?');
-  // ClamAV is a signature engine, so the two things worth reporting are the
-  // engine generation every verdict is recorded against (a new one is what makes
-  // the bucket sweep re-judge the stored tree, see virus-scan.js) and the
-  // signature revision + its date. Nothing here is a "model": what proves the
-  // daemon is really detecting is CLAMAV_VERIFY_EICAR at boot (see the
-  // Dockerfile) and scripts/verify-clamav.js.
-  // `pending` is the queue being judged right now, never a file a reader is
-  // waiting on: the verdict is a background one (see virus-scan.js).
-  const info = sc.engineInfo;
-  const sig = info && info.db
-    ? `sig ${info.db} (${info.dbDate})`
-    : sc.engine === 'ready' ? 'signatures unreadable' : 'no signatures loaded';
-  const id = sc.engineIdentity ? `${esc(sc.engineIdentity)} · ` : '';
-  return `Virus scan: ${esc(eng)} · judging ${c.pending || 0} · infected ${c.infected || 0} · errors ${c.error || 0} · ${id}${esc(sig)}${sc.engineHost ? ' · ' + esc(sc.engineHost) : ''} · uploads serve immediately`;
-}
 function sweepLine(sw) {
   if (!sw) return '';
   if (!sw.enabled) return ' · Orphan sweep: OFF';
@@ -591,22 +566,6 @@ function storageCard(usage, tracked) {
 // Every verdict is a background one: the bytes stay servable while it is
 // pending, so the sweep can only ever remove malware, never briefly take a
 // working file away from a reader.
-function scanSweepLine(s) {
-  if (!s) return '';
-  if (!s.enabled) return ' · Malware sweep: OFF';
-  const every = (s.everyMs || 0) < 3600000 ? `${Math.round((s.everyMs || 0) / 60000)}min` : `${Math.round((s.everyMs || 0) / 3600000)}h`;
-  const last = s.lastRunAt ? agoStr(s.lastRunAt) : 'not yet';
-  const r = s.lastResult;
-  let did = 'no pass yet';
-  if (r && r.skipped === 'scanning_off') did = 'skipped — scanning is off';
-  else if (r) {
-    did = `${r.queued} queued of ${r.candidates} without a verdict · ${r.listed} object${r.listed === 1 ? '' : 's'} listed · ${r.judged} already judged`;
-    if (r.capped) did += ` (capped at ${s.maxJobs}, rest next pass)`;
-    if (r.errored) did += ` · ${r.errored} in error`;
-  }
-  const err = s.lastError ? ` · last error: ${s.lastError.error}` : '';
-  return ` · Malware sweep: every ${esc(every)}, last ${esc(last)} — ${esc(did)}${esc(err)}`;
-}
 // The bucket reconciliation pass: the compression path that owns ordinary media.
 // It lists the bucket itself and compresses everything referenced that the key
 // ledger has not settled — which is every fresh upload, because the upload path
@@ -689,8 +648,8 @@ async function loadAdminMedia() {
       </div>
       ${!w.ffmpeg ? '<div class="muted small">ffmpeg is not on PATH — uploads work, they just stay uncompressed.</div>' : ''}
       <div class="muted small" style="margin-top:.4rem">${m.totals?.kept ? `${m.totals.kept} examined and kept as-is (already small, or nothing to gain) — every one is listed below.` : 'Every upload is examined, whatever its size or type.'}</div>
-      <div class="muted small" style="margin-top:.4rem">${scanLine(m.scan)}${sweepLine(m.sweep)}</div>
-      <div class="muted small" style="margin-top:.25rem">${bucketScanLine(m.bucketScan)}${scanSweepLine(m.scanSweep)}</div>
+      <div class="muted small" style="margin-top:.4rem">${sweepLine(m.sweep)}</div>
+      <div class="muted small" style="margin-top:.25rem">${bucketScanLine(m.bucketScan)}</div>
       <div class="pf-sec-label" style="margin-top:1rem">Recent files</div>
       ${jobs.length
         ? `<div class="adm-scroll">${jobs.map(jobRow).join('')}</div>`
