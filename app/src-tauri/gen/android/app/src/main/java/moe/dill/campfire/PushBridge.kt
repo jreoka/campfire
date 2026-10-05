@@ -52,6 +52,17 @@ class PushBridge(private val activity: MainActivity) {
   @JavascriptInterface
   fun takeUrl(): String = try { activity.takePendingUrl() } catch (e: Exception) { "" }
 
+  /**
+   * The story camera arms the volume-key shutter while its capture step is
+   * live, and disarms it when the composer closes (see MainActivity.onKeyDown).
+   * Runs on a WebView thread; the flag it sets is volatile, so no UI-thread
+   * hop is needed.
+   */
+  @JavascriptInterface
+  fun setVolumeShutterArmed(armed: Boolean) {
+    try { activity.setVolumeShutterArmed(armed) } catch (e: Exception) {}
+  }
+
   @JavascriptInterface
   fun version(): String = try { JSONObject().put("platform", "android").toString() } catch (e: Exception) { "{}" }
 }

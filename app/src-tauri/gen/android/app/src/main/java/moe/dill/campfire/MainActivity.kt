@@ -2,6 +2,7 @@ package moe.dill.campfire
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.KeyEvent
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import org.json.JSONObject
@@ -13,6 +14,15 @@ class MainActivity : TauriActivity() {
   // ready to route it (the site drains it through the bridge), because a cold
   // start has no JS to hand it to yet.
   @Volatile private var pendingUrl: String? = null
+
+  // Volume-key shutter: the story camera arms this while its capture step is
+  // live (see PushBridge.setVolumeShutterArmed, driven by the page). While
+  // armed, a volume keypress becomes a shutter tap and is consumed so the
+  // ringer/media volume doesn't change with it; otherwise the keys behave
+  // normally. Reset on pause/resume so a dead page can never wedge the keys.
+  @Volatile private var volumeShutterArmed: Boolean = false
+
+  fun setVolumeShutterArmed(armed: Boolean) { volumeShutterArmed = armed }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
@@ -32,12 +42,14 @@ class MainActivity : TauriActivity() {
     // The only suppression the push service applies: on screen means the app is
     // already showing the conversation, so no notification is posted.
     PushService.setAppInForeground(true)
+    volumeShutterArmed = false // the page re-arms through the bridge if needed
     flushPendingUrl()
   }
 
   override fun onPause() {
     super.onPause()
     PushService.setAppInForeground(false)
+    volumeShutterArmed = false
   }
 
   override fun onNewIntent(intent: Intent) {
@@ -45,6 +57,28 @@ class MainActivity : TauriActivity() {
     setIntent(intent)
     takeIntentUrl(intent)
     flushPendingUrl()
+  }
+
+  /**
+   * Volume keys double as the story-camera shutter, but only while the page
+   * has armed it (PushBridge.setVolumeShutterArmed). Unconsumed keys fall
+   * through to the default behaviour, so volume works normally everywhere
+   * else. Key repeats are ignored: one press, one photo.
+   */
+  override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+    if (volumeShutterArmed && event?.repeatCount == 0 &&
+        (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) {
+      webView?.post {
+        try {
+          webView?.evaluateJavascript(
+            "(function(){try{window.dispatchEvent(new Event('cf-volume-shutter'));}catch(e){}})()",
+            null
+          )
+        } catch (ex: Exception) {}
+      }
+      return true
+    }
+    return super.onKeyDown(keyCode, event)
   }
 
   @Synchronized
