@@ -243,8 +243,6 @@ function attItemsFor(a) {
     });
     if (img || video) items.push({ label: img ? 'Open image link' : 'Open video link', icon: OPEN_SVG, fn: () => openMediaLink(url) });
   }
-  const si = scanInfoItem(a);
-  if (si) items.push(si);
   return items;
 }
 // An attachment's rows on their own, for a surface with no message menu to
