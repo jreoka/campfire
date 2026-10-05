@@ -17,8 +17,16 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Campfire" />
 <link rel="stylesheet" href="/styles.css" />
-<style>/* story chooser drop highlight (see js/story-upload-dnd.js) */
-.sn-card.sn-dropping{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-dim)}</style>
+<style>/* story upload dialog (see js/story-upload-dnd.js) */
+#story-upload{position:fixed;inset:0;z-index:170;background:rgba(4,6,11,.68);display:flex;align-items:center;justify-content:center;padding:1rem;animation:cf-fade .15s ease-out}
+.su-card{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-lg);padding:1rem;width:100%;max-width:404px;animation:cf-rise .16s ease-out}
+.su-drop{display:flex;align-items:center;gap:.8rem;border:1.5px dashed var(--line-soft);border-radius:6px;padding:1.4rem 1rem;cursor:pointer;width:100%;background:transparent;color:var(--text);font-family:inherit;text-align:left;transition:border-color var(--t-fast),background var(--t-fast)}
+.su-drop:hover{border-color:var(--accent)}
+.su-drop:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.su-drop.su-dropping{border-color:var(--accent);border-style:solid;background:var(--accent-dim)}
+.su-drop-main{display:flex;flex-direction:column;gap:.15rem;min-width:0}
+.su-drop-title{font-weight:700}
+.su-drop-sub{color:var(--muted);font-size:.85rem}</style>
 <script>try{var __t=localStorage.getItem('cf_theme');document.documentElement.setAttribute('data-theme',(['light','dracula','oled'].indexOf(__t)>=0)?__t:'dark');}catch(e){}
 /* Installed-app flag, set before the first paint so the shell can tighten
    itself up with no flash: an installed app has no browser chrome to work
@@ -491,7 +499,7 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
       </button>
       <button type="button" class="sn-row" id="sn-upload">
         <span class="sn-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M21 16l-5-5-6 6"/></svg></span>
-        <span class="sn-main"><span class="sn-name">Upload a photo or video</span><span class="sn-sub">Pick from this device, or drag &amp; drop / paste</span></span>
+        <span class="sn-main"><span class="sn-name">Upload a photo or video</span><span class="sn-sub">Drag &amp; drop, paste, or browse</span></span>
       </button>
       <button type="button" class="sn-row" id="sn-text">
         <span class="sn-ic sn-aa">Aa</span>
@@ -500,6 +508,24 @@ try{if(window.__TAURI__)document.documentElement.classList.add('wrapper-app');}c
     </div>
   </div>
   <input id="sn-file" type="file" accept="image/*,video/*" class="hidden" />
+</div>
+
+<!-- story upload dialog: opened from the chooser's "Upload a photo or video"
+     row. Drag area, browse, and paste all land in the story composer.
+     (sn-file above is kept because stories.js wires it at load; nothing
+     opens it anymore.) -->
+<div id="story-upload" class="hidden">
+  <div class="su-card" role="dialog" aria-modal="true" aria-labelledby="su-title">
+    <div class="sn-head">
+      <span class="sn-title" id="su-title">Upload a photo or video</span>
+      <button type="button" id="su-close" class="sn-x" title="Cancel" aria-label="Cancel"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <button type="button" class="su-drop" id="su-drop" aria-label="Upload a photo or video: drop a file here, or activate to browse">
+      <span class="sn-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0L7 9m5-5l5 5"/><path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"/></svg></span>
+      <span class="su-drop-main"><span class="su-drop-title">Drag &amp; drop a photo or video</span><span class="su-drop-sub">or click to browse — you can also paste from your clipboard</span></span>
+    </button>
+    <input id="su-file" type="file" accept="image/*,video/*" class="hidden" />
+  </div>
 </div>
 
 <!-- emoji/gif picker -->
