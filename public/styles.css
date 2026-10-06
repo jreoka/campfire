@@ -2202,7 +2202,7 @@ body.touch-hold .sheet-cancel:hover{background:var(--panel-3)}
 /* Chat author line: the head's flex gap already separates the tag from the
    name — cancel the pill's own margin so it sits .35rem after the name (the
    same tag gap the sidebar lists use). */
-.msg .head .usertag{margin-left:-.15rem}
+.msg .head .usertag{margin-left:.35rem}
 .usertag.clickable{cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
 .usertag.clickable:hover{background:var(--panel-4);color:var(--text)}
 /* Server tag mini-panel (banner + icon + name + description). Sits one step
