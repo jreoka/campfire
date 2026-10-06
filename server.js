@@ -8336,9 +8336,13 @@ wss.on('connection', async (ws, req) => {
   // broadcast is ever missed.
   let setupDone = false;
   const earlyCleanup = () => { clients.delete(ws); presenceForget(ws).catch(() => {}); };
-  ws.on('close', () => { if (!setupDone) earlyCleanup(); });
+  ws.on('close', () => {
+    if (process.env.WS_DEBUG && ws.meta) console.log('[ws-debug] close user=%s pod=%s', shortUid(ws.meta.userId), bus.POD_ID);
+    if (!setupDone) earlyCleanup();
+  });
   await presenceUpsert(ws);
   if (ws.readyState !== 1) earlyCleanup(); // CLOSING/CLOSED: that row is nobody's
+  if (process.env.WS_DEBUG) console.log('[ws-debug] open user=%s pod=%s', shortUid(u.id), bus.POD_ID);
   safeSend(ws, { t: 'hello', user: publicUser(u), version: APP_VERSION, gen: APP_GEN });
   await pushAdminPresence();
 
@@ -8362,7 +8366,11 @@ wss.on('connection', async (ws, req) => {
       await announceMobile(me.userId, me.servers);
       return;
     }
-    if (msg.t === 'ping') { safeSend(ws, { t: 'pong' }); return; } // client liveness probe
+    if (msg.t === 'ping') {
+      if (process.env.WS_DEBUG) console.log('[ws-debug] ping from user=%s pod=%s', shortUid(me.userId), bus.POD_ID);
+      safeSend(ws, { t: 'pong' });
+      return;
+    } // client liveness probe
 
     if (msg.t === 'subscribe') {
       // refresh memberships
