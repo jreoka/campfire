@@ -7600,6 +7600,12 @@ async function notifyScanChange(key, status) {
 
 // ---------- WebSocket (live chat + presence + voice signaling) ----------
 const server = http.createServer(app);
+// Keepalive must exceed nginx's upstream keepalive_timeout (60s): otherwise
+// nginx reuses pooled connections Node already closed after 5s (keepalive
+// race), which fails the client's /api/version liveness probe and drops the
+// WebSocket. headersTimeout must exceed keepAliveTimeout per Node docs.
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
 // Two sockets share this HTTP server (the chat socket and the native push
 // socket below), so both are created `noServer` and the upgrade is routed by
 // path. ws's own `path` option ABORTS every upgrade that does not match with a
