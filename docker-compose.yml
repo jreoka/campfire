@@ -23,8 +23,8 @@ services:
     # `latest` is the current stable ClamAV release (the versioned tags — 1.4,
     # 1.5 — are this same build, frozen). It floats on purpose: fresh signatures
     # are only half of a signature engine, so the ENGINE floats too, and
-    # deploy/ovh/update-images.sh + campfire-images.timer pull this container
-    # forward unattended, gated on the app's own acceptance check
+    # The image is rebuilt via GitHub Actions on push to main,
+    # gated on the app's own acceptance check
     # (scripts/verify-clamav.js) with an automatic rollback when it fails.
     # Pin it with CLAMAV_TAG=1.5 to freeze the engine, or to hold a release you
     # do not want — which is also the rollback lever for a bad update.
@@ -54,7 +54,7 @@ services:
     # Loading a fresh database is memory-hungry (the signature set is ~1.3 GB
     # resident once loaded, and clamd is briefly much larger while it parses).
     # Bounded here so a load spike can never take Postgres down with it; the
-    # host's headroom is in deploy/ovh/README.md.
+    # host's headroom.
     mem_limit: 1600m
     healthcheck:
       test: ["CMD", "clamdcheck.sh"]
