@@ -67,7 +67,7 @@ self.addEventListener('fetch', (e) => {
           caches.open(CACHE).then((c) => c.put(e.request, copy));
         }
         return res;
-      }).catch(() => caches.match(e.request).then((hit) => hit || caches.match('/index.html')))
+      }).catch(() => caches.match(e.request).then((hit) => hit || caches.match('/index.html')).then((fallback) => fallback || Response.error()))
     );
     return;
   }
@@ -79,7 +79,7 @@ self.addEventListener('fetch', (e) => {
           caches.open(CACHE).then((c) => c.put(e.request, copy));
         }
         return res;
-      }).catch(() => hit);
+      }).catch(() => hit || Response.error());
       return hit || net;
     })
   );
