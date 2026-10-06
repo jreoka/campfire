@@ -8336,8 +8336,8 @@ wss.on('connection', async (ws, req) => {
   // broadcast is ever missed.
   let setupDone = false;
   const earlyCleanup = () => { clients.delete(ws); presenceForget(ws).catch(() => {}); };
-  ws.on('close', () => {
-    if (process.env.WS_DEBUG && ws.meta) console.log('[ws-debug] close user=%s pod=%s', shortUid(ws.meta.userId), bus.POD_ID);
+  ws.on('close', (code, reason) => {
+    if (process.env.WS_DEBUG && ws.meta) console.log('[ws-debug] close user=%s pod=%s code=%s reason=%s', shortUid(ws.meta.userId), bus.POD_ID, code, reason);
     if (!setupDone) earlyCleanup();
   });
   await presenceUpsert(ws);
