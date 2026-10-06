@@ -20,15 +20,12 @@ every task, in this file.
 - Local repo commits to `origin/main` (`https://github.com/jreoka/campfire`):
   `git add -A`, commit, `git push origin main`. Tests and docs ship in the same
   commit as the fix they describe.
-- Production is **one OVHcloud VPS** (`40.160.90.108`), running Docker Compose
-  from `/opt/campfire/app`: `ssh root@40.160.90.108`, then
-  `cd /opt/campfire/app && git pull && docker compose -f docker-compose.yml
-  -f deploy/ovh/docker-compose.ovh.yml up -d --build`. The overlay
-  (`docker-compose.ovh.yml`, cloudflared + coturn) is provider-agnostic and is
-  what a fresh host of any vendor uses. Full runbook:
-  **`deploy/ovh/README.md`**. Production builds its OWN image from its own
-  checkout — the repo publishes no container image, so `up -d --build` on the
-  host is the only build that matters.
+- Production is a **Rackspace Spot Kubernetes cluster** (`campfire` namespace).
+  Push to `origin/main` triggers a GitHub Actions build to GHCR
+  (`ghcr.io/jreoka/campfire:latest`), then roll the deployment:
+  `kubectl -n campfire rollout restart deploy/campfire`.
+  The deploy is complete when the rollout finishes and
+  `curl https://campfire.dill.moe/api/version` shows the new fingerprint.
 - **Confirm the deploy, don't assume it**: `curl https://campfire.dill.moe/api/version`
   (the fingerprint changes) and `docker compose ps` → everything Up, `db`
   healthy. Then look at the change itself on the live site. On the first deploy
