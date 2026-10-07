@@ -5699,10 +5699,13 @@ app.patch('/api/messages/:mid', authRequired, async (req, res) => {
   if (!m) return res.status(404).json({ error: 'no_message' });
   if (m.user_id !== req.user.id) return res.status(403).json({ error: 'only_your_own' });
   const content = squashBreaks(String(req.body?.content || '')).trim().slice(0, 5000);
-  if (!content) return res.status(400).json({ error: 'empty_message' });
-  await db.prepare('UPDATE messages SET content = ?, edited_at = ? WHERE id = ?').run(content, now(), m.id);
   // Editing can also drop attachments (ids verified against this message).
   const drop = Array.isArray(req.body?.removeAttachments) ? req.body.removeAttachments.map(String).filter(Boolean).slice(0, MAX_ATTACHMENTS) : [];
+  const remaining = drop.length
+    ? await db.prepare(`SELECT COUNT(*) AS n FROM attachments WHERE message_id = ? AND id NOT IN (${drop.map(() => '?').join(',')})`).get(m.id, ...drop)
+    : await db.prepare('SELECT COUNT(*) AS n FROM attachments WHERE message_id = ?').get(m.id);
+  if (!content && !(remaining && remaining.n > 0)) return res.status(400).json({ error: 'empty_message' });
+  await db.prepare('UPDATE messages SET content = ?, edited_at = ? WHERE id = ?').run(content, now(), m.id);
   if (drop.length) {
     await db.prepare(`DELETE FROM attachments WHERE message_id = ? AND id IN (${drop.map(() => '?').join(',')})`).run(m.id, ...drop);
   }
@@ -6989,9 +6992,12 @@ app.patch('/api/dms/messages/:mid', authRequired, async (req, res) => {
   if (!m || !(await dmThreadFor(req.user.id, m.thread_id))) return res.status(404).json({ error: 'no_message' });
   if (m.user_id !== req.user.id) return res.status(403).json({ error: 'only_your_own' });
   const content = squashBreaks(String(req.body?.content || '')).trim().slice(0, 5000);
-  if (!content) return res.status(400).json({ error: 'empty_message' });
-  await db.prepare('UPDATE dm_messages SET content = ?, edited_at = ? WHERE id = ?').run(content, now(), m.id);
   const drop = Array.isArray(req.body?.removeAttachments) ? req.body.removeAttachments.map(String).filter(Boolean).slice(0, MAX_ATTACHMENTS) : [];
+  const dmRemaining = drop.length
+    ? await db.prepare(`SELECT COUNT(*) AS n FROM dm_attachments WHERE message_id = ? AND id NOT IN (${drop.map(() => '?').join(',')})`).get(m.id, ...drop)
+    : await db.prepare('SELECT COUNT(*) AS n FROM dm_attachments WHERE message_id = ?').get(m.id);
+  if (!content && !(dmRemaining && dmRemaining.n > 0)) return res.status(400).json({ error: 'empty_message' });
+  await db.prepare('UPDATE dm_messages SET content = ?, edited_at = ? WHERE id = ?').run(content, now(), m.id);
   if (drop.length) {
     await db.prepare(`DELETE FROM dm_attachments WHERE message_id = ? AND id IN (${drop.map(() => '?').join(',')})`).run(m.id, ...drop);
   }

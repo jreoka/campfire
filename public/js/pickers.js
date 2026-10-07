@@ -1314,9 +1314,11 @@ $('#in-message').addEventListener('keydown', (e) => {
 async function saveEdit(mid) {
   const t = $('#edit-area');
   const content = (t?.value || '').trim();
-  if (!content) return;
   const remove = [...(S.editRemovals || [])];
   const before = msgById(mid);
+  // Empty text is fine if attachments remain (photo with no caption).
+  const remainingAttachments = ((before && before.attachments) || []).filter((a) => !remove.includes(String(a.id)));
+  if (!content && !remainingAttachments.length) return;
   const snapshot = before ? { content: before.content, edited: before.edited, attachments: before.attachments } : null;
   S.editing = null;
   S.editRemovals = new Set();
