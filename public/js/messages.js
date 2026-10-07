@@ -4037,10 +4037,11 @@ function paintTyping() {
   if (!el) return;
   const entries = [...S.typingNames.entries()].filter(([, n]) => n);
   if (!entries.length) { el.textContent = ''; if (bar) bar.classList.remove('show'); return; }
+  const dots = '<span class="tdots" aria-hidden="true"><i></i><i></i><i></i></span>';
   const bit = ([id, nm]) => esc(nm) + tagHTML(memberById(id));
-  if (entries.length === 1) el.innerHTML = `${bit(entries[0])} is typing…`;
-  else if (entries.length === 2) el.innerHTML = `${bit(entries[0])} and ${bit(entries[1])} are typing…`;
-  else el.innerHTML = `${bit(entries[0])}, ${bit(entries[1])} and ${entries.length - 2} other${entries.length - 2 === 1 ? '' : 's'} are typing…`;
+  if (entries.length === 1) el.innerHTML = `${dots}${bit(entries[0])} is typing…`;
+  else if (entries.length === 2) el.innerHTML = `${dots}${bit(entries[0])} and ${bit(entries[1])} are typing…`;
+  else el.innerHTML = `${dots}${bit(entries[0])}, ${bit(entries[1])} and ${entries.length - 2} other${entries.length - 2 === 1 ? '' : 's'} are typing…`;
   if (bar) bar.classList.add('show');
 }
 function clearTyping() {
@@ -4064,9 +4065,10 @@ function paintThreadTyping() {
   const entries = [...S.threadTypingNames.entries()].filter(([, n]) => n);
   if (!entries.length) { el.textContent = ''; if (bar) bar.classList.remove('show'); return; }
   const bit = ([id, nm]) => esc(nm) + tagHTML(memberById(id));
-  if (entries.length === 1) el.innerHTML = `${bit(entries[0])} is typing…`;
-  else if (entries.length === 2) el.innerHTML = `${bit(entries[0])} and ${bit(entries[1])} are typing…`;
-  else el.innerHTML = `${bit(entries[0])}, ${bit(entries[1])} and ${entries.length - 2} other${entries.length - 2 === 1 ? '' : 's'} are typing…`;
+  const tdots = '<span class="tdots" aria-hidden="true"><i></i><i></i><i></i></span>';
+  if (entries.length === 1) el.innerHTML = `${tdots}${bit(entries[0])} is typing…`;
+  else if (entries.length === 2) el.innerHTML = `${tdots}${bit(entries[0])} and ${bit(entries[1])} are typing…`;
+  else el.innerHTML = `${tdots}${bit(entries[0])}, ${bit(entries[1])} and ${entries.length - 2} other${entries.length - 2 === 1 ? '' : 's'} are typing…`;
   if (bar) bar.classList.add('show');
 }
 function clearThreadTyping() {

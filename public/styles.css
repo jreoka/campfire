@@ -860,6 +860,11 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 #typing-bar{display:flex;align-items:center;flex:0 0 auto;height:var(--strip-h);padding:0 1.1rem}
 #typing{font-size:.78rem;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;visibility:hidden;transition:opacity .14s ease,visibility .14s ease}
 #typing-bar.show #typing{opacity:1;visibility:visible}
+#typing .tdots{display:inline-flex;align-items:flex-end;gap:3px;margin-right:.45rem;height:1em;vertical-align:baseline}
+#typing .tdots i{width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.45;animation:tdot-bounce 1.2s infinite ease-in-out}
+#typing .tdots i:nth-child(2){animation-delay:.15s}
+#typing .tdots i:nth-child(3){animation-delay:.3s}
+@keyframes tdot-bounce{0%,60%,100%{transform:translateY(0);opacity:.45}30%{transform:translateY(-4px);opacity:1}}
 #slowmode-hint{display:inline-flex;align-items:center;gap:.32rem;font-size:.74rem;font-weight:700;color:var(--amber);white-space:nowrap}
 #slowmode-hint.hidden{display:none}
 /* Rounded square-ish, not a circle — it reads as a key in the composer row and
