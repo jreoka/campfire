@@ -152,8 +152,11 @@ function connectWS() {
     // A reconnect means the socket was down while messages arrived: their live
     // pushes are gone forever, so re-read the durable unread state (channels,
     // DMs, inbox) instead of leaving last night's gaps on screen.
+    // Also refresh the currently open view's messages — the socket was dead
+    // when they arrived, so the live tail missed them.
     if (wsOpened) {
       try { refreshUnreadState(); } catch {}
+      try { refreshCurrentViewMessages(); } catch {}
     }
     wsOpened = true;
   };
@@ -286,6 +289,71 @@ function repaintHomePresence() {
   renderDmMembers();
   try { repaintDmHead(); } catch {}
 }
+// Refresh the currently visible chat's messages after a reconnect.
+// Messages sent while the socket was dead never got their live push,
+// so the open view is stale until this fetch tops it up.
+async function refreshCurrentViewMessages() {
+  // Channel view
+  if (S.serverId && S.channelId && S.view !== 'home') {
+    const channelId = S.channelId;
+    const serverId = S.serverId;
+    try {
+      const { messages } = await api(`/api/servers/${serverId}/channels/${channelId}/messages?limit=20`);
+      // Still on the same channel? (user may have navigated during fetch)
+      if (S.channelId !== channelId || S.serverId !== serverId) return;
+      if (!messages || !messages.length) return;
+      const arr = S.messages.get(channelId) || [];
+      const seen = new Set(arr.map(m => m.id));
+      let added = false;
+      for (const m of messages) {
+        if (!seen.has(m.id)) {
+          arr.push(m);
+          seen.add(m.id);
+          added = true;
+        }
+      }
+      if (!added) return;
+      // Sort by timestamp to keep order correct
+      arr.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+      const dropOld = trimLiveTail(arr);
+      S.messages.set(channelId, arr);
+      // Re-render if still viewing this channel
+      if (S.channelId === channelId) {
+        renderMessages();
+        if (dropOld) pruneLiveTop($('#messages'), dropOld);
+      }
+    } catch {}
+    return;
+  }
+  // DM view
+  if (S.view === 'home' && S.dmThreadId) {
+    const threadId = S.dmThreadId;
+    try {
+      const { messages } = await api(`/api/dms/${threadId}/messages?limit=20`);
+      if (S.dmThreadId !== threadId) return;
+      if (!messages || !messages.length) return;
+      const arr = S.dmMessages.get(threadId) || [];
+      const seen = new Set(arr.map(m => m.id));
+      let added = false;
+      for (const m of messages) {
+        if (!seen.has(m.id)) {
+          arr.push(m);
+          seen.add(m.id);
+          added = true;
+        }
+      }
+      if (!added) return;
+      arr.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+      const dropOld = trimLiveTail(arr);
+      S.dmMessages.set(threadId, arr);
+      if (S.dmThreadId === threadId) {
+        renderDmMessages();
+        if (dropOld) pruneLiveTop($('#messages'), dropOld);
+      }
+    } catch {}
+  }
+}
+
 function onWS(m) {
   switch (m.t) {
     case 'hello': {
