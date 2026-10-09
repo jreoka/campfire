@@ -112,14 +112,6 @@ function paintDictate() {
   const btn = $('#cm-dictate');
   if (btn) btn.classList.toggle('active', !!dictSt);
 }
-function dictateInsert(text) {
-  const ta = $('#in-message');
-  if (!ta || !text) return;
-  let base = ta.value;
-  if (base && !/\s$/.test(base)) base += ' ';
-  ta.value = base + text;
-  ta.dispatchEvent(new Event('input', { bubbles: true }));
-}
 async function toggleDictate() {
   if (dictSt) { stopDictate(); return; }
   if (!composerTargetReady()) { toast('Pick a chat first, then dictate'); return; }
@@ -134,48 +126,67 @@ async function toggleDictate() {
     toast('Recording is not supported here');
     return;
   }
-  dictSt = { rec, stream, chunks: [] };
-  rec.ondataavailable = (e) => { if (dictSt && e.data && e.data.size) dictSt.chunks.push(e.data); };
-  rec.onstop = () => finishDictate(dictSt);
-  try { rec.start(); }
+  const ta = $('#in-message');
+  dictBase = ta ? ta.value : '';
+  if (dictBase && !/\s$/.test(dictBase)) dictBase += ' ';
+  const prevPh = ta ? ta.placeholder : '';
+  dictSt = { rec, stream, chunkN: 0, appended: '', done: false, prevPh, queue: Promise.resolve() };
+  const st = dictSt; // closure ref — survives dictSt being nulled on stop
+  rec.ondataavailable = (e) => {
+    if (!e.data || !e.data.size) return;
+    // Serialize chunk uploads so text appends in spoken order.
+    st.queue = st.queue.then(() => transcribeChunk(e.data, st)).catch(() => {});
+  };
+  rec.onstop = () => finishDictate(st);
+  try { rec.start(3000); } // 3s chunks → near-live transcription
   catch { dictSt = null; try { stream.getTracks().forEach((t) => t.stop()); } catch {} toast('Could not start dictation'); return; }
   paintDictate();
-  const ta = $('#in-message');
   if (ta) ta.focus();
+}
+// Transcribe one 3s chunk and append its text live.
+async function transcribeChunk(blob, st) {
+  if (!st || st.done) return;
+  const n = ++st.chunkN;
+  try {
+    const type = String(blob.type || 'audio/webm').split(';')[0] || 'audio/webm';
+    const file = new File([blob], 'chunk-' + n + '.webm', { type });
+    const fd = new FormData();
+    fd.append('audio', file);
+    const headers = store.token ? { 'Authorization': 'Bearer ' + store.token } : {};
+    const r = await fetch('/api/dictate', { method: 'POST', body: fd, headers });
+    const j = await r.json().catch(() => ({}));
+    if (st.done || !j || !j.text) return;
+    const ta = $('#in-message');
+    if (ta) {
+      st.appended += (st.appended ? ' ' : '') + j.text;
+      ta.value = dictBase + st.appended;
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  } catch {
+    // Chunk failed — skip it, keep recording. No per-chunk toast.
+  }
 }
 function stopDictate() {
   const st = dictSt;
   dictSt = null;
   paintDictate();
   if (st) {
+    const ta = $('#in-message');
+    if (ta) ta.placeholder = 'Transcribing…';
     // Rebind onstop to carry the state — dictSt is already null.
     st.rec.onstop = () => finishDictate(st);
     try { st.rec.stop(); } catch { finishDictate(st); }
   }
 }
 async function finishDictate(st) {
+  // Chunks were transcribed live; the final partial chunk was queued by the
+  // last ondataavailable before onstop. Just clean up.
+  if (st) st.done = true;
   dictSt = null;
   paintDictate();
   if (st) { try { st.stream.getTracks().forEach((t) => t.stop()); } catch {} }
-  if (!st || !st.chunks.length) return;
-  const type = String((st.rec.mimeType || 'audio/webm')).split(';')[0] || 'audio/webm';
-  const file = new File(st.chunks, 'dictate.' + (type === 'audio/mp4' ? 'm4a' : 'webm'), { type });
   const ta = $('#in-message');
-  const prevPh = ta ? ta.placeholder : '';
-  if (ta) ta.placeholder = 'Transcribing…';
-  try {
-    const fd = new FormData();
-    fd.append('audio', file);
-    const headers = store.token ? { 'Authorization': 'Bearer ' + store.token } : {};
-    const r = await fetch('/api/dictate', { method: 'POST', body: fd, headers });
-    const j = await r.json().catch(() => ({}));
-    if (j && j.text) dictateInsert(j.text);
-    else toast("Couldn't transcribe that — try again");
-  } catch {
-    toast("Couldn't reach the server");
-  } finally {
-    if (ta && ta.placeholder === 'Transcribing…') ta.placeholder = prevPh;
-  }
+  if (ta && ta.placeholder === 'Transcribing…') ta.placeholder = (st && st.prevPh) || '';
 }
 // ---------- polls ----------
 function sendPoll(question, options) {
