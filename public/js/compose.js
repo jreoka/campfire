@@ -171,8 +171,13 @@ async function transcribeChunk(blob, st) {
       ta.value = dictBase + st.appended;
       ta.dispatchEvent(new Event('input', { bubbles: true }));
     }
-  } catch {
-    // Chunk failed — skip it, keep recording. No per-chunk toast.
+  } catch (e) {
+    // Chunk failed — skip it, keep recording. Warn once on the first chunk
+    // so a broken pipeline isn't silent.
+    if (n === 1 && !st.warned) {
+      st.warned = true;
+      toast("Couldn't reach the transcription server");
+    }
   }
 }
 function stopDictate() {

@@ -1399,8 +1399,11 @@ const dictateUpload = multer({
   },
 });
 app.post('/api/dictate', authRequired, dictateUpload.single('audio'), async (req, res) => {
-  if (!req.file || !req.file.buffer || !req.file.buffer.length)
+  if (!req.file || !req.file.buffer || !req.file.buffer.length) {
+    console.log('[dictate] no audio received');
     return res.status(400).json({ error: 'no_audio' });
+  }
+  console.log('[dictate] got', req.file.buffer.length, 'bytes,', req.file.mimetype);
   const tmp = path.join(os.tmpdir(), 'dictate-' + crypto.randomBytes(8).toString('hex') + '.webm');
   try {
     fs.writeFileSync(tmp, req.file.buffer);
@@ -1411,9 +1414,12 @@ app.post('/api/dictate', authRequired, dictateUpload.single('audio'), async (req
       py.stdout.on('data', (d) => { out += d; });
       py.stderr.on('data', (d) => { err += d; });
       py.on('error', reject);
-      py.on('close', (code) => code === 0
-        ? resolve(String(out).trim())
-        : reject(new Error('whisper exit ' + code + ': ' + String(err).slice(0, 200))));
+      py.on('close', (code) => {
+        console.log('[dictate] whistle exit', code, 'text:', JSON.stringify(String(out).trim().slice(0, 80)));
+        code === 0
+          ? resolve(String(out).trim())
+          : reject(new Error('whisper exit ' + code + ': ' + String(err).slice(0, 200)));
+      });
     });
     res.json({ text });
   } catch (e) {
