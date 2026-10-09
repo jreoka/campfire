@@ -102,6 +102,7 @@ function finishVoiceRec() {
 let dictRec = null;  // active SpeechRecognition, or null
 let dictBase = '';   // textarea content when dictation started
 let dictFinal = '';  // committed final transcript this session
+let dictFatal = false; // set when onerror fires with a non-recoverable error
 function speechCtor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
 }
@@ -129,6 +130,7 @@ function toggleDictate() {
   dictBase = ta ? ta.value : '';
   if (dictBase && !/\s$/.test(dictBase)) dictBase += ' ';
   dictFinal = '';
+  dictFatal = false;
   let rec;
   try { rec = new Ctor(); } catch { toast('Dictation is not available here'); return; }
   rec.lang = navigator.language || 'en-US';
@@ -145,15 +147,27 @@ function toggleDictate() {
     renderDictText(interim);
   };
   rec.onerror = (e) => {
-    if (e.error === 'not-allowed' || e.error === 'service-not-allowed')
+    const err = e.error || '';
+    if (err === 'not-allowed' || err === 'service-not-allowed') {
+      dictFatal = true;
       toast('Microphone blocked — allow mic access to dictate');
-    else if (e.error && e.error !== 'no-speech' && e.error !== 'aborted')
-      toast('Dictation stopped (' + e.error + ')');
+    } else if (err === 'network') {
+      dictFatal = true;
+      toast('Dictation needs internet — check your connection');
+    } else if (err === 'audio-capture') {
+      dictFatal = true;
+      toast('No microphone found');
+    } else if (err && err !== 'no-speech' && err !== 'aborted') {
+      dictFatal = true;
+      toast('Dictation stopped (' + err + ')');
+    }
+    // 'no-speech'/'aborted' are transient — onend restarts for continuity.
   };
   rec.onend = () => {
-    // Browsers end recognition on long pauses; restart so it feels continuous
-    // until the user taps Dictate again.
-    if (dictRec === rec) { try { rec.start(); } catch { dictRec = null; paintDictate(); } }
+    if (dictRec !== rec) return; // stopped explicitly
+    if (dictFatal) { stopDictate(); return; } // don't loop on fatal errors
+    try { rec.start(); } // natural end (long pause) — restart
+    catch { stopDictate(); }
   };
   dictRec = rec;
   try { rec.start(); }
@@ -165,7 +179,7 @@ function stopDictate() {
   const rec = dictRec;
   dictRec = null;
   paintDictate();
-  if (rec) { try { rec.onend = null; rec.stop(); } catch {} }
+  if (rec) { try { rec.onend = null; rec.abort(); } catch {} }
 }
 // ---------- polls ----------
 function sendPoll(question, options) {
