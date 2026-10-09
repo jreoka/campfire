@@ -135,12 +135,32 @@ async function toggleDictate() {
   const st = dictSt; // closure ref — survives dictSt being nulled on stop
   rec.ondataavailable = (e) => {
     if (!e.data || !e.data.size) return;
-    // Serialize chunk uploads so text appends in spoken order.
-    st.queue = st.queue.then(() => transcribeChunk(e.data, st)).catch(() => {});
+    // Each stop() produces a complete, decodable file (unlike timeslice
+    // blobs, which lack headers after the first). Serialize uploads so
+    // text appends in spoken order.
+    const blob = e.data;
+    st.queue = st.queue.then(() => transcribeChunk(blob, st)).catch(() => {});
   };
-  rec.onstop = () => finishDictate(st);
-  try { rec.start(3000); } // 3s chunks → near-live transcription
+  rec.onstop = () => {
+    if (st.done) { finishDictate(st); return; }
+    // Chunk boundary: ship this segment, then start the next recorder.
+    // Small gap (<100ms) between segments; words at the boundary may clip.
+    try {
+      const mt2 = recMime();
+      const rec2 = new MediaRecorder(st.stream, mt2 ? { mimeType: mt2 } : undefined);
+      st.rec = rec2;
+      rec2.ondataavailable = rec.ondataavailable;
+      rec2.onstop = rec.onstop;
+      rec2.start();
+      st.chunkTimer = setTimeout(() => { if (!st.done) { try { st.rec.stop(); } catch {} } }, 3000);
+    } catch {
+      finishDictate(st);
+    }
+  };
+  try { rec.start(); }
   catch { dictSt = null; try { stream.getTracks().forEach((t) => t.stop()); } catch {} toast('Could not start dictation'); return; }
+  // First chunk boundary in 3s; subsequent ones are set in onstop.
+  st.chunkTimer = setTimeout(() => { if (!st.done && dictSt) { try { st.rec.stop(); } catch {} } }, 3000);
   paintDictate();
   if (ta) ta.focus();
 }
@@ -186,17 +206,23 @@ function stopDictate() {
   dictSt = null;
   paintDictate();
   if (st) {
+    st.done = true;
+    if (st.chunkTimer) { clearTimeout(st.chunkTimer); st.chunkTimer = null; }
     const ta = $('#in-message');
     if (ta) ta.placeholder = 'Transcribing…';
     // Rebind onstop to carry the state — dictSt is already null.
+    // The final ondataavailable ships the last segment before onstop.
     st.rec.onstop = () => finishDictate(st);
     try { st.rec.stop(); } catch { finishDictate(st); }
   }
 }
 async function finishDictate(st) {
-  // Chunks were transcribed live; the final partial chunk was queued by the
+  // Chunks were transcribed live; the final segment was queued by the
   // last ondataavailable before onstop. Just clean up.
-  if (st) st.done = true;
+  if (st) {
+    st.done = true;
+    if (st.chunkTimer) { clearTimeout(st.chunkTimer); st.chunkTimer = null; }
+  }
   dictSt = null;
   paintDictate();
   if (st) { try { st.stream.getTracks().forEach((t) => t.stop()); } catch {} }
