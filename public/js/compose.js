@@ -154,9 +154,17 @@ async function transcribeChunk(blob, st) {
     const fd = new FormData();
     fd.append('audio', file);
     const headers = store.token ? { 'Authorization': 'Bearer ' + store.token } : {};
-    const r = await fetch('/api/dictate', { method: 'POST', body: fd, headers });
+    const r = await fetch('/api/dictate', { method: 'POST', body: fd, headers, credentials: 'include' });
     const j = await r.json().catch(() => ({}));
-    if (st.done || !j || !j.text) return;
+    if (st.done || !j || !j.text) {
+      // First chunk failed and gave nothing — surface it once so the user
+      // isn't staring at a silent Listening indicator.
+      if (n === 1 && !st.warned) {
+        st.warned = true;
+        toast(r.status === 401 ? 'Dictation: not signed in?' : "Couldn't transcribe — try again");
+      }
+      return;
+    }
     const ta = $('#in-message');
     if (ta) {
       st.appended += (st.appended ? ' ' : '') + j.text;
