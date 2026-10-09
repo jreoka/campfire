@@ -102,6 +102,7 @@ function finishVoiceRec() {
 // Server-side only: the Windows/WebView2 app has no Web Speech API, and this
 // way every platform uses the same local transcription with no Google.
 let dictSt = null; // {rec, stream, chunks} while recording
+let dictBase = ''; // textarea content when dictation started
 function paintDictate() {
   const ind = $('#dictate-ind');
   if (ind) {
