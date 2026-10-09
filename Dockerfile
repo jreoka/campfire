@@ -28,7 +28,8 @@ RUN apk add --no-cache postgresql-client ffmpeg libheif-tools python3 py3-pip
 # at build time so first use doesn't download.
 RUN pip install --break-system-packages --no-cache-dir "cactus-needle[whistle]" huggingface_hub && \
     python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='Cactus-Compute/whistle', filename='whistle.cact', local_dir='/app/whistle-models'); print('whistle.cact cached')"
-ENV WHISTLE_MODEL_DIR=/app/whistle-models
+ENV WHISTLE_MODEL_DIR=/app/whistle-models \
+    NEEDLE_TELEMETRY=0
 
 WORKDIR /app
 COPY package.json ./
