@@ -104,7 +104,11 @@ function finishVoiceRec() {
 let dictSt = null; // {rec, stream, chunks} while recording
 function paintDictate() {
   const ind = $('#dictate-ind');
-  if (ind) ind.classList.toggle('hidden', !dictSt);
+  if (ind) {
+    ind.classList.toggle('hidden', !dictSt);
+    // Tap the pill itself to stop — more obvious than reopening the menu.
+    ind.onclick = dictSt ? (e) => { e.stopPropagation(); stopDictate(); } : null;
+  }
   const btn = $('#cm-dictate');
   if (btn) btn.classList.toggle('active', !!dictSt);
 }
