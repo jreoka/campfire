@@ -161,7 +161,8 @@ async function transcribeChunk(blob, st) {
       // isn't staring at a silent Listening indicator.
       if (n === 1 && !st.warned) {
         st.warned = true;
-        toast(r.status === 401 ? 'Dictation: not signed in?' : "Couldn't transcribe — try again");
+        const detail = j && j.error ? ' (' + j.error + ')' : ' (HTTP ' + r.status + ')';
+        toast(r.status === 401 ? 'Dictation: not signed in?' : "Couldn't transcribe" + detail);
       }
       return;
     }
