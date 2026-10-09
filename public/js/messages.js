@@ -3967,6 +3967,7 @@ document.addEventListener('drop', (e) => {
 });
 $('#composer').addEventListener('submit', (e) => {
   e.preventDefault();
+  stopDictate();
   const inp = $('#in-message');
   const content = inp.value.trim();
   const ctx = draftCtx();

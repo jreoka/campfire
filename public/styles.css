@@ -3197,6 +3197,11 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 #rec-time{font-variant-numeric:tabular-nums;font-weight:750}
 #rec-bar.paused .rec-dot{background:var(--amber);animation:none}
 #rec-bar.paused #rec-status{color:var(--amber)}
+/* dictation indicator */
+#dictate-ind{display:inline-flex;align-items:center;gap:.4rem;font-size:.76rem;font-weight:700;color:var(--red);padding:.15rem .5rem .15rem .2rem;flex-shrink:0}
+#dictate-ind.hidden{display:none}
+.dict-dot{width:8px;height:8px;border-radius:50%;background:var(--red);flex-shrink:0;animation:rec-pulse 1.2s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.dict-dot{animation:none}}
 /* audio player: one shared look for every audio embed */
 .vplayer{display:flex;align-items:center;gap:.65rem;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:8px;padding:.55rem .65rem;max-width:340px}
 .vp-play{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);color:var(--on-accent);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:background var(--t-fast),transform .1s ease}

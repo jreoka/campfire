@@ -98,6 +98,75 @@ function finishVoiceRec() {
   uploadAndAttach(file);
   $('#in-message').focus();
 }
+// ---------- dictation (speech → message box) ----------
+let dictRec = null;  // active SpeechRecognition, or null
+let dictBase = '';   // textarea content when dictation started
+let dictFinal = '';  // committed final transcript this session
+function speechCtor() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+function paintDictate() {
+  const ind = $('#dictate-ind');
+  if (ind) ind.classList.toggle('hidden', !dictRec);
+  const btn = $('#cm-dictate');
+  if (btn) btn.classList.toggle('active', !!dictRec);
+}
+function renderDictText(interim) {
+  const ta = $('#in-message');
+  if (!ta) return;
+  let out = dictBase;
+  if (dictFinal) out += dictFinal;
+  if (interim) out += interim;
+  ta.value = out;
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+}
+function toggleDictate() {
+  if (dictRec) { stopDictate(); return; }
+  const Ctor = speechCtor();
+  if (!Ctor) { toast('Dictation needs Chrome or Edge'); return; }
+  if (!composerTargetReady()) { toast('Pick a chat first, then dictate'); return; }
+  const ta = $('#in-message');
+  dictBase = ta ? ta.value : '';
+  if (dictBase && !/\s$/.test(dictBase)) dictBase += ' ';
+  dictFinal = '';
+  let rec;
+  try { rec = new Ctor(); } catch { toast('Dictation is not available here'); return; }
+  rec.lang = navigator.language || 'en-US';
+  rec.interimResults = true;
+  rec.continuous = true;
+  rec.maxAlternatives = 1;
+  rec.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) dictFinal += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    renderDictText(interim);
+  };
+  rec.onerror = (e) => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed')
+      toast('Microphone blocked — allow mic access to dictate');
+    else if (e.error && e.error !== 'no-speech' && e.error !== 'aborted')
+      toast('Dictation stopped (' + e.error + ')');
+  };
+  rec.onend = () => {
+    // Browsers end recognition on long pauses; restart so it feels continuous
+    // until the user taps Dictate again.
+    if (dictRec === rec) { try { rec.start(); } catch { dictRec = null; paintDictate(); } }
+  };
+  dictRec = rec;
+  try { rec.start(); }
+  catch { dictRec = null; toast('Could not start dictation'); return; }
+  paintDictate();
+  if (ta) ta.focus();
+}
+function stopDictate() {
+  const rec = dictRec;
+  dictRec = null;
+  paintDictate();
+  if (rec) { try { rec.onend = null; rec.stop(); } catch {} }
+}
 // ---------- polls ----------
 function sendPoll(question, options) {
   question = String(question || '').trim().slice(0, 200);

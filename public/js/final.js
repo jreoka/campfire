@@ -631,6 +631,7 @@ $('#cm-attach').onclick = (e) => { e.stopPropagation(); $('#composer-more').clas
 $('#cm-emoji').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); $('#btn-emoji').click(); };
 $('#cm-gif').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); $('#btn-gif').click(); };
 $('#cm-voice').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); startVoiceRec(); };
+$('#cm-dictate').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); toggleDictate(); };
 $('#cm-poll').onclick = (e) => { e.stopPropagation(); $('#composer-more').classList.add('hidden'); openPollModal(); };
 // The thread bar is the chat bar's own version, so it carries its own copy of the
 // tools — emoji, GIF and the + menu — and each one names the field a pick belongs
