@@ -136,7 +136,7 @@ async function toggleDictate() {
   }
   dictSt = { rec, stream, chunks: [] };
   rec.ondataavailable = (e) => { if (dictSt && e.data && e.data.size) dictSt.chunks.push(e.data); };
-  rec.onstop = finishDictate;
+  rec.onstop = () => finishDictate(dictSt);
   try { rec.start(); }
   catch { dictSt = null; try { stream.getTracks().forEach((t) => t.stop()); } catch {} toast('Could not start dictation'); return; }
   paintDictate();
@@ -147,10 +147,13 @@ function stopDictate() {
   const st = dictSt;
   dictSt = null;
   paintDictate();
-  if (st) { try { st.rec.stop(); } catch { finishDictate(); } }
+  if (st) {
+    // Rebind onstop to carry the state — dictSt is already null.
+    st.rec.onstop = () => finishDictate(st);
+    try { st.rec.stop(); } catch { finishDictate(st); }
+  }
 }
-async function finishDictate() {
-  const st = dictSt;
+async function finishDictate(st) {
   dictSt = null;
   paintDictate();
   if (st) { try { st.stream.getTracks().forEach((t) => t.stop()); } catch {} }
