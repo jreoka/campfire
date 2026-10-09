@@ -26,8 +26,13 @@ RUN apk add --no-cache postgresql-client ffmpeg libheif-tools python3 py3-pip
 # CPU-only, no dependencies, no Google. Used by the Dictate button on all
 # platforms (the Windows/WebView2 app has no Web Speech API). Model baked in
 # at build time so first use doesn't download.
+# Retry the model fetch — HF Hub can flake under load and fail the build.
 RUN pip install --break-system-packages --no-cache-dir "cactus-needle[whistle]" huggingface_hub && \
-    python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='Cactus-Compute/whistle', filename='whistle.cact', local_dir='/app/whistle-models'); print('whistle.cact cached')"
+    for i in 1 2 3 4 5; do \
+      python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='Cactus-Compute/whistle', filename='whistle.cact', local_dir='/app/whistle-models'); print('whistle.cact cached')" && break; \
+      echo "HF download attempt $i failed, retrying..."; sleep 10; \
+    done && \
+    test -f /app/whistle-models/whistle.cact
 ENV WHISTLE_MODEL_DIR=/app/whistle-models \
     NEEDLE_TELEMETRY=0
 
