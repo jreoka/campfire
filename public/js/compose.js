@@ -98,92 +98,77 @@ function finishVoiceRec() {
   uploadAndAttach(file);
   $('#in-message').focus();
 }
-// ---------- dictation (speech → message box) ----------
-let dictRec = null;  // active SpeechRecognition, or null
-let dictBase = '';   // textarea content when dictation started
-let dictFinal = '';  // committed final transcript this session
-let dictFatal = false; // set when onerror fires with a non-recoverable error
-let dictNetRetries = 0; // one automatic retry on transient network failures
-function speechCtor() {
-  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
-}
+// ---------- dictation (record → server Whistle → message box) ----------
+// Server-side only: the Windows/WebView2 app has no Web Speech API, and this
+// way every platform uses the same local transcription with no Google.
+let dictSt = null; // {rec, stream, chunks} while recording
 function paintDictate() {
   const ind = $('#dictate-ind');
-  if (ind) ind.classList.toggle('hidden', !dictRec);
+  if (ind) ind.classList.toggle('hidden', !dictSt);
   const btn = $('#cm-dictate');
-  if (btn) btn.classList.toggle('active', !!dictRec);
+  if (btn) btn.classList.toggle('active', !!dictSt);
 }
-function renderDictText(interim) {
+function dictateInsert(text) {
   const ta = $('#in-message');
-  if (!ta) return;
-  let out = dictBase;
-  if (dictFinal) out += dictFinal;
-  if (interim) out += interim;
-  ta.value = out;
+  if (!ta || !text) return;
+  let base = ta.value;
+  if (base && !/\s$/.test(base)) base += ' ';
+  ta.value = base + text;
   ta.dispatchEvent(new Event('input', { bubbles: true }));
 }
-function toggleDictate() {
-  if (dictRec) { stopDictate(); return; }
-  const Ctor = speechCtor();
-  if (!Ctor) { toast('Dictation needs Chrome or Edge'); return; }
+async function toggleDictate() {
+  if (dictSt) { stopDictate(); return; }
   if (!composerTargetReady()) { toast('Pick a chat first, then dictate'); return; }
-  const ta = $('#in-message');
-  dictBase = ta ? ta.value : '';
-  if (dictBase && !/\s$/.test(dictBase)) dictBase += ' ';
-  dictFinal = '';
-  dictFatal = false;
-  dictNetRetries = 0;
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch { toast('Microphone blocked — allow mic access to dictate'); return; }
+  const mt = recMime();
   let rec;
-  try { rec = new Ctor(); } catch { toast('Dictation is not available here'); return; }
-  rec.lang = navigator.language || 'en-US';
-  rec.interimResults = true;
-  rec.continuous = true;
-  rec.maxAlternatives = 1;
-  rec.onresult = (e) => {
-    dictNetRetries = 0; // got speech — reset the retry counter
-    let interim = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const r = e.results[i];
-      if (r.isFinal) dictFinal += r[0].transcript;
-      else interim += r[0].transcript;
-    }
-    renderDictText(interim);
-  };
-  rec.onerror = (e) => {
-    const err = e.error || '';
-    if (err === 'not-allowed' || err === 'service-not-allowed') {
-      dictFatal = true;
-      toast('Microphone blocked — allow mic access to dictate');
-    } else if (err === 'network') {
-      // Can be a transient blip — allow one silent retry before giving up.
-      if (dictNetRetries < 1) dictNetRetries++;
-      else { dictFatal = true; toast("Couldn't reach the speech service"); }
-    } else if (err === 'audio-capture') {
-      dictFatal = true;
-      toast('No microphone found');
-    } else if (err && err !== 'no-speech' && err !== 'aborted') {
-      dictFatal = true;
-      toast('Dictation stopped (' + err + ')');
-    }
-    // 'no-speech'/'aborted' are transient — onend restarts for continuity.
-  };
-  rec.onend = () => {
-    if (dictRec !== rec) return; // stopped explicitly
-    if (dictFatal) { stopDictate(); return; } // don't loop on fatal errors
-    try { rec.start(); } // natural end (long pause) — restart
-    catch { stopDictate(); }
-  };
-  dictRec = rec;
+  try { rec = new MediaRecorder(stream, mt ? { mimeType: mt } : undefined); }
+  catch {
+    try { stream.getTracks().forEach((t) => t.stop()); } catch {}
+    toast('Recording is not supported here');
+    return;
+  }
+  dictSt = { rec, stream, chunks: [] };
+  rec.ondataavailable = (e) => { if (dictSt && e.data && e.data.size) dictSt.chunks.push(e.data); };
+  rec.onstop = finishDictate;
   try { rec.start(); }
-  catch { dictRec = null; toast('Could not start dictation'); return; }
+  catch { dictSt = null; try { stream.getTracks().forEach((t) => t.stop()); } catch {} toast('Could not start dictation'); return; }
   paintDictate();
+  const ta = $('#in-message');
   if (ta) ta.focus();
 }
 function stopDictate() {
-  const rec = dictRec;
-  dictRec = null;
+  const st = dictSt;
+  dictSt = null;
   paintDictate();
-  if (rec) { try { rec.onend = null; rec.abort(); } catch {} }
+  if (st) { try { st.rec.stop(); } catch { finishDictate(); } }
+}
+async function finishDictate() {
+  const st = dictSt;
+  dictSt = null;
+  paintDictate();
+  if (st) { try { st.stream.getTracks().forEach((t) => t.stop()); } catch {} }
+  if (!st || !st.chunks.length) return;
+  const type = String((st.rec.mimeType || 'audio/webm')).split(';')[0] || 'audio/webm';
+  const file = new File(st.chunks, 'dictate.' + (type === 'audio/mp4' ? 'm4a' : 'webm'), { type });
+  const ta = $('#in-message');
+  const prevPh = ta ? ta.placeholder : '';
+  if (ta) ta.placeholder = 'Transcribing…';
+  try {
+    const fd = new FormData();
+    fd.append('audio', file);
+    const headers = store.token ? { 'Authorization': 'Bearer ' + store.token } : {};
+    const r = await fetch('/api/dictate', { method: 'POST', body: fd, headers });
+    const j = await r.json().catch(() => ({}));
+    if (j && j.text) dictateInsert(j.text);
+    else toast("Couldn't transcribe that — try again");
+  } catch {
+    toast("Couldn't reach the server");
+  } finally {
+    if (ta && ta.placeholder === 'Transcribing…') ta.placeholder = prevPh;
+  }
 }
 // ---------- polls ----------
 function sendPoll(question, options) {

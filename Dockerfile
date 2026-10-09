@@ -20,7 +20,15 @@ FROM node:22-alpine
 # JPEG that the still pipeline then downsizes and re-encodes like any other
 # photo (see media-compress.js: planFor/encodeCandidate, and checkHeifConvert,
 # which the worker probes at boot and reports in its startup line).
-RUN apk add --no-cache postgresql-client ffmpeg libheif-tools
+RUN apk add --no-cache postgresql-client ffmpeg libheif-tools python3 py3-pip
+
+# cactus-needle (Whistle) for server-side dictation — 16.9MB speech-to-text,
+# CPU-only, no dependencies, no Google. Used by the Dictate button on all
+# platforms (the Windows/WebView2 app has no Web Speech API). Model baked in
+# at build time so first use doesn't download.
+RUN pip install --break-system-packages --no-cache-dir "cactus-needle[whistle]" huggingface_hub && \
+    python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='Cactus-Compute/whistle', filename='whistle.cact', local_dir='/app/whistle-models'); print('whistle.cact cached')"
+ENV WHISTLE_MODEL_DIR=/app/whistle-models
 
 WORKDIR /app
 COPY package.json ./

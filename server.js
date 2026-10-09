@@ -1,7 +1,9 @@
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const http = require('http');
 const crypto = require('crypto');
+const child_process = require('child_process');
 const express = require('express');
 // Express 4 drops async handler rejections on the floor (hung request +
 // unhandled rejection) — this forwards them to Express error handling.
@@ -1382,6 +1384,43 @@ app.post('/api/me/timezone', authRequired, async (req, res) => {
     notifyUser(req.user.id, { t: 'user-updated', user: fu });
     return res.json({ user: fu });
   } catch { return res.json({ user: publicUser(req.user) }); }
+});
+
+// Server-side dictation — local Cactus Whistle transcription (no Google,
+// works on every platform including the Windows/WebView2 app which has no
+// Web Speech API). Short clips only; not a general transcription service.
+const dictateUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => {
+    const t = String(file.mimetype || '');
+    // MediaRecorder on some platforms labels opus-in-webm as video/webm.
+    cb(null, t.startsWith('audio/') || t === 'video/webm');
+  },
+});
+app.post('/api/dictate', authRequired, dictateUpload.single('audio'), async (req, res) => {
+  if (!req.file || !req.file.buffer || !req.file.buffer.length)
+    return res.status(400).json({ error: 'no_audio' });
+  const tmp = path.join(os.tmpdir(), 'dictate-' + crypto.randomBytes(8).toString('hex') + '.webm');
+  try {
+    fs.writeFileSync(tmp, req.file.buffer);
+    const text = await new Promise((resolve, reject) => {
+      const py = child_process.spawn('python3',
+        [path.join(__dirname, 'whistle-dictate.py'), tmp], { timeout: 120000 });
+      let out = '', err = '';
+      py.stdout.on('data', (d) => { out += d; });
+      py.stderr.on('data', (d) => { err += d; });
+      py.on('error', reject);
+      py.on('close', (code) => code === 0
+        ? resolve(String(out).trim())
+        : reject(new Error('whisper exit ' + code + ': ' + String(err).slice(0, 200))));
+    });
+    res.json({ text });
+  } catch (e) {
+    res.status(500).json({ error: 'transcribe_failed' });
+  } finally {
+    try { fs.unlinkSync(tmp); } catch {}
+  }
 });
 
 app.get('/api/servers', authRequired, async (req, res) => {
