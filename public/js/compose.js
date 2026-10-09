@@ -103,6 +103,7 @@ let dictRec = null;  // active SpeechRecognition, or null
 let dictBase = '';   // textarea content when dictation started
 let dictFinal = '';  // committed final transcript this session
 let dictFatal = false; // set when onerror fires with a non-recoverable error
+let dictNetRetries = 0; // one automatic retry on transient network failures
 function speechCtor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
 }
@@ -131,6 +132,7 @@ function toggleDictate() {
   if (dictBase && !/\s$/.test(dictBase)) dictBase += ' ';
   dictFinal = '';
   dictFatal = false;
+  dictNetRetries = 0;
   let rec;
   try { rec = new Ctor(); } catch { toast('Dictation is not available here'); return; }
   rec.lang = navigator.language || 'en-US';
@@ -138,6 +140,7 @@ function toggleDictate() {
   rec.continuous = true;
   rec.maxAlternatives = 1;
   rec.onresult = (e) => {
+    dictNetRetries = 0; // got speech — reset the retry counter
     let interim = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const r = e.results[i];
@@ -152,8 +155,9 @@ function toggleDictate() {
       dictFatal = true;
       toast('Microphone blocked — allow mic access to dictate');
     } else if (err === 'network') {
-      dictFatal = true;
-      toast('Dictation needs internet — check your connection');
+      // Can be a transient blip — allow one silent retry before giving up.
+      if (dictNetRetries < 1) dictNetRetries++;
+      else { dictFatal = true; toast("Couldn't reach the speech service"); }
     } else if (err === 'audio-capture') {
       dictFatal = true;
       toast('No microphone found');

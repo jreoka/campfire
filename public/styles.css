@@ -3198,7 +3198,7 @@ body.thread-resizing,body.thread-resizing *{user-select:none!important;cursor:ew
 #rec-bar.paused .rec-dot{background:var(--amber);animation:none}
 #rec-bar.paused #rec-status{color:var(--amber)}
 /* dictation indicator */
-#dictate-ind{position:absolute;top:.35rem;left:3rem;z-index:5;display:inline-flex;align-items:center;gap:.4rem;font-size:.72rem;font-weight:700;color:var(--red);background:var(--panel-2);border:1px solid var(--line-soft);border-radius:20px;padding:.18rem .6rem .18rem .5rem;pointer-events:none;box-shadow:var(--shadow-sm)}
+#dictate-ind{position:absolute;bottom:calc(100% + .45rem);left:.5rem;z-index:5;display:inline-flex;align-items:center;gap:.4rem;font-size:.72rem;font-weight:700;color:var(--red);background:var(--panel-2);border:1px solid var(--line-soft);border-radius:20px;padding:.18rem .6rem .18rem .5rem;pointer-events:none;box-shadow:var(--shadow-sm)}
 #dictate-ind.hidden{display:none}
 .dict-dot{width:8px;height:8px;border-radius:50%;background:var(--red);flex-shrink:0;animation:rec-pulse 1.2s ease-in-out infinite}
 @media (prefers-reduced-motion:reduce){.dict-dot{animation:none}}
