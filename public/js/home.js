@@ -867,6 +867,29 @@ function dmCtxMenu(tid, x, y) {
   const items = dmMenuItems(tid);
   if (items.length) openCtx(x, y, items);
 }
+// A DM row names its conversation, so a mute here is always scoped to this
+// thread (d:<threadId>). 1:1 rows mute the peer; group rows name no user, so
+// members are muted from the member list once the conversation is open.
+// The row carries both `sub` (desktop flyout) and `fn` (mobile sheet opens a
+// duration sheet) — each surface uses the half it understands.
+function dmMuteItem(t) {
+  if (!t || t.isGroup || !S.me) return null;
+  const peer = dmPeer(t);
+  if (!peer || peer.id === S.me.id) return null;
+  const scope = `d:${t.id}`;
+  const nm = peer.username || peer.display_name || 'user';
+  const row = muteRow(peer.id, scope);
+  if (row) return { label: `Unmute @${nm}`, icon: '🔈', fn: () => unmuteUser(peer.id, nm, scope) };
+  const checked = muteCheckedMinutes(row);
+  const sub = MUTE_DURATIONS.map((d) => ({ label: d.label, checked: checked === d.minutes, fn: () => muteUser(peer.id, nm, d.minutes, scope) }));
+  return {
+    label: `Mute @${nm}`, icon: '🔇', sub,
+    fn: () => openCtxSheet(
+      [{ head: `Mute in ${dmTitle(t)}` }, ...sub.map((s) => ({ ...s, label: (s.checked ? '✓ ' : '') + s.label }))],
+      { title: peer.display_name || 'Direct message', sub: peer.username ? '@' + peer.username : '', serverUser: peer },
+    ),
+  };
+}
 // Same item list for the desktop popup and the mobile slide-up sheet, so the
 // two can never drift apart.
 function dmMenuItems(tid) {
@@ -876,6 +899,8 @@ function dmMenuItems(tid) {
     { label: 'Open', icon: '→', fn: () => selectDmThread(tid) },
     { label: t.pinned ? 'Unpin chat' : 'Pin chat', icon: (typeof PIN_SVG !== 'undefined' ? PIN_SVG : '📌'), fn: () => toggleDmPin(tid) },
   ];
+  const mi = dmMuteItem(t);
+  if (mi) items.push(mi);
   if (t.isGroup) {
     items.push({ sep: true });
     items.push({ label: 'Edit group chat', icon: '✎', fn: () => openGroupEdit(tid) });
