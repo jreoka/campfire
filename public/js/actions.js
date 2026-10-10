@@ -731,6 +731,15 @@ function openCtxSheet(items, head, opts) {
   const rows = document.createElement('div');
   rows.className = 'sheet-rows';
   for (const it of items) {
+    if (!it) continue;
+    // Sheets cannot fly out: a submenu-only row opens its options as a
+    // follow-up sheet instead (ticked rows keep their check).
+    if (it.sub && it.sub.length && !it.fn) {
+      it.fn = () => openCtxSheet(
+        it.sub.map((x) => (x.head ? x : { ...x, label: ((x.checked ? '✓ ' : '') + x.label) })),
+        { title: it.label },
+      );
+    }
     if (it.sep) { const s = document.createElement('div'); s.className = 'sheet-sep'; rows.appendChild(s); continue; }
     if (it.head) { const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = it.head; rows.appendChild(h); continue; }
     const b = document.createElement('button');
@@ -1193,6 +1202,7 @@ function prefCheckedMinutes(scope) {
 }
 function serverMuteMenuItem(sid) {
   const scope = 's:' + sid;
+  const s = S.servers.find((v) => v.id === sid);
   const own = notifPrefsCache[scope] || '';
   if (serverMuted(sid)) {
     return {
@@ -1201,9 +1211,16 @@ function serverMuteMenuItem(sid) {
     };
   }
   const checked = prefCheckedMinutes(scope);
+  const sub = MUTE_DURATIONS.map((d) => ({ label: d.label, checked: checked === d.minutes, fn: async () => { await setNotifPref(scope, 'muted', d.minutes); renderServerList(); renderChannels(); } }));
+  const sname = (s && s.name) || 'server';
   return {
-    label: 'Mute server', icon: MUTE_SVG,
-    sub: MUTE_DURATIONS.map((d) => ({ label: d.label, checked: checked === d.minutes, fn: async () => { await setNotifPref(scope, 'muted', d.minutes); renderServerList(); renderChannels(); } })),
+    label: 'Mute server', icon: MUTE_SVG, sub,
+    // Sheets (mobile rail long-press) cannot fly out: the row opens a
+    // duration sheet instead. Desktop openCtx uses `sub` and ignores `fn`.
+    fn: () => openCtxSheet(
+      [{ head: `Mute ${sname}` }, ...sub.map((x) => ({ ...x, label: (x.checked ? '✓ ' : '') + x.label }))],
+      { title: sname, sub: 'Muted for…', glyph: sname.trim().charAt(0).toUpperCase(), color: 'var(--panel-3)' },
+    ),
   };
 }
 async function openServerNotifSettings(sid) {
