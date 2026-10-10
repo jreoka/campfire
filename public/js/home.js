@@ -879,11 +879,13 @@ function dmMuteItem(t) {
   const scope = `d:${t.id}`;
   const nm = peer.username || peer.display_name || 'user';
   const row = muteRow(peer.id, scope);
-  if (row) return { label: `Unmute @${nm}`, icon: '🔈', fn: () => unmuteUser(peer.id, nm, scope) };
+  // Same speaker icon as the server-rail mute rows (MUTE_SVG in actions.js).
+  const spk = (typeof MUTE_SVG !== 'undefined' ? MUTE_SVG : '🔇');
+  if (row) return { label: `Unmute @${nm}`, icon: spk, fn: () => unmuteUser(peer.id, nm, scope) };
   const checked = muteCheckedMinutes(row);
   const sub = MUTE_DURATIONS.map((d) => ({ label: d.label, checked: checked === d.minutes, fn: () => muteUser(peer.id, nm, d.minutes, scope) }));
   return {
-    label: `Mute @${nm}`, icon: '🔇', sub,
+    label: `Mute @${nm}`, icon: spk, sub,
     fn: () => openCtxSheet(
       [{ head: `Mute in ${dmTitle(t)}` }, ...sub.map((s) => ({ ...s, label: (s.checked ? '✓ ' : '') + s.label }))],
       { title: peer.display_name || 'Direct message', sub: peer.username ? '@' + peer.username : '', serverUser: peer },
