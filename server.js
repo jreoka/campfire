@@ -6088,10 +6088,19 @@ function parseMuteScope(scope) {
 }
 async function notifMode(uid, scopes) {
   let rows = [];
-  try { rows = await db.prepare('SELECT scope, mode FROM notif_prefs WHERE user_id = ?').all(uid); } catch {}
-  const map = new Map(rows.map((r) => [r.scope, r.mode]));
-  for (const s of scopes) if (map.has(s)) return map.get(s);
-  return map.get('global') || 'all';
+  try { rows = await db.prepare('SELECT scope, mode, expires_at FROM notif_prefs WHERE user_id = ?').all(uid); } catch {}
+  const t = now();
+  const map = new Map(rows.map((r) => [r.scope, r]));
+  // A lapsed timed mute reads as absent, so the chain falls through to the
+  // next scope instead of staying silent forever.
+  const live = (s) => {
+    const r = map.get(s);
+    if (!r) return null;
+    if (r.mode === 'muted' && r.expires_at != null && r.expires_at <= t) return null;
+    return r.mode;
+  };
+  for (const s of scopes) { const m = live(s); if (m) return m; }
+  return live('global') || 'all';
 }
 // What a fan-out to one account's subscriptions actually did. The old code threw
 // this away and every caller reported success unconditionally, which is how a
@@ -6218,13 +6227,13 @@ async function notifyServerMessage(serverId, channelId, author, content, message
   let prefs = [], names = new Map();
   try {
     const ph = cands.map(() => '?').join(',');
-    prefs = await db.prepare(`SELECT user_id, scope, mode FROM notif_prefs WHERE user_id IN (${ph})`).all(...cands);
+    prefs = await db.prepare(`SELECT user_id, scope, mode, expires_at FROM notif_prefs WHERE user_id IN (${ph})`).all(...cands);
     for (const u of await db.prepare(`SELECT id, username FROM users WHERE id IN (${ph})`).all(...cands)) names.set(u.id, u.username);
   } catch {}
   const byUser = new Map();
   for (const p of prefs) {
     if (!byUser.has(p.user_id)) byUser.set(p.user_id, new Map());
-    byUser.get(p.user_id).set(p.scope, p.mode);
+    byUser.get(p.user_id).set(p.scope, { mode: p.mode, exp: p.expires_at });
   }
   const ch = await db.prepare('SELECT name FROM channels WHERE id = ?').get(channelId);
   const s = await getServer(serverId);
@@ -6275,8 +6284,9 @@ async function notifyServerMessage(serverId, channelId, author, content, message
   for (const uid of cands) {
     if (mutedByAuthor.has(uid)) continue;
     const pm = byUser.get(uid) || new Map();
-    const mode = pm.get(`c:${channelId}`) || pm.get(`s:${serverId}`) || pm.get('global') || 'all';
-    if (mode === 'muted') continue;
+    const pref = pm.get(`c:${channelId}`) || pm.get(`s:${serverId}`) || pm.get('global');
+    if (pref && pref.mode === 'muted' && (pref.exp == null || pref.exp > now())) continue;
+    const mode = (pref && pref.mode) || 'all';
     const isMention = mentionsName(text, names.get(uid)) || roleHolders.has(uid)
       || idUserIds.includes(uid)
       || everyone || (here && !!online && !!online[uid]);
@@ -6844,10 +6854,18 @@ app.post('/api/push/test', authRequired, async (req, res) => {
   res.json({ ok: true, delivered: r.delivered, subs: r.subs });
 });
 app.get('/api/notifs/prefs', authRequired, async (req, res) => {
-  const rows = await db.prepare('SELECT scope, mode FROM notif_prefs WHERE user_id = ?').all(req.user.id);
-  const prefs = {};
-  for (const r of rows) prefs[r.scope] = r.mode;
-  res.json({ prefs });
+  const t = now();
+  const rows = await db.prepare('SELECT scope, mode, expires_at FROM notif_prefs WHERE user_id = ?').all(req.user.id);
+  const prefs = {}, expires = {};
+  for (const r of rows) {
+    // Lapsed timed mutes read as absent everywhere (fan-outs, rail paint,
+    // menus) and are swept here.
+    if (r.mode === 'muted' && r.expires_at != null && r.expires_at <= t) continue;
+    prefs[r.scope] = r.mode;
+    if (r.expires_at != null) expires[r.scope] = r.expires_at;
+  }
+  try { await db.prepare("DELETE FROM notif_prefs WHERE user_id = ? AND mode = 'muted' AND expires_at IS NOT NULL AND expires_at <= ?").run(req.user.id, t); } catch {}
+  res.json({ prefs, expires });
 });
 app.put('/api/notifs/prefs', authRequired, async (req, res) => {
   const scope = String(req.body?.scope || '');
@@ -6865,8 +6883,28 @@ app.put('/api/notifs/prefs', authRequired, async (req, res) => {
     }
   }
   if (mode === 'inherit' || scope === 'global' && mode === 'inherit') await db.prepare('DELETE FROM notif_prefs WHERE user_id = ? AND scope = ?').run(req.user.id, scope);
-  else await db.prepare('INSERT INTO notif_prefs (user_id,scope,mode) VALUES (?,?,?) ON CONFLICT(user_id, scope) DO UPDATE SET mode = excluded.mode').run(req.user.id, scope, mode);
-  res.json({ ok: true });
+  else {
+    // Timed mutes: minutes null = until turned back on, undefined (key
+    // absent) = leave any existing expiry alone, N = mute for N minutes.
+    // Any non-muted mode always clears the expiry.
+    const hasMinutes = req.body && Object.hasOwn(req.body, 'minutes');
+    let minutes = null;
+    if (hasMinutes) {
+      minutes = req.body.minutes == null ? null : Number(req.body.minutes);
+      if (minutes !== null && !(Number.isFinite(minutes) && minutes > 0)) return res.status(400).json({ error: 'bad_duration' });
+    }
+    let expires_at = null;
+    if (mode === 'muted') {
+      if (minutes === undefined) {
+        try { const cur = await db.prepare('SELECT expires_at FROM notif_prefs WHERE user_id = ? AND scope = ?').get(req.user.id, scope); expires_at = cur ? cur.expires_at : null; } catch {}
+      } else expires_at = minutes == null ? null : now() + Math.round(minutes * 60000);
+    }
+    await db.prepare('INSERT INTO notif_prefs (user_id,scope,mode,expires_at) VALUES (?,?,?,?) ON CONFLICT(user_id, scope) DO UPDATE SET mode = excluded.mode, expires_at = excluded.expires_at').run(req.user.id, scope, mode, expires_at);
+  }
+  try {
+    const cur = await db.prepare('SELECT expires_at FROM notif_prefs WHERE user_id = ? AND scope = ?').get(req.user.id, scope);
+    return res.json({ ok: true, expires_at: cur ? cur.expires_at : null });
+  } catch { return res.json({ ok: true, expires_at: null }); }
 });
 app.get('/api/dms', authRequired, async (req, res) => {
   const ids = (await db.prepare('SELECT thread_id FROM dm_members WHERE user_id = ? AND (hidden IS NULL OR hidden = 0)').all(req.user.id)).map((r) => r.thread_id);

@@ -497,6 +497,10 @@ CREATE TABLE IF NOT EXISTS pin_seen (
   PRIMARY KEY (user_id, ctx)
 );
 `);
+  // Timed server/channel mutes: NULL expiry = until turned back on. The table
+  // is created in the exec block above, so this must run after it (an earlier
+  // spot breaks fresh installs — the table does not exist yet there).
+  await addColumn('notif_prefs', 'expires_at', 'BIGINT');
   await addColumn('dm_messages', 'sys', 'TEXT');
   await addColumn('dm_members', 'hidden', 'BIGINT NOT NULL DEFAULT 0');
   await addColumn('dm_members', 'pinned', 'BIGINT NOT NULL DEFAULT 0');

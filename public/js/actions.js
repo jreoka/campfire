@@ -1175,6 +1175,37 @@ function muteToggleItem(muted, ownMuted, labelBase, scope) {
     fn: async () => { await setNotifPref(scope, muted ? (ownMuted ? 'inherit' : 'all') : 'muted'); renderServerList(); renderChannels(); },
   };
 }
+// Server-rail mute with durations (the rail row names the server, so no head
+// row). Expiry rides notif_prefs.expires_at; the server pre-filters lapsed
+// rows, so the cache — and this menu — only ever see live mutes.
+function prefCheckedMinutes(scope) {
+  const exp = (typeof notifExpiryCache !== 'undefined' && notifExpiryCache[scope]) || null;
+  if (exp == null) {
+    const cur = (typeof notifPrefsCache !== 'undefined' && notifPrefsCache[scope]) || '';
+    return cur === 'muted' ? null : undefined;
+  }
+  const remain = exp - Date.now();
+  if (remain <= 0) return undefined;
+  for (const d of MUTE_DURATIONS) {
+    if (d.minutes != null && remain <= d.minutes * 60000) return d.minutes;
+  }
+  return undefined;
+}
+function serverMuteMenuItem(sid) {
+  const scope = 's:' + sid;
+  const own = notifPrefsCache[scope] || '';
+  if (serverMuted(sid)) {
+    return {
+      label: 'Unmute server', icon: MUTE_SVG,
+      fn: async () => { await setNotifPref(scope, own === 'muted' ? 'inherit' : 'all'); renderServerList(); renderChannels(); },
+    };
+  }
+  const checked = prefCheckedMinutes(scope);
+  return {
+    label: 'Mute server', icon: MUTE_SVG,
+    sub: MUTE_DURATIONS.map((d) => ({ label: d.label, checked: checked === d.minutes, fn: async () => { await setNotifPref(scope, 'muted', d.minutes); renderServerList(); renderChannels(); } })),
+  };
+}
 async function openServerNotifSettings(sid) {
   const s = S.servers.find((v) => v.id === sid);
   if (!s) return;
@@ -1182,6 +1213,19 @@ async function openServerNotifSettings(sid) {
   const cur = notifPrefsCache['s:' + sid] || '';
   const glob = notifEffective('global');
   const opt = (v, l) => `<option value="${v}"${cur === v ? ' selected' : ''}>${l}</option>`;
+  // Preselect the live span: indefinite when the mute has no expiry, else the
+  // smallest duration the remaining time still fits in.
+  const exp = notifExpiryCache['s:' + sid] || null;
+  const curBucket = (() => {
+    if (cur !== 'muted') return undefined;
+    if (exp == null) return 'null';
+    const remain = exp - Date.now();
+    for (const d of MUTE_DURATIONS) {
+      if (d.minutes != null && remain <= d.minutes * 60000) return String(d.minutes);
+    }
+    return 'null';
+  })();
+  const durOpt = (v, l) => `<option value="${v}"${curBucket === v ? ' selected' : ''}>${l}</option>`;
   openModal(`${esc(s.name)} notifications`, `
     <p class="muted small">How should <b>${esc(s.name)}</b> notify you? This is personal — it does not change anything for other members.</p>
     <label style="margin-top:.6rem;display:block">Notify me<select id="m-notif-mode">
@@ -1190,10 +1234,22 @@ async function openServerNotifSettings(sid) {
       ${opt('mentions', 'Mentions only')}
       ${opt('muted', 'Muted')}
     </select></label>
+    <label id="m-notif-dur-wrap" style="margin-top:.6rem;display:${cur === 'muted' ? 'block' : 'none'}">Muted for<select id="m-notif-dur">
+      ${MUTE_DURATIONS.map((d) => durOpt(d.minutes == null ? 'null' : String(d.minutes), d.label)).join('')}
+    </select></label>
   `, 'Save', async () => {
-    await setNotifPref('s:' + sid, $('#m-notif-mode').value || 'inherit');
+    const mode = $('#m-notif-mode').value || 'inherit';
+    let minutes;
+    if (mode === 'muted') {
+      const v = $('#m-notif-dur').value;
+      minutes = v === 'null' ? null : Number(v);
+    }
+    await setNotifPref('s:' + sid, mode, minutes);
     renderServerList(); renderChannels();
   });
+  $('#m-notif-mode').onchange = (e) => {
+    $('#m-notif-dur-wrap').style.display = e.target.value === 'muted' ? 'block' : 'none';
+  };
 }
 async function openChannelNotifSettings(cid) {
   const c = S.serverDetail?.channels.find((v) => v.id === cid);
@@ -1229,7 +1285,6 @@ function folderMoveItems(sid) {
 function serverMenuItems(sid) {
   const s = S.servers.find((v) => v.id === sid);
   if (!s) return [];
-  const own = notifPrefsCache['s:' + sid] || '';
   return [
     { label: 'Open', icon: '→', fn: () => selectServer(sid) },
     { label: 'Invite links', icon: '⧉', fn: async () => { if (sid !== S.serverId) await selectServer(sid); S.serverSubTab = 'invites'; openServerSettings(); } },
@@ -1238,7 +1293,7 @@ function serverMenuItems(sid) {
     ...(typeof serverMoveItems === 'function' ? serverMoveItems(sid) : []),
     ...folderMoveItems(sid),
     { sep: true },
-    muteToggleItem(serverMuted(sid), own === 'muted', 'server', 's:' + sid),
+    serverMuteMenuItem(sid),
     { label: 'Notification settings', icon: BELL_SVG, fn: () => openServerNotifSettings(sid) },
     // Only offered when there is something to clear — like "Remove from folder".
     ...(typeof serverUnreadCount === 'function' && serverUnreadCount(sid) ? [{ label: 'Mark all as read', icon: '✓', fn: () => markServerRead(sid) }] : []),

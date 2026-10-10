@@ -85,16 +85,23 @@ function closeSettings() { closePicker(false); try { stopMediaPreview(); } catch
 const NOTIF_OPTS = [['all', 'All messages'], ['mentions', 'Mentions only'], ['muted', 'Muted']];
 const NOTIF_LABEL = { all: 'All messages', mentions: 'Mentions only', muted: 'Muted' };
 let notifPrefsCache = {};
+let notifExpiryCache = {};
 async function refreshNotifPrefs() {
-  try { const { prefs } = await api('/api/notifs/prefs'); notifPrefsCache = prefs || {}; }
-  catch { notifPrefsCache = {}; }
+  try { const r = await api('/api/notifs/prefs'); notifPrefsCache = (r && r.prefs) || {}; notifExpiryCache = (r && r.expires) || {}; }
+  catch { notifPrefsCache = {}; notifExpiryCache = {}; }
   return notifPrefsCache;
 }
-async function setNotifPref(scope, mode) {
+async function setNotifPref(scope, mode, minutes) {
   try {
-    await api('/api/notifs/prefs', { method: 'PUT', body: JSON.stringify({ scope, mode }) });
-    if (mode === 'inherit') delete notifPrefsCache[scope];
-    else notifPrefsCache[scope] = mode;
+    const body = { scope, mode };
+    if (minutes !== undefined) body.minutes = minutes;
+    const r = await api('/api/notifs/prefs', { method: 'PUT', body: JSON.stringify(body) });
+    if (mode === 'inherit') { delete notifPrefsCache[scope]; delete notifExpiryCache[scope]; }
+    else {
+      notifPrefsCache[scope] = mode;
+      if (r && r.expires_at != null) notifExpiryCache[scope] = r.expires_at;
+      else delete notifExpiryCache[scope];
+    }
   } catch (err) { toast('Failed: ' + prettyError(err.message)); }
 }
 function notifSelect(scope, val, small) {
