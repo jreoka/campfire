@@ -2481,7 +2481,7 @@ async function openUserCard(uid, x, y, fallback, opts = {}) {
       ${voiceVolHTML}
       ${voiceModHTML}
       ${cardRolesHTML(uid)}
-      <div class="uc-tabs">${uid !== S.me.id ? ucTabHTML('uc-mention', 'mention', 'Mention') : ''}${uid !== S.me.id && !isBlocked(uid) ? ucTabHTML('uc-message', 'message', 'Message') : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid, 'uc-friend', 'uc-tab', true) : ''}${canMod ? ucTabHTML('uc-kick', 'minus-user', 'Kick', ' danger') + ucTabHTML('uc-ban', 'x-user', 'Ban', ' danger') : ''}${groupRemoveTabHTML(dmThread, uid)}${uid !== S.me.id ? ucTabHTML('uc-mute', isMutedUser(uid) ? 'vol' : 'vol-x', isMutedUser(uid) ? 'Unmute' : 'Mute') : ''}${uid !== S.me.id ? ucTabHTML('uc-block', isBlocked(uid) ? 'check' : 'slash', isBlocked(uid) ? 'Unblock' : 'Block', isBlocked(uid) ? '' : ' danger') : ''}${ucTabHTML('uc-profile', 'user', 'Profile')}${ucTabHTML('uc-close', 'close', 'Close')}</div>
+      <div class="uc-tabs">${uid !== S.me.id ? ucTabHTML('uc-mention', 'mention', 'Mention') : ''}${uid !== S.me.id && !isBlocked(uid) ? ucTabHTML('uc-message', 'message', 'Message') : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid, 'uc-friend', 'uc-tab', true) : ''}${canMod ? ucTabHTML('uc-kick', 'minus-user', 'Kick', ' danger') + ucTabHTML('uc-ban', 'x-user', 'Ban', ' danger') : ''}${groupRemoveTabHTML(dmThread, uid)}${uid !== S.me.id && muteScope() ? ucTabHTML('uc-mute', isMutedUser(uid) ? 'vol' : 'vol-x', isMutedUser(uid) ? 'Unmute' : 'Mute') : ''}${uid !== S.me.id ? ucTabHTML('uc-block', isBlocked(uid) ? 'check' : 'slash', isBlocked(uid) ? 'Unblock' : 'Block', isBlocked(uid) ? '' : ' danger') : ''}${ucTabHTML('uc-profile', 'user', 'Profile')}${ucTabHTML('uc-close', 'close', 'Close')}</div>
     </div>`;
   paintAvatar(card.querySelector('.avatar'), u);
   paintGameBadge(card.querySelector('.gbadge'));
@@ -2513,6 +2513,7 @@ async function openUserCard(uid, x, y, fallback, opts = {}) {
   const mut = $('#uc-mute');
   if (mut) mut.onclick = () => {
     const item = muteMenuItem({ id: uid, username: u.username });
+    if (!item) return;
     const repaint = () => setTimeout(() => { try { if (!$('#usercard').classList.contains('hidden') && $('#usercard').dataset.uid === String(uid)) openUserCard(uid, x, y); } catch {} }, 600);
     const wrap = (fn) => (...a) => { try { const r = fn(...a); if (r && r.then) r.then(repaint, repaint); else repaint(); } catch { repaint(); } };
     if (item.fn) item.fn = wrap(item.fn);

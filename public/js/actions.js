@@ -66,6 +66,7 @@ function openCtx(x, y, items) {
   const m = document.createElement('div');
   m.id = 'ctx-menu';
   for (const it of items) {
+    if (!it) continue;
     if (it.sep) { const s = document.createElement('div'); s.className = 'ctx-sep'; m.appendChild(s); continue; }
     if (it.head) { const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = it.head; m.appendChild(h); continue; }
     const b = document.createElement('button');
@@ -81,6 +82,7 @@ function openCtx(x, y, items) {
         const s = document.createElement('div');
         s.className = 'ctx-menu ctx-sub';
         for (const sub of it.sub) {
+          if (sub.head) { const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = sub.head; s.appendChild(h); continue; }
           const r = document.createElement('button');
           r.className = 'ctx-item';
           r.innerHTML = `<span class="ctx-check">${sub.checked ? '✓' : ''}</span><span>${esc(sub.label)}</span>`;
@@ -893,7 +895,8 @@ function memberCtxMenu(uid, x, y) {
     }
     if (isBlocked(uid)) items.push({ label: `Unblock @${u.username}`, icon: '⊘', fn: () => unblockUser(uid) });
     else items.push({ label: `Block @${u.username}`, icon: '⊘', danger: true, fn: () => blockUser(uid, u.username) });
-    items.splice(items.length - 1, 0, muteMenuItem(u));
+    const mi = muteMenuItem(u);
+    if (mi) items.splice(items.length - 1, 0, mi);
   }
   openCtx(x, y, items);
 }

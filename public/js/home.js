@@ -539,11 +539,28 @@ async function loadMutes() {
   try { const r = await api('/api/mutes'); S.mutes = (r && r.mutes) || []; }
   catch { if (!S.mutes) S.mutes = []; }
 }
-function muteRow(id) {
+function muteRow(id, scope) {
   const t = Date.now();
-  return (S.mutes || []).find((m) => m.user_id === id && (m.expires_at == null || m.expires_at > t)) || null;
+  return (S.mutes || []).find((m) => m.user_id === id && m.scope === scope && (m.expires_at == null || m.expires_at > t)) || null;
 }
-function isMutedUser(id) { return !!muteRow(id); }
+// The conversation a mute belongs to: the open server, or the open DM/group.
+// Null outside any conversation (friends page, stray cards) — a mute lives
+// where the conversation lives, so the row/tab hides there instead of muting
+// somewhere surprising.
+function muteScope() {
+  try {
+    if (S.view === 'server' && S.serverId) {
+      const name = (S.serverDetail && S.serverDetail.name) || 'this server';
+      return { scope: `s:${S.serverId}`, label: name };
+    }
+    if (S.view === 'home' && S.dmThreadId) {
+      const t = (S.dms || []).find((x) => x.id === S.dmThreadId);
+      if (t) return { scope: `d:${t.id}`, label: dmTitle(t) };
+    }
+  } catch {}
+  return null;
+}
+function isMutedUser(id) { const sc = muteScope(); return sc ? !!muteRow(id, sc.scope) : false; }
 // Which duration row earns the checkmark: indefinite, else the smallest
 // bucket the remaining time still fits in.
 function muteCheckedMinutes(row) {
@@ -555,31 +572,34 @@ function muteCheckedMinutes(row) {
   }
   return undefined;
 }
-async function muteUser(id, username, minutes) {
+async function muteUser(id, username, minutes, scope) {
   try {
-    await api('/api/mutes', { method: 'POST', body: JSON.stringify({ user_id: id, minutes }) });
+    await api('/api/mutes', { method: 'POST', body: JSON.stringify({ user_id: id, minutes, scope }) });
     await loadMutes();
     const d = MUTE_DURATIONS.find((x) => x.minutes === minutes);
     toast(d && d.minutes != null ? `Muted @${username} (${d.label.slice(4).toLowerCase()})` : `Muted @${username}`);
   } catch (err) { toast('Mute failed: ' + prettyError(err.message)); }
 }
-async function unmuteUser(id, username) {
+async function unmuteUser(id, username, scope) {
   try {
-    await api(`/api/mutes/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await api(`/api/mutes/${encodeURIComponent(id)}?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' });
     await loadMutes();
     toast(`Unmuted @${username || 'user'}`);
   } catch (err) { toast('Unmute failed: ' + prettyError(err.message)); }
 }
-// One row for any user menu (member list, friends more-menu, user card):
-// Unmute when muted, otherwise Mute with the duration flyout and the active
-// span ticked.
+// One row for any user menu in a conversation (member list, friends more-menu
+// while a chat is open, user card): Unmute when muted here, otherwise Mute
+// with the duration flyout (headed by the conversation) and the active span
+// ticked. Null outside any conversation — the caller hides the row.
 function muteMenuItem(u) {
-  const row = muteRow(u.id);
-  if (row) return { label: `Unmute @${u.username}`, icon: '🔈', fn: () => unmuteUser(u.id, u.username) };
+  const sc = muteScope();
+  if (!sc) return null;
+  const row = muteRow(u.id, sc.scope);
+  if (row) return { label: `Unmute @${u.username}`, icon: '🔈', fn: () => unmuteUser(u.id, u.username, sc.scope) };
   const checked = muteCheckedMinutes(row);
   return {
     label: `Mute @${u.username}`, icon: '🔇',
-    sub: MUTE_DURATIONS.map((d) => ({ label: d.label, checked: checked === d.minutes, fn: () => muteUser(u.id, u.username, d.minutes) })),
+    sub: [{ head: `In ${sc.label}` }, ...MUTE_DURATIONS.map((d) => ({ label: d.label, checked: checked === d.minutes, fn: () => muteUser(u.id, u.username, d.minutes, sc.scope) }))],
   };
 }
 function renderFriendLists() {

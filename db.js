@@ -223,6 +223,25 @@ CREATE INDEX IF NOT EXISTS idx_members_user ON server_members(user_id);
   await addColumn('users', 'banner_url', 'TEXT');
   await addColumn('users', 'sidebar_banner_url', 'TEXT');
   await addColumn('servers', 'icon_url', 'TEXT');
+  // Mutes went per-context (scope) the day after the table landed: heal tables
+  // created before scope existed. The CREATE TABLE below runs later in this
+  // function, so the whole block is table-guarded — fresh installs skip it
+  // and land directly on the scoped shape. Old 'global' rows never match a
+  // real context check, and posting a scoped mute deletes the pair's legacy
+  // global row, so nothing gets stuck.
+  await pool.query(`DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'mutes') THEN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'mutes' AND column_name = 'scope') THEN
+        ALTER TABLE mutes ADD COLUMN scope TEXT NOT NULL DEFAULT 'global';
+      END IF;
+      IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'mutes_pkey') THEN
+        ALTER TABLE mutes DROP CONSTRAINT mutes_pkey;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'mutes_scope_pkey') THEN
+        ALTER TABLE mutes ADD CONSTRAINT mutes_scope_pkey PRIMARY KEY (user_id, muted_id, scope);
+      END IF;
+    END IF;
+  END $$`);
   await addColumn('servers', 'tag', 'TEXT');
   await addColumn('servers', 'tag_emoji', 'TEXT');
   await addColumn('users', 'active_tag_server_id', 'TEXT');
@@ -418,16 +437,18 @@ CREATE TABLE IF NOT EXISTS blocks (
   CHECK (user_id != blocked_id)
 );
 -- Per-user notification mutes (Discord-style "Mute @user"): the muted author's
--- messages, calls and reactions stop pinging this account everywhere —
--- servers, DMs, group DMs — while their messages still render normally.
+-- messages, calls and reactions stop pinging this account while their messages
+-- still render normally. Mutes are per context, never global: scope is
+-- 's:<serverId>' for a server mute, 'd:<threadId>' for a DM/group-DM mute.
 -- expires_at NULL = muted until turned back on. Expired rows are swept lazily
 -- wherever mutes are read, so no background job is needed.
 CREATE TABLE IF NOT EXISTS mutes (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   muted_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  scope TEXT NOT NULL DEFAULT 'global',
   expires_at BIGINT,
   created_at BIGINT NOT NULL,
-  PRIMARY KEY (user_id, muted_id),
+  PRIMARY KEY (user_id, muted_id, scope),
   CHECK (user_id != muted_id)
 );
 CREATE TABLE IF NOT EXISTS roles (
