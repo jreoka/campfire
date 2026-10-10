@@ -417,6 +417,19 @@ CREATE TABLE IF NOT EXISTS blocks (
   PRIMARY KEY (user_id, blocked_id),
   CHECK (user_id != blocked_id)
 );
+-- Per-user notification mutes (Discord-style "Mute @user"): the muted author's
+-- messages, calls and reactions stop pinging this account everywhere —
+-- servers, DMs, group DMs — while their messages still render normally.
+-- expires_at NULL = muted until turned back on. Expired rows are swept lazily
+-- wherever mutes are read, so no background job is needed.
+CREATE TABLE IF NOT EXISTS mutes (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  muted_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at BIGINT,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (user_id, muted_id),
+  CHECK (user_id != muted_id)
+);
 CREATE TABLE IF NOT EXISTS roles (
   id TEXT PRIMARY KEY,
   server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,

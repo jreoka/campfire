@@ -1024,6 +1024,12 @@ button.role-pill:hover{background:var(--panel-3);color:var(--text)}
 /* ---------- context menu ---------- */
 #ctx-menu{position:fixed;z-index:400;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);padding:.35rem;min-width:210px;max-width:280px;max-height:min(72vh,560px);overflow-y:auto;overscroll-behavior:contain;box-shadow:var(--shadow-2);}
 .ctx-item{display:flex;align-items:center;gap:.6rem;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:4px;padding:.55rem .65rem;font-size:.87rem;font-weight:600;cursor:pointer;transition:background var(--t-fast)}
+/* Flyout submenu (mute durations et al): same menu sheet, floating beside its
+   parent row. Check column keeps labels aligned whether or not a row is ticked. */
+.ctx-menu.ctx-sub{position:fixed;z-index:401;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:var(--r-md);padding:.35rem;min-width:200px;max-width:260px;box-shadow:var(--shadow-2);}
+.ctx-item .ctx-chev{margin-left:auto;color:var(--muted);font-size:1rem;line-height:1;}
+.ctx-item.has-sub{background:var(--hover);}
+.ctx-check{display:inline-flex;flex-shrink:0;width:18px;justify-content:center;color:var(--accent);font-weight:700;}
 
 .ctx-item.danger{color:var(--danger-tx)}
 .ctx-ic{display:inline-flex;flex-shrink:0;width:18px;justify-content:center}

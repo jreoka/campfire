@@ -342,6 +342,8 @@ async function boot() {
     // Which messages this account has bookmarked — the message menu's
     // Bookmark/Remove bookmark wording needs it before the first right-click.
     try { loadBookmarks(); } catch {}
+    // Who this account has muted — user menus paint Mute/Unmute state.
+    try { loadMutes(); } catch {}
     S.bootRetrying = false;
     try { syncAccountTheme(); } catch {}
     // Report local timezone so game streaks bucket play on the player's

@@ -234,6 +234,7 @@ function friendMoreMenu(u, anchor) {
   openCtx(r.left, r.bottom + 6, [
     { label: 'View profile', icon: '@', fn: () => openUserCard(u.id, r.left + r.width / 2, r.bottom + 6) },
     { label: 'Unfriend', icon: '\u2212', fn: () => unfriendUser(u.id, u.username) },
+    muteMenuItem(u),
     { label: 'Block', icon: '\u2298', danger: true, fn: () => blockUser(u.id, u.username) },
   ]);
 }
@@ -519,6 +520,67 @@ async function blockUser(id, username) {
 async function unblockUser(id) {
   try { await api(`/api/blocks/${id}`, { method: 'DELETE' }); await refreshFriends(); }
   catch (err) { toast('Unblock failed: ' + prettyError(err.message)); }
+}
+/* ================= per-user notification mutes =================
+ * Discord-style "Mute @user": the muted author's messages, calls and
+ * reactions stop pinging this account everywhere (servers, DMs, group DMs)
+ * while their messages still render normally. Durations mirror Discord.
+ * S.mutes is the server list (loaded at boot, refreshed after each change);
+ * expiry is enforced server-side, the client only paints state. */
+const MUTE_DURATIONS = [
+  { label: 'For 15 minutes', minutes: 15 },
+  { label: 'For 1 hour', minutes: 60 },
+  { label: 'For 3 hours', minutes: 180 },
+  { label: 'For 8 hours', minutes: 480 },
+  { label: 'For 24 hours', minutes: 1440 },
+  { label: 'Until I turn it back on', minutes: null },
+];
+async function loadMutes() {
+  try { const r = await api('/api/mutes'); S.mutes = (r && r.mutes) || []; }
+  catch { if (!S.mutes) S.mutes = []; }
+}
+function muteRow(id) {
+  const t = Date.now();
+  return (S.mutes || []).find((m) => m.user_id === id && (m.expires_at == null || m.expires_at > t)) || null;
+}
+function isMutedUser(id) { return !!muteRow(id); }
+// Which duration row earns the checkmark: indefinite, else the smallest
+// bucket the remaining time still fits in.
+function muteCheckedMinutes(row) {
+  if (!row) return undefined;
+  if (row.expires_at == null) return null;
+  const remain = row.expires_at - Date.now();
+  for (const d of MUTE_DURATIONS) {
+    if (d.minutes != null && remain <= d.minutes * 60000) return d.minutes;
+  }
+  return undefined;
+}
+async function muteUser(id, username, minutes) {
+  try {
+    await api('/api/mutes', { method: 'POST', body: JSON.stringify({ user_id: id, minutes }) });
+    await loadMutes();
+    const d = MUTE_DURATIONS.find((x) => x.minutes === minutes);
+    toast(d && d.minutes != null ? `Muted @${username} (${d.label.slice(4).toLowerCase()})` : `Muted @${username}`);
+  } catch (err) { toast('Mute failed: ' + prettyError(err.message)); }
+}
+async function unmuteUser(id, username) {
+  try {
+    await api(`/api/mutes/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await loadMutes();
+    toast(`Unmuted @${username || 'user'}`);
+  } catch (err) { toast('Unmute failed: ' + prettyError(err.message)); }
+}
+// One row for any user menu (member list, friends more-menu, user card):
+// Unmute when muted, otherwise Mute with the duration flyout and the active
+// span ticked.
+function muteMenuItem(u) {
+  const row = muteRow(u.id);
+  if (row) return { label: `Unmute @${u.username}`, icon: '🔈', fn: () => unmuteUser(u.id, u.username) };
+  const checked = muteCheckedMinutes(row);
+  return {
+    label: `Mute @${u.username}`, icon: '🔇',
+    sub: MUTE_DURATIONS.map((d) => ({ label: d.label, checked: checked === d.minutes, fn: () => muteUser(u.id, u.username, d.minutes) })),
+  };
 }
 function renderFriendLists() {
   const f = S.friends;

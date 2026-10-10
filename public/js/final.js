@@ -549,7 +549,7 @@ $('#chat').addEventListener('click', markActiveReadOnChatClick);
   // this listener runs after the opener in the same click, and an already-loaded
   // friend list paints the card before it gets here (ucOpenedByThisClick).
   if (!clickInPath(e, ['#usercard', '#me-card', '[data-uid]', '.member', '.usertag[data-tag-sid]']) && !ucOpenedByThisClick() && !clickInOverPopDialog(e)) closeUserCard();
-  if (ctxEl && !e.target.closest('#ctx-menu') && !e.target.closest('.msg-actions')) closeCtx();
+  if (ctxEl && !e.target.closest('#ctx-menu') && !e.target.closest('.ctx-sub') && !e.target.closest('.msg-actions')) closeCtx();
   if ($('#emoji-pop') && !e.target.closest('#emoji-pop') && !e.target.closest('#in-message') && !e.target.closest('#in-thread')) hideEmojiPop();
   if (folderFlyoutEl && !e.target.closest('#folder-menu')) closeFolderFlyout();
   // A folder only collapses when its own header (top part) is clicked; never

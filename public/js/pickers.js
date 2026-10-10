@@ -2342,6 +2342,8 @@ const UC_ICONS = {
   'minus-user': '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11h-6"/>',
   slash: '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
   check: '<circle cx="12" cy="12" r="9"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/>',
+  'vol-x': '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>',
+  vol: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>',
   user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
   close: '<path d="M18 6L6 18M6 6l12 12"/>',
 };
@@ -2479,7 +2481,7 @@ async function openUserCard(uid, x, y, fallback, opts = {}) {
       ${voiceVolHTML}
       ${voiceModHTML}
       ${cardRolesHTML(uid)}
-      <div class="uc-tabs">${uid !== S.me.id ? ucTabHTML('uc-mention', 'mention', 'Mention') : ''}${uid !== S.me.id && !isBlocked(uid) ? ucTabHTML('uc-message', 'message', 'Message') : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid, 'uc-friend', 'uc-tab', true) : ''}${canMod ? ucTabHTML('uc-kick', 'minus-user', 'Kick', ' danger') + ucTabHTML('uc-ban', 'x-user', 'Ban', ' danger') : ''}${groupRemoveTabHTML(dmThread, uid)}${uid !== S.me.id ? ucTabHTML('uc-block', isBlocked(uid) ? 'check' : 'slash', isBlocked(uid) ? 'Unblock' : 'Block', isBlocked(uid) ? '' : ' danger') : ''}${ucTabHTML('uc-profile', 'user', 'Profile')}${ucTabHTML('uc-close', 'close', 'Close')}</div>
+      <div class="uc-tabs">${uid !== S.me.id ? ucTabHTML('uc-mention', 'mention', 'Mention') : ''}${uid !== S.me.id && !isBlocked(uid) ? ucTabHTML('uc-message', 'message', 'Message') : ''}${uid !== S.me.id && !isBlocked(uid) ? friendBtnHTML(uid, 'uc-friend', 'uc-tab', true) : ''}${canMod ? ucTabHTML('uc-kick', 'minus-user', 'Kick', ' danger') + ucTabHTML('uc-ban', 'x-user', 'Ban', ' danger') : ''}${groupRemoveTabHTML(dmThread, uid)}${uid !== S.me.id ? ucTabHTML('uc-mute', isMutedUser(uid) ? 'vol' : 'vol-x', isMutedUser(uid) ? 'Unmute' : 'Mute') : ''}${uid !== S.me.id ? ucTabHTML('uc-block', isBlocked(uid) ? 'check' : 'slash', isBlocked(uid) ? 'Unblock' : 'Block', isBlocked(uid) ? '' : ' danger') : ''}${ucTabHTML('uc-profile', 'user', 'Profile')}${ucTabHTML('uc-close', 'close', 'Close')}</div>
     </div>`;
   paintAvatar(card.querySelector('.avatar'), u);
   paintGameBadge(card.querySelector('.gbadge'));
@@ -2505,6 +2507,19 @@ async function openUserCard(uid, x, y, fallback, opts = {}) {
   if (msg) msg.onclick = () => messageUser(uid);
   const blk = $('#uc-block');
   if (blk) blk.onclick = () => { const was = isBlocked(uid), nm = u.username; closeUserCard(); if (was) unblockUser(uid); else blockUser(uid, nm); };
+  // Notification mute lives on the card beside Block so a 1:1 DM's header
+  // (which opens this card) can mute too. The duration picker is the shared
+  // ctx flyout; after the change lands the card re-opens to repaint the tab.
+  const mut = $('#uc-mute');
+  if (mut) mut.onclick = () => {
+    const item = muteMenuItem({ id: uid, username: u.username });
+    const repaint = () => setTimeout(() => { try { if (!$('#usercard').classList.contains('hidden') && $('#usercard').dataset.uid === String(uid)) openUserCard(uid, x, y); } catch {} }, 600);
+    const wrap = (fn) => (...a) => { try { const r = fn(...a); if (r && r.then) r.then(repaint, repaint); else repaint(); } catch { repaint(); } };
+    if (item.fn) item.fn = wrap(item.fn);
+    if (item.sub) item.sub = item.sub.map((s) => ({ ...s, fn: wrap(s.fn) }));
+    const r = mut.getBoundingClientRect();
+    openCtx(Math.max(8, Math.min(r.left, innerWidth - 250)), r.bottom + 6, [item]);
+  };
   const fr = $('#uc-friend');
   if (fr) fr.onclick = () => friendCardAction(uid, x, y);
   const kik = $('#uc-kick');

@@ -6056,6 +6056,28 @@ function userLive(uid) {
   for (const c of clients) if (c.meta && c.meta.userId === uid) return true;
   return false;
 }
+// Per-user notification mutes (Discord-style "Mute @user"). A muted author's
+// messages, calls and reactions stop pinging the muter everywhere — servers,
+// DMs, group DMs — while their messages still render normally. expires_at
+// NULL = muted until turned back on. Expired rows are swept lazily wherever
+// mutes are read, so no background job is needed.
+async function mutedAuthorIds(recipientIds, authorId) {
+  const out = new Set();
+  if (!authorId || !recipientIds || !recipientIds.length) return out;
+  try {
+    const t = now();
+    const ph = recipientIds.map(() => '?').join(',');
+    for (const r of await db.prepare(`SELECT user_id FROM mutes WHERE muted_id = ? AND user_id IN (${ph}) AND (expires_at IS NULL OR expires_at > ?)`).all(authorId, ...recipientIds, t)) out.add(r.user_id);
+    try { await db.prepare('DELETE FROM mutes WHERE muted_id = ? AND expires_at IS NOT NULL AND expires_at <= ?').run(authorId, t); } catch {}
+  } catch {}
+  return out;
+}
+async function isMutedBy(viewerId, authorId) {
+  if (!viewerId || !authorId || viewerId === authorId) return false;
+  try {
+    return !!(await db.prepare('SELECT 1 AS x FROM mutes WHERE user_id = ? AND muted_id = ? AND (expires_at IS NULL OR expires_at > ?)').get(viewerId, authorId, now()));
+  } catch { return false; }
+}
 async function notifMode(uid, scopes) {
   let rows = [];
   try { rows = await db.prepare('SELECT scope, mode FROM notif_prefs WHERE user_id = ?').all(uid); } catch {}
@@ -6241,7 +6263,9 @@ async function notifyServerMessage(serverId, channelId, author, content, message
       if (a && a.url) inboxMedia = { url: a.url, kind: a.kind === 'video' ? 'video' : 'image' };
     } catch {}
   }
+  const mutedByAuthor = author.userId ? await mutedAuthorIds(cands, author.userId) : new Set();
   for (const uid of cands) {
+    if (mutedByAuthor.has(uid)) continue;
     const pm = byUser.get(uid) || new Map();
     const mode = pm.get(`c:${channelId}`) || pm.get(`s:${serverId}`) || pm.get('global') || 'all';
     if (mode === 'muted') continue;
@@ -6270,6 +6294,7 @@ async function notifyDmMessage(thread, author, content, messageId) {
   let mems = [];
   try { mems = (await db.prepare('SELECT user_id FROM dm_members WHERE thread_id = ? AND user_id != ?').all(thread.id, author.userId)).map((r) => r.user_id); } catch { return; }
   for (const uid of mems) {
+    if (await isMutedBy(uid, author.userId)) continue;
     if ((await notifMode(uid, [`dm:${thread.id}`, 'global'])) === 'muted') continue;
     const title = thread.is_group ? (thread.name || 'Group chat') : `${displayOf(author)} (DM)`;
     const body = thread.is_group ? emojifyText(`${displayOf(author)}: ${text}`).slice(0, 160) : emojifyText(text).slice(0, 160);
@@ -6294,6 +6319,7 @@ async function notifyDmMessage(thread, author, content, messageId) {
 async function pushDmCallIncoming(t, caller, video, others) {
   if (!t || t.is_group) return;
   for (const uid of others) {
+    if (await isMutedBy(uid, caller.userId)) continue;
     if ((await notifMode(uid, [`dm:${t.id}`, 'global'])) === 'muted') continue;
     await pushToUser(uid, {
       title: displayOf(caller),
@@ -6320,6 +6346,7 @@ async function notifyReaction(authorId, reactor, emoji, target) {
   try {
     if (await db.prepare('SELECT 1 FROM blocks WHERE user_id = ? AND blocked_id = ?').get(authorId, reactor.id)) return;
   } catch {}
+  if (await isMutedBy(authorId, reactor.id)) return;
   const who = displayOf(reactor);
   let title, body, url;
   if (target.threadId) {
@@ -6374,6 +6401,7 @@ async function notifyFriendStatus(user, statusText) {
     if (uid === user.id) continue;
     try { if ((await notifMode(uid, ['global'])) === 'muted') continue; } catch {}
     try { if (await db.prepare('SELECT 1 FROM blocks WHERE user_id = ? AND blocked_id = ?').get(uid, user.id)) continue; } catch {}
+    try { if (await isMutedBy(uid, user.id)) continue; } catch {}
     // The digest always tracks the latest text (a typo fix seconds later
     // replaces the earlier draft); the cooldown is enforced at flush time so
     // repeated edits by the same changer still only ping once per window.
@@ -6729,6 +6757,30 @@ app.post('/api/blocks', authRequired, async (req, res) => {
 app.delete('/api/blocks/:oid', authRequired, async (req, res) => {
   await db.prepare('DELETE FROM blocks WHERE user_id = ? AND blocked_id = ?').run(req.user.id, String(req.params.oid));
   notifyUser(req.user.id, { t: 'friends-changed' });
+  res.json({ ok: true });
+});
+
+// ---------- per-user notification mutes ----------
+app.get('/api/mutes', authRequired, async (req, res) => {
+  const t = now();
+  let rows = [];
+  try {
+    rows = await db.prepare('SELECT m.muted_id AS user_id, u.username, u.display_name, m.expires_at FROM mutes m LEFT JOIN users u ON u.id = m.muted_id WHERE m.user_id = ? AND (m.expires_at IS NULL OR m.expires_at > ?)').all(req.user.id, t);
+    try { await db.prepare('DELETE FROM mutes WHERE user_id = ? AND expires_at IS NOT NULL AND expires_at <= ?').run(req.user.id, t); } catch {}
+  } catch {}
+  res.json({ mutes: rows });
+});
+app.post('/api/mutes', authRequired, async (req, res) => {
+  const target = await db.prepare('SELECT id, username FROM users WHERE id = ?').get(String(req.body?.user_id || req.body?.userId || ''));
+  if (!target || target.id === req.user.id) return res.status(404).json({ error: 'user_not_found' });
+  const minutes = req.body?.minutes == null ? null : Number(req.body.minutes);
+  if (minutes !== null && !(Number.isFinite(minutes) && minutes > 0)) return res.status(400).json({ error: 'bad_duration' });
+  const expires_at = minutes == null ? null : now() + Math.round(minutes * 60000);
+  await db.prepare('INSERT INTO mutes (user_id, muted_id, expires_at, created_at) VALUES (?,?,?,?) ON CONFLICT (user_id, muted_id) DO UPDATE SET expires_at = excluded.expires_at, created_at = excluded.created_at').run(req.user.id, target.id, expires_at, now());
+  res.json({ ok: true, user_id: target.id, expires_at });
+});
+app.delete('/api/mutes/:oid', authRequired, async (req, res) => {
+  await db.prepare('DELETE FROM mutes WHERE user_id = ? AND muted_id = ?').run(req.user.id, String(req.params.oid));
   res.json({ ok: true });
 });
 

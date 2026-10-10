@@ -44,7 +44,9 @@ function bumpFreq(e) {
   } catch { return false; }
 }
 let ctxEl = null;
-function closeCtx() { if (ctxEl) { ctxEl.remove(); ctxEl = null; } }
+let ctxSubEl = null;
+function closeSub() { if (ctxSubEl) { ctxSubEl.remove(); ctxSubEl = null; } }
+function closeCtx() { closeSub(); if (ctxEl) { ctxEl.remove(); ctxEl = null; } }
 // A long-press opens its sheet/menu while the finger is still down. Blink then
 // paints the :hover background of whatever row sits under that finger (and keeps
 // it sticky after the lift), so a row reads as pre-selected before anything was
@@ -68,7 +70,45 @@ function openCtx(x, y, items) {
     if (it.head) { const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = it.head; m.appendChild(h); continue; }
     const b = document.createElement('button');
     b.className = 'ctx-item' + (it.danger ? ' danger' : '');
+    if (it.sub && it.sub.length) {
+      // Flyout submenu (mute durations et al): hover opens on devices with a
+      // real hover, tap toggles everywhere else. The flyout is a sibling of
+      // the menu (never clipped by its scroll box); closeCtx takes both down.
+      b.classList.add('has-sub');
+      b.innerHTML = (it.icon ? `<span class="ctx-ic">${it.icon}</span>` : '') + `<span>${esc(it.label)}</span><span class="ctx-chev">›</span>`;
+      const openSub = () => {
+        closeSub();
+        const s = document.createElement('div');
+        s.className = 'ctx-menu ctx-sub';
+        for (const sub of it.sub) {
+          const r = document.createElement('button');
+          r.className = 'ctx-item';
+          r.innerHTML = `<span class="ctx-check">${sub.checked ? '✓' : ''}</span><span>${esc(sub.label)}</span>`;
+          r.onclick = (ev) => { ev.stopPropagation(); closeCtx(); sub.fn && sub.fn(); };
+          s.appendChild(r);
+        }
+        s.style.visibility = 'hidden';
+        document.body.appendChild(s);
+        const r = b.getBoundingClientRect();
+        const sb = popupBox(s);
+        let lx = r.right + 4;
+        if (lx + sb.w > innerWidth - 8) lx = Math.max(8, r.left - sb.w - 4);
+        s.style.left = lx + 'px';
+        s.style.top = Math.max(8, Math.min(r.top - 6, innerHeight - sb.h - 8)) + 'px';
+        s.style.visibility = '';
+        ctxSubEl = s;
+      };
+      if (window.matchMedia) {
+        try {
+          if (matchMedia('(hover: hover)').matches) b.onmouseenter = () => openSub();
+        } catch {}
+      }
+      b.onclick = (ev) => { ev.stopPropagation(); if (ctxSubEl) closeCtx(); else openSub(); };
+      m.appendChild(b);
+      continue;
+    }
     b.innerHTML = (it.icon ? `<span class="ctx-ic">${it.icon}</span>` : '') + `<span>${esc(it.label)}</span>`;
+    b.onmouseenter = () => closeSub();
     b.onclick = (ev) => { ev.stopPropagation(); closeCtx(); it.fn && it.fn(); };
     m.appendChild(b);
   }
@@ -853,6 +893,7 @@ function memberCtxMenu(uid, x, y) {
     }
     if (isBlocked(uid)) items.push({ label: `Unblock @${u.username}`, icon: '⊘', fn: () => unblockUser(uid) });
     else items.push({ label: `Block @${u.username}`, icon: '⊘', danger: true, fn: () => blockUser(uid, u.username) });
+    items.splice(items.length - 1, 0, muteMenuItem(u));
   }
   openCtx(x, y, items);
 }
