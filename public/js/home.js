@@ -576,6 +576,7 @@ async function muteUser(id, username, minutes, scope) {
   try {
     await api('/api/mutes', { method: 'POST', body: JSON.stringify({ user_id: id, minutes, scope }) });
     await loadMutes();
+    try { renderDmLists(); } catch {}
     const d = MUTE_DURATIONS.find((x) => x.minutes === minutes);
     toast(d && d.minutes != null ? `Muted @${username} (${d.label.slice(4).toLowerCase()})` : `Muted @${username}`);
   } catch (err) { toast('Mute failed: ' + prettyError(err.message)); }
@@ -584,6 +585,7 @@ async function unmuteUser(id, username, scope) {
   try {
     await api(`/api/mutes/${encodeURIComponent(id)}?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' });
     await loadMutes();
+    try { renderDmLists(); } catch {}
     toast(`Unmuted @${username || 'user'}`);
   } catch (err) { toast('Unmute failed: ' + prettyError(err.message)); }
 }
@@ -668,7 +670,7 @@ function renderFriendLists() {
 }
 function dmRowEl(t) {
   const b = document.createElement('button');
-  b.className = 'dmrow' + (t.id === S.dmThreadId ? ' active' : '') + (t.pinned ? ' pinned' : '');
+  b.className = 'dmrow' + (t.id === S.dmThreadId ? ' active' : '') + (t.pinned ? ' pinned' : '') + (dmThreadMuted(t) ? ' muted' : '');
   b.dataset.dmthread = t.id;
   const av = t.isGroup ? null : dmPeer(t);
   // Presence light on direct DMs: same corner dot the friends list uses.
@@ -872,6 +874,22 @@ function dmCtxMenu(tid, x, y) {
 // members are muted from the member list once the conversation is open.
 // The row carries both `sub` (desktop flyout) and `fn` (mobile sheet opens a
 // duration sheet) — each surface uses the half it understands.
+// A DM row fades like a muted server icon when you've muted in that thread:
+// the peer for 1:1s, any member for groups. Lapsed rows don't count.
+function dmThreadMuted(t) {
+  try {
+    if (!t || !S.mutes || !S.mutes.length) return false;
+    const scope = `d:${t.id}`;
+    const nowT = Date.now();
+    const live = (m) => m.scope === scope && (m.expires_at == null || m.expires_at > nowT);
+    if (!t.isGroup) {
+      const peer = dmPeer(t);
+      return !!peer && S.mutes.some((m) => m.user_id === peer.id && live(m));
+    }
+    const ids = new Set((t.members || []).map((m) => m.id));
+    return S.mutes.some((m) => ids.has(m.user_id) && live(m));
+  } catch { return false; }
+}
 function dmMuteItem(t) {
   if (!t || t.isGroup || !S.me) return null;
   const peer = dmPeer(t);

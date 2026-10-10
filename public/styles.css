@@ -485,6 +485,7 @@ body.sidebar-resizing,body.sidebar-resizing *{user-select:none!important;cursor:
 .chan:hover{background:var(--panel-2);color:var(--text)}
 .chan.active{background:var(--accent-dim);color:var(--text);font-weight:650}
 .chan.muted{opacity:.45}
+.dmrow.muted{opacity:.45}
 .chan[draggable="true"]{cursor:grab}
 .chan .vicon{display:inline-flex;flex-shrink:0}
 .nsfw-badge{flex-shrink:0;font-size:.64rem;font-weight:800;letter-spacing:.04em;color:var(--amber);background:rgba(250,168,26,.13);border-radius:3px;padding:.12rem .42rem;line-height:1.4}
